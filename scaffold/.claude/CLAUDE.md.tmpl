@@ -1,0 +1,27 @@
+# {{CLIENT_NAME}} — Team Ops
+
+Shared workspace for the {{CLIENT_NAME}} engagement ({{ENGAGEMENT_DESC}}).
+
+## Start here
+- Decisions → `03-status/decision-log.md`
+- Hours → `03-status/hours-log.md`
+- Tasks → `03-status/tasks.md`
+- Your workspace → `05-personal/<your-name>/`
+- Scope → `00-engagement/scope-baseline.md` + `scope-ledger.md`
+
+## The numbered spine
+| # | Folder | Holds |
+|---|--------|-------|
+| 00 | engagement | charter, scope baseline + ledger, roles |
+| 01 | intake | raw inputs (transcripts, notes) |
+| 02 | deliverables | sprint-scoped team outputs |
+| 03 | status | decision log, hours, tasks |
+| 04 | client-surface | captain-approved, client-facing |
+| 05 | personal | per-member private workspace |
+
+## Conventions
+Governance rules live in `.claude/rules/` (decision-log, frontmatter, publishing,
+hours). Dynamic-workflow harnesses live in `.claude/skills/` — run `decision-audit`
+before a close-out and `scope-creep` before a scope conversation.
+
+Captain: {{CAPTAIN}} · Team: {{MEMBER_LIST}} · Currency: {{CURRENCY}}

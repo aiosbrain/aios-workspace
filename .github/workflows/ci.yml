@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  guard:
+    name: leak-gate + secrets + harness checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confidentiality leak gate
+        run: bash scripts/leak-gate.sh .
+
+      - name: Secret scan
+        run: bash validation/check-secrets.sh .
+
+      - name: Harness syntax check
+        run: |
+          for f in scaffold/.claude/skills/*/*.workflow.js; do
+            node -e "const s=require('fs').readFileSync('$f','utf8'); new Function('agent','parallel','pipeline','phase','log','args','budget','workflow','return (async()=>{'+s.replace(/export const meta/,'const meta')+'})')" \
+              && echo "ok: $f" || { echo "FAIL: $f"; exit 1; }
+          done
+
+      - name: Scaffold smoke test + validate
+        run: |
+          bash scripts/scaffold-engagement.sh \
+            --slug ci-sample-team-ops --client "Sample Co" --captain alex \
+            --members "alex,sam,jordan" --org your-github-org --currency USD \
+            --output /tmp/ci-sample-team-ops
+          bash validation/validate-all.sh /tmp/ci-sample-team-ops
