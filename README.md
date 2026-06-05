@@ -51,6 +51,11 @@ Workflow({
 })
 ```
 
+Prefer to just see results? [`examples/sample-output/`](examples/sample-output/) has
+real harness output on the synthetic engagement — a decision-log audit (9 verified
+findings, false positives filtered out), a scope-creep register, and decisions
+extracted from meeting transcripts.
+
 ## The numbered spine
 
 Every engagement uses the same six-folder pipeline, raw → refined:

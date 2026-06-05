@@ -14,15 +14,22 @@
 set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-# Exclusions: VCS, this script (it necessarily contains the terms), binaries, and
-# LICENSE (the copyright holder — the repo owner — legitimately appears there).
+# Exclusions: VCS, this script (it necessarily contains the terms), binaries,
+# LICENSE (the copyright holder legitimately appears there), and docs/strategy/
+# (INTERNAL, reviewer-only studio strategy — verified free of client identifiers,
+# carries the studio brand, and is REMOVED before any public release; see
+# RELEASE-CHECKLIST.md and docs/strategy/README.md).
 EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
-  --exclude-dir=__pycache__ --exclude-dir=store --exclude=leak-gate.sh
-  --exclude=LICENSE
+  --exclude-dir=__pycache__ --exclude-dir=store --exclude-dir=strategy
+  --exclude=leak-gate.sh --exclude=LICENSE
   --exclude=*.png --exclude=*.jpg --exclude=*.pdf --exclude=*.lock)
 
 # STRONG terms — unambiguous; any occurrence is a leak. Case-insensitive substring.
-STRONG='REDACTED|REDACTED|REDACTED|pravos|vibrana|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|company graph|company-graph|REDACTED|24z\.de|john-ellison|iamjohndass|/Users/iamjohndass|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|julius|christoph|yvonne|katya|blaise|yiannis|robbie|fatma|stephan|miguel|crespo'
+# Note: "company graph" is NOT gated — the Confidentiality Confirmation (§1.2(a))
+# defines the Company Graph *structure* as a generic, publicly-available pattern in
+# which no party asserts IP. Only client-specific *content* is confidential, and the
+# client identifiers below already catch that.
+STRONG='REDACTED|REDACTED|REDACTED|pravos|vibrana|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|24z\.de|john-ellison|iamjohndass|/Users/iamjohndass|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|julius|christoph|yvonne|katya|blaise|yiannis|robbie|fatma|stephan|miguel|crespo'
 
 # WORD-BOUNDED terms — short/ambiguous client identifiers; match only as whole
 # words to avoid false positives (e.g. Tine in "routine", Abe in "label").
