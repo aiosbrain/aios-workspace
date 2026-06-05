@@ -14,9 +14,11 @@
 set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-# Exclusions: VCS, this script (it necessarily contains the terms), binaries.
+# Exclusions: VCS, this script (it necessarily contains the terms), binaries, and
+# LICENSE (the copyright holder — the repo owner — legitimately appears there).
 EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
   --exclude-dir=__pycache__ --exclude-dir=store --exclude=leak-gate.sh
+  --exclude=LICENSE
   --exclude=*.png --exclude=*.jpg --exclude=*.pdf --exclude=*.lock)
 
 # STRONG terms — unambiguous; any occurrence is a leak. Case-insensitive substring.
