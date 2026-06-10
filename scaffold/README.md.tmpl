@@ -1,20 +1,20 @@
 # {{CLIENT_FULL_NAME}} — Team Ops
 
-Engagement workspace for **{{CLIENT_NAME}}** ({{ENGAGEMENT_DESC}}), scaffolded from
+{{UNIT_TITLE}} workspace for **{{CLIENT_NAME}}** ({{ENGAGEMENT_DESC}}), scaffolded from
 [Agentic Team Ops](https://github.com/your-github-org/agentic-team-ops).
 
-- **Captain:** {{CAPTAIN}}
+- **{{LEAD_LABEL}}:** {{CAPTAIN}}
 - **Team:** {{MEMBER_LIST}} ({{MEMBER_COUNT}})
 - **Started:** {{START_DATE}}
 - **Currency:** {{CURRENCY}}
 
 ## Layout (the numbered spine)
 ```
-00-engagement/   charter, scope baseline + ledger, roles
-01-intake/       raw inputs (transcripts, notes, reference)
+{{DIR00}}/   charter, scope baseline + ledger, roles
+01-intake/       raw inputs (transcripts, notes, reference, from-brain)
 02-deliverables/ sprint-scoped team outputs
 03-status/       decision log, hours, tasks
-04-client-surface/ captain-approved, client-facing
+{{DIR04}}/ {{DIR04_DESC}}
 05-personal/     per-member private workspace
 ```
 
@@ -22,5 +22,16 @@ Engagement workspace for **{{CLIENT_NAME}}** ({{ENGAGEMENT_DESC}}), scaffolded f
 - Log decisions in `03-status/decision-log.md` (see `.claude/rules/decision-log.md`).
 - Log hours in your `05-personal/<name>/03-status/hours-log.md`.
 - Promote work via the flow in `.claude/rules/publishing.md`.
-- Run the harnesses in `.claude/skills/` (decision-audit, scope-creep).
+- Run the harnesses in `.claude/skills/` (decision-audit, scope-creep, weekly-synthesis).
 - Validate structure with the Agentic Team Ops validators.
+
+## Team Brain (optional)
+This repo can sync tier-tagged content to an AIOS Team Brain. Configure
+`aios.yaml` + `.env` (see `.env.example`), then:
+```
+aios status   # what would sync (and what's blocked, and why)
+aios push     # push team/external-tier content
+aios pull     # fetch team updates into 01-intake/from-brain/
+aios query "what did we decide about X?"
+```
+`access: admin` content and untagged files never leave this machine.

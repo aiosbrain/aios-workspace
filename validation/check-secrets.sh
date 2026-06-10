@@ -60,7 +60,19 @@ SCAN_FILES=$(find "$REPO" \
   -not -name "*.xlsx" \
   -not -name "*.docx" \
   -not -name "check-secrets.sh" \
+  -not -name "secret-patterns.txt" \
   -type f 2>/dev/null || true)
+
+# Merge in shared patterns (validation/secret-patterns.txt) — the single
+# source also consumed by hooks/team-ops-guard.sh and scripts/aios.mjs.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/secret-patterns.txt" ]; then
+  while IFS= read -r shared_pattern; do
+    [ -z "$shared_pattern" ] && continue
+    case "$shared_pattern" in \#*) continue ;; esac
+    PATTERNS+=("Shared pattern|$shared_pattern")
+  done < "$SCRIPT_DIR/secret-patterns.txt"
+fi
 
 for entry in "${PATTERNS[@]}"; do
   label="${entry%%|*}"

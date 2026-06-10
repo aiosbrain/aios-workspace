@@ -46,19 +46,23 @@ step. Nothing is auto-promoted.
 
 ## Access tiers
 
-Each file carries an audience tier in frontmatter (`access: admin | team | client`).
-The tiers are a contract:
+Each file carries an audience tier in frontmatter (`access: admin | team | external`;
+`client` is accepted everywhere as a legacy alias of `external` — see
+[`brain-api.md`](brain-api.md)). The tiers are a contract:
 
-- **admin** — internal only (pricing, strategy, raw analysis).
+- **admin** — internal only (pricing, strategy, raw analysis). **Never syncs** to a
+  Team Brain; never leaves the machine.
 - **team** — the delivery team.
-- **client** — appropriate to share with the client; recorded in the client-surface
-  log when it is.
+- **external** (legacy: `client`) — appropriate to share outside the team; recorded
+  in the client-surface log when it is.
 
-Tiers are enforced in two places: the **guard hook** (`hooks/team-ops-guard.sh`) blocks
-admin-only content from being written into team/client directories, and the
-**validators** check that frontmatter is present and well-formed. A knowledge-base
-layer (on the roadmap) filters retrieval by tier so an agent answering a question
-never returns content above the caller's ceiling.
+Tiers are enforced in three places: the **guard hook** (`hooks/team-ops-guard.sh`)
+blocks admin-only content from being written into team/external directories, the
+**validators** check that frontmatter is present and well-formed, and the **sync
+client** (`scripts/aios.mjs`) default-denies anything not explicitly tiered within
+`aios.yaml: sync_tiers` before a single byte goes over the network. On the Team
+Brain side, retrieval is tier-filtered in SQL so a query never returns content above
+the caller's ceiling.
 
 ## Why agent-native
 

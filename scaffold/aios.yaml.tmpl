@@ -1,0 +1,38 @@
+# AIOS Team Brain connection — restricted YAML subset (flat scalars + string
+# lists only; no nesting beyond one level of lists). Parsed by scripts/aios.mjs.
+#
+# Leave brain_url empty to run fully offline/standalone — every other part of
+# this repo works without a Team Brain.
+version: 1
+brain_url: "{{BRAIN_URL}}"
+team_id: "{{TEAM_ID}}"
+
+# NAME of the environment variable holding your API key — never the key itself.
+api_key_env: AIOS_API_KEY
+
+# Which access tiers may leave this machine. `admin` is forbidden here and the
+# validator (OGR04) hard-fails if you add it. `client` is a legacy alias of
+# `external`.
+sync_tiers:
+  - team
+  - external
+
+# Paths considered for sync (relative to repo root). Files still need an
+# `access:` frontmatter tier within sync_tiers to actually push — files with
+# no access tier are blocked by default.
+sync_include:
+  - {{DIR00}}
+  - 02-deliverables
+  - 03-status/decision-log.md
+  - 03-status/tasks.md
+  - {{DIR04}}
+  - .claude/memory
+sync_exclude:
+  - 05-personal
+
+# Identity override (optional). Resolution order:
+#   $AIOS_MEMBER → this field → `git config aios.member` → git user.name
+member: ""
+
+# Display vocabulary: project | engagement
+unit_label: {{UNIT_LABEL}}

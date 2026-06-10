@@ -1,27 +1,37 @@
 # {{CLIENT_NAME}} — Team Ops
 
-Shared workspace for the {{CLIENT_NAME}} engagement ({{ENGAGEMENT_DESC}}).
+Shared workspace for the {{CLIENT_NAME}} {{UNIT_LABEL}} ({{ENGAGEMENT_DESC}}).
 
 ## Start here
 - Decisions → `03-status/decision-log.md`
 - Hours → `03-status/hours-log.md`
 - Tasks → `03-status/tasks.md`
 - Your workspace → `05-personal/<your-name>/`
-- Scope → `00-engagement/scope-baseline.md` + `scope-ledger.md`
+- Scope → `{{DIR00}}/scope-baseline.md` + `scope-ledger.md`
+- **Before running any harness, read `.claude/memory/instincts.md`** — distilled
+  rules from past failures; consult them instead of re-deriving.
 
 ## The numbered spine
 | # | Folder | Holds |
 |---|--------|-------|
-| 00 | engagement | charter, scope baseline + ledger, roles |
-| 01 | intake | raw inputs (transcripts, notes) |
+| 00 | {{DIR00}} | charter, scope baseline + ledger, roles |
+| 01 | intake | raw inputs (transcripts, notes, from-brain) |
 | 02 | deliverables | sprint-scoped team outputs |
 | 03 | status | decision log, hours, tasks |
-| 04 | client-surface | captain-approved, client-facing |
+| 04 | {{DIR04}} | {{DIR04_DESC}} |
 | 05 | personal | per-member private workspace |
 
 ## Conventions
 Governance rules live in `.claude/rules/` (decision-log, frontmatter, publishing,
 hours). Dynamic-workflow harnesses live in `.claude/skills/` — run `decision-audit`
-before a close-out and `scope-creep` before a scope conversation.
+before a close-out, `scope-creep` before a scope conversation, and
+`weekly-synthesis` at sprint boundaries. Harnesses that synthesize are
+rubric-gated (`.claude/rubrics/`): an independent verifier grades the output and
+the harness self-corrects until the rubric passes or its budget is spent.
 
-Captain: {{CAPTAIN}} · Team: {{MEMBER_LIST}} · Currency: {{CURRENCY}}
+## Team Brain
+If `aios.yaml` has a `brain_url`, this repo syncs tier-tagged content to the AIOS
+Team Brain. Use the `aios-sync` skill (or `aios status|push|pull|query` directly).
+`access: admin` content and untagged files never sync — promotion is deliberate.
+
+{{LEAD_LABEL}}: {{CAPTAIN}} · Team: {{MEMBER_LIST}} · Currency: {{CURRENCY}}
