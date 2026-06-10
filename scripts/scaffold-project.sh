@@ -329,8 +329,12 @@ if [ -d "$SCAFFOLD/.claude/memory" ]; then
   cp -R "$SCAFFOLD/.claude/memory/." "$OUTPUT/.claude/memory/"
 fi
 
-# Create status files
+# Create status files (decision log + tasks carry access: team so they sync
+# to a Team Brain by default; hours stay local — billing-adjacent)
 cat > "$OUTPUT/03-status/decision-log.md" << EOF
+---
+access: team
+---
 # Decision Log — $STAKEHOLDER
 
 | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
@@ -345,6 +349,9 @@ cat > "$OUTPUT/03-status/hours-log.md" << EOF
 EOF
 
 cat > "$OUTPUT/03-status/tasks.md" << EOF
+---
+access: team
+---
 # Tasks — $STAKEHOLDER
 
 | ID | Task | Assignee | Status | Sprint | Due |
