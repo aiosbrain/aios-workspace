@@ -53,6 +53,8 @@ case "$MODE" in
     run_check "OGR01 — Folder Structure" "$SCRIPT_DIR/check-structure.sh"
     run_check "OGR02 — Frontmatter" "$SCRIPT_DIR/check-frontmatter.sh"
     run_check "OGR03 — Secrets Scanner" "$SCRIPT_DIR/check-secrets.sh"
+    run_check "OGR04 — AIOS Config" "$SCRIPT_DIR/check-aios-config.sh"
+    run_check "OGR05 — Rubrics + Memory" "$SCRIPT_DIR/check-rubrics.sh"
     ;;
 esac
 

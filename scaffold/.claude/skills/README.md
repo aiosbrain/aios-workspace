@@ -10,9 +10,12 @@ engagement-specific arrives through the workflow's `args`.
 |-------|------|-------|
 | `decision-audit/` | workflow-harness | Per-rule fan-out + adversarial verify over the decision log |
 | `scope-creep/` | workflow-harness | Per-deliverable classify + **severity-downgrade** refuter |
+| `transcript-decisions/` | workflow-harness | Per-transcript extract → dedup → adversarial grounding (rubric-gated) |
+| `weekly-synthesis/` | workflow-harness | Weekly digest with a **rubric-gated self-correction loop** |
+| `aios-sync/` | skill | Team Brain sync: status → review blocked → dry-run → push → pull |
 
-More harnesses are on the roadmap (see the repo issues): transcript → decisions,
-weekly synthesis, ticket-hygiene.
+More harnesses are on the roadmap (see the repo issues): ticket-hygiene,
+sync-integrity.
 
 ## Harness conventions (the design rules)
 
@@ -41,6 +44,24 @@ multi-agent harnesses (`docs/workflows.md`). Follow them when adding a harness.
    *summarizes* must verify material claims against their source before shipping.
 9. **`args` arrives as a JSON string** from the Workflow tool — always `JSON.parse(args)`.
 10. **Be read-only.** Harnesses analyze and return data; the calling session writes output.
+11. **Rubric-gate synthesis (self-correction loop).** Any harness that synthesizes
+    accepts `rubricPath` (default `.claude/rubrics/<harness>.md`) holding checkable
+    criteria. After Synthesize, a **verifier sub-agent with an independent context**
+    grades the candidate output against the rubric — it receives ONLY the rubric, the
+    candidate output, and the source file paths to ground against; never the
+    producer's reasoning. (Models are poor judges of their own outputs; an
+    independent grader context is what makes the gate real.) It returns
+    `{criteria: [{id, pass, evidence, fix_hint}]}`.
+12. **Correct, don't regenerate.** On must-fail criteria with budget remaining, a
+    Correct agent receives the failing criteria + the candidate output and revises
+    it; then re-grade. Loop until the rubric passes or `budget` (from the rubric
+    frontmatter) is exhausted. Always return the final grade report alongside the
+    output — a failed gate is a result, not an exception.
+13. **Consult memory first; distill on failure.** Read `.claude/memory/instincts.md`
+    before a run and apply its rules. When a run fails its rubric after budget
+    exhaustion (or the user corrects harness output), the calling session records an
+    incident in `.claude/memory/incidents/` following the progression in
+    `.claude/memory/README.md`: fail → investigate → verify → distill → consult.
 
 ## Skill folder layout
 
