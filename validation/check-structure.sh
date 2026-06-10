@@ -30,39 +30,56 @@ fi
 echo "OGR01: Checking folder structure in $REPO"
 echo "================================================"
 
-# Required top-level directories (numbered spine)
+# Required top-level directories (numbered spine).
+# Entries with | accept either name (project profile | legacy engagement profile).
 REQUIRED_DIRS=(
-  "00-engagement"
+  "00-project|00-engagement"
   "01-intake"
   "02-deliverables"
   "03-status"
-  "04-client-surface"
+  "04-shared|04-client-surface"
   "05-personal"
 )
 
-for dir in "${REQUIRED_DIRS[@]}"; do
-  if [ -d "$REPO/$dir" ]; then
-    echo -e "  ${GREEN}✓${NC} $dir/"
+for dir_spec in "${REQUIRED_DIRS[@]}"; do
+  found=""
+  IFS='|' read -ra ALTS <<< "$dir_spec"
+  for alt in "${ALTS[@]}"; do
+    if [ -d "$REPO/$alt" ]; then
+      found="$alt"
+      break
+    fi
+  done
+  if [ -n "$found" ]; then
+    echo -e "  ${GREEN}✓${NC} $found/"
   else
-    echo -e "  ${RED}✗${NC} $dir/ — MISSING"
+    echo -e "  ${RED}✗${NC} ${dir_spec//|/ or }/ — MISSING"
     ERRORS=$((ERRORS + 1))
   fi
 done
 
-# Required top-level files
+# Required top-level files (| = accept either)
 REQUIRED_FILES=(
   "README.md"
-  "engagement.yaml"
+  "project.yaml|engagement.yaml"
   "contacts.yaml"
 )
 
 echo ""
 echo "Required files:"
-for file in "${REQUIRED_FILES[@]}"; do
-  if [ -f "$REPO/$file" ]; then
-    echo -e "  ${GREEN}✓${NC} $file"
+for file_spec in "${REQUIRED_FILES[@]}"; do
+  found=""
+  IFS='|' read -ra ALTS <<< "$file_spec"
+  for alt in "${ALTS[@]}"; do
+    if [ -f "$REPO/$alt" ]; then
+      found="$alt"
+      break
+    fi
+  done
+  if [ -n "$found" ]; then
+    echo -e "  ${GREEN}✓${NC} $found"
   else
-    echo -e "  ${RED}✗${NC} $file — MISSING"
+    echo -e "  ${RED}✗${NC} ${file_spec//|/ or } — MISSING"
     ERRORS=$((ERRORS + 1))
   fi
 done

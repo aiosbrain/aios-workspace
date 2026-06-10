@@ -1,0 +1,194 @@
+# AIOS Team Brain — API Contract
+
+**Version: 1** (`/api/v1`). This document is the single pinned contract between the
+contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
+sides build against this file; changes require a version bump and a matching change in
+both repos. Treat any drift between this doc and either implementation as a bug.
+
+---
+
+## Vocabulary (normative)
+
+### Access tiers
+
+Canonical values: **`admin` | `team` | `external`**.
+
+- `client` is accepted everywhere as a **legacy alias** of `external` and is normalized
+  to `external` on ingest. Responses always use canonical values.
+- `admin` content **never syncs**. The client enforces this (default-deny before any
+  network call); the server independently rejects it with `422`.
+- Files with **no `access` frontmatter do not sync** (client-side default-deny). The
+  CLI reports them as `blocked` with the reason.
+
+### Item kinds
+
+`deliverable` | `transcript` | `decision` | `task` | `artifact`
+
+`decision` and `task` items are markdown files containing the canonical status tables
+(`03-status/decision-log.md`, `03-status/tasks.md`). For these, the client also parses
+table rows into `rows[]` so the brain can materialize structured entities.
+
+---
+
+## Authentication
+
+Every request carries:
+
+```
+Authorization: Bearer aios_<key_id>_<secret>
+X-AIOS-Team: <team_id>
+```
+
+- Keys are issued per **member** in the brain's admin UI and shown once. The brain
+  stores only `sha256(secret)`.
+- A key is valid only for its own team; `X-AIOS-Team` must match or the request fails.
+- Failures return `401` and are audit-logged with source IP.
+
+## Error envelope
+
+All errors:
+
+```json
+{ "error": { "code": "string", "message": "human-readable", "request_id": "uuid" } }
+```
+
+Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_payload`
+(422), `payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
+`internal` (500).
+
+## Rate limits
+
+- `POST /items`: 120/min per key
+- `GET /items`, `GET /tasks`: 60/min per key
+- `POST /query`: 10/min per member; daily budgets enforced server-side
+
+---
+
+## `POST /api/v1/items` — push (upsert)
+
+One item per request. Idempotent.
+
+```json
+{
+  "project": "northwind-aios",
+  "path": "02-deliverables/sprint-1/governance-framework.md",
+  "kind": "deliverable",
+  "content_sha256": "hex",
+  "actor": "alex",
+  "access": "team",
+  "frontmatter": { "status": "review", "owner": "alex", "sprint": "sprint-1" },
+  "body": "full markdown body (frontmatter stripped)",
+  "rows": []
+}
+```
+
+- `project`: slug of the contributor repo's project (from `project.yaml` /
+  `engagement.yaml` name, slugified).
+- `actor`: the resolved member identity (must match a member `actor_handle` on the
+  brain side; unknown actors are accepted but flagged in the dashboard provenance).
+- `rows`: present **only** for `kind: decision|task`. Shapes below.
+
+**Task rows** (parsed from `tasks.md` `| ID | Task | Assignee | Status | Sprint | Due |`):
+
+```json
+{ "row_key": "T-01", "title": "...", "assignee": "alex",
+  "status": "in_progress", "sprint": "sprint-1", "due": "2026-03-27" }
+```
+
+Status values the client sends verbatim; the server normalizes to
+`backlog|ready|in_progress|blocked|done` (unknown → `backlog`, raw value preserved).
+
+**Decision rows** (parsed from `decision-log.md`
+`| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |`):
+
+```json
+{ "row_key": "12", "decided_at": "2026-03-20", "title": "...", "rationale": "...",
+  "decided_by": "Priya Sharma", "impact": "...", "tier": 2, "audience": "team" }
+```
+
+**Server semantics (normative):**
+
+1. Upsert project on `(team_id, project)`.
+2. If an item exists at `(team_id, project, path)` with identical `content_sha256` →
+   `200 {"status":"unchanged"}`; only `synced_at` is bumped.
+3. Otherwise upsert the item; if the body changed, append an immutable version record.
+4. If `rows[]` present: **diff-sync by `row_key`** — upsert all incoming rows; rows
+   absent from the payload are deleted **only if** they originated from sync
+   (UI-created rows are never deleted by a push).
+5. `access: client` → stored as `external`. `access: admin` → `422 forbidden_tier`.
+6. Every accepted push is audit-logged with key id, member, and item path.
+
+**Response:** `201 {"status":"created","id":"uuid"}` /
+`200 {"status":"updated"|"unchanged","id":"uuid"}`
+
+## `GET /api/v1/items?since=<ISO8601>&project=<slug>&kinds=a,b` — pull
+
+Returns items the calling key's member tier may see (tier filtering is re-applied
+server-side in SQL), updated strictly after `since`. Keyset-paginated:
+
+```json
+{
+  "items": [
+    { "id": "uuid", "project": "northwind-aios", "path": "...", "kind": "deliverable",
+      "access": "team", "frontmatter": {}, "body": "...", "content_sha256": "hex",
+      "actor": "riley", "updated_at": "ISO8601" }
+  ],
+  "next_cursor": "opaque-or-null"
+}
+```
+
+Pass `cursor=<next_cursor>` to continue. Page size 200.
+
+The CLI writes pulled items **append-only** under `01-intake/from-brain/` — it never
+overwrites working files; promotion into the spine stays a deliberate human act.
+
+## `GET /api/v1/tasks?since=<ISO8601>` — task writeback
+
+Returns task rows created or modified **in the dashboard UI** since the cursor, so the
+CLI can merge them into the local `03-status/tasks.md`:
+
+```json
+{
+  "tasks": [
+    { "project": "northwind-aios",
+      "rows": [ { "row_key": "T-09", "title": "...", "assignee": "riley",
+                  "status": "ready", "sprint": "sprint-2", "due": null } ] }
+  ],
+  "next_cursor": null
+}
+```
+
+Merge semantics on the client: match by `row_key`; update existing rows in place;
+append unknown rows to the table; never delete local rows.
+
+## `POST /api/v1/query` — natural-language query
+
+```json
+{ "question": "What did we decide about governance review gates?", "project": null }
+```
+
+Response is an SSE stream (`text/event-stream`):
+
+- `event: delta` — `{"text": "..."}` answer tokens
+- `event: sources` — final trailer:
+  `{"sources":[{"id":"S1","item_id":"uuid","project":"...","path":"...","kind":"decision"}]}`
+- `event: done` — `{"input_tokens":n,"output_tokens":n,"cost_usd":n}`
+
+Answers are grounded only in tier-visible items; citations use `[S#]` inline markers
+that map to the `sources` trailer. The CLI's `aios query` prints the answer followed by
+a numbered source list.
+
+---
+
+## Conflict semantics (tasks, two-way)
+
+A task row can change in markdown (synced by push) and in the dashboard (Kanban drag)
+between syncs. Resolution: **last write wins per `row_key`** on `updated_at`. The
+`origin` flag (sync|ui) only governs deletion (push never deletes UI rows). Document
+disagreements surface in `aios status` when the local table and last-pulled state
+diverge.
+
+## Out of scope for v1
+
+Hours sync; binary artifact upload (storage bucket); webhooks; bulk endpoints;
+embedding-based retrieval (server may add it transparently — contract unchanged).

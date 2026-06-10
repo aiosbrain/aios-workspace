@@ -79,8 +79,8 @@ while IFS= read -r file; do
     fi
   fi
 
-  # Files in 04-client-surface should have access
-  if echo "$rel_path" | grep -q "^04-client-surface/"; then
+  # Files in 04-shared / 04-client-surface should have access
+  if echo "$rel_path" | grep -qE "^(04-shared|04-client-surface)/"; then
     if ! has_field "access"; then
       missing_fields+=("access")
     fi

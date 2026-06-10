@@ -43,14 +43,29 @@ if [ -z "$CONTENT" ]; then
 fi
 
 # ── Check 1: Secrets ────────────────────────────────────────────────
+# Patterns are shared with validation/check-secrets.sh and scripts/aios.mjs
+# via validation/secret-patterns.txt (single source — they must not drift).
 
-SECRETS_PATTERNS=(
-  "AKIA[0-9A-Z]{16}"
-  "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
-  "gh[ps]_[A-Za-z0-9_]{36,}"
-  "xox[bporas]-[A-Za-z0-9-]+"
-  "sk-[A-Za-z0-9]{40,}"
-)
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PATTERNS_FILE="$HOOK_DIR/../validation/secret-patterns.txt"
+
+SECRETS_PATTERNS=()
+if [ -f "$PATTERNS_FILE" ]; then
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
+    SECRETS_PATTERNS+=("$line")
+  done < "$PATTERNS_FILE"
+else
+  # Fallback if the shared file is missing (e.g. hook copied standalone)
+  SECRETS_PATTERNS=(
+    "AKIA[0-9A-Z]{16}"
+    "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+    "gh[ps]_[A-Za-z0-9_]{36,}"
+    "xox[bporas]-[A-Za-z0-9-]+"
+    "sk-[A-Za-z0-9]{40,}"
+  )
+fi
 
 for pattern in "${SECRETS_PATTERNS[@]}"; do
   if echo "$CONTENT" | grep -qE "$pattern" 2>/dev/null; then
@@ -63,8 +78,8 @@ done
 
 # ── Check 2: Access tag enforcement ────────────────────────────────
 
-# Only enforce on workspace/client-surface directories
-if echo "$FILE_PATH" | grep -qE "(05-workspace|06-client-surface|04-client-surface)" 2>/dev/null; then
+# Only enforce on workspace/shared/client-surface directories
+if echo "$FILE_PATH" | grep -qE "(05-workspace|06-client-surface|04-client-surface|04-shared)" 2>/dev/null; then
   SENSITIVE_PATTERNS=(
     'day rate'
     'Day Rate'
@@ -96,8 +111,8 @@ fi
 
 # ── Check 3: Frontmatter required ──────────────────────────────────
 
-# Only for markdown files in deliverables or client-surface
-if echo "$FILE_PATH" | grep -qE "(02-deliverables|04-client-surface|06-client-surface)" 2>/dev/null; then
+# Only for markdown files in deliverables or shared/client-surface
+if echo "$FILE_PATH" | grep -qE "(02-deliverables|04-client-surface|04-shared|06-client-surface)" 2>/dev/null; then
   if echo "$FILE_PATH" | grep -qE "\.md$" 2>/dev/null; then
     # For Write tool, check if content starts with ---
     if [ "$(echo "$TOOL_INPUT" | jq -r '.content // empty' 2>/dev/null)" != "" ]; then
