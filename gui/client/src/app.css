@@ -1,0 +1,89 @@
+:root {
+  --bg: #0f1117;
+  --surface: #171a23;
+  --surface-2: #1e2230;
+  --border: #2a2f40;
+  --text: #e8eaf0;
+  --text-dim: #8b91a5;
+  --accent: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.16);
+  --green: #34d399;
+  --red: #f87171;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.app { display: flex; flex-direction: column; height: 100%; max-width: 860px; margin: 0 auto; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+}
+.title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+.dot[data-on="true"] { background: var(--green); }
+.repo { font-family: var(--mono); font-size: 12px; color: var(--text-dim); max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+main { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+
+.empty { margin: auto; max-width: 420px; text-align: center; color: var(--text-dim); }
+.empty em { color: var(--text); font-style: normal; background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; }
+
+.msg { padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+.msg.user { background: var(--accent-soft); border: 1px solid rgba(124, 58, 237, 0.35); align-self: flex-end; max-width: 80%; }
+.msg.assistant { background: var(--surface); border: 1px solid var(--border); align-self: flex-start; max-width: 92%; }
+.msg.assistant.streaming::after { content: "▋"; opacity: 0.6; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0.1; } }
+.msg.meta { align-self: center; font-size: 12px; color: var(--text-dim); background: none; padding: 2px; }
+.msg.meta.error { color: var(--red); }
+
+.tool { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); align-self: stretch; }
+.tool-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; color: var(--text); cursor: pointer;
+  padding: 8px 12px; font: 13px var(--mono); text-align: left;
+}
+.chevron { color: var(--text-dim); }
+.tool-name { color: var(--accent); font-weight: 600; }
+.tool-summary { color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-state { font-size: 11px; color: var(--text-dim); }
+.tool-error .tool-state { color: var(--red); }
+.tool-body { border-top: 1px solid var(--border); padding: 10px 12px; }
+.tool-body pre {
+  margin: 0; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word;
+  color: var(--text-dim); max-height: 260px; overflow-y: auto;
+}
+.tool-result { margin-top: 8px !important; color: var(--text) !important; }
+
+.permission {
+  border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft);
+  padding: 12px 14px; align-self: stretch;
+}
+.perm-head { margin-bottom: 8px; }
+.permission pre { font: 12px var(--mono); color: var(--text-dim); max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+.perm-actions { display: flex; gap: 8px; margin-top: 8px; }
+.perm-actions button {
+  padding: 6px 18px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600;
+}
+.perm-actions .allow { background: var(--green); color: #06281c; }
+.perm-actions .deny { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+
+footer { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
+footer textarea {
+  flex: 1; resize: none; min-height: 44px; max-height: 160px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 11px 14px; font: inherit; outline: none;
+}
+footer textarea:focus { border-color: var(--accent); }
+footer button {
+  padding: 0 22px; border-radius: 10px; border: none; cursor: pointer;
+  background: var(--accent); color: white; font-weight: 600;
+}
+footer button:disabled { opacity: 0.4; cursor: default; }
