@@ -19,12 +19,14 @@
  */
 export const meta = {
   name: 'transcript-decisions',
-  description: 'Extract decisions from meeting transcripts: fan-out → dedup → adversarial grounding → synthesize.',
+  description: 'Extract decisions from meeting transcripts: fan-out → dedup → adversarial grounding → synthesize → rubric gate.',
   phases: [
     { title: 'Extract' },
     { title: 'Dedup' },
     { title: 'Verify' },
     { title: 'Synthesize' },
+    { title: 'Grade' },
+    { title: 'Correct' },
   ],
 }
 
@@ -34,6 +36,7 @@ const repo = A.repoPath
 const transcripts = (A.transcriptPaths || []).map(p => `${repo}/${p}`)
 const decisionLog = `${repo}/${A.decisionLog || '03-status/decision-log.md'}`
 const runDate = A.runDate || ''
+const rubricPath = `${repo}/${A.rubricPath || '.claude/rubrics/transcript-decisions.md'}`
 
 const DECISIONS = {
   type: 'object',
@@ -133,12 +136,100 @@ Decisions: ${JSON.stringify(verified.map(d => ({ gist: d.gist, rationale: d.rati
   { label: 'synthesize', phase: 'Synthesize', schema: { type: 'object', properties: { rows_markdown: { type: 'string' }, decisions: DECISIONS.properties.decisions }, required: ['rows_markdown'] } },
 )
 
+// ---- Grade → Correct: rubric gate on the synthesized rows (conventions #11–12) ----
+// The Verify phase grounded individual candidates; this gates the FINAL output
+// (formatting fidelity, dedup, attribution) with an independent verifier context.
+let rowsMarkdown = out.rows_markdown
+let gradeReport = null
+let loopsUsed = 0
+let passed = false
+
+const RUBRIC = {
+  type: 'object',
+  properties: {
+    budget: { type: 'integer' },
+    criteria: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, criterion: { type: 'string' }, must: { type: 'boolean' } },
+        required: ['id', 'criterion', 'must'],
+      },
+    },
+  },
+  required: ['budget', 'criteria'],
+}
+const GRADE = {
+  type: 'object',
+  properties: {
+    criteria: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' }, pass: { type: 'boolean' },
+          evidence: { type: 'string' }, fix_hint: { type: 'string' },
+        },
+        required: ['id', 'pass', 'evidence'],
+      },
+    },
+  },
+  required: ['criteria'],
+}
+
+phase('Grade')
+const rubric = await agent(
+  `Read the rubric file ${rubricPath} with the Read tool. Return its frontmatter budget integer and its criteria table rows (ID, Criterion, Must yes/no). If the file does not exist, return budget 0 and an empty criteria list.`,
+  { label: 'rubric', phase: 'Grade', schema: RUBRIC },
+)
+const budget = A.budget ?? rubric?.budget ?? 2
+const criteria = rubric?.criteria || []
+
+if (!criteria.length) {
+  passed = true // no rubric in this repo — gate is a no-op, output ships as-is
+} else {
+  for (let round = 0; round <= budget; round++) {
+    const grade = await agent(
+      `You are an independent verifier. Grade the candidate decision-log rows against each rubric criterion. Use the Read tool to check sources — the transcripts (${transcripts.join(', ')}), the existing log (${decisionLog}) for duplicates, and the log's table header for column fidelity. Do not take the candidate's word for anything.
+RUBRIC CRITERIA: ${JSON.stringify(criteria)}
+CANDIDATE ROWS:
+"""
+${rowsMarkdown}
+"""
+STRUCTURED DECISIONS (for quote checks): ${JSON.stringify(verified.map(d => ({ gist: d.gist, transcript: d.transcript, source_quote: d.source_quote })))}`,
+      { label: `grade:r${round}`, phase: 'Grade', schema: GRADE },
+    )
+    gradeReport = grade?.criteria || []
+    const mustFails = gradeReport.filter(g => !g.pass && (criteria.find(c => c.id === g.id)?.must))
+    log(`Grade round ${round}: ${mustFails.length} must-fail(s)`)
+    if (!mustFails.length) { passed = true; break }
+    if (round === budget) break
+
+    phase('Correct')
+    loopsUsed++
+    const corrected = await agent(
+      `Revise these decision-log rows to fix ONLY the failing rubric criteria. Keep passing rows intact. Use the Read tool on sources if a fix needs grounding.
+FAILING: ${JSON.stringify(mustFails.map(f => ({ id: f.id, criterion: criteria.find(c => c.id === f.id)?.criterion, evidence: f.evidence, fix_hint: f.fix_hint })))}
+ROWS TO REVISE:
+"""
+${rowsMarkdown}
+"""`,
+      { label: `correct:r${round}`, phase: 'Correct', schema: { type: 'object', properties: { rows_markdown: { type: 'string' } }, required: ['rows_markdown'] } },
+    )
+    if (corrected?.rows_markdown) rowsMarkdown = corrected.rows_markdown
+    phase('Grade')
+  }
+}
+
 return {
   workflow: 'transcript-decisions',
   transcripts: A.transcriptPaths,
   candidates: candidates.length,
   novel: novel.length,
   verified: verified.length,
+  passed,
+  loops_used: loopsUsed,
+  grade_report: gradeReport,
   decisions: verified.map(d => ({ gist: d.gist, decided_by: d.decided_by, type: d.type, audience: d.audience, transcript: d.transcript })),
-  rows_markdown: out.rows_markdown,
+  rows_markdown: rowsMarkdown,
 }

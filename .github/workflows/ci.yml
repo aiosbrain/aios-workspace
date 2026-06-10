@@ -25,10 +25,27 @@ jobs:
               && echo "ok: $f" || { echo "FAIL: $f"; exit 1; }
           done
 
-      - name: Scaffold smoke test + validate
+      - name: Sync CLI syntax check
+        run: node --check scripts/aios.mjs
+
+      - name: Scaffold smoke test + validate (project profile)
         run: |
-          bash scripts/scaffold-engagement.sh \
-            --slug ci-sample-team-ops --client "Sample Co" --captain alex \
+          bash scripts/scaffold-project.sh \
+            --slug ci-sample-team-ops --stakeholder "Sample Co" --lead alex \
             --members "alex,sam,jordan" --org your-github-org --currency USD \
             --output /tmp/ci-sample-team-ops
           bash validation/validate-all.sh /tmp/ci-sample-team-ops
+
+      - name: Scaffold smoke test + validate (legacy engagement profile)
+        run: |
+          bash scripts/scaffold-engagement.sh \
+            --slug ci-sample-eng-ops --client "Sample Co" --captain alex \
+            --members "alex,sam,jordan" --org your-github-org --currency USD \
+            --output /tmp/ci-sample-eng-ops
+          bash validation/validate-all.sh /tmp/ci-sample-eng-ops
+
+      - name: Sync client offline smoke (status + dry-run push)
+        run: |
+          node scripts/aios.mjs status --repo /tmp/ci-sample-team-ops
+          node scripts/aios.mjs push --dry-run --repo /tmp/ci-sample-team-ops
+          node scripts/aios.mjs status --porcelain --repo /tmp/ci-sample-team-ops
