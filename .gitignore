@@ -1,7 +1,4 @@
-.DS_Store
+gui/.sessions/
+gui/client/dist/
 node_modules/
-__pycache__/
-*.pyc
-.venv/
-.env
-.env.local
+.DS_Store
