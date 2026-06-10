@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# aios — Team Brain sync client shim.
+# Add this repo's bin/ to PATH, or symlink: ln -s "$(pwd)/bin/aios" /usr/local/bin/aios
+exec node "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/aios.mjs" "$@"
