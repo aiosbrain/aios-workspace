@@ -17,17 +17,60 @@ status: draft        # draft | review | final | sent | signed
 
 | Directory | Required | Recommended |
 |-----------|----------|-------------|
-| `02-deliverables/` | `status`, `owner` | `created`, `sprint` |
-| `03-status/` | — (living docs) | `updated` |
-| `04-client-surface/` | `status`, `owner`, `access` | `created`, `approved_by` |
+| `02-deliverables/` | `status`, `owner` | `type`, `created`, `sprint` |
+| `03-status/` | — (living docs) | `type`, `updated` |
+| `04-client-surface/` | `status`, `owner`, `access` | `type`, `created`, `approved_by` |
 | `05-personal/*/01-intake/` | `status` | `created`, `from` |
 | `05-personal/*/02-deliverables/` | `status`, `owner` | `created`, `sprint` |
+| `*/index.md` | `type`, `access` | — |
 
 ## Field reference
 - `status` — lifecycle: `draft → review → final → sent → signed`.
 - `owner` — the single person accountable for the file.
-- `access` — audience tier: `admin | team | client`.
+- `access` — audience tier: `admin | team | external` (legacy alias: `client`).
 - `created` / `updated` — ISO dates.
 - `sprint` — sprint identifier when the content is sprint-scoped.
+- `type` — OKF document type (see OKF alignment section below). Recommended on all content files; required on `index.md` navigation files.
+- `tags` — optional YAML list for cross-cutting categorization, e.g. `[governance, sprint-1]`.
+- `resource` — optional URI linking to the canonical external source (meeting recording, ticket, etc.).
 
-The `check-frontmatter` validator enforces presence; it does not judge values.
+The `check-frontmatter` validator enforces `status`, `owner`, and `access` presence
+by directory. It does not enforce `type` — run `AIOS_OKF_LINT=1 ./validation/check-frontmatter.sh <repo>` to get advisory notices on files missing `type:`.
+
+## OKF alignment (Open Knowledge Format)
+
+This repo's frontmatter is OKF v0.1-conformant. Field mapping:
+
+| OKF field | This repo's field | Notes |
+|-----------|-------------------|-------|
+| `type` | `type` | Recommended; inferred from path by `aios export-okf` if absent |
+| `title` | First `# Heading` in body | OKF consumers read the H1 heading |
+| `timestamp` | `updated` | No rename needed; use ISO 8601 |
+| `description` | `description` | Optional one-line summary |
+| `tags` | `tags` | Optional list |
+| `resource` | `resource` | Optional URI to the canonical source asset |
+
+### `type` values by content path
+
+| Path pattern | OKF `type` |
+|---|---|
+| `02-deliverables/` | `"Deliverable"` |
+| `01-intake/transcripts/` | `"Transcript"` (lowercase `transcript` also accepted for back-compat) |
+| `03-status/decision-log.md` | `"Decision Log"` |
+| `03-status/tasks.md` | `"Task List"` |
+| `03-status/*-ledger.md` | `"Sprint Ledger"` |
+| `00-*/scope-baseline.md`, `scope-ledger.md` | `"Scope"` |
+| `04-*/` | `"Deliverable"` |
+| `*/index.md` | `"index"` |
+
+Add `type:` when creating new files. Existing files without `type:` remain valid —
+the validator does not require it. `aios export-okf` infers `type` from path when absent.
+
+## OKF navigation fields
+
+`index.md` files in each spine directory serve as the agent navigation layer.
+They carry:
+- `type: index` — marks the file as a navigation index, not a content deliverable.
+- `access: team` — default tier for navigation documents.
+
+`index.md` files are excluded from the `status:` requirement enforced by OGR02.

@@ -4,6 +4,7 @@ owner: riley
 access: team
 created: 2026-03-30
 sprint: sprint-1
+type: "Deliverable"
 ---
 
 # Operations Team — Learning Journey (Days 1–5)

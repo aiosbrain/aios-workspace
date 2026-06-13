@@ -4,6 +4,7 @@ owner: sam
 access: team
 created: 2026-03-24
 sprint: sprint-1
+type: "Deliverable"
 ---
 
 # Support Chatbot — Design Sketch

@@ -3,6 +3,7 @@ status: final
 owner: alex
 access: team
 created: 2026-03-02
+type: "Scope"
 ---
 
 # Scope Baseline — Northwind Robotics

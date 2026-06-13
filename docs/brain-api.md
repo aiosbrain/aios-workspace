@@ -192,3 +192,82 @@ diverge.
 
 Hours sync; binary artifact upload (storage bucket); webhooks; bulk endpoints;
 embedding-based retrieval (server may add it transparently — contract unchanged).
+
+---
+
+## OKF Bundle endpoint (Tier 3 extension)
+
+> **Status:** Contract only. The brain implementation lives in a separate repo.
+> Both sides build against this document; treat any drift as a bug.
+> The v1 endpoints above are unchanged.
+
+### `GET /api/v1/okf-bundle` — pull the engagement's OKF link graph
+
+```
+GET /api/v1/okf-bundle?project=<slug>&since=<ISO8601>&include_body=false&tier=team|external
+Authorization: Bearer aios_<key_id>_<secret>
+X-AIOS-Team: <team_id>
+```
+
+**Parameters:**
+- `project` — optional; filter to one project slug. Omit to return all projects visible to the caller's tier ceiling.
+- `since` — optional ISO8601 cursor; return only nodes updated after this timestamp.
+- `include_body` — boolean, default `false`. When `false`, returns frontmatter + link graph only (the navigation layer). When `true`, includes full body text.
+- `tier` — optional; `team` or `external`. Defaults to the caller's tier ceiling.
+
+**Response:**
+
+```json
+{
+  "bundle": {
+    "project": "northwind-aios",
+    "generated_at": "ISO8601",
+    "nodes": [
+      {
+        "path": "02-deliverables/sprint-1/governance-framework.md",
+        "title": "Governance Framework",
+        "kind": "deliverable",
+        "access": "team",
+        "frontmatter": { "status": "final", "owner": "jordan", "sprint": "sprint-1" },
+        "links": [
+          "../../03-status/decision-log.md",
+          "ai-readiness-assessment-report.md"
+        ],
+        "body": null
+      }
+    ]
+  },
+  "next_cursor": "opaque-or-null"
+}
+```
+
+**Server semantics (normative):**
+
+1. The server extracts markdown links from every pushed item body at ingest time and stores the link graph denormalized on the item record.
+2. `GET /okf-bundle` materializes the stored graph without re-parsing bodies.
+3. Links are stored as document-relative paths (same format the client writes). The server does not validate them — broken links are preserved so clients can report them.
+4. `include_body=false` is the primary mode for graph hydration. `include_body=true` is rate-limited at 10/min per key because it returns full text.
+5. **Tier filtering:** The same SQL tier filter as `GET /items` applies. `links[]` is also filtered: links pointing to documents above the caller's tier ceiling are redacted.
+
+**Rate limits:** `GET /okf-bundle`: 30/min per key. Page size 500 nodes (keyset-paginated by `updated_at`).
+
+### `aios pull-bundle` — pull the OKF bundle to local cache
+
+```
+aios pull-bundle [--include-body]
+```
+
+Downloads the OKF bundle from the brain and writes `.aios/bundle.json` (gitignored).
+This is the client side of the contract; enables future `aios graph --bundle` mode
+for cross-project traversal without local file walking.
+
+```json
+{
+  "project": "northwind-aios",
+  "pulled_at": "ISO8601",
+  "nodes": [ ... ]
+}
+```
+
+The `--include-body` flag passes `include_body=true` to the endpoint (subject to the
+10/min rate limit). Without it, only frontmatter + links are pulled.
