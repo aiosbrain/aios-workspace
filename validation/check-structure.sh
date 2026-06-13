@@ -132,6 +132,26 @@ for file in "${STATUS_FILES[@]}"; do
   fi
 done
 
+# OKF index files (Tier 3 — warn, not error; repos predating Tier 3 are valid)
+# 05-personal/ is a private workspace without an OKF nav layer — skip it.
+echo ""
+echo "OKF index files:"
+for dir_spec in "${REQUIRED_DIRS[@]}"; do
+  if [[ "$dir_spec" == "05-personal" ]]; then continue; fi
+  IFS='|' read -ra ALTS <<< "$dir_spec"
+  for alt in "${ALTS[@]}"; do
+    if [ -d "$REPO/$alt" ]; then
+      if [ -f "$REPO/$alt/index.md" ]; then
+        echo -e "  ${GREEN}✓${NC} $alt/index.md"
+      else
+        echo -e "  ${YELLOW}!${NC} $alt/index.md — missing (OKF nav layer; run scaffold to generate)"
+        WARNINGS=$((WARNINGS + 1))
+      fi
+      break
+    fi
+  done
+done
+
 # Summary
 echo ""
 echo "================================================"

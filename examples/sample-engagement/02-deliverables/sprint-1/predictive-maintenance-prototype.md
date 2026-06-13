@@ -4,6 +4,7 @@ owner: sam
 access: team
 created: 2026-03-26
 sprint: sprint-1
+type: "Deliverable"
 ---
 
 # Predictive-Maintenance Prototype — Technical Plan

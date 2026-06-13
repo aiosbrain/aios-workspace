@@ -12,6 +12,9 @@
  *   aios push [--dry-run] [paths…]
  *   aios pull                  fetch team updates → 01-intake/from-brain/ (append-only)
  *   aios query "question"      NL query against the Team Brain
+ *   aios export-okf [dir]      emit a tier-filtered OKF bundle (offline, no brain needed)
+ *   aios pull-bundle           pull OKF link graph from Team Brain → .aios/bundle.json
+ *   aios graph [--from <file>] traverse local OKF link graph (offline, no brain needed)
  *
  * Options: --repo <path> (default: walk up from cwd to find aios.yaml)
  */
@@ -134,6 +137,40 @@ function findRepoRoot(start) {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+// Offline commands (export-okf, graph) don't require aios.yaml.
+// Walk up looking for project.yaml | engagement.yaml | README.md as fallbacks.
+function findRepoRootOffline(start) {
+  let dir = path.resolve(start);
+  for (;;) {
+    if (
+      existsSync(path.join(dir, "aios.yaml")) ||
+      existsSync(path.join(dir, "project.yaml")) ||
+      existsSync(path.join(dir, "engagement.yaml")) ||
+      existsSync(path.join(dir, "README.md"))
+    ) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function loadOfflineConfig(repo) {
+  let projCfg = {};
+  for (const f of ["project.yaml", "engagement.yaml"]) {
+    const p = path.join(repo, f);
+    if (existsSync(p)) { projCfg = parseFlatYaml(readFileSync(p, "utf8")); break; }
+  }
+  return {
+    project: projCfg.slug || slugify(path.basename(repo)),
+    project_members: projCfg.members || [],
+    sync_tiers: ["team", "external"],
+    sync_include: [],
+    sync_exclude: [],
+    brain_url: "",
+    api_key: "",
+  };
 }
 
 function loadDotEnv(repo) {
@@ -647,6 +684,346 @@ async function cmdQuery(repo, cfg, args) {
   }
 }
 
+// ── OKF export helpers ──────────────────────────────────────────────────────
+
+const OKF_SPINE_DIRS = [
+  "00-engagement", "00-project",
+  "01-intake",
+  "02-deliverables",
+  "03-status",
+  "04-client-surface", "04-shared",
+];
+
+function inferOkfType(rel, frontmatter) {
+  // Preserve lowercase "transcript" from source files — classifyKind() uses it.
+  // Normalize only during export.
+  if (frontmatter?.type) {
+    const t = frontmatter.type;
+    if (t === "transcript") return "Transcript";
+    return t;
+  }
+  if (/(?:^|[/\\])03-status[/\\]decision-log\.md$/.test(rel)) return "Decision Log";
+  if (/(?:^|[/\\])03-status[/\\]tasks\.md$/.test(rel)) return "Task List";
+  if (/sprint-\d+-ledger\.md$/.test(rel)) return "Sprint Ledger";
+  if (/scope-baseline\.md$|scope-ledger\.md$/.test(rel)) return "Scope";
+  if (/[/\\]transcripts[/\\]/.test(rel)) return "Transcript";
+  if (/^02-deliverables[/\\]|[/\\]02-deliverables[/\\]/.test(rel)) return "Deliverable";
+  if (/^(04-client-surface|04-shared)[/\\]/.test(rel)) return "Deliverable";
+  return "Artifact";
+}
+
+function walkOkfFiles(repo, tierFilter) {
+  const allowedTiers = tierFilter === "team" ? ["team"] : ["team", "external"];
+  const files = [];
+  for (const dir of OKF_SPINE_DIRS) {
+    const abs = path.join(repo, dir);
+    if (!existsSync(abs)) continue;
+    const stack = [abs];
+    while (stack.length) {
+      const cur = stack.pop();
+      for (const entry of readdirSync(cur, { withFileTypes: true })) {
+        if (entry.name.startsWith(".")) continue;
+        if (entry.name === "index.md") continue; // reserved; generated, not source content
+        const absChild = path.join(cur, entry.name);
+        const rel = path.relative(repo, absChild);
+        if (entry.isDirectory()) { stack.push(absChild); continue; }
+        if (!entry.name.endsWith(".md")) continue;
+        const raw = readFileSync(absChild, "utf8");
+        const { frontmatter } = parseFrontmatter(raw);
+        if (!frontmatter?.access) continue;
+        const tier = normalizeTier(frontmatter.access);
+        if (tier === "admin") continue;
+        if (!allowedTiers.includes(tier)) continue;
+        files.push({ rel, raw, frontmatter });
+      }
+    }
+  }
+  return files.sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+function injectOkfFrontmatter(raw, frontmatter, okfType) {
+  if (!raw.startsWith("---")) return raw;
+  const end = raw.indexOf("\n---", 3);
+  if (end === -1) return raw;
+  const fmLines = raw.slice(raw.indexOf("\n") + 1, end).split("\n").filter((l) => l !== "");
+  const today = new Date().toISOString().slice(0, 10);
+  if (!frontmatter.type) fmLines.push(`type: "${okfType}"`);
+  if (!frontmatter.timestamp) {
+    const ts = frontmatter.updated || frontmatter.created || today;
+    fmLines.push(`timestamp: ${ts}`);
+  }
+  const newFm = "---\n" + fmLines.join("\n") + "\n---";
+  const bodyStart = raw.indexOf("\n", end + 1) + 1;
+  return newFm + "\n" + raw.slice(bodyStart);
+}
+
+function extractTitle(body) {
+  for (const line of body.split("\n")) {
+    const m = line.match(/^#\s+(.+)$/);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+function generateDirIndex(dirRel, entries) {
+  const heading = `# Index — ${path.basename(dirRel) || dirRel}`;
+  const lines = [heading, ""];
+  for (const e of entries) {
+    // Use path relative to this index file's directory for standard markdown compat
+    const relLink = path.relative(dirRel, e.rel).replace(/\\/g, "/");
+    const title = e.title || path.basename(e.rel, ".md");
+    const desc = e.frontmatter?.description ? ` — ${e.frontmatter.description}` : "";
+    lines.push(`* [${title}](${relLink})${desc}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function generateRootLogMd(decisionRows) {
+  if (!decisionRows?.length) return "# Change Log\n\n_No decisions recorded._\n";
+  const lines = ["# Change Log", ""];
+  for (const row of decisionRows) {
+    const date = row.decided_at || "";
+    const title = row.title || "(untitled)";
+    const by = row.decided_by ? ` — ${row.decided_by}` : "";
+    lines.push(`## ${date}${date && title ? " — " : ""}${title}${by}`);
+    if (row.rationale) { lines.push("", row.rationale); }
+    if (row.impact) { lines.push("", `Impact: ${row.impact}`); }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function generateRootIndex(project, members, tierFilter, spineFound) {
+  const today = new Date().toISOString().slice(0, 10);
+  const memberList = Array.isArray(members) && members.length
+    ? members.map((m) => `- ${m}`).join("\n")
+    : "- (see project.yaml)";
+  const contentLinks = spineFound.map((d) => `* [${d}/](${d}/index.md)`).join("\n");
+  return [
+    "---",
+    `okf_version: "0.1"`,
+    `type: "Project"`,
+    `title: "${project}"`,
+    `timestamp: ${today}`,
+    "---",
+    "",
+    `# ${project}`,
+    "",
+    `OKF bundle exported ${today}. Tier: ${tierFilter}.`,
+    "",
+    "## Team",
+    "",
+    memberList,
+    "",
+    "## Contents",
+    "",
+    contentLinks,
+    "",
+    `* [log.md](log.md) — change log (from decision log)`,
+    "",
+  ].join("\n");
+}
+
+async function cmdExportOkf(repo, cfg, args) {
+  // Parse flags first, then collect remaining positional args
+  let tierFilter = "external";
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--tier") { tierFilter = args[++i] || "external"; continue; }
+    if (args[i].startsWith("--")) { i++; continue; } // skip unknown flag + value
+    positional.push(args[i]);
+  }
+  if (!["external", "team"].includes(tierFilter))
+    die(`--tier must be 'external' or 'team'; got '${tierFilter}'`);
+  const outputArg = positional[0] || null;
+  const outputDir = outputArg
+    ? path.resolve(outputArg)
+    : path.join(repo, ".aios", "okf-export");
+
+  console.log(c.blue(`aios export-okf — project '${cfg.project}' tier=${tierFilter} → ${outputDir}`));
+  if (existsSync(outputDir))
+    console.log(c.yellow("  warning: output dir exists — files will be overwritten"));
+  mkdirSync(outputDir, { recursive: true });
+
+  const files = walkOkfFiles(repo, tierFilter);
+  if (!files.length) {
+    console.log(c.yellow("  nothing to export — no files matched tier filter")); return;
+  }
+
+  const dirEntries = {};
+  let exportedCount = 0;
+
+  for (const { rel, raw, frontmatter } of files) {
+    const okfType = inferOkfType(rel, frontmatter);
+    const injected = injectOkfFrontmatter(raw, frontmatter, okfType);
+    const { body } = parseFrontmatter(raw);
+    const title = extractTitle(body) || frontmatter.title || path.basename(rel, ".md");
+
+    const dest = path.join(outputDir, rel);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, injected);
+    exportedCount++;
+    console.log(`  ${c.green("✓")} ${rel}`);
+
+    const dir = path.dirname(rel);
+    if (!dirEntries[dir]) dirEntries[dir] = [];
+    dirEntries[dir].push({ rel, frontmatter, title });
+  }
+
+  // Per-directory index.md files
+  for (const [dir, entries] of Object.entries(dirEntries)) {
+    const indexContent = generateDirIndex(dir, entries);
+    const indexPath = path.join(outputDir, dir, "index.md");
+    writeFileSync(indexPath, indexContent);
+    console.log(`  ${c.green("✓")} ${dir}/index.md`);
+  }
+
+  // Root log.md from decision-log
+  const dlPath = path.join(repo, "03-status", "decision-log.md");
+  if (existsSync(dlPath)) {
+    const dlRaw = readFileSync(dlPath, "utf8");
+    const { frontmatter: dlFm, body: dlBody } = parseFrontmatter(dlRaw);
+    const dlTier = normalizeTier(dlFm?.access || "");
+    const allowed = tierFilter === "team" ? ["team"] : ["team", "external"];
+    if (dlFm && allowed.includes(dlTier)) {
+      const rows = parseDecisionRows(dlBody);
+      writeFileSync(path.join(outputDir, "log.md"), generateRootLogMd(rows));
+      console.log(`  ${c.green("✓")} log.md`);
+    }
+  }
+
+  // Root index.md
+  const spineFound = [...new Set(files.map((f) => f.rel.split(/[/\\]/)[0]))].sort();
+  writeFileSync(
+    path.join(outputDir, "index.md"),
+    generateRootIndex(cfg.project, cfg.project_members, tierFilter, spineFound)
+  );
+  console.log(`  ${c.green("✓")} index.md`);
+
+  console.log("");
+  console.log(c.green(`exported ${exportedCount} file(s) → ${outputDir}`));
+  console.log(c.dim(`OKF bundle ready — git-hostable; pass a path outside the repo to commit it`));
+}
+
+async function cmdPullBundle(repo, cfg, args) {
+  requireOnline(cfg);
+  const includeBody = args.includes("--include-body");
+  let cursor = null;
+  const allNodes = [];
+  do {
+    const qs = new URLSearchParams({ project: cfg.project });
+    if (cursor) qs.set("cursor", cursor);
+    if (includeBody) qs.set("include_body", "true");
+    const res = await api(cfg, "GET", `/okf-bundle?${qs}`);
+    allNodes.push(...(res.bundle?.nodes || []));
+    cursor = res.next_cursor || null;
+  } while (cursor);
+
+  const dest = path.join(repo, ".aios", "bundle.json");
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  writeFileSync(dest, JSON.stringify({
+    project: cfg.project,
+    pulled_at: new Date().toISOString(),
+    nodes: allNodes,
+  }, null, 2));
+  console.log(c.green(`pulled ${allNodes.length} node(s) → .aios/bundle.json`));
+  if (!includeBody)
+    console.log(c.dim("(frontmatter + links only; add --include-body for full text)"));
+}
+
+// ── OKF graph traversal ─────────────────────────────────────────────────────
+
+const LINK_RE = /\[(?:[^\]]*)\]\(([^)#:]+\.(?:md|yaml))\)/g;
+
+function cmdGraph(repo, cfg, args) {
+  const fromIdx = args.indexOf("--from");
+  const depthIdx = args.indexOf("--depth");
+  const formatIdx = args.indexOf("--format");
+
+  let seedRel = null;
+  if (fromIdx !== -1) {
+    seedRel = path.relative(repo, path.resolve(repo, args[fromIdx + 1]));
+  } else {
+    // Default: first index.md in a spine dir
+    for (const dir of OKF_SPINE_DIRS) {
+      const candidate = path.join(dir, "index.md");
+      if (existsSync(path.join(repo, candidate))) { seedRel = candidate; break; }
+    }
+    if (!seedRel && existsSync(path.join(repo, "index.md"))) seedRel = "index.md";
+  }
+  if (!seedRel || !existsSync(path.join(repo, seedRel)))
+    die("no seed file found — use --from <file> or generate index.md stubs (see Tier 3 docs)");
+
+  const maxDepth = depthIdx !== -1 ? parseInt(args[depthIdx + 1], 10) || 3 : 3;
+  const format = formatIdx !== -1 ? args[formatIdx + 1] : "text";
+
+  const visited = new Map(); // rel → { title, tier, depth, links }
+  const broken = [];
+  const queue = [{ rel: seedRel, depth: 0 }];
+
+  while (queue.length) {
+    const { rel, depth } = queue.shift();
+    if (visited.has(rel)) continue;
+    const absPath = path.join(repo, rel);
+    if (!existsSync(absPath)) { broken.push(rel); continue; }
+
+    const raw = readFileSync(absPath, "utf8");
+    const { frontmatter, body } = parseFrontmatter(raw);
+    const tier = normalizeTier(frontmatter?.access || "");
+    const titleMatch = (body || raw).match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1].trim() : path.basename(rel);
+
+    const links = [];
+    let m;
+    LINK_RE.lastIndex = 0;
+    while ((m = LINK_RE.exec(raw)) !== null) {
+      const rawLink = m[1];
+      if (rawLink.startsWith("http")) continue;
+      const resolved = path.normalize(path.join(path.dirname(rel), rawLink));
+      links.push(resolved);
+    }
+
+    visited.set(rel, { title, tier: tier || null, depth, links });
+
+    if (tier === "admin") continue; // don't follow admin-tier outbound links
+
+    if (depth < maxDepth) {
+      for (const linkRel of links) {
+        if (!visited.has(linkRel)) queue.push({ rel: linkRel, depth: depth + 1 });
+      }
+    }
+  }
+
+  if (format === "json") {
+    const out = {};
+    for (const [rel, node] of visited)
+      out[rel] = { title: node.title, tier: node.tier, depth: node.depth, links: node.links };
+    if (broken.length) out["__broken__"] = broken;
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+
+  console.log(c.blue(`aios graph — '${cfg.project}' from '${seedRel}' (depth ${maxDepth})`));
+  console.log("");
+  const sorted = [...visited.entries()].sort(
+    (a, b) => a[1].depth - b[1].depth || a[0].localeCompare(b[0])
+  );
+  for (const [rel, node] of sorted) {
+    const indent = "  ".repeat(node.depth);
+    const tierTag = node.tier ? c.dim(` [${node.tier}]`) : c.red(" [no-access]");
+    const linkCount = node.links.length ? c.dim(` → ${node.links.length} link(s)`) : "";
+    console.log(`${indent}${c.green(node.title)}${tierTag}${linkCount}`);
+    console.log(`${indent}  ${c.dim(rel)}`);
+  }
+  if (broken.length) {
+    console.log("");
+    console.log(c.yellow(`broken links (${broken.length}):`));
+    for (const b of broken) console.log(`  ${b}`);
+  }
+  console.log("");
+  console.log(c.dim(`${visited.size} node(s) | ${broken.length} broken link(s)`));
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -663,10 +1040,15 @@ if (repoFlagIdx !== -1) {
 const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
 
 usage:
-  aios status                 what would sync (new/modified/blocked/clean)
+  aios status                           what would sync (new/modified/blocked/clean)
   aios push [--dry-run] [paths…]
-  aios pull                   fetch team updates → 01-intake/from-brain/
-  aios query "question"       ask the Team Brain
+  aios pull                             fetch team updates → 01-intake/from-brain/
+  aios query "question"                 ask the Team Brain
+  aios export-okf [output-dir]          emit OKF bundle (no brain needed)
+    [--tier external|team]              default: external (includes team + external)
+  aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
+  aios graph [--from <file>]            traverse local OKF link graph (no brain needed)
+    [--depth N] [--format text|json]
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -675,9 +1057,21 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
-const repo = repoArg ? path.resolve(repoArg) : findRepoRoot(process.cwd());
-if (!repo) die("no aios.yaml found walking up from cwd — pass --repo <path>");
-const cfg = loadConfig(repo);
+// export-okf and graph are offline-only: no aios.yaml required.
+const OFFLINE_CMDS = new Set(["export-okf", "graph"]);
+
+let repo, cfg;
+if (OFFLINE_CMDS.has(cmd)) {
+  repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
+  if (!repo) die("could not locate repo root — pass --repo <path>");
+  cfg = existsSync(path.join(repo, "aios.yaml"))
+    ? loadConfig(repo)
+    : loadOfflineConfig(repo);
+} else {
+  repo = repoArg ? path.resolve(repoArg) : findRepoRoot(process.cwd());
+  if (!repo) die("no aios.yaml found walking up from cwd — pass --repo <path>");
+  cfg = loadConfig(repo);
+}
 const patterns = loadSecretPatterns();
 
 try {
@@ -685,6 +1079,9 @@ try {
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
   else if (cmd === "pull") await cmdPull(repo, cfg);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
+  else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
+  else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
+  else if (cmd === "graph") cmdGraph(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

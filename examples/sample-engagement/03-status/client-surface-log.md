@@ -3,6 +3,7 @@ status: living
 owner: alex
 access: team
 updated: 2026-03-25
+type: "Status Log"
 ---
 
 # Client Surface Log — Northwind Robotics

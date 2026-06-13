@@ -204,6 +204,85 @@ mkdir -p "$OUTPUT"/02-deliverables
 mkdir -p "$OUTPUT"/03-status
 mkdir -p "$OUTPUT/$DIR04"
 
+# OKF index.md stubs — agent navigation layer for each spine directory
+cat > "$OUTPUT/$DIR00/index.md" << IDXEOF
+---
+type: index
+access: team
+---
+# $DIR00
+
+Navigation index for the charter, scope, and roles.
+
+* [Scope Baseline](scope-baseline.md) — contracted deliverable tracks
+* [Scope Ledger](scope-ledger.md) — scope changes and out-of-scope log
+
+## Add links
+<!-- Add role docs, SOW, and charter files as they are created. -->
+IDXEOF
+
+cat > "$OUTPUT/01-intake/index.md" << IDXEOF
+---
+type: index
+access: team
+---
+# 01-intake
+
+Navigation index for raw inputs — transcripts, reference materials, and brain pulls.
+
+* [Transcripts](transcripts/) — meeting recordings and extracted text
+* [Reference](reference/) — background reading and external sources
+* [From Brain](from-brain/) — items pulled from the Team Brain (append-only)
+
+## Add links
+<!-- Add per-sprint intake folders as they appear. -->
+IDXEOF
+
+cat > "$OUTPUT/02-deliverables/index.md" << IDXEOF
+---
+type: index
+access: team
+---
+# 02-deliverables
+
+Navigation index for sprint-scoped team outputs.
+
+## Add links
+<!-- Add one link per sprint folder as sprints are opened:
+* [Sprint 1](sprint-1/) — <sprint goal>
+-->
+IDXEOF
+
+cat > "$OUTPUT/03-status/index.md" << IDXEOF
+---
+type: index
+access: team
+---
+# 03-status
+
+Navigation index for living status documents.
+
+* [Decision Log](decision-log.md) — durable record of coordinated choices
+* [Tasks](tasks.md) — task register (syncs to Team Brain)
+* [Hours Log](hours-log.md) — billing-adjacent time record
+
+## Add links
+<!-- Add sprint ledgers, client-surface logs, and other status docs here. -->
+IDXEOF
+
+cat > "$OUTPUT/$DIR04/index.md" << IDXEOF
+---
+type: index
+access: team
+---
+# $DIR04
+
+Navigation index for $DIR04_DESC content.
+
+## Add links
+<!-- Add $STAKEHOLDER_LABEL-facing or shared artifacts here as they are approved and promoted. -->
+IDXEOF
+
 for m in "${MEMBER_ARRAY[@]}"; do
   m=$(echo "$m" | xargs)
   mkdir -p "$OUTPUT/05-personal/$m"/{01-intake/{inbox,transcripts,email},02-deliverables,03-status,.claude,.planning}
@@ -334,6 +413,7 @@ fi
 cat > "$OUTPUT/03-status/decision-log.md" << EOF
 ---
 access: team
+type: "Decision Log"
 ---
 # Decision Log — $STAKEHOLDER
 
@@ -351,6 +431,7 @@ EOF
 cat > "$OUTPUT/03-status/tasks.md" << EOF
 ---
 access: team
+type: "Task List"
 ---
 # Tasks — $STAKEHOLDER
 

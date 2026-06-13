@@ -14,3 +14,4 @@ pass: no-must-fails
 | WS4 | Task deltas (newly done / newly blocked) match the tasks table — no invented or omitted status changes | grounding-read | yes |
 | WS5 | Digest is ≤ 600 words | deterministic | no |
 | WS6 | Risks section distinguishes observed facts from inferences | deterministic | no |
+| WS7 | Every cross-document reference uses a bundle-relative markdown link `[text](path.md)` or the existing prose citation format `(path, #row)` — no bare filenames without context | deterministic | no |

@@ -11,6 +11,7 @@ set -euo pipefail
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 if [ $# -eq 0 ]; then
@@ -91,11 +92,19 @@ while IFS= read -r file; do
     WARNINGS=$((WARNINGS + 1))
   fi
 
+  # OKF advisory: type is recommended but not required.
+  # Enable with: AIOS_OKF_LINT=1 ./validation/check-frontmatter.sh <repo>
+  if [ "${AIOS_OKF_LINT:-0}" = "1" ] && ! has_field "type"; then
+    echo -e "  ${BLUE}i${NC} $rel_path — OKF: consider adding \`type:\` (see scaffold/.claude/rules/frontmatter.md)"
+    WARNINGS=$((WARNINGS + 1))
+  fi
+
 done < <(find "$REPO" -name "*.md" \
   -not -path "*/.git/*" \
   -not -path "*/.planning/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/.claude/*" \
+  -not -path "*/.aios/*" \
   -not -name "CLAUDE.md" \
   -not -name "MEMORY.md" \
   -not -name "README.md" \
@@ -105,6 +114,7 @@ done < <(find "$REPO" -name "*.md" \
   -not -name "tasks.md" \
   -not -name "learnings.md" \
   -not -name "client-surface-log.md" \
+  -not -name "index.md" \
   | sort)
 
 # Summary

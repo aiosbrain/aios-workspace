@@ -4,6 +4,7 @@ owner: riley
 access: client
 created: 2026-04-02
 sprint: sprint-1
+type: "Deliverable"
 ---
 
 # AI Readiness Assessment — Findings Report (Northwind Robotics)

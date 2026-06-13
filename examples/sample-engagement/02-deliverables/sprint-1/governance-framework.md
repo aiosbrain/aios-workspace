@@ -4,6 +4,7 @@ owner: jordan
 access: team
 created: 2026-03-28
 sprint: sprint-1
+type: "Deliverable"
 ---
 
 # AI Governance Framework (Northwind Robotics)

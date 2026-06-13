@@ -4,6 +4,7 @@ owner: alex
 access: team
 updated: 2026-03-31
 sprint: sprint-1
+type: "Sprint Ledger"
 ---
 
 # Sprint 1 Ledger — Northwind Robotics ("Foundations")
