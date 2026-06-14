@@ -30,6 +30,18 @@ work to the shared **Team Brain**. This repo is *yours* — private by default.
 `{{OUTWARD_TIER}}` (promoted outward). Tag a file's `access:` frontmatter to make
 it shareable; untagged and `private` files never sync. Promotion is deliberate.
 
+## Skills & integrations
+- **Skills** → [`.claude/skills/INDEX.md`](.claude/skills/INDEX.md) — the catalog of
+  what this workspace can do (harnesses + skills). Skills activate when your request
+  matches their description; you can also name one. Regenerate with `npm run gen:catalog`.
+- **Integrations** → [`.claude/INTEGRATIONS.md`](.claude/INTEGRATIONS.md) — connectable
+  tools (Slack, Jira, Notion, Linear, GitHub, Gmail, Granola, …). To wire one, copy its
+  server from `.mcp.example.json` into `.mcp.json`, set the env vars, flip its status in
+  `.claude/integrations.json`, and re-run the catalog. Setup notes: `docs/integrations.md`.
+- **Share/pull skills** → push a skill to the brain (`aios push skill <name>`), pull one
+  (`aios pull skill <name>`), install it (`aios install-skill <name>`). Pulled skills are
+  code — install is deliberate; they never auto-activate.
+
 ## Conventions
 Governance rules live in `.claude/rules/`. Dynamic-workflow harnesses live in
 `.claude/skills/` — run `decision-audit` before a close-out, `scope-creep` before

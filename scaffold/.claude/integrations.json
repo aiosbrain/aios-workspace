@@ -1,0 +1,106 @@
+{
+  "$schema": "https://aios.dev/schemas/integrations-v1.json",
+  "description": "Curated catalog of tools this AIOS workspace can connect. status: 'available' = a connector exists and is documented here; 'wired' = configured in .mcp.json / on PATH for this workspace. Connect a tool, then flip its status to 'wired'. See docs/integrations.md.",
+  "integrations": [
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "chat",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Read channels and threads, post messages, pull conversation context.",
+      "connect": "Add the Slack MCP server to .mcp.json with a bot token (SLACK_BOT_TOKEN) and team id (SLACK_TEAM_ID). See .mcp.example.json.",
+      "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
+    },
+    {
+      "id": "jira",
+      "name": "Jira",
+      "category": "issue-tracking",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Search issues, read/comment/transition tickets, manage sprints and worklogs.",
+      "connect": "Add the mcp-atlassian server to .mcp.json with your site URL and an API token. Covers Jira + Confluence.",
+      "env": ["ATLASSIAN_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN"]
+    },
+    {
+      "id": "confluence",
+      "name": "Confluence",
+      "category": "knowledge-base",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Search spaces, read/create/update pages, manage comments and attachments.",
+      "connect": "Shares the mcp-atlassian server with Jira — one config covers both.",
+      "env": ["ATLASSIAN_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN"]
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "category": "issue-tracking",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Query issues/projects/cycles, create and update issues, track status.",
+      "connect": "Add the Linear MCP server to .mcp.json; authenticate via OAuth on first use.",
+      "env": []
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "knowledge-base",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Search workspace, read/append pages and databases.",
+      "connect": "Add the Notion MCP server to .mcp.json with an integration token (NOTION_TOKEN) and share the relevant pages with the integration.",
+      "env": ["NOTION_TOKEN"]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "code",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Read repos/PRs/issues, search code, manage branches and reviews.",
+      "connect": "Add the GitHub MCP server to .mcp.json with a fine-grained PAT (GITHUB_TOKEN), or use the `gh` CLI already on most machines.",
+      "env": ["GITHUB_TOKEN"]
+    },
+    {
+      "id": "google",
+      "name": "Gmail / Google Workspace",
+      "category": "email",
+      "transport": "cli",
+      "status": "available",
+      "summary": "Read/send email, calendar, and drive via the gog-cli tool.",
+      "connect": "Install gog-cli and run its OAuth login (`gog auth login`); the agent calls it via Bash. No MCP server required.",
+      "env": []
+    },
+    {
+      "id": "granola",
+      "name": "Granola",
+      "category": "meetings",
+      "transport": "cli",
+      "status": "available",
+      "summary": "Pull meeting notes/transcripts to feed transcript-decisions and weekly-synthesis.",
+      "connect": "Export Granola notes to 1-inbox/transcripts/ (manual export or the Granola API/CLI), then run the transcript-decisions harness.",
+      "env": ["GRANOLA_API_KEY"]
+    },
+    {
+      "id": "mattermost",
+      "name": "Mattermost",
+      "category": "chat",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Read channels, post messages — self-hosted chat alternative to Slack.",
+      "connect": "Add a Mattermost MCP server to .mcp.json with your server URL and a personal access token.",
+      "env": ["MATTERMOST_URL", "MATTERMOST_TOKEN"]
+    },
+    {
+      "id": "toggl",
+      "name": "Toggl",
+      "category": "time-tracking",
+      "transport": "mcp",
+      "status": "available",
+      "summary": "Start/stop timers, read entries and summaries — reconcile against 3-log/hours-log.md.",
+      "connect": "Add a Toggl MCP server to .mcp.json with your API token (TOGGL_API_KEY).",
+      "env": ["TOGGL_API_KEY"]
+    }
+  ]
+}

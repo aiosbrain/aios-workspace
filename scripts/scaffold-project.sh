@@ -354,6 +354,16 @@ for d in skills rubrics memory; do
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"
 
+# Integrations manifest + MCP stub/example
+[ -f "$SCAFFOLD/.claude/integrations.json" ] && cp "$SCAFFOLD/.claude/integrations.json" "$OUTPUT/.claude/integrations.json"
+[ -f "$SCAFFOLD/.mcp.json" ] && cp "$SCAFFOLD/.mcp.json" "$OUTPUT/.mcp.json"
+[ -f "$SCAFFOLD/.mcp.example.json" ] && cp "$SCAFFOLD/.mcp.example.json" "$OUTPUT/.mcp.example.json"
+
+# Generate the skills + integrations catalogs for the new workspace
+if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
+  node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true
+fi
+
 # CODEOWNERS
 cat > "$OUTPUT/.github/CODEOWNERS" << EOF
 # $SLUG — owned by @$OWNER

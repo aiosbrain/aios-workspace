@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
@@ -56,6 +57,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ repo, sessions: listSessions() }));
   }
+  if (url.pathname === "/api/catalog") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(readCatalog(repo)));
+  }
   let file = url.pathname === "/" ? "/index.html" : url.pathname;
   const abs = path.join(CLIENT_DIST, path.normalize(file));
   if (!abs.startsWith(CLIENT_DIST) || !existsSync(abs)) {
@@ -77,6 +82,17 @@ function listSessions() {
   } catch {
     return [];
   }
+}
+
+// Surface the workspace's skills + integrations to the GUI. Reuses the same robust
+// parser gen-catalog.mjs uses, so the GUI is accurate without a separate build step.
+function readCatalog(repoDir) {
+  const skills = readSkills(repoDir).map((s) => ({
+    name: s.name,
+    kind: s.kind,
+    description: firstSentence(s.description),
+  }));
+  return { skills, integrations: readIntegrations(repoDir) };
 }
 
 // ── websocket: one connection = one SDK session ─────────────────────────────
