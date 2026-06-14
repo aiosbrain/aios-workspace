@@ -2,7 +2,7 @@
   "name": "aios-workspace",
   "version": "0.2.0",
   "private": true,
-  "description": "Agent-native operating system for teams: governed repo scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
+  "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
   "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
@@ -12,7 +12,8 @@
   "scripts": {
     "gui": "node scripts/run-gui.mjs",
     "gui:build": "npm run build --workspace gui/client",
-    "aios": "node scripts/aios.mjs"
+    "aios": "node scripts/aios.mjs",
+    "gen:catalog": "node scripts/gen-catalog.mjs"
   },
   "engines": {
     "node": ">=18"

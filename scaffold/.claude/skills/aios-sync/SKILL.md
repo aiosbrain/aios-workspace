@@ -1,7 +1,7 @@
 ---
 name: aios-sync
 description: >
-  Sync this team-ops repo with the AIOS Team Brain. Use when the user says
+  Sync this workspace with the AIOS Team Brain. Use when the user says
   "sync", "push to the brain", "pull team updates", or at a natural stopping
   point after producing deliverables/decisions. Reviews what is blocked and
   why before pushing — promotion is deliberate, never silent.
