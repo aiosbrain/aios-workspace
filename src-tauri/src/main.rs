@@ -88,13 +88,85 @@ fn save_repo(app: &tauri::AppHandle, repo: &Path) {
     }
 }
 
+// Locate the toolkit (the dir containing gui/, scripts/, scaffold/). Bundled builds
+// have it in the resource dir; `tauri dev` doesn't copy resources, so walk up from
+// the executable to the repo root.
+fn toolkit_dir(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(r) = app.path().resource_dir() {
+        if r.join("gui/server/index.mjs").exists() {
+            return r;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut cur = exe.parent().map(|p| p.to_path_buf());
+        while let Some(p) = cur {
+            if p.join("gui/server/index.mjs").exists() {
+                return p;
+            }
+            cur = p.parent().map(|x| x.to_path_buf());
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+// A PATH that includes Node/Homebrew locations (GUI apps don't inherit the shell PATH),
+// so the scaffold's `node` (catalog generation) is found.
+fn enriched_path() -> String {
+    let mut dirs = vec![
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+    ];
+    if let Some(p) = Path::new(&find_bin("node")).parent() {
+        dirs.insert(0, p.to_string_lossy().to_string());
+    }
+    dirs.join(":")
+}
+
+// Turn an empty folder into a workspace by running scaffold-project.sh. Asks the one
+// onboarding question (consultant vs employee) and uses sensible defaults the user can
+// edit later in workspace.yaml.
+fn scaffold_into(app: &tauri::AppHandle, dir: &Path) -> bool {
+    let consultant = matches!(
+        rfd::MessageDialog::new()
+            .set_title("Set up your workspace")
+            .set_description("How do you work?\n\n• Yes — Consultant (you work with clients)\n• No — Employee (inside a company)")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show(),
+        rfd::MessageDialogResult::Yes
+    );
+    let context = if consultant { "consultant" } else { "employee" };
+    let owner = std::env::var("USER").unwrap_or_else(|_| "me".to_string());
+    let slug = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "workspace".to_string());
+    let toolkit = toolkit_dir(app);
+    let script = toolkit.join("scripts/scaffold-project.sh");
+
+    let status = Command::new("bash")
+        .arg(&script)
+        .arg("--context").arg(context)
+        .arg("--slug").arg(&slug)
+        .arg("--owner").arg(&owner)
+        .arg("--stakeholder").arg(if consultant { "My Client" } else { "My Company" })
+        .arg("--team").arg(&owner)
+        .arg("--output").arg(dir)
+        .current_dir(&toolkit)
+        .env("PATH", enriched_path())
+        .status();
+
+    matches!(status, Ok(s) if s.success()) && is_workspace(dir)
+}
+
 fn resolve_repo(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Some(r) = saved_repo(app) {
         return Some(r);
     }
     loop {
         match rfd::FileDialog::new()
-            .set_title("Choose your AIOS workspace folder")
+            .set_title("Choose or create your AIOS workspace folder")
             .pick_folder()
         {
             None => return None, // user cancelled → don't launch
@@ -102,11 +174,26 @@ fn resolve_repo(app: &tauri::AppHandle) -> Option<PathBuf> {
                 save_repo(app, &dir);
                 return Some(dir);
             }
-            Some(_) => {
-                rfd::MessageDialog::new()
-                    .set_title("Not an AIOS workspace")
-                    .set_description("That folder isn't an AIOS workspace (no aios.yaml / .claude). Pick a workspace folder.")
-                    .show();
+            Some(dir) => {
+                let empty = std::fs::read_dir(&dir)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false);
+                if empty {
+                    // New, empty folder → set it up in place.
+                    if scaffold_into(app, &dir) {
+                        save_repo(app, &dir);
+                        return Some(dir);
+                    }
+                    rfd::MessageDialog::new()
+                        .set_title("Couldn't set up workspace")
+                        .set_description("Setting up that folder failed. Try another folder.")
+                        .show();
+                } else {
+                    rfd::MessageDialog::new()
+                        .set_title("Pick an empty folder")
+                        .set_description("That folder has files but isn't an AIOS workspace. Choose an existing workspace, or an empty folder to create a new one.")
+                        .show();
+                }
             }
         }
     }
@@ -124,11 +211,7 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
 }
 
 fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) -> std::io::Result<Child> {
-    let server = app
-        .path()
-        .resource_dir()
-        .expect("resource dir")
-        .join("gui/server/index.mjs");
+    let server = toolkit_dir(app).join("gui/server/index.mjs");
     let node = find_bin("node");
 
     // Under dotenvx when the workspace has an encrypted .env, so the agent's MCP
