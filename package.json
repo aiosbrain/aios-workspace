@@ -13,9 +13,15 @@
     "gui": "node scripts/run-gui.mjs",
     "gui:build": "npm run build --workspace gui/client",
     "aios": "node scripts/aios.mjs",
-    "gen:catalog": "node scripts/gen-catalog.mjs"
+    "gen:catalog": "node scripts/gen-catalog.mjs",
+    "app:dev": "npm run gui:build && tauri dev",
+    "app:build": "npm run gui:build && tauri build",
+    "app:icon": "tauri icon"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2"
   }
 }
