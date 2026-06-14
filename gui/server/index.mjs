@@ -26,6 +26,14 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector } from "../../scripts/connector.mjs";
 
+// Tools that run without a permission prompt (read-only + workspace edits — the
+// PreToolUse guard hook still vets every Write/Edit for secrets and tier leaks).
+// Bash and network/MCP tools fall through to an explicit prompt.
+const AUTO_ALLOW = new Set([
+  "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "Task", "ExitPlanMode",
+  "WebFetch", "WebSearch", "Write", "Edit", "MultiEdit", "NotebookEdit",
+]);
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
 const SESSIONS_DIR = path.join(SCRIPT_DIR, "..", ".sessions");
@@ -246,6 +254,14 @@ wss.on("connection", (ws) => {
           settingSources: ["user", "project"], // CLAUDE.md + skills + hooks fire
           includePartialMessages: true,
           canUseTool: async (toolName, input) => {
+            // Allowlist/auto mode: safe reads + workspace edits run without a prompt
+            // (the PreToolUse guard hook is the real safety net for secrets/tiers).
+            // Only genuinely powerful tools (Bash, network/MCP) prompt.
+            if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
+            // No UI to render a multiple-choice question — make the agent ask inline.
+            if (toolName === "AskUserQuestion") {
+              return { behavior: "deny", message: "This chat can't render multiple-choice questions. Ask the user ONE short question at a time as a normal message and wait for their typed reply." };
+            }
             const id = nextPermId++;
             send({ type: "permission_request", id, tool: toolName, input });
             const allow = await new Promise((resolve) => {

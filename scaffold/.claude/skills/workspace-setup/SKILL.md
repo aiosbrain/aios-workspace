@@ -19,10 +19,14 @@ triggers:
 # Workspace setup
 
 Seed this workspace with durable context about its owner so every future session
-starts informed. Conduct a short, warm interview — **one question at a time**, at most
-six questions, and let them skip any. Then write it into `.claude/CLAUDE.md`.
+starts informed. Then write it into `.claude/CLAUDE.md`.
 
-## Interview (one at a time)
+**Asking (important for this chat UI):** ask in **plain chat messages** — do NOT use
+the AskUserQuestion tool (it can't render here). Prefer asking **all questions at once
+as a short numbered list** and inviting a free-form reply ("answer in any order, skip
+any"); that's far less tedious in a chat than one-at-a-time. Keep it warm and brief.
+
+## Interview (ask as one free-form batch)
 
 1. **You** — name and role/title.
 2. **Context** — consultant (which client(s) right now?) or employee (which company /
