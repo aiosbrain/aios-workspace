@@ -1,0 +1,34 @@
+{
+  "id": "linear",
+  "name": "Linear",
+  "category": "issue-tracking",
+  "descriptor_version": "1.0.0",
+  "transport": "skill",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Query and update issues, projects, and cycles via a personal API key — our own connector (Linear's MCP is OAuth-only).",
+  "secrets": [
+    { "env": "LINEAR_API_KEY", "label": "Personal API key", "required": true, "placeholder": "lin_api_…" }
+  ],
+  "scopes": ["read", "write"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": "https://linear.app/settings/api",
+    "scopes_url": "https://linear.app/developers/graphql",
+    "instructions": "Linear → Settings → API → Personal API keys → Create key (copy it — shown once).",
+    "verified_against_docs": "2026-06-14"
+  },
+  "skill": {
+    "skill_name": "linear-direct",
+    "source": ".claude/descriptors/skills/linear-direct/"
+  },
+  "validate": {
+    "method": "POST",
+    "url": "https://api.linear.app/graphql",
+    "headers": { "Authorization": "${LINEAR_API_KEY}", "Content-Type": "application/json" },
+    "body": { "query": "{ viewer { id name email } }" },
+    "expect": { "status": 200, "json_has": ["data.viewer.id"] },
+    "identity": { "json_path": "data.viewer.name", "label": "You" },
+    "instance_check": { "json_path": "data.viewer.email", "label": "Account" }
+  }
+}

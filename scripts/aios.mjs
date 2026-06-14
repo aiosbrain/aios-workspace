@@ -577,8 +577,8 @@ async function cmdConnect(repo, args) {
     return;
   }
 
-  // store (encrypt + write artifact + flip status)
-  const stored = storeConnector(repo, d, values);
+  // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
+  const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
   const who = result.identity?.value ? ` as ${result.identity.value}` : "";
   const where = result.instance?.value ? ` in ${result.instance.value}` : "";
   console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
