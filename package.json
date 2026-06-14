@@ -1,5 +1,5 @@
 {
-  "name": "agentic-team-ops",
+  "name": "aios-workspace",
   "version": "0.2.0",
   "private": true,
   "description": "Agent-native operating system for teams: governed repo scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",

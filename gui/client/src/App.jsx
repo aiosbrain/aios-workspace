@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * Minimal local cockpit for an agentic-team-ops repo.
+ * Minimal local cockpit for an aios-workspace repo.
  * One WebSocket = one Claude Agent SDK session with the repo as cwd —
  * skills, rules, and the guard hook fire exactly as in Claude Code.
  */
