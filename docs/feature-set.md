@@ -118,10 +118,47 @@ outputs from one run live in `examples/sample-output/`.
 
 ---
 
-## Roadmap (the integrations layer + more harnesses)
+## 8. Discoverability: skills + integrations catalog
 
-The clean core ships today. Deliberately deferred — and ideal contribution targets:
+Every workspace generates two catalogs (`scripts/gen-catalog.mjs`, `npm run gen:catalog`):
+- **Skills catalog** (`.claude/skills/INDEX.md`) — every installed skill, what it does,
+  and when it runs, parsed from each `SKILL.md`. Surfaced in `CLAUDE.md` and the GUI.
+- **Integrations catalog** (`.claude/INTEGRATIONS.md` from `.claude/integrations.json`)
+  — connectable tools (Slack, Jira, Confluence, Linear, Notion, GitHub, Gmail/gog-cli,
+  Granola, Mattermost, Toggl) with status + how-to-connect. A live `.mcp.json` stub and
+  `.mcp.example.json` starter servers ship in the scaffold; `docs/integrations.md` has
+  per-tool setup. *Wiring a starter set live is the remaining fast-follow.*
 
+## 9. Skill + artifact share/pull
+
+Skills are shareable across the team via the brain:
+- `aios push skill <name>` — publish `SKILL.md` (kind `skill`, with a reference manifest)
+  + its files (kind `artifact`) under `.claude/skills/<name>/`.
+- `aios pull skill <name>` / `aios pull deliverable <path>` — fetch on demand into
+  `1-inbox/from-brain/` with provenance (source workspace + author).
+- `aios install-skill <name>` — promote a pulled skill into `.claude/skills/`
+  (explicit, append-only). **Pulled skills are code and never auto-activate.**
+- The dashboard has a **Skills** catalog page with a copyable `aios pull skill` per skill.
+
+## 10. Review-and-push panel (GUI + TUI)
+
+Choosing what reaches the brain is visual, not blind:
+- **GUI panel** (`gui/client`, "Review & push" tab) — lists new/modified/blocked/clean
+  from `aios status --json`, with per-file tier + block reason, checkboxes to include,
+  a dry-run, and push. Backed by token-gated `/api/review` + `/api/push` endpoints that
+  reuse the CLI's exact plan logic — so the same default-deny safety holds server-side
+  (an `admin` file stays blocked even if explicitly requested).
+- **TUI** (`aios review`) — the same model, keyboard-driven, for terminal users.
+
+---
+
+## Roadmap
+
+The clean core + catalogs + share/pull + review panel ship today. Deliberately
+deferred — and ideal contribution targets:
+
+- **Live integration wiring** — wire a starter set (Gmail via gog-cli + Granola + one
+  MCP server) end-to-end, beyond the catalog + `.mcp.json` scaffold that ships now.
 - **Sync pipeline** — fetch → triage → promote across email/chat/time-tracking, as
   pluggable integration adapters (rather than hard-wired to one stack).
 - **Access-aware knowledge base** — local RAG over the corpus with retrieval filtered
