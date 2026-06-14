@@ -109,10 +109,14 @@ fn toolkit_dir(app: &tauri::AppHandle) -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-// A PATH that includes Node/Homebrew locations (GUI apps don't inherit the shell PATH),
-// so the scaffold's `node` (catalog generation) is found.
+// A PATH that includes Node + the Claude Code CLI locations (GUI apps don't inherit
+// the shell PATH), prepended to whatever PATH we did inherit. The agent runtime spawns
+// the `claude` CLI (often in ~/.local/bin), so it must be findable.
 fn enriched_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
     let mut dirs = vec![
+        format!("{home}/.local/bin"),
+        format!("{home}/.cargo/bin"),
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
         "/usr/bin".to_string(),
@@ -121,7 +125,8 @@ fn enriched_path() -> String {
     if let Some(p) = Path::new(&find_bin("node")).parent() {
         dirs.insert(0, p.to_string_lossy().to_string());
     }
-    dirs.join(":")
+    let base = std::env::var("PATH").unwrap_or_default();
+    if base.is_empty() { dirs.join(":") } else { format!("{}:{}", dirs.join(":"), base) }
 }
 
 // Turn an empty folder into a workspace by running scaffold-project.sh. Asks the one
@@ -214,6 +219,13 @@ fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) ->
     let server = toolkit_dir(app).join("gui/server/index.mjs");
     let node = find_bin("node");
 
+    // Log the sidecar (and the agent runtime it spawns) to a file so failures are
+    // diagnosable instead of vanishing into /dev/null.
+    let logdir = repo.join(".aios");
+    let _ = std::fs::create_dir_all(&logdir);
+    let log = std::fs::File::create(logdir.join("gui-server.log"))?;
+    let log_err = log.try_clone()?;
+
     // Under dotenvx when the workspace has an encrypted .env, so the agent's MCP
     // servers get decrypted provider tokens at spawn.
     let use_dotenvx = repo.join(".env").exists();
@@ -230,9 +242,10 @@ fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) ->
         .arg("--port")
         .arg(port.to_string())
         .env("AIOS_GUI_TOKEN", token)
+        .env("PATH", enriched_path())
         .current_dir(repo)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
     cmd.spawn()
 }
 
