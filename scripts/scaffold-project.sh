@@ -118,7 +118,11 @@ if [ "$DRY_RUN" = true ]; then
   echo -e "${GREEN}Remove --dry-run to create.${NC}"; exit 0
 fi
 
-[ -d "$OUTPUT" ] && { echo -e "${RED}Error: $OUTPUT already exists${NC}"; exit 1; }
+# Allow scaffolding into an existing EMPTY directory (e.g. a folder the user just
+# created in a picker); only refuse a non-empty one to avoid clobbering real work.
+if [ -d "$OUTPUT" ] && [ -n "$(ls -A "$OUTPUT" 2>/dev/null)" ]; then
+  echo -e "${RED}Error: $OUTPUT already exists and is not empty${NC}"; exit 1
+fi
 
 echo "Creating workspace..."
 mkdir -p "$OUTPUT"/.claude/rules "$OUTPUT"/.github "$OUTPUT/.planning"
