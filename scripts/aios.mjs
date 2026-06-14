@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -523,6 +524,65 @@ function cmdStatus(repo, cfg, patterns, args = []) {
       "(or `external`) frontmatter — promotion is deliberate."
     ));
   }
+}
+
+// aios connect [<id>] — guided connect→validate→store for an integration (headless engine).
+async function cmdConnect(repo, args) {
+  const id = args.find((a) => !a.startsWith("--"));
+  if (!id) {
+    console.log(c.blue("connectable integrations:"));
+    for (const conn of listConnectors(repo)) {
+      const badge = conn.status === "wired" ? c.green("✓ wired") : c.dim("○ available");
+      console.log(`  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}`);
+    }
+    console.log(c.dim("\nrun: aios connect <id>"));
+    return;
+  }
+  let d;
+  try { d = getDescriptor(repo, id); } catch (e) { die(e.message); }
+
+  // collect secret values: --token sets the primary required secret; --set ENV=VALUE for others.
+  const sets = {};
+  for (let i = 0; i < args.length; i++) if (args[i] === "--set" && args[i + 1]) { const [k, ...v] = args[i + 1].split("="); sets[k] = v.join("="); }
+  const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
+  const required = (d.secrets || []).filter((s) => s.required !== false);
+
+  // print connect guidance (the "exact URL + scopes" moment)
+  console.log(c.blue(`\nConnect ${d.name}`));
+  if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
+  if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
+  if (d.scopes?.length) console.log(c.dim(`  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`));
+  console.log("");
+
+  const values = {};
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  for (const s of required) {
+    if (sets[s.env] != null) values[s.env] = sets[s.env];
+    else if (tokenFlag && s === required[0]) values[s.env] = tokenFlag;
+    else values[s.env] = (await ask(`  ${s.label} (${s.env}): `)).trim();
+  }
+  rl.close();
+  if (required.some((s) => !values[s.env])) die("missing required value(s)");
+
+  // validate live
+  process.stdout.write(c.dim("  validating… "));
+  const result = await validateConnector(d, values);
+  console.log("");
+  for (const ch of result.checks) console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
+  if (!result.ok) {
+    console.log(c.red(`\n${d.name} not connected (${result.error}).`));
+    if (d.docs?.token_create_url) console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  // store (encrypt + write artifact + flip status)
+  const stored = storeConnector(repo, d, values);
+  const who = result.identity?.value ? ` as ${result.identity.value}` : "";
+  const where = result.instance?.value ? ` in ${result.instance.value}` : "";
+  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
+  console.log(c.dim(`  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`));
 }
 
 // aios review — interactive review-and-push panel for the terminal.
@@ -1331,6 +1391,8 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
+  aios connect [<id>]                   connect an integration (guided + live-validated)
+    [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
@@ -1352,8 +1414,8 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
-// export-okf, graph, install-skill are offline-only: no aios.yaml required.
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill"]);
+// export-okf, graph, install-skill, connect are offline-only: no aios.yaml required.
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1375,6 +1437,7 @@ try {
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
+  else if (cmd === "connect") await cmdConnect(repo, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);

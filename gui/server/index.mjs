@@ -24,6 +24,7 @@ import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
+import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector } from "../../scripts/connector.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
@@ -86,6 +87,52 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // ── connector engine (token-gated) ──
+  if (url.pathname === "/api/connectors") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ connectors: listConnectors(repo) }));
+  }
+  const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
+  if (conn && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    const [, id, action] = conn;
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e5) req.destroy(); });
+    req.on("end", () => {
+      // Secrets arrive here in the POST body and are held in memory only — never logged,
+      // never written to .sessions; only persisted (encrypted) by storeConnector.
+      let secrets = {};
+      try { secrets = JSON.parse(body || "{}").secrets || {}; } catch { /* bad body */ }
+      (async () => {
+        try {
+          const d = getDescriptor(repo, id);
+          if (action === "unwire") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify(unwireConnector(repo, d)));
+          }
+          const result = await validateConnector(d, secrets);
+          if (action === "validate") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify(result)); // checks/identity/instance — no secrets
+          }
+          // store: only persist on a passing validation
+          if (!result.ok) {
+            res.writeHead(422, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ ok: false, validation: result }));
+          }
+          const stored = storeConnector(repo, d, secrets);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...stored, identity: result.identity, instance: result.instance }));
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      })();
+    });
+    return;
+  }
+
   let file = url.pathname === "/" ? "/index.html" : url.pathname;
   const abs = path.join(CLIENT_DIST, path.normalize(file));
   if (!abs.startsWith(CLIENT_DIST) || !existsSync(abs)) {

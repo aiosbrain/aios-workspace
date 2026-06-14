@@ -1,0 +1,32 @@
+{
+  "id": "granola",
+  "name": "Granola",
+  "category": "meetings",
+  "descriptor_version": "1.0.0",
+  "transport": "skill",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Pull meeting notes + transcripts into 1-inbox/transcripts/ — our own connector (calls the Granola public API directly; does not use the Granola MCP).",
+  "secrets": [
+    { "env": "GRANOLA_API_KEY", "label": "API key", "required": true, "placeholder": "grn_…" }
+  ],
+  "scopes": ["Personal notes", "Public notes"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": null,
+    "scopes_url": "https://docs.granola.ai/introduction",
+    "instructions": "In the Granola desktop app: Settings → Connectors → API keys → Create new key → tick the 'Personal notes' scope (add 'Public notes' for team/workspace notes) → Generate API Key. Requires a Business or Enterprise plan.",
+    "verified_against_docs": "2026-06-14"
+  },
+  "skill": {
+    "skill_name": "granola-direct",
+    "source": ".claude/descriptors/skills/granola-direct/"
+  },
+  "validate": {
+    "method": "GET",
+    "url": "https://public-api.granola.ai/v1/notes?limit=1",
+    "headers": { "Authorization": "Bearer ${GRANOLA_API_KEY}" },
+    "expect": { "status": 200 },
+    "identity": { "json_path": null, "label": "Granola" }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "id": "notion",
+  "name": "Notion",
+  "category": "knowledge-base",
+  "descriptor_version": "1.0.0",
+  "transport": "mcp",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Read and write Notion pages and databases you share with the integration.",
+  "secrets": [
+    { "env": "NOTION_TOKEN", "label": "Internal integration token", "required": true, "placeholder": "ntn_…" }
+  ],
+  "scopes": ["Read content", "Insert content"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": "https://www.notion.so/my-integrations",
+    "scopes_url": "https://developers.notion.com/reference/capabilities",
+    "instructions": "Create an internal integration, copy its token, and (important) Share each page or database you want the agent to use with the integration — Notion is deny-by-default per page.",
+    "verified_against_docs": "2026-06-14"
+  },
+  "mcp": {
+    "server_key": "notion",
+    "command": "npx",
+    "args": ["-y", "@notionhq/notion-mcp-server"],
+    "env_map": { "NOTION_TOKEN": "${NOTION_TOKEN}" }
+  },
+  "validate": {
+    "method": "GET",
+    "url": "https://api.notion.com/v1/users/me",
+    "headers": {
+      "Authorization": "Bearer ${NOTION_TOKEN}",
+      "Notion-Version": "2026-03-11"
+    },
+    "expect": { "status": 200 },
+    "identity": { "json_path": "name", "label": "Integration" },
+    "instance_check": { "json_path": "bot.workspace_name", "label": "Workspace" }
+  }
+}
