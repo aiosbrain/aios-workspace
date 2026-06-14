@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core permissions for the AIOS Workspace window. The UI is served from the local sidecar over 127.0.0.1; no extra Tauri APIs are exposed to the frontend.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

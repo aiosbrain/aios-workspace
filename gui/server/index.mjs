@@ -47,7 +47,9 @@ if (!existsSync(path.join(repo, "aios.yaml")) &&
   process.exit(1);
 }
 
-const TOKEN = randomBytes(16).toString("hex");
+// The desktop shell (Tauri) can pre-set the session token so it doesn't have to
+// parse it back out of stdout; otherwise we mint a random one (the dev/CLI path).
+const TOKEN = process.env.AIOS_GUI_TOKEN || randomBytes(16).toString("hex");
 mkdirSync(SESSIONS_DIR, { recursive: true });
 
 // ── static client ───────────────────────────────────────────────────────────
