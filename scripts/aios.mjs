@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
-const VALID_KINDS = ["deliverable", "transcript", "decision", "task", "artifact"];
+const VALID_KINDS = ["deliverable", "transcript", "decision", "task", "artifact", "skill"];
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
 
 // Embedded fallback if validation/secret-patterns.txt is unavailable
@@ -511,6 +511,7 @@ function cmdStatus(repo, cfg, patterns, args = []) {
 }
 
 async function cmdPush(repo, cfg, patterns, args) {
+  if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
   const dryRun = args.includes("--dry-run");
   const paths = args.filter((a) => !a.startsWith("--"));
   const { plan, state } = buildPlan(repo, cfg, patterns, paths);
@@ -572,7 +573,9 @@ async function cmdPush(repo, cfg, patterns, args) {
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
 }
 
-async function cmdPull(repo, cfg) {
+async function cmdPull(repo, cfg, args = []) {
+  if (args[0] === "skill") return cmdPullSkill(repo, cfg, args.slice(1));
+  if (args[0] === "deliverable") return cmdPullDeliverable(repo, cfg, args.slice(1));
   requireOnline(cfg);
   const state = loadState(repo);
   const since = state.last_pull || "1970-01-01T00:00:00Z";
@@ -640,6 +643,190 @@ async function cmdPull(repo, cfg) {
   saveState(repo, state);
   console.log("");
   console.log(c.green(`pulled ${fetched} item(s); merged ${merged} task row(s).`));
+}
+
+// ── skill + artifact share/pull (P4) ─────────────────────────────────────────
+
+function listFilesRec(dir, base = dir) {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...listFilesRec(full, base));
+    else out.push(path.relative(base, full));
+  }
+  return out;
+}
+
+function isBinary(buf) {
+  // crude but effective: a NUL byte in the first 8KB → treat as binary
+  const n = Math.min(buf.length, 8192);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+
+// Guard against path traversal in server-supplied relative paths.
+function safeJoin(base, rel) {
+  const dest = path.resolve(base, rel);
+  if (dest !== base && !dest.startsWith(base + path.sep)) {
+    die(`refusing unsafe path from brain: ${rel}`);
+  }
+  return dest;
+}
+
+// aios push skill <name> — share a skill (SKILL.md as kind 'skill' + references as artifacts)
+async function cmdPushSkill(repo, cfg, patterns, args) {
+  const dryRun = args.includes("--dry-run");
+  const name = args.find((a) => !a.startsWith("--"));
+  if (!name) die("usage: aios push skill <name> [--dry-run]");
+  const skillDir = path.join(repo, ".claude", "skills", name);
+  const skillMd = path.join(skillDir, "SKILL.md");
+  if (!existsSync(skillMd)) die(`no skill '${name}' at .claude/skills/${name}/SKILL.md`);
+
+  const raw = readFileSync(skillMd, "utf8");
+  const { frontmatter } = parseFrontmatter(raw);
+  const tier = normalizeTier(frontmatter?.access || "team");
+  if (tier === "admin") die(`skill '${name}' is access: private — cannot share. Set access: team to share.`);
+  if (!SYNCABLE_TIERS.includes(tier)) die(`skill tier '${tier}' is not syncable (use team or an outward tier)`);
+
+  // reference files = everything under the skill dir except SKILL.md
+  const refs = [];
+  for (const r of listFilesRec(skillDir).sort()) {
+    if (r === "SKILL.md") continue;
+    const buf = readFileSync(path.join(skillDir, r));
+    if (isBinary(buf)) { console.log(c.yellow(`  skip (binary): ${r}`)); continue; }
+    const text = buf.toString("utf8");
+    const secret = findSecret(text, patterns);
+    if (secret) { console.log(c.red(`  skip (secret '${secret}'): ${r}`)); continue; }
+    refs.push({ rel: r, body: text, hash: sha256(text) });
+  }
+
+  const dotenv = loadDotEnv(repo);
+  const member = resolveMember(repo, cfg, dotenv);
+  const base = `.claude/skills/${name}`;
+  const items = [
+    {
+      path: `${base}/SKILL.md`, kind: "skill", body: raw, hash: sha256(raw),
+      frontmatter: {
+        skill: name, access: tier,
+        manifest: { references: refs.map((r) => r.rel) },
+        source_project: cfg.project, source_actor: member,
+      },
+    },
+    ...refs.map((r) => ({
+      path: `${base}/${r.rel}`, kind: "artifact", body: r.body, hash: r.hash,
+      frontmatter: { skill: name, access: tier, skill_ref: true },
+    })),
+  ];
+
+  if (dryRun) {
+    console.log(c.yellow(`DRY RUN — would share skill '${name}' (${items.length} file(s), tier ${tier}):`));
+    for (const it of items) console.log(`  ${it.path} [${it.kind}] sha=${it.hash.slice(0, 12)}`);
+    return;
+  }
+
+  requireOnline(cfg);
+  const state = loadState(repo);
+  let pushed = 0;
+  for (const it of items) {
+    try {
+      const res = await api(cfg, "POST", "/items", {
+        project: cfg.project, path: it.path, kind: it.kind, content_sha256: it.hash,
+        actor: member, access: tier, frontmatter: it.frontmatter, body: it.body,
+      });
+      state.items[it.path] = { sha: it.hash, remote_id: res.id || null, pushed_at: new Date().toISOString() };
+      pushed++;
+      console.log(`  ${c.green("✓")} ${it.path} ${c.dim(`${it.kind} ${res.status || ""}`)}`);
+    } catch (e) {
+      console.log(`  ${c.red("✗")} ${it.path} — ${e.message}`);
+    }
+  }
+  saveState(repo, state);
+  console.log("");
+  console.log(c.green(`shared skill '${name}': ${pushed}/${items.length} file(s) at tier ${tier}.`));
+}
+
+// aios pull skill <name> — fetch SKILL.md + references → 1-inbox/from-brain/skills/<name>/
+async function cmdPullSkill(repo, cfg, args) {
+  const name = args.find((a) => !a.startsWith("--"));
+  if (!name) die("usage: aios pull skill <name>");
+  requireOnline(cfg);
+  const prefix = `.claude/skills/${name}/`;
+  const res = await api(cfg, "GET", `/items?${new URLSearchParams({ path_prefix: prefix })}`);
+  const items = res.items || [];
+  if (!items.length) die(`no skill '${name}' found in the brain (nothing under ${prefix})`);
+
+  const inboxDir = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
+  const destBase = path.join(repo, inboxDir, "from-brain", "skills", name);
+  mkdirSync(destBase, { recursive: true });
+
+  let wrote = 0, provenance = null;
+  for (const it of items) {
+    const rel = it.path.startsWith(prefix) ? it.path.slice(prefix.length) : path.basename(it.path);
+    if (!rel) continue;
+    const dest = safeJoin(destBase, rel);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    writeFileSync(dest, it.body || "");
+    if (it.kind === "skill") provenance = it.frontmatter || {};
+    wrote++;
+    console.log(`  ${c.green("✓")} ${inboxDir}/from-brain/skills/${name}/${rel} ${c.dim(it.kind)}`);
+  }
+  console.log("");
+  console.log(c.green(`pulled skill '${name}': ${wrote} file(s).`));
+  if (provenance) console.log(c.dim(`  source: ${provenance.source_project || "?"} · by ${provenance.source_actor || "?"}`));
+  console.log(c.dim(`  review it, then promote: aios install-skill ${name}`));
+  console.log(c.dim(`  (pulled skills are executable code — install is a deliberate act; they never auto-activate)`));
+}
+
+// aios pull deliverable <path> — fetch one item (or a folder by prefix) on demand
+async function cmdPullDeliverable(repo, cfg, args) {
+  const p = args.find((a) => !a.startsWith("--"));
+  if (!p) die("usage: aios pull deliverable <path>");
+  requireOnline(cfg);
+  const res = await api(cfg, "GET", `/items?${new URLSearchParams({ path_prefix: p })}`);
+  const items = (res.items || []).filter((it) => it.path === p || it.path.startsWith(p));
+  if (!items.length) die(`no item matching '${p}' in the brain (above your tier, or not pushed)`);
+
+  const inboxDir = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
+  let wrote = 0;
+  for (const it of items) {
+    const fromBrain = path.join(repo, inboxDir, "from-brain");
+    const dest = safeJoin(fromBrain, path.join(it.project, it.path));
+    mkdirSync(path.dirname(dest), { recursive: true });
+    const fm = [
+      "---", "from_brain: true", `origin_project: ${it.project}`, `origin_path: ${it.path}`,
+      `origin_actor: ${it.actor || "unknown"}`, `access: ${it.access}`,
+      `pulled_at: ${new Date().toISOString()}`, "---", "",
+    ].join("\n");
+    writeFileSync(dest, fm + (it.body || ""));
+    wrote++;
+    console.log(`  ${c.green("✓")} ${inboxDir}/from-brain/${it.project}/${it.path} ${c.dim(it.kind)}`);
+  }
+  console.log("");
+  console.log(c.green(`pulled ${wrote} item(s) on demand → ${inboxDir}/from-brain/ (append-only).`));
+}
+
+// aios install-skill <name> — promote a pulled skill into .claude/skills/ (offline, explicit)
+function cmdInstallSkill(repo, args) {
+  const force = args.includes("--force");
+  const name = args.find((a) => !a.startsWith("--"));
+  if (!name) die("usage: aios install-skill <name> [--force]");
+  const inboxDir = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
+  const src = path.join(repo, inboxDir, "from-brain", "skills", name);
+  if (!existsSync(src)) die(`no pulled skill '${name}' at ${inboxDir}/from-brain/skills/${name}/ — run: aios pull skill ${name}`);
+  const dest = path.join(repo, ".claude", "skills", name);
+  if (existsSync(dest) && !force) {
+    die(`.claude/skills/${name}/ already exists — refusing to overwrite (append-only). Re-run with --force to replace.`);
+  }
+  let copied = 0;
+  for (const rel of listFilesRec(src)) {
+    const to = path.join(dest, rel);
+    mkdirSync(path.dirname(to), { recursive: true });
+    writeFileSync(to, readFileSync(path.join(src, rel)));
+    copied++;
+  }
+  console.log(c.green(`installed skill '${name}' → .claude/skills/${name}/ (${copied} file(s)).`));
+  console.log(c.dim("pulled skills are executable code — review SKILL.md + workflow before trusting."));
+  console.log(c.dim("refresh the catalog: npm run gen:catalog"));
 }
 
 async function cmdQuery(repo, cfg, args) {
@@ -1053,7 +1240,11 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 usage:
   aios status                           what would sync (new/modified/blocked/clean)
   aios push [--dry-run] [paths…]
-  aios pull                             fetch team updates → 01-intake/from-brain/
+  aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
+  aios pull                             fetch team updates → 1-inbox/from-brain/
+  aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/
+  aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
+  aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
@@ -1068,8 +1259,8 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
-// export-okf and graph are offline-only: no aios.yaml required.
-const OFFLINE_CMDS = new Set(["export-okf", "graph"]);
+// export-okf, graph, install-skill are offline-only: no aios.yaml required.
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1088,7 +1279,8 @@ const patterns = loadSecretPatterns();
 try {
   if (cmd === "status") cmdStatus(repo, cfg, patterns, rest);
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
-  else if (cmd === "pull") await cmdPull(repo, cfg);
+  else if (cmd === "pull") await cmdPull(repo, cfg, rest);
+  else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
