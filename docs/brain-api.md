@@ -13,10 +13,13 @@ both repos. Treat any drift between this doc and either implementation as a bug.
 
 Canonical values: **`admin` | `team` | `external`**.
 
-- `client` is accepted everywhere as a **legacy alias** of `external` and is normalized
-  to `external` on ingest. Responses always use canonical values.
-- `admin` content **never syncs**. The client enforces this (default-deny before any
-  network call); the server independently rejects it with `422`.
+- `client` (consultant context), `company` (employee context), and `private` are the
+  **friendly labels** authors write. `client`/`company` normalize to `external`;
+  `private` normalizes to `admin`. All normalization happens on ingest; responses
+  always use canonical values.
+- `admin` (friendly `private`) content **never syncs**. The client enforces this
+  (default-deny before any network call); the server independently rejects it with
+  `422`.
 - Files with **no `access` frontmatter do not sync** (client-side default-deny). The
   CLI reports them as `blocked` with the reason.
 
@@ -25,7 +28,7 @@ Canonical values: **`admin` | `team` | `external`**.
 `deliverable` | `transcript` | `decision` | `task` | `artifact`
 
 `decision` and `task` items are markdown files containing the canonical status tables
-(`03-status/decision-log.md`, `03-status/tasks.md`). For these, the client also parses
+(`3-log/decision-log.md`, `3-log/tasks.md`). For these, the client also parses
 table rows into `rows[]` so the brain can materialize structured entities.
 
 ---
@@ -71,7 +74,7 @@ One item per request. Idempotent.
 ```json
 {
   "project": "northwind-aios",
-  "path": "02-deliverables/sprint-1/governance-framework.md",
+  "path": "2-work/governance-framework.md",
   "kind": "deliverable",
   "content_sha256": "hex",
   "actor": "alex",
@@ -82,8 +85,8 @@ One item per request. Idempotent.
 }
 ```
 
-- `project`: slug of the contributor repo's project (from `project.yaml` /
-  `engagement.yaml` name, slugified).
+- `project`: slug of the workspace's project (from `workspace.yaml` name —
+  legacy: `project.yaml` / `engagement.yaml` — slugified).
 - `actor`: the resolved member identity (must match a member `actor_handle` on the
   brain side; unknown actors are accepted but flagged in the dashboard provenance).
 - `rows`: present **only** for `kind: decision|task`. Shapes below.
@@ -115,7 +118,8 @@ Status values the client sends verbatim; the server normalizes to
 4. If `rows[]` present: **diff-sync by `row_key`** — upsert all incoming rows; rows
    absent from the payload are deleted **only if** they originated from sync
    (UI-created rows are never deleted by a push).
-5. `access: client` → stored as `external`. `access: admin` → `422 forbidden_tier`.
+5. `access: client`/`company` → stored as `external`. `access: admin`/`private` →
+   `422 forbidden_tier`.
 6. Every accepted push is audit-logged with key id, member, and item path.
 
 **Response:** `201 {"status":"created","id":"uuid"}` /
@@ -139,13 +143,14 @@ server-side in SQL), updated strictly after `since`. Keyset-paginated:
 
 Pass `cursor=<next_cursor>` to continue. Page size 200.
 
-The CLI writes pulled items **append-only** under `01-intake/from-brain/` — it never
-overwrites working files; promotion into the spine stays a deliberate human act.
+The CLI writes pulled items **append-only** under `1-inbox/from-brain/` (legacy:
+`01-intake/from-brain/`) — it never overwrites working files; promotion into the
+spine stays a deliberate human act.
 
 ## `GET /api/v1/tasks?since=<ISO8601>` — task writeback
 
 Returns task rows created or modified **in the dashboard UI** since the cursor, so the
-CLI can merge them into the local `03-status/tasks.md`:
+CLI can merge them into the local `3-log/tasks.md`:
 
 ```json
 {
@@ -224,13 +229,13 @@ X-AIOS-Team: <team_id>
     "generated_at": "ISO8601",
     "nodes": [
       {
-        "path": "02-deliverables/sprint-1/governance-framework.md",
+        "path": "2-work/governance-framework.md",
         "title": "Governance Framework",
         "kind": "deliverable",
         "access": "team",
         "frontmatter": { "status": "final", "owner": "jordan", "sprint": "sprint-1" },
         "links": [
-          "../../03-status/decision-log.md",
+          "../3-log/decision-log.md",
           "ai-readiness-assessment-report.md"
         ],
         "body": null

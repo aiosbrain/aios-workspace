@@ -1,24 +1,40 @@
-# Agentic Team Ops
+# AIOS Workspace
 
-An open, agent-native operating system for teams — product, engineering, design,
-consulting, and transformation alike.
+An open, agent-native operating system for **an individual contributor** — the
+workspace you work in day to day and from which you push selected output to a
+shared [AIOS Team Brain](docs/brain-api.md).
 
-Agentic Team Ops gives a team **a clean folder structure**, a set of
-**governance conventions**, **validators** that keep a repo honest, a growing
-library of **dynamic multi-agent workflow harnesses** that do real operational work —
+AIOS Workspace gives you **a clean folder structure**, a set of **governance
+conventions**, **validators** that keep the repo honest, a growing library of
+**dynamic multi-agent workflow harnesses** that do real operational work —
 auditing a decision log, catching scope creep, turning meeting transcripts into
-decisions, synthesizing the week — with **adversarial verification and rubric-gated
-self-correction** so their output is trustworthy, and an optional **sync client +
-local GUI** for connecting to an [AIOS Team Brain](docs/brain-api.md).
+decisions, synthesizing the week — with **adversarial verification and
+rubric-gated self-correction** so their output is trustworthy, and a **sync
+client + local GUI** for deciding what leaves your machine and pushing it to the
+brain.
 
-It is designed to be **forked per team or project**: scaffold a new team-ops repo,
-fill in the numbered spine as the work runs, and point the harnesses at it.
+There are **two repositories** in AIOS, and they are not the same thing:
+
+- **This repo — the individual workspace.** One per person. You work here; you
+  choose what to share. Nothing leaves until you `aios push` it.
+- **The [Team Brain](docs/brain-api.md).** The *one* shared service that receives
+  everyone's pushes and answers questions across the team. It is the only "team"
+  layer.
+
+It is designed to be **cloned per person and shaped to your context**, asked once
+at onboarding:
+
+> **Are you a consultant working in a team for a client**, or **an employee
+> working inside a company?**
+
+Your answer selects the spine that scaffolds — the same skeleton with a context
+skin (client/engagement framing, or internal role/OKR framing).
 
 ```
-agentic-team-ops/
-├── scaffold/        the team-ops repo template (structure + rules + skills)
+aios-workspace/
+├── scaffold/        the workspace template (structure + rules + skills)
 │   └── .claude/
-│       ├── rules/    decision-log · frontmatter · publishing · hours
+│       ├── rules/    decision-log · frontmatter · publishing · hours · interlinking
 │       ├── skills/   dynamic-workflow harnesses (decision-audit, scope-creep,
 │       │             transcript-decisions, weekly-synthesis, aios-sync)
 │       ├── rubrics/  checkable criteria for rubric-gated self-correction
@@ -27,29 +43,37 @@ agentic-team-ops/
 ├── hooks/           Claude Code guards (secrets · access · frontmatter · sync nudge)
 ├── scripts/         scaffold-project.sh · aios.mjs (Team Brain sync CLI) · leak-gate.sh
 ├── gui/             local web GUI — chat with this repo via the Claude Agent SDK
-├── examples/        a fully synthetic sample engagement to demo + test the harnesses
+├── examples/        a fully synthetic sample to demo + test the harnesses
 └── docs/            architecture · feature-set · workflows · brain-api (sync contract)
 ```
 
 ## Quickstart
 
-Spawn a new team repo:
+Scaffold your workspace — pick the context that matches how you work:
 
 ```bash
-scripts/scaffold-project.sh \
-  --slug acme-team-ops --stakeholder "Acme Corp" \
-  --lead alex --members "alex,sam,jordan" \
+# Consultant working in a team for a client:
+scripts/scaffold-project.sh --context consultant \
+  --slug acme-workspace --stakeholder "Acme Corp" \
+  --owner alex --team "alex,sam,jordan" \
   --org your-github-org \
-  --output ~/Projects/acme-team-ops
+  --output ~/Projects/acme-workspace
+
+# Employee working inside a company:
+scripts/scaffold-project.sh --context employee \
+  --slug alex-workspace --stakeholder "Acme Inc" \
+  --owner alex --team "alex,sam,jordan" \
+  --org your-github-org \
+  --output ~/Projects/alex-workspace
 ```
 
-(Consulting teams: `--profile engagement` keeps the legacy layout —
-`scaffold-engagement.sh` still works and does exactly that.)
+(Legacy flags still work: `--profile engagement` maps to `--context consultant`,
+and `--lead`/`--captain`/`--client`/`--members` are accepted as aliases.)
 
-Validate any team-ops repo:
+Validate any workspace:
 
 ```bash
-validation/validate-all.sh ~/Projects/acme-team-ops
+validation/validate-all.sh ~/Projects/acme-workspace
 ```
 
 Run a harness (via Claude Code's Workflow tool) against the included sample:
@@ -62,7 +86,7 @@ Workflow({
 ```
 
 Prefer to just see results? [`examples/sample-output/`](examples/sample-output/) has
-real harness output on the synthetic engagement — a decision-log audit (9 verified
+real harness output on the synthetic sample — a decision-log audit (9 verified
 findings, false positives filtered out), a scope-creep register, and decisions
 extracted from meeting transcripts.
 
@@ -72,45 +96,58 @@ Connect to a Team Brain (optional — everything works offline without one):
 cp .env.example .env          # add your AIOS_API_KEY
 git config aios.member alex   # your identity
 aios status                   # what would sync, what's blocked, why
-aios push                     # push team/external-tier content
+aios push                     # push team- and outward-tier content
 aios query "what's blocking sprint 2?"
 ```
 
 Chat with your repo in a browser instead of the terminal:
 
 ```bash
-npm run gui -- --repo ~/Projects/acme-team-ops
+npm run gui -- --repo ~/Projects/acme-workspace
 ```
 
 ## The numbered spine
 
-Every team repo uses the same six-folder pipeline, raw → refined:
+Every workspace uses the same six-folder pipeline, raw → refined. The `0-context`
+and `4-shared` folders take a context skin; the rest are identical either way:
 
 | # | Folder | Holds | Audience |
 |---|--------|-------|----------|
-| 00 | project | charter, scope baseline + ledger, roles | team |
-| 01 | intake | raw inputs (transcripts, notes, from-brain) | admin |
-| 02 | deliverables | sprint-scoped team outputs | team |
-| 03 | status | decision log, hours, tasks | admin |
-| 04 | shared | lead-approved, externally shareable | external |
-| 05 | personal | per-member private workspace | individual |
+| 0 | context | consultant: charter, scope baseline + ledger · employee: role, OKRs | team |
+| 1 | inbox | raw inputs (transcripts, notes, from-brain) | private |
+| 2 | work | your deliverables and working docs | team |
+| 3 | log | decision log, tasks, hours | private |
+| 4 | shared | outward-facing — client (consultant) or company (employee) | external |
+| 5 | personal | your private workspace | private |
+
+## Access tiers
+
+You choose what leaves your machine. Content is tagged with a **friendly** tier
+label that maps to the engine's **canonical** tier:
+
+| Friendly (consultant) | Friendly (employee) | Canonical | Syncs? |
+|---|---|---|---|
+| `private` | `private` | `admin` | never |
+| `team` | `team` | `team` | yes — to the team brain |
+| `client` | `company` | `external` | yes — outward-facing |
+
+**Default-deny:** untagged content and anything `private`/`admin` never syncs.
+Promotion is always a deliberate `aios push`.
 
 ## Terminology
 
 The toolkit started life in consulting; both vocabularies are accepted everywhere
-(validators, hooks, harnesses) and forks never need to rename:
+(validators, hooks, harnesses) and existing clones never need to rename:
 
-| Concept | Canonical | Legacy alias |
+| Concept | Current | Legacy alias |
 |---|---|---|
-| Unit of work | project | engagement |
-| Spine 00 | `00-project/` | `00-engagement/` |
-| Spine 04 | `04-shared/` | `04-client-surface/` |
-| Root config | `project.yaml` | `engagement.yaml` |
-| Team lead | lead | captain |
-| Counterparty | stakeholder | client |
-| Access tier | `external` | `client` |
-
-Access tiers: `admin` (never leaves the repo) · `team` · `external`.
+| Onboarding selector | `--context consultant\|employee` | `--profile project\|engagement` |
+| Spine 0 | `0-context/` | `00-project/` · `00-engagement/` |
+| Spine 4 | `4-shared/` | `04-shared/` · `04-client-surface/` |
+| Root config | `workspace.yaml` | `project.yaml` · `engagement.yaml` |
+| Owner | `--owner` | `--lead` · `--captain` |
+| Counterparty | `--stakeholder` | `--client` |
+| Outward tier | `client`/`company` (→`external`) | — |
 
 See [`docs/architecture.md`](docs/architecture.md) for the hub-and-spoke model and
 access tiers, [`docs/feature-set.md`](docs/feature-set.md) for the full feature set,
