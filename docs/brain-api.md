@@ -25,11 +25,41 @@ Canonical values: **`admin` | `team` | `external`**.
 
 ### Item kinds
 
-`deliverable` | `transcript` | `decision` | `task` | `artifact`
+`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill`
 
 `decision` and `task` items are markdown files containing the canonical status tables
 (`3-log/decision-log.md`, `3-log/tasks.md`). For these, the client also parses
 table rows into `rows[]` so the brain can materialize structured entities.
+
+**Forward-compat:** clients MUST ignore item kinds they don't recognize (a v1 client
+that predates `skill` simply skips those items on pull). New kinds are additive.
+
+### Skills (kind `skill`)
+
+A shared skill is published as multiple items under one path prefix
+`.claude/skills/<name>/`:
+
+- **`.claude/skills/<name>/SKILL.md`** — kind `skill`. Unlike other kinds, its `body`
+  carries the **full SKILL.md including its own frontmatter** (so pull is lossless and
+  the skill is runnable verbatim). Its item `frontmatter` carries a manifest:
+
+  ```json
+  {
+    "skill": "<name>",
+    "access": "team",
+    "manifest": { "references": ["decision-audit.workflow.js"] },
+    "source_project": "<origin workspace slug>",
+    "source_actor": "<member who shared it>"
+  }
+  ```
+
+- **`.claude/skills/<name>/<ref>`** — each reference file as kind `artifact`, with
+  `frontmatter.skill = <name>` and `frontmatter.skill_ref = true`.
+
+Skills are team- or outward-tier only (never `admin`/`private`). Pull a whole skill
+with `?path_prefix=.claude/skills/<name>/`. Installation into a workspace's live
+`.claude/skills/` is always an explicit client-side act — pulled skills never
+auto-activate.
 
 ---
 
@@ -125,10 +155,14 @@ Status values the client sends verbatim; the server normalizes to
 **Response:** `201 {"status":"created","id":"uuid"}` /
 `200 {"status":"updated"|"unchanged","id":"uuid"}`
 
-## `GET /api/v1/items?since=<ISO8601>&project=<slug>&kinds=a,b` — pull
+## `GET /api/v1/items?since=<ISO8601>&project=<slug>&kinds=a,b&path_prefix=<p>` — pull
 
 Returns items the calling key's member tier may see (tier filtering is re-applied
-server-side in SQL), updated strictly after `since`. Keyset-paginated:
+server-side in SQL), updated strictly after `since`. Keyset-paginated.
+
+Query params: `since`, `cursor`, `project`, `kinds` (comma list), and **`path_prefix`**
+— restrict to items whose `path` begins with the prefix (used for on-demand fetches:
+a whole skill folder via `.claude/skills/<name>/`, or one deliverable by its path).
 
 ```json
 {
@@ -146,6 +180,26 @@ Pass `cursor=<next_cursor>` to continue. Page size 200.
 The CLI writes pulled items **append-only** under `1-inbox/from-brain/` (legacy:
 `01-intake/from-brain/`) — it never overwrites working files; promotion into the
 spine stays a deliberate human act.
+
+## `GET /api/v1/items/<id>` — fetch one item
+
+Returns a single item by id, tier-filtered (an external-tier key gets `404` for a
+team item). Same object shape as one element of the `items[]` array above. `404
+not_found` if the id doesn't exist or is above the caller's tier. Used by on-demand
+pulls and dashboard detail views.
+
+## On-demand pull (client commands)
+
+The CLI exposes these over the endpoints above:
+
+- `aios push skill <name>` — publish `.claude/skills/<name>/` (SKILL.md as kind
+  `skill` + references as `artifact`s).
+- `aios pull skill <name>` — `GET …?path_prefix=.claude/skills/<name>/` → write to
+  `1-inbox/from-brain/skills/<name>/` with provenance.
+- `aios pull deliverable <path>` — `GET …?path_prefix=<path>` → write under
+  `1-inbox/from-brain/<project>/<path>`.
+- `aios install-skill <name>` — promote a pulled skill into `.claude/skills/`
+  (offline, append-only, explicit; refuses to overwrite without `--force`).
 
 ## `GET /api/v1/tasks?since=<ISO8601>` — task writeback
 
