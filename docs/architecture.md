@@ -1,68 +1,79 @@
 # Architecture
 
-Agentic Team Ops is built around three ideas: a **hub-and-spoke** layout, a
-**numbered spine** per engagement, and **access tiers** that travel with the content.
+AIOS is built around four ideas: a **two-repo model** (individual workspace ↔
+Team Brain), a **context-driven numbered spine**, **access tiers** that travel
+with the content, and **default-deny sync**.
 
-## Hub and spokes
+## Two repositories
 
-A consulting practice runs one private **hub** and many **spokes**.
+AIOS has exactly two kinds of repository, and conflating them is the most common
+mistake:
 
-- **Hub** — the practice's private admin repo: every engagement's sensitive material
-  (pricing, legal, strategy), plus the shared infrastructure that spawns and governs
-  spokes. The hub is not part of this open-source project; this project is the
-  *toolkit* a hub is built from.
-- **Spoke** — one **team-ops repo per engagement**, shared with the delivery team (and,
-  at the right tier, the client). A spoke is scaffolded from this project's
-  `scaffold/` template and governed by the same rules and validators.
+- **The individual workspace** (this toolkit's output) — **one per person**. You
+  work here. It holds your intake, your work, your logs, and your private notes.
+  Nothing in it is shared until you deliberately push it.
+- **The Team Brain** — the *one* shared service (its own repo: `aios-team-brain`)
+  that receives everyone's pushes, stores tier-filtered content, and answers
+  questions across the team. It is the only "team" layer.
 
 ```
-            this toolkit (open source)
-                     │ scaffold-engagement.sh
-        ┌────────────┼────────────┐
-   acme-team-ops  globex-team-ops  …      ← spokes (one per client)
+        this toolkit (open source)
+                 │ scaffold-project.sh --context …
+   ┌─────────────┼─────────────┐
+ alex-workspace  sam-workspace  …      ← individual workspaces (one per person)
+   └──────┬──────┴──────┬──────┘
+          │  aios push   │               (only tagged team/outward content)
+          ▼              ▼
+            AIOS Team Brain               ← the one shared hub
+            (aios-team-brain)
 ```
 
-Cross-engagement isolation is enforced by repository boundaries: a collaborator on
-one spoke cannot see another. The hub is the only place that sees across engagements.
+The brain is the hub; each person's workspace is a spoke. A spoke only ever sends
+content the person has explicitly tagged and pushed; the brain re-applies tier
+filtering on retrieval so a query never returns content above the caller's ceiling.
 
-## The numbered spine
+## Context-driven spine
 
-Every engagement — and every person's private workspace inside it — uses the same
-six-folder pipeline. Numbers encode maturity: content flows from raw capture (low
-numbers) to refined, client-facing output (high numbers).
+At onboarding the individual answers one question — *consultant working in a team
+for a client*, or *employee working inside a company* — and that selects the spine
+skin. Both skins share one skeleton so the harnesses and validators stay generic;
+only `0-context` and `4-shared` (and the tier labels) differ.
 
-| # | Folder | Holds | Default audience |
-|---|--------|-------|------------------|
-| 00 | engagement | charter, scope baseline + ledger, roles | team |
-| 01 | intake | raw inputs: transcripts, notes, reference | admin |
-| 02 | deliverables | sprint-scoped team outputs | team |
-| 03 | status | decision log, hours, tasks, ledgers | admin |
-| 04 | client-surface | captain-approved, client-facing artifacts | client |
-| 05 | personal | per-member private workspace (mirrors 00–04) | individual |
+| # | Folder | Consultant skin | Employee skin | Default audience |
+|---|--------|-----------------|---------------|------------------|
+| 0 | context | charter, scope baseline + ledger | role, OKRs | team |
+| 1 | inbox | raw inputs: transcripts, notes, from-brain | (same) | private |
+| 2 | work | your deliverables and working docs | (same) | team |
+| 3 | log | decision log, tasks, hours | (same) | private |
+| 4 | shared | client-facing artifacts | company-wide artifacts | external |
+| 5 | personal | your private workspace | (same) | private |
 
-Promotion through the spine is deliberate (see `scaffold/.claude/rules/publishing.md`):
-personal draft → team deliverable → client-surface, with a review or approval at each
-step. Nothing is auto-promoted.
+Numbers encode maturity: content flows from raw capture (low numbers) to refined,
+outward-facing output (high numbers). Promotion is deliberate (see
+`scaffold/.claude/rules/publishing.md`): personal draft → team work → shared, with
+a review or approval at each step. Nothing is auto-promoted.
 
 ## Access tiers
 
-Each file carries an audience tier in frontmatter (`access: admin | team | external`;
-`client` is accepted everywhere as a legacy alias of `external` — see
-[`brain-api.md`](brain-api.md)). The tiers are a contract:
+Each file carries an audience tier in frontmatter. Friendly labels map to the
+engine's canonical tiers (the brain and sync engine only ever see canonical):
 
-- **admin** — internal only (pricing, strategy, raw analysis). **Never syncs** to a
-  Team Brain; never leaves the machine.
-- **team** — the delivery team.
-- **external** (legacy: `client`) — appropriate to share outside the team; recorded
-  in the client-surface log when it is.
+| Friendly (consultant) | Friendly (employee) | Canonical | Behavior |
+|---|---|---|---|
+| `private` | `private` | `admin` | internal only — **never syncs**, never leaves the machine |
+| `team` | `team` | `team` | the delivery team / department, via the brain |
+| `client` | `company` | `external` | appropriate to share outward; recorded in `4-shared/` |
+
+(`client`, `company`, and `external` are interchangeable on input — all normalize
+to canonical `external`. See [`brain-api.md`](brain-api.md).)
 
 Tiers are enforced in three places: the **guard hook** (`hooks/team-ops-guard.sh`)
-blocks admin-only content from being written into team/external directories, the
+blocks private/admin content from being written into team/shared directories, the
 **validators** check that frontmatter is present and well-formed, and the **sync
 client** (`scripts/aios.mjs`) default-denies anything not explicitly tiered within
 `aios.yaml: sync_tiers` before a single byte goes over the network. On the Team
-Brain side, retrieval is tier-filtered in SQL so a query never returns content above
-the caller's ceiling.
+Brain side, retrieval is tier-filtered in SQL so a query never returns content
+above the caller's ceiling.
 
 ## Why agent-native
 

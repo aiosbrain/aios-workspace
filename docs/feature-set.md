@@ -1,43 +1,49 @@
-# Agentic Team Ops — Feature Set
+# AIOS Workspace — Feature Set
 
-A complete tour of what the system does today and where it's going. Agentic Team Ops
-is an **agent-native operating system for consulting and transformation teams**: a
-shared structure, a set of governance conventions, validators that keep repos honest,
+A complete tour of what the system does today and where it's going. AIOS Workspace
+is an **agent-native operating system for an individual contributor**: a clean
+structure, a set of governance conventions, validators that keep the repo honest,
 and a library of multi-agent workflow harnesses that do real operational work with
-verifiable output.
+verifiable output — plus a sync client for pushing selected work to a shared
+Team Brain.
 
-It is **fork-per-client**: a practice scaffolds one team-ops repo per engagement and
-runs the same conventions, validators, and harnesses across all of them.
+It is **clone-per-person, shaped-to-context**: each individual scaffolds their own
+workspace, picking the context (consultant-for-a-client or employee-in-a-company)
+that selects the spine skin, and runs the same conventions, validators, and
+harnesses inside it.
 
 ---
 
 ## 1. The operating model
 
-### Hub and spokes
-A practice keeps one private **hub** and many **spokes** — one team-ops repo per
-engagement, scaffolded from the same template, shared with the delivery team at the
-right access tier. Repository boundaries enforce cross-engagement isolation. (This
-open-source project is the *toolkit*; a hub is built from it.)
+### Two repositories
+AIOS has two kinds of repo: the **individual workspace** (this toolkit's output,
+one per person) and the **Team Brain** (`aios-team-brain`, the one shared hub that
+receives pushes). The brain is the hub; each workspace is a spoke that pushes only
+the content its owner has tagged and chosen. See `architecture.md`.
 
-### The numbered spine
-Every engagement uses the same six-folder pipeline — `00-engagement`, `01-intake`,
-`02-deliverables`, `03-status`, `04-client-surface`, `05-personal` — encoding maturity
-from raw capture to client-facing output. Content is promoted deliberately, with a
-review or approval at each step.
+### The context-driven spine
+Every workspace uses the same six-folder pipeline — `0-context`, `1-inbox`,
+`2-work`, `3-log`, `4-shared`, `5-personal` — encoding maturity from raw capture to
+outward-facing output. The `0-context` and `4-shared` folders take a context skin
+(consultant or employee); the rest are identical. Content is promoted deliberately,
+with a review or approval at each step.
 
 ### Access tiers
-Every file carries an audience tier (`admin | team | client`) in frontmatter. Tiers
-are enforced by the guard hook and the validators, and (on the roadmap) by access-aware
-retrieval. See `architecture.md`.
+Every file carries a friendly audience tier (`private | team | client`/`company`)
+in frontmatter, mapping to canonical `admin | team | external`. Tiers are enforced
+by the guard hook, the validators, the sync client (default-deny), and tier-filtered
+retrieval on the brain. See `architecture.md`.
 
 ---
 
 ## 2. Scaffolding
 
-`scripts/scaffold-engagement.sh` spawns a complete team-ops repo from
-`scaffold/`: the full numbered spine, per-member personal workspaces, starter status
-files (decision log, hours, tasks), CODEOWNERS, and the shipped governance rules and
-harness skills. One command, a ready-to-run engagement repo.
+`scripts/scaffold-project.sh --context consultant|employee` spawns a complete
+workspace from `scaffold/`: the full numbered spine with the right context skin, the
+personal workspace, starter log files (decision log, hours, tasks), CODEOWNERS, and
+the shipped governance rules and harness skills. One command, a ready-to-run
+workspace. (`scaffold-engagement.sh` remains as a back-compat shim → consultant.)
 
 The template (`scaffold/.claude/`) ships:
 - **Conventions** (`rules/`): decision-log format + type/audience taxonomy, frontmatter
@@ -48,7 +54,7 @@ The template (`scaffold/.claude/`) ships:
 
 ## 3. Validators (OGR)
 
-Pure-shell, dependency-free checks you can point at any team-ops repo, also wired into
+Pure-shell, dependency-free checks you can point at any workspace, also wired into
 CI:
 
 | Validator | Checks |
@@ -64,9 +70,10 @@ CI:
 ## 4. Guard hook
 
 `hooks/team-ops-guard.sh` is a Claude Code PreToolUse hook that fires on every
-Write/Edit and blocks: (1) secrets, (2) admin-tier content (rates, margins, P&L,
-strategy) written into team/client directories, and (3) markdown deliverables missing
-frontmatter. Prevention at authoring time, before anything reaches version control.
+Write/Edit and blocks: (1) secrets, (2) private/admin-tier content (rates, margins,
+P&L, strategy) written into team/shared directories, and (3) markdown deliverables
+missing frontmatter. Prevention at authoring time, before anything reaches version
+control.
 
 ---
 
@@ -88,7 +95,7 @@ harness trustworthy.** A fan-out without an independent grounding step can ampli
 single agent's error and do *worse* than a single pass. The harnesses encode ten
 conventions distilled from that study (`workflows.md`, `scaffold/.claude/skills/README.md`).
 
-Every harness is a **template**, tuned per engagement via `args`, read-only (it returns
+Every harness is a **template**, tuned per workspace via `args`, read-only (it returns
 data; the caller writes), and demonstrated against the synthetic `examples/sample-engagement/`.
 
 ---
