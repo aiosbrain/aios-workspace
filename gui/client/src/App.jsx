@@ -89,8 +89,8 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, permissions]);
 
-  const sendMessage = () => {
-    const text = input.trim();
+  const sendMessage = (override) => {
+    const text = (typeof override === "string" ? override : input).trim();
     if (!text || !connected) return;
     append({ kind: "user", text });
     wsRef.current?.send(JSON.stringify({ type: "user_message", text }));
@@ -105,20 +105,24 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <div className="title">
-          <span className="dot" data-on={connected} />
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark" />
           AIOS Workspace
+          <span className="brand-status" data-on={connected} title={connected ? "Connected" : "Connecting…"} />
         </div>
-        <nav className="tabs">
-          <button className={view === "chat" ? "tab on" : "tab"} onClick={() => setView("chat")}>Chat</button>
-          <button className={view === "integrations" ? "tab on" : "tab"} onClick={() => setView("integrations")}>Integrations</button>
-          <button className={view === "review" ? "tab on" : "tab"} onClick={() => setView("review")}>Review &amp; push</button>
+        <nav className="side-nav">
+          <button className={`side-link${view === "chat" ? " on" : ""}`} onClick={() => setView("chat")}>{NAV_ICONS.chat} Chat</button>
+          <button className={`side-link${view === "integrations" ? " on" : ""}`} onClick={() => setView("integrations")}>{NAV_ICONS.integrations} Integrations</button>
+          <button className={`side-link${view === "review" ? " on" : ""}`} onClick={() => setView("review")}>{NAV_ICONS.review} Review &amp; Push</button>
         </nav>
-        <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Local — keys stay here</div>
-        <div className="repo" title={repo}>{repo}</div>
-      </header>
+        <div className="side-foot">
+          <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Keys stay on this machine</div>
+          <div className="repo" title={repo}>{repo}</div>
+        </div>
+      </aside>
 
+      <div className="app-main">
       {view === "review" && <ReviewPanel />}
       {view === "integrations" && (
         <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
@@ -129,9 +133,16 @@ export default function App() {
       <main>
         {messages.length === 0 && (
           <div className="empty">
-            <p>Chat with your team-ops repo. Skills, rules, and the guard
-            hook are live — try <em>"run the aios-sync skill"</em> or
-            <em> "what changed this week?"</em></p>
+            <p>Welcome to your workspace. Start by letting the agent learn who you are.</p>
+            <button
+              className="empty-cta"
+              disabled={!connected}
+              onClick={() => sendMessage("Set me up — interview me about who I am and what I'm working on, then update my profile in .claude/CLAUDE.md.")}
+            >
+              ✨ Set up your profile
+            </button>
+            <p className="empty-sub">…or just chat. Skills, rules, and the guard hook are live —
+              try <em>"what changed this week?"</em> or connect a tool in <em>Integrations</em>.</p>
           </div>
         )}
         {messages.map((m, i) => {
@@ -175,9 +186,29 @@ export default function App() {
       </footer>
       </>
       )}
+      </div>
     </div>
   );
 }
+
+const NAV_ICONS = {
+  chat: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  integrations: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  ),
+  review: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19V6M5 13l7-7 7 7" />
+    </svg>
+  ),
+};
 
 function ReviewPanel() {
   const [plan, setPlan] = useState(null);

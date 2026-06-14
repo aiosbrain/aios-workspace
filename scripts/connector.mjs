@@ -82,11 +82,17 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
   const url = resolve(v.url, values);
   const checks = [];
 
+  const init = { method: v.method || "GET", headers };
+  if (v.body) {
+    init.body = typeof v.body === "string" ? v.body : JSON.stringify(v.body);
+    if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  }
+
   let res, json;
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    res = await fetch(url, { method: v.method || "GET", headers, signal: ctrl.signal });
+    res = await fetch(url, { ...init, signal: ctrl.signal });
     clearTimeout(t);
   } catch (e) {
     const offline = e.name === "AbortError";
@@ -104,14 +110,17 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
     checks.push({ name: "reachable", ok: false, detail: `unexpected response (HTTP ${res.status})` });
     return { ok: false, checks, identity: null, instance: null, error: "unexpected_status" };
   }
-  checks.push({ name: "reachable", ok: true, detail: "key accepted" });
-
-  // json_has assertions
-  let ok = true;
-  for (const key of (v.expect && v.expect.json_has) || []) {
-    const present = json && getPath(json, key) != null;
-    if (!present) ok = false;
+  // Some APIs return 200 even for bad keys (Slack `{ok:false}`, GraphQL `{errors}`):
+  // treat a declared `expect.ok_path` / `expect.json_has` miss as a rejected key.
+  const okPathFail = v.expect && v.expect.ok_path && getPath(json, v.expect.ok_path) !== true;
+  const jsonHasFail = (v.expect && v.expect.json_has || []).some((k) => !(json && getPath(json, k) != null));
+  if (okPathFail || jsonHasFail) {
+    const reason = json && json.error ? `rejected (${json.error})` : "key rejected — invalid, revoked, or lacks access";
+    checks.push({ name: "reachable", ok: false, detail: reason });
+    return { ok: false, checks, identity: null, instance: null, error: "invalid_key" };
   }
+  checks.push({ name: "reachable", ok: true, detail: "key accepted" });
+  let ok = true;
 
   // scope probe (optional second call)
   if (v.scope_probe) {
@@ -134,7 +143,14 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
   const instance = v.instance_check ? { label: v.instance_check.label || "Workspace", value: v.instance_check.json_path ? getPath(json, v.instance_check.json_path) : null } : null;
   if (instance && instance.value) checks.push({ name: "workspace", ok: true, detail: instance.value });
 
-  return { ok, checks, identity, instance, error: ok ? null : "incomplete" };
+  // capture derived env values from the response (e.g. Slack team_id) to store too
+  const captured = {};
+  for (const [env, jp] of Object.entries(v.capture || {})) {
+    const val = getPath(json, jp);
+    if (val != null) captured[env] = String(val);
+  }
+
+  return { ok, checks, identity, instance, captured, error: ok ? null : "incomplete" };
 }
 
 // ── secret vault (dotenvx) ───────────────────────────────────────────────────

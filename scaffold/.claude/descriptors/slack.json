@@ -1,0 +1,39 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "category": "chat",
+  "descriptor_version": "1.0.0",
+  "transport": "mcp",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Read channels and threads, post messages, pull conversation context.",
+  "secrets": [
+    { "env": "SLACK_BOT_TOKEN", "label": "Bot User OAuth token", "required": true, "placeholder": "xoxb-…" }
+  ],
+  "scopes": ["channels:read", "channels:history", "chat:write", "users:read"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": "https://api.slack.com/apps",
+    "scopes_url": "https://docs.slack.dev/reference/scopes",
+    "instructions": "Create a Slack app → OAuth & Permissions → add the bot scopes below → Install to Workspace → copy the Bot User OAuth Token (xoxb-…). The workspace ID is captured for you on connect.",
+    "verified_against_docs": "2026-06-14"
+  },
+  "mcp": {
+    "server_key": "slack",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-slack"],
+    "env_map": {
+      "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}",
+      "SLACK_TEAM_ID": "${SLACK_TEAM_ID}"
+    }
+  },
+  "validate": {
+    "method": "GET",
+    "url": "https://slack.com/api/auth.test",
+    "headers": { "Authorization": "Bearer ${SLACK_BOT_TOKEN}" },
+    "expect": { "status": 200, "ok_path": "ok" },
+    "identity": { "json_path": "user", "label": "Bot" },
+    "instance_check": { "json_path": "team", "label": "Workspace" },
+    "capture": { "SLACK_TEAM_ID": "team_id" }
+  }
+}

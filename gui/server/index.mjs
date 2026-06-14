@@ -123,7 +123,7 @@ const server = http.createServer((req, res) => {
             res.writeHead(422, { "Content-Type": "application/json" });
             return res.end(JSON.stringify({ ok: false, validation: result }));
           }
-          const stored = storeConnector(repo, d, secrets);
+          const stored = storeConnector(repo, d, { ...secrets, ...(result.captured || {}) });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, ...stored, identity: result.identity, instance: result.instance }));
         } catch (e) {
