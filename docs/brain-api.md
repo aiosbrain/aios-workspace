@@ -197,9 +197,9 @@ embedding-based retrieval (server may add it transparently — contract unchange
 
 ## OKF Bundle endpoint (Tier 3 extension)
 
-> **Status:** Contract only. The brain implementation lives in a separate repo.
-> Both sides build against this document; treat any drift as a bug.
-> The v1 endpoints above are unchanged.
+> **Status:** Implemented (brain: `app/api/v1/okf-bundle/route.ts`; client:
+> `aios pull-bundle`). Both sides build against this document; treat any drift
+> as a bug. The v1 endpoints above are unchanged.
 
 ### `GET /api/v1/okf-bundle` — pull the engagement's OKF link graph
 
@@ -243,9 +243,9 @@ X-AIOS-Team: <team_id>
 
 **Server semantics (normative):**
 
-1. The server extracts markdown links from every pushed item body at ingest time and stores the link graph denormalized on the item record.
-2. `GET /okf-bundle` materializes the stored graph without re-parsing bodies.
-3. Links are stored as document-relative paths (same format the client writes). The server does not validate them — broken links are preserved so clients can report them.
+1. The server derives the markdown link graph from item bodies using the same link grammar as the client (`[text](relative.md|.yaml)`, excluding anchors and URLs). Whether it does so at ingest (denormalized) or on read is an implementation detail; output is identical. (Current brain: on read.)
+2. `GET /okf-bundle` returns the same graph regardless of extraction timing.
+3. Links are document-relative paths (same format the client writes). The server does not validate them — broken or cross-project links are preserved so clients can report them.
 4. `include_body=false` is the primary mode for graph hydration. `include_body=true` is rate-limited at 10/min per key because it returns full text.
 5. **Tier filtering:** The same SQL tier filter as `GET /items` applies. `links[]` is also filtered: links pointing to documents above the caller's tier ceiling are redacted.
 
