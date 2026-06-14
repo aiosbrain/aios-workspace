@@ -10,6 +10,7 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 
 export default function App() {
   const [repo, setRepo] = useState("");
+  const [view, setView] = useState("chat"); // "chat" | "review"
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState([]); // {kind, ...}
   const [input, setInput] = useState("");
@@ -107,11 +108,19 @@ export default function App() {
       <header>
         <div className="title">
           <span className="dot" data-on={connected} />
-          Team Ops
+          AIOS Workspace
         </div>
+        <nav className="tabs">
+          <button className={view === "chat" ? "tab on" : "tab"} onClick={() => setView("chat")}>Chat</button>
+          <button className={view === "review" ? "tab on" : "tab"} onClick={() => setView("review")}>Review &amp; push</button>
+        </nav>
         <div className="repo" title={repo}>{repo}</div>
       </header>
 
+      {view === "review" && <ReviewPanel />}
+
+      {view === "chat" && (
+      <>
       <main>
         {messages.length === 0 && (
           <div className="empty">
@@ -159,6 +168,102 @@ export default function App() {
           {busy ? "…" : "Send"}
         </button>
       </footer>
+      </>
+      )}
+    </div>
+  );
+}
+
+function ReviewPanel() {
+  const [plan, setPlan] = useState(null);
+  const [error, setError] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [output, setOutput] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null); setOutput("");
+    try {
+      const res = await fetch(`/api/review?token=${token}`);
+      if (!res.ok) throw new Error(`review failed (${res.status})`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setPlan(data);
+      // default: select every pushable (new + modified) file
+      const all = [...(data.items.new || []), ...(data.items.modified || [])].map((i) => i.rel);
+      setSelected(new Set(all));
+    } catch (e) { setError(e.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = (rel) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(rel)) next.delete(rel); else next.add(rel);
+    return next;
+  });
+
+  const push = async (dryRun) => {
+    setBusy(true); setOutput("");
+    try {
+      const res = await fetch(`/api/push?token=${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths: [...selected], dryRun }),
+      });
+      const data = await res.json();
+      setOutput(data.output || data.error || "(no output)");
+      if (!dryRun && data.ok) load(); // refresh status after a real push
+    } catch (e) { setOutput(`error: ${e.message}`); }
+    setBusy(false);
+  };
+
+  if (error) return <div className="review"><div className="msg meta error">error: {error}</div><button className="rev-btn" onClick={load}>Retry</button></div>;
+  if (!plan) return <div className="review"><div className="empty"><p>loading status…</p></div></div>;
+
+  const pushable = [...(plan.items.new || []).map((i) => ({ ...i, state: "new" })),
+                    ...(plan.items.modified || []).map((i) => ({ ...i, state: "modified" }))];
+
+  return (
+    <div className="review">
+      <div className="rev-head">
+        <span>{plan.project} → {plan.brain_url || "offline"}</span>
+        <span className="rev-actions">
+          <button className="rev-btn" onClick={load} disabled={busy}>Refresh</button>
+          <button className="rev-btn" onClick={() => push(true)} disabled={busy || !selected.size}>Dry-run</button>
+          <button className="rev-btn primary" onClick={() => push(false)} disabled={busy || !selected.size}>
+            Push {selected.size} selected
+          </button>
+        </span>
+      </div>
+
+      {pushable.length === 0 ? (
+        <div className="empty"><p>Nothing to push — all eligible files are clean.</p></div>
+      ) : (
+        <ul className="rev-list">
+          {pushable.map((i) => (
+            <li key={i.rel} className="rev-item">
+              <label>
+                <input type="checkbox" checked={selected.has(i.rel)} onChange={() => toggle(i.rel)} />
+                <span className="rev-path">{i.rel}</span>
+                <span className="rev-tags">[{i.kind}, {i.tier}] {i.state === "new" ? "NEW" : "MOD"}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {plan.items.blocked?.length > 0 && (
+        <div className="rev-blocked">
+          <div className="rev-blocked-head">blocked ({plan.items.blocked.length}) — never sync</div>
+          {plan.items.blocked.map((b) => (
+            <div key={b.rel} className="rev-blocked-item">{b.rel} — {b.reason}</div>
+          ))}
+        </div>
+      )}
+
+      <div className="rev-clean">clean (already synced): {plan.items.clean?.length || 0}</div>
+      {output && <pre className="rev-output">{output}</pre>}
     </div>
   );
 }

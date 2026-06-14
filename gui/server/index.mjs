@@ -20,6 +20,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
@@ -61,6 +62,30 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(readCatalog(repo)));
   }
+  // ── review-and-push panel (token-gated; mutating) ──
+  if (url.pathname === "/api/review") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    runAios(["status", "--json"], (err, out) => {
+      res.writeHead(err ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(err ? JSON.stringify({ error: err.message }) : out);
+    });
+    return;
+  }
+  if (url.pathname === "/api/push" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e6) req.destroy(); });
+    req.on("end", () => {
+      let paths = [], dryRun = false;
+      try { const j = JSON.parse(body || "{}"); paths = Array.isArray(j.paths) ? j.paths : []; dryRun = !!j.dryRun; } catch { /* bad body */ }
+      if (!paths.length) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ ok: false, error: "no paths selected" })); }
+      runAios(["push", ...paths, ...(dryRun ? ["--dry-run"] : [])], (err, out, stderr) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: !err, dryRun, output: stripAnsi((out || "") + (stderr || "")), error: err?.message || null }));
+      });
+    });
+    return;
+  }
   let file = url.pathname === "/" ? "/index.html" : url.pathname;
   const abs = path.join(CLIENT_DIST, path.normalize(file));
   if (!abs.startsWith(CLIENT_DIST) || !existsSync(abs)) {
@@ -70,6 +95,17 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": MIME[path.extname(abs)] || "application/octet-stream" });
   res.end(readFileSync(abs));
 });
+
+// Run the aios CLI against the target repo; reuses the CLI's exact plan/push logic.
+const AIOS_CLI = path.join(SCRIPT_DIR, "..", "..", "scripts", "aios.mjs");
+function runAios(args, cb) {
+  execFile(process.execPath, [AIOS_CLI, ...args, "--repo", repo], { cwd: repo, maxBuffer: 10 * 1024 * 1024 },
+    (err, stdout, stderr) => cb(err, stdout, stderr));
+}
+function stripAnsi(s) {
+  // eslint-disable-next-line no-control-regex
+  return String(s).replace(/\x1b\[[0-9;]*m/g, "");
+}
 
 function listSessions() {
   try {

@@ -24,6 +24,7 @@ import {
   readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -472,6 +473,20 @@ async function api(cfg, method, route, body = null) {
 
 function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
+  if (args.includes("--json")) {
+    const item = (i) => ({ rel: i.rel, kind: i.kind || null, tier: i.tier || null, isNew: !!i.isNew });
+    console.log(JSON.stringify({
+      project: cfg.project,
+      brain_url: cfg.brain_url || null,
+      items: {
+        new: plan.push.filter((i) => i.isNew).map(item),
+        modified: plan.push.filter((i) => !i.isNew).map(item),
+        blocked: plan.blocked.map((i) => ({ rel: i.rel, reason: i.reason })),
+        clean: plan.clean.map((i) => ({ rel: i.rel })),
+      },
+    }));
+    return;
+  }
   if (args.includes("--porcelain")) {
     const newCount = plan.push.filter((i) => i.isNew).length;
     console.log(
@@ -507,6 +522,83 @@ function cmdStatus(repo, cfg, patterns, args = []) {
       "blocked files never leave this machine. To sync one: add `access: team` " +
       "(or `external`) frontmatter — promotion is deliberate."
     ));
+  }
+}
+
+// aios review — interactive review-and-push panel for the terminal.
+async function cmdReview(repo, cfg, patterns, args) {
+  const { plan } = buildPlan(repo, cfg, patterns);
+  const pushable = plan.push;
+
+  if (!pushable.length) {
+    console.log(c.green("nothing to review — all eligible files are clean."));
+    if (plan.blocked.length) {
+      console.log(c.red(`\nblocked (${plan.blocked.length}):`));
+      for (const b of plan.blocked) console.log(`  ${b.rel} — ${b.reason}`);
+    }
+    return;
+  }
+
+  const selected = new Set(pushable.map((_, i) => i));
+  const render = () => {
+    console.log("");
+    console.log(c.blue(`aios review — project '${cfg.project}' → ${cfg.brain_url || c.dim("<offline>")}`));
+    console.log(c.dim("toggle inclusion, then push only what you chose. Promotion is deliberate."));
+    console.log("");
+    pushable.forEach((i, idx) => {
+      const box = selected.has(idx) ? c.green("[x]") : "[ ]";
+      const tag = i.isNew ? c.green("NEW") : c.yellow("MOD");
+      console.log(`  ${box} ${String(idx + 1).padStart(2)}. ${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)} ${tag}`);
+    });
+    if (plan.blocked.length) {
+      console.log("");
+      console.log(c.red(`  blocked (${plan.blocked.length}) — cannot be selected:`));
+      for (const b of plan.blocked) console.log(c.dim(`    ${b.rel} — ${b.reason}`));
+    }
+    console.log(c.dim(`\n  clean (already synced): ${plan.clean.length}`));
+    console.log("");
+    console.log(c.dim("  commands: <n> toggle · a all · n none · d dry-run · p push selected · q quit"));
+  };
+
+  // Queue-based line reader: buffers lines from the 'line' event (so piped input
+  // isn't lost to a race) and returns null only once the queue is drained at EOF.
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const queue = [];
+  let waiting = null, ended = false;
+  rl.on("line", (l) => { if (waiting) { const w = waiting; waiting = null; w(l); } else queue.push(l); });
+  rl.on("close", () => { ended = true; if (waiting) { const w = waiting; waiting = null; w(null); } });
+  const ask = (q) => {
+    process.stdout.write(q);
+    if (queue.length) return Promise.resolve(queue.shift());
+    if (ended) return Promise.resolve(null);
+    return new Promise((res) => { waiting = res; });
+  };
+
+  for (;;) {
+    render();
+    const ans = await ask(c.blue("> "));
+    if (ans === null) { rl.close(); console.log("\naborted — nothing pushed."); return; }
+    const raw = ans.trim().toLowerCase();
+    if (raw === "" || raw === "q") { rl.close(); console.log("aborted — nothing pushed."); return; }
+    if (raw === "a") { pushable.forEach((_, i) => selected.add(i)); continue; }
+    if (raw === "n") { selected.clear(); continue; }
+    if (/^\d/.test(raw)) {
+      for (const tok of raw.split(/[\s,]+/)) {
+        const idx = parseInt(tok, 10) - 1;
+        if (idx >= 0 && idx < pushable.length) {
+          if (selected.has(idx)) selected.delete(idx); else selected.add(idx);
+        }
+      }
+      continue;
+    }
+    if (raw === "d" || raw === "p") {
+      const chosen = [...selected].sort((a, b) => a - b).map((i) => pushable[i].rel);
+      if (!chosen.length) { console.log(c.yellow("nothing selected.")); continue; }
+      rl.close();
+      const flags = raw === "d" ? ["--dry-run"] : [];
+      return cmdPush(repo, cfg, patterns, [...chosen, ...flags]);
+    }
+    console.log(c.yellow(`unknown command: ${raw}`));
   }
 }
 
@@ -1238,7 +1330,8 @@ if (repoFlagIdx !== -1) {
 const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
 
 usage:
-  aios status                           what would sync (new/modified/blocked/clean)
+  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
+  aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
   aios pull                             fetch team updates → 1-inbox/from-brain/
@@ -1278,6 +1371,7 @@ const patterns = loadSecretPatterns();
 
 try {
   if (cmd === "status") cmdStatus(repo, cfg, patterns, rest);
+  else if (cmd === "review") await cmdReview(repo, cfg, patterns, rest);
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
