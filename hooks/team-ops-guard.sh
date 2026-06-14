@@ -78,8 +78,8 @@ done
 
 # ── Check 2: Access tag enforcement ────────────────────────────────
 
-# Only enforce on workspace/shared/client-surface directories
-if echo "$FILE_PATH" | grep -qE "(05-workspace|06-client-surface|04-client-surface|04-shared)" 2>/dev/null; then
+# Only enforce on outward/shared directories (new 4-shared; legacy variants)
+if echo "$FILE_PATH" | grep -qE "(4-shared|04-shared|04-client-surface|06-client-surface|05-workspace)" 2>/dev/null; then
   SENSITIVE_PATTERNS=(
     'day rate'
     'Day Rate'
@@ -111,8 +111,8 @@ fi
 
 # ── Check 3: Frontmatter required ──────────────────────────────────
 
-# Only for markdown files in deliverables or shared/client-surface
-if echo "$FILE_PATH" | grep -qE "(02-deliverables|04-client-surface|04-shared|06-client-surface)" 2>/dev/null; then
+# Only for markdown files in work/deliverables or shared (new + legacy)
+if echo "$FILE_PATH" | grep -qE "(2-work|02-deliverables|4-shared|04-shared|04-client-surface|06-client-surface)" 2>/dev/null; then
   if echo "$FILE_PATH" | grep -qE "\.md$" 2>/dev/null; then
     # For Write tool, check if content starts with ---
     if [ "$(echo "$TOOL_INPUT" | jq -r '.content // empty' 2>/dev/null)" != "" ]; then

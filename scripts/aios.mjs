@@ -123,7 +123,10 @@ function parseFrontmatter(content) {
 }
 
 function normalizeTier(tier) {
-  if (tier === "client") return "external"; // legacy alias
+  // Friendly labels → canonical engine values. `private` never syncs (= admin);
+  // outward tiers `client` (consultant) and `company` (employee) → external.
+  if (tier === "private") return "admin";
+  if (tier === "client" || tier === "company") return "external";
   return tier;
 }
 
@@ -295,12 +298,14 @@ function walkFiles(repo, cfg) {
 }
 
 function classifyKind(rel, frontmatter) {
-  if (rel.endsWith("03-status/decision-log.md") || rel === "03-status/decision-log.md")
-    return "decision";
-  if (rel.endsWith("03-status/tasks.md") || rel === "03-status/tasks.md") return "task";
+  // Spine-agnostic: match by filename/role so new (3-log, 2-work) and legacy
+  // (03-status, 02-deliverables) spines both classify correctly.
+  const base = rel.split("/").pop();
+  if (base === "decision-log.md") return "decision";
+  if (base === "tasks.md") return "task";
   if (frontmatter?.type === "transcript" || rel.includes("/transcripts/"))
     return "transcript";
-  if (rel.startsWith("02-deliverables/")) return "deliverable";
+  if (/^(2-work|02-deliverables)[/\\]/.test(rel)) return "deliverable";
   return "artifact";
 }
 
@@ -571,7 +576,10 @@ async function cmdPull(repo, cfg) {
   requireOnline(cfg);
   const state = loadState(repo);
   const since = state.last_pull || "1970-01-01T00:00:00Z";
-  const destRoot = path.join(repo, "01-intake", "from-brain");
+  // New spine: 1-inbox/from-brain/; legacy: 01-intake/from-brain/.
+  const inboxDir = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
+  const destRel = `${inboxDir}/from-brain`;
+  const destRoot = path.join(repo, inboxDir, "from-brain");
   mkdirSync(destRoot, { recursive: true });
 
   let cursor = null;
@@ -598,7 +606,7 @@ async function cmdPull(repo, cfg) {
       ].join("\n");
       writeFileSync(dest, fm + (item.body || ""));
       fetched++;
-      console.log(`  ${c.green("✓")} 01-intake/from-brain/${flat}`);
+      console.log(`  ${c.green("✓")} ${destRel}/${flat}`);
     }
     cursor = res.next_cursor || null;
   } while (cursor);
@@ -609,7 +617,9 @@ async function cmdPull(repo, cfg) {
     `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
   );
   let merged = 0;
-  const tasksPath = path.join(repo, "03-status", "tasks.md");
+  const tasksPath = existsSync(path.join(repo, "3-log", "tasks.md"))
+    ? path.join(repo, "3-log", "tasks.md")
+    : path.join(repo, "03-status", "tasks.md");
   if (existsSync(tasksPath) && (tasksRes.tasks || []).length) {
     let content = readFileSync(tasksPath, "utf8");
     for (const group of tasksRes.tasks) {
@@ -687,11 +697,10 @@ async function cmdQuery(repo, cfg, args) {
 // ── OKF export helpers ──────────────────────────────────────────────────────
 
 const OKF_SPINE_DIRS = [
-  "00-engagement", "00-project",
-  "01-intake",
-  "02-deliverables",
-  "03-status",
-  "04-client-surface", "04-shared",
+  // new intent-named spine
+  "0-context", "1-inbox", "2-work", "3-log", "4-shared",
+  // legacy numbered spine (back-compat)
+  "00-engagement", "00-project", "01-intake", "02-deliverables", "03-status", "04-client-surface",
 ];
 
 function inferOkfType(rel, frontmatter) {
@@ -702,13 +711,13 @@ function inferOkfType(rel, frontmatter) {
     if (t === "transcript") return "Transcript";
     return t;
   }
-  if (/(?:^|[/\\])03-status[/\\]decision-log\.md$/.test(rel)) return "Decision Log";
-  if (/(?:^|[/\\])03-status[/\\]tasks\.md$/.test(rel)) return "Task List";
+  if (/(?:^|[/\\])decision-log\.md$/.test(rel)) return "Decision Log";
+  if (/(?:^|[/\\])tasks\.md$/.test(rel)) return "Task List";
   if (/sprint-\d+-ledger\.md$/.test(rel)) return "Sprint Ledger";
-  if (/scope-baseline\.md$|scope-ledger\.md$/.test(rel)) return "Scope";
+  if (/scope-baseline\.md$|scope-ledger\.md$|role\.md$|okrs\.md$/.test(rel)) return "Scope";
   if (/[/\\]transcripts[/\\]/.test(rel)) return "Transcript";
-  if (/^02-deliverables[/\\]|[/\\]02-deliverables[/\\]/.test(rel)) return "Deliverable";
-  if (/^(04-client-surface|04-shared)[/\\]/.test(rel)) return "Deliverable";
+  if (/^(2-work|02-deliverables)[/\\]|[/\\](2-work|02-deliverables)[/\\]/.test(rel)) return "Deliverable";
+  if (/^(4-shared|04-client-surface|04-shared)[/\\]/.test(rel)) return "Deliverable";
   return "Artifact";
 }
 
@@ -879,7 +888,9 @@ async function cmdExportOkf(repo, cfg, args) {
   }
 
   // Root log.md from decision-log
-  const dlPath = path.join(repo, "03-status", "decision-log.md");
+  const dlPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
+    ? path.join(repo, "3-log", "decision-log.md")
+    : path.join(repo, "03-status", "decision-log.md");
   if (existsSync(dlPath)) {
     const dlRaw = readFileSync(dlPath, "utf8");
     const { frontmatter: dlFm, body: dlBody } = parseFrontmatter(dlRaw);

@@ -60,19 +60,19 @@ for key in version api_key_env sync_tiers sync_include; do
   fi
 done
 
-# ── admin must never be a sync tier (the load-bearing governance rule)
+# ── private/admin must never be a sync tier (the load-bearing governance rule)
 SYNC_TIERS=$(awk '/^sync_tiers:/{f=1;next} /^[A-Za-z0-9_]+:/{f=0} f && /^\s+-/{gsub(/^\s+-\s+/,"");print}' "$CFG")
-if echo "$SYNC_TIERS" | grep -qx "admin"; then
-  echo -e "  ${RED}✗${NC} sync_tiers contains 'admin' — admin content NEVER syncs. Remove it."
+if echo "$SYNC_TIERS" | grep -qxE "admin|private"; then
+  echo -e "  ${RED}✗${NC} sync_tiers contains 'admin'/'private' — that content NEVER syncs. Remove it."
   ERRORS=$((ERRORS + 1))
 else
-  echo -e "  ${GREEN}✓${NC} sync_tiers excludes admin"
+  echo -e "  ${GREEN}✓${NC} sync_tiers excludes admin/private"
 fi
 for t in $SYNC_TIERS; do
   case "$t" in
-    team|external|client) ;;
+    team|external|client|company) ;;
     *)
-      echo -e "  ${RED}✗${NC} unknown sync tier: '$t' (allowed: team, external; legacy: client)"
+      echo -e "  ${RED}✗${NC} unknown sync tier: '$t' (allowed: team, external; outward: client|company)"
       ERRORS=$((ERRORS + 1))
       ;;
   esac

@@ -1,37 +1,45 @@
-# {{CLIENT_NAME}} — Team Ops
+# {{OWNER}}'s AIOS Workspace — {{STAKEHOLDER_NAME}}
 
-Shared workspace for the {{CLIENT_NAME}} {{UNIT_LABEL}} ({{ENGAGEMENT_DESC}}).
+Your individual agentic workspace ({{DESC}}). You work here; you push selected
+work to the shared **Team Brain**. This repo is *yours* — private by default.
+
+**Context:** {{CONTEXT}} ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
 
 ## Start here
-- Decisions → `03-status/decision-log.md`
-- Hours → `03-status/hours-log.md`
-- Tasks → `03-status/tasks.md`
-- Your workspace → `05-personal/<your-name>/`
-- Scope → `{{DIR00}}/scope-baseline.md` + `scope-ledger.md`
+- Decisions → `3-log/decision-log.md`
+- Tasks → `3-log/tasks.md`
+- Time → `3-log/hours-log.md`
+- Your private scratch → `5-personal/`
+- What frames the work → `0-context/`
 - **Before running any harness, read `.claude/memory/instincts.md`** — distilled
   rules from past failures; consult them instead of re-deriving.
 
-## The numbered spine
-| # | Folder | Holds |
-|---|--------|-------|
-| 00 | {{DIR00}} | charter, scope baseline + ledger, roles |
-| 01 | intake | raw inputs (transcripts, notes, from-brain) |
-| 02 | deliverables | sprint-scoped team outputs |
-| 03 | status | decision log, hours, tasks |
-| 04 | {{DIR04}} | {{DIR04_DESC}} |
-| 05 | personal | per-member private workspace |
+## The spine (intent-named)
+| Folder | Holds | Default tier |
+|--------|-------|--------------|
+| `0-context/` | what frames the work ({{CONTEXT_TITLE}}: {{STAKEHOLDER_LABEL}}, scope/role, goals) | team |
+| `1-inbox/` | raw inputs — transcripts, notes, reference, `from-brain/` pulls | private |
+| `2-work/` | your deliverables / drafts in progress | team |
+| `3-log/` | the record — decisions, tasks, hours | team / private |
+| `4-shared/` | what you've promoted outward ({{OUTWARD_DESC}}) | {{OUTWARD_TIER}} |
+| `5-personal/` | your private scratch | private (never syncs) |
+| `.claude/` | the agent layer — skills, rules, rubrics, memory | — |
+
+## Access tiers
+`private` (never leaves this machine) · `team` (your team, via the brain) ·
+`{{OUTWARD_TIER}}` (promoted outward). Tag a file's `access:` frontmatter to make
+it shareable; untagged and `private` files never sync. Promotion is deliberate.
 
 ## Conventions
-Governance rules live in `.claude/rules/` (decision-log, frontmatter, publishing,
-hours). Dynamic-workflow harnesses live in `.claude/skills/` — run `decision-audit`
-before a close-out, `scope-creep` before a scope conversation, and
-`weekly-synthesis` at sprint boundaries. Harnesses that synthesize are
-rubric-gated (`.claude/rubrics/`): an independent verifier grades the output and
-the harness self-corrects until the rubric passes or its budget is spent.
+Governance rules live in `.claude/rules/`. Dynamic-workflow harnesses live in
+`.claude/skills/` — run `decision-audit` before a close-out, `scope-creep` before
+a scope conversation, `weekly-synthesis` at week boundaries. Synthesis harnesses
+are rubric-gated (`.claude/rubrics/`): an independent verifier grades the output
+and the harness self-corrects until the rubric passes or its budget is spent.
 
 ## Team Brain
-If `aios.yaml` has a `brain_url`, this repo syncs tier-tagged content to the AIOS
-Team Brain. Use the `aios-sync` skill (or `aios status|push|pull|query` directly).
-`access: admin` content and untagged files never sync — promotion is deliberate.
+If `aios.yaml` has a `brain_url`, this workspace syncs tier-tagged content to the
+AIOS Team Brain. Use the `aios-sync` skill (or `aios status|push|pull|query`).
+`private`/untagged content never syncs.
 
-{{LEAD_LABEL}}: {{CAPTAIN}} · Team: {{MEMBER_LIST}} · Currency: {{CURRENCY}}
+Owner: {{OWNER}} · {{STAKEHOLDER_LABEL}}: {{STAKEHOLDER_NAME}} · Team: {{MEMBER_LIST}}

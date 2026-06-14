@@ -1,31 +1,32 @@
 # Rule: Publishing & Promotion
 
 Content matures by moving through the numbered spine, gaining refinement and a
-wider audience at each step. Promotion is deliberate, never automatic.
+wider audience at each step. Promotion is deliberate, never automatic — nothing
+leaves your workspace until you choose to `aios push` it.
 
 ## Flow
 
 ```
-05-personal/<name>/01-intake/     raw capture, private
+5-personal/        raw capture & private drafts (never syncs)
         ↓
-05-personal/<name>/02-deliverables/   personal draft
+2-work/            your work, team-visible once tagged access: team
         ↓
-02-deliverables/sprint-N/         team deliverable (peer-reviewed)
-        ↓
-04-client-surface/                client-facing (captain-approved)
+4-shared/          outward-facing — client (consultant) or company (employee)
 ```
 
 ## Promotion rules
-- **Personal → Team:** when a draft is team-relevant, the author promotes it to
-  `02-deliverables/`; another team member reviews.
-- **Team → Client:** only with captain approval. Set `access: client` and record
-  `approved_by`.
-- **Never promoted:** pricing and rate detail, internal deliberation, anything an
-  access rule marks admin-only.
+- **Personal → Team:** when a draft is team-relevant, move it from `5-personal/`
+  into `2-work/` and tag `access: team`. A teammate reviews.
+- **Team → Outward:** only deliberately. Set `access: client` (consultant) or
+  `access: company` (employee), record `approved_by`, and place it in `4-shared/`.
+- **Never promoted:** pricing and rate detail, internal deliberation, anything
+  tagged `access: private` (canonical `admin`). These never sync, by default.
 
-## Client-first ordering
-In rosters, tables, and recipient lists, list the client's people before the
-delivery team's. The work belongs to the client; the team supports it.
+## Outward-first ordering
+In rosters, tables, and recipient lists, list the outward party's people
+(the client, or the wider company) before your immediate delivery team. The work
+serves them; the team supports it.
 
-The `scope-creep` skill checks deliverables against the engagement's scope
-baseline before they are surfaced.
+The `scope-creep` skill checks `2-work/` output against the engagement's scope
+baseline (`0-context/scope-baseline.md`) before it is surfaced — consultant
+context only.

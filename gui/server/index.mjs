@@ -37,9 +37,10 @@ const repo = path.resolve(flag("--repo", process.cwd()));
 const port = parseInt(flag("--port", "8790"), 10);
 
 if (!existsSync(path.join(repo, "aios.yaml")) &&
+    !existsSync(path.join(repo, "workspace.yaml")) &&
     !existsSync(path.join(repo, "project.yaml")) &&
     !existsSync(path.join(repo, "engagement.yaml"))) {
-  console.error(`error: ${repo} does not look like a team-ops repo (no aios/project/engagement.yaml)`);
+  console.error(`error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml)`);
   process.exit(1);
 }
 

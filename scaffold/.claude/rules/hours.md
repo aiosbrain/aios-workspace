@@ -1,12 +1,14 @@
 # Rule: Hours Logging
 
-Each team member logs time so the engagement can reconcile effort against scope
-and bill accurately.
+Log time so effort can be reconciled. In the **consultant** context this is for
+reconciling against scope and billing the client; in the **employee** context
+it is lightweight time/effort tracking against your work and OKRs — same format,
+no invoicing.
 
 ## Format
 
-Personal log at `05-personal/<name>/03-status/hours-log.md`; a team-level summary
-at `03-status/hours-log.md`. Markdown table, newest first:
+Your log lives at `3-log/hours-log.md` (one workspace = one person). Markdown
+table, newest first:
 
 ```
 | Date | Activity | Hours | Tag | Task Ref |
@@ -20,6 +22,6 @@ at `03-status/hours-log.md`. Markdown table, newest first:
 - Log after each work block, not from memory at week's end.
 - Round to the nearest 0.5 hours.
 - Tag every entry; reference the task ID where one exists.
-- Reconcile the personal logs into the team summary at each sprint boundary.
-- Reconcile against your time-tracking tool of record (whichever the engagement
-  uses) on the same cadence; note discrepancies rather than silently overwriting.
+- Reconcile against your time-tracking tool of record (whichever your engagement
+  or company uses) at each sprint/period boundary; note discrepancies rather than
+  silently overwriting.

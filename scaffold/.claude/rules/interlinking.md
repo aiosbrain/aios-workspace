@@ -11,17 +11,17 @@ Use path-relative markdown links:
 [Title](relative/path/to/file.md)
 ```
 
-- From `02-deliverables/sprint-1/report.md` → `../../03-status/decision-log.md`
-- From `03-status/index.md` → `decision-log.md`
-- From `00-engagement/scope-baseline.md` → `../03-status/decision-log.md`
+- From `2-work/report.md` → `../3-log/decision-log.md`
+- From `3-log/index.md` → `decision-log.md`
+- From `0-context/scope-baseline.md` → `../3-log/decision-log.md`
 
 ## Where to link
 
 | Context | Convention |
 |---------|------------|
 | `index.md` files | `* [Title](path) — one-sentence description` |
-| Prose citations | `(03-status/decision-log.md, #16)` — existing prose style |
-| OKF-style citations | `([Decision #16](../03-status/decision-log.md))` |
+| Prose citations | `(3-log/decision-log.md, #16)` — existing prose style |
+| OKF-style citations | `([Decision #16](../3-log/decision-log.md))` |
 | Cross-links in deliverables | Reference supporting documents inline |
 
 ## `index.md` is the agent entry point

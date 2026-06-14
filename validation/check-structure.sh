@@ -30,15 +30,15 @@ fi
 echo "OGR01: Checking folder structure in $REPO"
 echo "================================================"
 
-# Required top-level directories (numbered spine).
-# Entries with | accept either name (project profile | legacy engagement profile).
+# Required spine directories. Entries with | accept either name:
+# new intent-named spine first, then legacy numbered spine (back-compat).
 REQUIRED_DIRS=(
-  "00-project|00-engagement"
-  "01-intake"
-  "02-deliverables"
-  "03-status"
-  "04-shared|04-client-surface"
-  "05-personal"
+  "0-context|00-project|00-engagement"
+  "1-inbox|01-intake"
+  "2-work|02-deliverables"
+  "3-log|03-status"
+  "4-shared|04-client-surface"
+  "5-personal|05-personal"
 )
 
 for dir_spec in "${REQUIRED_DIRS[@]}"; do
@@ -61,7 +61,7 @@ done
 # Required top-level files (| = accept either)
 REQUIRED_FILES=(
   "README.md"
-  "project.yaml|engagement.yaml"
+  "workspace.yaml|project.yaml|engagement.yaml"
   "contacts.yaml"
 )
 
@@ -84,50 +84,32 @@ for file_spec in "${REQUIRED_FILES[@]}"; do
   fi
 done
 
-# Check personal folders have expected structure
+# Personal area. New IC model: a single flat 5-personal/ (one person's private
+# scratch). Legacy team model: 05-personal/<name>/ with a mirrored sub-spine.
 echo ""
-echo "Personal folders:"
-if [ -d "$REPO/05-personal" ]; then
+echo "Personal area:"
+if [ -d "$REPO/5-personal" ]; then
+  echo -e "  ${GREEN}✓${NC} 5-personal/ (private, never syncs)"
+elif [ -d "$REPO/05-personal" ]; then
   for person_dir in "$REPO"/05-personal/*/; do
-    if [ -d "$person_dir" ]; then
-      person=$(basename "$person_dir")
-      echo "  $person/:"
-
-      PERSONAL_DIRS=(
-        "01-intake"
-        "02-deliverables"
-        "03-status"
-      )
-
-      for subdir in "${PERSONAL_DIRS[@]}"; do
-        if [ -d "$person_dir/$subdir" ]; then
-          echo -e "    ${GREEN}✓${NC} $subdir/"
-        else
-          echo -e "    ${YELLOW}!${NC} $subdir/ — missing (recommended)"
-          WARNINGS=$((WARNINGS + 1))
-        fi
-      done
-    fi
+    [ -d "$person_dir" ] && echo -e "  ${GREEN}✓${NC} 05-personal/$(basename "$person_dir")/ (legacy)"
   done
 else
-  echo -e "  ${RED}✗${NC} 05-personal/ not found"
+  echo -e "  ${RED}✗${NC} 5-personal/ not found"
   ERRORS=$((ERRORS + 1))
 fi
 
-# Check status files
+# Log files (decisions/tasks/hours). New: 3-log/*; legacy: 03-status/*.
 echo ""
-echo "Status files:"
-STATUS_FILES=(
-  "03-status/decision-log.md"
-  "03-status/hours-log.md"
-  "03-status/tasks.md"
-)
-
-for file in "${STATUS_FILES[@]}"; do
-  if [ -f "$REPO/$file" ]; then
-    echo -e "  ${GREEN}✓${NC} $file"
+echo "Log files:"
+LOG_DIR=""
+[ -d "$REPO/3-log" ] && LOG_DIR="3-log"
+[ -z "$LOG_DIR" ] && [ -d "$REPO/03-status" ] && LOG_DIR="03-status"
+for base in decision-log.md tasks.md hours-log.md; do
+  if [ -n "$LOG_DIR" ] && [ -f "$REPO/$LOG_DIR/$base" ]; then
+    echo -e "  ${GREEN}✓${NC} $LOG_DIR/$base"
   else
-    echo -e "  ${YELLOW}!${NC} $file — missing (recommended)"
+    echo -e "  ${YELLOW}!${NC} ${LOG_DIR:-3-log}/$base — missing (recommended)"
     WARNINGS=$((WARNINGS + 1))
   fi
 done
@@ -137,7 +119,7 @@ done
 echo ""
 echo "OKF index files:"
 for dir_spec in "${REQUIRED_DIRS[@]}"; do
-  if [[ "$dir_spec" == "05-personal" ]]; then continue; fi
+  if [[ "$dir_spec" == 5-personal* ]]; then continue; fi  # private area — no nav layer
   IFS='|' read -ra ALTS <<< "$dir_spec"
   for alt in "${ALTS[@]}"; do
     if [ -d "$REPO/$alt" ]; then
