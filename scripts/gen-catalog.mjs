@@ -88,6 +88,25 @@ export function readIntegrations(repoDir) {
   catch { return []; }
 }
 
+// Load connector descriptors (the connect/validate/store specs) keyed by id.
+// Looks in the target repo first, then falls back to the toolkit's bundled
+// scaffold descriptors — so existing workspaces are connectable without re-scaffolding.
+const SCRIPT_DIR_GC = path.dirname(fileURLToPath(import.meta.url));
+const BUNDLED_DESCRIPTORS = path.join(SCRIPT_DIR_GC, "..", "scaffold", ".claude", "descriptors");
+export function readDescriptors(repoDir) {
+  const out = {};
+  const dirs = [BUNDLED_DESCRIPTORS, path.join(repoDir, ".claude", "descriptors")]; // repo overrides bundled
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".json")) continue;
+      try { const d = JSON.parse(readFileSync(path.join(dir, f), "utf8")); if (d.id) out[d.id] = d; }
+      catch { /* skip malformed */ }
+    }
+  }
+  return out;
+}
+
 function generate(repo) {
 const skillsDir = path.join(repo, ".claude", "skills");
 const skills = readSkills(repo);

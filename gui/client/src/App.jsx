@@ -10,7 +10,7 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 
 export default function App() {
   const [repo, setRepo] = useState("");
-  const [view, setView] = useState("chat"); // "chat" | "review"
+  const [view, setView] = useState("chat"); // "chat" | "review" | "integrations"
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState([]); // {kind, ...}
   const [input, setInput] = useState("");
@@ -112,12 +112,17 @@ export default function App() {
         </div>
         <nav className="tabs">
           <button className={view === "chat" ? "tab on" : "tab"} onClick={() => setView("chat")}>Chat</button>
+          <button className={view === "integrations" ? "tab on" : "tab"} onClick={() => setView("integrations")}>Integrations</button>
           <button className={view === "review" ? "tab on" : "tab"} onClick={() => setView("review")}>Review &amp; push</button>
         </nav>
+        <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Local — keys stay here</div>
         <div className="repo" title={repo}>{repo}</div>
       </header>
 
       {view === "review" && <ReviewPanel />}
+      {view === "integrations" && (
+        <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
+      )}
 
       {view === "chat" && (
       <>
@@ -264,6 +269,184 @@ function ReviewPanel() {
 
       <div className="rev-clean">clean (already synced): {plan.items.clean?.length || 0}</div>
       {output && <pre className="rev-output">{output}</pre>}
+    </div>
+  );
+}
+
+const SUGGESTED = {
+  notion: "Summarize my most recent Notion page.",
+  granola: "Pull my recent Granola meeting notes into the inbox.",
+};
+
+function IntegrationsPanel({ onTryInChat }) {
+  const [connectors, setConnectors] = useState(null);
+  const [error, setError] = useState(null);
+  const [active, setActive] = useState(null); // connector being connected
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/connectors?token=${token}`);
+      if (!res.ok) throw new Error(`failed to load connectors (${res.status})`);
+      setConnectors((await res.json()).connectors || []);
+    } catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <div className="integrations"><div className="msg meta error">error: {error}</div></div>;
+  if (!connectors) return <div className="integrations"><div className="empty"><p>loading integrations…</p></div></div>;
+
+  const wired = connectors.filter((c) => c.status === "wired").length;
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Integrations</h2>
+          <p className="int-sub">Connect your tools. We hand you the exact key page, check the key live, and lock it on this machine.</p>
+        </div>
+        <div className="int-progress">{wired} of {connectors.length} connected</div>
+      </div>
+
+      <div className="int-grid">
+        {connectors.map((c) => (
+          <div key={c.id} className={`int-card${c.status === "wired" ? " wired" : ""}`}>
+            <div className="int-card-top">
+              <span className="int-name">{c.name}</span>
+              <span className={`int-status ${c.status}`}>{c.status === "wired" ? "● connected" : "○ available"}</span>
+            </div>
+            <p className="int-summary">{c.summary}</p>
+            <div className="int-card-foot">
+              <span className="int-transport">{c.transport === "skill" ? "direct API skill" : "MCP"}</span>
+              <button className="int-connect" onClick={() => setActive(c)}>
+                {c.status === "wired" ? "Reconnect" : "Connect →"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="int-foot">🔒 Every key is encrypted on this machine (dotenvx) and never sent to the team brain.</p>
+
+      {active && (
+        <ConnectWizard
+          connector={active}
+          onClose={() => setActive(null)}
+          onConnected={() => { load(); }}
+          onTryInChat={onTryInChat}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConnectWizard({ connector, onClose, onConnected, onTryInChat }) {
+  const [secrets, setSecrets] = useState({});
+  const [reveal, setReveal] = useState({});
+  const [phase, setPhase] = useState("collect"); // collect | validating | done | error
+  const [result, setResult] = useState(null);
+  const required = (connector.secrets || []).filter((s) => s.required);
+  const filled = required.every((s) => (secrets[s.env] || "").trim());
+
+  const connect = async () => {
+    setPhase("validating"); setResult(null);
+    try {
+      const vRes = await fetch(`/api/connectors/${connector.id}/store?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secrets }),
+      });
+      const data = await vRes.json();
+      if (vRes.ok && data.ok) { setResult(data); setPhase("done"); onConnected(); }
+      else { setResult(data.validation || data); setPhase("error"); }
+    } catch (e) { setResult({ error: e.message, checks: [] }); setPhase("error"); }
+  };
+
+  const checks = result?.checks || result?.validation?.checks || [];
+
+  return (
+    <div className="wiz-overlay" onClick={onClose}>
+      <div className="wiz" onClick={(e) => e.stopPropagation()}>
+        <div className="wiz-head">
+          <span>Connect {connector.name}</span>
+          <button className="wiz-x" onClick={onClose}>✕</button>
+        </div>
+
+        {phase !== "done" && (
+          <>
+            <div className="wiz-step">
+              <div className="wiz-step-n">1 · Get your key</div>
+              {connector.docs?.token_create_url ? (
+                <a className="wiz-link" href={connector.docs.token_create_url} target="_blank" rel="noreferrer">
+                  Open {connector.name} to create a key →
+                </a>
+              ) : (
+                <div className="wiz-inapp">Created in the {connector.name} app (no web page).</div>
+              )}
+              {connector.docs?.instructions && <p className="wiz-note">{connector.docs.instructions}</p>}
+              {connector.scopes?.length > 0 && (
+                <p className="wiz-scopes">Give it these scopes: <strong>{connector.scopes.join(" · ")}</strong></p>
+              )}
+            </div>
+
+            <div className="wiz-step">
+              <div className="wiz-step-n">2 · Paste &amp; check</div>
+              {required.map((s) => (
+                <div key={s.env} className="wiz-field">
+                  <label>{s.label}</label>
+                  <div className="wiz-input">
+                    <input
+                      type={reveal[s.env] ? "text" : "password"}
+                      placeholder={s.placeholder || s.env}
+                      value={secrets[s.env] || ""}
+                      onChange={(e) => setSecrets({ ...secrets, [s.env]: e.target.value })}
+                      autoComplete="off" spellCheck="false"
+                    />
+                    <button className="wiz-eye" onClick={() => setReveal({ ...reveal, [s.env]: !reveal[s.env] })}>👁</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {phase === "validating" && <div className="wiz-validating">Checking it live…</div>}
+            {checks.length > 0 && (
+              <ul className="wiz-checks">
+                {checks.map((ch, i) => (
+                  <li key={i} className={ch.ok ? "ok" : "bad"}>{ch.ok ? "✓" : "✗"} {ch.name} <span>— {ch.detail}</span></li>
+                ))}
+              </ul>
+            )}
+            {phase === "error" && (
+              <div className="wiz-error">
+                Couldn’t connect{result?.error ? ` (${result.error})` : ""}.
+                {connector.docs?.token_create_url && (
+                  <a href={connector.docs.token_create_url} target="_blank" rel="noreferrer"> Create a fresh key →</a>
+                )}
+              </div>
+            )}
+
+            <button className="wiz-go" disabled={!filled || phase === "validating"} onClick={connect}>
+              {phase === "validating" ? "Checking…" : "Connect"}
+            </button>
+          </>
+        )}
+
+        {phase === "done" && (
+          <div className="wiz-done">
+            <div className="wiz-done-badge">✓ Connected</div>
+            <p>
+              Connected to <strong>{connector.name}</strong>
+              {result?.identity?.value ? <> as <strong>{result.identity.value}</strong></> : null}
+              {result?.instance?.value ? <> in <strong>{result.instance.value}</strong></> : null}.
+            </p>
+            <p className="wiz-note">Your key is encrypted on this machine. {connector.transport === "skill" ? "A skill was installed to use it." : "An MCP server was wired up."}</p>
+            <div className="wiz-done-actions">
+              <button className="wiz-go" onClick={() => onTryInChat(SUGGESTED[connector.id] || `Use ${connector.name} to help me with a task.`)}>
+                Try it in chat →
+              </button>
+              <button className="wiz-secondary" onClick={onClose}>Done</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

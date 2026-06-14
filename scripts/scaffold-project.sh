@@ -354,8 +354,9 @@ for d in skills rubrics memory; do
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"
 
-# Integrations manifest + MCP stub/example
+# Integrations manifest + connector descriptors + MCP stub/example
 [ -f "$SCAFFOLD/.claude/integrations.json" ] && cp "$SCAFFOLD/.claude/integrations.json" "$OUTPUT/.claude/integrations.json"
+[ -d "$SCAFFOLD/.claude/descriptors" ] && { mkdir -p "$OUTPUT/.claude/descriptors"; cp -R "$SCAFFOLD/.claude/descriptors/." "$OUTPUT/.claude/descriptors/"; }
 [ -f "$SCAFFOLD/.mcp.json" ] && cp "$SCAFFOLD/.mcp.json" "$OUTPUT/.mcp.json"
 [ -f "$SCAFFOLD/.mcp.example.json" ] && cp "$SCAFFOLD/.mcp.example.json" "$OUTPUT/.mcp.example.json"
 
