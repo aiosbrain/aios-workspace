@@ -73,15 +73,15 @@ while IFS= read -r file; do
     missing_fields+=("status")
   fi
 
-  # Files in 02-deliverables should have owner
-  if echo "$rel_path" | grep -q "^02-deliverables/"; then
+  # Work deliverables should have owner (new 2-work/; legacy 02-deliverables/)
+  if echo "$rel_path" | grep -qE "^(2-work|02-deliverables)/"; then
     if ! has_field "owner"; then
       missing_fields+=("owner")
     fi
   fi
 
-  # Files in 04-shared / 04-client-surface should have access
-  if echo "$rel_path" | grep -qE "^(04-shared|04-client-surface)/"; then
+  # Outward-shared files should have access (new 4-shared/; legacy 04-client-surface/)
+  if echo "$rel_path" | grep -qE "^(4-shared|04-shared|04-client-surface)/"; then
     if ! has_field "access"; then
       missing_fields+=("access")
     fi

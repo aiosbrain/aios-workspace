@@ -1,0 +1,25 @@
+# AIOS workspace metadata — single source of truth for this individual workspace.
+okf_version: "0.1"
+slug: {{SLUG}}
+
+# How you work (set at onboarding): consultant | employee
+#   consultant → you work in a team for a CLIENT
+#   employee   → you work inside a COMPANY
+context: {{CONTEXT}}
+
+# You — the individual who owns this workspace.
+owner: {{OWNER}}
+
+# The {{STAKEHOLDER_LABEL}} this work is for.
+stakeholder:
+  name: "{{STAKEHOLDER_NAME}}"
+  legal_name: "{{STAKEHOLDER_FULL}}"
+
+description: "{{DESC}}"
+started: "{{START_DATE}}"
+currency: "{{CURRENCY}}"
+
+# People in scope (you + teammates, for context/handoffs). Teammates have their
+# OWN workspaces; the shared layer is the Team Brain, not this repo.
+members:
+{{MEMBERS_YAML}}

@@ -1,35 +1,34 @@
 #!/bin/bash
-# scaffold-project.sh — Spawn a new team-ops repo from the Agentic Team Ops scaffold
+# scaffold-project.sh — Spawn a new AIOS individual-contributor workspace.
+#
+# An AIOS workspace is where ONE individual works with agentic workflows and
+# pushes selected output to a shared Team Brain. The spine is intent-named and
+# context-driven: an onboarding question picks how you work.
 #
 # Usage:
 #   ./scripts/scaffold-project.sh \
-#     --slug acme-team-ops \
-#     --stakeholder "Acme Corp" \
-#     --stakeholder-full "Acme Corporation Ltd" \
-#     --desc "AI Workflow Automation" \
-#     --lead john \
-#     --members "alex,sam,jordan" \
-#     --org your-github-org \
-#     --currency USD \
-#     --output ~/Projects/acme-team-ops
+#     --slug alex-aios \
+#     --owner alex \
+#     --context consultant|employee \
+#     [--stakeholder "Acme Corp"] [--team "sam,jordan"] \
+#     [--team-id <brain team id>] [--brain-url <url>] \
+#     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--dry-run]
 #
-#   --profile project|engagement   Vocabulary profile (default: project).
-#                                  `project`    → 00-project/, 04-shared/, project.yaml
-#                                  `engagement` → 00-engagement/, 04-client-surface/,
-#                                                 engagement.yaml (legacy consulting layout)
-#   --team-id <id>                 AIOS Team Brain team id (optional; written to aios.yaml)
-#   --brain-url <url>              AIOS Team Brain base URL (optional; empty = offline mode)
-#   --dry-run                      Preview without creating anything
+# Onboarding context (the spine skin):
+#   consultant  → you work in a team for a CLIENT.  0-context=engagement+scope,
+#                 4-shared=client-facing, outward tier "client", billable hours.
+#   employee    → you work inside a COMPANY.        0-context=role+OKRs,
+#                 4-shared=company-shared, outward tier "company", lightweight hours.
 #
-# Legacy flag aliases (still accepted): --client, --client-full, --captain
+# Spine (same folder names in both contexts):
+#   0-context  1-inbox  2-work  3-log  4-shared  5-personal  .claude/
+#
+# Legacy aliases still accepted: --profile engagement→consultant / project→employee,
+#   --client→--stakeholder, --captain/--lead→--owner.
 
 set -euo pipefail
 
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -37,380 +36,233 @@ SCAFFOLD="$REPO_ROOT/scaffold"
 
 # Defaults
 DRY_RUN=false
-SLUG=""
-STAKEHOLDER=""
-STAKEHOLDER_FULL=""
-DESC=""
-LEAD=""
-MEMBERS=""
-ORG="your-github-org"
-CURRENCY="USD"
-OUTPUT=""
-PROFILE="project"
-TEAM_ID=""
-BRAIN_URL=""
+SLUG=""; OWNER=""; CONTEXT=""; STAKEHOLDER=""; STAKEHOLDER_FULL=""; DESC=""
+TEAM=""; ORG="your-github-org"; CURRENCY="USD"; OUTPUT=""; TEAM_ID=""; BRAIN_URL=""
 
-# Parse args (new flags + legacy aliases)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --slug) SLUG="$2"; shift 2 ;;
+    --owner|--lead|--captain) OWNER="$2"; shift 2 ;;
+    --context) CONTEXT="$2"; shift 2 ;;
+    --profile) # legacy → context
+      case "$2" in engagement) CONTEXT="consultant" ;; project) CONTEXT="employee" ;; *) CONTEXT="$2" ;; esac
+      shift 2 ;;
     --stakeholder|--client) STAKEHOLDER="$2"; shift 2 ;;
     --stakeholder-full|--client-full) STAKEHOLDER_FULL="$2"; shift 2 ;;
     --desc) DESC="$2"; shift 2 ;;
-    --lead|--captain) LEAD="$2"; shift 2 ;;
-    --members) MEMBERS="$2"; shift 2 ;;
+    --team|--members) TEAM="$2"; shift 2 ;;
     --org) ORG="$2"; shift 2 ;;
     --currency) CURRENCY="$2"; shift 2 ;;
     --output) OUTPUT="$2"; shift 2 ;;
-    --profile) PROFILE="$2"; shift 2 ;;
     --team-id) TEAM_ID="$2"; shift 2 ;;
     --brain-url) BRAIN_URL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help)
-      echo "Usage: $0 --slug <slug> --stakeholder <name> --lead <name> --members <csv> [options]"
-      echo ""
-      echo "Required:"
-      echo "  --slug             Repo name (e.g., acme-team-ops)"
-      echo "  --stakeholder      Short stakeholder/org name (alias: --client)"
-      echo "  --lead             Team lead (alias: --captain)"
-      echo "  --members          Comma-separated member list (e.g., alex,sam,jordan)"
-      echo ""
-      echo "Optional:"
-      echo "  --stakeholder-full Full legal name (alias: --client-full; defaults to --stakeholder)"
-      echo "  --desc             Project description"
-      echo "  --profile          project | engagement (default: project)"
-      echo "  --team-id          AIOS Team Brain team id (written to aios.yaml)"
-      echo "  --brain-url        AIOS Team Brain base URL (empty = offline/standalone)"
-      echo "  --org              GitHub org (default: your-github-org)"
-      echo "  --currency         Billing currency (default: USD)"
-      echo "  --output           Output directory (default: ~/Projects/<slug>)"
-      echo "  --dry-run          Preview the scaffold without creating files"
-      exit 0
-      ;;
+      sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-# Validate required args
-for var in SLUG STAKEHOLDER LEAD MEMBERS; do
+CONTEXT="${CONTEXT:-consultant}"
+case "$CONTEXT" in
+  consultant)
+    CONTEXT_TITLE="Engagement"; OUTWARD_TIER="client"; OUTWARD_DESC="client-facing"
+    STAKEHOLDER_LABEL="client" ;;
+  employee)
+    CONTEXT_TITLE="Role"; OUTWARD_TIER="company"; OUTWARD_DESC="company-shared"
+    STAKEHOLDER_LABEL="company" ;;
+  *) echo -e "${RED}Error: --context must be 'consultant' or 'employee'${NC}"; exit 1 ;;
+esac
+
+# Required
+for var in SLUG OWNER; do
   if [ -z "${!var}" ]; then
-    flag=$(echo "$var" | tr '[:upper:]' '[:lower:]')
-    echo -e "${RED}Error: --$flag is required${NC}"
-    exit 1
+    echo -e "${RED}Error: --$(echo $var | tr '[:upper:]' '[:lower:]') is required${NC}"; exit 1
   fi
 done
 
-# Profile vocabulary
-case "$PROFILE" in
-  project)
-    DIR00="00-project"; DIR04="04-shared"
-    CONFIG_FILE="project.yaml"; CONFIG_TMPL="project.yaml.tmpl"
-    UNIT_LABEL="project"; UNIT_TITLE="Project"
-    LEAD_LABEL="Lead"; STAKEHOLDER_LABEL="stakeholder"
-    DIR04_DESC="lead-approved, externally shareable"
-    ;;
-  engagement)
-    DIR00="00-engagement"; DIR04="04-client-surface"
-    CONFIG_FILE="engagement.yaml"; CONFIG_TMPL="engagement.yaml.tmpl"
-    UNIT_LABEL="engagement"; UNIT_TITLE="Engagement"
-    LEAD_LABEL="Captain"; STAKEHOLDER_LABEL="client"
-    DIR04_DESC="captain-approved, client-facing"
-    ;;
-  *)
-    echo -e "${RED}Error: --profile must be 'project' or 'engagement'${NC}"
-    exit 1
-    ;;
-esac
+# Intent-named spine (identical names in both contexts)
+D_CONTEXT="0-context"; D_INBOX="1-inbox"; D_WORK="2-work"
+D_LOG="3-log"; D_SHARED="4-shared"; D_PERSONAL="5-personal"
 
-# Defaults
+STAKEHOLDER="${STAKEHOLDER:-$([ "$CONTEXT" = consultant ] && echo 'Your Client' || echo 'Your Company')}"
 STAKEHOLDER_FULL="${STAKEHOLDER_FULL:-$STAKEHOLDER}"
-DESC="${DESC:-team $UNIT_LABEL}"
+DESC="${DESC:-AIOS $CONTEXT workspace}"
 OUTPUT="${OUTPUT:-$HOME/Projects/$SLUG}"
 START_DATE=$(date +%Y-%m-%dT00:00:00Z)
 
-# Parse members
+# Team-for-context list (teammates have their OWN workspaces; this is context only).
+# The owner is always a member so identity resolution passes.
+MEMBERS="$OWNER${TEAM:+,$TEAM}"
 IFS=',' read -ra MEMBER_ARRAY <<< "$MEMBERS"
-MEMBER_COUNT=${#MEMBER_ARRAY[@]}
 MEMBER_LIST=$(IFS=', '; echo "${MEMBER_ARRAY[*]}")
-
-# Build YAML members list
+MEMBER_COUNT=${#MEMBER_ARRAY[@]}
 MEMBERS_YAML=""
-for m in "${MEMBER_ARRAY[@]}"; do
-  MEMBERS_YAML="$MEMBERS_YAML  - $(echo "$m" | xargs)\n"
-done
+for m in "${MEMBER_ARRAY[@]}"; do MEMBERS_YAML="$MEMBERS_YAML  - $(echo "$m" | xargs)\n"; done
 
-echo -e "${BLUE}Agentic Team Ops — ${UNIT_TITLE} Scaffold${NC}"
+echo -e "${BLUE}AIOS Workspace Scaffold — context: ${CONTEXT}${NC}"
 echo "================================================"
-echo "  Slug:        $SLUG"
-echo "  Profile:     $PROFILE"
-echo "  Stakeholder: $STAKEHOLDER ($STAKEHOLDER_FULL)"
-echo "  Desc:        $DESC"
-echo "  $LEAD_LABEL:        $LEAD"
-echo "  Members:     $MEMBER_LIST ($MEMBER_COUNT)"
-echo "  Org:         $ORG"
-echo "  Currency:    $CURRENCY"
-echo "  Brain:       ${BRAIN_URL:-<offline/standalone>}"
-echo "  Output:      $OUTPUT"
-echo "  Mode:        $([ "$DRY_RUN" = true ] && echo "DRY RUN" || echo "CREATE")"
+echo "  Slug:       $SLUG"
+echo "  Owner:      $OWNER"
+echo "  Context:    $CONTEXT ($CONTEXT_TITLE; outward tier: $OUTWARD_TIER)"
+echo "  Stakeholder ($STAKEHOLDER_LABEL): $STAKEHOLDER"
+echo "  Team (ctx): ${TEAM:-<none>}"
+echo "  Brain:      ${BRAIN_URL:-<offline/standalone>}"
+echo "  Output:     $OUTPUT"
+echo "  Mode:       $([ "$DRY_RUN" = true ] && echo 'DRY RUN' || echo CREATE)"
 echo "================================================"
-echo ""
 
 if [ "$DRY_RUN" = true ]; then
-  echo -e "${YELLOW}DRY RUN — showing what would be created:${NC}"
-  echo ""
-  echo "Directories:"
-  echo "  $OUTPUT/"
-  echo "  $OUTPUT/.claude/{rules,skills,rubrics,memory}/"
-  echo "  $OUTPUT/.github/"
-  echo "  $OUTPUT/.planning/"
-  echo "  $OUTPUT/$DIR00/"
-  echo "  $OUTPUT/01-intake/{email,transcripts,reference,from-brain}/"
-  echo "  $OUTPUT/02-deliverables/"
-  echo "  $OUTPUT/03-status/"
-  echo "  $OUTPUT/$DIR04/"
-  for m in "${MEMBER_ARRAY[@]}"; do
-    m=$(echo "$m" | xargs)
-    echo "  $OUTPUT/05-personal/$m/{01-intake/{inbox,transcripts,email},02-deliverables,03-status,$DIR04,.claude,.planning}/"
-  done
-  echo ""
-  echo "Files:"
-  echo "  README.md"
-  echo "  $CONFIG_FILE"
-  echo "  contacts.yaml"
-  echo "  aios.yaml"
-  echo "  .env.example"
-  echo "  .claude/CLAUDE.md"
-  echo "  .claude/rules/{decision-log,frontmatter,publishing,hours}.md"
-  echo "  .github/CODEOWNERS"
-  echo "  03-status/{decision-log,hours-log,tasks}.md"
-  echo ""
-  echo -e "${GREEN}Dry run complete. Remove --dry-run to create.${NC}"
-  exit 0
+  echo -e "${YELLOW}DRY RUN — spine that would be created:${NC}"
+  printf '  %s/\n' "$D_CONTEXT" "$D_INBOX" "$D_WORK" "$D_LOG" "$D_SHARED" "$D_PERSONAL" ".claude"
+  echo -e "${GREEN}Remove --dry-run to create.${NC}"; exit 0
 fi
 
-# Check output doesn't already exist
-if [ -d "$OUTPUT" ]; then
-  echo -e "${RED}Error: Output directory already exists: $OUTPUT${NC}"
-  echo "Remove it first or choose a different --output path."
-  exit 1
-fi
+[ -d "$OUTPUT" ] && { echo -e "${RED}Error: $OUTPUT already exists${NC}"; exit 1; }
 
-# Create directory structure
-echo "Creating directories..."
-mkdir -p "$OUTPUT"/{.claude/rules,.github,.planning}
-mkdir -p "$OUTPUT/$DIR00"
-mkdir -p "$OUTPUT"/01-intake/{email,transcripts,reference,from-brain}
-mkdir -p "$OUTPUT"/02-deliverables
-mkdir -p "$OUTPUT"/03-status
-mkdir -p "$OUTPUT/$DIR04"
+echo "Creating workspace..."
+mkdir -p "$OUTPUT"/.claude/rules "$OUTPUT"/.github "$OUTPUT/.planning"
+mkdir -p "$OUTPUT/$D_CONTEXT"
+mkdir -p "$OUTPUT/$D_INBOX"/{transcripts,reference,from-brain}
+mkdir -p "$OUTPUT/$D_WORK"
+mkdir -p "$OUTPUT/$D_LOG"
+mkdir -p "$OUTPUT/$D_SHARED"
+mkdir -p "$OUTPUT/$D_PERSONAL"
+touch "$OUTPUT/$D_INBOX/transcripts/.gitkeep" "$OUTPUT/$D_INBOX/from-brain/.gitkeep"
 
-# OKF index.md stubs — agent navigation layer for each spine directory
-cat > "$OUTPUT/$DIR00/index.md" << IDXEOF
+# ── context skin: 0-context starter files ─────────────────────────────────────
+idx() { cat > "$1"; }  # helper: idx <path> <<EOF ... EOF
+
+if [ "$CONTEXT" = consultant ]; then
+  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
 ---
 type: index
 access: team
 ---
-# $DIR00
+# 0-context — engagement
 
-Navigation index for the charter, scope, and roles.
+What frames this engagement: scope, the client, and roles.
 
 * [Scope Baseline](scope-baseline.md) — contracted deliverable tracks
 * [Scope Ledger](scope-ledger.md) — scope changes and out-of-scope log
+EOF
+  idx "$OUTPUT/$D_CONTEXT/scope-baseline.md" << EOF
+---
+type: Scope
+status: draft
+access: team
+---
+# Scope Baseline — $STAKEHOLDER
 
-## Add links
-<!-- Add role docs, SOW, and charter files as they are created. -->
-IDXEOF
+| Track | In scope | Notes |
+|-------|----------|-------|
+EOF
+  idx "$OUTPUT/$D_CONTEXT/scope-ledger.md" << EOF
+---
+type: Scope
+status: living
+access: team
+---
+# Scope Ledger — $STAKEHOLDER
 
-cat > "$OUTPUT/01-intake/index.md" << IDXEOF
+| # | Date | Change | In/Out | Decided By |
+|---|------|--------|--------|------------|
+EOF
+else
+  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
 ---
 type: index
 access: team
 ---
-# 01-intake
+# 0-context — role
 
-Navigation index for raw inputs — transcripts, reference materials, and brain pulls.
+What frames your work: your role, your team, and your goals.
+
+* [Role](role.md) — what you own and how you work
+* [OKRs](okrs.md) — current objectives and key results
+EOF
+  idx "$OUTPUT/$D_CONTEXT/role.md" << EOF
+---
+type: Scope
+status: living
+access: team
+---
+# Role — $OWNER @ $STAKEHOLDER
+
+**Function:**
+**Manager:**
+**Team:** ${TEAM:-}
+EOF
+  idx "$OUTPUT/$D_CONTEXT/okrs.md" << EOF
+---
+type: Scope
+status: living
+access: team
+---
+# OKRs — $OWNER
+
+| Objective | Key result | Status |
+|-----------|------------|--------|
+EOF
+fi
+
+# ── 1-inbox, 2-work indexes ──────────────────────────────────────────────────
+idx "$OUTPUT/$D_INBOX/index.md" << EOF
+---
+type: index
+access: team
+---
+# 1-inbox
+
+Raw inputs — transcripts, reference material, and items pulled from the Team Brain.
 
 * [Transcripts](transcripts/) — meeting recordings and extracted text
 * [Reference](reference/) — background reading and external sources
-* [From Brain](from-brain/) — items pulled from the Team Brain (append-only)
+* [From Brain](from-brain/) — pulled from the Team Brain (append-only)
+EOF
 
-## Add links
-<!-- Add per-sprint intake folders as they appear. -->
-IDXEOF
-
-cat > "$OUTPUT/02-deliverables/index.md" << IDXEOF
+idx "$OUTPUT/$D_WORK/index.md" << EOF
 ---
 type: index
 access: team
 ---
-# 02-deliverables
+# 2-work
 
-Navigation index for sprint-scoped team outputs.
+Your deliverables and drafts in progress.
 
 ## Add links
-<!-- Add one link per sprint folder as sprints are opened:
-* [Sprint 1](sprint-1/) — <sprint goal>
--->
-IDXEOF
+<!-- Add one link per deliverable or work item as you create them. -->
+EOF
 
-cat > "$OUTPUT/03-status/index.md" << IDXEOF
+idx "$OUTPUT/$D_SHARED/index.md" << EOF
+---
+type: index
+access: $OUTWARD_TIER
+---
+# 4-shared — $OUTWARD_DESC
+
+What you've deliberately promoted outward ($OUTWARD_DESC). Tier: \`$OUTWARD_TIER\`.
+
+## Add links
+<!-- Add $OUTWARD_DESC artifacts here as you approve and promote them. -->
+EOF
+
+# ── 3-log: decisions + tasks (synced); hours (local, lightweight) ────────────
+idx "$OUTPUT/$D_LOG/index.md" << EOF
 ---
 type: index
 access: team
 ---
-# 03-status
+# 3-log
 
-Navigation index for living status documents.
+The record — decisions, tasks, and time.
 
-* [Decision Log](decision-log.md) — durable record of coordinated choices
-* [Tasks](tasks.md) — task register (syncs to Team Brain)
-* [Hours Log](hours-log.md) — billing-adjacent time record
+* [Decision Log](decision-log.md) — durable record of choices (syncs)
+* [Tasks](tasks.md) — task register (syncs)
+* [Hours Log](hours-log.md) — time record (stays local)
+EOF
 
-## Add links
-<!-- Add sprint ledgers, client-surface logs, and other status docs here. -->
-IDXEOF
-
-cat > "$OUTPUT/$DIR04/index.md" << IDXEOF
----
-type: index
-access: team
----
-# $DIR04
-
-Navigation index for $DIR04_DESC content.
-
-## Add links
-<!-- Add $STAKEHOLDER_LABEL-facing or shared artifacts here as they are approved and promoted. -->
-IDXEOF
-
-for m in "${MEMBER_ARRAY[@]}"; do
-  m=$(echo "$m" | xargs)
-  mkdir -p "$OUTPUT/05-personal/$m"/{01-intake/{inbox,transcripts,email},02-deliverables,03-status,.claude,.planning}
-  mkdir -p "$OUTPUT/05-personal/$m/$DIR04"
-  touch "$OUTPUT/05-personal/$m/01-intake/transcripts/.gitkeep"
-  touch "$OUTPUT/05-personal/$m/01-intake/email/.gitkeep"
-  touch "$OUTPUT/05-personal/$m/02-deliverables/.gitkeep"
-  touch "$OUTPUT/05-personal/$m/$DIR04/.gitkeep"
-
-  # Personal CLAUDE.md
-  cat > "$OUTPUT/05-personal/$m/.claude/CLAUDE.md" << PEOF
-# $m's Personal Workspace
-
-Read \`$DIR00/my-scope.md\` and \`03-status/tasks.md\` for orientation.
-PEOF
-
-  # Personal status files
-  cat > "$OUTPUT/05-personal/$m/03-status/hours-log.md" << HEOF
-# Hours Log — $m
-
-| Date | Activity | Hours | Tag | Task Ref |
-|------|----------|-------|-----|----------|
-HEOF
-
-  cat > "$OUTPUT/05-personal/$m/03-status/tasks.md" << TEOF
-# Tasks — $m
-
-| ID | Task | Status | Sprint | Due |
-|----|------|--------|--------|-----|
-TEOF
-
-  cat > "$OUTPUT/05-personal/$m/03-status/decision-log.md" << DEOF
-# Decision Log — $m
-
-| # | Date | Decision | Rationale | Type |
-|---|------|----------|-----------|------|
-DEOF
-
-  # Planning README
-  cat > "$OUTPUT/05-personal/$m/.planning/README.md" << PLEOF
-# Planning — $m
-
-Scratchpad for plans, prep, and thinking-in-progress. Not promoted.
-PLEOF
-done
-
-# Process templates
-echo "Processing templates..."
-
-process_template() {
-  local src="$1"
-  local dest="$2"
-
-  sed \
-    -e "s|{{SLUG}}|$SLUG|g" \
-    -e "s|{{CLIENT_NAME}}|$STAKEHOLDER|g" \
-    -e "s|{{CLIENT_FULL_NAME}}|$STAKEHOLDER_FULL|g" \
-    -e "s|{{ENGAGEMENT_DESC}}|$DESC|g" \
-    -e "s|{{CAPTAIN}}|$LEAD|g" \
-    -e "s|{{MEMBER_COUNT}}|$MEMBER_COUNT|g" \
-    -e "s|{{MEMBER_LIST}}|$MEMBER_LIST|g" \
-    -e "s|{{CURRENCY}}|$CURRENCY|g" \
-    -e "s|{{START_DATE}}|$START_DATE|g" \
-    -e "s|{{UNIT_LABEL}}|$UNIT_LABEL|g" \
-    -e "s|{{UNIT_TITLE}}|$UNIT_TITLE|g" \
-    -e "s|{{LEAD_LABEL}}|$LEAD_LABEL|g" \
-    -e "s|{{STAKEHOLDER_LABEL}}|$STAKEHOLDER_LABEL|g" \
-    -e "s|{{DIR00}}|$DIR00|g" \
-    -e "s|{{DIR04}}|$DIR04|g" \
-    -e "s|{{DIR04_DESC}}|$DIR04_DESC|g" \
-    -e "s|{{TEAM_ID}}|$TEAM_ID|g" \
-    -e "s|{{BRAIN_URL}}|$BRAIN_URL|g" \
-    "$src" > "$dest"
-}
-
-process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
-process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
-process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
-
-# Config yaml needs multiline member substitution
-sed \
-  -e "s|{{SLUG}}|$SLUG|g" \
-  -e "s|{{CLIENT_NAME}}|$STAKEHOLDER|g" \
-  -e "s|{{CLIENT_FULL_NAME}}|$STAKEHOLDER_FULL|g" \
-  -e "s|{{ENGAGEMENT_DESC}}|$DESC|g" \
-  -e "s|{{CAPTAIN}}|$LEAD|g" \
-  -e "s|{{CURRENCY}}|$CURRENCY|g" \
-  -e "s|{{START_DATE}}|$START_DATE|g" \
-  -e "s|{{UNIT_LABEL}}|$UNIT_LABEL|g" \
-  "$SCAFFOLD/$CONFIG_TMPL" | \
-  awk -v members="$(printf '%s' "$MEMBERS_YAML")" '{gsub(/\{\{MEMBERS_YAML\}\}/, members); print}' \
-  > "$OUTPUT/$CONFIG_FILE"
-
-# contacts.yaml — simple for now
-sed \
-  -e "s|{{CLIENT_NAME}}|$STAKEHOLDER|g" \
-  -e "s|{{CONTACTS_YAML}}|  # Add team contacts here|g" \
-  "$SCAFFOLD/contacts.yaml.tmpl" > "$OUTPUT/contacts.yaml"
-
-# .env.example
-if [ -f "$SCAFFOLD/.env.example" ]; then
-  cp "$SCAFFOLD/.env.example" "$OUTPUT/.env.example"
-fi
-
-# Copy shared rules
-cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"
-
-# Copy shared skills (dynamic-workflow harnesses + their SKILL.md)
-if [ -d "$SCAFFOLD/.claude/skills" ]; then
-  mkdir -p "$OUTPUT/.claude/skills"
-  cp -R "$SCAFFOLD/.claude/skills/." "$OUTPUT/.claude/skills/"
-fi
-
-# Copy rubrics (self-correction loop criteria)
-if [ -d "$SCAFFOLD/.claude/rubrics" ]; then
-  mkdir -p "$OUTPUT/.claude/rubrics"
-  cp -R "$SCAFFOLD/.claude/rubrics/." "$OUTPUT/.claude/rubrics/"
-fi
-
-# Copy memory scaffold (instincts + incidents convention)
-if [ -d "$SCAFFOLD/.claude/memory" ]; then
-  mkdir -p "$OUTPUT/.claude/memory/incidents"
-  cp -R "$SCAFFOLD/.claude/memory/." "$OUTPUT/.claude/memory/"
-fi
-
-# Create status files (decision log + tasks carry access: team so they sync
-# to a Team Brain by default; hours stay local — billing-adjacent)
-cat > "$OUTPUT/03-status/decision-log.md" << EOF
+idx "$OUTPUT/$D_LOG/decision-log.md" << EOF
 ---
 access: team
 type: "Decision Log"
@@ -421,14 +273,7 @@ type: "Decision Log"
 |---|------|----------|-----------|------------|--------|------|----------|
 EOF
 
-cat > "$OUTPUT/03-status/hours-log.md" << EOF
-# Hours Log — $STAKEHOLDER
-
-| Member | Date | Activity | Hours | Tag |
-|--------|------|----------|-------|-----|
-EOF
-
-cat > "$OUTPUT/03-status/tasks.md" << EOF
+idx "$OUTPUT/$D_LOG/tasks.md" << EOF
 ---
 access: team
 type: "Task List"
@@ -439,23 +284,82 @@ type: "Task List"
 |----|------|----------|--------|--------|-----|
 EOF
 
-# CODEOWNERS — simplified (no GitHub usernames available)
-cat > "$OUTPUT/.github/CODEOWNERS" << EOF
-# $STAKEHOLDER Team Ops — Code Owners
-# Update GitHub usernames below after repo creation.
+# Hours: billable framing for consultant, lightweight for employee — both stay local (no access tier → never syncs).
+idx "$OUTPUT/$D_LOG/hours-log.md" << EOF
+# Hours Log — $OWNER
 
-* @$LEAD
-/.claude/ @$LEAD
-/$DIR04/ @$LEAD
-/03-status/decision-log.md @$LEAD
+$([ "$CONTEXT" = consultant ] && echo 'Billable time for this engagement.' || echo 'Lightweight time tracking.')
+
+| Date | Activity | Hours | Tag | Ref |
+|------|----------|-------|-----|-----|
 EOF
 
-for m in "${MEMBER_ARRAY[@]}"; do
-  m=$(echo "$m" | xargs)
-  echo "/05-personal/$m/ @$m" >> "$OUTPUT/.github/CODEOWNERS"
-done
+# client-surface-log only for consultants
+if [ "$CONTEXT" = consultant ]; then
+  idx "$OUTPUT/$D_LOG/client-surface-log.md" << EOF
+---
+access: team
+---
+# Client-Surface Log — $STAKEHOLDER
 
-# .gitignore
+| Date | Artifact | Sent To | Approved By |
+|------|----------|---------|-------------|
+EOF
+fi
+
+# ── 5-personal: single private area (this is ONE person's workspace) ─────────
+idx "$OUTPUT/$D_PERSONAL/README.md" << EOF
+# $OWNER — personal
+
+Your private scratch: drafts, prep, thinking-in-progress. **Never syncs** to the
+Team Brain (no access tier here). Promote to 2-work/ or 4-shared/ when ready.
+EOF
+
+# ── templates (CLAUDE.md, README, aios.yaml, workspace.yaml, contacts) ────────
+echo "Processing templates..."
+process_template() {
+  sed \
+    -e "s|{{SLUG}}|$SLUG|g" -e "s|{{OWNER}}|$OWNER|g" -e "s|{{CONTEXT}}|$CONTEXT|g" \
+    -e "s|{{CONTEXT_TITLE}}|$CONTEXT_TITLE|g" -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" \
+    -e "s|{{STAKEHOLDER_FULL}}|$STAKEHOLDER_FULL|g" -e "s|{{STAKEHOLDER_LABEL}}|$STAKEHOLDER_LABEL|g" \
+    -e "s|{{DESC}}|$DESC|g" -e "s|{{MEMBER_LIST}}|$MEMBER_LIST|g" -e "s|{{MEMBER_COUNT}}|$MEMBER_COUNT|g" \
+    -e "s|{{CURRENCY}}|$CURRENCY|g" -e "s|{{START_DATE}}|$START_DATE|g" \
+    -e "s|{{OUTWARD_TIER}}|$OUTWARD_TIER|g" -e "s|{{OUTWARD_DESC}}|$OUTWARD_DESC|g" \
+    -e "s|{{TEAM_ID}}|$TEAM_ID|g" -e "s|{{BRAIN_URL}}|$BRAIN_URL|g" \
+    "$1" > "$2"
+}
+
+process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
+process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
+process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
+
+sed \
+  -e "s|{{SLUG}}|$SLUG|g" -e "s|{{OWNER}}|$OWNER|g" -e "s|{{CONTEXT}}|$CONTEXT|g" \
+  -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{STAKEHOLDER_FULL}}|$STAKEHOLDER_FULL|g" \
+  -e "s|{{STAKEHOLDER_LABEL}}|$STAKEHOLDER_LABEL|g" -e "s|{{DESC}}|$DESC|g" \
+  -e "s|{{CURRENCY}}|$CURRENCY|g" -e "s|{{START_DATE}}|$START_DATE|g" \
+  "$SCAFFOLD/workspace.yaml.tmpl" \
+  | awk -v members="$(printf '%s' "$MEMBERS_YAML")" '{gsub(/\{\{MEMBERS_YAML\}\}/, members); print}' \
+  > "$OUTPUT/workspace.yaml"
+
+sed -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{CONTACTS_YAML}}|  # Add contacts here|g" \
+  "$SCAFFOLD/contacts.yaml.tmpl" > "$OUTPUT/contacts.yaml"
+
+[ -f "$SCAFFOLD/.env.example" ] && cp "$SCAFFOLD/.env.example" "$OUTPUT/.env.example"
+
+# Copy the agent layer (rules, skills, rubrics, memory)
+cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"
+for d in skills rubrics memory; do
+  if [ -d "$SCAFFOLD/.claude/$d" ]; then mkdir -p "$OUTPUT/.claude/$d"; cp -R "$SCAFFOLD/.claude/$d/." "$OUTPUT/.claude/$d/"; fi
+done
+mkdir -p "$OUTPUT/.claude/memory/incidents"
+
+# CODEOWNERS
+cat > "$OUTPUT/.github/CODEOWNERS" << EOF
+# $SLUG — owned by @$OWNER
+* @$OWNER
+EOF
+
 cat > "$OUTPUT/.gitignore" << EOF
 .env
 .env.local
@@ -466,29 +370,20 @@ __pycache__/
 node_modules/
 EOF
 
-# .planning README
 cat > "$OUTPUT/.planning/README.md" << EOF
-# Team Planning
+# Planning — $OWNER
 
-Deliberation space. Files here are for team discussion, not promotion.
+Deliberation space. Not promoted.
 EOF
 
-# Initialize git
 echo "Initializing git..."
 cd "$OUTPUT"
-git init -q
-git add -A
-git commit -q -m "feat: scaffold $SLUG from Agentic Team Ops template"
+git init -q; git add -A
+git commit -q -m "feat: scaffold $SLUG — AIOS $CONTEXT workspace"
 
 echo ""
-echo -e "${GREEN}Scaffold complete!${NC}"
-echo ""
-echo "Next steps:"
-echo "  1. Review the generated files in: $OUTPUT"
-echo "  2. Create GitHub repo: gh repo create $ORG/$SLUG --private --source=$OUTPUT --push"
-echo "  3. Add collaborators: gh api repos/$ORG/$SLUG/collaborators/<username> -X PUT"
-echo "  4. Set up branch protection on main"
-echo "  5. Connect to the Team Brain: set AIOS_API_KEY in .env, fill aios.yaml, run 'aios status'"
-echo ""
-echo "Run validation:"
-echo "  $REPO_ROOT/validation/validate-all.sh $OUTPUT"
+echo -e "${GREEN}Workspace ready: $OUTPUT${NC}"
+echo "Next:"
+echo "  1. Connect the brain: set AIOS_API_KEY in .env, fill aios.yaml (brain_url, team_id)"
+echo "  2. aios status   # what would sync"
+echo "  3. Validate: $REPO_ROOT/validation/validate-all.sh $OUTPUT"
