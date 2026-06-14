@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * gui/server — local web GUI for an agentic-team-ops repo.
+ * gui/server — local web GUI for an aios-workspace repo.
  *
  * A thin gateway: one WebSocket session = one Claude Agent SDK `query()` with
  * cwd set to the target repo, so .claude/CLAUDE.md, rules, skills, and the
@@ -201,7 +201,7 @@ wss.on("connection", (ws) => {
 
 server.listen(port, "127.0.0.1", () => {
   console.log("");
-  console.log("  agentic-team-ops GUI");
+  console.log("  aios-workspace GUI");
   console.log(`  repo:  ${repo}`);
   console.log(`  open:  http://127.0.0.1:${port}/?token=${TOKEN}`);
   console.log("");

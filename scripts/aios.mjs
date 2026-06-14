@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * aios.mjs — AIOS Team Brain sync client for agentic-team-ops repos.
+ * aios.mjs — AIOS Team Brain sync client for aios-workspace repos.
  *
  * Zero npm dependencies (Node >= 18: built-in fetch, crypto, fs).
  * Contract: docs/brain-api.md (v1). Tier vocabulary: admin | team | external
