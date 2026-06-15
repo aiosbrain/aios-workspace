@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
+import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
@@ -307,7 +308,11 @@ wss.on("connection", (ws) => {
   (async () => {
     try {
       const adapter = createAdapter(runtime);
-      await adapter.run({ repo, model, baseUrl, input: input(), emit: send, confirmClaudeTool, signal: ac.signal });
+      await adapter.run({
+        repo, model, baseUrl, input: input(), emit: send, confirmClaudeTool, signal: ac.signal,
+        // host-side governance for runtimes whose writes are host-mediated (ACP fs/write)
+        guardWrite: (args) => runGuardWrite({ repo, ...args }),
+      });
     } catch (e) {
       send({ type: "error", message: String(e?.message || e) });
     }

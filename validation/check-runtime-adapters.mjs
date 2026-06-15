@@ -69,6 +69,25 @@ try {
   console.log(`  ${YELLOW}—${NC} GUI adapter resolution skipped (gui/server deps not installed): ${String(e.message).split("\n")[0]}`);
 }
 
+// 4. Host-side write guard — reuses team-ops-guard.sh as the single governance
+//    source. Tested against this repo (has hooks/team-ops-guard.sh). Needs jq +
+//    bash (the guard's own deps); skips with a note if absent.
+try {
+  const repoRoot = path.join(DIR, "..");
+  const { guardWrite } = await import(path.join(repoRoot, "gui", "server", "runtime-adapters", "guard.mjs"));
+  const expect = (label, args, wantOk) => {
+    const r = guardWrite({ repo: repoRoot, ...args });
+    if (r.ok !== wantOk) fail(`guardWrite ${label}: expected ok=${wantOk}, got ok=${r.ok} (${r.reason || ""})`);
+  };
+  expect("clean deliverable allowed", { path: "2-work/x.md", content: "---\nstatus: draft\nowner: me\n---\nhi" }, true);
+  expect("secret blocked", { path: "notes.md", content: "token=AKIAIOSFODNN7EXAMPLE" }, false);
+  expect("admin-tier in outward dir blocked", { path: "4-shared/deal.md", content: "---\nstatus: draft\n---\nour day rate is confidential" }, false);
+  expect("path escape blocked", { path: "../../../../etc/passwd", content: "x" }, false);
+  if (!errors) ok("guardWrite: clean allowed; secret / admin-tier / path-escape blocked");
+} catch (e) {
+  console.log(`  ${YELLOW}—${NC} guardWrite check skipped: ${String(e.message).split("\n")[0]}`);
+}
+
 console.log("================================================");
 if (errors === 0) { console.log(`${GREEN}OGR07 PASSED${NC}`); process.exit(0); }
 console.log(`${RED}OGR07 FAILED — ${errors} issue(s)${NC}`); process.exit(1);
