@@ -28,7 +28,7 @@ import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
-import { parseFlatYaml } from "./flat-yaml.mjs";
+import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));

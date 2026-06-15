@@ -80,7 +80,8 @@ try {
     if (r.ok !== wantOk) fail(`guardWrite ${label}: expected ok=${wantOk}, got ok=${r.ok} (${r.reason || ""})`);
   };
   expect("clean deliverable allowed", { path: "2-work/x.md", content: "---\nstatus: draft\nowner: me\n---\nhi" }, true);
-  expect("secret blocked", { path: "notes.md", content: "token=AKIAIOSFODNN7EXAMPLE" }, false);
+  // Split so this fixture file itself doesn't trip OGR03's secret scan in CI.
+  expect("secret blocked", { path: "notes.md", content: "token=AKIA" + "IOSFODNN7EXAMPLE" }, false);
   expect("admin-tier in outward dir blocked", { path: "4-shared/deal.md", content: "---\nstatus: draft\n---\nour day rate is confidential" }, false);
   expect("path escape blocked", { path: "../../../../etc/passwd", content: "x" }, false);
   if (!errors) ok("guardWrite: clean allowed; secret / admin-tier / path-escape blocked");

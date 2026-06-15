@@ -13,6 +13,14 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync, existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// The toolkit's own guard — always present relative to this module. Used as a
+// fallback so scaffolded workspaces (which don't ship hooks/ yet) are still
+// governed rather than silently allowing every write.
+const TOOLKIT_GUARD = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "hooks", "team-ops-guard.sh",
+);
 
 // Resolve `target` to an absolute path proven to live inside `repo`, realpath-ing
 // the deepest existing ancestor so a not-yet-created file can't escape via a
@@ -42,8 +50,13 @@ export function guardWrite({ repo, path: target, content = "", operation = "Writ
   const real = resolveInRepo(repo, target);
   if (!real) return { ok: false, reason: `path escapes the workspace: ${target}` };
 
-  const guard = path.join(repo, "hooks", "team-ops-guard.sh");
-  if (!existsSync(guard)) return { ok: true }; // no guard in this workspace — allow (matches Claude Code)
+  // Prefer the workspace's own guard (workspace-specific rules); otherwise fall
+  // back to the toolkit guard so we never silently allow ungoverned writes.
+  const workspaceGuard = path.join(repo, "hooks", "team-ops-guard.sh");
+  const guard = existsSync(workspaceGuard) ? workspaceGuard
+    : existsSync(TOOLKIT_GUARD) ? TOOLKIT_GUARD
+    : null;
+  if (!guard) return { ok: true }; // no guard available anywhere — allow
 
   const isEdit = operation === "Edit";
   const toolInput = isEdit ? { file_path: real, new_string: content } : { file_path: real, content };

@@ -249,6 +249,7 @@ wss.on("connection", (ws) => {
   // Adapters consume { type:"user", text } turns (runtime-neutral).
   const queue = [];
   let wake = null;
+  const ac = new AbortController(); // fired on ws close → wakes the iterator + signals the adapter
   const pushUser = (text) => {
     queue.push({ type: "user", text });
     if (wake) { wake(); wake = null; }
@@ -256,7 +257,9 @@ wss.on("connection", (ws) => {
   async function* input() {
     for (;;) {
       while (queue.length) yield queue.shift();
+      if (ac.signal.aborted) return;
       await new Promise((r) => (wake = r));
+      if (ac.signal.aborted) return; // woken by ws close → terminate the iterator
     }
   }
 
@@ -302,7 +305,6 @@ wss.on("connection", (ws) => {
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
   const { runtime, model, baseUrl } = readAgentConfig(repo);
-  const ac = new AbortController();
   send({ type: "hello", repo, sessionId, runtime });
 
   (async () => {
@@ -320,6 +322,7 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     ac.abort();
+    if (wake) { wake(); wake = null; } // unpark the input iterator so it returns
     // resolve any pending approvals as denied so the adapter loop can finish
     for (const resolve of pending.values()) resolve(false);
     pending.clear();
