@@ -1,9 +1,10 @@
 # Bring Your Own Agent (BYOA)
 
-> Status: **Phase 1 done** (config + docs). **Phase 2 first cut shipped** —
-> `aios skills export --runtime <name>` is implemented (see below). Phase 3
-> (GUI multi-backend) is designed but not yet built. This document is both the
-> design/roadmap and the user-facing reference for choosing an agent runtime.
+> Status: **Phase 1 done** (config + docs). **Phase 2 done** — `aios skills
+> export --runtime <name>` + `--install` + a round-trip validator (OGR06);
+> only true per-runtime multi-agent harness equivalents are carried forward.
+> Phase 3 (GUI multi-backend) is designed but not yet built. This document is
+> both the design/roadmap and the user-facing reference for choosing a runtime.
 
 The workspace should not assume one agent. A contributor should be able to
 **choose the agent runtime** that drives their workspace — Claude Code, Hermes
@@ -130,12 +131,21 @@ Implemented in `scripts/aios.mjs` (`cmdSkills` + the `SKILL_RUNTIMES` registry);
 reads `.claude/skills/*/SKILL.md`, handles `|`/`>` block-scalar descriptions, and
 emits exactly one H1 per skill.
 
-**Still open in Phase 2:**
-- True multi-agent harness equivalents on runtimes that support them (rather than
-  always degrading to single-agent off Claude Code).
-- A round-trip test in `tests/` asserting every shipped skill exports cleanly for
-  each runtime, keeping `SKILL.md` the single source of truth.
-- An optional `--install` that drives `hermes skills install` directly.
+**Done:**
+- ✅ **Round-trip test** — `validation/check-skill-export.mjs` (OGR06, wired into
+  `validate-all.sh`) exports every skill for all six runtimes and asserts valid
+  frontmatter (name + non-block-scalar description), exactly one H1, claude-code
+  identity preserves `.workflow.js`, and harnesses are flagged degraded off
+  Claude Code.
+- ✅ **`--install`** — `aios skills export --runtime hermes --install` drives
+  `hermes skills install` per skill (best-effort; Hermes' own scanner decides
+  acceptance, and per-skill outcomes are reported — it never fails the export).
+
+**Still open (carried to a follow-up / Phase 3-adjacent):**
+- True multi-agent harness equivalents on runtimes that support them, rather than
+  always degrading to single-agent off Claude Code. This is runtime-specific
+  porting (each runtime's sub-agent API differs) and is its own effort — the
+  honest single-agent fallback ships today.
 
 ## Phase 3 — GUI multi-backend
 

@@ -1556,6 +1556,7 @@ function cmdSkills(repo, args) {
   if (!rt) die(`--runtime must be one of: ${Object.keys(SKILL_RUNTIMES).join(", ")}`);
   const only = flagValue(args, "--skill");
   const outBase = flagValue(args, "--out") || path.join(repo, ".aios", "export", runtime);
+  const doInstall = args.includes("--install");
 
   let skills = readWorkspaceSkills(repo);
   if (only) skills = skills.filter((s) => s.name === only);
@@ -1565,6 +1566,7 @@ function cmdSkills(repo, args) {
 
   mkdirSync(outBase, { recursive: true });
   const degraded = [];
+  const installable = []; // {name, md} for SKILL.md-layout runtimes
   for (const s of skills) {
     const willDegrade = s.kind === "workflow-harness" && !rt.harness;
     if (willDegrade) degraded.push(s.name);
@@ -1575,18 +1577,54 @@ function cmdSkills(repo, args) {
       mkdirSync(skillOut, { recursive: true });
       const file = rt.layout === "skillmd" ? "SKILL.md" : `${s.name}.md`;
       const render = rt.layout === "skillmd" ? renderSkillMd : renderInstructions;
-      writeFileSync(path.join(skillOut, file), render(runtime, s, willDegrade));
+      const outFile = path.join(skillOut, file);
+      writeFileSync(outFile, render(runtime, s, willDegrade));
+      if (rt.layout === "skillmd") installable.push({ name: s.name, md: outFile });
     }
     console.log(`  ${s.name}${willDegrade ? " (harness→single-agent)" : ""}`);
   }
   console.log(`\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`);
-  if (runtime === "hermes") {
-    console.log(`install into Hermes:  hermes skills install <path-to-SKILL.md> --name <skill>`);
-  }
   if (degraded.length) {
     console.log(`\n⚠ multi-agent harness(es) degraded to single-agent instructions: ${degraded.join(", ")}`);
     console.log(`  Only claude-code runs the .workflow.js multi-agent harness; ${runtime} uses the SKILL.md body.`);
   }
+
+  if (doInstall) {
+    installIntoHermes(runtime, installable);
+  } else if (runtime === "hermes") {
+    console.log(`\ninstall into Hermes:  hermes skills install <path-to-SKILL.md> --name <skill> --yes`);
+    console.log(`  (or re-run with --install to install them now)`);
+  }
+}
+
+// Best-effort: drive `hermes skills install` for each exported SKILL.md. Never
+// throws — Hermes' own skill scanner may block individual skills; we report
+// per-skill outcomes rather than failing the whole export.
+function installIntoHermes(runtime, installable) {
+  if (runtime !== "hermes") {
+    console.log(`\n--install currently supports only --runtime hermes (got '${runtime}').`);
+    return;
+  }
+  try {
+    execFileSync("hermes", ["--version"], { stdio: "pipe" });
+  } catch {
+    console.log(`\n⚠ 'hermes' not found on PATH — skipping --install. Install Hermes, then re-run.`);
+    return;
+  }
+  console.log(`\ninstalling ${installable.length} skill(s) into Hermes…`);
+  let ok = 0;
+  for (const { name, md } of installable) {
+    try {
+      execFileSync("hermes", ["skills", "install", md, "--name", name, "--category", "aios", "--yes"],
+        { stdio: "pipe" });
+      console.log(`  ✓ ${name}`);
+      ok++;
+    } catch (e) {
+      const last = String(e.stdout || e.stderr || e.message).split("\n").filter((l) => l.trim()).pop();
+      console.log(`  ✗ ${name} — ${last || "install failed"}`);
+    }
+  }
+  console.log(`installed ${ok}/${installable.length} into Hermes (any ✗ were rejected by Hermes' own scanner).`);
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -1625,6 +1663,7 @@ usage:
     [--depth N] [--format text|json]
   aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
     [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
+    [--install]                         for hermes: also run hermes skills install on each
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
