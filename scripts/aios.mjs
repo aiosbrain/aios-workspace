@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync,
+  readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, cpSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline";
@@ -1420,6 +1420,175 @@ function cmdGraph(repo, cfg, args) {
   console.log(c.dim(`${visited.size} node(s) | ${broken.length} broken link(s)`));
 }
 
+// ── skills export (BYOA Phase 2) ─────────────────────────────────────────────
+// Export workspace skills into a target agent runtime's format. SKILL.md is the
+// canonical, runtime-neutral manifest; runtimes are adapters around it. Runtimes
+// without a multi-agent harness get the SKILL.md body as single-agent
+// instructions (a flagged degrade), never a silent drop. See docs/byoa.md.
+
+const SKILL_RUNTIMES = {
+  // harness: can execute the multi-agent .workflow.js (Claude Code Workflow tool)
+  // layout:  how skills are emitted for this runtime
+  "claude-code": { harness: true,  layout: "claude" },       // identity (source format)
+  "hermes":      { harness: false, layout: "skillmd" },      // hermes skills install
+  "openclaw":    { harness: false, layout: "skillmd" },
+  "codex":       { harness: false, layout: "instructions" }, // instruction file
+  "opencode":    { harness: false, layout: "instructions" },
+  "claude-api":  { harness: false, layout: "instructions" },
+};
+
+function flagValue(args, name) {
+  const i = args.indexOf(name);
+  return i !== -1 ? args[i + 1] : null;
+}
+
+// parseFlatYaml flattens `key: |` block scalars to "|"; re-extract them from the
+// raw frontmatter text (handles inline + `|`/`>` block scalars).
+function readFmField(fmText, key) {
+  const lines = fmText.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(new RegExp(`^${key}:\\s*(.*)$`));
+    if (!m) continue;
+    const inline = m[1].trim();
+    if (inline && !/^[|>][-+]?$/.test(inline)) return inline.replace(/^["']|["']$/g, "");
+    const base = (lines[i].match(/^\s*/) || [""])[0].length;
+    const collected = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].trim() === "") { collected.push(""); continue; }
+      if (((lines[j].match(/^\s*/) || [""])[0].length) <= base) break;
+      collected.push(lines[j].trim());
+    }
+    return collected.join(" ").replace(/\s+/g, " ").trim();
+  }
+  return "";
+}
+
+// Pull a leading `# Title` off the body so renderers emit exactly one H1.
+function splitTitle(body, fallback) {
+  const m = body.match(/^#\s+(.+?)\n+/);
+  return m ? { title: m[1].trim(), rest: body.slice(m[0].length) } : { title: fallback, rest: body };
+}
+
+// Read .claude/skills/<name>/SKILL.md → {dir,name,kind,description,triggers,workflow,body}
+function readWorkspaceSkills(repo) {
+  const dir = path.join(repo, ".claude", "skills");
+  const out = [];
+  if (!existsSync(dir)) return out;
+  for (const name of readdirSync(dir).sort()) {
+    const sub = path.join(dir, name);
+    if (!statSync(sub).isDirectory()) continue;
+    const skillMd = path.join(sub, "SKILL.md");
+    if (!existsSync(skillMd)) continue; // skips README.md / INDEX.md
+    const raw = readFileSync(skillMd, "utf8");
+    const { frontmatter: fm, body } = parseFrontmatter(raw);
+    if (!fm || !fm.name) continue;
+    let description = (fm.description || "").replace(/\s+/g, " ").trim();
+    if (!description || /^[|>][-+]?$/.test(description)) {
+      const fmText = raw.slice(raw.indexOf("\n") + 1, raw.indexOf("\n---", 3));
+      description = readFmField(fmText, "description");
+    }
+    out.push({
+      dir: sub,
+      name: fm.name,
+      kind: fm.kind || "skill",
+      version: fm.version || "1.0.0",
+      description,
+      triggers: Array.isArray(fm.triggers) ? fm.triggers : [],
+      workflow: fm.workflow || null,
+      body: (body || "").trim(),
+    });
+  }
+  return out;
+}
+
+function degradeNote(runtime) {
+  return `> ⚠ Authored as a multi-agent harness for Claude Code. On \`${runtime}\` ` +
+    `it runs **single-agent**: follow the steps below directly, without the parallel ` +
+    `sub-agent + adversarial-verification passes. Expect more false positives — spot-check results.\n\n`;
+}
+
+function triggersToTags(triggers) {
+  return triggers
+    .map((t) => String(t).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+// Hermes/OpenClaw-flavored SKILL.md (installable via `hermes skills install`).
+function renderSkillMd(runtime, s, degrade) {
+  const tags = triggersToTags(s.triggers);
+  const fm = [
+    "---",
+    `name: ${s.name}`,
+    `description: ${JSON.stringify(s.description)}`,
+    `version: ${s.version}`,
+    "platforms: [linux, macos, windows]",
+    "metadata:",
+    "  byoa:",
+    "    source: aios-workspace",
+    `    kind: ${s.kind}`,
+    ...(runtime === "hermes"
+      ? ["  hermes:", `    tags: [${tags.join(", ")}]`]
+      : [`  tags: [${tags.join(", ")}]`]),
+    "---",
+    "",
+  ].join("\n");
+  const { title, rest } = splitTitle(s.body, s.name);
+  return fm + (degrade ? degradeNote(runtime) : "") + `# ${title}\n\n${rest}\n`;
+}
+
+// Plain instruction file for Codex / OpenCode / a bare Claude-API loop.
+function renderInstructions(runtime, s, degrade) {
+  const { title, rest } = splitTitle(s.body, s.name);
+  const use = s.triggers.length ? `**Use when:** ${s.triggers.join(" · ")}\n\n` : "";
+  return `# ${title}\n\n` +
+    `> Skill exported from aios-workspace for \`${runtime}\` (BYOA).\n\n` +
+    (degrade ? degradeNote(runtime) : "") + use + `${rest}\n`;
+}
+
+function cmdSkills(repo, args) {
+  if (args[0] !== "export") {
+    die('usage: aios skills export --runtime <name> [--skill <name>] [--out <dir>]\n' +
+      `       runtimes: ${Object.keys(SKILL_RUNTIMES).join(", ")}`);
+  }
+  const runtime = flagValue(args, "--runtime");
+  const rt = SKILL_RUNTIMES[runtime];
+  if (!rt) die(`--runtime must be one of: ${Object.keys(SKILL_RUNTIMES).join(", ")}`);
+  const only = flagValue(args, "--skill");
+  const outBase = flagValue(args, "--out") || path.join(repo, ".aios", "export", runtime);
+
+  let skills = readWorkspaceSkills(repo);
+  if (only) skills = skills.filter((s) => s.name === only);
+  if (!skills.length) {
+    die(only ? `no skill named '${only}' in .claude/skills/` : "no skills found in .claude/skills/");
+  }
+
+  mkdirSync(outBase, { recursive: true });
+  const degraded = [];
+  for (const s of skills) {
+    const willDegrade = s.kind === "workflow-harness" && !rt.harness;
+    if (willDegrade) degraded.push(s.name);
+    const skillOut = path.join(outBase, s.name);
+    if (rt.layout === "claude") {
+      cpSync(s.dir, skillOut, { recursive: true }); // identity: SKILL.md + workflow + refs
+    } else {
+      mkdirSync(skillOut, { recursive: true });
+      const file = rt.layout === "skillmd" ? "SKILL.md" : `${s.name}.md`;
+      const render = rt.layout === "skillmd" ? renderSkillMd : renderInstructions;
+      writeFileSync(path.join(skillOut, file), render(runtime, s, willDegrade));
+    }
+    console.log(`  ${s.name}${willDegrade ? " (harness→single-agent)" : ""}`);
+  }
+  console.log(`\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`);
+  if (runtime === "hermes") {
+    console.log(`install into Hermes:  hermes skills install <path-to-SKILL.md> --name <skill>`);
+  }
+  if (degraded.length) {
+    console.log(`\n⚠ multi-agent harness(es) degraded to single-agent instructions: ${degraded.join(", ")}`);
+    console.log(`  Only claude-code runs the .workflow.js multi-agent harness; ${runtime} uses the SKILL.md body.`);
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -1454,6 +1623,8 @@ usage:
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
   aios graph [--from <file>]            traverse local OKF link graph (no brain needed)
     [--depth N] [--format text|json]
+  aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
+    [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -1463,7 +1634,7 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
 }
 
 // export-okf, graph, install-skill, connect are offline-only: no aios.yaml required.
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect"]);
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1490,6 +1661,7 @@ try {
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
   else if (cmd === "graph") cmdGraph(repo, cfg, rest);
+  else if (cmd === "skills") cmdSkills(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);
