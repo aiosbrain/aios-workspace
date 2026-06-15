@@ -33,10 +33,12 @@ STRONG='REDACTED|REDACTED|REDACTED|pravos|vibrana|REDACTED|REDACTED|REDACTED|RED
 
 # WORD-BOUNDED terms — short/ambiguous client identifiers; match only as whole
 # words to avoid false positives (e.g. Tine in "routine", Abe in "label").
-# NOTE: generic third-party SaaS names (Jira, Confluence, Toggl, Slack, etc.) are
-# NOT confidential identifiers and may appear in generic integration/secret-scan
-# code, so they are deliberately NOT gated here.
-WORDS='REDACTED|Pravos|Anna|Tine|Andre|André|Abe|eNPS|OKR|OKRs'
+# NOTE: generic third-party SaaS names (Jira, Confluence, Toggl, Slack, etc.) and
+# generic business-metric terms (OKR/OKRs, eNPS, KPI, NPS) are NOT confidential
+# identifiers and appear in normal product/docs copy, so they are deliberately NOT
+# gated. A *specific* company's OKRs/metrics are still caught — by that company's
+# name (STRONG list) and the business-data PATTERNS (amounts/IDs) that accompany them.
+WORDS='REDACTED|Pravos|Anna|Tine|Andre|André|Abe'
 
 # PATTERN terms — structured business data.
 PATTERNS='ANT-[0-9]+|CO-[12][[:space:]]|INV-[0-9]+|€[0-9]|EUR[[:space:]]*[0-9]'
