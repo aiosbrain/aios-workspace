@@ -41,6 +41,8 @@ aios-workspace/
 │       └── memory/   instincts + incidents (cross-session learning)
 ├── validation/      OGR validators (structure · frontmatter · secrets · aios config · rubrics)
 ├── hooks/           Claude Code guards (secrets · access · frontmatter · sync nudge)
+│                    shipped into every scaffolded workspace + registered in
+│                    .claude/settings.json, so the PreToolUse guard fires there too
 ├── scripts/         scaffold-project.sh · aios.mjs (Team Brain sync CLI) · leak-gate.sh
 ├── gui/             local web GUI — chat with this repo via the Claude Agent SDK
 ├── examples/        a fully synthetic sample to demo + test the harnesses
