@@ -1027,6 +1027,14 @@ async function cmdPullBlueprint(repo, cfg) {
   console.log(c.green(`pulled team blueprint: ${n} tool(s)${by ? ` (by ${by})` : ""} → .aios/blueprint.json`));
 }
 
+// aios whoami — print the authenticated member's identity + role (JSON). Lets the
+// cockpit tailor the UI (e.g. only leads/admins see the Team publish surface).
+async function cmdWhoami(repo, cfg) {
+  requireOnline(cfg);
+  const me = await api(cfg, "GET", "/me");
+  console.log(JSON.stringify(me));
+}
+
 async function cmdQuery(repo, cfg, args) {
   const question = args.filter((a) => !a.startsWith("--")).join(" ").trim();
   if (!question) die('usage: aios query "your question"');
@@ -1696,6 +1704,7 @@ try {
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "connect") await cmdConnect(repo, rest);
+  else if (cmd === "whoami") await cmdWhoami(repo, cfg);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
