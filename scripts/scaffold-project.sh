@@ -394,7 +394,10 @@ EOF
 echo "Initializing git..."
 cd "$OUTPUT"
 git init -q; git add -A
-git commit -q -m "feat: scaffold $SLUG — AIOS $CONTEXT workspace"
+# Inline identity so the first commit never depends on a configured git user
+# (non-technical machines and CI runners often have none). The owner can amend later.
+git -c user.email="workspace@aios.local" -c user.name="AIOS Workspace" \
+  commit -q -m "feat: scaffold $SLUG — AIOS $CONTEXT workspace"
 
 echo ""
 echo -e "${GREEN}Workspace ready: $OUTPUT${NC}"
