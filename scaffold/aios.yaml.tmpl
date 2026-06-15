@@ -10,6 +10,17 @@ team_id: "{{TEAM_ID}}"
 # NAME of the environment variable holding your API key — never the key itself.
 api_key_env: AIOS_API_KEY
 
+# Agent runtime that drives this workspace — Bring Your Own Agent (see
+# docs/byoa.md). The runtime is independent of which model/provider answers
+# (cloud vs local); the two compose freely.
+#   claude-code (default) | hermes | openclaw | codex | opencode | claude-api
+# Default keeps existing workspaces unchanged.
+agent_runtime: claude-code
+# Optional hints a runtime adapter may use; leave blank for the runtime's own
+# defaults. Endpoint/model normally live with the runtime, not here.
+agent_model: ""
+agent_base_url: ""
+
 # Which access tiers may leave this machine.
 #   private  → never syncs (canonical: admin; hard-failed if listed here)
 #   team     → shared with your team via the brain
