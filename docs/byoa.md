@@ -1,8 +1,9 @@
 # Bring Your Own Agent (BYOA)
 
-> Status: **Phase 1 (docs + config) in progress.** Phases 2–3 are designed
-> below but not yet implemented. This document is both the design/roadmap and
-> the user-facing reference for choosing an agent runtime.
+> Status: **Phase 1 done** (config + docs). **Phase 2 first cut shipped** —
+> `aios skills export --runtime <name>` is implemented (see below). Phase 3
+> (GUI multi-backend) is designed but not yet built. This document is both the
+> design/roadmap and the user-facing reference for choosing an agent runtime.
 
 The workspace should not assume one agent. A contributor should be able to
 **choose the agent runtime** that drives their workspace — Claude Code, Hermes
@@ -101,26 +102,40 @@ Per-runtime setup (Phase 1 = documentation; full integration in 2–3):
 
 ## Phase 2 — portable skill & harness format
 
-Goal: one skill authored once, runnable by any runtime.
+Goal: one skill authored once, runnable by any runtime. **First cut shipped.**
 
-1. **Treat `SKILL.md` as the canonical, runtime-neutral manifest** (already is).
-   Formalize the schema: `name`, `description`, `version`, `kind`
-   (`workflow-harness` | `instruction`), `triggers`, and an optional
-   `workflow:` (Claude-Code executable) — plus a new optional
-   `instructions:` body usable by runtimes without a multi-agent harness.
-2. **Add an exporter:** `aios skills export --runtime <name> [--out <dir>]`.
-   - `claude-code` → current layout (`.claude/skills/<id>/` + `.workflow.js`).
-   - `hermes` → emit a Hermes-compatible `SKILL.md` and/or call
-     `hermes skills install` (proven path — llm-wiki installs this way).
-   - `codex` / `opencode` → instruction-file packaging.
-   - `openclaw` → OpenClaw skill package.
-3. **Bridge the harness-execution gap.** `*.workflow.js` is multi-agent
-   (sub-agents + adversarial verification). Runtimes without that get a
-   **single-agent fallback** compiled from the SKILL.md `instructions` body, and
-   `aios skills export` warns when a harness degrades. Document the capability
-   matrix (which runtimes support true multi-agent harnesses).
-4. **Round-trip test:** a `tests/` check that every shipped skill exports
-   cleanly for each runtime and the SKILL.md stays the single source of truth.
+`SKILL.md` is the canonical, runtime-neutral manifest (`name`, `description`,
+`version`, `kind`, `triggers`, optional `workflow:` for the Claude-Code
+executable). The exporter adapts it per runtime:
+
+```bash
+aios skills export --runtime <name> [--skill <name>] [--out <dir>]
+#   runtimes: claude-code | hermes | openclaw | codex | opencode | claude-api
+#   default out: .aios/export/<runtime>/
+```
+
+| Runtime | Output | Notes |
+|---------|--------|-------|
+| `claude-code` | identity copy (`SKILL.md` + `.workflow.js` + refs) | the source format |
+| `hermes` / `openclaw` | Hermes-flavored `SKILL.md` (frontmatter + tags) | install via `hermes skills install` (proven path — llm-wiki) |
+| `codex` / `opencode` / `claude-api` | plain instruction `*.md` | for instruction-file / bare-loop runtimes |
+
+**Harness degrade is explicit, never silent.** `*.workflow.js` is multi-agent
+(sub-agents + adversarial verification); only `claude-code` runs it. Exporting a
+`workflow-harness` to any other runtime emits the `SKILL.md` body as
+single-agent instructions with a visible degrade banner, and the CLI prints a
+`harness→single-agent` warning per skill.
+
+Implemented in `scripts/aios.mjs` (`cmdSkills` + the `SKILL_RUNTIMES` registry);
+reads `.claude/skills/*/SKILL.md`, handles `|`/`>` block-scalar descriptions, and
+emits exactly one H1 per skill.
+
+**Still open in Phase 2:**
+- True multi-agent harness equivalents on runtimes that support them (rather than
+  always degrading to single-agent off Claude Code).
+- A round-trip test in `tests/` asserting every shipped skill exports cleanly for
+  each runtime, keeping `SKILL.md` the single source of truth.
+- An optional `--install` that drives `hermes skills install` directly.
 
 ## Phase 3 — GUI multi-backend
 
