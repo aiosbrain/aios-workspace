@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
-import { createAdapter } from "./runtime-adapters/index.mjs";
+import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
@@ -297,16 +297,17 @@ wss.on("connection", (ws) => {
       : { behavior: "deny", message: "Denied in the GUI" };
   };
 
-  // One adapter drives this session. Slice 2 reads agent_runtime from aios.yaml;
-  // for now this is the unchanged claude-code path.
-  const runtime = "claude-code";
+  // One adapter drives this session, selected by agent_runtime in aios.yaml
+  // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
+  // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
+  const { runtime, model, baseUrl } = readAgentConfig(repo);
   const ac = new AbortController();
   send({ type: "hello", repo, sessionId, runtime });
 
   (async () => {
     try {
       const adapter = createAdapter(runtime);
-      await adapter.run({ repo, input: input(), emit: send, confirmClaudeTool, signal: ac.signal });
+      await adapter.run({ repo, model, baseUrl, input: input(), emit: send, confirmClaudeTool, signal: ac.signal });
     } catch (e) {
       send({ type: "error", message: String(e?.message || e) });
     }

@@ -28,6 +28,8 @@ import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
+import { parseFlatYaml } from "./flat-yaml.mjs";
+import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -80,38 +82,8 @@ function gitConfig(repo, key) {
 // Deliberately minimal: aios.yaml is constrained to this subset (OGR04
 // enforces it). Nested structures are NOT supported — by design.
 
-function parseFlatYaml(text) {
-  const out = {};
-  let currentList = null;
-  for (const raw of text.split("\n")) {
-    const line = raw.replace(/\t/g, "  ");
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-    const listItem = line.match(/^\s+-\s+(.*)$/);
-    if (listItem && currentList) {
-      out[currentList].push(stripQuotes(listItem[1].trim()));
-      continue;
-    }
-    const kv = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
-    if (kv) {
-      const [, key, value] = kv;
-      if (value === "" || value.startsWith("#")) {
-        out[key] = [];
-        currentList = key;
-      } else {
-        out[key] = stripQuotes(value.replace(/\s+#.*$/, "").trim());
-        currentList = null;
-      }
-    }
-  }
-  return out;
-}
-
-function stripQuotes(s) {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    return s.slice(1, -1);
-  }
-  return s;
-}
+// parseFlatYaml + stripQuotes now live in ./flat-yaml.mjs (shared with the GUI
+// runtime-adapter config reader). Imported at the top of this file.
 
 // ── frontmatter ─────────────────────────────────────────────────────────────
 
@@ -1426,16 +1398,9 @@ function cmdGraph(repo, cfg, args) {
 // without a multi-agent harness get the SKILL.md body as single-agent
 // instructions (a flagged degrade), never a silent drop. See docs/byoa.md.
 
-const SKILL_RUNTIMES = {
-  // harness: can execute the multi-agent .workflow.js (Claude Code Workflow tool)
-  // layout:  how skills are emitted for this runtime
-  "claude-code": { harness: true,  layout: "claude" },       // identity (source format)
-  "hermes":      { harness: false, layout: "skillmd" },      // hermes skills install
-  "openclaw":    { harness: false, layout: "skillmd" },
-  "codex":       { harness: false, layout: "instructions" }, // instruction file
-  "opencode":    { harness: false, layout: "instructions" },
-  "claude-api":  { harness: false, layout: "instructions" },
-};
+// Skill-export targets are a view over the canonical registry (scripts/runtimes.mjs):
+//   { runtime: { harness, layout } }. Single source of truth — see runtimes.mjs.
+const SKILL_RUNTIMES = EXPORT_RUNTIMES;
 
 function flagValue(args, name) {
   const i = args.indexOf(name);
