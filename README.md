@@ -165,8 +165,9 @@ The toolkit started life in consulting; both vocabularies are accepted everywher
 See [`docs/architecture.md`](docs/architecture.md) for the hub-and-spoke model and
 access tiers, [`docs/feature-set.md`](docs/feature-set.md) for the full feature set,
 [`docs/workflows.md`](docs/workflows.md) for the harness design study that shaped
-the skills, and [`docs/brain-api.md`](docs/brain-api.md) for the Team Brain sync
-contract.
+the skills, [`docs/byoa.md`](docs/byoa.md) for **Bring Your Own Agent** (choose
+your runtime — Claude Code, Hermes, OpenClaw, Codex…), and
+[`docs/brain-api.md`](docs/brain-api.md) for the Team Brain sync contract.
 
 ## Status
 
