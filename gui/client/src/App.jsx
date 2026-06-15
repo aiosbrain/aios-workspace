@@ -115,6 +115,7 @@ export default function App() {
           <button className={`side-link${view === "chat" ? " on" : ""}`} onClick={() => setView("chat")}>{NAV_ICONS.chat} Chat</button>
           <button className={`side-link${view === "integrations" ? " on" : ""}`} onClick={() => setView("integrations")}>{NAV_ICONS.integrations} Integrations</button>
           <button className={`side-link${view === "review" ? " on" : ""}`} onClick={() => setView("review")}>{NAV_ICONS.review} Review &amp; Push</button>
+          <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
         </nav>
         <div className="side-foot">
           <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Keys stay on this machine</div>
@@ -124,6 +125,7 @@ export default function App() {
 
       <div className="app-main">
       {view === "review" && <ReviewPanel />}
+      {view === "team" && <TeamPanel />}
       {view === "integrations" && (
         <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
       )}
@@ -206,6 +208,12 @@ const NAV_ICONS = {
   review: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 19V6M5 13l7-7 7 7" />
+    </svg>
+  ),
+  team: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
 };
@@ -317,9 +325,12 @@ function IntegrationsPanel({ onTryInChat }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/connectors?token=${token}`);
-      if (!res.ok) throw new Error(`failed to load connectors (${res.status})`);
-      setConnectors((await res.json()).connectors || []);
+      // /api/blueprint refreshes the team's tool set then returns team-aware connectors;
+      // fall back to /api/connectors if the brain isn't reachable.
+      let res = await fetch(`/api/blueprint?token=${token}`);
+      let data = res.ok ? await res.json() : null;
+      if (!data || !data.connectors) { res = await fetch(`/api/connectors?token=${token}`); data = await res.json(); }
+      setConnectors(data.connectors || []);
     } catch (e) { setError(e.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -328,6 +339,25 @@ function IntegrationsPanel({ onTryInChat }) {
   if (!connectors) return <div className="integrations"><div className="empty"><p>loading integrations…</p></div></div>;
 
   const wired = connectors.filter((c) => c.status === "wired").length;
+  const team = connectors.filter((c) => c.team_enabled);
+  const rest = connectors.filter((c) => !c.team_enabled);
+  const showTeam = team.length > 0;
+
+  const card = (c) => (
+    <div key={c.id} className={`int-card${c.status === "wired" ? " wired" : ""}`}>
+      <div className="int-card-top">
+        <span className="int-name">{c.name}</span>
+        <span className={`int-status ${c.status}`}>{c.status === "wired" ? "● connected" : "○ available"}</span>
+      </div>
+      <p className="int-summary">{c.summary}</p>
+      <div className="int-card-foot">
+        <span className="int-transport">{c.transport === "skill" ? "direct API skill" : "MCP"}</span>
+        <button className="int-connect" onClick={() => setActive(c)}>
+          {c.status === "wired" ? "Reconnect" : "Connect →"}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="integrations">
@@ -339,23 +369,14 @@ function IntegrationsPanel({ onTryInChat }) {
         <div className="int-progress">{wired} of {connectors.length} connected</div>
       </div>
 
-      <div className="int-grid">
-        {connectors.map((c) => (
-          <div key={c.id} className={`int-card${c.status === "wired" ? " wired" : ""}`}>
-            <div className="int-card-top">
-              <span className="int-name">{c.name}</span>
-              <span className={`int-status ${c.status}`}>{c.status === "wired" ? "● connected" : "○ available"}</span>
-            </div>
-            <p className="int-summary">{c.summary}</p>
-            <div className="int-card-foot">
-              <span className="int-transport">{c.transport === "skill" ? "direct API skill" : "MCP"}</span>
-              <button className="int-connect" onClick={() => setActive(c)}>
-                {c.status === "wired" ? "Reconnect" : "Connect →"}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {showTeam && (
+        <>
+          <h3 className="int-section">Your team uses these {team.length} tool{team.length === 1 ? "" : "s"}</h3>
+          <div className="int-grid">{team.map(card)}</div>
+          <h3 className="int-section int-section-muted">More integrations</h3>
+        </>
+      )}
+      <div className="int-grid">{(showTeam ? rest : connectors).map(card)}</div>
       <p className="int-foot">🔒 Every key is encrypted on this machine (dotenvx) and never sent to the team brain.</p>
 
       {active && (
@@ -371,7 +392,14 @@ function IntegrationsPanel({ onTryInChat }) {
 }
 
 function ConnectWizard({ connector, onClose, onConnected, onTryInChat }) {
-  const [secrets, setSecrets] = useState({});
+  // Pre-fill any field the team blueprint already set (e.g. the Jira site URL).
+  const [secrets, setSecrets] = useState(() => {
+    const init = {};
+    for (const s of connector.secrets || []) {
+      if (connector.instance && connector.instance[s.env]) init[s.env] = connector.instance[s.env];
+    }
+    return init;
+  });
   const [reveal, setReveal] = useState({});
   const [phase, setPhase] = useState("collect"); // collect | validating | done | error
   const [result, setResult] = useState(null);
@@ -478,6 +506,95 @@ function ConnectWizard({ connector, onClose, onConnected, onTryInChat }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function TeamPanel() {
+  const [connectors, setConnectors] = useState(null);
+  const [sel, setSel] = useState(() => new Set());
+  const [inst, setInst] = useState({}); // {id: {env: value}}
+  const [busy, setBusy] = useState(false);
+  const [output, setOutput] = useState("");
+  const [hint, setHint] = useState(null);
+
+  const load = useCallback(async () => {
+    setOutput("");
+    try {
+      const res = await fetch(`/api/blueprint?token=${token}`);
+      const data = await res.json();
+      const list = data.connectors || [];
+      setConnectors(list);
+      setSel(new Set(list.filter((c) => c.team_enabled).map((c) => c.id)));
+      const iv = {};
+      for (const c of list) for (const f of c.team_instance || []) { const v = c.instance?.[f.env]; if (v) (iv[c.id] ||= {})[f.env] = v; }
+      setInst(iv);
+      setHint(data.ok ? null : "Connect this workspace to the brain (set AIOS_API_KEY + team_id) to publish for your team.");
+    } catch (e) { setHint(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = (id) => setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const setField = (id, env, val) => setInst((p) => ({ ...p, [id]: { ...(p[id] || {}), [env]: val } }));
+
+  const publish = async () => {
+    setBusy(true); setOutput("");
+    const payload = {};
+    for (const c of connectors) if (sel.has(c.id)) {
+      payload[c.id] = { enabled: true, name: c.name, transport: c.transport, instance: inst[c.id] || {} };
+    }
+    try {
+      const res = await fetch(`/api/blueprint/publish?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectors: payload }),
+      });
+      const data = await res.json();
+      setOutput(data.output || data.error || "(no output)");
+      if (data.ok) load();
+    } catch (e) { setOutput(`error: ${e.message}`); }
+    setBusy(false);
+  };
+
+  if (!connectors) return <div className="integrations"><div className="empty"><p>loading team tools…</p></div></div>;
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Team</h2>
+          <p className="int-sub">Pick the tools your team uses and publish them once. Everyone gets a guided
+            checklist — each person still supplies their own keys.</p>
+        </div>
+        <button className="int-connect" disabled={busy || !sel.size} onClick={publish}>
+          {busy ? "Publishing…" : `Publish ${sel.size} to team`}
+        </button>
+      </div>
+      {hint && <p className="msg meta">{hint}</p>}
+
+      <div className="int-grid">
+        {connectors.map((c) => (
+          <div key={c.id} className={`int-card${sel.has(c.id) ? " wired" : ""}`}>
+            <label className="team-row">
+              <input type="checkbox" checked={sel.has(c.id)} onChange={() => toggle(c.id)} />
+              <span className="int-name">{c.name}</span>
+              <span className="int-transport">{c.transport === "skill" ? "direct API" : "MCP"}</span>
+            </label>
+            <p className="int-summary">{c.summary}</p>
+            {sel.has(c.id) && (c.team_instance || []).map((f) => (
+              <div key={f.env} className="wiz-field">
+                <label>{f.label}</label>
+                <div className="wiz-input">
+                  <input type="text" placeholder={f.placeholder || f.env}
+                    value={(inst[c.id] || {})[f.env] || ""}
+                    onChange={(e) => setField(c.id, f.env, e.target.value)} />
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      {output && <pre className="rev-output">{output}</pre>}
+      <p className="int-foot">🔒 The blueprint carries only which tools + shared URLs — never anyone's keys.</p>
     </div>
   );
 }

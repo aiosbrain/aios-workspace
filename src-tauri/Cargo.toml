@@ -2,7 +2,7 @@
 name = "aios-workspace"
 version = "0.1.0"
 description = "AIOS Workspace — your local agent cockpit"
-authors = ["Pravos"]
+authors = ["AIOS Workspace contributors"]
 edition = "2021"
 rust-version = "1.77.2"
 

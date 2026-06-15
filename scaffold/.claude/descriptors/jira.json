@@ -14,6 +14,9 @@
   ],
   "scopes": ["read:jira-work", "write:jira-work"],
   "scopes_advisory": true,
+  "team_instance": [
+    { "env": "ATLASSIAN_URL", "label": "Jira site URL", "placeholder": "https://your-team.atlassian.net" }
+  ],
   "docs": {
     "token_create_url": "https://id.atlassian.com/manage-profile/security/api-tokens",
     "scopes_url": "https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps/",

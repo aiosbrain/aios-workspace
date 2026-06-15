@@ -181,3 +181,9 @@ footer button:disabled { opacity: 0.4; cursor: default; }
 .empty-cta { margin: 14px auto 6px; display: inline-block; padding: 11px 20px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; cursor: pointer; }
 .empty-cta:disabled { opacity: 0.4; cursor: default; }
 .empty-sub { font-size: 13px; margin-top: 8px; }
+
+/* ── team blueprint sections ── */
+.int-section { font-size: 13px; font-weight: 600; color: var(--text); margin: 6px 0 -2px; }
+.int-section-muted { color: var(--text-dim); font-weight: 500; margin-top: 14px; }
+.team-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.team-row input { width: 15px; height: 15px; }

@@ -24,7 +24,8 @@ import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
-import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector } from "../../scripts/connector.mjs";
+import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
+import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
 // PreToolUse guard hook still vets every Write/Edit for secrets and tier leaks).
@@ -102,6 +103,41 @@ const server = http.createServer((req, res) => {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ connectors: listConnectors(repo) }));
+  }
+  // ── team blueprint (token-gated) ──
+  if (url.pathname === "/api/blueprint" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    // refresh from the brain, then return the (now team-aware) connectors
+    runAios(["pull", "blueprint"], (err, out, stderr) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: !err,
+        blueprint: readBlueprint(repo), connectors: listConnectors(repo),
+        note: err ? stripAnsi((stderr || "") + (out || "")) : null,
+      }));
+    });
+    return;
+  }
+  if (url.pathname === "/api/blueprint/publish" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e5) req.destroy(); });
+    req.on("end", () => {
+      let connectors = {};
+      try { connectors = JSON.parse(body || "{}").connectors || {}; } catch { /* */ }
+      try {
+        fsMkdirSync(path.join(repo, ".aios"), { recursive: true });
+        fsWriteFileSync(path.join(repo, ".aios", "team-blueprint.json"), JSON.stringify({ connectors }, null, 2));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+      runAios(["push", "blueprint"], (err, out, stderr) => {
+        res.writeHead(err ? 200 : 200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: !err, output: stripAnsi((out || "") + (stderr || "")) }));
+      });
+    });
+    return;
   }
   const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
   if (conn && req.method === "POST") {

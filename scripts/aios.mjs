@@ -664,6 +664,7 @@ async function cmdReview(repo, cfg, patterns, args) {
 
 async function cmdPush(repo, cfg, patterns, args) {
   if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
+  if (args[0] === "blueprint") return cmdPushBlueprint(repo, cfg, args.slice(1));
   const dryRun = args.includes("--dry-run");
   const paths = args.filter((a) => !a.startsWith("--"));
   const { plan, state } = buildPlan(repo, cfg, patterns, paths);
@@ -728,6 +729,7 @@ async function cmdPush(repo, cfg, patterns, args) {
 async function cmdPull(repo, cfg, args = []) {
   if (args[0] === "skill") return cmdPullSkill(repo, cfg, args.slice(1));
   if (args[0] === "deliverable") return cmdPullDeliverable(repo, cfg, args.slice(1));
+  if (args[0] === "blueprint") return cmdPullBlueprint(repo, cfg);
   requireOnline(cfg);
   const state = loadState(repo);
   const since = state.last_pull || "1970-01-01T00:00:00Z";
@@ -979,6 +981,50 @@ function cmdInstallSkill(repo, args) {
   console.log(c.green(`installed skill '${name}' → .claude/skills/${name}/ (${copied} file(s)).`));
   console.log(c.dim("pulled skills are executable code — review SKILL.md + workflow before trusting."));
   console.log(c.dim("refresh the catalog: npm run gen:catalog"));
+}
+
+// ── team blueprint (P4 lead→IC) ──────────────────────────────────────────────
+
+// aios push blueprint — publish the team's tool set (from .aios/team-blueprint.json).
+async function cmdPushBlueprint(repo, cfg, args) {
+  const selPath = path.join(repo, ".aios", "team-blueprint.json");
+  if (!existsSync(selPath)) die("no .aios/team-blueprint.json — define the team's tools (Team tab) first");
+  let sel;
+  try { sel = JSON.parse(readFileSync(selPath, "utf8")); } catch { die("team-blueprint.json is not valid JSON"); }
+  requireOnline(cfg);
+  const member = resolveMember(repo, cfg, loadDotEnv(repo));
+  const body = JSON.stringify({
+    blueprint_version: 1,
+    team: cfg.team_id || "",
+    published_by: member,
+    connectors: sel.connectors || {},
+  }, null, 2);
+  const payload = {
+    project: "_team", path: ".aios/blueprint.json", kind: "blueprint",
+    content_sha256: sha256(body), actor: member, access: "team",
+    frontmatter: { blueprint_version: 1, published_by: member }, body,
+  };
+  try {
+    const res = await api(cfg, "POST", "/items", payload);
+    const n = Object.values(sel.connectors || {}).filter((c) => c.enabled).length;
+    console.log(c.green(`published team blueprint: ${n} tool(s) ${c.dim(res.status || "")}`));
+  } catch (e) {
+    die(e.message.includes("403") ? "only a team lead/admin can publish the blueprint" : e.message);
+  }
+}
+
+// aios pull blueprint — fetch the team's published tool set → .aios/blueprint.json.
+async function cmdPullBlueprint(repo, cfg) {
+  requireOnline(cfg);
+  const res = await api(cfg, "GET", `/items?${new URLSearchParams({ kinds: "blueprint" })}`);
+  const items = res.items || [];
+  if (!items.length) { console.log(c.dim("no team blueprint published yet.")); return; }
+  const latest = items[items.length - 1]; // GET returns ascending by updated_at
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  writeFileSync(path.join(repo, ".aios", "blueprint.json"), latest.body || "{}");
+  let n = 0, by = "";
+  try { const b = JSON.parse(latest.body || "{}"); n = Object.values(b.connectors || {}).filter((c) => c.enabled).length; by = b.published_by || ""; } catch { /* */ }
+  console.log(c.green(`pulled team blueprint: ${n} tool(s)${by ? ` (by ${by})` : ""} → .aios/blueprint.json`));
 }
 
 async function cmdQuery(repo, cfg, args) {
@@ -1396,6 +1442,8 @@ usage:
   aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
+  aios push blueprint                   publish the team's tool set (lead/admin only)
+  aios pull blueprint                   fetch the team's tool set → .aios/blueprint.json
   aios pull                             fetch team updates → 1-inbox/from-brain/
   aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand

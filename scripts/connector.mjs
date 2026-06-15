@@ -26,7 +26,17 @@ const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
 
 // ── descriptors + status ─────────────────────────────────────────────────────
 
-// List connectable tools = descriptors, with live status merged from integrations.json.
+// The team blueprint a lead published (which tools the team uses + non-secret
+// instance config), pulled into .aios/blueprint.json. Null if none pulled yet.
+export function readBlueprint(repo) {
+  const p = path.join(repo, ".aios", "blueprint.json");
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf8")); }
+  catch { return null; }
+}
+
+// List connectable tools = descriptors, with live status merged from integrations.json,
+// and (if a team blueprint was pulled) team_enabled + the team's instance config merged in.
 export function listConnectors(repo) {
   const descs = readDescriptors(repo);
   const statuses = {};
@@ -34,14 +44,24 @@ export function listConnectors(repo) {
     const ints = JSON.parse(readFileSync(path.join(repo, ".claude", "integrations.json"), "utf8")).integrations || [];
     for (const i of ints) statuses[i.id] = i.status;
   } catch { /* none */ }
-  return Object.values(descs).map((d) => ({
-    id: d.id, name: d.name, category: d.category, transport: d.transport, auth_mode: d.auth_mode || "token",
-    summary: d.summary || "", scopes: d.scopes || [], scopes_advisory: !!d.scopes_advisory,
-    secrets: (d.secrets || []).map((s) => ({ env: s.env, label: s.label, required: s.required !== false, placeholder: s.placeholder || "" })),
-    docs: d.docs || {}, instance: d.instance || {},
-    status: statuses[d.id] || d.status || "available",
-    verified_against_docs: (d.docs && d.docs.verified_against_docs) || null,
-  }));
+  const bp = readBlueprint(repo);
+  const teamConn = (bp && bp.connectors) || {};
+  return Object.values(descs).map((d) => {
+    const t = teamConn[d.id];
+    return {
+      id: d.id, name: d.name, category: d.category, transport: d.transport, auth_mode: d.auth_mode || "token",
+      summary: d.summary || "", scopes: d.scopes || [], scopes_advisory: !!d.scopes_advisory,
+      secrets: (d.secrets || []).map((s) => ({ env: s.env, label: s.label, required: s.required !== false, placeholder: s.placeholder || "" })),
+      docs: d.docs || {},
+      // shared, lead-set config fields (e.g. the Jira site URL) the Team tab collects
+      team_instance: d.team_instance || [],
+      // team instance config (e.g. the Jira site URL) overrides/augments the descriptor's
+      instance: { ...(d.instance || {}), ...((t && t.instance) || {}) },
+      status: statuses[d.id] || d.status || "available",
+      team_enabled: !!(t && t.enabled),
+      verified_against_docs: (d.docs && d.docs.verified_against_docs) || null,
+    };
+  });
 }
 
 export function getDescriptor(repo, id) {
