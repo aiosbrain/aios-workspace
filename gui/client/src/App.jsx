@@ -10,7 +10,8 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 
 export default function App() {
   const [repo, setRepo] = useState("");
-  const [view, setView] = useState("chat"); // "chat" | "review" | "integrations"
+  const [view, setView] = useState("chat"); // "chat" | "review" | "integrations" | "team"
+  const [role, setRole] = useState(null); // brain member role; only lead/admin see Team
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState([]); // {kind, ...}
   const [input, setInput] = useState("");
@@ -18,6 +19,14 @@ export default function App() {
   const [permissions, setPermissions] = useState([]); // pending approval requests
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+
+  // Who am I? Only a brain lead/admin sees the Team (publish) surface.
+  useEffect(() => {
+    fetch(`/api/me?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => setRole(d.me?.role || null))
+      .catch(() => {});
+  }, []);
 
   const append = useCallback((m) => setMessages((prev) => [...prev, m]), []);
 
@@ -115,7 +124,9 @@ export default function App() {
           <button className={`side-link${view === "chat" ? " on" : ""}`} onClick={() => setView("chat")}>{NAV_ICONS.chat} Chat</button>
           <button className={`side-link${view === "integrations" ? " on" : ""}`} onClick={() => setView("integrations")}>{NAV_ICONS.integrations} Integrations</button>
           <button className={`side-link${view === "review" ? " on" : ""}`} onClick={() => setView("review")}>{NAV_ICONS.review} Review &amp; Push</button>
-          <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
+          {(role === "admin" || role === "lead") && (
+            <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
+          )}
         </nav>
         <div className="side-foot">
           <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Keys stay on this machine</div>

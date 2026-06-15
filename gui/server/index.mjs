@@ -104,6 +104,17 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ connectors: listConnectors(repo) }));
   }
+  // ── who am I (token-gated) — role drives UI (only leads see the Team surface) ──
+  if (url.pathname === "/api/me" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    runAios(["whoami"], (err, out) => {
+      let me = null;
+      if (!err) { try { me = JSON.parse((out || "").trim().split("\n").pop()); } catch { /* not wired */ } }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: !!me, me }));
+    });
+    return;
+  }
   // ── team blueprint (token-gated) ──
   if (url.pathname === "/api/blueprint" && req.method === "GET") {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
