@@ -20,6 +20,10 @@ agent_runtime: claude-code
 # defaults. Endpoint/model normally live with the runtime, not here.
 agent_model: ""
 agent_base_url: ""
+# Cockpit personality — a style-only voice appended to the agent's system prompt.
+# One of the files in .claude/personalities/ (aios | operator | coach | analyst).
+# Switchable in the cockpit's Settings; never overrides rules/CLAUDE.md/skills.
+agent_personality: "aios"
 
 # Which access tiers may leave this machine.
 #   private  → never syncs (canonical: admin; hard-failed if listed here)

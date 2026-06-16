@@ -61,10 +61,16 @@ try {
   const tmp = mkdtempSync(path.join(tmpdir(), "ogr07-"));
   const cfgDefault = reg.readAgentConfig(tmp); // no aios.yaml
   if (cfgDefault.runtime !== "claude-code") fail("readAgentConfig default should be claude-code");
-  writeFileSync(path.join(tmp, "aios.yaml"), "agent_runtime: codex\n");
-  if (reg.readAgentConfig(tmp).runtime !== "codex") fail("readAgentConfig did not read agent_runtime");
+  if (cfgDefault.personality !== "aios") fail("readAgentConfig default personality should be 'aios'");
+  writeFileSync(path.join(tmp, "aios.yaml"), "agent_runtime: codex\nagent_personality: operator\n");
+  const cfg2 = reg.readAgentConfig(tmp);
+  if (cfg2.runtime !== "codex") fail("readAgentConfig did not read agent_runtime");
+  if (cfg2.personality !== "operator") fail("readAgentConfig did not read agent_personality");
   rmSync(tmp, { recursive: true, force: true });
-  if (!errors) ok("GUI registry: claude-code resolves, claude-api/unknown error, config default + read");
+  // claude-code adapter resolves an unknown/empty model to the Sonnet default.
+  if (cc.DEFAULT_MODEL !== "claude-sonnet-4-6") fail("claude-code DEFAULT_MODEL should be claude-sonnet-4-6");
+  if (!cc.ALLOWED_MODELS?.has("claude-opus-4-8")) fail("claude-code ALLOWED_MODELS should include claude-opus-4-8");
+  if (!errors) ok("GUI registry: claude-code resolves, claude-api/unknown error, config default + read, model/personality defaults");
 } catch (e) {
   console.log(`  ${YELLOW}—${NC} GUI adapter resolution skipped (gui/server deps not installed): ${String(e.message).split("\n")[0]}`);
 }
