@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 # team-ops-guard.sh — PreToolUse hook for Claude Code (Agentic Team Ops)
 #
-# Fires on Write/Edit tool calls. Validates the file being written.
-# Exit 0 = allow, Exit 1 + stderr message = block.
+# Fires on Write/Edit/MultiEdit tool calls. Validates the file being written.
+# Exit 0 = allow (no decision), Exit 2 + stderr = BLOCK (Claude Code's deny signal;
+# any other non-zero is a non-blocking error, so blocks MUST use exit 2).
 #
 # Checks:
 #   1. Secrets scan (API keys, tokens, passwords)
 #   2. Access tag enforcement (no admin content in team/client dirs)
 #   3. Frontmatter required for deliverables/client-surface
 #
-# Environment (set by Claude Code):
-#   CC_TOOL_NAME — the tool being used (Write, Edit)
-#   CC_TOOL_INPUT — JSON with the tool parameters
+# Input: current Claude Code sends a JSON event on STDIN:
+#   { "tool_name": "...", "tool_input": { "file_path": "...", "content": "..." } }
+# We also accept CC_TOOL_NAME / CC_TOOL_INPUT env vars (used by the GUI's
+# host-side guardWrite, which has no stdin). STDIN wins when present.
 
 set -euo pipefail
 
-# Parse tool input
-TOOL_INPUT="${CC_TOOL_INPUT:-}"
+# Parse tool input from stdin JSON (Claude Code) or env (GUI guardWrite).
+STDIN_JSON=$(cat 2>/dev/null || true)
+if [ -n "$STDIN_JSON" ]; then
+  TOOL_INPUT=$(printf '%s' "$STDIN_JSON" | jq -c '.tool_input // empty' 2>/dev/null || true)
+else
+  TOOL_INPUT="${CC_TOOL_INPUT:-}"
+fi
 if [ -z "$TOOL_INPUT" ]; then
   exit 0  # No input to check — allow
 fi
@@ -72,7 +79,7 @@ for pattern in "${SECRETS_PATTERNS[@]}"; do
     echo "BLOCKED by team-ops-guard: Potential secret detected in $FILE_PATH" >&2
     echo "Pattern matched: $pattern" >&2
     echo "Remove the secret before writing this file." >&2
-    exit 1
+    exit 2
   fi
 done
 
@@ -104,7 +111,7 @@ if echo "$FILE_PATH" | grep -qE "(4-shared|04-shared|04-client-surface|06-client
       echo "File: $FILE_PATH" >&2
       echo "Pattern: '$pattern'" >&2
       echo "Admin-tier content cannot be written to workspace or client-surface directories." >&2
-      exit 1
+      exit 2
     fi
   done
 fi
@@ -120,7 +127,7 @@ if echo "$FILE_PATH" | grep -qE "(2-work|02-deliverables|4-shared|04-shared|04-c
         echo "BLOCKED by team-ops-guard: Markdown files in deliverables/client-surface require YAML frontmatter" >&2
         echo "File: $FILE_PATH" >&2
         echo "Add frontmatter with at least: status, owner" >&2
-        exit 1
+        exit 2
       fi
     fi
   fi

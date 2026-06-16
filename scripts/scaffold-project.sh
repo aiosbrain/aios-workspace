@@ -364,6 +364,16 @@ mkdir -p "$OUTPUT/.claude/memory/incidents"
 [ -f "$SCAFFOLD/.mcp.json" ] && cp "$SCAFFOLD/.mcp.json" "$OUTPUT/.mcp.json"
 [ -f "$SCAFFOLD/.mcp.example.json" ] && cp "$SCAFFOLD/.mcp.example.json" "$OUTPUT/.mcp.example.json"
 
+# Governance guard: ship the PreToolUse hook + its secret patterns + the hook
+# registration so Claude Code's native guard (secrets / tier leaks / frontmatter)
+# fires in this workspace, not just in the toolkit repo. The hook reads stdin
+# JSON and blocks with exit 2.
+mkdir -p "$OUTPUT/hooks" "$OUTPUT/validation"
+cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
+chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
+cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
+[ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
+
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
   node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true
