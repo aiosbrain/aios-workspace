@@ -96,19 +96,22 @@ const SWEEP_SKIP_DIRS = new Set([".git", "node_modules", ".sessions", "dist", ".
 // Mirror the extensions team-ops-guard.sh itself checks, so the sweep can't flag
 // (or miss) anything the pre-write gate wouldn't.
 const SWEEP_EXTS = new Set([".md", ".yaml", ".yml", ".json", ".sh", ".py", ".ts", ".js", ".mjs"]);
-const SWEEP_MAX_FILES = 500; // backstop so a huge tree can't wedge a turn
+const SWEEP_MAX_FILES = 5000; // backstop so a giant tree can't wedge a turn
 
 // Yield absolute paths of guard-relevant files under `repo` modified at/after
-// `sinceMs` (i.e. touched during the just-finished turn).
-async function* changedFiles(repo, sinceMs, budget = { n: SWEEP_MAX_FILES }) {
+// `sinceMs` (i.e. touched during the just-finished turn). If the visited-file
+// budget is exhausted before the walk finishes, sets `budget.truncated` so the
+// caller can FAIL LOUD rather than silently skip the unscanned tail.
+async function* changedFiles(repo, sinceMs, budget) {
   let entries;
   try { entries = await readdir(repo, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
-    if (budget.n <= 0) return;
+    if (budget.n <= 0) { budget.truncated = true; return; }
     if (SWEEP_SKIP_DIRS.has(e.name)) continue;
     const abs = path.join(repo, e.name);
     if (e.isDirectory()) {
       yield* changedFiles(abs, sinceMs, budget);
+      if (budget.truncated) return;
     } else if (e.isFile() && SWEEP_EXTS.has(path.extname(e.name))) {
       budget.n--;
       let st;
@@ -118,17 +121,20 @@ async function* changedFiles(repo, sinceMs, budget = { n: SWEEP_MAX_FILES }) {
   }
 }
 
-// Re-run the SAME governance hook over files the turn changed. Returns a list of
-// { path, reason } for any that would have been blocked as a pre-write.
-export async function postTurnSweep(repo, guardWrite, sinceMs) {
+// Re-run the SAME governance hook over files the turn changed. Returns
+// { violations: [{path,reason}], truncated } — `truncated` is true if the walk
+// hit the visited-file cap, meaning some changes went UNCHECKED (caller must
+// surface this, not swallow it).
+export async function postTurnSweep(repo, guardWrite, sinceMs, maxFiles = SWEEP_MAX_FILES) {
   const violations = [];
-  for await (const abs of changedFiles(repo, sinceMs)) {
+  const budget = { n: maxFiles, truncated: false };
+  for await (const abs of changedFiles(repo, sinceMs, budget)) {
     let content;
     try { content = await readFile(abs, "utf8"); } catch { continue; }
     const verdict = guardWrite({ path: abs, content, operation: "Write" });
     if (!verdict.ok) violations.push({ path: path.relative(repo, abs), reason: verdict.reason });
   }
-  return violations;
+  return { violations, truncated: budget.truncated };
 }
 
 /**
@@ -242,11 +248,19 @@ export async function run(host) {
         // pre-gate. A violation is reported as a blocking error (the file is
         // already on disk — surfacing it is the honest mitigation for this tier).
         try {
-          const violations = await postTurnSweep(repo, guardWrite, turnStart);
+          const { violations, truncated } = await postTurnSweep(repo, guardWrite, turnStart);
           for (const v of violations) {
             emit({ type: "error", message: `post-turn guard: ${v.path} — ${v.reason}` });
           }
-        } catch { /* sweep best-effort; never wedge the turn */ }
+          // Fail loud: never let a too-large sweep look like a clean turn.
+          if (truncated) {
+            emit({ type: "error", message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some shell-driven changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.` });
+          }
+        } catch (e) {
+          // The sweep IS the governance for in-process writes — if it can't run,
+          // say so rather than implying the turn was clean.
+          emit({ type: "error", message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.` });
+        }
         emit({ type: "result", subtype: stopReason, cost_usd: null });
       } catch (e) {
         if (aborted || signal?.aborted) break;

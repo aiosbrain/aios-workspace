@@ -111,10 +111,11 @@ test("post-turn sweep flags a secret written this turn, ignores clean + pre-exis
   writeFileSync(path.join(repo, "clean.md"), "nothing to see");
   writeFileSync(path.join(repo, "leak.md"), "oops a SECRET landed via shell");
 
-  const violations = await postTurnSweep(repo, stubGuard, sinceMs);
+  const { violations, truncated } = await postTurnSweep(repo, stubGuard, sinceMs);
   assert.equal(violations.length, 1);
   assert.equal(violations[0].path, "leak.md");
   assert.match(violations[0].reason, /secret/);
+  assert.equal(truncated, false);
 });
 
 test("post-turn sweep skips node_modules/.git and non-text files", async () => {
@@ -123,6 +124,14 @@ test("post-turn sweep skips node_modules/.git and non-text files", async () => {
   mkdirSync(path.join(repo, "node_modules"));
   writeFileSync(path.join(repo, "node_modules", "x.js"), "SECRET in a dep");
   writeFileSync(path.join(repo, "image.png"), "SECRET-but-binary-ext");
-  const violations = await postTurnSweep(repo, stubGuard, Date.now() - 5_000);
+  const { violations } = await postTurnSweep(repo, stubGuard, Date.now() - 5_000);
   assert.deepEqual(violations, []);
+});
+
+test("post-turn sweep FAILS LOUD (truncated=true) when the file cap is hit", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "sweep-cap-"));
+  // more guard-relevant files than the cap → walk must report truncation
+  for (let i = 0; i < 5; i++) writeFileSync(path.join(repo, `f${i}.md`), "clean");
+  const { truncated } = await postTurnSweep(repo, stubGuard, Date.now() - 5_000, 2);
+  assert.equal(truncated, true);
 });
