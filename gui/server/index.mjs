@@ -24,6 +24,7 @@ import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
+import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
@@ -333,7 +334,14 @@ wss.on("connection", (ws) => {
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
   const { runtime, model, baseUrl } = readAgentConfig(repo);
-  send({ type: "hello", repo, sessionId, runtime });
+  // claude-code's PreToolUse hook pre-gates every write natively. Other drivers
+  // can mutate files via in-process shell tools that bypass the host write-gate,
+  // so they're validated by a post-turn sweep — say so in the UI (honest tier).
+  const driver = GUI_RUNTIMES[runtime]?.driver;
+  const safetyNote = driver && driver !== "claude-sdk"
+    ? "Shell-driven file changes are validated after each turn, not pre-gated."
+    : null;
+  send({ type: "hello", repo, sessionId, runtime, safetyNote });
 
   (async () => {
     try {

@@ -3,24 +3,29 @@
 // in scripts/runtimes.mjs (Hermes first; OpenClaw rides the same adapter once
 // its spawn command is confirmed).
 //
-// Governance model (the safe, fully-pre-gated path): the agent does NOT write
-// files itself — it asks the client via `fs/write_text_file`. We route every
-// such write through host.guardWrite() BEFORE touching disk, so secrets /
-// admin-tier leakage / path-escape are blocked uniformly with claude-code. Tool
-// permissions arrive as option-based `session/request_permission` requests and
-// are surfaced through host.requestPermission() (ACP options are option-IDs, not
-// booleans). fs reads/writes are scoped to `repo` (realpath + symlink-escape).
+// Governance model — two layers, because ACP file mutation has two paths:
+//   1. PRE-GATE (host-mediated): the agent asks the client via
+//      `fs/write_text_file`; we route every such write through host.guardWrite()
+//      BEFORE touching disk and write only the resolved, in-repo path it vetted.
+//   2. POST-TURN SWEEP (in-process): we do NOT advertise the `terminal`
+//      capability, so the agent runs shell commands inside its OWN process
+//      (cwd=repo). A shell write (`echo secret > f`) therefore bypasses layer 1.
+//      So after every turn we re-run the SAME governance hook over the files the
+//      turn changed and emit a blocking `error` if one trips. This adapter is
+//      thus NOT "fully pre-gated" — host writes are pre-gated, shell-driven
+//      changes are caught post-hoc. (A future slice can host-mediate terminals
+//      with repo scoping to make shell writes pre-gated too.)
 //
-// Scope note: we advertise fs (read/write) but NOT the `terminal` capability —
-// shell commands run inside the agent's own process (cwd=repo) and are reported
-// as tool calls. Host-mediated terminals (scoped to repo) are a follow-up slice.
+// Tool permissions arrive as option-based `session/request_permission` requests
+// surfaced through host.requestPermission() (ACP options are option-IDs, not
+// booleans). fs reads/writes are scoped to `repo` (realpath + symlink-escape).
 //
 // Adapter contract: export `meta` + `run(host)`. See runtime-adapters/index.mjs.
 
 import { spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { realpathSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { ClientSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
 import { GUI_RUNTIMES } from "../../../scripts/runtimes.mjs";
@@ -85,6 +90,47 @@ function inRepo(repo, target) {
   return null;
 }
 
+// ── post-turn guard sweep (catches in-process / shell-driven writes) ──────────
+
+const SWEEP_SKIP_DIRS = new Set([".git", "node_modules", ".sessions", "dist", ".aios"]);
+// Mirror the extensions team-ops-guard.sh itself checks, so the sweep can't flag
+// (or miss) anything the pre-write gate wouldn't.
+const SWEEP_EXTS = new Set([".md", ".yaml", ".yml", ".json", ".sh", ".py", ".ts", ".js", ".mjs"]);
+const SWEEP_MAX_FILES = 500; // backstop so a huge tree can't wedge a turn
+
+// Yield absolute paths of guard-relevant files under `repo` modified at/after
+// `sinceMs` (i.e. touched during the just-finished turn).
+async function* changedFiles(repo, sinceMs, budget = { n: SWEEP_MAX_FILES }) {
+  let entries;
+  try { entries = await readdir(repo, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (budget.n <= 0) return;
+    if (SWEEP_SKIP_DIRS.has(e.name)) continue;
+    const abs = path.join(repo, e.name);
+    if (e.isDirectory()) {
+      yield* changedFiles(abs, sinceMs, budget);
+    } else if (e.isFile() && SWEEP_EXTS.has(path.extname(e.name))) {
+      budget.n--;
+      let st;
+      try { st = await stat(abs); } catch { continue; }
+      if (st.mtimeMs >= sinceMs) yield abs;
+    }
+  }
+}
+
+// Re-run the SAME governance hook over files the turn changed. Returns a list of
+// { path, reason } for any that would have been blocked as a pre-write.
+export async function postTurnSweep(repo, guardWrite, sinceMs) {
+  const violations = [];
+  for await (const abs of changedFiles(repo, sinceMs)) {
+    let content;
+    try { content = await readFile(abs, "utf8"); } catch { continue; }
+    const verdict = guardWrite({ path: abs, content, operation: "Write" });
+    if (!verdict.ok) violations.push({ path: path.relative(repo, abs), reason: verdict.reason });
+  }
+  return violations;
+}
+
 /**
  * @param {object} host  see runtime-adapters/index.mjs — repo, input, emit,
  *   requestPermission({title,content,options})→optionId|null, guardWrite, signal,
@@ -137,10 +183,15 @@ export async function run(host) {
           : { outcome: { outcome: "cancelled" } };
       },
       async writeTextFile({ path: target, content }) {
-        // Pre-gate EVERY host-mediated write through the shared governance hook.
+        // Pre-gate EVERY host-mediated write through the shared governance hook,
+        // then write the RESOLVED in-repo path it vetted — never the raw input,
+        // which may be relative and resolve against the wrong cwd (CLI mode runs
+        // the server without cwd=repo). guardWrite returns that safe path.
         const verdict = guardWrite({ path: target, content, operation: "Write" });
-        if (!verdict.ok) throw RequestError.internalError({ reason: verdict.reason }, verdict.reason);
-        await writeFile(target, content); // absolute + proven in-repo by guardWrite
+        if (!verdict.ok || !verdict.path) {
+          throw RequestError.internalError({ reason: verdict.reason }, verdict.reason || "write blocked");
+        }
+        await writeFile(verdict.path, content);
         return {};
       },
       async readTextFile({ path: target, line, limit }) {
@@ -183,9 +234,19 @@ export async function run(host) {
   try {
     for await (const turn of input) {
       if (aborted || signal?.aborted) break;
+      const turnStart = Date.now(); // baseline for the post-turn sweep
       try {
         const { stopReason } = await conn.prompt({ sessionId, prompt: [{ type: "text", text: turn.text }] });
         emit({ type: "assistant_done" });
+        // Catch in-process / shell-driven writes that bypassed the fs/write
+        // pre-gate. A violation is reported as a blocking error (the file is
+        // already on disk — surfacing it is the honest mitigation for this tier).
+        try {
+          const violations = await postTurnSweep(repo, guardWrite, turnStart);
+          for (const v of violations) {
+            emit({ type: "error", message: `post-turn guard: ${v.path} — ${v.reason}` });
+          }
+        } catch { /* sweep best-effort; never wedge the turn */ }
         emit({ type: "result", subtype: stopReason, cost_usd: null });
       } catch (e) {
         if (aborted || signal?.aborted) break;

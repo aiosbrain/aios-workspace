@@ -11,6 +11,7 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 export default function App() {
   const [repo, setRepo] = useState("");
   const [runtime, setRuntime] = useState(""); // agent_runtime driving this session
+  const [safetyNote, setSafetyNote] = useState(null); // write-guard tier note from server
   const [view, setView] = useState("chat"); // "chat" | "review" | "integrations" | "team"
   const [role, setRole] = useState(null); // brain member role; only lead/admin see Team
   const [connected, setConnected] = useState(false);
@@ -62,7 +63,7 @@ export default function App() {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       switch (msg.type) {
-        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); break;
+        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); setSafetyNote(msg.safetyNote || null); break;
         case "echo_user": break; // already rendered optimistically
         case "delta": appendDelta(msg.text); break;
         case "assistant_done": finishAssistant(); break;
@@ -156,6 +157,11 @@ export default function App() {
       {view === "chat" && (
       <>
       <main>
+        {safetyNote && (
+          <div className="safety-banner" title="Writes the agent makes through its own shell run after the turn ends are scanned, not blocked beforehand.">
+            ⚠ {safetyNote}
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="empty">
             <p>Welcome to your workspace. Start by letting the agent learn who you are.</p>
@@ -188,7 +194,7 @@ export default function App() {
                 p.options.map((o) => (
                   <button
                     key={o.optionId}
-                    className={/reject/.test(o.kind || "") ? "deny" : "allow"}
+                    className={/deny|reject|cancel/i.test(o.kind || "") ? "deny" : "allow"}
                     onClick={() => respondPermissionOption(p.id, o.optionId)}
                   >
                     {o.name}

@@ -168,13 +168,19 @@ same normalized WS events (`delta` / `tool_use` / `tool_result` /
   so secrets / admin-tier leakage / path-escape are blocked uniformly.
 - ✅ **ACP adapter (`hermes`, `openclaw`)** — `runtime-adapters/acp.mjs` spawns
   `hermes acp` and speaks ACP (JSON-RPC/stdio) via `@agentclientprotocol/sdk`.
-  File writes arrive as host-mediated `fs/write_text_file` requests and are
-  **pre-gated through `guardWrite` before touching disk**; tool permissions are
-  **option-based** (the client renders a button per ACP option); tab-close sends
-  `session/cancel` and reaps the child.
-- ☐ **`codex`, `opencode`** — native runtimes whose writes execute in-process
-  (can't be pre-gated); they ship behind an opt-in post-turn guard sweep + a UI
-  banner. Next slice.
+  Governance is **two-layer**, because ACP agents mutate files two ways:
+  1. *Host-mediated* `fs/write_text_file` requests are **pre-gated through
+     `guardWrite`** and only the guard-resolved, in-repo path is written.
+  2. The agent can also run shell/file tools **inside its own process**
+     (we don't advertise the `terminal` capability), which bypasses (1) — so
+     after every turn a **post-turn sweep** re-runs the same guard over the
+     files the turn changed and emits a blocking `error` on a violation. The UI
+     shows a banner: *shell-driven changes are validated after the turn, not
+     pre-gated.* (Observed: Hermes tends to use its own file tools, so the sweep
+     is the primary net for it today.) Tool permissions are **option-based** (a
+     button per ACP option); tab-close sends `session/cancel` and reaps the child.
+- ☐ **`codex`, `opencode`** — native runtimes whose writes execute in-process;
+  same post-turn-sweep + banner tier as the ACP in-process path. Next slice.
 
 The session announces its active runtime in the UI (a runtime badge), selected
 from `agent_runtime` in `aios.yaml` (Phase-1 config).
