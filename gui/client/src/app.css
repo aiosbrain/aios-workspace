@@ -196,6 +196,13 @@ footer button:disabled { opacity: 0.4; cursor: default; }
 .int-connect { padding: 5px 12px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; }
 .int-foot { font-size: 12px; color: var(--text-dim); }
 
+/* ── skills: capability disclosure ── */
+.skill-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+.skill-caps .cap { font: 10px var(--mono); color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.skill-caps .cap.code { color: var(--accent); border-color: rgba(124,58,237,0.4); }
+.skill-err { font-size: 12px; color: var(--red); margin: 4px 0 0; }
+.int-card a.int-connect { text-decoration: none; display: inline-block; }
+
 /* ── connect wizard ── */
 .wiz-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
 .wiz { width: min(520px, 100%); max-height: 90vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }

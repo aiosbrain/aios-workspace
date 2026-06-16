@@ -27,6 +27,7 @@ import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { readSkills, readIntegrations, firstSentence, frontmatter } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
+import { listLibrary, installSkill, uninstallSkill } from "./skill-library.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -153,6 +154,31 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, personality: id }));
     });
+    return;
+  }
+  // ── skills library (token-gated) — install vendored official skills only ──
+  if (url.pathname === "/api/skills" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    try {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify(listLibrary(repo)));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+  const skillAct = url.pathname.match(/^\/api\/skills\/([a-z0-9-]+)\/(install|uninstall)$/);
+  if (skillAct && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    const [, id, action] = skillAct;
+    try {
+      const out = action === "install" ? installSkill(repo, id) : uninstallSkill(repo, id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ...out }));
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
     return;
   }
   // ── chat sessions (token-gated; transcripts are sensitive local content) ──
