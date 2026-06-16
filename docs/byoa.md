@@ -83,6 +83,14 @@ agent_model: ""
 agent_base_url: ""
 ```
 
+> **GUI note.** An empty `agent_model` means "the runtime's own default" — its
+> semantics are unchanged for every runtime. The cockpit's `claude-code` adapter,
+> however, resolves an empty/unknown `agent_model` to **`claude-sonnet-4-6`** (fast
+> and cheap) instead of Claude Code's heavier default, and the chat header lets you
+> switch between `claude-sonnet-4-6` and `claude-opus-4-8` live (persisted back to
+> `agent_model`). An unknown value degrades to Sonnet with a visible warning rather
+> than breaking chat.
+
 Phase-1 scope:
 - `agent_runtime` (+ optional `agent_model`, `agent_base_url`) added to
   `scaffold/aios.yaml.tmpl` with documentation. Default `claude-code` ⇒ **zero

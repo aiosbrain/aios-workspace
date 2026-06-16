@@ -31,6 +31,7 @@ export function readAgentConfig(repo) {
     runtime: cfg.agent_runtime || "claude-code",
     model: cfg.agent_model || "",
     baseUrl: cfg.agent_base_url || "",
+    personality: cfg.agent_personality || "aios",
   };
 }
 

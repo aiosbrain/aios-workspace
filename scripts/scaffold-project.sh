@@ -351,9 +351,9 @@ sed -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{CONTACTS_YAML}}|  # Add c
 
 [ -f "$SCAFFOLD/.env.example" ] && cp "$SCAFFOLD/.env.example" "$OUTPUT/.env.example"
 
-# Copy the agent layer (rules, skills, rubrics, memory)
+# Copy the agent layer (rules, skills, rubrics, memory, personalities)
 cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"
-for d in skills rubrics memory; do
+for d in skills rubrics memory personalities; do
   if [ -d "$SCAFFOLD/.claude/$d" ]; then mkdir -p "$OUTPUT/.claude/$d"; cp -R "$SCAFFOLD/.claude/$d/." "$OUTPUT/.claude/$d/"; fi
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"

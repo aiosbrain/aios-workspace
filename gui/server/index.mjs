@@ -16,16 +16,17 @@
  */
 
 import http from "node:http";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
+import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
-import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
+import { readSkills, readIntegrations, firstSentence, frontmatter } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
@@ -39,7 +40,6 @@ const AUTO_ALLOW = new Set([
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
-const SESSIONS_DIR = path.join(SCRIPT_DIR, "..", ".sessions");
 
 // ── args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -61,7 +61,37 @@ if (!existsSync(path.join(repo, "aios.yaml")) &&
 // The desktop shell (Tauri) can pre-set the session token so it doesn't have to
 // parse it back out of stdout; otherwise we mint a random one (the dev/CLI path).
 const TOKEN = process.env.AIOS_GUI_TOKEN || randomBytes(16).toString("hex");
+
+// Chat transcripts + index live INSIDE the workspace (.aios/ is gitignored by the
+// scaffold), so they're inherently scoped to this repo and never leak across
+// workspaces. They are local + private + token-gated: a transcript can contain
+// tool inputs/results and assistant text, so the endpoints that serve them
+// require the session token, same as every other mutating/sensitive route.
+const SESSIONS_DIR = path.join(repo, ".aios", "sessions");
+const SESSIONS_INDEX = path.join(SESSIONS_DIR, "index.json");
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 mkdirSync(SESSIONS_DIR, { recursive: true });
+
+// ── session index (repo-scoped) ─────────────────────────────────────────────
+function readSessionIndex() {
+  try {
+    const idx = JSON.parse(readFileSync(SESSIONS_INDEX, "utf8"));
+    if (Array.isArray(idx.sessions)) return { sessions: idx.sessions, lastSelected: idx.lastSelected || null };
+  } catch { /* missing/corrupt → fresh */ }
+  return { sessions: [], lastSelected: null };
+}
+function writeSessionIndex(idx) {
+  try { fsWriteFileSync(SESSIONS_INDEX, JSON.stringify(idx, null, 2)); } catch { /* best-effort */ }
+}
+// Insert or update one session entry (merge fields), bump updatedAt, set lastSelected.
+function upsertSession(id, fields) {
+  const idx = readSessionIndex();
+  let s = idx.sessions.find((x) => x.id === id);
+  if (!s) { s = { id, title: "", createdAt: new Date().toISOString(), model: "" }; idx.sessions.push(s); }
+  Object.assign(s, fields, { updatedAt: new Date().toISOString() });
+  idx.lastSelected = id;
+  writeSessionIndex(idx);
+}
 
 // ── static client ───────────────────────────────────────────────────────────
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
@@ -70,11 +100,84 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   if (url.pathname === "/api/info") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ repo, sessions: listSessions() }));
+    return res.end(JSON.stringify({ repo }));
   }
   if (url.pathname === "/api/catalog") {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(readCatalog(repo)));
+  }
+  // ── agent config: model (+ personality, Phase 4) — token-gated ──
+  if (url.pathname === "/api/config" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    const cfg = readAgentConfig(repo);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ model: cfg.model, personality: cfg.personality, runtime: cfg.runtime, models: [...ALLOWED_MODELS] }));
+  }
+  if (url.pathname === "/api/config/model" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e4) req.destroy(); });
+    req.on("end", () => {
+      let model = "";
+      try { model = String(JSON.parse(body || "{}").model || ""); } catch { /* bad body */ }
+      if (!ALLOWED_MODELS.has(model)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: `model must be one of: ${[...ALLOWED_MODELS].join(", ")}` }));
+      }
+      try { setAiosKey(repo, "agent_model", model); }
+      catch (e) { res.writeHead(500, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ ok: false, error: e.message })); }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, model }));
+    });
+    return;
+  }
+  // ── personalities (token-gated) ──
+  if (url.pathname === "/api/personalities" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ personalities: listPersonalities(repo), current: readAgentConfig(repo).personality }));
+  }
+  if (url.pathname === "/api/config/personality" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e4) req.destroy(); });
+    req.on("end", () => {
+      let id = "";
+      try { id = String(JSON.parse(body || "{}").personality || ""); } catch { /* bad body */ }
+      const valid = listPersonalities(repo).some((p) => p.id === id);
+      if (!valid) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "unknown personality" }));
+      }
+      try { setAiosKey(repo, "agent_personality", id); }
+      catch (e) { res.writeHead(500, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ ok: false, error: e.message })); }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, personality: id }));
+    });
+    return;
+  }
+  // ── chat sessions (token-gated; transcripts are sensitive local content) ──
+  if (url.pathname === "/api/sessions" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    const idx = readSessionIndex();
+    const sessions = [...idx.sessions].sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ sessions, lastSelected: idx.lastSelected }));
+  }
+  const sessMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessMatch && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    const id = sessMatch[1];
+    if (!UUID_RE.test(id)) { res.writeHead(400, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "bad session id" })); }
+    const file = path.join(SESSIONS_DIR, `${id}.jsonl`); // id is a validated UUID — no traversal
+    if (!existsSync(file)) { res.writeHead(404, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ error: "not found" })); }
+    const events = [];
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try { events.push(JSON.parse(line)); } catch { /* skip a torn line */ }
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ id, events }));
   }
   // ── review-and-push panel (token-gated; mutating) ──
   if (url.pathname === "/api/review") {
@@ -213,17 +316,41 @@ function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-function listSessions() {
-  try {
-    return readdirSync(SESSIONS_DIR)
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => f.replace(/\.jsonl$/, ""))
-      .sort()
-      .reverse()
-      .slice(0, 20);
-  } catch {
-    return [];
+// Keys the GUI is allowed to write into aios.yaml. Callers validate the VALUE
+// (model ∈ ALLOWED_MODELS; personality ∈ scanned dir) before calling.
+const AIOS_WRITABLE_KEYS = new Set(["agent_model", "agent_personality"]);
+
+// Set a single flat key in aios.yaml, preserving the rest. Replaces an existing
+// non-comment `key:` line (anchored at column 0, so a commented "# key:" is left
+// alone) or appends one. Output stays within OGR04's flat-YAML subset.
+function setAiosKey(repoDir, key, value) {
+  if (!AIOS_WRITABLE_KEYS.has(key)) throw new Error(`refusing to write unknown aios.yaml key '${key}'`);
+  const p = path.join(repoDir, "aios.yaml");
+  const line = `${key}: "${value}"`;
+  const re = new RegExp(`^${key}:.*$`, "m");
+  let text = existsSync(p) ? readFileSync(p, "utf8") : "";
+  if (!text) text = line + "\n";
+  else if (re.test(text)) text = text.replace(re, line);
+  else text = text.replace(/\n*$/, "\n") + line + "\n";
+  fsWriteFileSync(p, text);
+}
+
+// Scan .claude/personalities/ → [{ id, name, description }]. id is the filename
+// stem (already constrained to safe chars by the scan); used by the picker + to
+// validate a personality write.
+function listPersonalities(repoDir) {
+  const dir = path.join(repoDir, ".claude", "personalities");
+  if (!existsSync(dir)) return [];
+  const out = [];
+  for (const f of readdirSync(dir).sort()) {
+    if (!f.endsWith(".md")) continue;
+    const id = f.replace(/\.md$/, "");
+    if (!/^[a-z0-9-]+$/.test(id)) continue;
+    let fm = {};
+    try { fm = frontmatter(readFileSync(path.join(dir, f), "utf8")); } catch { /* skip */ }
+    out.push({ id, name: fm.name || id, description: firstSentence(fm.description || "") });
   }
+  return out;
 }
 
 // Surface the workspace's skills + integrations to the GUI. Reuses the same robust
@@ -249,12 +376,26 @@ server.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 
-wss.on("connection", (ws) => {
-  const sessionId = new Date().toISOString().replace(/[:.]/g, "-");
-  const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`);
+wss.on("connection", (ws, req) => {
+  // Resume an existing chat when the client passes a valid ?session=<uuid> that
+  // we already have a transcript for; otherwise mint a fresh UUID and pin it as
+  // the SDK session id so the transcript file and the resumable session share one id.
+  const wsUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+  const wanted = wsUrl.searchParams.get("session") || "";
+  const resumeId = UUID_RE.test(wanted) && existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) ? wanted : null;
+  const sessionId = resumeId || randomUUID();
+  const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
+  let titleSet = !!readSessionIndex().sessions.find((s) => s.id === sessionId)?.title;
+
   const send = (obj) => {
     try { ws.send(JSON.stringify(obj)); } catch { /* closed */ }
     try { appendFileSync(transcript, JSON.stringify(obj) + "\n"); } catch { /* best-effort */ }
+  };
+  // Adapter event sink: same as send(), plus keep the session index fresh.
+  const emit = (obj) => {
+    send(obj);
+    if ((obj.type === "session" || obj.type === "model") && obj.model) upsertSession(sessionId, { model: obj.model });
+    else if (obj.type === "result") upsertSession(sessionId, {}); // bump updatedAt
   };
 
   // Streaming-input generator fed by a queue: user turns arrive over WS.
@@ -262,8 +403,8 @@ wss.on("connection", (ws) => {
   const queue = [];
   let wake = null;
   const ac = new AbortController(); // fired on ws close → wakes the iterator + signals the adapter
-  const pushUser = (text) => {
-    queue.push({ type: "user", text });
+  const pushUser = (text, model) => {
+    queue.push({ type: "user", text, model });
     if (wake) { wake(); wake = null; }
   };
   async function* input() {
@@ -284,7 +425,8 @@ wss.on("connection", (ws) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === "user_message" && typeof msg.text === "string") {
       send({ type: "echo_user", text: msg.text });
-      pushUser(msg.text);
+      if (!titleSet) { upsertSession(sessionId, { title: msg.text.replace(/\s+/g, " ").trim().slice(0, 80) }); titleSet = true; }
+      pushUser(msg.text, typeof msg.model === "string" ? msg.model : undefined);
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
       const resolve = pending.get(msg.id);
       pending.delete(msg.id);
@@ -333,7 +475,7 @@ wss.on("connection", (ws) => {
   // One adapter drives this session, selected by agent_runtime in aios.yaml
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
-  const { runtime, model, baseUrl } = readAgentConfig(repo);
+  const { runtime, model, baseUrl, personality } = readAgentConfig(repo);
   // claude-code's PreToolUse hook pre-gates every write natively. Other drivers
   // can mutate files via in-process shell tools that bypass the host write-gate,
   // so they're validated by a post-turn sweep — say so in the UI (honest tier).
@@ -341,13 +483,17 @@ wss.on("connection", (ws) => {
   const safetyNote = driver && driver !== "claude-sdk"
     ? "Shell-driven file changes are validated after each turn, not pre-gated."
     : null;
-  send({ type: "hello", repo, sessionId, runtime, safetyNote });
+  // Register/refresh this chat so it appears in the sidebar list and is restorable.
+  upsertSession(sessionId, { model });
+  send({ type: "hello", repo, sessionId, runtime, safetyNote, resumed: !!resumeId });
 
   (async () => {
     try {
       const adapter = createAdapter(runtime);
       await adapter.run({
-        repo, runtime, model, baseUrl, input: input(), emit: send, confirmClaudeTool, requestPermission, signal: ac.signal,
+        repo, runtime, model, baseUrl, personality,
+        ...(resumeId ? { resume: resumeId } : { sessionId }), // claude SDK: continue vs. pin a new session
+        input: input(), emit, confirmClaudeTool, requestPermission, signal: ac.signal,
         // host-side governance for runtimes whose writes are host-mediated (ACP fs/write)
         guardWrite: (args) => runGuardWrite({ repo, ...args }),
       });

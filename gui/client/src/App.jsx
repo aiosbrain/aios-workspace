@@ -1,4 +1,78 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+const MODELS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+];
+const CONTEXT_WINDOW = 200_000; // both offered models
+
+// Force every markdown link to open externally WITHOUT a Referer, so the
+// cockpit URL's ?token=… is never leaked to the destination site.
+const MD_COMPONENTS = {
+  a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+};
+
+function fmtK(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+}
+function fmtUsd(n) {
+  return `$${Number(n).toFixed(n < 0.1 ? 4 : 2)}`;
+}
+
+// "turn done" line, shared by the live stream and transcript replay so they read
+// identically. total_cost_usd may be cumulative across a session — show a per-turn
+// delta when it clearly is (prevCost>0, non-negative), else treat it as the turn's cost.
+function formatResultMeta(usage, cost_usd, prevCost) {
+  const parts = [];
+  if (usage) parts.push(`${fmtK(usage.input_tokens || 0)} in / ${fmtK(usage.output_tokens || 0)} out`);
+  if (typeof cost_usd === "number") {
+    const delta = cost_usd - prevCost;
+    parts.push(prevCost > 0 && delta >= 0 ? `+${fmtUsd(delta)} (session ${fmtUsd(cost_usd)})` : fmtUsd(cost_usd));
+  }
+  return `turn done${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
+}
+
+// Fold a stored transcript (array of WS events) into a messages[] for replay.
+// Differs from the live handler: echo_user BECOMES a user message here (live
+// ignores it because the UI already rendered it optimistically), and historical
+// permission_request events are dropped — never shown as live approval prompts.
+function buildMessagesFromEvents(events) {
+  const msgs = [];
+  let lastUsage = null, prevCost = 0;
+  for (const ev of events) {
+    switch (ev.type) {
+      case "echo_user": msgs.push({ kind: "user", text: ev.text }); break;
+      case "delta": {
+        const last = msgs[msgs.length - 1];
+        if (last?.kind === "assistant" && last.streaming) last.text += ev.text;
+        else msgs.push({ kind: "assistant", text: ev.text, streaming: true });
+        break;
+      }
+      case "assistant_done": { const last = msgs[msgs.length - 1]; if (last?.kind === "assistant") last.streaming = false; break; }
+      case "tool_use": msgs.push({ kind: "tool", name: ev.name, input: ev.input, id: ev.id, result: null }); break;
+      case "tool_result": {
+        const t = [...msgs].reverse().find((m) => m.kind === "tool" && m.id === ev.id);
+        if (t) { t.result = ev.text; t.isError = ev.is_error; }
+        break;
+      }
+      case "usage": lastUsage = ev.usage; break;
+      case "warning": msgs.push({ kind: "meta", text: `⚠ ${ev.message}` }); break;
+      case "result":
+        msgs.push({ kind: "meta", text: formatResultMeta(lastUsage, ev.cost_usd, prevCost) });
+        if (typeof ev.cost_usd === "number") prevCost = ev.cost_usd;
+        lastUsage = null;
+        break;
+      default: break; // hello, model, session, permission_request → not replayed
+    }
+  }
+  const last = msgs[msgs.length - 1];
+  if (last?.kind === "assistant") last.streaming = false; // never leave a stale cursor
+  return msgs;
+}
 
 /**
  * Minimal local cockpit for an aios-workspace repo.
@@ -19,8 +93,14 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [permissions, setPermissions] = useState([]); // pending approval requests
+  const [model, setModel] = useState(MODELS[0].id); // selected model (Sonnet 4.6 default)
+  const [usage, setUsage] = useState(null); // latest token usage → context meter
+  const [chats, setChats] = useState([]); // past sessions for the sidebar
+  const [currentSession, setCurrentSession] = useState(null); // active chat id
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const usageRef = useRef(null);  // latest usage for the result line (state is async)
+  const prevCostRef = useRef(0);  // session cost so far, to show a per-turn delta
 
   // Who am I? Only a brain lead/admin sees the Team (publish) surface.
   useEffect(() => {
@@ -28,6 +108,22 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => setRole(d.me?.role || null))
       .catch(() => {});
+  }, []);
+
+  // Restore the persisted model choice (agent_model in aios.yaml), if it's one we offer.
+  useEffect(() => {
+    fetch(`/api/config?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (MODELS.some((m) => m.id === d.model)) setModel(d.model); })
+      .catch(() => {});
+  }, []);
+
+  const changeModel = useCallback((m) => {
+    setModel(m); // applies to the NEXT send (sent on each user_message → SDK setModel)
+    fetch(`/api/config/model?token=${token}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: m }),
+    }).catch(() => {});
   }, []);
 
   const append = useCallback((m) => setMessages((prev) => [...prev, m]), []);
@@ -53,9 +149,20 @@ export default function App() {
     );
   }, []);
 
-  useEffect(() => {
+  const loadChats = useCallback(() => {
+    fetch(`/api/sessions?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => setChats(d.sessions || []))
+      .catch(() => {});
+  }, []);
+
+  // Open (or reopen) a WebSocket. With a sessionId, the server resumes that chat's
+  // SDK session so prior context is intact; without one it mints a fresh chat.
+  const connect = useCallback((sessionId) => {
+    try { wsRef.current?.close(); } catch { /* already closed */ }
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${token}`);
+    const qs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
+    const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${token}${qs}`);
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
@@ -63,7 +170,7 @@ export default function App() {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       switch (msg.type) {
-        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); setSafetyNote(msg.safetyNote || null); break;
+        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); setSafetyNote(msg.safetyNote || null); setCurrentSession(msg.sessionId); loadChats(); break;
         case "echo_user": break; // already rendered optimistically
         case "delta": appendDelta(msg.text); break;
         case "assistant_done": finishAssistant(); break;
@@ -82,9 +189,21 @@ export default function App() {
         case "permission_request":
           setPermissions((prev) => [...prev, msg]);
           break;
+        case "usage":
+          usageRef.current = msg.usage;
+          setUsage(msg.usage);
+          break;
+        case "model": // server confirms an in-session switch — keep the picker in sync
+          if (MODELS.some((m) => m.id === msg.model)) setModel(msg.model);
+          break;
+        case "warning":
+          append({ kind: "meta", text: `⚠ ${msg.message}` });
+          break;
         case "result":
           setBusy(false);
-          append({ kind: "meta", text: `turn done${typeof msg.cost_usd === "number" ? ` · $${msg.cost_usd.toFixed(4)}` : ""}` });
+          append({ kind: "meta", text: formatResultMeta(usageRef.current, msg.cost_usd, prevCostRef.current) });
+          if (typeof msg.cost_usd === "number") prevCostRef.current = msg.cost_usd;
+          loadChats(); // first turn just set this chat's title
           break;
         case "error":
           setBusy(false);
@@ -93,8 +212,55 @@ export default function App() {
         default: break;
       }
     };
-    return () => ws.close();
-  }, [append, appendDelta, finishAssistant]);
+  }, [append, appendDelta, finishAssistant, loadChats]);
+
+  // Reset the per-chat meters when switching chats.
+  const resetChatState = useCallback(() => {
+    setBusy(false); setPermissions([]);
+    usageRef.current = null; setUsage(null); prevCostRef.current = 0;
+  }, []);
+
+  const newChat = useCallback(() => {
+    resetChatState();
+    setMessages([]);
+    setCurrentSession(null);
+    setView("chat");
+    connect(); // no session → server mints a new chat
+  }, [connect, resetChatState]);
+
+  // Replay a stored transcript, then resume its SDK session for new turns.
+  const openChat = useCallback(async (id) => {
+    resetChatState();
+    setView("chat");
+    try {
+      const r = await fetch(`/api/sessions/${id}?token=${token}`);
+      const d = await r.json();
+      const events = d.events || [];
+      setMessages(buildMessagesFromEvents(events));
+      // Continue the cost/context meters from where the transcript left off.
+      let lastCost = 0, lastUsage = null;
+      for (const ev of events) {
+        if (ev.type === "usage") lastUsage = ev.usage;
+        if (ev.type === "result" && typeof ev.cost_usd === "number") lastCost = ev.cost_usd;
+      }
+      prevCostRef.current = lastCost; usageRef.current = lastUsage; setUsage(lastUsage);
+    } catch { setMessages([]); }
+    connect(id);
+  }, [connect, resetChatState]);
+
+  // On launch, restore the last chat if there is one; otherwise start fresh.
+  useEffect(() => {
+    fetch(`/api/sessions?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setChats(d.sessions || []);
+        if (d.lastSelected) openChat(d.lastSelected);
+        else connect();
+      })
+      .catch(() => connect());
+    return () => { try { wsRef.current?.close(); } catch { /* noop */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -104,7 +270,7 @@ export default function App() {
     const text = (typeof override === "string" ? override : input).trim();
     if (!text || !connected) return;
     append({ kind: "user", text });
-    wsRef.current?.send(JSON.stringify({ type: "user_message", text }));
+    wsRef.current?.send(JSON.stringify({ type: "user_message", text, model }));
     setInput("");
     setBusy(true);
   };
@@ -135,7 +301,23 @@ export default function App() {
           {(role === "admin" || role === "lead") && (
             <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
           )}
+          <button className={`side-link${view === "settings" ? " on" : ""}`} onClick={() => setView("settings")}>{NAV_ICONS.settings} Settings</button>
         </nav>
+        <div className="side-chats">
+          <button className="side-newchat" onClick={newChat}>+ New chat</button>
+          <div className="chat-list">
+            {chats.map((c) => (
+              <button
+                key={c.id}
+                className={`chat-item${c.id === currentSession ? " on" : ""}`}
+                onClick={() => openChat(c.id)}
+                title={c.title || "(untitled)"}
+              >
+                {c.title || "New chat"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="side-foot">
           {runtime && (
             <div className="runtime-badge" title={`Agent runtime: ${runtime}`}>
@@ -150,12 +332,23 @@ export default function App() {
       <div className="app-main">
       {view === "review" && <ReviewPanel />}
       {view === "team" && <TeamPanel />}
+      {view === "settings" && (
+        <SettingsPanel model={model} onModelChange={changeModel} onPersonalityApplied={newChat} />
+      )}
       {view === "integrations" && (
         <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
       )}
 
       {view === "chat" && (
       <>
+      <div className="chat-head">
+        <label className="model-pick">
+          <span>Model</span>
+          <select value={model} disabled={busy} onChange={(e) => changeModel(e.target.value)}>
+            {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
+      </div>
       <main>
         {safetyNote && (
           <div className="safety-banner" title="Writes the agent makes through its own shell run after the turn ends are scanned, not blocked beforehand.">
@@ -179,7 +372,11 @@ export default function App() {
         {messages.map((m, i) => {
           if (m.kind === "user") return <div key={i} className="msg user">{m.text}</div>;
           if (m.kind === "assistant")
-            return <div key={i} className={`msg assistant${m.streaming ? " streaming" : ""}`}>{m.text}</div>;
+            return (
+              <div key={i} className={`msg assistant${m.streaming ? " streaming" : ""}`}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
+              </div>
+            );
           if (m.kind === "tool") return <ToolCard key={i} tool={m} />;
           return <div key={i} className={`msg meta${m.error ? " error" : ""}`}>{m.text}</div>;
         })}
@@ -211,6 +408,8 @@ export default function App() {
         ))}
         <div ref={bottomRef} />
       </main>
+
+      <ContextMeter usage={usage} />
 
       <footer>
         <textarea
@@ -259,7 +458,100 @@ const NAV_ICONS = {
       <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
+  settings: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  ),
 };
+
+function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
+  const [personalities, setPersonalities] = useState(null);
+  const [current, setCurrent] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/personalities?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { setPersonalities(d.personalities || []); setCurrent(d.current); })
+      .catch(() => setPersonalities([]));
+  }, []);
+
+  const pick = async (id) => {
+    if (id === current || saving) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/config/personality?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personality: id }),
+      });
+      const d = await r.json();
+      if (d.ok) { setCurrent(id); onPersonalityApplied(); } // new chat so the persona applies
+    } catch { /* leave selection */ }
+    setSaving(false);
+  };
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Settings</h2>
+          <p className="int-sub">Pick the default model and the agent's personality. Personality is a
+            style layer appended to the system prompt — it never overrides your rules, CLAUDE.md, or skills.</p>
+        </div>
+      </div>
+
+      <h3 className="int-section">Default model</h3>
+      <label className="model-pick">
+        <span>Model</span>
+        <select value={model} onChange={(e) => onModelChange(e.target.value)}>
+          {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+      </label>
+
+      <h3 className="int-section">Personality</h3>
+      {!personalities ? (
+        <div className="empty"><p>loading…</p></div>
+      ) : (
+        <div className="int-grid">
+          {personalities.map((p) => (
+            <div key={p.id} className={`int-card${p.id === current ? " wired" : ""}`}>
+              <div className="int-card-top">
+                <span className="int-name">{p.name}</span>
+                <span className={`int-status ${p.id === current ? "wired" : ""}`}>{p.id === current ? "● active" : "○"}</span>
+              </div>
+              <p className="int-summary">{p.description}</p>
+              <div className="int-card-foot">
+                <span className="int-transport">style only</span>
+                <button className="int-connect" disabled={saving || p.id === current} onClick={() => pick(p.id)}>
+                  {p.id === current ? "Active" : "Use"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="int-foot">Changing personality starts a new chat so the new voice takes effect.</p>
+    </div>
+  );
+}
+
+function ContextMeter({ usage }) {
+  // Approximate context occupancy = the prompt fed on the latest turn
+  // (fresh input + cached tokens). Labeled "est." because it's a proxy, not a
+  // live token count, and is absent until the first turn reports usage.
+  const ctx = usage
+    ? (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0)
+    : null;
+  const pct = ctx == null ? 0 : Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
+  return (
+    <div className="ctx-meter" title="Estimated context used (input + cached tokens) on the last turn, out of the model's window. Approximate.">
+      <div className="ctx-bar"><div className="ctx-fill" style={{ width: `${pct}%` }} /></div>
+      <span>context (est.) {ctx == null ? "—" : `~${fmtK(ctx)} / ${fmtK(CONTEXT_WINDOW)}`}</span>
+    </div>
+  );
+}
 
 function ReviewPanel() {
   const [plan, setPlan] = useState(null);
