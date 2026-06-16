@@ -22,7 +22,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
+import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { readSkills, readIntegrations, firstSentence } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
@@ -255,21 +256,21 @@ wss.on("connection", (ws) => {
     try { appendFileSync(transcript, JSON.stringify(obj) + "\n"); } catch { /* best-effort */ }
   };
 
-  // Streaming-input generator fed by a queue: user messages arrive over WS.
+  // Streaming-input generator fed by a queue: user turns arrive over WS.
+  // Adapters consume { type:"user", text } turns (runtime-neutral).
   const queue = [];
   let wake = null;
+  const ac = new AbortController(); // fired on ws close → wakes the iterator + signals the adapter
   const pushUser = (text) => {
-    queue.push({
-      type: "user",
-      message: { role: "user", content: text },
-      parent_tool_use_id: null,
-    });
+    queue.push({ type: "user", text });
     if (wake) { wake(); wake = null; }
   };
-  async function* userMessages() {
+  async function* input() {
     for (;;) {
       while (queue.length) yield queue.shift();
+      if (ac.signal.aborted) return;
       await new Promise((r) => (wake = r));
+      if (ac.signal.aborted) return; // woken by ws close → terminate the iterator
     }
   }
 
@@ -289,75 +290,51 @@ wss.on("connection", (ws) => {
     }
   });
 
-  send({ type: "hello", repo, sessionId });
+  // Claude-style tool permission, server-owned so the WS prompt machinery is
+  // shared across adapters: AUTO_ALLOW runs silently (the PreToolUse guard hook
+  // still vets writes); other tools prompt. Returns the SDK { behavior } shape.
+  const confirmClaudeTool = async (toolName, toolInput) => {
+    if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: toolInput };
+    if (toolName === "AskUserQuestion") {
+      return { behavior: "deny", message: "This chat can't render multiple-choice questions. Ask the user ONE short question at a time as a normal message and wait for their typed reply." };
+    }
+    const id = nextPermId++;
+    send({ type: "permission_request", id, tool: toolName, input: toolInput });
+    const allow = await new Promise((resolve) => {
+      pending.set(id, resolve);
+      // auto-deny after 5 minutes so a closed tab can't wedge the run
+      setTimeout(() => {
+        if (pending.has(id)) { pending.delete(id); resolve(false); }
+      }, 5 * 60 * 1000).unref?.();
+    });
+    return allow
+      ? { behavior: "allow", updatedInput: toolInput }
+      : { behavior: "deny", message: "Denied in the GUI" };
+  };
+
+  // One adapter drives this session, selected by agent_runtime in aios.yaml
+  // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
+  // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
+  const { runtime, model, baseUrl } = readAgentConfig(repo);
+  send({ type: "hello", repo, sessionId, runtime });
 
   (async () => {
     try {
-      const q = query({
-        prompt: userMessages(),
-        options: {
-          cwd: repo,
-          systemPrompt: { type: "preset", preset: "claude_code" },
-          settingSources: ["user", "project"], // CLAUDE.md + skills + hooks fire
-          includePartialMessages: true,
-          canUseTool: async (toolName, input) => {
-            // Allowlist/auto mode: safe reads + workspace edits run without a prompt
-            // (the PreToolUse guard hook is the real safety net for secrets/tiers).
-            // Only genuinely powerful tools (Bash, network/MCP) prompt.
-            if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: input };
-            // No UI to render a multiple-choice question — make the agent ask inline.
-            if (toolName === "AskUserQuestion") {
-              return { behavior: "deny", message: "This chat can't render multiple-choice questions. Ask the user ONE short question at a time as a normal message and wait for their typed reply." };
-            }
-            const id = nextPermId++;
-            send({ type: "permission_request", id, tool: toolName, input });
-            const allow = await new Promise((resolve) => {
-              pending.set(id, resolve);
-              // auto-deny after 5 minutes so a closed tab can't wedge the run
-              setTimeout(() => {
-                if (pending.has(id)) { pending.delete(id); resolve(false); }
-              }, 5 * 60 * 1000).unref?.();
-            });
-            return allow
-              ? { behavior: "allow", updatedInput: input }
-              : { behavior: "deny", message: "Denied in the GUI" };
-          },
-        },
+      const adapter = createAdapter(runtime);
+      await adapter.run({
+        repo, model, baseUrl, input: input(), emit: send, confirmClaudeTool, signal: ac.signal,
+        // host-side governance for runtimes whose writes are host-mediated (ACP fs/write)
+        guardWrite: (args) => runGuardWrite({ repo, ...args }),
       });
-
-      for await (const message of q) {
-        if (message.type === "stream_event") {
-          const ev = message.event;
-          if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta") {
-            send({ type: "delta", text: ev.delta.text });
-          }
-        } else if (message.type === "assistant") {
-          for (const block of message.message?.content || []) {
-            if (block.type === "tool_use") {
-              send({ type: "tool_use", name: block.name, input: block.input, id: block.id });
-            }
-          }
-          send({ type: "assistant_done" });
-        } else if (message.type === "user") {
-          for (const block of message.message?.content || []) {
-            if (block.type === "tool_result") {
-              const text = Array.isArray(block.content)
-                ? block.content.map((b) => b.text || "").join("")
-                : String(block.content ?? "");
-              send({ type: "tool_result", id: block.tool_use_id, text: text.slice(0, 4000), is_error: !!block.is_error });
-            }
-          }
-        } else if (message.type === "result") {
-          send({ type: "result", subtype: message.subtype, cost_usd: message.total_cost_usd });
-        }
-      }
     } catch (e) {
       send({ type: "error", message: String(e?.message || e) });
     }
   })();
 
   ws.on("close", () => {
-    // resolve any pending approvals as denied so the SDK loop can finish
+    ac.abort();
+    if (wake) { wake(); wake = null; } // unpark the input iterator so it returns
+    // resolve any pending approvals as denied so the adapter loop can finish
     for (const resolve of pending.values()) resolve(false);
     pending.clear();
   });

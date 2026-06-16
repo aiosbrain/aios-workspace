@@ -56,6 +56,7 @@ case "$MODE" in
     run_check "OGR04 — AIOS Config" "$SCRIPT_DIR/check-aios-config.sh"
     run_check "OGR05 — Rubrics + Memory" "$SCRIPT_DIR/check-rubrics.sh"
     run_check "OGR06 — Skill Export (BYOA)" "$SCRIPT_DIR/check-skill-export.mjs"
+    run_check "OGR07 — Runtime Adapters (BYOA)" "$SCRIPT_DIR/check-runtime-adapters.mjs"
     ;;
 esac
 
