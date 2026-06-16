@@ -8,41 +8,105 @@
 // Adapter contract: export `meta` + `run(host)`. See runtime-adapters/index.mjs.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
 
 export const meta = { runtime: "claude-code", driver: "claude-sdk" };
+
+const PERSONALITY_ID_RE = /^[a-z0-9-]+$/;
+
+// Load a style-only persona to append to the preset system prompt. Returns the
+// markdown body (frontmatter stripped) or null. The id is strictly sanitized so
+// it can't escape .claude/personalities/. A persona NEVER overrides rules/skills —
+// it's appended, and the preset + settingSources still carry the governance layer.
+function loadPersona(repo, personality) {
+  if (!personality || !PERSONALITY_ID_RE.test(personality)) return null;
+  const file = path.join(repo, ".claude", "personalities", `${personality}.md`);
+  if (!existsSync(file)) return null;
+  try {
+    const body = readFileSync(file, "utf8").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+    return body || null;
+  } catch { return null; }
+}
+
+// Models the cockpit picker offers. The claude-code adapter resolves an empty /
+// unknown `agent_model` to the default here — so global `agent_model: ""` keeps
+// meaning "runtime default" for every other runtime (see docs/byoa.md), while the
+// GUI gets a fast, cheap default instead of Claude Code's heavy fallback.
+export const ALLOWED_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
+export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+function resolveModel(model) {
+  return ALLOWED_MODELS.has(model) ? model : DEFAULT_MODEL;
+}
 
 /**
  * @param {object} host
  * @param {string} host.repo                       workspace cwd
- * @param {AsyncIterable<{type:"user",text:string}>} host.input   user turns
+ * @param {string} [host.model]                    configured agent_model (resolved to a default)
+ * @param {string} [host.resume]                   SDK session id to resume (Phase 2)
+ * @param {string} [host.sessionId]                pinned SDK session id for a new chat (Phase 2)
+ * @param {string} [host.personality]              persona id in .claude/personalities/ (Phase 4)
+ * @param {AsyncIterable<{type:"user",text:string,model?:string}>} host.input   user turns
  * @param {(event:object)=>void} host.emit         WS-shaped event sink
  * @param {(tool:string,input:object)=>Promise<object>} host.confirmClaudeTool  → {behavior,...}
  * @param {AbortSignal} host.signal
  */
-export async function run({ repo, input, emit, confirmClaudeTool, signal }) {
-  // Map host turns → the SDK's streaming-input message shape (unchanged from
-  // the original userMessages() generator).
+export async function run({ repo, model, resume, sessionId, personality, input, emit, confirmClaudeTool, signal }) {
+  let active = resolveModel(model);
+  // Surface a clear note (not a hard error) when a configured model is unusable,
+  // so a typo in aios.yaml degrades to Sonnet instead of breaking chat.
+  if (model && !ALLOWED_MODELS.has(model)) {
+    emit({ type: "warning", message: `Unknown agent_model '${model}' — using ${DEFAULT_MODEL}. Valid: ${[...ALLOWED_MODELS].join(", ")}.` });
+  }
+
+  // Map host turns → the SDK's streaming-input message shape. A turn may carry a
+  // `model`: switching mid-session is supported in streaming-input mode via
+  // q.setModel(), so a model change takes effect on the NEXT send with no
+  // reconnect and the visible history stays the real agent context.
   async function* prompt() {
     for await (const turn of input) {
       if (signal?.aborted) return;
+      const want = resolveModel(turn.model);
+      if (turn.model && want !== active) {
+        try { await q.setModel(want); active = want; emit({ type: "model", model: active }); }
+        catch (e) { emit({ type: "warning", message: `Could not switch model: ${String(e?.message || e)}` }); }
+      }
       yield { type: "user", message: { role: "user", content: turn.text }, parent_tool_use_id: null };
     }
   }
+
+  // Persona is appended to the preset (the SDK honors `append` on a fresh session;
+  // a resumed session keeps its persisted prompt, so the GUI starts a NEW chat when
+  // the personality changes — see Settings).
+  const persona = loadPersona(repo, personality);
+  const systemPrompt = persona
+    ? { type: "preset", preset: "claude_code", append: persona }
+    : { type: "preset", preset: "claude_code" };
 
   const q = query({
     prompt: prompt(),
     options: {
       cwd: repo,
-      systemPrompt: { type: "preset", preset: "claude_code" },
+      model: active,
+      ...(resume ? { resume } : sessionId ? { sessionId } : {}),
+      systemPrompt,
       settingSources: ["user", "project"], // CLAUDE.md + skills + PreToolUse guard hook fire
       includePartialMessages: true,
       canUseTool: confirmClaudeTool,
     },
   });
 
+  // Forward token usage from whatever message carries it (assistant or result);
+  // never assume a fixed shape. The client uses the latest as a context estimate.
+  const emitUsage = (usage) => { if (usage) emit({ type: "usage", usage }); };
+
   for await (const message of q) {
     if (signal?.aborted) break;
-    if (message.type === "stream_event") {
+    if (message.type === "system" && message.subtype === "init") {
+      // session_id powers Phase 2 resume; model confirms what's actually running.
+      emit({ type: "session", session_id: message.session_id, model: message.model });
+    } else if (message.type === "stream_event") {
       const ev = message.event;
       if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta") {
         emit({ type: "delta", text: ev.delta.text });
@@ -53,6 +117,7 @@ export async function run({ repo, input, emit, confirmClaudeTool, signal }) {
           emit({ type: "tool_use", name: block.name, input: block.input, id: block.id });
         }
       }
+      emitUsage(message.message?.usage);
       emit({ type: "assistant_done" });
     } else if (message.type === "user") {
       for (const block of message.message?.content || []) {
@@ -64,6 +129,7 @@ export async function run({ repo, input, emit, confirmClaudeTool, signal }) {
         }
       }
     } else if (message.type === "result") {
+      emitUsage(message.usage);
       emit({ type: "result", subtype: message.subtype, cost_usd: message.total_cost_usd });
     }
   }
