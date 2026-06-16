@@ -285,8 +285,10 @@ wss.on("connection", (ws) => {
       send({ type: "echo_user", text: msg.text });
       pushUser(msg.text);
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
-      pending.get(msg.id)(!!msg.allow);
+      const resolve = pending.get(msg.id);
       pending.delete(msg.id);
+      // Option-based runtimes (ACP) reply with an optionId; Claude replies allow/deny.
+      resolve(typeof msg.optionId === "string" ? msg.optionId : !!msg.allow);
     }
   });
 
@@ -312,6 +314,21 @@ wss.on("connection", (ws) => {
       : { behavior: "deny", message: "Denied in the GUI" };
   };
 
+  // Option-based permission (ACP / OpenCode): the adapter passes the runtime's
+  // own options; the client renders a button per option and replies with an
+  // optionId. Returns the chosen optionId (string), or null if the tab closed /
+  // it timed out (the adapter maps a non-string to a "cancelled" outcome).
+  const requestPermission = async ({ title, content, options }) => {
+    const id = nextPermId++;
+    send({ type: "permission_request", id, tool: title, input: content, options });
+    return new Promise((resolve) => {
+      pending.set(id, resolve);
+      setTimeout(() => {
+        if (pending.has(id)) { pending.delete(id); resolve(null); }
+      }, 5 * 60 * 1000).unref?.();
+    });
+  };
+
   // One adapter drives this session, selected by agent_runtime in aios.yaml
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
@@ -322,7 +339,7 @@ wss.on("connection", (ws) => {
     try {
       const adapter = createAdapter(runtime);
       await adapter.run({
-        repo, model, baseUrl, input: input(), emit: send, confirmClaudeTool, signal: ac.signal,
+        repo, runtime, model, baseUrl, input: input(), emit: send, confirmClaudeTool, requestPermission, signal: ac.signal,
         // host-side governance for runtimes whose writes are host-mediated (ACP fs/write)
         guardWrite: (args) => runGuardWrite({ repo, ...args }),
       });
