@@ -1,0 +1,63 @@
+{
+  "events": [
+    {
+      "type": "thread.started",
+      "thread_id": "019ed48d-e389-71a1-8982-cd34b48629be"
+    },
+    {
+      "type": "turn.started"
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_0",
+        "type": "agent_message",
+        "text": "I\u2019m creating `notes.md` with the exact requested content and nothing else."
+      }
+    },
+    {
+      "type": "item.started",
+      "item": {
+        "id": "item_1",
+        "type": "file_change",
+        "changes": [
+          {
+            "path": "/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/tmp.E0eVR1up50/notes.md",
+            "kind": "add"
+          }
+        ],
+        "status": "in_progress"
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_1",
+        "type": "file_change",
+        "changes": [
+          {
+            "path": "/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/tmp.E0eVR1up50/notes.md",
+            "kind": "add"
+          }
+        ],
+        "status": "completed"
+      }
+    },
+    {
+      "type": "item.completed",
+      "item": {
+        "id": "item_2",
+        "type": "agent_message",
+        "text": "Created `notes.md` with exactly `hello fixture`."
+      }
+    },
+    {
+      "type": "turn.completed",
+      "usage": {
+        "input_tokens": 35013,
+        "cached_input_tokens": 0,
+        "output_tokens": 95
+      }
+    }
+  ]
+}

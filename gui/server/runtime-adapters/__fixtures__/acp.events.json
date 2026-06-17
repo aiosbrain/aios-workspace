@@ -1,0 +1,119 @@
+{
+  "updates": [
+    {
+      "availableCommands": [
+        {
+          "description": "List available commands",
+          "name": "help"
+        },
+        {
+          "description": "Show current model and provider, or switch models",
+          "input": {
+            "hint": "model name to switch to"
+          },
+          "name": "model"
+        },
+        {
+          "description": "List available tools with descriptions",
+          "name": "tools"
+        },
+        {
+          "description": "Show conversation message counts by role",
+          "name": "context"
+        },
+        {
+          "description": "Clear conversation history",
+          "name": "reset"
+        },
+        {
+          "description": "Compress conversation context",
+          "name": "compact"
+        },
+        {
+          "description": "Inject guidance into the currently running agent turn",
+          "input": {
+            "hint": "guidance for the active turn"
+          },
+          "name": "steer"
+        },
+        {
+          "description": "Queue a prompt to run after the current turn finishes",
+          "input": {
+            "hint": "prompt to run next"
+          },
+          "name": "queue"
+        },
+        {
+          "description": "Show Hermes version",
+          "name": "version"
+        }
+      ],
+      "sessionUpdate": "available_commands_update"
+    },
+    {
+      "size": 65536,
+      "used": 10705,
+      "sessionUpdate": "usage_update"
+    },
+    {
+      "content": [
+        {
+          "content": {
+            "text": "Preparing write to /tmp/example.txt. Approval prompt shows the diff.",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "edit",
+      "locations": [
+        {
+          "path": "/tmp/example.txt"
+        }
+      ],
+      "title": "write: /tmp/example.txt",
+      "toolCallId": "tc-6e2356400a16",
+      "sessionUpdate": "tool_call"
+    },
+    {
+      "content": {
+        "text": "\n\nHER",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    },
+    {
+      "content": {
+        "text": "MES",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    },
+    {
+      "content": {
+        "text": " FIX",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    },
+    {
+      "content": {
+        "text": "TURE",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    },
+    {
+      "content": {
+        "text": " OK",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    },
+    {
+      "size": 65536,
+      "used": 14506,
+      "sessionUpdate": "usage_update"
+    }
+  ]
+}
