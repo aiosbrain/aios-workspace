@@ -195,13 +195,16 @@ Claude rather than installing them here. See `docs/phase3-skills-library.md`.
 
 ### Onboarding: draft your profile from a link
 
-First-run onboarding offers a fast path: under *or draft it from a link*, paste a
-company or profile URL and click **Draft →**. The agent reads that **one** page
-with the `firecrawl-direct` skill (via Firecrawl — connect it in Integrations
-first), extracts structured facts (person, company, focus areas, tools), and
-**drafts** your `.claude/CLAUDE.md` profile for you to **confirm before it's
-written**. Scraped page content is treated as untrusted facts to confirm, never
-as instructions, and only the single URL you supply is read (no crawling).
+First-run onboarding offers a fast path: under *or draft it from a link*, paste
+**one or a few** URLs (your site, LinkedIn, a company page — one per line or
+comma-separated) and click **Draft →**. The agent reads those pages with the
+`firecrawl-direct` skill (via Firecrawl — connect it in Integrations first),
+extracts structured facts (person, company, focus areas, tools), merges them, and
+**drafts** your workspace memory — `.claude/memory/USER.md` (you) and
+`WORKSPACE.md` (your company/tooling), plus canonical company/role facts in
+`0-context/` — for you to **confirm before anything is written**. Scraped page
+content is treated as untrusted facts to confirm, never as instructions, and only
+the URLs you supply are read (no crawling).
 
 ---
 

@@ -97,7 +97,7 @@ export default function App() {
   const [usage, setUsage] = useState(null); // latest token usage → context meter
   const [chats, setChats] = useState([]); // past sessions for the sidebar
   const [currentSession, setCurrentSession] = useState(null); // active chat id
-  const [enrichUrl, setEnrichUrl] = useState(""); // onboarding: draft profile from a link
+  const [enrichLinks, setEnrichLinks] = useState(""); // onboarding: draft profile from one or more links
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
   const usageRef = useRef(null);  // latest usage for the result line (state is async)
@@ -364,7 +364,7 @@ export default function App() {
             <button
               className="empty-cta"
               disabled={!connected}
-              onClick={() => sendMessage("Set me up — interview me about who I am and what I'm working on, then update my profile in .claude/CLAUDE.md.")}
+              onClick={() => sendMessage("Set me up — interview me about who I am and what I'm working on, then update my workspace memory (.claude/memory/USER.md + WORKSPACE.md).")}
             >
               ✨ Set up your profile
             </button>
@@ -374,22 +374,27 @@ export default function App() {
                 className="enrich-form"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const u = enrichUrl.trim();
-                  if (!u || !connected) return;
-                  sendMessage(`Enrich my profile from this link: ${u} — read it with the firecrawl-direct skill, then draft and confirm my .claude/CLAUDE.md profile.`);
-                  setEnrichUrl("");
+                  const urls = [...new Set(enrichLinks.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s)))];
+                  if (!urls.length || !connected) return;
+                  const list = urls.join(", ");
+                  const phrase = urls.length === 1
+                    ? `Enrich my profile from this link: ${list} — read it with the firecrawl-direct skill, then draft and confirm my workspace memory (.claude/memory/).`
+                    : `Enrich my profile from these links: ${list} — read them with the firecrawl-direct skill, merge the facts, then draft and confirm my workspace memory (.claude/memory/).`;
+                  sendMessage(phrase);
+                  setEnrichLinks("");
                 }}
               >
-                <input
-                  type="url"
-                  placeholder="https://your-company.com/about"
-                  value={enrichUrl}
-                  onChange={(e) => setEnrichUrl(e.target.value)}
+                <textarea
+                  className="enrich-input"
+                  rows={2}
+                  placeholder="https://your-company.com/about&#10;https://linkedin.com/in/you  (one per line, or comma-separated)"
+                  value={enrichLinks}
+                  onChange={(e) => setEnrichLinks(e.target.value)}
                   disabled={!connected}
                 />
-                <button type="submit" disabled={!connected || !enrichUrl.trim()}>Draft →</button>
+                <button type="submit" disabled={!connected || !/^https?:\/\//im.test(enrichLinks)}>Draft →</button>
               </form>
-              <div className="enrich-note">🔗 We send this one URL to Firecrawl to read the page. Connect Firecrawl in <em>Integrations</em> first.</div>
+              <div className="enrich-note">🔗 We send these URLs to Firecrawl to read the pages. Connect Firecrawl in <em>Integrations</em> first.</div>
             </div>
             <p className="empty-sub">…or just chat. Skills, rules, and the guard hook are live —
               try <em>"what changed this week?"</em> or connect a tool in <em>Integrations</em>.</p>

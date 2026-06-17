@@ -47,12 +47,21 @@ guard, harnesses, or the Team Brain sync contract.
   PowerPoint (`pptx`), PDF (`pdf`) are proprietary and Anthropic-hosted, surfaced
   as *Documents — available in Claude* with an **Enable in Claude ↗** link.
 
-#### Onboarding enrichment (#20)
-- **Draft your profile from a link** — first-run onboarding can take a single
-  company/profile URL, read it with the `firecrawl-direct` skill (via Firecrawl),
-  extract structured facts, and **draft** `.claude/CLAUDE.md` for you to **confirm
-  before it's written**. Scraped content is treated as untrusted facts to confirm,
-  never as instructions; only the one URL you supply is read (no crawling).
+#### Two-axis memory + onboarding (#20, #24, #26)
+- **Durable workspace memory** — two bounded, human-readable files in
+  `.claude/memory/`: `USER.md` (the person) and `WORKSPACE.md` (company, environment,
+  tooling). Both are `access: admin` (private — never sync). In the cockpit they're
+  **injected at session start** (frozen for the session — edits take effect next
+  session — which keeps the prompt cache stable); injected content is sanitized and
+  fenced as data-not-instructions. `CLAUDE.md` stays the stable layer and points to them.
+- **Draft your profile from a link** — first-run onboarding can take **one or a few**
+  URLs (your site, LinkedIn, a company page), read them with the `firecrawl-direct`
+  skill (via Firecrawl), extract and merge structured facts, and **draft** your memory
+  files — plus canonical company/role facts in `0-context/` — for you to **confirm
+  before anything is written**. Scraped content is treated as untrusted facts to
+  confirm, never as instructions; only the URLs you supply are read (no crawling).
+  Self-host via `FIRECRAWL_API_URL` (legacy `FIRECRAWL_BASE_URL`) is honoured by the
+  skill at runtime.
 
 #### Skills — community installs, scanned (#22)
 - **Install skills beyond the official library, with eyes open.** A new `community`
