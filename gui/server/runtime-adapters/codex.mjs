@@ -96,6 +96,7 @@ function runCodexTurn(bin, args, prompt, { emit, signal, onThreadId }) {
     let failed = false;
     let spawnError = null;
     let stderrTail = "";
+    let lastError = null; // codex emits both `error` and `turn.failed` for one failure
 
     const onAbort = () => { try { child.kill("SIGTERM"); } catch { /* gone */ } };
     if (signal?.aborted) { onAbort(); resolve({ failed: true, spawnError: null }); return; }
@@ -120,7 +121,16 @@ function runCodexTurn(bin, args, prompt, { emit, signal, onThreadId }) {
       try { ev = JSON.parse(s); } catch { return; } // tolerate any non-JSONL log line
       if (ev.type === "thread.started" && ev.thread_id) { onThreadId(ev.thread_id); return; }
       if (ev.type === "turn.failed" || ev.type === "error") failed = true;
-      for (const wsEvent of mapCodexEvent(ev)) emit(wsEvent);
+      for (const wsEvent of mapCodexEvent(ev)) {
+        // Collapse the duplicate error codex emits as both `error` + `turn.failed`.
+        if (wsEvent.type === "error") {
+          if (wsEvent.message === lastError) continue;
+          lastError = wsEvent.message;
+        } else {
+          lastError = null;
+        }
+        emit(wsEvent);
+      }
     });
 
     child.on("close", (code) => {
