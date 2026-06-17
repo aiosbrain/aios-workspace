@@ -24,6 +24,7 @@
 
 import { spawn } from "node:child_process";
 import { Writable } from "node:stream";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -92,16 +93,38 @@ function inRepo(repo, target) {
 }
 
 
+// A stable, repo-scoped session key for the OpenClaw bridge (exported for unit
+// testing). WHY this is required, not cosmetic: invoked bare, `openclaw acp`
+// mints a fresh `acp:<uuid>` session per ACP newSession. The Gateway routes any
+// `acp:`-keyed `chat.send` into its ACP-runtime ("acpx") dispatch path, which
+// expects an ACP backend bound via `/acp spawn`; with none bound, EVERY turn
+// fails server-side with ACP_SESSION_INIT_FAILED and the bridge emits zero
+// session/update notifications (the turn hangs, then cancels — no model output).
+// Pinning `--session agent:<id>:…` routes `chat.send` to the Gateway's normal
+// embedded agent instead, which streams agent_message_chunk → our delta events.
+// We scope the key to the repo (so different workspaces don't share history) and
+// keep it OUT of the user's `agent:main:main` session (heartbeat/personal chat).
+// Agent id is "main" — OpenClaw's default and only agent in a standard install.
+export function openclawSessionKey(repo) {
+  const h = createHash("sha1").update(String(repo)).digest("hex").slice(0, 12);
+  return `agent:main:aios-gui-${h}`;
+}
+
 // Per-backend launch quirks for the ACP bridge (exported for unit testing):
 //  - hermes: auto-accept unseen shell hooks (no TTY in ACP would otherwise wedge);
 //    writes are still governed by guardWrite + the post-turn sweep.
-//  - openclaw: `openclaw acp` bridges to the OpenClaw Gateway; pass the gateway
-//    password when configured — prefer a file so it never lands in argv/ps output.
-export function acpSpawnArgs(bin, baseArgs, env = process.env) {
+//  - openclaw: `openclaw acp` bridges to the OpenClaw Gateway. Pin the session
+//    key (see openclawSessionKey) so prompts reach the main agent, and pass the
+//    gateway password when configured — prefer a file so it never lands in
+//    argv/ps output.
+export function acpSpawnArgs(bin, baseArgs, env = process.env, opts = {}) {
   if (bin === "hermes") return [...baseArgs, "--accept-hooks"];
   if (bin === "openclaw") {
-    if (env.OPENCLAW_GATEWAY_PASSWORD_FILE) return [...baseArgs, "--password-file", env.OPENCLAW_GATEWAY_PASSWORD_FILE];
-    if (env.OPENCLAW_GATEWAY_PASSWORD) return [...baseArgs, "--password", env.OPENCLAW_GATEWAY_PASSWORD];
+    const args = [...baseArgs];
+    if (opts.sessionKey) args.push("--session", opts.sessionKey);
+    if (env.OPENCLAW_GATEWAY_PASSWORD_FILE) args.push("--password-file", env.OPENCLAW_GATEWAY_PASSWORD_FILE);
+    else if (env.OPENCLAW_GATEWAY_PASSWORD) args.push("--password", env.OPENCLAW_GATEWAY_PASSWORD);
+    return args;
   }
   return baseArgs;
 }
@@ -144,7 +167,8 @@ export async function run(host) {
 
   const command = GUI_RUNTIMES[runtime]?.command || ["hermes", "acp"];
   const [bin, ...baseArgs] = command;
-  const args = acpSpawnArgs(bin, baseArgs);
+  const sessionKey = bin === "openclaw" ? openclawSessionKey(repo) : undefined;
+  const args = acpSpawnArgs(bin, baseArgs, process.env, { sessionKey });
 
   const child = spawn(bin, args, { cwd: repo, stdio: ["pipe", "pipe", "pipe"] });
   let stderrTail = "";
