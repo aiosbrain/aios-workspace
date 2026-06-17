@@ -56,7 +56,10 @@ export function guardWrite({ repo, path: target, content = "", operation = "Writ
   const guard = existsSync(workspaceGuard) ? workspaceGuard
     : existsSync(TOOLKIT_GUARD) ? TOOLKIT_GUARD
     : null;
-  if (!guard) return { ok: true }; // no guard available anywhere — allow
+  // `real` is the resolved, in-repo, symlink-safe absolute path. Callers MUST
+  // write to THIS path, never the raw input (which may be relative and resolve
+  // against the wrong cwd) — that's the only path we actually vetted.
+  if (!guard) return { ok: true, path: real }; // no guard available anywhere — allow
 
   const isEdit = operation === "Edit";
   const toolInput = isEdit ? { file_path: real, new_string: content } : { file_path: real, content };
@@ -66,7 +69,7 @@ export function guardWrite({ repo, path: target, content = "", operation = "Writ
       env: { ...process.env, CC_TOOL_NAME: isEdit ? "Edit" : "Write", CC_TOOL_INPUT: JSON.stringify(toolInput) },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return { ok: true };
+    return { ok: true, path: real };
   } catch (e) {
     const reason = String(e.stderr || e.stdout || e.message).trim();
     return { ok: false, reason: reason || "blocked by team-ops-guard" };
