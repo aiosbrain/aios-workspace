@@ -8,7 +8,7 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately and is **unchanged** by the
 entries below — no sync-protocol change, still `v1`.
 
-## [Unreleased]
+## [0.3.0] — 2026-06-17
 
 The cockpit overhaul: the local GUI (`npm run gui`) becomes a real workspace
 cockpit — model choice, resumable chats, personality, an official-skills library,
