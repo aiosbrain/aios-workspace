@@ -25,6 +25,12 @@ agent_base_url: ""
 # Switchable in the cockpit's Settings; never overrides rules/CLAUDE.md/skills.
 agent_personality: "aios"
 
+# Background memory reviewer (cockpit, claude-code runtime only): after each turn a
+# fast model conservatively saves durable facts to .claude/memory/USER.md /
+# WORKSPACE.md (💾 notice + undo; takes effect next session). on | off. Toggle in
+# Settings. Secrets are never sent to the reviewer or written.
+memory_review: on
+
 # Which access tiers may leave this machine.
 #   private  → never syncs (canonical: admin; hard-failed if listed here)
 #   team     → shared with your team via the brain
