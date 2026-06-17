@@ -39,7 +39,8 @@ export function frontmatter(md) {
       flush();
       key = top[1];
       const val = top[2];
-      if (val === "|" || val === ">") { blockMode = val; block = []; }
+      const blockHdr = val.match(/^([|>])[-+]?$/); // |, |-, |+, >, >-, >+ (YAML chomping indicators)
+      if (blockHdr) { blockMode = blockHdr[1]; block = []; }
       else if (val === "") { list = []; } // may become a list (- items) or stay empty
       else { out[key] = val.replace(/^["']|["']$/g, ""); key = null; }
     } else if (key && block !== null) {
@@ -70,6 +71,7 @@ export function readSkills(repoDir) {
     if (!statSync(sub).isDirectory() || !existsSync(skillMd)) continue;
     const fm = frontmatter(readFileSync(skillMd, "utf8"));
     out.push({
+      id: name, // the directory name — stable install-status key (distinct from fm.name)
       name: fm.name || name,
       kind: fm.kind || "skill",
       description: fm.description || "",

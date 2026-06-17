@@ -1,0 +1,454 @@
+{
+  "upstream_repo": "https://github.com/anthropics/skills",
+  "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+  "skills": [
+    {
+      "id": "claude-api",
+      "name": "claude-api",
+      "description": "Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration. TRIGGER — read BEFORE opening the target file; don't skip because it \"looks like a one-liner\" — whenever: the prompt names Claude/Anthropic in any form (Claude, Anthropic, Fable, Opus, Sonnet, Haiku, `anthropic`, `@anthropic-ai`, `claude-*`, `us.anthropic.*`, `[1m]`); the user asks about an LLM (pricing/model choice/limits/caching) — never answer from memory; OR the task is LLM-shaped with provider unstated (agent/MCP/tool-definition/multi-agent/RAG/LLM-judge/computer-use; generate/summarize/extract/classify/rewrite/converse over NL; debugging refusals/cutoffs/streaming/tool-calls/tokens). SKIP only when another provider is being worked on (overrides all triggers): OpenAI/GPT/Gemini/Llama/Mistral/Cohere/Ollama named in the query; OR `grep -rE 'openai|langchain_openai|google.generativeai|genai|mistralai|cohere|ollama'` over the project hits (run this grep FIRST if no provider named — don't Read the file).",
+      "category": "Build with Claude",
+      "license": "Apache-2.0",
+      "provenance": {
+        "upstream_repo": "https://github.com/anthropics/skills",
+        "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+        "vendored_at": "2026-06-16"
+      },
+      "capabilities": {
+        "bundles_code": false,
+        "code_files": [],
+        "file_count": 49
+      },
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "290beaca25c5938cb94355ff3a452712e4e32d1b202cc6af75991160af147e3d"
+        },
+        {
+          "path": "csharp/claude-api.md",
+          "sha256": "7fd8b6e7eeffdd6d282d1f378db5bd6a5e785b15f266989e53d1b3d6d3900e4e"
+        },
+        {
+          "path": "curl/examples.md",
+          "sha256": "4051a40cc2a00db73f94cd48c2286ace417b3b82387af772a0b46d43437357ae"
+        },
+        {
+          "path": "curl/managed-agents.md",
+          "sha256": "b710fe91ba1fde843559a6898f33cd2b41a5a929d30ce62cd9baf67734329920"
+        },
+        {
+          "path": "go/claude-api.md",
+          "sha256": "2957cc509f2d4644ebed74c4f613b8aa5ef3fb4889cf1dbb28c7e3f4fec0bdea"
+        },
+        {
+          "path": "go/managed-agents/README.md",
+          "sha256": "30759cc3c58049215edb9011d0a996abcc53285ee592cd3467fd9d85ffa0a539"
+        },
+        {
+          "path": "java/claude-api.md",
+          "sha256": "4583f59eb1d175b3a27a95e34edb8b1b37ff6736cfca4fe0c7a7b108ce8c3d4e"
+        },
+        {
+          "path": "java/managed-agents/README.md",
+          "sha256": "c48defa56f7c2b86bb464c91e8c516671eaec724df72614fe39b9dd3c4fde2f3"
+        },
+        {
+          "path": "php/claude-api.md",
+          "sha256": "896215a05b3b6f9a87ad47afd4d9c44b6c3acbc911753cd0fd5e2781c24681b1"
+        },
+        {
+          "path": "php/managed-agents/README.md",
+          "sha256": "133a2c13d61c39adba33ee863d816303d328ce5f61aeb3ed082df3ae741857b7"
+        },
+        {
+          "path": "python/claude-api/README.md",
+          "sha256": "b965ed461393cad9699103cdec60bc90c279d3817a1a652dd4d2b5f84e7cc0a3"
+        },
+        {
+          "path": "python/claude-api/batches.md",
+          "sha256": "6849033ccaaf140ac52a0cf4c923fd6ae545754f67d7a72d20c36036cdacbe68"
+        },
+        {
+          "path": "python/claude-api/files-api.md",
+          "sha256": "68d034200244045b7f8b8ba31e2860ca633d0b7141a151317a5d8aeba013a603"
+        },
+        {
+          "path": "python/claude-api/streaming.md",
+          "sha256": "69731caae2e313aa1b9fe90571705ed092817e13257e478c5afd6007d5ed0d78"
+        },
+        {
+          "path": "python/claude-api/tool-use.md",
+          "sha256": "490dc14dbaa0cf471bff456aea5eba95101b7c69f767cc9d7032d93feb0f6f43"
+        },
+        {
+          "path": "python/managed-agents/README.md",
+          "sha256": "6bda5859a8ae9fa45a1a9071d338c663a81fddb74a43bcf05d4c624232d11df4"
+        },
+        {
+          "path": "ruby/claude-api.md",
+          "sha256": "68f92eb0d239fd185a04c221ca65e5ff4ea93a59a852870978bb85eec3d340eb"
+        },
+        {
+          "path": "ruby/managed-agents/README.md",
+          "sha256": "810a53abe00396ba8ba80df51867444aa05c46aad590d9fd234a065192d45cb5"
+        },
+        {
+          "path": "shared/agent-design.md",
+          "sha256": "13c26bea8bdbdc627a708458e1e0d51fdb96db6ed4fb457c9c036ef553f6503e"
+        },
+        {
+          "path": "shared/anthropic-cli.md",
+          "sha256": "693eda916c2298373dd45b1a09f6d7aa5383ea958cef9beab412c55a401e01e9"
+        },
+        {
+          "path": "shared/claude-platform-on-aws.md",
+          "sha256": "7f25cc319def7c000f17dc66809b607c1f3e8fb7a369199ae6c312016defdce3"
+        },
+        {
+          "path": "shared/error-codes.md",
+          "sha256": "d14061b855e14662ab299e00fd652698c41df16293e0b4a66db9d9a9914e0273"
+        },
+        {
+          "path": "shared/live-sources.md",
+          "sha256": "46ca91c1bb757b97b10a78d8b29152ad11c52213aa328397267535a86de1c949"
+        },
+        {
+          "path": "shared/managed-agents-api-reference.md",
+          "sha256": "a5715a13b1231d92c0e8952c4f8c537c110efde83b8057ebdffff3f0630b68f2"
+        },
+        {
+          "path": "shared/managed-agents-client-patterns.md",
+          "sha256": "f8a5d42fb5ae6bfb410870db4528d953602d3b7c37f484fbccace64bce8d6b97"
+        },
+        {
+          "path": "shared/managed-agents-core.md",
+          "sha256": "bb197c1089b389f96690644eb5a78b45d153e2f54f05d2ed5a6a5e37c9123512"
+        },
+        {
+          "path": "shared/managed-agents-environments.md",
+          "sha256": "c26934889eaccb936b2eb900ec2c5a648881784280c1beba0e249864078b90b0"
+        },
+        {
+          "path": "shared/managed-agents-events.md",
+          "sha256": "e329146941709db3558c558780b5ca47acf4fcb4254b5fcd6ef3ce69a88c1377"
+        },
+        {
+          "path": "shared/managed-agents-memory.md",
+          "sha256": "1c2825364115ccf9d0a779447336764ebbaaf875f79c2a064075ca9235d16c16"
+        },
+        {
+          "path": "shared/managed-agents-multiagent.md",
+          "sha256": "6f150526edf942aecbeb054cf878d5a7829ff9e16b6792c67cabc64439bb5171"
+        },
+        {
+          "path": "shared/managed-agents-onboarding.md",
+          "sha256": "4a070f8085eef9989221f19883bd7a1468b3b7a2692558046916fca0f3937024"
+        },
+        {
+          "path": "shared/managed-agents-outcomes.md",
+          "sha256": "bf195965dca27a07a996c66df16ccb62c745dd000039f1f364b8a4e75dd73b96"
+        },
+        {
+          "path": "shared/managed-agents-overview.md",
+          "sha256": "e48e842d899d12f1ccfc3b31c9188f98851935ebe47b3028c0910a4e4aec3969"
+        },
+        {
+          "path": "shared/managed-agents-scheduled-deployments.md",
+          "sha256": "3c61168ac012ae57ed522fe2739f7f604c24179c9017c023e4e1f14dd88de967"
+        },
+        {
+          "path": "shared/managed-agents-self-hosted-sandboxes.md",
+          "sha256": "225865291eb1eda677451a416849523b9be1bf81661c6c0306408501b089e8bc"
+        },
+        {
+          "path": "shared/managed-agents-tools.md",
+          "sha256": "89a3dfdcde13b313b919f6fba8c04cd19ff2a89531f1f07114a831bf2774900d"
+        },
+        {
+          "path": "shared/managed-agents-webhooks.md",
+          "sha256": "6fa05e6f8ae950e164d06990de1b3f69ddc7cbc744e404a32ffd7f556ac8f64e"
+        },
+        {
+          "path": "shared/model-migration.md",
+          "sha256": "cefa112e69d929028ed93addfe74364821e750a1732ca4e52d2e960a63e3f916"
+        },
+        {
+          "path": "shared/models.md",
+          "sha256": "53d52ebdfdc159368b8520765a964d50fdbc1c4ce3f32ab8e8632421f905d564"
+        },
+        {
+          "path": "shared/prompt-caching.md",
+          "sha256": "a3c5252969b3818ec7f472fc49ee52f5ca78d7733c83512129727637818f1029"
+        },
+        {
+          "path": "shared/token-counting.md",
+          "sha256": "231c4d669618915958adb2db2d73470f3e2a376aaf5472e39b651d3e5efa044d"
+        },
+        {
+          "path": "shared/tool-use-concepts.md",
+          "sha256": "5db0d3b847b653b9d27069f4c395664d3547f663087066bee46c99f108374eca"
+        },
+        {
+          "path": "typescript/claude-api/README.md",
+          "sha256": "d491107781a06b685d2e1d0dc4a69dab092529fdf5165178bd010f3fe096ced8"
+        },
+        {
+          "path": "typescript/claude-api/batches.md",
+          "sha256": "07e75f7e6864aa79fad1f4135a06f1907dc0149ce3234f0851c950b93e0a9e8f"
+        },
+        {
+          "path": "typescript/claude-api/files-api.md",
+          "sha256": "0e70fae5742e78d93314744777dc9359d71d6e3511ca67abe3d51aaf1e107331"
+        },
+        {
+          "path": "typescript/claude-api/streaming.md",
+          "sha256": "b279eb47f348e23bf54237ece965527d81ca880edfbab6f85a2a5a93ece4ae7f"
+        },
+        {
+          "path": "typescript/claude-api/tool-use.md",
+          "sha256": "320f17ca6909642abb5194fe84c526ad6552afe6a57c90869b52fa56d82e1b88"
+        },
+        {
+          "path": "typescript/managed-agents/README.md",
+          "sha256": "5665a34c90e26a743441787713a36f3375bcbc8d18b60487227b98b4813e8a51"
+        }
+      ]
+    },
+    {
+      "id": "frontend-design",
+      "name": "frontend-design",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "category": "Design",
+      "license": "Apache-2.0",
+      "provenance": {
+        "upstream_repo": "https://github.com/anthropics/skills",
+        "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+        "vendored_at": "2026-06-16"
+      },
+      "capabilities": {
+        "bundles_code": false,
+        "code_files": [],
+        "file_count": 2
+      },
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "1608ea77fbb6fc30d13a97d12cfa8ebf31358d40f0dd97beed24829d6b3f45dd"
+        }
+      ]
+    },
+    {
+      "id": "mcp-builder",
+      "name": "mcp-builder",
+      "description": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).",
+      "category": "Extend Claude",
+      "license": "Apache-2.0",
+      "provenance": {
+        "upstream_repo": "https://github.com/anthropics/skills",
+        "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+        "vendored_at": "2026-06-16"
+      },
+      "capabilities": {
+        "bundles_code": true,
+        "code_files": [
+          "scripts/connections.py",
+          "scripts/evaluation.py"
+        ],
+        "file_count": 10
+      },
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "0f4592dcb53cf2b5d6b7febee6b4152018b565551a1c29e3c612f57b218ab295"
+        },
+        {
+          "path": "reference/evaluation.md",
+          "sha256": "8c99479f8a2d22a636c38e274537aac3610879e26f34e0709825077c4576f427"
+        },
+        {
+          "path": "reference/mcp_best_practices.md",
+          "sha256": "80fb4369a349447cf18ecdd7494fe7938b6065377e9f08c077cec411093a3007"
+        },
+        {
+          "path": "reference/node_mcp_server.md",
+          "sha256": "c3ba35a4f599dd53be9c6555ae72c19a7bf412cd5426576c2c08d42755482c66"
+        },
+        {
+          "path": "reference/python_mcp_server.md",
+          "sha256": "2da52f77e675191014ca2e146a4b95aa04d0ca7dd7e2b100322df15ade685e80"
+        },
+        {
+          "path": "scripts/connections.py",
+          "sha256": "9403668a2041568772082a8b334122c1f88daf0541fb393af4522d0094a47a6e"
+        },
+        {
+          "path": "scripts/evaluation.py",
+          "sha256": "49ed1d17cdce5da101b210197740713f49b935c29d4f339542a14b132658e6f7"
+        },
+        {
+          "path": "scripts/example_evaluation.xml",
+          "sha256": "9272b348ddcc4b06ba562367ccd0770e018158c0068ac5116d5e34aaeff8777a"
+        },
+        {
+          "path": "scripts/requirements.txt",
+          "sha256": "d5d7558b2368ecea9dfeed7d1fbc71ee9e0750bebd1282faa527d528a344c3c7"
+        }
+      ]
+    },
+    {
+      "id": "skill-creator",
+      "name": "skill-creator",
+      "description": "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.",
+      "category": "Build skills",
+      "license": "Apache-2.0",
+      "provenance": {
+        "upstream_repo": "https://github.com/anthropics/skills",
+        "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+        "vendored_at": "2026-06-16"
+      },
+      "capabilities": {
+        "bundles_code": true,
+        "code_files": [
+          "eval-viewer/generate_review.py",
+          "scripts/__init__.py",
+          "scripts/aggregate_benchmark.py",
+          "scripts/generate_report.py",
+          "scripts/improve_description.py",
+          "scripts/package_skill.py",
+          "scripts/quick_validate.py",
+          "scripts/run_eval.py",
+          "scripts/run_loop.py",
+          "scripts/utils.py"
+        ],
+        "file_count": 18
+      },
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "dcd4803e61e913e6fc27294184cd3a71f09f5e924ff20c8a9a20173e7b3c2bcf"
+        },
+        {
+          "path": "agents/analyzer.md",
+          "sha256": "bf68f4cac5a56c673a928c2e6d619586c5b93ea364026ab37547772cb45a663a"
+        },
+        {
+          "path": "agents/comparator.md",
+          "sha256": "fe1fc9787c495d864c5d6eada47396478572325fde1b33a96d78bf4b849b7a3e"
+        },
+        {
+          "path": "agents/grader.md",
+          "sha256": "57134da0c1a4eea33fbd74a1c9c44aa814f07d6bc64de303edb586f941e5d21a"
+        },
+        {
+          "path": "assets/eval_review.html",
+          "sha256": "ce477dcc74dc1c0d1d3352646a79167b5a63634e936b1019160025065974e452"
+        },
+        {
+          "path": "eval-viewer/generate_review.py",
+          "sha256": "fc9d1b9243fe5ab6012ebd579bd76d0035de1b79fd3b969de114defab26478fb"
+        },
+        {
+          "path": "eval-viewer/viewer.html",
+          "sha256": "a53213426ee1100441d701a3a0d49cda7a842f992d2c36463f4d3cc0258575fa"
+        },
+        {
+          "path": "references/schemas.md",
+          "sha256": "8e8876180a8989b406a4d3edddf875b04cdfd5805cc8616686d552b11ce4455f"
+        },
+        {
+          "path": "scripts/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "scripts/aggregate_benchmark.py",
+          "sha256": "123ef128ea5ccc01a4b1ac212ef5567f21e9c13d3d240609780beeb3200c49aa"
+        },
+        {
+          "path": "scripts/generate_report.py",
+          "sha256": "13df7118a3c50c83c4c3250a606d5f2b20b25a3d44cbc392b3d669ec75281453"
+        },
+        {
+          "path": "scripts/improve_description.py",
+          "sha256": "87d864570220b699fac52da309d2d6efdb060647bfebc74f768128e646accf80"
+        },
+        {
+          "path": "scripts/package_skill.py",
+          "sha256": "1a33059b0db1ef73375d46d513e5ea81369d2e8838c970597b0d52ddef8d1c0f"
+        },
+        {
+          "path": "scripts/quick_validate.py",
+          "sha256": "67cf5703402013936c8fb75ad6a1afecd8841d45cc5e606b634eb05825fde365"
+        },
+        {
+          "path": "scripts/run_eval.py",
+          "sha256": "43e3b8f80dbf69c343967ba77e268fae991d9fa3ed68b32a0ff02532cd48657f"
+        },
+        {
+          "path": "scripts/run_loop.py",
+          "sha256": "7bd6f674203168520517eec94c55f493c0d154339b061b4d7c0f0dad187d0f21"
+        },
+        {
+          "path": "scripts/utils.py",
+          "sha256": "3af8ae62c40c73ab712207436a0d9a981e845f25c5a7040229eb189cc8e45bb1"
+        }
+      ]
+    },
+    {
+      "id": "web-artifacts-builder",
+      "name": "web-artifacts-builder",
+      "description": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.",
+      "category": "Build artifacts",
+      "license": "Apache-2.0",
+      "provenance": {
+        "upstream_repo": "https://github.com/anthropics/skills",
+        "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+        "vendored_at": "2026-06-16"
+      },
+      "capabilities": {
+        "bundles_code": true,
+        "code_files": [
+          "scripts/bundle-artifact.sh",
+          "scripts/init-artifact.sh"
+        ],
+        "file_count": 5
+      },
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "bc6b3af2f331cbc7fb0da1344efb2cbe5877a31498b4d70dbc7000f3405a1362"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "81c5002c6643b0de7b8710b00e7a9038daa6fb9b68d59870ee6adb12da8d10f8"
+        },
+        {
+          "path": "scripts/bundle-artifact.sh",
+          "sha256": "abf0e480bf6585b56fab8526a407dfb7dc740812bddd70c636e1e8f3df5f9618"
+        },
+        {
+          "path": "scripts/init-artifact.sh",
+          "sha256": "355e5dd4382aaaee91f01f1627eaeab30b2676ffa8d9b3ec328a1ae450ebccaa"
+        },
+        {
+          "path": "scripts/shadcn-components.tar.gz",
+          "sha256": "1296f069e825de7933de7e8ac63672495cacce3f88f2dc45554dbcddbcbca60f"
+        }
+      ]
+    }
+  ]
+}
