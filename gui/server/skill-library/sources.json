@@ -1,0 +1,13 @@
+{
+  "_comment": "Provenance + curation for the vendored skill library. Authored by hand; index.json is GENERATED from this + the on-disk files by scripts/lock-skill-library.mjs. Only Apache-2.0 official skills may be vendored — the proprietary document skills (docx/pdf/pptx/xlsx) are pointer-only (see referenced.json).",
+  "upstream_repo": "https://github.com/anthropics/skills",
+  "upstream_commit": "57546260929473d4e0d1c1bb75297be2fdfa1949",
+  "vendored_at": "2026-06-16",
+  "skills": {
+    "skill-creator": { "category": "Build skills" },
+    "mcp-builder": { "category": "Extend Claude" },
+    "web-artifacts-builder": { "category": "Build artifacts" },
+    "claude-api": { "category": "Build with Claude" },
+    "frontend-design": { "category": "Design" }
+  }
+}

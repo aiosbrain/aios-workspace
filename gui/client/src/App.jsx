@@ -289,6 +289,7 @@ export default function App() {
         <nav className="side-nav">
           <button className={`side-link${view === "chat" ? " on" : ""}`} onClick={() => setView("chat")}>{NAV_ICONS.chat} Chat</button>
           <button className={`side-link${view === "integrations" ? " on" : ""}`} onClick={() => setView("integrations")}>{NAV_ICONS.integrations} Integrations</button>
+          <button className={`side-link${view === "skills" ? " on" : ""}`} onClick={() => setView("skills")}>{NAV_ICONS.skills} Skills</button>
           <button className={`side-link${view === "review" ? " on" : ""}`} onClick={() => setView("review")}>{NAV_ICONS.review} Review &amp; Push</button>
           {(role === "admin" || role === "lead") && (
             <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
@@ -325,6 +326,7 @@ export default function App() {
       {view === "integrations" && (
         <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
       )}
+      {view === "skills" && <SkillsPanel />}
 
       {view === "chat" && (
       <>
@@ -426,6 +428,11 @@ const NAV_ICONS = {
       <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
+  skills: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+    </svg>
+  ),
   settings: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
@@ -501,6 +508,105 @@ function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
         </div>
       )}
       <p className="int-foot">Changing personality starts a new chat so the new voice takes effect.</p>
+    </div>
+  );
+}
+
+function SkillsPanel() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [acting, setActing] = useState(null);   // id currently installing/removing
+  const [rowErr, setRowErr] = useState({});      // id → error message
+
+  const load = useCallback(() => {
+    setError(null);
+    fetch(`/api/skills?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.error) throw new Error(d.error); setData(d); })
+      .catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (id, action) => {
+    setActing(id); setRowErr((p) => ({ ...p, [id]: null }));
+    try {
+      const r = await fetch(`/api/skills/${id}/${action}?token=${token}`, { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) setRowErr((p) => ({ ...p, [id]: d.error || "failed" }));
+      else load();
+    } catch (e) { setRowErr((p) => ({ ...p, [id]: e.message })); }
+    setActing(null);
+  };
+
+  if (error) return <div className="integrations"><div className="msg meta error">error: {error}</div></div>;
+  if (!data) return <div className="integrations"><div className="empty"><p>loading skills…</p></div></div>;
+
+  // group installable skills by category
+  const groups = {};
+  for (const s of data.skills) (groups[s.category] ||= []).push(s);
+  const installedCount = data.skills.filter((s) => s.installed).length;
+
+  const card = (s) => (
+    <div key={s.id} className={`int-card${s.installed ? " wired" : ""}`}>
+      <div className="int-card-top">
+        <span className="int-name">{s.name}</span>
+        <span className={`int-status ${s.installed ? "wired" : ""}`}>{s.installed ? "● installed" : "○ available"}</span>
+      </div>
+      <p className="int-summary">{s.description}</p>
+      <div className="skill-caps">
+        {s.capabilities?.bundles_code
+          ? <span className="cap code" title={(s.capabilities.code_files || []).join(", ")}>⚙ runs code ({(s.capabilities.code_files || []).length})</span>
+          : <span className="cap">text-only</span>}
+        <span className="cap">official · Apache-2.0</span>
+      </div>
+      <div className="int-card-foot">
+        <span className="int-transport">{s.category}</span>
+        {s.installed
+          ? <button className="wiz-secondary" disabled={acting === s.id} onClick={() => act(s.id, "uninstall")}>{acting === s.id ? "…" : "Remove"}</button>
+          : <button className="int-connect" disabled={acting === s.id} onClick={() => act(s.id, "install")}>{acting === s.id ? "Installing…" : "Install"}</button>}
+      </div>
+      {rowErr[s.id] && <p className="skill-err">{rowErr[s.id]}</p>}
+    </div>
+  );
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Skills</h2>
+          <p className="int-sub">Official Anthropic skills, vendored from <code>anthropics/skills</code> and
+            hash-locked. Installing copies a skill into <code>.claude/skills/</code> so the agent can use it.
+            Skills are demonstration/educational — test before relying on them.</p>
+        </div>
+        <div className="int-progress">{installedCount} of {data.skills.length} installed</div>
+      </div>
+
+      {Object.keys(groups).sort().map((cat) => (
+        <React.Fragment key={cat}>
+          <h3 className="int-section">{cat}</h3>
+          <div className="int-grid">{groups[cat].map(card)}</div>
+        </React.Fragment>
+      ))}
+
+      {data.referenced?.length > 0 && (
+        <>
+          <h3 className="int-section int-section-muted">Documents — available in Claude</h3>
+          <div className="int-grid">
+            {data.referenced.map((s) => (
+              <div key={s.id} className="int-card">
+                <div className="int-card-top"><span className="int-name">{s.name}</span></div>
+                <p className="int-summary">{s.description}</p>
+                <div className="int-card-foot">
+                  <span className="int-transport">official · hosted</span>
+                  <a className="int-connect" href={data.referenced_docs_url} target="_blank" rel="noreferrer">Enable in Claude ↗</a>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="int-foot">These document skills are Anthropic-hosted (proprietary license) — used inside
+            Claude, not copied here.</p>
+        </>
+      )}
     </div>
   );
 }

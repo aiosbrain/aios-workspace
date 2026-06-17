@@ -196,19 +196,18 @@ export function vaultGet(repo, env) {
   } catch { return ""; }
 }
 
-function ensureGitignore(repo) {
+export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
   const gi = path.join(repo, ".gitignore");
-  const need = [".env", ".env.keys"];
   let txt = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   const lines = new Set(txt.split("\n").map((l) => l.trim()));
   let changed = false;
-  for (const n of need) if (!lines.has(n)) { txt = txt.replace(/\s*$/, "\n") + n + "\n"; changed = true; }
+  for (const n of entries) if (!lines.has(n)) { txt = txt.replace(/\s*$/, "\n") + n + "\n"; changed = true; }
   if (changed) writeFileSync(gi, txt);
 }
 
 // ── store / unwire (transport dispatch) ──────────────────────────────────────
 
-function copyDir(src, dest) {
+export function copyDir(src, dest) {
   mkdirSync(dest, { recursive: true });
   for (const e of readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, e.name), d = path.join(dest, e.name);
