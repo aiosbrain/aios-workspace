@@ -21,6 +21,7 @@ if [ $# -eq 0 ]; then
 fi
 
 REPO="$1"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ERRORS=0
 WARNINGS=0
 CFG="$REPO/aios.yaml"
@@ -100,6 +101,22 @@ if [ -n "$MEMBER" ]; then
   if [ -n "$PROJ" ] && ! grep -qE "^\s+-\s+$MEMBER\s*$" "$PROJ"; then
     echo -e "  ${YELLOW}!${NC} member '$MEMBER' not found in $(basename "$PROJ") members"
     WARNINGS=$((WARNINGS + 1))
+  fi
+fi
+
+# ── agent_runtime (BYOA), if set, must be a known runtime.
+#    Single source of truth: scripts/runtimes.mjs (shared with the GUI + OGR07).
+AGENT_RT=$(grep -E '^agent_runtime:' "$CFG" | sed 's/^agent_runtime:[[:space:]]*//' | tr -d '"' | tr -d "'" | xargs || true)
+if [ -n "$AGENT_RT" ]; then
+  VALID_RT=$(node -e "import('file://'+require('path').resolve('$SCRIPT_DIR/../scripts/runtimes.mjs')).then(m=>process.stdout.write(m.RUNTIME_NAMES.join(' ')))" 2>/dev/null || true)
+  if [ -z "$VALID_RT" ]; then
+    echo -e "  ${YELLOW}!${NC} agent_runtime '$AGENT_RT' set but registry not loadable (node missing?) — skipped"
+    WARNINGS=$((WARNINGS + 1))
+  elif echo " $VALID_RT " | grep -q " $AGENT_RT "; then
+    echo -e "  ${GREEN}✓${NC} agent_runtime '$AGENT_RT' is a known runtime"
+  else
+    echo -e "  ${RED}✗${NC} unknown agent_runtime '$AGENT_RT' (valid: $VALID_RT)"
+    ERRORS=$((ERRORS + 1))
   fi
 fi
 

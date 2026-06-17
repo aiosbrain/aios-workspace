@@ -1,0 +1,10 @@
+{
+  "_comment": "Anthropic-hosted document skills. These carry a PROPRIETARY license (skills/<id>/LICENSE.txt in anthropics/skills) that forbids copying/redistribution/retaining copies outside the Services — so they are NOT vendored and NOT locally installable. We surface them as pointers so users can enable Claude's hosted versions. Do not add files for these.",
+  "docs_url": "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview",
+  "skills": [
+    { "id": "pptx", "name": "PowerPoint (pptx)", "description": "Create and edit PowerPoint presentations.", "category": "Documents" },
+    { "id": "xlsx", "name": "Excel (xlsx)", "description": "Create and edit Excel spreadsheets with formulas and charts.", "category": "Documents" },
+    { "id": "docx", "name": "Word (docx)", "description": "Create and edit Word documents.", "category": "Documents" },
+    { "id": "pdf", "name": "PDF (pdf)", "description": "Generate formatted PDF documents and reports.", "category": "Documents" }
+  ]
+}

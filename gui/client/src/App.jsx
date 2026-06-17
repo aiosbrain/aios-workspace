@@ -1,4 +1,79 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+const MODELS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+];
+const CONTEXT_WINDOW = 200_000; // both offered models
+
+// Force every markdown link to open externally WITHOUT a Referer, so the
+// cockpit URL's ?token=… is never leaked to the destination site.
+const MD_COMPONENTS = {
+  a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+};
+
+function fmtK(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+}
+function fmtUsd(n) {
+  return `$${Number(n).toFixed(n < 0.1 ? 4 : 2)}`;
+}
+
+// "turn done" line, shared by the live stream and transcript replay so they read
+// identically. total_cost_usd may be cumulative across a session — show a per-turn
+// delta when it clearly is (prevCost>0, non-negative), else treat it as the turn's cost.
+function formatResultMeta(usage, cost_usd, prevCost) {
+  const parts = [];
+  if (usage) parts.push(`${fmtK(usage.input_tokens || 0)} in / ${fmtK(usage.output_tokens || 0)} out`);
+  if (typeof cost_usd === "number") {
+    const delta = cost_usd - prevCost;
+    parts.push(prevCost > 0 && delta >= 0 ? `+${fmtUsd(delta)} (session ${fmtUsd(cost_usd)})` : fmtUsd(cost_usd));
+  }
+  return `turn done${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
+}
+
+// Fold a stored transcript (array of WS events) into a messages[] for replay.
+// Differs from the live handler: echo_user BECOMES a user message here (live
+// ignores it because the UI already rendered it optimistically), and historical
+// permission_request events are dropped — never shown as live approval prompts.
+function buildMessagesFromEvents(events) {
+  const msgs = [];
+  let lastUsage = null, prevCost = 0;
+  for (const ev of events) {
+    switch (ev.type) {
+      case "echo_user": msgs.push({ kind: "user", text: ev.text }); break;
+      case "delta": {
+        const last = msgs[msgs.length - 1];
+        if (last?.kind === "assistant" && last.streaming) last.text += ev.text;
+        else msgs.push({ kind: "assistant", text: ev.text, streaming: true });
+        break;
+      }
+      case "assistant_done": { const last = msgs[msgs.length - 1]; if (last?.kind === "assistant") last.streaming = false; break; }
+      case "tool_use": msgs.push({ kind: "tool", name: ev.name, input: ev.input, id: ev.id, result: null }); break;
+      case "tool_result": {
+        const t = [...msgs].reverse().find((m) => m.kind === "tool" && m.id === ev.id);
+        if (t) { t.result = ev.text; t.isError = ev.is_error; }
+        break;
+      }
+      case "usage": lastUsage = ev.usage; break;
+      case "warning": msgs.push({ kind: "meta", text: `⚠ ${ev.message}` }); break;
+      case "result":
+        msgs.push({ kind: "meta", text: formatResultMeta(lastUsage, ev.cost_usd, prevCost) });
+        if (typeof ev.cost_usd === "number") prevCost = ev.cost_usd;
+        lastUsage = null;
+        break;
+      default: break; // hello, model, session, permission_request, memory_* → not replayed
+                       // (memory notices are live-only; their undo CAS isn't valid on replay)
+    }
+  }
+  const last = msgs[msgs.length - 1];
+  if (last?.kind === "assistant") last.streaming = false; // never leave a stale cursor
+  return msgs;
+}
 
 /**
  * Minimal local cockpit for an aios-workspace repo.
@@ -10,14 +85,48 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 
 export default function App() {
   const [repo, setRepo] = useState("");
-  const [view, setView] = useState("chat"); // "chat" | "review" | "integrations"
+  const [runtime, setRuntime] = useState(""); // agent_runtime driving this session
+  const [safetyNote, setSafetyNote] = useState(null); // write-guard tier note from server
+  const [view, setView] = useState("chat"); // "chat" | "review" | "integrations" | "team"
+  const [role, setRole] = useState(null); // brain member role; only lead/admin see Team
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState([]); // {kind, ...}
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [permissions, setPermissions] = useState([]); // pending approval requests
+  const [model, setModel] = useState(MODELS[0].id); // selected model (Sonnet 4.6 default)
+  const [usage, setUsage] = useState(null); // latest token usage → context meter
+  const [chats, setChats] = useState([]); // past sessions for the sidebar
+  const [currentSession, setCurrentSession] = useState(null); // active chat id
+  const [enrichLinks, setEnrichLinks] = useState(""); // onboarding: draft profile from one or more links
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const usageRef = useRef(null);  // latest usage for the result line (state is async)
+  const prevCostRef = useRef(0);  // session cost so far, to show a per-turn delta
+
+  // Who am I? Only a brain lead/admin sees the Team (publish) surface.
+  useEffect(() => {
+    fetch(`/api/me?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => setRole(d.me?.role || null))
+      .catch(() => {});
+  }, []);
+
+  // Restore the persisted model choice (agent_model in aios.yaml), if it's one we offer.
+  useEffect(() => {
+    fetch(`/api/config?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (MODELS.some((m) => m.id === d.model)) setModel(d.model); })
+      .catch(() => {});
+  }, []);
+
+  const changeModel = useCallback((m) => {
+    setModel(m); // applies to the NEXT send (sent on each user_message → SDK setModel)
+    fetch(`/api/config/model?token=${token}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: m }),
+    }).catch(() => {});
+  }, []);
 
   const append = useCallback((m) => setMessages((prev) => [...prev, m]), []);
 
@@ -42,9 +151,20 @@ export default function App() {
     );
   }, []);
 
-  useEffect(() => {
+  const loadChats = useCallback(() => {
+    fetch(`/api/sessions?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => setChats(d.sessions || []))
+      .catch(() => {});
+  }, []);
+
+  // Open (or reopen) a WebSocket. With a sessionId, the server resumes that chat's
+  // SDK session so prior context is intact; without one it mints a fresh chat.
+  const connect = useCallback((sessionId) => {
+    try { wsRef.current?.close(); } catch { /* already closed */ }
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${token}`);
+    const qs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
+    const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${token}${qs}`);
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
@@ -52,7 +172,7 @@ export default function App() {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       switch (msg.type) {
-        case "hello": setRepo(msg.repo); break;
+        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); setSafetyNote(msg.safetyNote || null); setCurrentSession(msg.sessionId); loadChats(); break;
         case "echo_user": break; // already rendered optimistically
         case "delta": appendDelta(msg.text); break;
         case "assistant_done": finishAssistant(); break;
@@ -71,19 +191,85 @@ export default function App() {
         case "permission_request":
           setPermissions((prev) => [...prev, msg]);
           break;
+        case "usage":
+          usageRef.current = msg.usage;
+          setUsage(msg.usage);
+          break;
+        case "model": // server confirms an in-session switch — keep the picker in sync
+          if (MODELS.some((m) => m.id === msg.model)) setModel(msg.model);
+          break;
+        case "warning":
+          append({ kind: "meta", text: `⚠ ${msg.message}` });
+          break;
         case "result":
           setBusy(false);
-          append({ kind: "meta", text: `turn done${typeof msg.cost_usd === "number" ? ` · $${msg.cost_usd.toFixed(4)}` : ""}` });
+          append({ kind: "meta", text: formatResultMeta(usageRef.current, msg.cost_usd, prevCostRef.current) });
+          if (typeof msg.cost_usd === "number") prevCostRef.current = msg.cost_usd;
+          loadChats(); // first turn just set this chat's title
           break;
         case "error":
           setBusy(false);
           append({ kind: "meta", text: `error: ${msg.message}`, error: true });
           break;
+        case "memory_updated": // background reviewer saved a fact (takes effect next session)
+          append({ kind: "memory", id: msg.id, file: msg.file, summary: msg.summary });
+          break;
+        case "memory_undone":
+          setMessages((prev) => prev.map((m) =>
+            m.kind === "memory" && m.id === msg.id ? { ...m, undone: msg.ok, undoFailed: !msg.ok } : m));
+          break;
         default: break;
       }
     };
-    return () => ws.close();
-  }, [append, appendDelta, finishAssistant]);
+  }, [append, appendDelta, finishAssistant, loadChats]);
+
+  // Reset the per-chat meters when switching chats.
+  const resetChatState = useCallback(() => {
+    setBusy(false); setPermissions([]);
+    usageRef.current = null; setUsage(null); prevCostRef.current = 0;
+  }, []);
+
+  const newChat = useCallback(() => {
+    resetChatState();
+    setMessages([]);
+    setCurrentSession(null);
+    setView("chat");
+    connect(); // no session → server mints a new chat
+  }, [connect, resetChatState]);
+
+  // Replay a stored transcript, then resume its SDK session for new turns.
+  const openChat = useCallback(async (id) => {
+    resetChatState();
+    setView("chat");
+    try {
+      const r = await fetch(`/api/sessions/${id}?token=${token}`);
+      const d = await r.json();
+      const events = d.events || [];
+      setMessages(buildMessagesFromEvents(events));
+      // Continue the cost/context meters from where the transcript left off.
+      let lastCost = 0, lastUsage = null;
+      for (const ev of events) {
+        if (ev.type === "usage") lastUsage = ev.usage;
+        if (ev.type === "result" && typeof ev.cost_usd === "number") lastCost = ev.cost_usd;
+      }
+      prevCostRef.current = lastCost; usageRef.current = lastUsage; setUsage(lastUsage);
+    } catch { setMessages([]); }
+    connect(id);
+  }, [connect, resetChatState]);
+
+  // On launch, restore the last chat if there is one; otherwise start fresh.
+  useEffect(() => {
+    fetch(`/api/sessions?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setChats(d.sessions || []);
+        if (d.lastSelected) openChat(d.lastSelected);
+        else connect();
+      })
+      .catch(() => connect());
+    return () => { try { wsRef.current?.close(); } catch { /* noop */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -93,13 +279,24 @@ export default function App() {
     const text = (typeof override === "string" ? override : input).trim();
     if (!text || !connected) return;
     append({ kind: "user", text });
-    wsRef.current?.send(JSON.stringify({ type: "user_message", text }));
+    wsRef.current?.send(JSON.stringify({ type: "user_message", text, model }));
     setInput("");
     setBusy(true);
   };
 
   const respondPermission = (id, allow) => {
     wsRef.current?.send(JSON.stringify({ type: "permission_response", id, allow }));
+    setPermissions((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  // Undo a background-reviewer memory write (compare-and-swap on the server).
+  const undoMemory = (id) => {
+    wsRef.current?.send(JSON.stringify({ type: "memory_undo", id }));
+  };
+
+  // Option-based runtimes (ACP) reply with one of the agent's own option IDs.
+  const respondPermissionOption = (id, optionId) => {
+    wsRef.current?.send(JSON.stringify({ type: "permission_response", id, optionId }));
     setPermissions((prev) => prev.filter((p) => p.id !== id));
   };
 
@@ -114,10 +311,34 @@ export default function App() {
         <nav className="side-nav">
           <button className={`side-link${view === "chat" ? " on" : ""}`} onClick={() => setView("chat")}>{NAV_ICONS.chat} Chat</button>
           <button className={`side-link${view === "integrations" ? " on" : ""}`} onClick={() => setView("integrations")}>{NAV_ICONS.integrations} Integrations</button>
+          <button className={`side-link${view === "skills" ? " on" : ""}`} onClick={() => setView("skills")}>{NAV_ICONS.skills} Skills</button>
           <button className={`side-link${view === "review" ? " on" : ""}`} onClick={() => setView("review")}>{NAV_ICONS.review} Review &amp; Push</button>
-          <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
+          {(role === "admin" || role === "lead") && (
+            <button className={`side-link${view === "team" ? " on" : ""}`} onClick={() => setView("team")}>{NAV_ICONS.team} Team</button>
+          )}
+          <button className={`side-link${view === "settings" ? " on" : ""}`} onClick={() => setView("settings")}>{NAV_ICONS.settings} Settings</button>
         </nav>
+        <div className="side-chats">
+          <button className="side-newchat" onClick={newChat}>+ New chat</button>
+          <div className="chat-list">
+            {chats.map((c) => (
+              <button
+                key={c.id}
+                className={`chat-item${c.id === currentSession ? " on" : ""}`}
+                onClick={() => openChat(c.id)}
+                title={c.title || "(untitled)"}
+              >
+                {c.title || "New chat"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="side-foot">
+          {runtime && (
+            <div className="runtime-badge" title={`Agent runtime: ${runtime}`}>
+              <span className="runtime-dot" />{runtime}
+            </div>
+          )}
           <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Keys stay on this machine</div>
           <div className="repo" title={repo}>{repo}</div>
         </div>
@@ -126,23 +347,68 @@ export default function App() {
       <div className="app-main">
       {view === "review" && <ReviewPanel />}
       {view === "team" && <TeamPanel />}
+      {view === "settings" && (
+        <SettingsPanel model={model} onModelChange={changeModel} onPersonalityApplied={newChat} />
+      )}
       {view === "integrations" && (
         <IntegrationsPanel onTryInChat={(prompt) => { setView("chat"); setInput(prompt); }} />
       )}
+      {view === "skills" && <SkillsPanel />}
 
       {view === "chat" && (
       <>
+      <div className="chat-head">
+        <label className="model-pick">
+          <span>Model</span>
+          <select value={model} disabled={busy} onChange={(e) => changeModel(e.target.value)}>
+            {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
+      </div>
       <main>
+        {safetyNote && (
+          <div className="safety-banner" title="Writes the agent makes through its own shell run after the turn ends are scanned, not blocked beforehand.">
+            ⚠ {safetyNote}
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="empty">
             <p>Welcome to your workspace. Start by letting the agent learn who you are.</p>
             <button
               className="empty-cta"
               disabled={!connected}
-              onClick={() => sendMessage("Set me up — interview me about who I am and what I'm working on, then update my profile in .claude/CLAUDE.md.")}
+              onClick={() => sendMessage("Set me up — interview me about who I am and what I'm working on, then update my workspace memory (.claude/memory/USER.md + WORKSPACE.md).")}
             >
               ✨ Set up your profile
             </button>
+            <div className="enrich">
+              <div className="enrich-or">or draft it from a link</div>
+              <form
+                className="enrich-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const urls = [...new Set(enrichLinks.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s)))];
+                  if (!urls.length || !connected) return;
+                  const list = urls.join(", ");
+                  const phrase = urls.length === 1
+                    ? `Enrich my profile from this link: ${list} — read it with the firecrawl-direct skill, then draft and confirm my workspace memory (.claude/memory/).`
+                    : `Enrich my profile from these links: ${list} — read them with the firecrawl-direct skill, merge the facts, then draft and confirm my workspace memory (.claude/memory/).`;
+                  sendMessage(phrase);
+                  setEnrichLinks("");
+                }}
+              >
+                <textarea
+                  className="enrich-input"
+                  rows={2}
+                  placeholder="https://your-company.com/about&#10;https://linkedin.com/in/you  (one per line, or comma-separated)"
+                  value={enrichLinks}
+                  onChange={(e) => setEnrichLinks(e.target.value)}
+                  disabled={!connected}
+                />
+                <button type="submit" disabled={!connected || !/^https?:\/\//im.test(enrichLinks)}>Draft →</button>
+              </form>
+              <div className="enrich-note">🔗 We send these URLs to Firecrawl to read the pages. Connect Firecrawl in <em>Integrations</em> first.</div>
+            </div>
             <p className="empty-sub">…or just chat. Skills, rules, and the guard hook are live —
               try <em>"what changed this week?"</em> or connect a tool in <em>Integrations</em>.</p>
           </div>
@@ -150,8 +416,22 @@ export default function App() {
         {messages.map((m, i) => {
           if (m.kind === "user") return <div key={i} className="msg user">{m.text}</div>;
           if (m.kind === "assistant")
-            return <div key={i} className={`msg assistant${m.streaming ? " streaming" : ""}`}>{m.text}</div>;
+            return (
+              <div key={i} className={`msg assistant${m.streaming ? " streaming" : ""}`}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{m.text}</ReactMarkdown>
+              </div>
+            );
           if (m.kind === "tool") return <ToolCard key={i} tool={m} />;
+          if (m.kind === "memory")
+            return (
+              <div key={i} className="msg memory">
+                💾 Memory updated · <code>{m.file}</code> — {m.summary}
+                <span className="memory-sub"> (takes effect next session)</span>
+                {m.undone ? <span className="memory-done"> · undone</span>
+                  : m.undoFailed ? <span className="memory-done"> · undo unavailable (file changed)</span>
+                  : <button className="memory-undo" onClick={() => undoMemory(m.id)}>undo</button>}
+              </div>
+            );
           return <div key={i} className={`msg meta${m.error ? " error" : ""}`}>{m.text}</div>;
         })}
         {permissions.map((p) => (
@@ -161,13 +441,29 @@ export default function App() {
             </div>
             <pre>{JSON.stringify(p.input, null, 2).slice(0, 1200)}</pre>
             <div className="perm-actions">
-              <button className="allow" onClick={() => respondPermission(p.id, true)}>Allow</button>
-              <button className="deny" onClick={() => respondPermission(p.id, false)}>Deny</button>
+              {Array.isArray(p.options) && p.options.length ? (
+                p.options.map((o) => (
+                  <button
+                    key={o.optionId}
+                    className={/deny|reject|cancel/i.test(o.kind || "") ? "deny" : "allow"}
+                    onClick={() => respondPermissionOption(p.id, o.optionId)}
+                  >
+                    {o.name}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button className="allow" onClick={() => respondPermission(p.id, true)}>Allow</button>
+                  <button className="deny" onClick={() => respondPermission(p.id, false)}>Deny</button>
+                </>
+              )}
             </div>
           </div>
         ))}
         <div ref={bottomRef} />
       </main>
+
+      <ContextMeter usage={usage} />
 
       <footer>
         <textarea
@@ -216,7 +512,383 @@ const NAV_ICONS = {
       <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
+  skills: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+    </svg>
+  ),
+  settings: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  ),
 };
+
+function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
+  const [personalities, setPersonalities] = useState(null);
+  const [current, setCurrent] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [memReview, setMemReview] = useState(null); // null = loading
+  const [runtime, setRuntime] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/personalities?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { setPersonalities(d.personalities || []); setCurrent(d.current); })
+      .catch(() => setPersonalities([]));
+    fetch(`/api/config?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { setMemReview(d.memoryReview !== false); setRuntime(d.runtime || ""); })
+      .catch(() => setMemReview(true));
+  }, []);
+
+  const toggleMemReview = async () => {
+    const next = !memReview;
+    setMemReview(next);
+    try {
+      await fetch(`/api/config/memory-review?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+    } catch { setMemReview(!next); } // revert on failure
+  };
+
+  const pick = async (id) => {
+    if (id === current || saving) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/config/personality?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ personality: id }),
+      });
+      const d = await r.json();
+      if (d.ok) { setCurrent(id); onPersonalityApplied(); } // new chat so the persona applies
+    } catch { /* leave selection */ }
+    setSaving(false);
+  };
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Settings</h2>
+          <p className="int-sub">Pick the default model and the agent's personality. Personality is a
+            style layer appended to the system prompt — it never overrides your rules, CLAUDE.md, or skills.</p>
+        </div>
+      </div>
+
+      <h3 className="int-section">Default model</h3>
+      <label className="model-pick">
+        <span>Model</span>
+        <select value={model} onChange={(e) => onModelChange(e.target.value)}>
+          {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+      </label>
+
+      <h3 className="int-section">Personality</h3>
+      {!personalities ? (
+        <div className="empty"><p>loading…</p></div>
+      ) : (
+        <div className="int-grid">
+          {personalities.map((p) => (
+            <div key={p.id} className={`int-card${p.id === current ? " wired" : ""}`}>
+              <div className="int-card-top">
+                <span className="int-name">{p.name}</span>
+                <span className={`int-status ${p.id === current ? "wired" : ""}`}>{p.id === current ? "● active" : "○"}</span>
+              </div>
+              <p className="int-summary">{p.description}</p>
+              <div className="int-card-foot">
+                <span className="int-transport">style only</span>
+                <button className="int-connect" disabled={saving || p.id === current} onClick={() => pick(p.id)}>
+                  {p.id === current ? "Active" : "Use"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="int-foot">Changing personality starts a new chat so the new voice takes effect.</p>
+
+      <h3 className="int-section">Memory</h3>
+      <label className="mem-toggle">
+        <input type="checkbox" checked={!!memReview} disabled={memReview === null || runtime !== "claude-code"} onChange={toggleMemReview} />
+        <span>Auto-update my workspace memory after each turn</span>
+      </label>
+      <p className="int-sub">
+        A fast model (Haiku) conservatively saves durable facts to
+        {" "}<code>.claude/memory/USER.md</code> / <code>WORKSPACE.md</code> — you get a 💾 notice with an
+        undo, and changes take effect next session. Secrets are never sent or saved.
+        {runtime && runtime !== "claude-code"
+          ? <> Unavailable on the <code>{runtime}</code> runtime (claude-code only).</>
+          : null}
+      </p>
+    </div>
+  );
+}
+
+const RISK_LABEL = { low: "low risk", elevated: "review", high: "high risk" };
+
+function SkillsPanel() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [acting, setActing] = useState(null);   // id currently installing/removing
+  const [rowErr, setRowErr] = useState({});      // id → error message
+  const [review, setReview] = useState(null);    // { id, name } of skill under review
+
+  const load = useCallback(() => {
+    setError(null);
+    fetch(`/api/skills?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.error) throw new Error(d.error); setData(d); })
+      .catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // Install/uninstall. `consent` is sent for community installs (official ignores it).
+  const act = async (id, action, consent) => {
+    setActing(id); setRowErr((p) => ({ ...p, [id]: null }));
+    try {
+      const r = await fetch(`/api/skills/${id}/${action}?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(consent ? { consent } : {}),
+      });
+      const d = await r.json();
+      if (!d.ok) { setRowErr((p) => ({ ...p, [id]: d.error || "failed" })); return false; }
+      setReview(null); load(); return true;
+    } catch (e) { setRowErr((p) => ({ ...p, [id]: e.message })); return false; }
+    finally { setActing(null); }
+  };
+
+  if (error) return <div className="integrations"><div className="msg meta error">error: {error}</div></div>;
+  if (!data) return <div className="integrations"><div className="empty"><p>loading skills…</p></div></div>;
+
+  // group official skills by category
+  const groups = {};
+  for (const s of data.skills) (groups[s.category] ||= []).push(s);
+  const marketplace = data.marketplace || [];
+  const community = data.community || [];
+  const installedCount = data.skills.filter((s) => s.installed).length;
+
+  // Trust → human badge. official is hash-locked; marketplace is first-party vetted but
+  // fetch-on-install (so a Review step runs the advisory scan); community is unverified.
+  const TRUST_BADGE = {
+    official: "official · Apache-2.0",
+    marketplace: "marketplace · official",
+    community: "community · unverified",
+  };
+
+  const card = (s) => {
+    const isCommunity = s.trust === "community";
+    const isMarketplace = s.trust === "marketplace";
+    const reviewed = isCommunity || isMarketplace; // both go through the Review modal
+    return (
+    <div key={s.id} className={`int-card${s.installed ? " wired" : ""}`}>
+      <div className="int-card-top">
+        <span className="int-name">{s.name}</span>
+        <span className={`int-status ${s.installed ? "wired" : ""}`}>{s.installed ? "● installed" : "○ available"}</span>
+      </div>
+      <p className="int-summary">{s.description}</p>
+      <div className="skill-caps">
+        {s.capabilities?.bundles_code
+          ? <span className="cap code" title={(s.capabilities.code_files || []).join(", ")}>⚙ runs code{s.capabilities.code_files ? ` (${(s.capabilities.code_files || []).length})` : ""}</span>
+          : !reviewed && <span className="cap">text-only</span>}
+        <span className={`cap trust ${s.trust}`}>{TRUST_BADGE[s.trust] || s.trust}</span>
+      </div>
+      <div className="int-card-foot">
+        <span className="int-transport">{s.category}</span>
+        {s.installed
+          ? <button className="wiz-secondary" disabled={acting === s.id} onClick={() => act(s.id, "uninstall")}>{acting === s.id ? "…" : "Remove"}</button>
+          : reviewed
+            ? <button className="int-connect" disabled={acting === s.id} onClick={() => setReview({ id: s.id, name: s.name, trust: s.trust })}>Review &amp; install</button>
+            : <button className="int-connect" disabled={acting === s.id} onClick={() => act(s.id, "install")}>{acting === s.id ? "Installing…" : "Install"}</button>}
+      </div>
+      {rowErr[s.id] && <p className="skill-err">{rowErr[s.id]}</p>}
+    </div>
+    );
+  };
+
+  return (
+    <div className="integrations">
+      <div className="int-head">
+        <div>
+          <h2>Skills</h2>
+          <p className="int-sub">Official Anthropic skills are vendored from <code>anthropics/skills</code> and
+            hash-locked — one-click install into <code>.claude/skills/</code>. Marketplace skills come from
+            Anthropic's official plugin directory (<code>claude-plugins-official</code>): first-party vetted, but
+            fetched-on-install at a pinned commit and byte-verified against the catalog. Community skills carry no
+            first-party provenance and require your review. Scanning is <strong>advisory</strong> — provenance and
+            your own review are the real safeguard.</p>
+        </div>
+        <div className="int-progress">{installedCount} of {data.skills.length} installed</div>
+      </div>
+
+      {Object.keys(groups).sort().map((cat) => (
+        <React.Fragment key={cat}>
+          <h3 className="int-section">{cat}</h3>
+          <div className="int-grid">{groups[cat].map(card)}</div>
+        </React.Fragment>
+      ))}
+
+      {marketplace.length > 0 && (
+        <>
+          <h3 className="int-section">Marketplace — Anthropic official plugins</h3>
+          <div className="int-grid">{marketplace.map(card)}</div>
+          <p className="int-foot">↪ Marketplace skills are first-party (Anthropic) but <strong>fetched on install</strong>
+            {" "}from <code>claude-plugins-official</code> at a pinned commit. The fetched bytes are byte-verified
+            against the catalog before anything lands in <code>.claude/skills/</code> — a tampered or drifted
+            upstream is refused. Installing needs network access.</p>
+        </>
+      )}
+
+      {community.length > 0 && (
+        <>
+          <h3 className="int-section int-section-muted">Community — unverified (scan + consent required)</h3>
+          <div className="int-grid">{community.map(card)}</div>
+          <p className="int-foot">⚠ Community skills are not vendored or first-party. Installing one runs its
+            bundled instructions/code in your workspace — treat it like installing software from a stranger.</p>
+        </>
+      )}
+
+      {review && (
+        <SkillReviewModal
+          skill={review}
+          acting={acting === review.id}
+          rowErr={rowErr[review.id]}
+          onClose={() => setReview(null)}
+          onInstall={(consent) => act(review.id, "install", consent)}
+        />
+      )}
+
+      {data.referenced?.length > 0 && (
+        <>
+          <h3 className="int-section int-section-muted">Documents — available in Claude</h3>
+          <div className="int-grid">
+            {data.referenced.map((s) => (
+              <div key={s.id} className="int-card">
+                <div className="int-card-top"><span className="int-name">{s.name}</span></div>
+                <p className="int-summary">{s.description}</p>
+                <div className="int-card-foot">
+                  <span className="int-transport">official · hosted</span>
+                  <a className="int-connect" href={data.referenced_docs_url} target="_blank" rel="noreferrer">Enable in Claude ↗</a>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="int-foot">These document skills are Anthropic-hosted (proprietary license) — used inside
+            Claude, not copied here.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Review & install modal for a reviewed skill (marketplace OR community). Fetches the
+// advisory scan, lists findings (file:line), and gates install behind consent. Community
+// `high` risk additionally requires typing the skill id; marketplace is first-party vetted
+// (fetched-on-install + byte-verified), so it is a simple accept with no typed confirm.
+function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
+  const [scan, setScan] = useState(null);
+  const [scanErr, setScanErr] = useState(null);
+  const [accepted, setAccepted] = useState(false);
+  const [typed, setTyped] = useState("");
+  const isMarketplace = skill.trust === "marketplace";
+
+  useEffect(() => {
+    setScan(null); setScanErr(null);
+    fetch(`/api/skills/${skill.id}/scan?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.error) throw new Error(d.error); setScan(d); })
+      .catch((e) => setScanErr(e.message));
+  }, [skill.id]);
+
+  const needsTyped = scan?.requiresTypedConfirm; // server: community high-risk only
+  const canInstall = accepted && (!needsTyped || typed === skill.id) && !acting;
+  const consent = { accepted: true, ...(needsTyped ? { typed } : {}) };
+
+  return (
+    <div className="wiz-overlay" onClick={onClose}>
+      <div className="wiz skill-review" onClick={(e) => e.stopPropagation()}>
+        <div className="wiz-head">
+          <h3>Review &amp; install — {skill.name}</h3>
+          <button className="wiz-x" onClick={onClose}>✕</button>
+        </div>
+
+        {scanErr && <div className="wiz-error">{isMarketplace ? "fetch / verify" : "scan"} failed: {scanErr}</div>}
+        {!scan && !scanErr && <div className="wiz-validating">{isMarketplace ? "Fetching + verifying skill…" : "Scanning skill…"}</div>}
+
+        {scan && (
+          <>
+            <div className="skill-review-head">
+              <span className={`risk-badge ${scan.riskClass}`}>{RISK_LABEL[scan.riskClass] || scan.riskClass}</span>
+              <span className="skill-review-meta">
+                {scan.counts.high} high-severity of {scan.counts.total} findings · {scan.counts.code_files} code file{scan.counts.code_files === 1 ? "" : "s"}
+              </span>
+            </div>
+            {isMarketplace
+              ? <p className="wiz-note">This skill is <strong>marketplace · official</strong> (Anthropic's
+                  <code>claude-plugins-official</code> directory). It was fetched at a pinned commit and
+                  byte-verified against the catalog. The scan below is <strong>advisory</strong> — review it,
+                  then install.</p>
+              : <p className="wiz-note">This skill is <strong>community · unverified</strong> with no first-party
+                  provenance. The scan below is <strong>advisory</strong> — it can miss obfuscated behavior. Install
+                  only if you trust the source.</p>}
+
+            <div className="skill-findings">
+              {scan.findings.length === 0
+                ? <p className="skill-finding ok">No findings — instructions only, no code.</p>
+                : scan.findings.map((f, i) => (
+                  <div key={i} className={`skill-finding ${f.severity}`}>
+                    <span className="skill-finding-loc">{f.file}:{f.line}</span>
+                    <span className="skill-finding-rule">{f.rule}</span>
+                    <code className="skill-finding-snip">{f.snippet}</code>
+                  </div>
+                ))}
+            </div>
+
+            <label className="skill-consent">
+              <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+              <span>{isMarketplace
+                ? "I reviewed the findings and want to install this marketplace skill."
+                : "I reviewed the findings and accept the risk of installing this unverified skill."}</span>
+            </label>
+            {needsTyped && (
+              <div className="skill-typed">
+                <p className="wiz-note skill-typed-warn">⚠ This skill scanned <strong>HIGH risk</strong>. Type
+                  <code>{skill.id}</code> to confirm.</p>
+                <input className="wiz-text" placeholder={skill.id} value={typed} onChange={(e) => setTyped(e.target.value)} />
+              </div>
+            )}
+
+            {rowErr && <div className="wiz-error">{rowErr}</div>}
+            <div className="wiz-done-actions">
+              <button className="wiz-go" disabled={!canInstall} onClick={() => onInstall(consent)}>
+                {acting ? "Installing…" : isMarketplace ? "Install" : "Install anyway"}
+              </button>
+              <button className="wiz-secondary" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ContextMeter({ usage }) {
+  // Approximate context occupancy = the prompt fed on the latest turn
+  // (fresh input + cached tokens). Labeled "est." because it's a proxy, not a
+  // live token count, and is absent until the first turn reports usage.
+  const ctx = usage
+    ? (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0)
+    : null;
+  const pct = ctx == null ? 0 : Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
+  return (
+    <div className="ctx-meter" title="Estimated context used (input + cached tokens) on the last turn, out of the model's window. Approximate.">
+      <div className="ctx-bar"><div className="ctx-fill" style={{ width: `${pct}%` }} /></div>
+      <span>context (est.) {ctx == null ? "—" : `~${fmtK(ctx)} / ${fmtK(CONTEXT_WINDOW)}`}</span>
+    </div>
+  );
+}
 
 function ReviewPanel() {
   const [plan, setPlan] = useState(null);
@@ -315,6 +987,10 @@ function ReviewPanel() {
 const SUGGESTED = {
   notion: "Summarize my most recent Notion page.",
   granola: "Pull my recent Granola meeting notes into the inbox.",
+  slack: "Catch me up on my unread Slack messages.",
+  jira: "Show me the Jira issues assigned to me.",
+  linear: "List my open Linear issues for this cycle.",
+  firecrawl: "Read this page and pull out the key facts: <url>",
 };
 
 function IntegrationsPanel({ onTryInChat }) {

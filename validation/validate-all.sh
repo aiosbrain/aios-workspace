@@ -55,6 +55,10 @@ case "$MODE" in
     run_check "OGR03 — Secrets Scanner" "$SCRIPT_DIR/check-secrets.sh"
     run_check "OGR04 — AIOS Config" "$SCRIPT_DIR/check-aios-config.sh"
     run_check "OGR05 — Rubrics + Memory" "$SCRIPT_DIR/check-rubrics.sh"
+    run_check "OGR06 — Skill Export (BYOA)" "$SCRIPT_DIR/check-skill-export.mjs"
+    run_check "OGR07 — Runtime Adapters (BYOA)" "$SCRIPT_DIR/check-runtime-adapters.mjs"
+    run_check "OGR08 — Scaffold Guard" "$SCRIPT_DIR/check-scaffold-guard.mjs"
+    run_check "OGR09 — Skill Library" "$SCRIPT_DIR/check-skill-library.mjs"
     ;;
 esac
 

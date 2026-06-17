@@ -21,7 +21,7 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 | Skill | What it does |
 |---|---|
 | `aios-sync` | Sync this workspace with the AIOS Team Brain. |
-| `workspace-setup` | Set up (or update) the owner's profile in this workspace: interview the user about who they are and what they're working on, then write it into .claude/CLAUDE.md so the agent has durable context. |
+| `workspace-setup` | Set up, update, or incrementally extend the owner's profile in this workspace: interview the user (or draft from a link), then write it into the workspace memory files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. |
 
 ## Share a skill
 

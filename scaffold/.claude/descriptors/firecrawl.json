@@ -1,0 +1,30 @@
+{
+  "id": "firecrawl",
+  "name": "Firecrawl",
+  "category": "web",
+  "descriptor_version": "1.0.0",
+  "transport": "skill",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Read a web page (your site, profile, or company page) and pull out structured facts — used to draft your workspace profile from a link during onboarding.",
+  "secrets": [
+    { "env": "FIRECRAWL_API_KEY", "label": "API key", "required": true, "placeholder": "fc-…" }
+  ],
+  "docs": {
+    "token_create_url": "https://www.firecrawl.dev/app/api-keys",
+    "instructions": "Create an API key at firecrawl.dev → Dashboard → API Keys (free tier available). Connecting here validates against hosted Firecrawl (api.firecrawl.dev). Self-hosting? Set FIRECRAWL_API_URL (legacy FIRECRAWL_BASE_URL) in your .env — the firecrawl-direct skill routes there at runtime; note this connect/validate check still pings hosted, so wiring it needs a hosted key.",
+    "verified_against_docs": "2026-06-17"
+  },
+  "skill": {
+    "skill_name": "firecrawl-direct",
+    "source": ".claude/descriptors/skills/firecrawl-direct/"
+  },
+  "validate": {
+    "method": "POST",
+    "url": "https://api.firecrawl.dev/v2/scrape",
+    "headers": { "Authorization": "Bearer ${FIRECRAWL_API_KEY}", "Content-Type": "application/json" },
+    "body": { "url": "https://example.com", "formats": ["markdown"] },
+    "expect": { "status": 200, "ok_path": "success" },
+    "identity": { "json_path": null, "label": "Firecrawl" }
+  }
+}

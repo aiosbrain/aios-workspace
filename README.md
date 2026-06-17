@@ -41,6 +41,8 @@ aios-workspace/
 │       └── memory/   instincts + incidents (cross-session learning)
 ├── validation/      OGR validators (structure · frontmatter · secrets · aios config · rubrics)
 ├── hooks/           Claude Code guards (secrets · access · frontmatter · sync nudge)
+│                    shipped into every scaffolded workspace + registered in
+│                    .claude/settings.json, so the PreToolUse guard fires there too
 ├── scripts/         scaffold-project.sh · aios.mjs (Team Brain sync CLI) · leak-gate.sh
 ├── gui/             local web GUI — chat with this repo via the Claude Agent SDK
 ├── examples/        a fully synthetic sample to demo + test the harnesses
@@ -100,11 +102,32 @@ aios push                     # push team- and outward-tier content
 aios query "what's blocking sprint 2?"
 ```
 
-Chat with your repo in a browser instead of the terminal:
+Chat with your repo in a browser instead of the terminal — the **local cockpit**:
 
 ```bash
 npm run gui -- --repo ~/Projects/acme-workspace
 ```
+
+The cockpit is more than a chat box:
+
+- **Model picker** — switch between **Sonnet 4.6** (the fast, cheap default) and
+  **Opus 4.8** live, mid-session, with no reconnect.
+- **Chats** — a resumable chat-history sidebar; each conversation is saved and
+  reopened where you left off (`+ New chat` to start fresh).
+- **Context (est.) meter** — an approximate read of how much of the model's
+  window the last turn used, so you can see when a chat is getting heavy.
+- **Markdown rendering** — assistant replies render as GitHub-flavored markdown
+  (tables, lists, code).
+- **Settings → Personality** — pick the agent's voice (AIOS · Analyst · Coach ·
+  Operator); it's a style layer over the system prompt and never overrides your
+  rules, `CLAUDE.md`, or skills.
+- **Skills** — install official, Apache-2.0 Anthropic skills (vendored and
+  hash-locked) into `.claude/skills/` with one click; document skills (Word,
+  Excel, PowerPoint, PDF) are surfaced as pointers to **Enable in Claude**.
+
+First-run onboarding can **draft your profile from a link** — paste a company or
+profile URL and the agent reads it with Firecrawl, then drafts your
+`.claude/CLAUDE.md` for you to confirm (connect Firecrawl in Integrations first).
 
 ## The numbered spine
 
@@ -165,8 +188,9 @@ The toolkit started life in consulting; both vocabularies are accepted everywher
 See [`docs/architecture.md`](docs/architecture.md) for the hub-and-spoke model and
 access tiers, [`docs/feature-set.md`](docs/feature-set.md) for the full feature set,
 [`docs/workflows.md`](docs/workflows.md) for the harness design study that shaped
-the skills, and [`docs/brain-api.md`](docs/brain-api.md) for the Team Brain sync
-contract.
+the skills, [`docs/byoa.md`](docs/byoa.md) for **Bring Your Own Agent** (choose
+your runtime — Claude Code, Hermes, OpenClaw, Codex…), and
+[`docs/brain-api.md`](docs/brain-api.md) for the Team Brain sync contract.
 
 ## Status
 

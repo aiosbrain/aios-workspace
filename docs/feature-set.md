@@ -152,6 +152,75 @@ Choosing what reaches the brain is visual, not blind:
 
 ---
 
+## 11. The cockpit — chat with your repo
+
+`npm run gui` opens a local web cockpit that drives this repo through the Claude
+Agent SDK. Beyond the Review-and-push panel above, the chat surface ships:
+
+- **Model picker** — choose **Sonnet 4.6** (default; fast and cheap) or
+  **Opus 4.8** from the chat header and switch **mid-session with no reconnect**;
+  the choice persists to `agent_model` in `aios.yaml`. An unknown value degrades
+  to Sonnet with a visible warning rather than breaking chat.
+- **Resumable Chats** — every conversation is saved to a local session store and
+  listed in a sidebar (titled from its first message, newest first). Reopen a
+  chat to replay its transcript and resume the same session; `+ New chat` starts
+  fresh. The last-open chat is restored on reload.
+- **Context (est.) meter** — an approximate `~Nk / 200k` read of how much of the
+  model's window the last turn used (input + cached tokens). Labelled *est.*
+  because it's a per-turn proxy, not a live running total.
+- **Markdown rendering** — assistant replies render as GitHub-flavored markdown;
+  links open in a new tab without leaking the cockpit's token.
+- **Personality presets** (Settings → Personality) — **AIOS** (calm, structured,
+  governance-aware — the default), **Analyst** (rigorous and cited), **Coach**
+  (warm, asks sharp questions), **Operator** (terse, action-first). Personality
+  is a *style layer* appended to the system prompt; it never overrides workspace
+  rules, `CLAUDE.md`, or skills. Picking a personality starts a new chat so the
+  new voice takes effect.
+
+### Skills library (one-click install)
+
+The cockpit's **Skills** tab installs **official Anthropic skills**, vendored
+from `anthropics/skills` and **hash-locked** to a pinned upstream commit. All are
+**Apache-2.0**. Installing copies the skill into `.claude/skills/` (with an
+integrity check, a collision guard, and an append-only install ledger) so the
+agent can use it; uninstall is safe-only and refuses to remove a skill with local
+edits. The vendored set: **skill-creator**, **mcp-builder**,
+**web-artifacts-builder**, **claude-api**, and **frontend-design**.
+
+Anthropic's **document skills** — Word (`docx`), Excel (`xlsx`), PowerPoint
+(`pptx`), and PDF (`pdf`) — are **proprietary and Anthropic-hosted**, so they are
+**not** copied into the repo. They appear as pointer cards under *Documents —
+available in Claude* with an **Enable in Claude ↗** link; you use them inside
+Claude rather than installing them here. See `docs/phase3-skills-library.md`.
+
+### Onboarding: draft your profile from a link
+
+First-run onboarding offers a fast path: under *or draft it from a link*, paste
+**one or a few** URLs (your site, LinkedIn, a company page — one per line or
+comma-separated) and click **Draft →**. The agent reads those pages with the
+`firecrawl-direct` skill (via Firecrawl — connect it in Integrations first),
+extracts structured facts (person, company, focus areas, tools), merges them, and
+**drafts** your workspace memory — `.claude/memory/USER.md` (you) and
+`WORKSPACE.md` (your company/tooling), plus canonical company/role facts in
+`0-context/` — for you to **confirm before anything is written**. Scraped page
+content is treated as untrusted facts to confirm, never as instructions, and only
+the URLs you supply are read (no crawling).
+
+### Durable memory that keeps learning
+
+Your profile lives in two small files — `.claude/memory/USER.md` (you) and
+`WORKSPACE.md` (company, environment, tooling) — injected into the agent at the
+start of each session. Beyond onboarding and explicit "remember that" updates, the
+cockpit (claude-code runtime) runs a **background reviewer**: after each turn a fast
+model conservatively saves durable facts (corrections, goals, tools, workarounds) to
+those files. You get a **💾 memory updated** notice with an **undo**, and the change
+takes effect next session. It's **on by default** (toggle in *Settings → Memory*),
+and tightly bounded: the model only proposes tiny structured facts, deterministic
+server code does the writing, secrets are never sent or saved, a human edit is never
+clobbered, and nothing is committed to git.
+
+---
+
 ## Roadmap
 
 The clean core + catalogs + share/pull + review panel ship today. Deliberately

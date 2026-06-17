@@ -1,6 +1,6 @@
 {
   "name": "aios-workspace",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
   "license": "Apache-2.0",
@@ -10,11 +10,11 @@
     "gui/client"
   ],
   "scripts": {
-    "gui": "node scripts/run-gui.mjs",
+    "gui": "dotenvx run -- node scripts/run-gui.mjs",
     "gui:build": "npm run build --workspace gui/client",
-    "aios": "node scripts/aios.mjs",
+    "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
-    "app:dev": "npm run gui:build && tauri dev",
+    "app:dev": "npm run gui:build && dotenvx run -- tauri dev",
     "app:build": "npm run gui:build && tauri build",
     "app:icon": "tauri icon"
   },
@@ -22,6 +22,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@dotenvx/dotenvx": "^1.52.0",
     "@tauri-apps/cli": "^2.11.2"
   }
 }

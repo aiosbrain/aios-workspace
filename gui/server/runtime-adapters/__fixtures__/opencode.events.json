@@ -1,0 +1,286 @@
+{
+  "sessionId": "ses_12b75215affeVRFA03ZSDvBIeY",
+  "events": [
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "type": "text",
+          "text": "Create notes.md containing exactly: hello fixture",
+          "messageID": "msg_ed48ae4af001u0n5CT7un5pOU2",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "id": "prt_ed48ae4af002GNgDuE8cU7NnfY"
+        },
+        "time": 1781682332855
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48afe3f001lGx9zHb5D0Ck5b",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "step-start"
+        },
+        "time": 1781682339391
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b018b001P1q1Oi82dyHBlv",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "reasoning",
+          "text": "",
+          "time": {
+            "start": 1781682340235
+          }
+        },
+        "time": 1781682340237
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b018b001P1q1Oi82dyHBlv",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "reasoning",
+          "text": "The user wants me to create a file called `notes.md` with the exact content \"hello fixture\".",
+          "time": {
+            "start": 1781682340235,
+            "end": 1781682340756
+          }
+        },
+        "time": 1781682340756
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0395001h6TfjIsW6xfh2B",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "tool",
+          "tool": "write",
+          "callID": "call_00_JD5uXQE1jCW6zbZHeIu23557",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1781682340757
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "type": "tool",
+          "tool": "write",
+          "callID": "call_00_JD5uXQE1jCW6zbZHeIu23557",
+          "state": {
+            "status": "running",
+            "input": {
+              "filePath": "/private/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/rec-oc-esEIHy/notes.md",
+              "content": "hello fixture"
+            },
+            "raw": "",
+            "time": {
+              "start": 1781682341235
+            }
+          },
+          "id": "prt_ed48b0395001h6TfjIsW6xfh2B",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek"
+        },
+        "time": 1781682341235
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "type": "tool",
+          "tool": "write",
+          "callID": "call_00_JD5uXQE1jCW6zbZHeIu23557",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "/private/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/rec-oc-esEIHy/notes.md",
+              "content": "hello fixture"
+            },
+            "output": "Wrote file successfully.",
+            "metadata": {
+              "diagnostics": {},
+              "filepath": "/private/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/rec-oc-esEIHy/notes.md",
+              "exists": false,
+              "truncated": false
+            },
+            "title": "private/var/folders/82/24518ch935sdflkqp8pp9gpw0000gn/T/rec-oc-esEIHy/notes.md",
+            "time": {
+              "start": 1781682341235,
+              "end": 1781682341241
+            }
+          },
+          "id": "prt_ed48b0395001h6TfjIsW6xfh2B",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek"
+        },
+        "time": 1781682341241
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b05d5001VPlrqz5lVbkYYJ",
+          "reason": "tool-calls",
+          "messageID": "msg_ed48ae4e0001A21IoiuH1Mnvek",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "step-finish",
+          "tokens": {
+            "total": 29923,
+            "input": 29804,
+            "output": 98,
+            "reasoning": 21,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1781682341334
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0b110017tATzEE75FNjOm",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "step-start"
+        },
+        "time": 1781682342673
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0d15001TM5MU9T17gSE4m",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "reasoning",
+          "text": "",
+          "time": {
+            "start": 1781682343189
+          }
+        },
+        "time": 1781682343189
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0d15001TM5MU9T17gSE4m",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "reasoning",
+          "text": "Done. Created the file as requested.",
+          "time": {
+            "start": 1781682343189,
+            "end": 1781682343219
+          }
+        },
+        "time": 1781682343219
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0d34001jzXn4O9uM1EgU4",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1781682343220
+          }
+        },
+        "time": 1781682343220
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0d34001jzXn4O9uM1EgU4",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "text",
+          "text": "Done. Created `notes.md` with the content \"hello fixture\".",
+          "time": {
+            "start": 1781682343220,
+            "end": 1781682343342
+          }
+        },
+        "time": 1781682343343
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+        "part": {
+          "id": "prt_ed48b0db10011k8sAAzrUyS8UI",
+          "reason": "stop",
+          "messageID": "msg_ed48b05db001KgSOlDeBiptx31",
+          "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY",
+          "type": "step-finish",
+          "tokens": {
+            "total": 29962,
+            "input": 115,
+            "output": 15,
+            "reasoning": 8,
+            "cache": {
+              "write": 0,
+              "read": 29824
+            }
+          },
+          "cost": 0
+        },
+        "time": 1781682343345
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_12b75215affeVRFA03ZSDvBIeY"
+      }
+    }
+  ]
+}
