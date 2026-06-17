@@ -75,7 +75,11 @@ if (existsSync(ws)) {
 } else {
   fail("no workspace generated");
 }
-rmSync(tmp, { recursive: true, force: true });
+// Best-effort temp cleanup with retries: removing the scaffolded `.git` can race
+// with git's own background writes and throw a transient ENOTEMPTY. The check has
+// already passed/failed by here, so a teardown hiccup must never flip the result.
+try { rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); }
+catch { /* OS reaps tmpdir; don't fail OGR08 on a cleanup race */ }
 
 console.log("================================================");
 if (errors === 0) { console.log(`${GREEN}OGR08 PASSED${NC}`); process.exit(0); }
