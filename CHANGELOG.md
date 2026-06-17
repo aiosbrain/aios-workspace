@@ -54,7 +54,19 @@ guard, harnesses, or the Team Brain sync contract.
   before it's written**. Scraped content is treated as untrusted facts to confirm,
   never as instructions; only the one URL you supply is read (no crawling).
 
+#### Skills — community installs, scanned (#22)
+- **Install skills beyond the official library, with eyes open.** A new `community`
+  trust tier runs a static safety scanner (`scripts/skill-scan.mjs`) over a skill's
+  `SKILL.md` and **every bundled file** before install — flagging bundled code
+  (including **extensionless shebang/executable scripts**), network egress,
+  filesystem/process exec, secret/exfil reads, external URLs, and prompt-injection
+  (incl. hidden/zero-width Unicode), with each finding shown as `file:line`. Install
+  requires consent; a **high** risk class requires a typed confirm. Scanning is
+  **advisory** — provenance + human review remain the trust anchor — and **official
+  skills stay one-click**. The collision guard, install ledger, and safe-only
+  uninstall from #17 carry over unchanged.
+
 ### Unchanged
-- **`docs/brain-api.md` (sync contract) — `v1`, untouched.** None of #16/#17/#20
+- **`docs/brain-api.md` (sync contract) — `v1`, untouched.** None of #16/#17/#20/#22
   altered the Team Brain sync protocol, so there is no version bump and no
   workspace↔brain contract drift.

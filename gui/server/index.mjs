@@ -28,7 +28,7 @@ import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
 import { readSkills, readIntegrations, firstSentence, frontmatter } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
-import { listLibrary, installSkill, uninstallSkill } from "./skill-library.mjs";
+import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -157,7 +157,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  // ── skills library (token-gated) — install vendored official skills only ──
+  // ── skills library (token-gated). Official = one-click; community = scan + consent. ──
   if (url.pathname === "/api/skills" && req.method === "GET") {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
     try {
@@ -168,18 +168,36 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ error: e.message }));
     }
   }
+  // Advisory static scan of a single skill (id-sanitized) — drives the Review & install UI.
+  const skillScan = url.pathname.match(/^\/api\/skills\/([a-z0-9-]+)\/scan$/);
+  if (skillScan && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    try {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify(scanSkillById(skillScan[1])));
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
   const skillAct = url.pathname.match(/^\/api\/skills\/([a-z0-9-]+)\/(install|uninstall)$/);
   if (skillAct && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
     const [, id, action] = skillAct;
-    try {
-      const out = action === "install" ? installSkill(repo, id) : uninstallSkill(repo, id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, ...out }));
-    } catch (e) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: false, error: e.message }));
-    }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e4) req.destroy(); });
+    req.on("end", () => {
+      let consent = {};
+      try { consent = JSON.parse(body || "{}").consent || {}; } catch { /* bad body → no consent */ }
+      try {
+        const out = action === "install" ? installSkill(repo, id, consent) : uninstallSkill(repo, id);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, ...out }));
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: e.message, scan: e.scan || null }));
+      }
+    });
     return;
   }
   // ── chat sessions (token-gated; transcripts are sensitive local content) ──

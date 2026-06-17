@@ -21,11 +21,13 @@ ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 # RELEASE-CHECKLIST.md and docs/strategy/README.md).
 EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
   --exclude-dir=__pycache__ --exclude-dir=store --exclude-dir=strategy
-  --exclude-dir=skill-library
+  --exclude-dir=skill-library --exclude-dir=skill-scan-fixtures
   --exclude=leak-gate.sh --exclude=LICENSE
   --exclude=*.png --exclude=*.jpg --exclude=*.pdf --exclude=*.lock)
 # skill-library/ holds vendored, integrity-locked official upstream skills (OGR09);
 # their example docs may mention generic names — not AIOS client identifiers.
+# skill-scan-fixtures/ holds DELIBERATELY-malicious scanner test fixtures (injection +
+# fake secret/exfil strings) — they are test inputs, never shipped to a workspace.
 
 # STRONG terms — unambiguous; any occurrence is a leak. Case-insensitive substring.
 # Note: "company graph" is NOT gated — the Confidentiality Confirmation (§1.2(a))

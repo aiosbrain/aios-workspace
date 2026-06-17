@@ -28,6 +28,11 @@ jobs:
       - name: Sync CLI syntax check
         run: node --check scripts/aios.mjs
 
+      - name: Skill-scan + install-gate tests
+        run: |
+          node test/skill-scan.test.mjs
+          node test/skill-install.test.mjs
+
       - name: Scaffold smoke test + validate (project profile)
         run: |
           bash scripts/scaffold-project.sh \
