@@ -32,6 +32,7 @@ jobs:
         run: |
           node test/skill-scan.test.mjs
           node test/skill-install.test.mjs
+          node test/suggest-connectors.test.mjs
 
       - name: Scaffold smoke test + validate (project profile)
         run: |
