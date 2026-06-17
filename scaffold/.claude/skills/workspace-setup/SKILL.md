@@ -1,13 +1,15 @@
 ---
 name: workspace-setup
 description: |
-  Set up (or update) the owner's profile in this workspace: interview the user about
-  who they are and what they're working on, then write it into the workspace memory
-  files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. Use
-  on first run, when those memory files are still empty, or when the user says "set me
-  up", "onboard me", "set up my profile", or "update my profile".
+  Set up, update, or incrementally extend the owner's profile in this workspace:
+  interview the user (or draft from a link), then write it into the workspace memory
+  files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. Also
+  handles explicit one-off updates — when the user says "remember that …", "note that
+  …", or "update my tooling". Use on first run, when those memory files are still empty,
+  or when the user says "set me up", "onboard me", "set up my profile", "update my
+  profile", "remember that", or "update my tooling".
 kind: skill
-version: 1.0.0
+version: 1.1.0
 triggers:
   - set me up
   - onboard me
@@ -16,6 +18,10 @@ triggers:
   - who am I
   - enrich my profile from
   - set up my profile from this link
+  - remember that
+  - remember this
+  - note that
+  - update my tooling
 ---
 
 # Workspace setup
@@ -99,3 +105,31 @@ Rules:
 - **Never** put secrets, API keys, or passwords in any of them. `USER.md`/`WORKSPACE.md`
   are private (`access: admin`) and never sync; `0-context/` is team-tier and does.
 - After writing, point them at the **Integrations** tab to connect the tools they named.
+
+## Update memory on request (explicit only)
+
+Keep memory current **only on an explicit cue** — not by watching the conversation.
+When the user says **"remember that …"**, **"note that …"**, or **"update my profile"**:
+
+1. Decide the home using the same split as above — a fact about *them* → `USER.md`;
+   *environment/tooling* → `WORKSPACE.md`; a *shareable company/role fact* → `0-context/`.
+2. **Read the target file, then write the one change in place** (don't rewrite the file).
+   Stay within the cap noted in the file header — if it's full, drop the least-useful line.
+3. **Confirm the one-line change with the user before writing** (same rule as setup), then
+   write via your normal Edit/Write so the guard still vets it.
+
+Do **not** auto-capture durable facts that merely *surface* in normal chat — that
+proactive behavior is intentionally deferred to the background reviewer (see
+`.claude/memory/README.md`). Until it ships, only the explicit cues above update memory.
+
+## Update tooling from connected integrations (manual)
+
+Nothing fires this skill automatically when a tool is connected, so refresh tooling
+**when this skill runs** or when the user says **"update my tooling"**:
+
+1. Read `.claude/integrations.json` and collect every connector with `status: "wired"`.
+2. Update the **Tooling** line in `WORKSPACE.md` to reflect that connected set (confirm,
+   then write). These are the user's own connected tools, so no extra sourcing is needed.
+
+Tell the user that after connecting a new tool in **Integrations**, they can say
+"update my tooling" (or re-run setup) to fold it in — it won't happen on its own yet.
