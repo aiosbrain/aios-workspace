@@ -1,0 +1,120 @@
+{
+  "upstream_repo": "https://github.com/anthropics/claude-plugins-official.git",
+  "upstream_commit": "ccdc03c56532519760df6363a6eef87324470fc8",
+  "skills": [
+    {
+      "id": "claude-md-improver",
+      "name": "claude-md-improver",
+      "description": "Audit and improve CLAUDE.md files in repositories. Use when user asks to check, audit, update, improve, or fix CLAUDE.md files. Scans for all CLAUDE.md files, evaluates quality against templates, outputs quality report, then makes targeted updates. Also use when the user mentions \"CLAUDE.md maintenance\" or \"project memory optimization\".",
+      "category": "Marketplace · Anthropic",
+      "trust": "marketplace",
+      "source": {
+        "repo": "https://github.com/anthropics/claude-plugins-official.git",
+        "commit": "ccdc03c56532519760df6363a6eef87324470fc8",
+        "path_in_repo": "plugins/claude-md-management/skills/claude-md-improver"
+      },
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "b06c7420be08ca1c7f6d75f7f4709fdb787624a2d363e2f8052216d8c780f85b"
+        },
+        {
+          "path": "references/quality-criteria.md",
+          "sha256": "383def16b05dca948297dd1acb33f007cb1b1b2c368454d424c5634348a8bab1"
+        },
+        {
+          "path": "references/templates.md",
+          "sha256": "de0aa3ac30120a0c77f9cd82738a75ed8326864f98feb89356a253f2deaf3ab0"
+        },
+        {
+          "path": "references/update-guidelines.md",
+          "sha256": "02a158d6ca41a0ab702a67a213e92205f09c073cea53796633251bc62fd7ec55"
+        }
+      ]
+    },
+    {
+      "id": "math-olympiad",
+      "name": "math-olympiad",
+      "description": "Solve competition math problems (IMO, Putnam, USAMO, AIME) with adversarial verification that catches the errors self-verification misses. Activates when asked to solve this IMO problem, prove this olympiad inequality, verify this competition proof, find a counterexample, is this proof correct, or for any problem with IMO, Putnam, USAMO, olympiad, or competition math in it. Uses pure reasoning (no tools) — then a fresh-context adversarial verifier attacks the proof using specific failure patterns, not generic check logic. Outputs calibrated confidence — will say no confident solution rather than bluff. If LaTeX is available, produces a clean PDF after verification passes.",
+      "category": "Marketplace · Anthropic",
+      "trust": "marketplace",
+      "source": {
+        "repo": "https://github.com/anthropics/claude-plugins-official.git",
+        "commit": "ccdc03c56532519760df6363a6eef87324470fc8",
+        "path_in_repo": "plugins/math-olympiad/skills/math-olympiad"
+      },
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "f697e195d343520f3db551bd4fb44c5120504ee2c47a9cc2016cd57767f23403"
+        },
+        {
+          "path": "evals/trigger_eval.json",
+          "sha256": "672a9d8c3804c74683cd779126ab6a7c310081b290f04de863962f3631ebb196"
+        },
+        {
+          "path": "references/adversarial_prompts.md",
+          "sha256": "686f5913da4e3291d64989f1bacb8f99fe69cdb3b5b9e64c8390151e870bae2a"
+        },
+        {
+          "path": "references/attempt_agent.md",
+          "sha256": "8716d7cad5ec2a05d8e6e48f4042721638b97dec83bd11eee1f7734697ba84bf"
+        },
+        {
+          "path": "references/known_constructions.md",
+          "sha256": "5135bca2eb1c448f1144cda2b1cfa796be5cb6a082306e589ad8308636b1e065"
+        },
+        {
+          "path": "references/model_tier_defaults.md",
+          "sha256": "fa44e35b3c73c12c4098568df2d8fc6ff54dbed16b8d592e82272554c3eeaeb0"
+        },
+        {
+          "path": "references/presentation_prompts.md",
+          "sha256": "19eb3e242eb5879a5fe2768eea9d0e5a35b3df38a5c02cccd101e0b1f07e7d09"
+        },
+        {
+          "path": "references/solver_heuristics.md",
+          "sha256": "a934fc5252d1a0776e6390c5a943af7f7b32324cf5454e3dce94b3681daa842e"
+        },
+        {
+          "path": "references/verifier_patterns.md",
+          "sha256": "b72657c916d5cd0baa464d5ad59fce9fedb6f870f46b8dd9610632b08a591f56"
+        },
+        {
+          "path": "scripts/check_latex.sh",
+          "sha256": "052151934c82b7a5d91a5bb3ba2a1611f22fc661929cf819f7e3d954bdb22721"
+        },
+        {
+          "path": "scripts/compile_pdf.sh",
+          "sha256": "1e990d377d79b1d08b993833e7dcce8c5c82ed5ab34ad72c009b42f2e068b243"
+        }
+      ]
+    },
+    {
+      "id": "session-report",
+      "name": "session-report",
+      "description": "Generate an explorable HTML report of Claude Code session usage (tokens, cache, subagents, skills, expensive prompts) from ~/.claude/projects transcripts.",
+      "category": "Marketplace · Anthropic",
+      "trust": "marketplace",
+      "source": {
+        "repo": "https://github.com/anthropics/claude-plugins-official.git",
+        "commit": "ccdc03c56532519760df6363a6eef87324470fc8",
+        "path_in_repo": "plugins/session-report/skills/session-report"
+      },
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "ef0fbc4259a41b7fd61b517fb1c9a95f02b83ea3c79ba0b3afbeee4942570397"
+        },
+        {
+          "path": "analyze-sessions.mjs",
+          "sha256": "7e660e93b4089e9262c822f36f7233f55b77d2d6d7e19dd664596cd90c6331ea"
+        },
+        {
+          "path": "template.html",
+          "sha256": "b2981488f8e9eeadb305330e8f6ddf795b0360d756a7f1f175f8320811202fc3"
+        }
+      ]
+    }
+  ]
+}

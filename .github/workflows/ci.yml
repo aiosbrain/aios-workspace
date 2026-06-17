@@ -33,6 +33,8 @@ jobs:
           node test/skill-scan.test.mjs
           node test/skill-install.test.mjs
           node test/suggest-connectors.test.mjs
+          node test/skill-install-marketplace.test.mjs
+          node scripts/lock-marketplace.mjs --check
 
       - name: Scaffold smoke test + validate (project profile)
         run: |

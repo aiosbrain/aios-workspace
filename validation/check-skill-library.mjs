@@ -10,6 +10,10 @@
 //   4. the committed index.json matches the on-disk files (integrity lock not stale)
 //   5. community skills are NEVER promoted to official (disjoint id sets) and each
 //      community entry resolves to a scannable source dir (so the gate can run)
+//   6. MARKETPLACE skills (anthropics/claude-plugins-official, fetch-on-install) have ids
+//      disjoint from official+community, trust==="marketplace", a valid pinned
+//      {repo,commit,path_in_repo} source, and declared per-file sha256 hashes (the
+//      install-time byte-diff authenticity anchor). No network here — structural only.
 // buildManifest() enforces 1+3 (it throws), so a clean build proves them.
 //
 // Usage: ./validation/check-skill-library.mjs [repo]  (repo arg unused; kept for
@@ -18,6 +22,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { buildManifest, LIBRARY_DIR } from "../scripts/lock-skill-library.mjs";
+import { structuralCheck as marketplaceStructuralCheck } from "../scripts/lock-marketplace.mjs";
 import { scanSkill } from "../scripts/skill-scan.mjs";
 
 const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
@@ -65,6 +70,7 @@ if (built) {
 }
 
 // 5. Community tier (Phase 3.5): disjoint from official + every entry is scannable.
+const communityIds = new Set();
 {
   const communityPath = path.join(LIBRARY_DIR, "community.json");
   if (!existsSync(communityPath)) {
@@ -75,6 +81,7 @@ if (built) {
       const officialIds = new Set((built?.skills || []).map((s) => s.id));
       let allGood = true;
       for (const s of com.skills || []) {
+        communityIds.add(s.id);
         if (!/^[a-z0-9-]+$/.test(s.id)) { fail(`community skill id '${s.id}' must match ^[a-z0-9-]+$`); allGood = false; continue; }
         if (officialIds.has(s.id)) { fail(`community skill '${s.id}' collides with an OFFICIAL id — community is never promoted to official`); allGood = false; }
         if (s.trust && s.trust !== "community") { fail(`community skill '${s.id}' has trust='${s.trust}' — must be 'community'`); allGood = false; }
@@ -87,6 +94,31 @@ if (built) {
       if (allGood) ok(`community tier: ${(com.skills || []).length} skill(s), disjoint from official, all scannable`);
     } catch (e) {
       fail(`community.json unreadable: ${e.message}`);
+    }
+  }
+}
+
+// 6. Marketplace tier: disjoint from official+community, trust==="marketplace", valid
+//    pinned source + declared file hashes. Structural only (the install-time byte-diff
+//    against the live upstream is exercised by the offline test, not at build time).
+{
+  const marketplacePath = path.join(LIBRARY_DIR, "marketplace.json");
+  if (!existsSync(marketplacePath)) {
+    ok("no marketplace.json — marketplace tier not registered");
+  } else {
+    try {
+      const mkt = JSON.parse(readFileSync(marketplacePath, "utf8"));
+      const officialIds = new Set((built?.skills || []).map((s) => s.id));
+      const problems = marketplaceStructuralCheck(mkt);
+      for (const p of problems) fail(`marketplace ${p}`);
+      let disjoint = true;
+      for (const s of mkt.skills || []) {
+        if (officialIds.has(s.id)) { fail(`marketplace skill '${s.id}' collides with an OFFICIAL id`); disjoint = false; }
+        if (communityIds.has(s.id)) { fail(`marketplace skill '${s.id}' collides with a COMMUNITY id`); disjoint = false; }
+      }
+      if (!problems.length && disjoint) ok(`marketplace tier: ${(mkt.skills || []).length} skill(s) @ ${(mkt.upstream_commit || "").slice(0, 7)}, disjoint, valid source + declared hashes`);
+    } catch (e) {
+      fail(`marketplace.json unreadable: ${e.message}`);
     }
   }
 }

@@ -666,11 +666,22 @@ function SkillsPanel() {
   // group official skills by category
   const groups = {};
   for (const s of data.skills) (groups[s.category] ||= []).push(s);
+  const marketplace = data.marketplace || [];
   const community = data.community || [];
   const installedCount = data.skills.filter((s) => s.installed).length;
 
+  // Trust → human badge. official is hash-locked; marketplace is first-party vetted but
+  // fetch-on-install (so a Review step runs the advisory scan); community is unverified.
+  const TRUST_BADGE = {
+    official: "official · Apache-2.0",
+    marketplace: "marketplace · official",
+    community: "community · unverified",
+  };
+
   const card = (s) => {
     const isCommunity = s.trust === "community";
+    const isMarketplace = s.trust === "marketplace";
+    const reviewed = isCommunity || isMarketplace; // both go through the Review modal
     return (
     <div key={s.id} className={`int-card${s.installed ? " wired" : ""}`}>
       <div className="int-card-top">
@@ -680,16 +691,16 @@ function SkillsPanel() {
       <p className="int-summary">{s.description}</p>
       <div className="skill-caps">
         {s.capabilities?.bundles_code
-          ? <span className="cap code" title={(s.capabilities.code_files || []).join(", ")}>⚙ runs code ({(s.capabilities.code_files || []).length})</span>
-          : !isCommunity && <span className="cap">text-only</span>}
-        <span className={`cap trust ${s.trust}`}>{isCommunity ? "community · unverified" : "official · Apache-2.0"}</span>
+          ? <span className="cap code" title={(s.capabilities.code_files || []).join(", ")}>⚙ runs code{s.capabilities.code_files ? ` (${(s.capabilities.code_files || []).length})` : ""}</span>
+          : !reviewed && <span className="cap">text-only</span>}
+        <span className={`cap trust ${s.trust}`}>{TRUST_BADGE[s.trust] || s.trust}</span>
       </div>
       <div className="int-card-foot">
         <span className="int-transport">{s.category}</span>
         {s.installed
           ? <button className="wiz-secondary" disabled={acting === s.id} onClick={() => act(s.id, "uninstall")}>{acting === s.id ? "…" : "Remove"}</button>
-          : isCommunity
-            ? <button className="int-connect" disabled={acting === s.id} onClick={() => setReview({ id: s.id, name: s.name })}>Review &amp; install</button>
+          : reviewed
+            ? <button className="int-connect" disabled={acting === s.id} onClick={() => setReview({ id: s.id, name: s.name, trust: s.trust })}>Review &amp; install</button>
             : <button className="int-connect" disabled={acting === s.id} onClick={() => act(s.id, "install")}>{acting === s.id ? "Installing…" : "Install"}</button>}
       </div>
       {rowErr[s.id] && <p className="skill-err">{rowErr[s.id]}</p>}
@@ -703,9 +714,11 @@ function SkillsPanel() {
         <div>
           <h2>Skills</h2>
           <p className="int-sub">Official Anthropic skills are vendored from <code>anthropics/skills</code> and
-            hash-locked — one-click install into <code>.claude/skills/</code>. Community skills carry no
-            first-party provenance: they are statically scanned and require your review before install.
-            Scanning is <strong>advisory</strong> — provenance and your own review are the real safeguard.</p>
+            hash-locked — one-click install into <code>.claude/skills/</code>. Marketplace skills come from
+            Anthropic's official plugin directory (<code>claude-plugins-official</code>): first-party vetted, but
+            fetched-on-install at a pinned commit and byte-verified against the catalog. Community skills carry no
+            first-party provenance and require your review. Scanning is <strong>advisory</strong> — provenance and
+            your own review are the real safeguard.</p>
         </div>
         <div className="int-progress">{installedCount} of {data.skills.length} installed</div>
       </div>
@@ -716,6 +729,17 @@ function SkillsPanel() {
           <div className="int-grid">{groups[cat].map(card)}</div>
         </React.Fragment>
       ))}
+
+      {marketplace.length > 0 && (
+        <>
+          <h3 className="int-section">Marketplace — Anthropic official plugins</h3>
+          <div className="int-grid">{marketplace.map(card)}</div>
+          <p className="int-foot">↪ Marketplace skills are first-party (Anthropic) but <strong>fetched on install</strong>
+            {" "}from <code>claude-plugins-official</code> at a pinned commit. The fetched bytes are byte-verified
+            against the catalog before anything lands in <code>.claude/skills/</code> — a tampered or drifted
+            upstream is refused. Installing needs network access.</p>
+        </>
+      )}
 
       {community.length > 0 && (
         <>
@@ -759,14 +783,16 @@ function SkillsPanel() {
   );
 }
 
-// Review & install modal for a community (non-official) skill. Fetches the advisory
-// scan, lists findings (file:line), and gates install behind consent — a `high` risk
-// class additionally requires typing the skill id to confirm.
+// Review & install modal for a reviewed skill (marketplace OR community). Fetches the
+// advisory scan, lists findings (file:line), and gates install behind consent. Community
+// `high` risk additionally requires typing the skill id; marketplace is first-party vetted
+// (fetched-on-install + byte-verified), so it is a simple accept with no typed confirm.
 function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
   const [scan, setScan] = useState(null);
   const [scanErr, setScanErr] = useState(null);
   const [accepted, setAccepted] = useState(false);
   const [typed, setTyped] = useState("");
+  const isMarketplace = skill.trust === "marketplace";
 
   useEffect(() => {
     setScan(null); setScanErr(null);
@@ -776,7 +802,7 @@ function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
       .catch((e) => setScanErr(e.message));
   }, [skill.id]);
 
-  const needsTyped = scan?.requiresTypedConfirm;
+  const needsTyped = scan?.requiresTypedConfirm; // server: community high-risk only
   const canInstall = accepted && (!needsTyped || typed === skill.id) && !acting;
   const consent = { accepted: true, ...(needsTyped ? { typed } : {}) };
 
@@ -788,8 +814,8 @@ function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
           <button className="wiz-x" onClick={onClose}>✕</button>
         </div>
 
-        {scanErr && <div className="wiz-error">scan failed: {scanErr}</div>}
-        {!scan && !scanErr && <div className="wiz-validating">Scanning skill…</div>}
+        {scanErr && <div className="wiz-error">{isMarketplace ? "fetch / verify" : "scan"} failed: {scanErr}</div>}
+        {!scan && !scanErr && <div className="wiz-validating">{isMarketplace ? "Fetching + verifying skill…" : "Scanning skill…"}</div>}
 
         {scan && (
           <>
@@ -799,9 +825,14 @@ function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
                 {scan.counts.high} high-severity of {scan.counts.total} findings · {scan.counts.code_files} code file{scan.counts.code_files === 1 ? "" : "s"}
               </span>
             </div>
-            <p className="wiz-note">This skill is <strong>community · unverified</strong> with no first-party
-              provenance. The scan below is <strong>advisory</strong> — it can miss obfuscated behavior. Install
-              only if you trust the source.</p>
+            {isMarketplace
+              ? <p className="wiz-note">This skill is <strong>marketplace · official</strong> (Anthropic's
+                  <code>claude-plugins-official</code> directory). It was fetched at a pinned commit and
+                  byte-verified against the catalog. The scan below is <strong>advisory</strong> — review it,
+                  then install.</p>
+              : <p className="wiz-note">This skill is <strong>community · unverified</strong> with no first-party
+                  provenance. The scan below is <strong>advisory</strong> — it can miss obfuscated behavior. Install
+                  only if you trust the source.</p>}
 
             <div className="skill-findings">
               {scan.findings.length === 0
@@ -817,7 +848,9 @@ function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
 
             <label className="skill-consent">
               <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-              <span>I reviewed the findings and accept the risk of installing this unverified skill.</span>
+              <span>{isMarketplace
+                ? "I reviewed the findings and want to install this marketplace skill."
+                : "I reviewed the findings and accept the risk of installing this unverified skill."}</span>
             </label>
             {needsTyped && (
               <div className="skill-typed">
@@ -830,7 +863,7 @@ function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
             {rowErr && <div className="wiz-error">{rowErr}</div>}
             <div className="wiz-done-actions">
               <button className="wiz-go" disabled={!canInstall} onClick={() => onInstall(consent)}>
-                {acting ? "Installing…" : "Install anyway"}
+                {acting ? "Installing…" : isMarketplace ? "Install" : "Install anyway"}
               </button>
               <button className="wiz-secondary" onClick={onClose}>Cancel</button>
             </div>
