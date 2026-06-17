@@ -48,11 +48,12 @@ pasting a link.
 
 ### Onboarding from a link (#20)
 
-- **Draft your profile from a URL.** On first run, paste a company or profile link
-  and the agent reads that one page (via Firecrawl) and **drafts** your
-  `.claude/CLAUDE.md` — which you confirm before anything is written. Scraped
-  content is treated as facts to confirm, never as instructions, and only the URL
-  you give is read. Connect Firecrawl in **Integrations** first.
+- **Draft your profile from a link.** On first run, paste one or a few company/profile
+  links and the agent reads them (via Firecrawl) and **drafts** your workspace memory
+  (`.claude/memory/USER.md` + `WORKSPACE.md`, plus canonical company/role facts in
+  `0-context/`) — which you confirm before anything is written. Scraped content is
+  treated as facts to confirm, never as instructions, and only the URLs you give are
+  read. Connect Firecrawl in **Integrations** first.
 
 ## Upgrade notes
 
