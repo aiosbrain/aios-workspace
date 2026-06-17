@@ -195,8 +195,16 @@ same normalized WS events (`delta` / `tool_use` / `tool_result` /
   **shared post-turn sweep** (`sweep.mjs`, reused from the ACP path) re-runs
   `team-ops-guard.sh` over changed files, surfacing violations/truncation as
   blocking errors; the `hello.safetyNote` banner discloses the post-hoc tier.
-- ☐ **`opencode`** — `opencode serve` SSE (session-mixed → filter by session id;
-  raw-fetch SSE, no native EventSource). Same post-turn-sweep tier. Next slice.
+- ✅ **OpenCode adapter (`opencode`)** — `runtime-adapters/opencode.mjs` spawns a
+  headless `opencode serve` (random port, scoped to the repo, reaped on exit) and
+  drives it over HTTP: `POST /session`, a turn per `POST /session/{id}/message`,
+  and the **global SSE stream at `GET /event`** parsed from a raw `fetch` body
+  (Node has no `EventSource`) and **filtered by session id**. Permissions are
+  option-based (`permission.updated` → `POST …/permissions/{id}` with once/always
+  /reject); `session.idle` is the turn boundary and `session.error` taints the
+  result. Writes execute in-process, so the **shared post-turn sweep** governs.
+
+All `gui:true` runtimes now resolve to an adapter (OGR07 enforces this).
 
 The session announces its active runtime in the UI (a runtime badge), selected
 from `agent_runtime` in `aios.yaml` (Phase-1 config).
