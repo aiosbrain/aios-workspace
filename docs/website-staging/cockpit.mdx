@@ -102,17 +102,19 @@ installing them here.
 ## Onboarding: draft your profile from a link
 
 On first run, the cockpit can set up your profile for you. Under *or draft it
-from a link*, paste a company or profile URL and click **Draft →**.
+from a link*, paste **one or a few** URLs (your site, LinkedIn, a company page —
+one per line or comma-separated) and click **Draft →**.
 
-The agent reads that **one** page with the `firecrawl-direct` skill (via
-Firecrawl) and extracts structured facts — who you are, your company, your focus
-areas, the tools you use — then **drafts** your `.claude/CLAUDE.md`. You
-**confirm before anything is written**.
+The agent reads those pages with the `firecrawl-direct` skill (via Firecrawl) and
+extracts structured facts — who you are, your company, your focus areas, the tools
+you use — merges them, and **drafts** your workspace memory: `.claude/memory/USER.md`
+(you) and `WORKSPACE.md` (your company/tooling), plus canonical company/role facts
+in `0-context/`. You **confirm before anything is written**.
 
 <Aside type="caution">
 Scraped page content is treated as **facts to confirm, never as instructions**,
-and only the single URL you supply is read (no crawling). Connect **Firecrawl**
-in **Integrations** first.
+and only the URLs you supply are read (no crawling). Connect **Firecrawl** in
+**Integrations** first.
 </Aside>
 
 {/* SCREENSHOT: onboarding welcome with the "or draft it from a link" URL field */}
