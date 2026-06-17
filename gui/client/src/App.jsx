@@ -568,11 +568,14 @@ function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
   );
 }
 
+const RISK_LABEL = { low: "low risk", elevated: "review", high: "high risk" };
+
 function SkillsPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [acting, setActing] = useState(null);   // id currently installing/removing
   const [rowErr, setRowErr] = useState({});      // id → error message
+  const [review, setReview] = useState(null);    // { id, name } of skill under review
 
   const load = useCallback(() => {
     setError(null);
@@ -583,26 +586,33 @@ function SkillsPanel() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const act = async (id, action) => {
+  // Install/uninstall. `consent` is sent for community installs (official ignores it).
+  const act = async (id, action, consent) => {
     setActing(id); setRowErr((p) => ({ ...p, [id]: null }));
     try {
-      const r = await fetch(`/api/skills/${id}/${action}?token=${token}`, { method: "POST" });
+      const r = await fetch(`/api/skills/${id}/${action}?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(consent ? { consent } : {}),
+      });
       const d = await r.json();
-      if (!d.ok) setRowErr((p) => ({ ...p, [id]: d.error || "failed" }));
-      else load();
-    } catch (e) { setRowErr((p) => ({ ...p, [id]: e.message })); }
-    setActing(null);
+      if (!d.ok) { setRowErr((p) => ({ ...p, [id]: d.error || "failed" })); return false; }
+      setReview(null); load(); return true;
+    } catch (e) { setRowErr((p) => ({ ...p, [id]: e.message })); return false; }
+    finally { setActing(null); }
   };
 
   if (error) return <div className="integrations"><div className="msg meta error">error: {error}</div></div>;
   if (!data) return <div className="integrations"><div className="empty"><p>loading skills…</p></div></div>;
 
-  // group installable skills by category
+  // group official skills by category
   const groups = {};
   for (const s of data.skills) (groups[s.category] ||= []).push(s);
+  const community = data.community || [];
   const installedCount = data.skills.filter((s) => s.installed).length;
 
-  const card = (s) => (
+  const card = (s) => {
+    const isCommunity = s.trust === "community";
+    return (
     <div key={s.id} className={`int-card${s.installed ? " wired" : ""}`}>
       <div className="int-card-top">
         <span className="int-name">{s.name}</span>
@@ -612,27 +622,31 @@ function SkillsPanel() {
       <div className="skill-caps">
         {s.capabilities?.bundles_code
           ? <span className="cap code" title={(s.capabilities.code_files || []).join(", ")}>⚙ runs code ({(s.capabilities.code_files || []).length})</span>
-          : <span className="cap">text-only</span>}
-        <span className="cap">official · Apache-2.0</span>
+          : !isCommunity && <span className="cap">text-only</span>}
+        <span className={`cap trust ${s.trust}`}>{isCommunity ? "community · unverified" : "official · Apache-2.0"}</span>
       </div>
       <div className="int-card-foot">
         <span className="int-transport">{s.category}</span>
         {s.installed
           ? <button className="wiz-secondary" disabled={acting === s.id} onClick={() => act(s.id, "uninstall")}>{acting === s.id ? "…" : "Remove"}</button>
-          : <button className="int-connect" disabled={acting === s.id} onClick={() => act(s.id, "install")}>{acting === s.id ? "Installing…" : "Install"}</button>}
+          : isCommunity
+            ? <button className="int-connect" disabled={acting === s.id} onClick={() => setReview({ id: s.id, name: s.name })}>Review &amp; install</button>
+            : <button className="int-connect" disabled={acting === s.id} onClick={() => act(s.id, "install")}>{acting === s.id ? "Installing…" : "Install"}</button>}
       </div>
       {rowErr[s.id] && <p className="skill-err">{rowErr[s.id]}</p>}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="integrations">
       <div className="int-head">
         <div>
           <h2>Skills</h2>
-          <p className="int-sub">Official Anthropic skills, vendored from <code>anthropics/skills</code> and
-            hash-locked. Installing copies a skill into <code>.claude/skills/</code> so the agent can use it.
-            Skills are demonstration/educational — test before relying on them.</p>
+          <p className="int-sub">Official Anthropic skills are vendored from <code>anthropics/skills</code> and
+            hash-locked — one-click install into <code>.claude/skills/</code>. Community skills carry no
+            first-party provenance: they are statically scanned and require your review before install.
+            Scanning is <strong>advisory</strong> — provenance and your own review are the real safeguard.</p>
         </div>
         <div className="int-progress">{installedCount} of {data.skills.length} installed</div>
       </div>
@@ -643,6 +657,25 @@ function SkillsPanel() {
           <div className="int-grid">{groups[cat].map(card)}</div>
         </React.Fragment>
       ))}
+
+      {community.length > 0 && (
+        <>
+          <h3 className="int-section int-section-muted">Community — unverified (scan + consent required)</h3>
+          <div className="int-grid">{community.map(card)}</div>
+          <p className="int-foot">⚠ Community skills are not vendored or first-party. Installing one runs its
+            bundled instructions/code in your workspace — treat it like installing software from a stranger.</p>
+        </>
+      )}
+
+      {review && (
+        <SkillReviewModal
+          skill={review}
+          acting={acting === review.id}
+          rowErr={rowErr[review.id]}
+          onClose={() => setReview(null)}
+          onInstall={(consent) => act(review.id, "install", consent)}
+        />
+      )}
 
       {data.referenced?.length > 0 && (
         <>
@@ -663,6 +696,88 @@ function SkillsPanel() {
             Claude, not copied here.</p>
         </>
       )}
+    </div>
+  );
+}
+
+// Review & install modal for a community (non-official) skill. Fetches the advisory
+// scan, lists findings (file:line), and gates install behind consent — a `high` risk
+// class additionally requires typing the skill id to confirm.
+function SkillReviewModal({ skill, acting, rowErr, onClose, onInstall }) {
+  const [scan, setScan] = useState(null);
+  const [scanErr, setScanErr] = useState(null);
+  const [accepted, setAccepted] = useState(false);
+  const [typed, setTyped] = useState("");
+
+  useEffect(() => {
+    setScan(null); setScanErr(null);
+    fetch(`/api/skills/${skill.id}/scan?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.error) throw new Error(d.error); setScan(d); })
+      .catch((e) => setScanErr(e.message));
+  }, [skill.id]);
+
+  const needsTyped = scan?.requiresTypedConfirm;
+  const canInstall = accepted && (!needsTyped || typed === skill.id) && !acting;
+  const consent = { accepted: true, ...(needsTyped ? { typed } : {}) };
+
+  return (
+    <div className="wiz-overlay" onClick={onClose}>
+      <div className="wiz skill-review" onClick={(e) => e.stopPropagation()}>
+        <div className="wiz-head">
+          <h3>Review &amp; install — {skill.name}</h3>
+          <button className="wiz-x" onClick={onClose}>✕</button>
+        </div>
+
+        {scanErr && <div className="wiz-error">scan failed: {scanErr}</div>}
+        {!scan && !scanErr && <div className="wiz-validating">Scanning skill…</div>}
+
+        {scan && (
+          <>
+            <div className="skill-review-head">
+              <span className={`risk-badge ${scan.riskClass}`}>{RISK_LABEL[scan.riskClass] || scan.riskClass}</span>
+              <span className="skill-review-meta">
+                {scan.counts.high} high-severity of {scan.counts.total} findings · {scan.counts.code_files} code file{scan.counts.code_files === 1 ? "" : "s"}
+              </span>
+            </div>
+            <p className="wiz-note">This skill is <strong>community · unverified</strong> with no first-party
+              provenance. The scan below is <strong>advisory</strong> — it can miss obfuscated behavior. Install
+              only if you trust the source.</p>
+
+            <div className="skill-findings">
+              {scan.findings.length === 0
+                ? <p className="skill-finding ok">No findings — instructions only, no code.</p>
+                : scan.findings.map((f, i) => (
+                  <div key={i} className={`skill-finding ${f.severity}`}>
+                    <span className="skill-finding-loc">{f.file}:{f.line}</span>
+                    <span className="skill-finding-rule">{f.rule}</span>
+                    <code className="skill-finding-snip">{f.snippet}</code>
+                  </div>
+                ))}
+            </div>
+
+            <label className="skill-consent">
+              <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+              <span>I reviewed the findings and accept the risk of installing this unverified skill.</span>
+            </label>
+            {needsTyped && (
+              <div className="skill-typed">
+                <p className="wiz-note skill-typed-warn">⚠ This skill scanned <strong>HIGH risk</strong>. Type
+                  <code>{skill.id}</code> to confirm.</p>
+                <input className="wiz-text" placeholder={skill.id} value={typed} onChange={(e) => setTyped(e.target.value)} />
+              </div>
+            )}
+
+            {rowErr && <div className="wiz-error">{rowErr}</div>}
+            <div className="wiz-done-actions">
+              <button className="wiz-go" disabled={!canInstall} onClick={() => onInstall(consent)}>
+                {acting ? "Installing…" : "Install anyway"}
+              </button>
+              <button className="wiz-secondary" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

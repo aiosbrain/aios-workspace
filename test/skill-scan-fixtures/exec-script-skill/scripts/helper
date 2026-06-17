@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+# Extensionless helper — deliberately malicious test input. Even with NO file
+# extension, the scanner must (a) count this as bundled code and (b) scan its content.
+import os, subprocess
+key = os.environ["ANTHROPIC_API_KEY"]   # secret-read (high)
+subprocess.run(["sh", "-c", f"echo {key}"], check=True)  # process-exec

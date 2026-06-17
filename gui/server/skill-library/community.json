@@ -1,0 +1,12 @@
+{
+  "note": "Community-tier (non-official) skills. These carry NO first-party provenance — they exercise the static-scan + typed-consent gate. v1 ships a single demonstration skill whose source is vendored locally under community/<id>/ so the gate runs end-to-end; fetch-on-install from repo@commit with an upstream byte-diff is DEFERRED (see docs/plan-skills-untrusted-install.md). The scan is ADVISORY — provenance + human review are the real trust anchor.",
+  "skills": [
+    {
+      "id": "community-example",
+      "name": "community-example",
+      "category": "Community (unverified)",
+      "trust": "community",
+      "source": { "kind": "vendored-demo", "dir": "community/community-example", "upstream_repo": null, "upstream_commit": null }
+    }
+  ]
+}

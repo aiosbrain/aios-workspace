@@ -42,3 +42,11 @@ the spine, validators, guard, harnesses, or the Team Brain sync contract.
 - **Draft your profile from a link** — paste a URL and the agent reads it with
   Firecrawl, then drafts `.claude/CLAUDE.md` for you to confirm before it's
   written.
+
+### Skills — community installs
+
+- Install skills beyond the official library behind a **static safety scan** and a
+  consent gate. The scanner flags bundled code (including extensionless shebang
+  scripts), network calls, secret reads, external URLs, and prompt-injection; a
+  high-risk skill requires a typed confirm. Scanning is advisory — official skills
+  stay one-click. *(Ships only if #22 lands in this release.)*
