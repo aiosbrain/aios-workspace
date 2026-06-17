@@ -102,11 +102,32 @@ aios push                     # push team- and outward-tier content
 aios query "what's blocking sprint 2?"
 ```
 
-Chat with your repo in a browser instead of the terminal:
+Chat with your repo in a browser instead of the terminal — the **local cockpit**:
 
 ```bash
 npm run gui -- --repo ~/Projects/acme-workspace
 ```
+
+The cockpit is more than a chat box:
+
+- **Model picker** — switch between **Sonnet 4.6** (the fast, cheap default) and
+  **Opus 4.8** live, mid-session, with no reconnect.
+- **Chats** — a resumable chat-history sidebar; each conversation is saved and
+  reopened where you left off (`+ New chat` to start fresh).
+- **Context (est.) meter** — an approximate read of how much of the model's
+  window the last turn used, so you can see when a chat is getting heavy.
+- **Markdown rendering** — assistant replies render as GitHub-flavored markdown
+  (tables, lists, code).
+- **Settings → Personality** — pick the agent's voice (AIOS · Analyst · Coach ·
+  Operator); it's a style layer over the system prompt and never overrides your
+  rules, `CLAUDE.md`, or skills.
+- **Skills** — install official, Apache-2.0 Anthropic skills (vendored and
+  hash-locked) into `.claude/skills/` with one click; document skills (Word,
+  Excel, PowerPoint, PDF) are surfaced as pointers to **Enable in Claude**.
+
+First-run onboarding can **draft your profile from a link** — paste a company or
+profile URL and the agent reads it with Firecrawl, then drafts your
+`.claude/CLAUDE.md` for you to confirm (connect Firecrawl in Integrations first).
 
 ## The numbered spine
 
