@@ -900,6 +900,10 @@ function ReviewPanel() {
 const SUGGESTED = {
   notion: "Summarize my most recent Notion page.",
   granola: "Pull my recent Granola meeting notes into the inbox.",
+  slack: "Catch me up on my unread Slack messages.",
+  jira: "Show me the Jira issues assigned to me.",
+  linear: "List my open Linear issues for this cycle.",
+  firecrawl: "Read this page and pull out the key facts: <url>",
 };
 
 function IntegrationsPanel({ onTryInChat }) {
