@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   reviewTurn, applyMemoryUpdates, undoMemoryWrite, sanitizeFact, isTrivialAck,
-  containsSecret, loadSecretPatterns, buildUpdatedContent,
+  containsSecret, loadSecretPatterns, buildUpdatedContent, redactSecrets,
 } from "./memory-reviewer.mjs";
-import { LEARNED_MARKER } from "./memory-files.mjs";
+import { LEARNED_MARKER, MEMORY_ABSENT } from "./memory-files.mjs";
 
 const SECRETS = loadSecretPatterns("/nonexistent"); // falls back to builtin
 const allowOpenGuard = () => ({ ok: true });        // simulate guardWrite fail-OPEN (no guard)
@@ -163,4 +163,32 @@ test("buildUpdatedContent: cap eviction is FIFO; gives up if seed alone > cap", 
 test("containsSecret: builtin patterns match common tokens", () => {
   assert.equal(containsSecret("token sk-ant-abcdefghijklmnopqrstuvwxyz0123", SECRETS), true);
   assert.equal(containsSecret("just a normal sentence", SECRETS), false);
+});
+
+test("redactSecrets: scrubs tokens in existing memory before the call", () => {
+  const dirty = "- API: sk-ant-abcdefghijklmnopqrstuvwxyz0123 and AKIAABCDEFGHIJKLMNOP";
+  const clean = redactSecrets(dirty, SECRETS);
+  assert.ok(!/sk-ant-/.test(clean) && !/AKIA[0-9A-Z]{16}/.test(clean));
+  assert.ok(clean.includes("[REDACTED]"));
+  assert.equal(redactSecrets("nothing secret here", SECRETS), "nothing secret here");
+});
+
+test("apply: MEMORY_ABSENT baseline (file created mid-session) → skip", () => {
+  const { dir } = ws();                                  // file exists on disk now…
+  const { events } = applyMemoryUpdates({
+    repo: dir, socketOpen: true, secretPatterns: SECRETS, guardWrite: allowOpenGuard,
+    baselines: { "USER.md": MEMORY_ABSENT },             // …but it was absent at session start
+    facts: [{ file: "USER.md", section: "goals", fact: "ship v1" }],
+  });
+  assert.equal(events.length, 0);
+});
+
+test("apply: undefined baseline → skip (fail-closed)", () => {
+  const { dir } = ws();
+  const { events } = applyMemoryUpdates({
+    repo: dir, socketOpen: true, secretPatterns: SECRETS, guardWrite: allowOpenGuard,
+    baselines: {},                                        // no baseline recorded
+    facts: [{ file: "USER.md", section: "goals", fact: "ship v1" }],
+  });
+  assert.equal(events.length, 0);
 });

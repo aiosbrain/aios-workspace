@@ -24,8 +24,8 @@ import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
-import { MEMORY_FILES } from "./memory-files.mjs";
-import { reviewTurn, applyMemoryUpdates, undoMemoryWrite, callModel, loadSecretPatterns, isTrivialAck, containsSecret } from "./memory-reviewer.mjs";
+import { MEMORY_FILES, MEMORY_ABSENT } from "./memory-files.mjs";
+import { reviewTurn, applyMemoryUpdates, undoMemoryWrite, callModel, loadSecretPatterns, isTrivialAck, containsSecret, redactSecrets } from "./memory-reviewer.mjs";
 import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
@@ -448,33 +448,52 @@ wss.on("connection", (ws, req) => {
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
   let titleSet = !!readSessionIndex().sessions.find((s) => s.id === sessionId)?.title;
 
-  // ── background memory reviewer state (claude-code only; gated below) ──
-  let reviewerActive = false;                 // set once config is read, before the run
+  // ── background memory reviewer state (claude-code only; opt-out read LIVE) ──
+  let reviewerRuntimeOk = false;               // runtime gate (set at config read); enablement re-read each turn
   const secretPatterns = loadSecretPatterns(repo);
-  const memBaselines = {};                     // file -> content at session start / last our-write (dirty-tree CAS)
+  const memBaselines = {};                      // file -> content at session start (MEMORY_ABSENT if it didn't exist)
   for (const m of MEMORY_FILES) {
-    try { memBaselines[m.file] = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); } catch { /* absent */ }
+    try { memBaselines[m.file] = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); }
+    catch { memBaselines[m.file] = MEMORY_ABSENT; } // appears later ⇒ treated as dirty, never written
   }
   const memoryUndos = new Map();               // undo_id -> { id, file, path, prevContent, writtenHash }
   let curTurn = { user: "", assistant: "" };   // the in-flight turn, captured for the reviewer
-  let reviewing = false;                        // serialize: drop overlapping reviews
+  let reviewing = false;                        // a review is in flight
+  let pendingReview = false;                    // a turn completed mid-review → drain once more (coalesce to latest)
   let reviewsThisSession = 0;
-  const REVIEW_CAP = 40;                        // per-session backstop on review calls (cost cap)
+  const REVIEW_CAP = 40;                        // per-session review-COUNT backstop (bounds cost)
 
-  // After a turn, conservatively learn from it. Async, never blocks the turn; any
-  // failure is swallowed. All trust-boundary gating lives in memory-reviewer.mjs.
-  async function runMemoryReview() {
-    if (!reviewerActive || reviewing) return;
+  // Schedule a review for the just-completed turn. Serializes rather than drops: if a
+  // review is running, mark pending and the drain loop picks up the latest turn next.
+  function runMemoryReview() {
+    if (reviewing) { pendingReview = true; return; }
+    drainReviews();
+  }
+  async function drainReviews() {
+    reviewing = true;
+    try {
+      do {
+        pendingReview = false;
+        await reviewOnce({ user: curTurn.user, assistant: curTurn.assistant });
+      } while (pendingReview && ws.readyState === ws.OPEN);
+    } finally { reviewing = false; }
+  }
+  // One conservative review. Async, never blocks the turn; failures swallowed. The
+  // trust boundary lives in memory-reviewer.mjs; here we gate + scrub inputs.
+  async function reviewOnce(turn) {
+    // LIVE opt-out: re-read config so a Settings toggle takes effect on this chat now.
+    if (!reviewerRuntimeOk || !readAgentConfig(repo).memoryReview) return;
     if (ws.readyState !== ws.OPEN) return;                       // no write the user can't see/undo
     if (reviewsThisSession >= REVIEW_CAP) return;
-    const turn = { user: curTurn.user, assistant: curTurn.assistant };
     if (isTrivialAck(turn.user)) return;                         // cheap pre-gate
-    if (containsSecret(`${turn.user}\n${turn.assistant}`, secretPatterns)) return; // don't ship secrets to a 2nd model
-    reviewing = true; reviewsThisSession++;
+    if (containsSecret(`${turn.user}\n${turn.assistant}`, secretPatterns)) return; // don't ship a secret-y turn
+    reviewsThisSession++;
     try {
       const fileContents = {};
       for (const m of MEMORY_FILES) {
-        try { fileContents[m.file] = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); } catch { fileContents[m.file] = ""; }
+        let body = "";
+        try { body = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); } catch { body = ""; }
+        fileContents[m.file] = redactSecrets(body, secretPatterns); // scrub EXISTING files before the call
       }
       const facts = await reviewTurn({ turn, fileContents, callModel: (p) => callModel(p, { query: sdkQuery }) });
       if (!facts.length) return;
@@ -487,7 +506,6 @@ wss.on("connection", (ws, req) => {
       for (const u of undos) memoryUndos.set(u.id, u);
       for (const ev of events) emit(ev);                          // 💾 memory_updated → client notice
     } catch (e) { console.error("memory review:", e?.message || e); }
-    finally { reviewing = false; }
   }
 
   const send = (obj) => {
@@ -585,11 +603,12 @@ wss.on("connection", (ws, req) => {
   // One adapter drives this session, selected by agent_runtime in aios.yaml
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
-  const { runtime, model, baseUrl, personality, memoryReview } = readAgentConfig(repo);
-  // Background memory reviewer: ONLY for the claude-code runtime (it reuses the
-  // Agent SDK's ambient auth) and only when enabled. Other runtimes (codex,
-  // opencode, ACP, local) must never trigger a silent Anthropic call — BYOA.
-  reviewerActive = memoryReview && runtime === "claude-code";
+  const { runtime, model, baseUrl, personality } = readAgentConfig(repo);
+  // Background memory reviewer: ONLY for the claude-code runtime (it reuses the Agent
+  // SDK's ambient auth). Other runtimes (codex, opencode, ACP, local) must never
+  // trigger a silent Anthropic call — BYOA. The runtime can't change mid-session, so
+  // capture it here; the enable/disable flag is re-read live each turn (reviewOnce).
+  reviewerRuntimeOk = runtime === "claude-code";
   // claude-code's PreToolUse hook pre-gates every write natively. Other drivers
   // can mutate files via in-process shell tools that bypass the host write-gate,
   // so they're validated by a post-turn sweep — say so in the UI (honest tier).

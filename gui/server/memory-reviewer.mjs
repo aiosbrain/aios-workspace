@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MEMORY_FILES, SECTIONS, LEARNED_MARKER, byFile } from "./memory-files.mjs";
+import { MEMORY_FILES, SECTIONS, LEARNED_MARKER, byFile, MEMORY_ABSENT } from "./memory-files.mjs";
 
 const FACT_MAX = 240;            // a "fact" is a short bullet, not a paragraph
 const TURN_MAX = 6000;           // cap what we send to the reviewer model
@@ -53,6 +53,18 @@ function compile(list) {
   return out;
 }
 export const containsSecret = (text, patterns) => patterns.some((re) => re.test(text || ""));
+
+// Replace any secret-pattern matches with a placeholder. Used to scrub the EXISTING
+// memory files before they're sent to the reviewer model (a file may already hold an
+// accidental token from a human/seed edit — never ship it to a second call).
+export function redactSecrets(text, patterns) {
+  let out = String(text || "");
+  for (const re of patterns) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    out = out.replace(g, "[REDACTED]");
+  }
+  return out;
+}
 
 // ── pre-gates (cheap, before any model call) ──
 // Trivial acks/greetings — skip. NOT length-based: "I use Linear" is short but durable.
@@ -201,8 +213,11 @@ export function applyMemoryUpdates({ repo, facts, baselines, socketOpen, guardWr
     let current;
     try { current = readFileSync(abs, "utf8"); } catch { continue; }
 
-    // dirty-tree: a human (or anything else) changed it since our baseline → skip
-    if (baselines[m.file] !== undefined && baselines[m.file] !== current) continue;
+    // dirty-tree (fail-closed): only write a file we observed at session start and
+    // that is still byte-identical to our baseline. ABSENT → it appeared mid-session;
+    // undefined → unknown baseline; mismatch → a human/other edit. Skip all three.
+    const base = baselines[m.file];
+    if (base === MEMORY_ABSENT || base === undefined || base !== current) continue;
 
     const built = buildUpdatedContent(current, fileFacts, m.cap);
     if (!built) continue;                         // nothing added / can't fit cap

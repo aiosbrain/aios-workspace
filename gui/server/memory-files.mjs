@@ -27,3 +27,8 @@ export const SECTIONS = {
 export const LEARNED_MARKER = "<!-- reviewer:learned (auto, conservative — edit above this line) -->";
 
 export const byFile = (name) => MEMORY_FILES.find((m) => m.file === name) || null;
+
+// Baseline sentinel: the file did NOT exist at session start. If it appears later
+// (created mid-session by something else), the reviewer treats that as "dirty" and
+// skips — it only ever writes files it observed and owns from the start.
+export const MEMORY_ABSENT = Symbol("memory-absent-at-session-start");
