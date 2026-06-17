@@ -8,6 +8,18 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately and is **unchanged** by the
 entries below — no sync-protocol change, still `v1`.
 
+## [Unreleased]
+
+### Added
+- **Update memory on request** (`workspace-setup`) — say **"remember that …"**,
+  **"note that …"**, or **"update my profile"** and the agent writes the one change to
+  the right home (`USER.md` / `WORKSPACE.md` / `0-context/`), confirm-before-write,
+  within the file's cap. Strictly **explicit cues only** — proactive auto-capture from
+  normal chat stays deferred to the background reviewer (see `.claude/memory/README.md`).
+- **Refresh tooling from connected integrations** — say **"update my tooling"** (or
+  re-run setup) and the agent folds wired connectors from `.claude/integrations.json`
+  into `WORKSPACE.md`. Manual by design — there's no auto-trigger on connect yet.
+
 ## [0.3.0] — 2026-06-17
 
 The cockpit overhaul: the local GUI (`npm run gui`) becomes a real workspace
