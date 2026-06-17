@@ -5,16 +5,15 @@ work to the shared **Team Brain**. This repo is *yours* — private by default.
 
 **Context:** {{CONTEXT}} ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
 
-## About {{OWNER}}
-_Not set up yet._ Run the **workspace-setup** skill (say **"set me up"** in chat) and
-the agent will interview you and fill in this section, plus *Current focus* and
-*Working preferences* below — so it always knows who you are and what you're doing.
+## Who you're working with
+Durable context about the owner and their workspace lives in two memory files:
+- `.claude/memory/USER.md` — who {{OWNER}} is (role, goals, working preferences).
+- `.claude/memory/WORKSPACE.md` — the company, environment, and tooling.
 
-## Current focus
-_…_
-
-## Working preferences
-_…_
+In the cockpit these are injected automatically at the start of each session.
+Running raw `claude` here? **Read both files** when you need who/what context.
+Update them only when asked (or run **workspace-setup** — say **"set me up"** — to
+fill them from a quick interview or a link). Keep them short; they're not a journal.
 
 ## Start here
 - Decisions → `3-log/decision-log.md`
