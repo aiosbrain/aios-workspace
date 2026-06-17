@@ -19,7 +19,7 @@ export const RUNTIMES = {
   },
   "openclaw": {
     export: { layout: "skillmd", harness: false },
-    gui: { driver: "acp", command: ["openclaw", "acp"] }, // exact spawn refined in slice 4
+    gui: { driver: "acp", command: ["openclaw", "acp"] }, // `openclaw acp` = stdio ACP bridge (Gateway-backed)
   },
   "codex": {
     export: { layout: "instructions", harness: false },

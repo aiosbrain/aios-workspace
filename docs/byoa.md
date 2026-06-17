@@ -175,8 +175,11 @@ same normalized WS events (`delta` / `tool_use` / `tool_result` /
 - ✅ **Host-side write guard** (`guardWrite`) — reuses `hooks/team-ops-guard.sh`
   so secrets / admin-tier leakage / path-escape are blocked uniformly.
 - ✅ **ACP adapter (`hermes`, `openclaw`)** — `runtime-adapters/acp.mjs` spawns
-  `hermes acp` and speaks ACP (JSON-RPC/stdio) via `@agentclientprotocol/sdk`.
-  Governance is **two-layer**, because ACP agents mutate files two ways:
+  the runtime's ACP bridge (`hermes acp`, or `openclaw acp` — a Gateway-backed
+  bridge; set `OPENCLAW_GATEWAY_PASSWORD_FILE`/`OPENCLAW_GATEWAY_PASSWORD` if the
+  gateway requires a password) and speaks ACP (JSON-RPC/stdio) via
+  `@agentclientprotocol/sdk`. Governance is **two-layer**, because ACP agents
+  mutate files two ways:
   1. *Host-mediated* `fs/write_text_file` requests are **pre-gated through
      `guardWrite`** and only the guard-resolved, in-repo path is written.
   2. The agent can also run shell/file tools **inside its own process**

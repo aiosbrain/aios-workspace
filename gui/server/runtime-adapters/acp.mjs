@@ -1,7 +1,7 @@
 // ACP adapter — drives the session over the Agent Client Protocol (JSON-RPC on
 // stdio) against a spawned agent process. Used by every `driver: "acp"` runtime
-// in scripts/runtimes.mjs (Hermes first; OpenClaw rides the same adapter once
-// its spawn command is confirmed).
+// in scripts/runtimes.mjs — Hermes (`hermes acp`) and OpenClaw (`openclaw acp`,
+// a Gateway-backed ACP bridge) both ride this one adapter.
 //
 // Governance model — two layers, because ACP file mutation has two paths:
 //   1. PRE-GATE (host-mediated): the agent asks the client via
@@ -23,7 +23,7 @@
 // Adapter contract: export `meta` + `run(host)`. See runtime-adapters/index.mjs.
 
 import { spawn } from "node:child_process";
-import { Readable, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -92,6 +92,48 @@ function inRepo(repo, target) {
 }
 
 
+// Per-backend launch quirks for the ACP bridge (exported for unit testing):
+//  - hermes: auto-accept unseen shell hooks (no TTY in ACP would otherwise wedge);
+//    writes are still governed by guardWrite + the post-turn sweep.
+//  - openclaw: `openclaw acp` bridges to the OpenClaw Gateway; pass the gateway
+//    password when configured — prefer a file so it never lands in argv/ps output.
+export function acpSpawnArgs(bin, baseArgs, env = process.env) {
+  if (bin === "hermes") return [...baseArgs, "--accept-hooks"];
+  if (bin === "openclaw") {
+    if (env.OPENCLAW_GATEWAY_PASSWORD_FILE) return [...baseArgs, "--password-file", env.OPENCLAW_GATEWAY_PASSWORD_FILE];
+    if (env.OPENCLAW_GATEWAY_PASSWORD) return [...baseArgs, "--password", env.OPENCLAW_GATEWAY_PASSWORD];
+  }
+  return baseArgs;
+}
+
+// Wrap a Node Readable (the child's stdout) as a Web ReadableStream that forwards
+// ONLY newline-delimited JSON-RPC lines (each ACP message is one object starting
+// with `{`). Some bridges print human banners / config warnings to stdout
+// (OpenClaw prints a boxed "Config warnings:" block), which would otherwise
+// corrupt ndJsonStream's framing and close the connection. Dropping non-`{` lines
+// keeps the protocol stream clean regardless of stdout noise.
+export function jsonRpcLines(nodeReadable) {
+  const enc = new TextEncoder();
+  let buf = "";
+  return new ReadableStream({
+    start(controller) {
+      nodeReadable.on("data", (chunk) => {
+        buf += chunk.toString();
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i + 1); buf = buf.slice(i + 1);
+          if (line.trimStart().startsWith("{")) controller.enqueue(enc.encode(line));
+        }
+      });
+      nodeReadable.on("end", () => {
+        if (buf.trimStart().startsWith("{")) controller.enqueue(enc.encode(buf));
+        try { controller.close(); } catch { /* already closed */ }
+      });
+      nodeReadable.on("error", (e) => { try { controller.error(e); } catch { /* */ } });
+    },
+  });
+}
+
 /**
  * @param {object} host  see runtime-adapters/index.mjs — repo, input, emit,
  *   requestPermission({title,content,options})→optionId|null, guardWrite, signal,
@@ -102,9 +144,7 @@ export async function run(host) {
 
   const command = GUI_RUNTIMES[runtime]?.command || ["hermes", "acp"];
   const [bin, ...baseArgs] = command;
-  // Hermes prompts for unseen shell hooks on a TTY; in ACP (no TTY) that would
-  // wedge. Auto-accept hooks — real write governance still runs via guardWrite.
-  const args = bin === "hermes" ? [...baseArgs, "--accept-hooks"] : baseArgs;
+  const args = acpSpawnArgs(bin, baseArgs);
 
   const child = spawn(bin, args, { cwd: repo, stdio: ["pipe", "pipe", "pipe"] });
   let stderrTail = "";
@@ -125,7 +165,7 @@ export async function run(host) {
 
   try {
     if (!child.stdin || !child.stdout) throw new Error("child has no stdio");
-    const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
+    const stream = ndJsonStream(Writable.toWeb(child.stdin), jsonRpcLines(child.stdout));
 
     const client = {
       async sessionUpdate({ update }) {
