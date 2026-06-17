@@ -47,10 +47,13 @@ PATTERNS=(
   "Bearer Token|Bearer\s+[A-Za-z0-9_\-\.]{20,}"
 )
 
-# Files to scan (exclude .git, binary files, .env.example)
+# Files to scan (exclude .git, binary files, .env.example, and the vendored
+# skill-library — integrity-locked official upstream skills (OGR09), whose docs
+# carry example/placeholder tokens like "xoxp-new-..." that are not real secrets)
 SCAN_FILES=$(find "$REPO" \
   -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
+  -not -path "*/skill-library/*" \
   -not -path "*/.env.example" \
   -not -name "*.pdf" \
   -not -name "*.png" \
