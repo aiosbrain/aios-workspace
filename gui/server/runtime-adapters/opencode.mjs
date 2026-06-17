@@ -70,6 +70,14 @@ export function mapOpencodeEvent(event, sessionId) {
   }
 }
 
+// `opencode serve` uses HTTP Basic auth (username "opencode") when
+// OPENCODE_SERVER_PASSWORD is set — Bearer is rejected with 401. Returns {} when
+// no password is configured. Exported for the auth-header unit test.
+export function authHeader(password) {
+  if (!password) return {};
+  return { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` };
+}
+
 // Parse the chosen permission optionId → opencode's response vocabulary.
 function toPermissionResponse(choice) {
   if (choice === "once" || choice === "always" || choice === "reject") return choice;
@@ -127,8 +135,7 @@ export async function run(host) {
     return;
   }
 
-  const pwd = process.env.OPENCODE_SERVER_PASSWORD;
-  const authHeaders = pwd ? { Authorization: `Bearer ${pwd}` } : {};
+  const authHeaders = authHeader(process.env.OPENCODE_SERVER_PASSWORD);
   const json = (extra) => ({ "Content-Type": "application/json", ...authHeaders, ...extra });
 
   // 2. Create a session.

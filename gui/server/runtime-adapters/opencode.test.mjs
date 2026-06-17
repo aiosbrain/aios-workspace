@@ -6,7 +6,20 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapOpencodeEvent } from "./opencode.mjs";
+import { mapOpencodeEvent, authHeader } from "./opencode.mjs";
+
+test("authHeader: no password → no Authorization header", () => {
+  assert.deepEqual(authHeader(undefined), {});
+  assert.deepEqual(authHeader(""), {});
+});
+
+test("authHeader: uses HTTP Basic auth with username 'opencode' (not Bearer)", () => {
+  const h = authHeader("s3cret");
+  assert.equal(h.Authorization, `Basic ${Buffer.from("opencode:s3cret").toString("base64")}`);
+  // round-trips to opencode:<password>
+  const decoded = Buffer.from(h.Authorization.split(" ")[1], "base64").toString();
+  assert.equal(decoded, "opencode:s3cret");
+});
 
 const SID = "ses_mine";
 const textPart = (over) => ({ id: "p1", sessionID: SID, messageID: "m1", type: "text", text: "", ...over });
