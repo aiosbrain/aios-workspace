@@ -63,6 +63,9 @@ body {
 .chat-item.on { background: var(--accent-soft); color: var(--text); border-color: rgba(124,58,237,0.35); }
 
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 8px 4px; }
+.safety-banner { align-self: stretch; font-size: 12px; color: #e8c37a; background: rgba(232, 195, 122, 0.10); border: 1px solid rgba(232, 195, 122, 0.30); border-radius: 8px; padding: 7px 11px; margin-bottom: 4px; }
+.runtime-badge { font-family: var(--mono); font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; align-self: flex-start; }
+.runtime-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .privacy { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
 .repo { font-family: var(--mono); font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

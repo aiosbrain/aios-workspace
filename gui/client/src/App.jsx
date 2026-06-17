@@ -84,6 +84,8 @@ const token = new URLSearchParams(window.location.search).get("token") || "";
 
 export default function App() {
   const [repo, setRepo] = useState("");
+  const [runtime, setRuntime] = useState(""); // agent_runtime driving this session
+  const [safetyNote, setSafetyNote] = useState(null); // write-guard tier note from server
   const [view, setView] = useState("chat"); // "chat" | "review" | "integrations" | "team"
   const [role, setRole] = useState(null); // brain member role; only lead/admin see Team
   const [connected, setConnected] = useState(false);
@@ -168,7 +170,7 @@ export default function App() {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       switch (msg.type) {
-        case "hello": setRepo(msg.repo); setCurrentSession(msg.sessionId); loadChats(); break;
+        case "hello": setRepo(msg.repo); setRuntime(msg.runtime || ""); setSafetyNote(msg.safetyNote || null); setCurrentSession(msg.sessionId); loadChats(); break;
         case "echo_user": break; // already rendered optimistically
         case "delta": appendDelta(msg.text); break;
         case "assistant_done": finishAssistant(); break;
@@ -278,6 +280,12 @@ export default function App() {
     setPermissions((prev) => prev.filter((p) => p.id !== id));
   };
 
+  // Option-based runtimes (ACP) reply with one of the agent's own option IDs.
+  const respondPermissionOption = (id, optionId) => {
+    wsRef.current?.send(JSON.stringify({ type: "permission_response", id, optionId }));
+    setPermissions((prev) => prev.filter((p) => p.id !== id));
+  };
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -312,6 +320,11 @@ export default function App() {
           </div>
         </div>
         <div className="side-foot">
+          {runtime && (
+            <div className="runtime-badge" title={`Agent runtime: ${runtime}`}>
+              <span className="runtime-dot" />{runtime}
+            </div>
+          )}
           <div className="privacy" title="Your keys are encrypted on this machine and never sent to the team brain.">🔒 Keys stay on this machine</div>
           <div className="repo" title={repo}>{repo}</div>
         </div>
@@ -339,6 +352,11 @@ export default function App() {
         </label>
       </div>
       <main>
+        {safetyNote && (
+          <div className="safety-banner" title="Writes the agent makes through its own shell run after the turn ends are scanned, not blocked beforehand.">
+            ⚠ {safetyNote}
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="empty">
             <p>Welcome to your workspace. Start by letting the agent learn who you are.</p>
@@ -371,8 +389,22 @@ export default function App() {
             </div>
             <pre>{JSON.stringify(p.input, null, 2).slice(0, 1200)}</pre>
             <div className="perm-actions">
-              <button className="allow" onClick={() => respondPermission(p.id, true)}>Allow</button>
-              <button className="deny" onClick={() => respondPermission(p.id, false)}>Deny</button>
+              {Array.isArray(p.options) && p.options.length ? (
+                p.options.map((o) => (
+                  <button
+                    key={o.optionId}
+                    className={/deny|reject|cancel/i.test(o.kind || "") ? "deny" : "allow"}
+                    onClick={() => respondPermissionOption(p.id, o.optionId)}
+                  >
+                    {o.name}
+                  </button>
+                ))
+              ) : (
+                <>
+                  <button className="allow" onClick={() => respondPermission(p.id, true)}>Allow</button>
+                  <button className="deny" onClick={() => respondPermission(p.id, false)}>Deny</button>
+                </>
+              )}
             </div>
           </div>
         ))}

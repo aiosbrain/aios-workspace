@@ -3,8 +3,10 @@
 > Status: **Phase 1 done** (config + docs). **Phase 2 done** — `aios skills
 > export --runtime <name>` + `--install` + a round-trip validator (OGR06);
 > only true per-runtime multi-agent harness equivalents are carried forward.
-> Phase 3 (GUI multi-backend) is designed but not yet built. This document is
-> both the design/roadmap and the user-facing reference for choosing a runtime.
+> **Phase 3 (GUI multi-backend) in progress** — adapter seam + shared registry +
+> host write-guard shipped; the **ACP adapter (Hermes) is live**. Codex/OpenCode
+> adapters are the remaining slice. This document is both the design/roadmap and
+> the user-facing reference for choosing a runtime.
 
 The workspace should not assume one agent. A contributor should be able to
 **choose the agent runtime** that drives their workspace — Claude Code, Hermes
@@ -159,21 +161,37 @@ emits exactly one H1 per skill.
 
 Goal: the local cockpit (`npm run gui`) drives any runtime, not just the SDK.
 
-1. **Extract a runtime-adapter interface** behind the one seam in
-   `gui/server/index.mjs` (the `query()` call):
-   ```
-   createSession(runtime, { cwd, systemPrompt, skills }) -> {
-     send(message), onDelta(cb), onToolUse(cb), onDone(cb), interrupt()
-   }
-   ```
-2. **Implement adapters:**
-   - `claude-agent-sdk` (refactor of today's code — no behavior change).
-   - `hermes` (drive the Hermes dashboard/ACP API or its MCP surface).
-   - `openclaw`, `codex`, `opencode`, `claude-api`.
-3. **Normalize the event stream** (delta / tool-use / done) so the React client
-   is runtime-agnostic; the session announces its active runtime in the UI.
-4. **Select the adapter from `agent_runtime`** (Phase-1 config), with per-session
-   override. Falls back to `claude-code` if a runtime is unreachable.
+The one seam in `gui/server/index.mjs` (the `query()` call) is now a
+**runtime-adapter interface**. Each adapter exports `run(host)` and emits the
+same normalized WS events (`delta` / `tool_use` / `tool_result` /
+`assistant_done` / `result` / `error`), so the React client is runtime-agnostic.
+
+- ✅ **Adapter seam + `claude-code` adapter** — a faithful extraction of the
+  original `query()` loop; byte-identical when `agent_runtime` is unset.
+- ✅ **Single source of truth** — `scripts/runtimes.mjs` drives Phase 2 export,
+  the GUI registry, and OGR04/OGR07. Selection is **fail-loud**: an unknown,
+  `gui:false` (claude-api), or unreachable runtime emits a clear `error` naming
+  the runtime and the fix command. **There is no silent fallback to claude-code.**
+- ✅ **Host-side write guard** (`guardWrite`) — reuses `hooks/team-ops-guard.sh`
+  so secrets / admin-tier leakage / path-escape are blocked uniformly.
+- ✅ **ACP adapter (`hermes`, `openclaw`)** — `runtime-adapters/acp.mjs` spawns
+  `hermes acp` and speaks ACP (JSON-RPC/stdio) via `@agentclientprotocol/sdk`.
+  Governance is **two-layer**, because ACP agents mutate files two ways:
+  1. *Host-mediated* `fs/write_text_file` requests are **pre-gated through
+     `guardWrite`** and only the guard-resolved, in-repo path is written.
+  2. The agent can also run shell/file tools **inside its own process**
+     (we don't advertise the `terminal` capability), which bypasses (1) — so
+     after every turn a **post-turn sweep** re-runs the same guard over the
+     files the turn changed and emits a blocking `error` on a violation. The UI
+     shows a banner: *shell-driven changes are validated after the turn, not
+     pre-gated.* (Observed: Hermes tends to use its own file tools, so the sweep
+     is the primary net for it today.) Tool permissions are **option-based** (a
+     button per ACP option); tab-close sends `session/cancel` and reaps the child.
+- ☐ **`codex`, `opencode`** — native runtimes whose writes execute in-process;
+  same post-turn-sweep + banner tier as the ACP in-process path. Next slice.
+
+The session announces its active runtime in the UI (a runtime badge), selected
+from `agent_runtime` in `aios.yaml` (Phase-1 config).
 
 ---
 

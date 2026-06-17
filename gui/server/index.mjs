@@ -25,6 +25,7 @@ import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
 import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
+import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
 import { readSkills, readIntegrations, firstSentence, frontmatter } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { listLibrary, installSkill, uninstallSkill } from "./skill-library.mjs";
@@ -453,8 +454,10 @@ wss.on("connection", (ws, req) => {
       if (!titleSet) { upsertSession(sessionId, { title: msg.text.replace(/\s+/g, " ").trim().slice(0, 80) }); titleSet = true; }
       pushUser(msg.text, typeof msg.model === "string" ? msg.model : undefined);
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
-      pending.get(msg.id)(!!msg.allow);
+      const resolve = pending.get(msg.id);
       pending.delete(msg.id);
+      // Option-based runtimes (ACP) reply with an optionId; Claude replies allow/deny.
+      resolve(typeof msg.optionId === "string" ? msg.optionId : !!msg.allow);
     }
   });
 
@@ -480,21 +483,43 @@ wss.on("connection", (ws, req) => {
       : { behavior: "deny", message: "Denied in the GUI" };
   };
 
+  // Option-based permission (ACP / OpenCode): the adapter passes the runtime's
+  // own options; the client renders a button per option and replies with an
+  // optionId. Returns the chosen optionId (string), or null if the tab closed /
+  // it timed out (the adapter maps a non-string to a "cancelled" outcome).
+  const requestPermission = async ({ title, content, options }) => {
+    const id = nextPermId++;
+    send({ type: "permission_request", id, tool: title, input: content, options });
+    return new Promise((resolve) => {
+      pending.set(id, resolve);
+      setTimeout(() => {
+        if (pending.has(id)) { pending.delete(id); resolve(null); }
+      }, 5 * 60 * 1000).unref?.();
+    });
+  };
+
   // One adapter drives this session, selected by agent_runtime in aios.yaml
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
   const { runtime, model, baseUrl, personality } = readAgentConfig(repo);
+  // claude-code's PreToolUse hook pre-gates every write natively. Other drivers
+  // can mutate files via in-process shell tools that bypass the host write-gate,
+  // so they're validated by a post-turn sweep — say so in the UI (honest tier).
+  const driver = GUI_RUNTIMES[runtime]?.driver;
+  const safetyNote = driver && driver !== "claude-sdk"
+    ? "Shell-driven file changes are validated after each turn, not pre-gated."
+    : null;
   // Register/refresh this chat so it appears in the sidebar list and is restorable.
   upsertSession(sessionId, { model });
-  send({ type: "hello", repo, sessionId, runtime, resumed: !!resumeId });
+  send({ type: "hello", repo, sessionId, runtime, safetyNote, resumed: !!resumeId });
 
   (async () => {
     try {
       const adapter = createAdapter(runtime);
       await adapter.run({
-        repo, model, baseUrl, personality,
-        ...(resumeId ? { resume: resumeId } : { sessionId }), // continue vs. pin a new SDK session
-        input: input(), emit, confirmClaudeTool, signal: ac.signal,
+        repo, runtime, model, baseUrl, personality,
+        ...(resumeId ? { resume: resumeId } : { sessionId }), // claude SDK: continue vs. pin a new session
+        input: input(), emit, confirmClaudeTool, requestPermission, signal: ac.signal,
         // host-side governance for runtimes whose writes are host-mediated (ACP fs/write)
         guardWrite: (args) => runGuardWrite({ repo, ...args }),
       });
