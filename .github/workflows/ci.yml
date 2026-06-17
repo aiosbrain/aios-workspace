@@ -34,6 +34,14 @@ jobs:
           node test/skill-install.test.mjs
           node test/suggest-connectors.test.mjs
 
+      - name: Runtime-adapter contract tests (BYOA Phase 3)
+        run: |
+          # the ACP adapter imports @agentclientprotocol/sdk (peer: zod); the rest
+          # of the mappers need no deps. Install just these, then run every adapter
+          # test incl. the recorded-transcript fixtures.
+          npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
+          node --test gui/server/runtime-adapters/*.test.mjs
+
       - name: Scaffold smoke test + validate (project profile)
         run: |
           bash scripts/scaffold-project.sh \
