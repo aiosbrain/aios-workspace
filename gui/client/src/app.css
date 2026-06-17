@@ -269,14 +269,15 @@ footer button:disabled { opacity: 0.4; cursor: default; }
 /* ── onboarding: draft from a link ── */
 .enrich { margin: 14px auto 4px; max-width: 380px; }
 .enrich-or { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
-.enrich-form { display: flex; gap: 6px; }
-.enrich-form input {
-  flex: 1; background: var(--surface); color: var(--text); border: 1px solid var(--border);
-  border-radius: 9px; padding: 9px 12px; font: inherit; font-size: 13px; outline: none;
+.enrich-form { display: flex; flex-direction: column; gap: 6px; }
+.enrich-input {
+  width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; font: inherit;
+  font-size: 13px; outline: none; resize: vertical; min-height: 38px; line-height: 1.4;
 }
-.enrich-form input:focus { border-color: var(--accent); }
+.enrich-input:focus { border-color: var(--accent); }
 .enrich-form button {
-  padding: 0 16px; border-radius: 9px; cursor: pointer;
+  align-self: flex-end; padding: 8px 16px; border-radius: 9px; cursor: pointer;
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border); font: inherit; font-weight: 600;
 }
 .enrich-form button:disabled { opacity: 0.4; cursor: default; }
