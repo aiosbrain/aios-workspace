@@ -13,11 +13,13 @@ import { parseFlatYaml } from "../../../scripts/flat-yaml.mjs";
 import { RUNTIMES, GUI_RUNTIMES } from "../../../scripts/runtimes.mjs";
 import * as claudeCode from "./claude-code.mjs";
 import * as acp from "./acp.mjs";
+import * as codex from "./codex.mjs";
 
-// driver → adapter module (filled in as slices land: codex/opencode next).
+// driver → adapter module (filled in as slices land: opencode next).
 const ADAPTERS = {
   "claude-sdk": claudeCode,
-  "acp": acp, // hermes (+ openclaw once its spawn command is confirmed)
+  "acp": acp,     // hermes (+ openclaw once its spawn command is confirmed)
+  "codex": codex, // native runtime — post-turn-sweep governance tier
 };
 
 /** Read the runtime selection from aios.yaml. Default claude-code ⇒ no change. */
