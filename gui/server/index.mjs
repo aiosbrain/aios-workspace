@@ -23,6 +23,9 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
+import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import { MEMORY_FILES } from "./memory-files.mjs";
+import { reviewTurn, applyMemoryUpdates, undoMemoryWrite, callModel, loadSecretPatterns, isTrivialAck, containsSecret } from "./memory-reviewer.mjs";
 import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
@@ -112,7 +115,21 @@ const server = http.createServer((req, res) => {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
     const cfg = readAgentConfig(repo);
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ model: cfg.model, personality: cfg.personality, runtime: cfg.runtime, models: [...ALLOWED_MODELS] }));
+    return res.end(JSON.stringify({ model: cfg.model, personality: cfg.personality, runtime: cfg.runtime, memoryReview: cfg.memoryReview, models: [...ALLOWED_MODELS] }));
+  }
+  if (url.pathname === "/api/config/memory-review" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1e4) req.destroy(); });
+    req.on("end", () => {
+      let enabled;
+      try { enabled = !!JSON.parse(body || "{}").enabled; } catch { enabled = true; }
+      try { setAiosKey(repo, "memory_review", enabled ? "on" : "off"); }
+      catch (e) { res.writeHead(500, { "Content-Type": "application/json" }); return res.end(JSON.stringify({ ok: false, error: e.message })); }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, memoryReview: enabled }));
+    });
+    return;
   }
   if (url.pathname === "/api/config/model" && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) { res.writeHead(401); return res.end("unauthorized"); }
@@ -362,7 +379,7 @@ function stripAnsi(s) {
 
 // Keys the GUI is allowed to write into aios.yaml. Callers validate the VALUE
 // (model ∈ ALLOWED_MODELS; personality ∈ scanned dir) before calling.
-const AIOS_WRITABLE_KEYS = new Set(["agent_model", "agent_personality"]);
+const AIOS_WRITABLE_KEYS = new Set(["agent_model", "agent_personality", "memory_review"]);
 
 // Set a single flat key in aios.yaml, preserving the rest. Replaces an existing
 // non-comment `key:` line (anchored at column 0, so a commented "# key:" is left
@@ -431,6 +448,48 @@ wss.on("connection", (ws, req) => {
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
   let titleSet = !!readSessionIndex().sessions.find((s) => s.id === sessionId)?.title;
 
+  // ── background memory reviewer state (claude-code only; gated below) ──
+  let reviewerActive = false;                 // set once config is read, before the run
+  const secretPatterns = loadSecretPatterns(repo);
+  const memBaselines = {};                     // file -> content at session start / last our-write (dirty-tree CAS)
+  for (const m of MEMORY_FILES) {
+    try { memBaselines[m.file] = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); } catch { /* absent */ }
+  }
+  const memoryUndos = new Map();               // undo_id -> { id, file, path, prevContent, writtenHash }
+  let curTurn = { user: "", assistant: "" };   // the in-flight turn, captured for the reviewer
+  let reviewing = false;                        // serialize: drop overlapping reviews
+  let reviewsThisSession = 0;
+  const REVIEW_CAP = 40;                        // per-session backstop on review calls (cost cap)
+
+  // After a turn, conservatively learn from it. Async, never blocks the turn; any
+  // failure is swallowed. All trust-boundary gating lives in memory-reviewer.mjs.
+  async function runMemoryReview() {
+    if (!reviewerActive || reviewing) return;
+    if (ws.readyState !== ws.OPEN) return;                       // no write the user can't see/undo
+    if (reviewsThisSession >= REVIEW_CAP) return;
+    const turn = { user: curTurn.user, assistant: curTurn.assistant };
+    if (isTrivialAck(turn.user)) return;                         // cheap pre-gate
+    if (containsSecret(`${turn.user}\n${turn.assistant}`, secretPatterns)) return; // don't ship secrets to a 2nd model
+    reviewing = true; reviewsThisSession++;
+    try {
+      const fileContents = {};
+      for (const m of MEMORY_FILES) {
+        try { fileContents[m.file] = readFileSync(path.join(repo, ".claude", "memory", m.file), "utf8"); } catch { fileContents[m.file] = ""; }
+      }
+      const facts = await reviewTurn({ turn, fileContents, callModel: (p) => callModel(p, { query: sdkQuery }) });
+      if (!facts.length) return;
+      const { events, undos } = applyMemoryUpdates({
+        repo, facts, baselines: memBaselines,
+        socketOpen: ws.readyState === ws.OPEN,
+        guardWrite: (args) => runGuardWrite({ repo, ...args }),
+        secretPatterns,
+      });
+      for (const u of undos) memoryUndos.set(u.id, u);
+      for (const ev of events) emit(ev);                          // 💾 memory_updated → client notice
+    } catch (e) { console.error("memory review:", e?.message || e); }
+    finally { reviewing = false; }
+  }
+
   const send = (obj) => {
     try { ws.send(JSON.stringify(obj)); } catch { /* closed */ }
     try { appendFileSync(transcript, JSON.stringify(obj) + "\n"); } catch { /* best-effort */ }
@@ -438,8 +497,9 @@ wss.on("connection", (ws, req) => {
   // Adapter event sink: same as send(), plus keep the session index fresh.
   const emit = (obj) => {
     send(obj);
+    if (obj.type === "delta" && typeof obj.text === "string") curTurn.assistant += obj.text; // capture for the reviewer
     if ((obj.type === "session" || obj.type === "model") && obj.model) upsertSession(sessionId, { model: obj.model });
-    else if (obj.type === "result") upsertSession(sessionId, {}); // bump updatedAt
+    else if (obj.type === "result") { upsertSession(sessionId, {}); runMemoryReview(); } // bump updatedAt + learn (async)
   };
 
   // Streaming-input generator fed by a queue: user turns arrive over WS.
@@ -470,12 +530,18 @@ wss.on("connection", (ws, req) => {
     if (msg.type === "user_message" && typeof msg.text === "string") {
       send({ type: "echo_user", text: msg.text });
       if (!titleSet) { upsertSession(sessionId, { title: msg.text.replace(/\s+/g, " ").trim().slice(0, 80) }); titleSet = true; }
+      curTurn = { user: msg.text, assistant: "" };   // start a fresh turn for the reviewer
       pushUser(msg.text, typeof msg.model === "string" ? msg.model : undefined);
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
       const resolve = pending.get(msg.id);
       pending.delete(msg.id);
       // Option-based runtimes (ACP) reply with an optionId; Claude replies allow/deny.
       resolve(typeof msg.optionId === "string" ? msg.optionId : !!msg.allow);
+    } else if (msg.type === "memory_undo" && typeof msg.id === "string" && memoryUndos.has(msg.id)) {
+      const u = memoryUndos.get(msg.id);
+      const ok = undoMemoryWrite(u);               // compare-and-swap: only if the file is still what we wrote
+      if (ok) { memoryUndos.delete(msg.id); memBaselines[u.file] = u.prevContent; }
+      emit({ type: "memory_undone", id: msg.id, ok });
     }
   });
 
@@ -519,7 +585,11 @@ wss.on("connection", (ws, req) => {
   // One adapter drives this session, selected by agent_runtime in aios.yaml
   // (default claude-code ⇒ unchanged). createAdapter fails loudly on an
   // unknown / non-GUI / not-yet-implemented runtime — never silent fallback.
-  const { runtime, model, baseUrl, personality } = readAgentConfig(repo);
+  const { runtime, model, baseUrl, personality, memoryReview } = readAgentConfig(repo);
+  // Background memory reviewer: ONLY for the claude-code runtime (it reuses the
+  // Agent SDK's ambient auth) and only when enabled. Other runtimes (codex,
+  // opencode, ACP, local) must never trigger a silent Anthropic call — BYOA.
+  reviewerActive = memoryReview && runtime === "claude-code";
   // claude-code's PreToolUse hook pre-gates every write natively. Other drivers
   // can mutate files via in-process shell tools that bypass the host write-gate,
   // so they're validated by a post-turn sweep — say so in the UI (honest tier).

@@ -71,6 +71,19 @@ starts a **new chat** so the new voice takes effect.
 
 {/* SCREENSHOT: Settings → Personality panel with the four presets */}
 
+### Memory
+
+Open **Settings → Memory** to control the **background reviewer**. When on (the
+default), a fast model conservatively saves durable facts about you and your
+workspace to `.claude/memory/USER.md` / `WORKSPACE.md` after each turn — you get a
+**💾 memory updated** notice with an **undo**, and changes take effect next session.
+
+<Aside type="note">
+The model only proposes tiny facts; the server does the writing, fail-closed:
+secrets are never sent or saved, your own edits are never overwritten, and nothing
+is committed to git. Available on the **claude-code** runtime only.
+</Aside>
+
 ## Skills
 
 The **Skills** tab installs **official Anthropic skills**, vendored from

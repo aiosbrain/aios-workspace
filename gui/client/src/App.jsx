@@ -66,7 +66,8 @@ function buildMessagesFromEvents(events) {
         if (typeof ev.cost_usd === "number") prevCost = ev.cost_usd;
         lastUsage = null;
         break;
-      default: break; // hello, model, session, permission_request → not replayed
+      default: break; // hello, model, session, permission_request, memory_* → not replayed
+                       // (memory notices are live-only; their undo CAS isn't valid on replay)
     }
   }
   const last = msgs[msgs.length - 1];
@@ -210,6 +211,13 @@ export default function App() {
           setBusy(false);
           append({ kind: "meta", text: `error: ${msg.message}`, error: true });
           break;
+        case "memory_updated": // background reviewer saved a fact (takes effect next session)
+          append({ kind: "memory", id: msg.id, file: msg.file, summary: msg.summary });
+          break;
+        case "memory_undone":
+          setMessages((prev) => prev.map((m) =>
+            m.kind === "memory" && m.id === msg.id ? { ...m, undone: msg.ok, undoFailed: !msg.ok } : m));
+          break;
         default: break;
       }
     };
@@ -279,6 +287,11 @@ export default function App() {
   const respondPermission = (id, allow) => {
     wsRef.current?.send(JSON.stringify({ type: "permission_response", id, allow }));
     setPermissions((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  // Undo a background-reviewer memory write (compare-and-swap on the server).
+  const undoMemory = (id) => {
+    wsRef.current?.send(JSON.stringify({ type: "memory_undo", id }));
   };
 
   // Option-based runtimes (ACP) reply with one of the agent's own option IDs.
@@ -409,6 +422,16 @@ export default function App() {
               </div>
             );
           if (m.kind === "tool") return <ToolCard key={i} tool={m} />;
+          if (m.kind === "memory")
+            return (
+              <div key={i} className="msg memory">
+                💾 Memory updated · <code>{m.file}</code> — {m.summary}
+                <span className="memory-sub"> (takes effect next session)</span>
+                {m.undone ? <span className="memory-done"> · undone</span>
+                  : m.undoFailed ? <span className="memory-done"> · undo unavailable (file changed)</span>
+                  : <button className="memory-undo" onClick={() => undoMemory(m.id)}>undo</button>}
+              </div>
+            );
           return <div key={i} className={`msg meta${m.error ? " error" : ""}`}>{m.text}</div>;
         })}
         {permissions.map((p) => (
@@ -506,13 +529,30 @@ function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
   const [personalities, setPersonalities] = useState(null);
   const [current, setCurrent] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [memReview, setMemReview] = useState(null); // null = loading
+  const [runtime, setRuntime] = useState("");
 
   useEffect(() => {
     fetch(`/api/personalities?token=${token}`)
       .then((r) => r.json())
       .then((d) => { setPersonalities(d.personalities || []); setCurrent(d.current); })
       .catch(() => setPersonalities([]));
+    fetch(`/api/config?token=${token}`)
+      .then((r) => r.json())
+      .then((d) => { setMemReview(d.memoryReview !== false); setRuntime(d.runtime || ""); })
+      .catch(() => setMemReview(true));
   }, []);
+
+  const toggleMemReview = async () => {
+    const next = !memReview;
+    setMemReview(next);
+    try {
+      await fetch(`/api/config/memory-review?token=${token}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+    } catch { setMemReview(!next); } // revert on failure
+  };
 
   const pick = async (id) => {
     if (id === current || saving) return;
@@ -569,6 +609,20 @@ function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
         </div>
       )}
       <p className="int-foot">Changing personality starts a new chat so the new voice takes effect.</p>
+
+      <h3 className="int-section">Memory</h3>
+      <label className="mem-toggle">
+        <input type="checkbox" checked={!!memReview} disabled={memReview === null || runtime !== "claude-code"} onChange={toggleMemReview} />
+        <span>Auto-update my workspace memory after each turn</span>
+      </label>
+      <p className="int-sub">
+        A fast model (Haiku) conservatively saves durable facts to
+        {" "}<code>.claude/memory/USER.md</code> / <code>WORKSPACE.md</code> — you get a 💾 notice with an
+        undo, and changes take effect next session. Secrets are never sent or saved.
+        {runtime && runtime !== "claude-code"
+          ? <> Unavailable on the <code>{runtime}</code> runtime (claude-code only).</>
+          : null}
+      </p>
     </div>
   );
 }
