@@ -124,8 +124,10 @@ proactive behavior is intentionally deferred to the background reviewer (see
 
 ## Update tooling from connected integrations (manual)
 
-Nothing fires this skill automatically when a tool is connected, so refresh tooling
-**when this skill runs** or when the user says **"update my tooling"**:
+Refresh tooling **only during a full setup/onboarding run, or when the user explicitly
+says "update my tooling"** — never as a side-effect of a "remember that" / "note that" /
+"update my profile" one-off (those do *only* the requested single change). Nothing fires
+this skill automatically when a tool is connected.
 
 1. Read `.claude/integrations.json` and collect every connector with `status: "wired"`.
 2. Update the **Tooling** line in `WORKSPACE.md` to reflect that connected set (confirm,

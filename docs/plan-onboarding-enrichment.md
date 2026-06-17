@@ -1,6 +1,9 @@
 # Plan — Onboarding enrichment (paste a link → drafted profile)
 
-> Status: **plan**. Branch TBD (`feat/onboarding-enrichment`).
+> Status: **superseded / historical.** Shipped and reshaped across #20, #24, #26, #27:
+> onboarding now reads **one or a few** links and drafts the **two-axis workspace memory**
+> (`.claude/memory/USER.md` + `WORKSPACE.md`) plus canonical `0-context/` — not a single
+> `.claude/CLAUDE.md` profile. Kept for historical context only.
 
 ## Context
 
