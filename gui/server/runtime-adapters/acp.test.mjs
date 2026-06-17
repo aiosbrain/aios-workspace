@@ -7,7 +7,51 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapSessionUpdate } from "./acp.mjs";
+import { Readable } from "node:stream";
+import { mapSessionUpdate, acpSpawnArgs, jsonRpcLines } from "./acp.mjs";
+
+test("jsonRpcLines drops non-JSON stdout noise (banners), keeps JSON-RPC lines", async () => {
+  // Simulate OpenClaw's stdout: a boxed config-warning banner interleaved with
+  // real ndJSON-RPC messages.
+  const raw = [
+    "Config warnings:",
+    "┌─────────────────────────────────────────┐",
+    '│  - plugins.entries.minimax-portal-auth   │',
+    "└─────────────────────────────────────────┘",
+    '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}',
+    '{"jsonrpc":"2.0","method":"session/update","params":{"x":1}}',
+  ].join("\n") + "\n";
+  const web = jsonRpcLines(Readable.from([raw]));
+  const reader = web.getReader();
+  const dec = new TextDecoder();
+  let out = "";
+  for (;;) { const { value, done } = await reader.read(); if (done) break; out += dec.decode(value); }
+  const lines = out.split("\n").filter(Boolean);
+  assert.equal(lines.length, 2); // only the two JSON-RPC objects survive
+  assert.deepEqual(JSON.parse(lines[0]), { jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } });
+  assert.equal(JSON.parse(lines[1]).method, "session/update");
+});
+
+test("acpSpawnArgs: hermes appends --accept-hooks", () => {
+  assert.deepEqual(acpSpawnArgs("hermes", ["acp"], {}), ["acp", "--accept-hooks"]);
+});
+
+test("acpSpawnArgs: openclaw with no gateway password is unchanged", () => {
+  assert.deepEqual(acpSpawnArgs("openclaw", ["acp"], {}), ["acp"]);
+});
+
+test("acpSpawnArgs: openclaw prefers --password-file over --password", () => {
+  const env = { OPENCLAW_GATEWAY_PASSWORD_FILE: "/secrets/pw", OPENCLAW_GATEWAY_PASSWORD: "inline" };
+  assert.deepEqual(acpSpawnArgs("openclaw", ["acp"], env), ["acp", "--password-file", "/secrets/pw"]);
+});
+
+test("acpSpawnArgs: openclaw falls back to --password when only the inline var is set", () => {
+  assert.deepEqual(acpSpawnArgs("openclaw", ["acp"], { OPENCLAW_GATEWAY_PASSWORD: "s3cret" }), ["acp", "--password", "s3cret"]);
+});
+
+test("acpSpawnArgs: unknown bin is unchanged", () => {
+  assert.deepEqual(acpSpawnArgs("somebin", ["acp"], { OPENCLAW_GATEWAY_PASSWORD: "x" }), ["acp"]);
+});
 
 test("agent_message_chunk (text) → delta{text}", () => {
   const out = mapSessionUpdate({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello " } });
