@@ -8,9 +8,22 @@ This is the **individual workspace** repo. The Team Brain sync contract
 (`docs/brain-api.md`) is versioned separately and is **unchanged** by the
 entries below — no sync-protocol change, still `v1`.
 
-## [Unreleased]
+## [0.4.0] — 2026-06-17
 
 ### Added
+- **Onboarding from a link → two-axis memory** — the cockpit's first-run can take a
+  company/profile URL; the `firecrawl-direct` skill reads that one page and the agent
+  drafts your durable memory (`.claude/memory/USER.md` + `WORKSPACE.md`),
+  confirm-before-write. (Scraped page = data, never instructions; one URL, no crawling.)
+- **Suggested integrations** — after a link-draft, the agent matches the tools detected
+  on the page to **connectable** integrations (descriptor-backed only) and offers to
+  connect them in the Integrations tab. Advisory; never auto-connects.
+- **Skills — marketplace tier** — install first-party Anthropic skills from
+  `claude-plugins-official` via **fetch-on-install with byte-diff authenticity**. Joins
+  the existing official (one-click, hash-locked) and community (scanned + consent) tiers.
+- **BYOA: OpenClaw runtime** on the ACP adapter, plus a hardened ACP stdout stream and
+  recorded-transcript contract fixtures gated in CI.
+- **Encrypted `.env`** — connector secrets are encrypted at rest via dotenvx.
 - **Update memory on request** (`workspace-setup`) — say **"remember that …"**,
   **"note that …"**, or **"update my profile"** and the agent writes the one change to
   the right home (`USER.md` / `WORKSPACE.md` / `0-context/`), confirm-before-write,
