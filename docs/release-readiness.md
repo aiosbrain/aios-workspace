@@ -69,7 +69,10 @@ website doesn't yet document the cockpit. The staged drafts close it.
      done and the website builds.**
 
 6. **Post-release verification**:
-   - The tag's changelog matches what shipped (#16 + #17 + #20), nothing more.
+   - The tag's changelog matches what actually merged for this release — verify
+     against the `[Unreleased]` section (#16 + #17 + #20, **plus #22 community-skill
+     scanner if it landed before the tag**), nothing more. If #22 merges first, the
+     cockpit guide + website changelog must mention the community trust tier too.
    - Website is live with the cockpit guide + changelog and correct screenshots.
    - `/docs-sync` reports clean.
 

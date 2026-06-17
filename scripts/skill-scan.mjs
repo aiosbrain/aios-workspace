@@ -29,7 +29,7 @@
  * Usage (CLI):  node scripts/skill-scan.mjs <skill-dir> [--json]
  */
 
-import { readFileSync, readdirSync, lstatSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync, existsSync, openSync, readSync, closeSync } from "node:fs";
 import path from "node:path";
 
 const CODE_RE = /\.(py|mjs|cjs|js|jsx|ts|tsx|sh|bash|zsh|rb|go|pl|php|ps1)$/i;
@@ -96,14 +96,28 @@ function walk(root, rel = "") {
     const st = lstatSync(path.join(root, relChild));
     if (st.isSymbolicLink()) { out.push({ rel: relChild, symlink: true, size: 0 }); continue; }
     if (st.isDirectory()) out.push(...walk(root, relChild));
-    else if (st.isFile()) out.push({ rel: relChild, symlink: false, size: st.size });
+    else if (st.isFile()) out.push({ rel: relChild, symlink: false, size: st.size, exec: (st.mode & 0o111) !== 0 });
   }
   return out;
 }
 
-function scanText(file, text, findings, { isSkillMd }) {
+// Peek a file's first bytes to classify what an extension didn't: a leading "#!" is an
+// executable script (must be scanned as code); a NUL byte means binary (don't scan as text).
+function peek(abs) {
+  let fd;
+  try {
+    fd = openSync(abs, "r");
+    const buf = Buffer.alloc(512);
+    const n = readSync(fd, buf, 0, 512, 0);
+    const head = buf.subarray(0, n);
+    return { binary: head.includes(0), shebang: n >= 2 && head[0] === 0x23 && head[1] === 0x21 };
+  } catch { return { binary: false, shebang: false }; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } } }
+}
+
+function scanText(file, text, findings, { isSkillMd, isCode }) {
   const lines = text.split(/\r?\n/);
-  const where = isSkillMd ? "skillmd" : (CODE_RE.test(file) ? "code" : "text");
+  const where = isSkillMd ? "skillmd" : (isCode ? "code" : "text");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const ln = i + 1;
@@ -153,19 +167,30 @@ export function scanSkill(dir) {
 
   for (const e of entries) {
     if (e.symlink) { findings.push({ file: e.rel, line: 0, rule: "symlink", severity: "high", snippet: "symlink in skill tree (may escape the dir)" }); continue; }
-    if (CODE_RE.test(e.rel)) { bundlesCode = true; codeFiles.push(e.rel); }
+    const abs = path.join(dir, e.rel);
+    const byExt = CODE_RE.test(e.rel) || TEXT_RE.test(e.rel);
 
-    if (!TEXT_RE.test(e.rel)) {
-      if (/\.(gz|tgz|zip|tar|bin|so|dylib|dll|exe|wasm)$/i.test(e.rel)) {
-        findings.push({ file: e.rel, line: 0, rule: "opaque-binary", severity: "info", snippet: "bundled non-text file — contents not scannable" });
-      }
+    // Files no extension classified (e.g. an extensionless `scripts/helper`): peek the
+    // bytes so a shebang/executable script can't slip through scanning as "not code".
+    let shebang = false, binary = false;
+    if (!byExt) { const p = peek(abs); shebang = p.shebang; binary = p.binary; }
+
+    // A code extension, a shebang, or the executable bit (on a non-binary file) ⇒ code.
+    const isCode = CODE_RE.test(e.rel) || shebang || (e.exec && !binary);
+    if (isCode) { bundlesCode = true; codeFiles.push(e.rel); }
+
+    // Non-text blobs (archives/binaries) are disclosed but not scanned.
+    if (binary || (!byExt && !isCode && /\.(gz|tgz|zip|tar|bin|so|dylib|dll|exe|wasm)$/i.test(e.rel))) {
+      findings.push({ file: e.rel, line: 0, rule: "opaque-binary", severity: "info", snippet: "bundled non-text file — contents not scannable" });
       continue;
     }
     if (e.size > MAX_BYTES) { findings.push({ file: e.rel, line: 0, rule: "oversize-file", severity: "info", snippet: `file > ${Math.round(MAX_BYTES / 1024)}KB — not scanned` }); continue; }
 
+    // Scan content for: text/code-by-extension, exec/shebang scripts, AND any other
+    // small text-like file (so an extensionless config carrying a URL/secret is caught).
     let text;
-    try { text = readFileSync(path.join(dir, e.rel), "utf8"); } catch { continue; }
-    scanText(e.rel, text, findings, { isSkillMd: e.rel === "SKILL.md" });
+    try { text = readFileSync(abs, "utf8"); } catch { continue; }
+    scanText(e.rel, text, findings, { isSkillMd: e.rel === "SKILL.md", isCode });
   }
 
   // Stable order: by file, then line, then rule.

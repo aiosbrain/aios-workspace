@@ -50,6 +50,18 @@ console.log("skill-scan: injection + exfil skill → high (exact findings)");
   check("bundlesCode true", r.bundlesCode === true);
 }
 
+console.log("skill-scan: extensionless executable helper → code is detected + scanned");
+{
+  // Regression: a shebang script with NO file extension (scripts/helper) must count as
+  // bundled code AND have its content scanned (previously slipped through as low/[]).
+  const r = scanSkill(fx("exec-script-skill"));
+  check("bundlesCode true (shebang, no extension)", r.bundlesCode === true);
+  check("extensionless helper recorded as code", r.codeFiles.includes("scripts/helper"));
+  check("riskClass is high (secret read inside)", r.riskClass === "high");
+  check("secret-read found in scripts/helper", r.findings.some((f) => f.file === "scripts/helper" && f.rule === "secret-read"));
+  check("process-exec found in scripts/helper", r.findings.some((f) => f.file === "scripts/helper" && f.rule === "process-exec"));
+}
+
 console.log("skill-scan: error cases");
 {
   let threw = false;
