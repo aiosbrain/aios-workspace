@@ -84,6 +84,23 @@ main { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: 
 .msg.meta { align-self: center; font-size: 12px; color: var(--text-dim); background: none; padding: 2px; }
 .msg.meta.error { color: var(--red); }
 
+/* background-reviewer memory notice */
+.msg.memory {
+  align-self: center; max-width: 92%; font-size: 12px; color: var(--text-dim);
+  background: var(--accent-soft); border: 1px solid rgba(124,58,237,0.25);
+  border-radius: 8px; padding: 6px 11px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.msg.memory code { font-size: 11.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+.msg.memory .memory-sub { opacity: 0.7; }
+.msg.memory .memory-done { color: var(--green); }
+.memory-undo {
+  margin-left: 4px; padding: 2px 10px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+}
+.memory-undo:hover { border-color: var(--accent); }
+.mem-toggle { display: flex; align-items: center; gap: 9px; font-size: 14px; margin: 2px 0 6px; cursor: pointer; }
+.mem-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+
 /* assistant text is rendered markdown, not preformatted */
 .msg.assistant { white-space: normal; }
 .msg.assistant > :first-child { margin-top: 0; }

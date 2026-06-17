@@ -19,6 +19,16 @@ entries below — no sync-protocol change, still `v1`.
 - **Refresh tooling from connected integrations** — say **"update my tooling"** (or
   re-run setup) and the agent folds wired connectors from `.claude/integrations.json`
   into `WORKSPACE.md`. Manual by design — there's no auto-trigger on connect yet.
+- **Background memory reviewer** (cockpit, `claude-code` runtime) — after each turn a
+  fast model (Haiku) conservatively saves durable facts to `.claude/memory/USER.md` /
+  `WORKSPACE.md`; you get a **💾 memory updated** notice with **undo**, and writes take
+  effect next session. **On by default**, opt out in *Settings → Memory* (`memory_review`
+  in `aios.yaml`). Strict trust boundary: the model only proposes tiny structured facts
+  and deterministic, fail-closed server code does the writing — runtime-gated (no
+  Anthropic call on other runtimes), secrets never sent or written, single-line/no-code
+  facts only, per-file cap, human edits never clobbered (dirty-tree skip + compare-and-
+  swap undo), and nothing is `git commit`ted. New: `gui/server/memory-reviewer.mjs`,
+  `gui/server/memory-files.mjs`.
 
 ## [0.3.0] — 2026-06-17
 

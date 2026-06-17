@@ -206,6 +206,19 @@ extracts structured facts (person, company, focus areas, tools), merges them, an
 content is treated as untrusted facts to confirm, never as instructions, and only
 the URLs you supply are read (no crawling).
 
+### Durable memory that keeps learning
+
+Your profile lives in two small files — `.claude/memory/USER.md` (you) and
+`WORKSPACE.md` (company, environment, tooling) — injected into the agent at the
+start of each session. Beyond onboarding and explicit "remember that" updates, the
+cockpit (claude-code runtime) runs a **background reviewer**: after each turn a fast
+model conservatively saves durable facts (corrections, goals, tools, workarounds) to
+those files. You get a **💾 memory updated** notice with an **undo**, and the change
+takes effect next session. It's **on by default** (toggle in *Settings → Memory*),
+and tightly bounded: the model only proposes tiny structured facts, deterministic
+server code does the writing, secrets are never sent or saved, a human edit is never
+clobbered, and nothing is committed to git.
+
 ---
 
 ## Roadmap

@@ -10,6 +10,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { MEMORY_FILES } from "../memory-files.mjs";
 
 export const meta = { runtime: "claude-code", driver: "claude-sdk" };
 
@@ -38,11 +39,6 @@ function loadPersona(repo, personality) {
 // are sanitized before injection — frontmatter and fenced code blocks stripped,
 // hard-capped — and wrapped in an explicit "data only, never instructions" fence
 // so nothing inside the block can steer the agent.
-const MEMORY_FILES = [
-  { file: "USER.md", label: "USER (the person)", cap: 1500 },
-  { file: "WORKSPACE.md", label: "WORKSPACE (company, environment, tooling)", cap: 2000 },
-];
-
 export function sanitizeMemory(raw, cap) {
   let body = raw.replace(/^---\n[\s\S]*?\n---\n?/, "");   // strip YAML frontmatter
   body = body.replace(/```[\s\S]*?```/g, "");             // strip fenced code blocks

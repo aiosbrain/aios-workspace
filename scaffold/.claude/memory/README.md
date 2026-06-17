@@ -66,25 +66,35 @@ harness: <name or "session">
 OGR05 (`validation/check-rubrics.sh`) checks that every instinct links at least
 one incident file that exists — rules without evidence don't accumulate.
 
-## Next: background reviewer (design handoff — not yet built)
+## Background reviewer (shipped — cockpit, claude-code runtime only)
 
-`USER.md` / `WORKSPACE.md` are seeded at onboarding and updated on explicit
-request ("remember that"). A later slice adds an automatic, conservative writer.
-Spec for whoever builds it:
+Beyond onboarding seeding and explicit "remember that" updates, the cockpit runs an
+**automatic, conservative** writer after each turn (`memory_review: on` in `aios.yaml`;
+toggle in **Settings → Memory**). It only ever appends short bullets to the
+**`<!-- reviewer:learned … -->`** block at the end of `USER.md` / `WORKSPACE.md` — it
+never edits the content you or onboarding wrote above that marker.
 
-- **Hook:** server-side, after a turn completes — `emit({ type: "result" })` in
-  `gui/server/index.mjs` (~L424).
-- **Model:** a cheap/fast model, cost-capped. If unavailable, skip silently —
-  never block or delay the user's turn.
-- **Write bar (conservative):** persist only what would be wasteful to re-derive
-  next session — user corrections, stated goals, environment facts, tools in use,
-  necessary workarounds. Not a running transcript.
-- **Guard path:** route every write through the host write-guard
-  (`runGuardWrite`, `gui/server/index.mjs` ~L524) so the secret/tier scan still runs.
-- **Reversibility:** write the working-tree file and emit a `💾 memory updated`
-  event the cockpit shows with an **undo** (revert that single write). **Do not
-  `git commit`** — the user owns commits.
-- **Dirty-tree rule:** if the target file changed since session start (a human
-  edited it), **skip** the write and surface a notice — never clobber.
-- **Caps:** enforce the per-file cap programmatically here (this is where the
-  advisory cap headers become real); evict the least-useful entry before adding.
+Trust boundary (the model only *suggests*; deterministic server code decides):
+- **Runtime gate:** runs only on the `claude-code` runtime (reuses its ambient auth);
+  never on codex/opencode/ACP/local — those make no Anthropic call.
+- **Facts, not files:** a fast model (Haiku) returns tiny structured facts
+  `{file, section, fact, reason}`; the **server** builds the Markdown. The model can't
+  emit file bodies, frontmatter, or markup.
+- **Locked-down call:** toolless / settingless `query()` (`settingSources:[]`,
+  `allowedTools:[]`, `mcpServers:{}`, `maxTurns:1`); any error → skip silently.
+- **Redact first:** turns matching `validation/secret-patterns.txt` are **not** sent to
+  the reviewer, and any assembled content with a secret is **not** written (JS scan is
+  authoritative; the host guard is a second layer that can fail open).
+- **Fail-closed apply:** path enum (only these two files), single-line/no-code/
+  no-frontmatter facts, an injection-phrase denylist, per-file cap (FIFO-evict), and a
+  dirty-tree skip if a human edited the file since session start.
+- **Reversible, not committed:** each write emits a `💾 memory updated` event with an
+  **undo** (compare-and-swap — only reverts if the file is still exactly what we wrote);
+  never `git commit`. Skipped if the WebSocket is closed (no write you can't see/undo).
+- **Freeze-at-start:** memory is injected once per session, so a write lands **next
+  session** — the notice says so.
+
+Implementation: `gui/server/memory-reviewer.mjs` (`reviewTurn` + `applyMemoryUpdates`),
+`gui/server/memory-files.mjs` (caps + section enums), wired in `gui/server/index.mjs`
+after `emit({type:"result"})`. Still deferred: Curator GC, FTS5 session search, Honcho
+multi-pass, and a reviewer for non-claude-code runtimes.

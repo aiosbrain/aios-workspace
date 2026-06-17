@@ -36,6 +36,8 @@ export function readAgentConfig(repo) {
     model: cfg.agent_model || "",
     baseUrl: cfg.agent_base_url || "",
     personality: cfg.agent_personality || "aios",
+    // Background memory reviewer: ON unless explicitly turned off (claude-code only).
+    memoryReview: !/^(off|false|no|0)$/i.test(String(cfg.memory_review ?? "on").trim()),
   };
 }
 
