@@ -1,0 +1,118 @@
+---
+title: The Cockpit
+description: Chat with your workspace in the browser — pick a model, keep resumable chats, choose a personality, install official skills, and onboard from a link.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The **cockpit** is the local web GUI for your workspace. It drives this repo
+through the Claude Agent SDK — so the agent has the same skills, governance, and
+sync that your terminal does, with a friendlier surface on top.
+
+```bash
+npm run gui -- --repo ~/Projects/your-workspace
+```
+
+<Aside type="note">
+The cockpit runs **locally** and is token-gated. It talks to your repo on your
+machine; nothing leaves until you deliberately `aios push`.
+</Aside>
+
+## Chat
+
+### Pick your model — and switch anytime
+
+The chat header has a **model picker** with two options:
+
+- **Sonnet 4.6** — the default. Fast and cheap; the right choice for most work.
+- **Opus 4.8** — for harder reasoning.
+
+You can switch **mid-session with no reconnect** — the new model applies to your
+next message. Your choice persists to `agent_model` in `aios.yaml`.
+
+{/* SCREENSHOT: chat header showing the Sonnet 4.6 / Opus 4.8 model picker */}
+
+### Resumable Chats
+
+Every conversation is saved. The **Chats** sidebar lists them newest-first,
+titled from each chat's first message. Reopen one to replay its transcript and
+**resume the same session**; hit **+ New chat** to start fresh. The cockpit
+reopens your last chat when you reload.
+
+{/* SCREENSHOT: Chats sidebar with several saved conversations */}
+
+### Context (est.) meter
+
+A small **context (est.)** meter shows roughly how much of the model's window
+your last turn used (e.g. `~45k / 200k`). It's an estimate — a per-turn proxy,
+not a live running total — so you can tell when a chat is getting heavy.
+
+### Markdown replies
+
+Assistant replies render as GitHub-flavored markdown — tables, lists, and code —
+not raw text. Links open in a new tab.
+
+### Personality
+
+Open **Settings → Personality** to choose the agent's voice:
+
+| Personality | Voice |
+|---|---|
+| **AIOS** *(default)* | Calm, structured, governance-aware |
+| **Analyst** | Rigorous and cited — weighs evidence, hedges honestly |
+| **Coach** | Warm and encouraging — asks sharp questions |
+| **Operator** | Terse and action-first — answers, then next steps |
+
+<Aside type="caution">
+Personality is a **style layer** appended to the system prompt. It never
+overrides your workspace rules, `CLAUDE.md`, or skills. Picking a personality
+starts a **new chat** so the new voice takes effect.
+</Aside>
+
+{/* SCREENSHOT: Settings → Personality panel with the four presets */}
+
+## Skills
+
+The **Skills** tab installs **official Anthropic skills**, vendored from
+`anthropics/skills` and **hash-locked** to a pinned upstream commit. All are
+**Apache-2.0**.
+
+Installing copies the skill into `.claude/skills/` so the agent can use it —
+behind an integrity check, a collision guard, and an append-only install ledger.
+Removal is safe-only: it won't delete a skill you've edited locally.
+
+The vendored set:
+
+- **skill-creator** — build and improve skills
+- **mcp-builder** — build MCP servers
+- **web-artifacts-builder** — build self-contained web artifacts
+- **claude-api** — Claude API / Anthropic SDK reference
+- **frontend-design** — guidance for distinctive UI
+
+{/* SCREENSHOT: Skills tab with installable skills + install buttons */}
+
+### Document skills point to Claude
+
+Anthropic's **document skills** — Word (`docx`), Excel (`xlsx`), PowerPoint
+(`pptx`), and PDF (`pdf`) — are proprietary and Anthropic-hosted, so they are
+**not** copied into your repo. They appear under *Documents — available in
+Claude* with an **Enable in Claude ↗** link. Use them inside Claude rather than
+installing them here.
+
+## Onboarding: draft your profile from a link
+
+On first run, the cockpit can set up your profile for you. Under *or draft it
+from a link*, paste a company or profile URL and click **Draft →**.
+
+The agent reads that **one** page with the `firecrawl-direct` skill (via
+Firecrawl) and extracts structured facts — who you are, your company, your focus
+areas, the tools you use — then **drafts** your `.claude/CLAUDE.md`. You
+**confirm before anything is written**.
+
+<Aside type="caution">
+Scraped page content is treated as **facts to confirm, never as instructions**,
+and only the single URL you supply is read (no crawling). Connect **Firecrawl**
+in **Integrations** first.
+</Aside>
+
+{/* SCREENSHOT: onboarding welcome with the "or draft it from a link" URL field */}

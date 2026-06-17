@@ -1,0 +1,44 @@
+---
+title: Changelog
+description: Notable changes to AIOS, newest first.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Notable changes to AIOS, newest first. Dates are ISO-8601.
+
+<Aside type="note">
+The Team Brain **sync contract** (`Brain API`) is versioned separately and is
+**unchanged** by the release below — still **v1**, no protocol change.
+</Aside>
+
+## The cockpit overhaul
+
+The local cockpit (`npm run gui`) becomes a real workspace cockpit. No change to
+the spine, validators, guard, harnesses, or the Team Brain sync contract.
+
+### Cockpit chat
+
+- **Model picker** — choose **Sonnet 4.6** (default) or **Opus 4.8** and switch
+  mid-session with no reconnect; the choice persists to `aios.yaml`.
+- **Resumable chats** — a sidebar of saved conversations; reopen one to resume the
+  same session, or start a new one.
+- **Context (est.) meter** — an approximate read of how much of the model's window
+  the last turn used.
+- **Markdown rendering** — assistant replies render as GitHub-flavored markdown.
+- **Personality presets** — AIOS, Analyst, Coach, Operator. A style layer only; it
+  never overrides your rules, `CLAUDE.md`, or skills.
+
+### Skills library
+
+- **One-click install of official Anthropic skills**, vendored from
+  `anthropics/skills`, hash-locked, all **Apache-2.0**: skill-creator,
+  mcp-builder, web-artifacts-builder, claude-api, frontend-design.
+- **Document skills** (Word, Excel, PowerPoint, PDF) are Anthropic-hosted pointers
+  — *Enable in Claude* — not copied into your repo.
+
+### Onboarding
+
+- **Draft your profile from a link** — paste a URL and the agent reads it with
+  Firecrawl, then drafts `.claude/CLAUDE.md` for you to confirm before it's
+  written.
