@@ -156,7 +156,13 @@ function loadDotEnv(repo) {
   const out = {};
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m) out[m[1]] = stripQuotes(m[2].trim());
+    if (!m) continue;
+    const val = stripQuotes(m[2].trim());
+    // Skip dotenvx ciphertext + its public key — these are decrypted into
+    // process.env at runtime by `dotenvx run` (see package.json scripts), which
+    // every caller checks first. Returning ciphertext here would be wrong.
+    if (m[1] === "DOTENV_PUBLIC_KEY" || val.startsWith("encrypted:")) continue;
+    out[m[1]] = val;
   }
   return out;
 }
