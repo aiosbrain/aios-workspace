@@ -1,6 +1,6 @@
 # Phase 3 — Skills Library (cockpit): trusted official-library MVP
 
-> Status: **plan** (branch `feat/skills-library`). Phases 1/2/4 of the cockpit
+> Status: **implemented** (#17, merged). Phases 1/2/4 of the cockpit
 > overhaul shipped in #16. This is the deferred Skills surface. Scope is
 > deliberately narrow: **v1 installs only vendored, official, Apache-2.0 skills**,
 > so safety comes from *provenance + integrity + capability disclosure* — not from
