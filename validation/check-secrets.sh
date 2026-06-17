@@ -50,12 +50,15 @@ PATTERNS=(
 # Files to scan (exclude .git, binary files, .env.example, the vendored
 # skill-library — integrity-locked official upstream skills (OGR09), whose docs
 # carry example/placeholder tokens like "xoxp-new-..." that are not real secrets —
-# and skill-scan-fixtures, the deliberately-malicious scanner test inputs)
+# skill-scan-fixtures, the deliberately-malicious scanner test inputs, and test/ux,
+# the agentic UX-testing harness whose fixtures/code carry a dummy known token and
+# dummy connector key for the throwaway cockpit fixture — never real secrets)
 SCAN_FILES=$(find "$REPO" \
   -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/skill-library/*" \
   -not -path "*/skill-scan-fixtures/*" \
+  -not -path "*/test/ux/*" \
   -not -path "*/.env.example" \
   -not -name "*.pdf" \
   -not -name "*.png" \
