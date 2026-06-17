@@ -97,6 +97,7 @@ export default function App() {
   const [usage, setUsage] = useState(null); // latest token usage → context meter
   const [chats, setChats] = useState([]); // past sessions for the sidebar
   const [currentSession, setCurrentSession] = useState(null); // active chat id
+  const [enrichUrl, setEnrichUrl] = useState(""); // onboarding: draft profile from a link
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
   const usageRef = useRef(null);  // latest usage for the result line (state is async)
@@ -367,6 +368,29 @@ export default function App() {
             >
               ✨ Set up your profile
             </button>
+            <div className="enrich">
+              <div className="enrich-or">or draft it from a link</div>
+              <form
+                className="enrich-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const u = enrichUrl.trim();
+                  if (!u || !connected) return;
+                  sendMessage(`Enrich my profile from this link: ${u} — read it with the firecrawl-direct skill, then draft and confirm my .claude/CLAUDE.md profile.`);
+                  setEnrichUrl("");
+                }}
+              >
+                <input
+                  type="url"
+                  placeholder="https://your-company.com/about"
+                  value={enrichUrl}
+                  onChange={(e) => setEnrichUrl(e.target.value)}
+                  disabled={!connected}
+                />
+                <button type="submit" disabled={!connected || !enrichUrl.trim()}>Draft →</button>
+              </form>
+              <div className="enrich-note">🔗 We send this one URL to Firecrawl to read the page. Connect Firecrawl in <em>Integrations</em> first.</div>
+            </div>
             <p className="empty-sub">…or just chat. Skills, rules, and the guard hook are live —
               try <em>"what changed this week?"</em> or connect a tool in <em>Integrations</em>.</p>
           </div>
