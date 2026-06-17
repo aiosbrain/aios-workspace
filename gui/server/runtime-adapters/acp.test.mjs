@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
-import { mapSessionUpdate, acpSpawnArgs, jsonRpcLines } from "./acp.mjs";
+import { mapSessionUpdate, acpSpawnArgs, jsonRpcLines, openclawSessionKey } from "./acp.mjs";
 
 test("jsonRpcLines drops non-JSON stdout noise (banners), keeps JSON-RPC lines", async () => {
   // Simulate OpenClaw's stdout: a boxed config-warning banner interleaved with
@@ -51,6 +51,31 @@ test("acpSpawnArgs: openclaw falls back to --password when only the inline var i
 
 test("acpSpawnArgs: unknown bin is unchanged", () => {
   assert.deepEqual(acpSpawnArgs("somebin", ["acp"], { OPENCLAW_GATEWAY_PASSWORD: "x" }), ["acp"]);
+});
+
+test("acpSpawnArgs: openclaw pins --session before the password flag", () => {
+  // Without a session key the bridge mints acp:<uuid> sessions the Gateway can't
+  // run (ACP_SESSION_INIT_FAILED). The session key must be passed for every turn.
+  assert.deepEqual(
+    acpSpawnArgs("openclaw", ["acp"], { OPENCLAW_GATEWAY_PASSWORD: "s3cret" }, { sessionKey: "agent:main:aios-gui-abc" }),
+    ["acp", "--session", "agent:main:aios-gui-abc", "--password", "s3cret"],
+  );
+});
+
+test("acpSpawnArgs: openclaw with a session key and no password", () => {
+  assert.deepEqual(
+    acpSpawnArgs("openclaw", ["acp"], {}, { sessionKey: "agent:main:aios-gui-abc" }),
+    ["acp", "--session", "agent:main:aios-gui-abc"],
+  );
+});
+
+test("openclawSessionKey: stable, repo-scoped, under the main agent", () => {
+  const a = openclawSessionKey("/repo/one");
+  const b = openclawSessionKey("/repo/one");
+  const c = openclawSessionKey("/repo/two");
+  assert.equal(a, b);                           // stable per repo (reused across turns)
+  assert.notEqual(a, c);                        // isolated between repos
+  assert.match(a, /^agent:main:aios-gui-[0-9a-f]{12}$/); // routes to the main agent, not acp:<uuid>
 });
 
 test("agent_message_chunk (text) → delta{text}", () => {

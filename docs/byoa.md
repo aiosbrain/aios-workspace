@@ -178,8 +178,11 @@ same normalized WS events (`delta` / `tool_use` / `tool_result` /
   the runtime's ACP bridge (`hermes acp`, or `openclaw acp` — a Gateway-backed
   bridge; set `OPENCLAW_GATEWAY_PASSWORD_FILE`/`OPENCLAW_GATEWAY_PASSWORD` if the
   gateway requires a password) and speaks ACP (JSON-RPC/stdio) via
-  `@agentclientprotocol/sdk`. Governance is **two-layer**, because ACP agents
-  mutate files two ways:
+  `@agentclientprotocol/sdk`. For OpenClaw the adapter **pins a repo-scoped
+  Gateway session** (`--session agent:main:aios-gui-<hash>`, see
+  `openclawSessionKey`) — without it the bridge mints `acp:<uuid>` sessions the
+  Gateway can't run (see *OpenClaw: "no model output"* below). Governance is
+  **two-layer**, because ACP agents mutate files two ways:
   1. *Host-mediated* `fs/write_text_file` requests are **pre-gated through
      `guardWrite`** and only the guard-resolved, in-repo path is written.
   2. The agent can also run shell/file tools **inside its own process**
@@ -211,6 +214,39 @@ All `gui:true` runtimes now resolve to an adapter (OGR07 enforces this).
 
 The session announces its active runtime in the UI (a runtime badge), selected
 from `agent_runtime` in `aios.yaml` (Phase-1 config).
+
+### OpenClaw: "no model output" (a prompt turn produces nothing)
+
+If `agent_runtime: openclaw` connects but every turn hangs with no model output,
+it is **not** an adapter bug. Two independent Gateway-side causes were observed,
+and both must be healthy:
+
+1. **Session routing (fixed in the adapter).** Invoked bare, `openclaw acp` mints
+   a fresh `acp:<uuid>` session per ACP `newSession`. The Gateway routes any
+   `acp:`-keyed `chat.send` into its **ACP-runtime ("acpx") dispatch path**, which
+   expects an ACP backend bound via `/acp spawn`; with none bound, every turn
+   fails server-side with `ACP_SESSION_INIT_FAILED` (`activeRuntimes=0`) and the
+   bridge emits **zero `session/update` notifications** — the turn hangs, then
+   the client cancels. The adapter now passes `--session agent:main:aios-gui-<hash>`
+   so `chat.send` runs the Gateway's normal **embedded agent** instead (which
+   streams `agent_message_chunk` → our `delta` events). The key is repo-scoped so
+   workspaces don't share history, and kept out of the user's `agent:main:main`
+   (heartbeat/personal) session.
+2. **The Gateway agent needs a working model provider (config, not code).** The
+   `main` agent must point at a model whose provider has live credentials and
+   quota. A misconfig here surfaces as `stopReason: error` / `livenessState:
+   blocked` with `lastCallUsage` all-zero. Diagnose **outside** ACP first — the
+   embedded path shows the real provider error that `--json` hides:
+   - `openclaw infer model run --model <provider/model> --prompt "Reply OK"`
+   - `openclaw agent --agent main --message "Reply OK"` (gateway path)
+   - `openclaw models list` (Auth column), `openclaw config get agents` (primary)
+
+   Provider auth lives in `~/.openclaw/agents/<id>/agent/auth-profiles.json`
+   (an `{type:"api_key",provider,key}` or OAuth entry) wired into
+   `~/.openclaw/openclaw.json` under `auth.profiles` + `agents.defaults.model`.
+   **Restart the Gateway after editing** (`openclaw gateway restart`) — the
+   running daemon caches config and the ACP bridge is Gateway-backed, so config
+   edits don't take effect until reload.
 
 ---
 
