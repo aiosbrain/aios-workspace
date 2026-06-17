@@ -187,8 +187,16 @@ same normalized WS events (`delta` / `tool_use` / `tool_result` /
      pre-gated.* (Observed: Hermes tends to use its own file tools, so the sweep
      is the primary net for it today.) Tool permissions are **option-based** (a
      button per ACP option); tab-close sends `session/cancel` and reaps the child.
-- ☐ **`codex`, `opencode`** — native runtimes whose writes execute in-process;
-  same post-turn-sweep + banner tier as the ACP in-process path. Next slice.
+- ✅ **Codex adapter (`codex`)** — `runtime-adapters/codex.mjs` drives the Codex
+  CLI's non-interactive `codex exec --json` (JSONL per-item events; one turn per
+  process, continued via `codex exec resume <thread_id>`). Codex writes files
+  **in-process** (`apply_patch`/shell), so it can't be pre-gated — it runs in
+  Codex's `--full-auto` sandbox (workspace-write, scoped to `-C repo`) and the
+  **shared post-turn sweep** (`sweep.mjs`, reused from the ACP path) re-runs
+  `team-ops-guard.sh` over changed files, surfacing violations/truncation as
+  blocking errors; the `hello.safetyNote` banner discloses the post-hoc tier.
+- ☐ **`opencode`** — `opencode serve` SSE (session-mixed → filter by session id;
+  raw-fetch SSE, no native EventSource). Same post-turn-sweep tier. Next slice.
 
 The session announces its active runtime in the UI (a runtime badge), selected
 from `agent_runtime` in `aios.yaml` (Phase-1 config).
