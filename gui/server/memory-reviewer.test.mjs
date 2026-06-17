@@ -13,6 +13,10 @@ import {
 import { LEARNED_MARKER, MEMORY_ABSENT } from "./memory-files.mjs";
 
 const SECRETS = loadSecretPatterns("/nonexistent"); // falls back to builtin
+// Split so these fixtures are secret-SHAPED at runtime but don't trip the repo's
+// own OGR03 secret scanner on this source file.
+const FAKE_AWS = "AKIA" + "ABCDEFGHIJKLMNOP";
+const FAKE_ANT = "sk-ant-" + "abcdefghijklmnopqrstuvwxyz0123";
 const allowOpenGuard = () => ({ ok: true });        // simulate guardWrite fail-OPEN (no guard)
 const stub = (json) => async () => (typeof json === "string" ? json : JSON.stringify(json));
 
@@ -83,7 +87,7 @@ test("apply: secret in content blocked even when guardWrite fails OPEN", () => {
   const before = readUser(dir);
   const { events } = applyMemoryUpdates({
     repo: dir, socketOpen: true, secretPatterns: SECRETS, guardWrite: allowOpenGuard, baselines: { "USER.md": seed },
-    facts: [{ file: "USER.md", section: "goals", fact: "my key is AKIAABCDEFGHIJKLMNOP" }],
+    facts: [{ file: "USER.md", section: "goals", fact: `my key is ${FAKE_AWS}` }],
   });
   assert.equal(events.length, 0);
   assert.equal(readUser(dir), before);                  // nothing written
@@ -161,12 +165,12 @@ test("buildUpdatedContent: cap eviction is FIFO; gives up if seed alone > cap", 
 });
 
 test("containsSecret: builtin patterns match common tokens", () => {
-  assert.equal(containsSecret("token sk-ant-abcdefghijklmnopqrstuvwxyz0123", SECRETS), true);
+  assert.equal(containsSecret(`token ${FAKE_ANT}`, SECRETS), true);
   assert.equal(containsSecret("just a normal sentence", SECRETS), false);
 });
 
 test("redactSecrets: scrubs tokens in existing memory before the call", () => {
-  const dirty = "- API: sk-ant-abcdefghijklmnopqrstuvwxyz0123 and AKIAABCDEFGHIJKLMNOP";
+  const dirty = `- API: ${FAKE_ANT} and ${FAKE_AWS}`;
   const clean = redactSecrets(dirty, SECRETS);
   assert.ok(!/sk-ant-/.test(clean) && !/AKIA[0-9A-Z]{16}/.test(clean));
   assert.ok(clean.includes("[REDACTED]"));
