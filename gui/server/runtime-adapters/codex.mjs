@@ -158,10 +158,14 @@ export async function run(host) {
     if (signal?.aborted) break;
     const turnStart = Date.now(); // baseline for the post-turn sweep
 
-    const args = ["exec"];
-    if (threadId) args.push("resume", threadId); // continue the same Codex thread
-    args.push("--json", "--skip-git-repo-check", "-C", repo, "--full-auto", "--color", "never");
-    if (model) args.push("-m", model);
+    // Exec-level options (--json/-C/--skip-git-repo-check/…) MUST precede the
+    // `resume` subcommand — the CLI rejects them after it. Prompt is read from
+    // stdin via the trailing "-" (required for `resume`; also valid for `exec`).
+    const opts = ["--json", "--skip-git-repo-check", "-C", repo, "--full-auto", "--color", "never"];
+    if (model) opts.push("-m", model);
+    const args = threadId
+      ? ["exec", ...opts, "resume", threadId, "-"] // continue the same Codex thread
+      : ["exec", ...opts, "-"];
 
     let failed = false;
     const r = await runCodexTurn("codex", args, turn.text, { emit, signal, onThreadId: (id) => { threadId = id; } });
@@ -169,14 +173,19 @@ export async function run(host) {
     failed = r.failed;
 
     // Post-turn governance: Codex writes files in-process, so this is the gate.
+    // A governance violation/truncation/sweep-failure MUST taint the turn result
+    // (not just emit an error then report success).
     try {
       const { violations, truncated } = await postTurnSweep(repo, guardWrite, turnStart);
       for (const v of violations) emit({ type: "error", message: `post-turn guard: ${v.path} — ${v.reason}` });
+      if (violations.length) failed = true;
       if (truncated) {
         emit({ type: "error", message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.` });
+        failed = true;
       }
     } catch (e) {
       emit({ type: "error", message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.` });
+      failed = true;
     }
 
     emit({ type: "result", subtype: failed ? "error" : "success", cost_usd: null });
