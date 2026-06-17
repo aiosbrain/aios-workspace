@@ -1,9 +1,39 @@
 # Plan — Skills untrusted-install phase (Phase 3.5)
 
-> Status: **plan**. Branch TBD (`feat/skills-untrusted`). Builds on the Skills
+> Status: **core increment shipped** on `feat/skills-untrusted`. Builds on the Skills
 > library (#17), whose v1 deliberately installs only vendored, official, Apache-2.0
 > skills. This phase admits skills **beyond** that set — and only then does the heavy
 > verification machinery (deferred in #17) earn its keep.
+>
+> ## Shipped in this increment
+> - **`scripts/skill-scan.mjs`** — pure, reusable static scanner. `scanSkill(dir)` →
+>   `{ riskClass, findings:[{file,line,rule,snippet}], counts, bundlesCode, codeFiles }`.
+>   Flags bundled code, network egress, fs/process exec, secret/exfil reads, external
+>   URLs in `SKILL.md`, and prompt-injection (incl. zero-width/bidi/hidden Unicode and
+>   "ignore previous instructions"/role-override phrasing). Classifies low/elevated/high.
+>   CLI: `node scripts/skill-scan.mjs <dir> [--json]` (exit 1 on high). Tests in
+>   `test/skill-scan.test.mjs` (+ fixtures under `test/skill-scan-fixtures/`).
+> - **Trust tier + typed-consent gate** in `gui/server/skill-library.mjs`: `official`
+>   stays one-click (hash-locked); a new `community` tier (`gui/server/skill-library/community.json`)
+>   runs the scanner on install, returns findings, and requires `consent.accepted`; a
+>   `high` risk class additionally requires a TYPED confirm (`consent.typed === id`).
+>   Endpoint `GET /api/skills/:id/scan`; install accepts a `consent` body. A single
+>   demonstration community skill (`community-example`, vendored-demo source) exercises
+>   the gate end-to-end. Tests in `test/skill-install.test.mjs`.
+> - **UI**: `SkillsPanel` shows a trust badge; community skills open a **Review & install**
+>   modal listing scan findings (file:line) + a consent checkbox (+ typed field on high).
+>   The copy states plainly that scanning is **advisory** — provenance is the anchor.
+> - **OGR09** extended: community ids are disjoint from official (never promoted), each
+>   community entry resolves to a scannable source dir.
+>
+> ## Deferred (clear TODOs)
+> - **Fetch-on-install from `repo@commit` + upstream byte-diff authenticity.** The
+>   community `source` schema already carries `{kind, dir, upstream_repo, upstream_commit}`;
+>   v1 uses `kind: "vendored-demo"` (a locally vendored source). A real fetch transport +
+>   byte-diff against the pinned commit is the next slice. See `community.json:note`.
+> - **`anthropics/claude-plugins-official` marketplace listing** (a `marketplace-vetted`
+>   tier reading `marketplace.json`) — not yet wired.
+> - **Sandboxed dry-run** of a skill's bundled scripts before first use.
 
 ## Context
 

@@ -203,8 +203,31 @@ footer button:disabled { opacity: 0.4; cursor: default; }
 .skill-caps { display: flex; flex-wrap: wrap; gap: 6px; }
 .skill-caps .cap { font: 10px var(--mono); color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
 .skill-caps .cap.code { color: var(--accent); border-color: rgba(124,58,237,0.4); }
+.skill-caps .cap.trust.community { color: #d97706; border-color: rgba(217,119,6,0.45); }
 .skill-err { font-size: 12px; color: var(--red); margin: 4px 0 0; }
 .int-card a.int-connect { text-decoration: none; display: inline-block; }
+
+/* ── skills: review & install (community / untrusted) ── */
+.skill-review { width: min(640px, 100%); max-height: 90vh; overflow-y: auto; }
+.skill-review-head { display: flex; align-items: center; gap: 10px; }
+.skill-review-meta { font: 11px var(--mono); color: var(--text-dim); }
+.risk-badge { font: 11px var(--mono); font-weight: 600; border-radius: 6px; padding: 2px 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+.risk-badge.low { color: #16a34a; background: rgba(22,163,74,0.12); border: 1px solid rgba(22,163,74,0.4); }
+.risk-badge.elevated { color: #d97706; background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.4); }
+.risk-badge.high { color: var(--red); background: rgba(220,38,38,0.12); border: 1px solid rgba(220,38,38,0.45); }
+.skill-findings { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.skill-finding { display: grid; grid-template-columns: minmax(120px, auto) auto 1fr; gap: 8px; align-items: baseline; font-size: 12px; padding: 3px 4px; border-left: 2px solid var(--border); }
+.skill-finding.high { border-left-color: var(--red); }
+.skill-finding.info { border-left-color: var(--text-dim); }
+.skill-finding.ok { color: var(--text-dim); border-left-color: #16a34a; }
+.skill-finding-loc { font: 11px var(--mono); color: var(--text-dim); }
+.skill-finding-rule { font: 11px var(--mono); color: var(--accent); }
+.skill-finding-snip { font: 11px var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.skill-consent input { margin-top: 2px; }
+.skill-typed-warn code, .skill-consent code { font: 12px var(--mono); color: var(--red); }
+.wiz-text { background: var(--bg, #111); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font: 13px var(--mono); outline: none; width: 100%; }
+.wiz-text:focus { border-color: var(--accent); }
 
 /* ── connect wizard ── */
 .wiz-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
