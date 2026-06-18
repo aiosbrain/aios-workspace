@@ -20,18 +20,28 @@ export const id = "skills-install-consent";
 
 export const SKILL_ID = "community-example";
 
+// Multi-step (scroll an inner panel → open a modal → consent → install) — give the driver headroom.
+export const maxTurns = 80;
+
 export const intent =
   `Goal: install a COMMUNITY skill through its consent gate.\n` +
   `Steps:\n` +
-  `1. Open the Skills tab. Screenshot the skills grid.\n` +
-  `2. Find the community skill "${SKILL_ID}" and click "Review & install".\n` +
-  `3. Confirm the review modal shows the advisory SCAN: findings with file:line and a RISK ` +
-  `BADGE. Screenshot the modal.\n` +
-  `4. Confirm that install is BLOCKED until consent is given (the consent control / checkbox). ` +
+  `1. Open the Skills tab (click the "Skills" nav item). Screenshot the skills grid.\n` +
+  `2. The Skills list scrolls in an INNER panel, so the community section is likely below the fold. ` +
+  `Find the community skill "${SKILL_ID}"; if its card is not visible, \`scrollintoview\` its card (or a ` +
+  `"Community" heading) — do NOT use window \`scroll\`.\n` +
+  `3. Open its review. The button reads "Review & install"; click it with a SHELL-SAFE locator — ` +
+  `\`find text "Review" click\` or \`find role button click --name Review\` (never put the "&" in a ` +
+  `locator). Then VERIFY the modal actually opened: \`wait --text\` for the scan/findings text and ` +
+  `\`is visible\` the dialog, then re-\`snapshot -i\`. If it did NOT open, \`scrollintoview\` the button ` +
+  `and click it again via the locator (not the same bare @ref).\n` +
+  `4. Confirm the review modal shows the advisory SCAN findings with file:line and a RISK BADGE. ` +
+  `Screenshot the modal.\n` +
+  `5. Confirm that install is BLOCKED until consent is given (the consent control / checkbox). ` +
   `Because this skill is "elevated" (not high-risk), a plain consent is enough — you should ` +
   `NOT be asked to type the skill id. Give consent.\n` +
-  `5. Install it and confirm the card reflects the installed state. Screenshot the result.\n` +
-  `6. Run \`errors\` to capture console errors, then stop and summarize.`;
+  `6. Install it and confirm the card reflects the installed state. Screenshot the result.\n` +
+  `7. Run \`errors\` to capture console errors, then stop and summarize.`;
 
 // Rubric: findings shown · consent required pre-install · install reflected · no console errors.
 // Threshold 1.0 on the consent gate being load-bearing.
