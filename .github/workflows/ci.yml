@@ -38,6 +38,7 @@ jobs:
           node test/ux/driver.test.mjs
           node test/ux/tool-policy.test.mjs
           node test/ux/proc.test.mjs
+          node test/ux/json-extract.test.mjs
           node test/ux/run-ux-skip.test.mjs
           node scripts/lock-marketplace.mjs --check
 
