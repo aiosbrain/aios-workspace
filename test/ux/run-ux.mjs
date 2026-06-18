@@ -14,7 +14,9 @@
 //
 // Statuses / exit codes:
 //   pass            → 0
-//   skipped_no_key  → 0   (ANTHROPIC_API_KEY unset; we still PROVE setup/launch/teardown)
+//   skipped_no_key  → 0   (ANTHROPIC_API_KEY unset → we skip BEFORE scaffold/launch and write a
+//                          skipped summary; this proves the harness is wired + exits cleanly, but
+//                          does NOT exercise cockpit startup/teardown, which need a key to drive)
 //   ux_fail         → 1   (a flow's gate is below threshold / a post-assert failed)
 //   harness_error   → 2   (infra broke)
 //   review_needed   → 0   + WARNING + artifacts (judge non-agreement; not a UX regression)
@@ -158,13 +160,11 @@ async function launchCockpit(fixture, stubUrl) {
     const env = {
       ...process.env,
       AIOS_GUI_TOKEN: KNOWN_TOKEN,
-      // Deterministic, deny-by-default server-side Bash policy for Flow A: the cockpit allows
-      // ONLY these two command substrings and denies anything else, recording a tool_policy
-      // event per decision. (Flow B triggers no Bash, so it is unaffected by this allow-list.)
-      AIOS_GUI_TEST_TOOL_ALLOW: [
-        ".claude/skills/firecrawl-direct/firecrawl-extract.mjs",
-        ".claude/skills/workspace-setup/suggest-connectors.mjs",
-      ].join(","),
+      // Deterministic, deny-by-default server-side Bash policy for Flow A: the cockpit runs under
+      // the NAMED built-in policy `ux-onboarding` (exact-argv shapes live in gui/server/tool-policy.mjs),
+      // which allows only the firecrawl-extract / suggest-connectors commands and denies everything
+      // else, recording a tool_policy event per decision. (Flow B triggers no Bash → unaffected.)
+      AIOS_GUI_TEST_POLICY: flowA.POLICY_NAME,
       ...(stubUrl ? { FIRECRAWL_API_URL: stubUrl } : {}),
     };
     const child = spawn(process.execPath, [path.join(ROOT, "scripts", "run-gui.mjs"), "--repo", fixture, "--port", String(port)], {

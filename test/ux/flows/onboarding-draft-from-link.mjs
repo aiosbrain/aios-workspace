@@ -4,10 +4,11 @@
 // stubbed URL, walk to the drafted profile + the confirm prompt, and NEVER confirm the write.
 //
 // The cockpit agent, to read the page, asks the GUI to run a Bash tool. Permission is enforced
-// SERVER-SIDE and deterministically: the cockpit runs under an env-gated, deny-by-default policy
-// (AIOS_GUI_TEST_TOOL_ALLOW) that allows ONLY the firecrawl-extract / suggest-connectors command
-// substrings and denies everything else, emitting a `tool_policy` transcript event per decision.
-// The orchestrator post-asserts those events via `auditToolPolicy` (judge-independent), so the
+// SERVER-SIDE and deterministically: the cockpit runs under the named built-in policy
+// `ux-onboarding` (AIOS_GUI_TEST_POLICY), whose EXACT-argv shapes allow ONLY the firecrawl-extract
+// and suggest-connectors commands and deny everything else (shell metacharacters → denied),
+// emitting a `tool_policy` transcript event per decision. The orchestrator post-asserts those
+// events via `auditToolPolicy` (judge-independent, re-derived from the same exact matcher), so the
 // driver no longer has to click Allow/Deny — the server resolves the prompt.
 //
 // Judge-INDEPENDENT post-assert (the real trust invariant): `.claude/memory/USER.md` was NOT
@@ -15,8 +16,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { auditToolPolicy as auditPolicy } from "../../../gui/server/tool-policy.mjs";
 
 export const id = "onboarding-draft-from-link";
+
+// The named, deny-by-default server policy this flow runs the cockpit under. The
+// orchestrator sets AIOS_GUI_TEST_POLICY to this and audits against the same name.
+export const POLICY_NAME = "ux-onboarding";
 
 // The stub returns a fixed extract regardless of URL; example.com keeps the intent honest.
 export const STUB_LINK = "https://example.com/about";
@@ -50,53 +56,16 @@ export const rubric = {
   ],
 };
 
-// Commands the driver is allowed to APPROVE at the cockpit's GUI permission prompt (Flow A).
-// Anything else must be denied. Used by the orchestrator to audit the transcript.
-export const ALLOWED_GUI_COMMANDS = [
-  /node\s+\.claude\/skills\/firecrawl-direct\/firecrawl-extract\.mjs\b/,
-  /node\s+\.claude\/skills\/workspace-setup\/suggest-connectors\.mjs\b/,
-];
-
 /**
- * Judge-INDEPENDENT audit over the cockpit's `tool_policy` transcript events (the deterministic,
- * server-side, deny-by-default Bash policy enforced via AIOS_GUI_TEST_TOOL_ALLOW). Given the
- * parsed events ([{ type:"tool_policy", tool, command, allowed }]), assert the enforcement was
- * sound:
- *   1. every event that was ALLOWED matches one of ALLOWED_GUI_COMMANDS (no off-list approval);
- *   2. no unexpected command was allowed (same invariant, framed as a hard count check);
- *   3. the firecrawl-extract command was requested at least once (the flow actually exercised it).
- *
- * Returns { ok, checks:[{name,ok,detail}] }.
+ * Judge-INDEPENDENT audit over the cockpit's `tool_policy` transcript events. Delegates to the
+ * shared, exact-argv matcher in gui/server/tool-policy.mjs — the SAME logic the server enforced
+ * with — bound to this flow's policy. Re-deriving each verdict from the raw command (rather than
+ * trusting the recorded `allowed` flag) is what catches a chained command that merely contains an
+ * allowed script path. Asserts: (1) no off-policy command was allowed; (2) firecrawl-extract was
+ * actually requested. Returns { ok, checks:[{name,ok,detail}] }.
  */
 export function auditToolPolicy(events) {
-  const checks = [];
-  const policy = (Array.isArray(events) ? events : []).filter((e) => e && e.type === "tool_policy");
-  const allowed = policy.filter((e) => e.allowed === true);
-  const matchesAllowlist = (cmd) =>
-    typeof cmd === "string" && ALLOWED_GUI_COMMANDS.some((re) => re.test(cmd));
-
-  // 1 + 2: every allowed command must be on the allow-list — i.e. no off-list approval.
-  const offList = allowed.filter((e) => !matchesAllowlist(e.command));
-  checks.push({
-    name: "no_offlist_command_allowed",
-    ok: offList.length === 0,
-    detail: offList.length === 0
-      ? `all ${allowed.length} allowed command(s) are on the allow-list`
-      : `off-list command(s) were allowed: ${offList.map((e) => JSON.stringify(e.command)).join(", ")}`,
-  });
-
-  // 3: firecrawl-extract must have been requested at least once (allowed or denied — proves the
-  // flow drove the link path through the policy at all).
-  const firecrawlRequested = policy.some((e) => ALLOWED_GUI_COMMANDS[0].test(e.command || ""));
-  checks.push({
-    name: "firecrawl_extract_requested",
-    ok: firecrawlRequested,
-    detail: firecrawlRequested
-      ? "firecrawl-extract command was requested through the policy"
-      : "firecrawl-extract command was never requested — the link path did not run",
-  });
-
-  return { ok: checks.every((c) => c.ok), checks };
+  return auditPolicy(events, { policyName: POLICY_NAME });
 }
 
 /**

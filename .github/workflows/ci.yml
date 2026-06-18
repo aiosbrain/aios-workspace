@@ -36,6 +36,7 @@ jobs:
           node test/skill-install-marketplace.test.mjs
           node test/ux/judge.test.mjs
           node test/ux/driver.test.mjs
+          node test/ux/tool-policy.test.mjs
           node test/ux/run-ux-skip.test.mjs
           node scripts/lock-marketplace.mjs --check
 

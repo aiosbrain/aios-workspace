@@ -43,7 +43,7 @@ node test/ux/run-ux.mjs --flow all --real-firecrawl   # hit real Firecrawl (opt-
 | Status | Exit | Meaning |
 |--------|------|---------|
 | `pass` | 0 | gate cleared, post-asserts green |
-| `skipped_no_key` | 0 | `ANTHROPIC_API_KEY` unset (setup/launch/teardown still proven) |
+| `skipped_no_key` | 0 | `ANTHROPIC_API_KEY` unset → skips **before** scaffold/launch (harness wiring + clean exit only; use `--setup-only` to exercise scaffold/launch/teardown without a key) |
 | `ux_fail` | 1 | gate below threshold or a post-assert failed |
 | `harness_error` | 2 | infra broke |
 | `review_needed` | 0 + WARNING | judge's 3× runs didn't agree — triage, not a regression |
@@ -54,6 +54,10 @@ node test/ux/run-ux.mjs --flow all --real-firecrawl   # hit real Firecrawl (opt-
 - The cockpit binds `127.0.0.1` with a **known token** (`AIOS_GUI_TOKEN`); the URL never
   leaves the machine.
 - The driver may run **only** `agent-browser` (default-deny; shell metacharacters rejected).
+- Flow A's cockpit permission is enforced **server-side** by a named, deny-by-default policy
+  (`AIOS_GUI_TEST_POLICY=ux-onboarding`, defined in `gui/server/tool-policy.mjs`) that **exact-argv**
+  matches only the firecrawl-extract / suggest-connectors commands — chained or metacharacter-laden
+  commands are denied — and the audit re-derives each verdict from the same matcher (no drift).
 - The judge is **pure** and never imports an SDK, so the gate logic is testable and free in CI.
 - Trust invariants are checked by **judge-independent post-asserts** (no silent `USER.md` write
   in Flow A; the install actually landed + the elevated-consent contract holds in Flow B).
