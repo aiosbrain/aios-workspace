@@ -246,6 +246,22 @@ existing rows in place; append unknown rows; never delete local rows. UI-created
 carry a `ui-…` key; the brain never diff-deletes decisions, so a UI row survives until
 it is written back and re-pushed.
 
+## `GET /api/v1/projects` — team project list (team-tier only)
+
+Lets `aios pull` register **brain-created** projects (created in the dashboard, never
+pushed from a repo) as local marker files under `1-inbox/from-brain/_projects/`. An
+`external`-tier key gets `403 forbidden_tier`. The CLI writes a marker only for
+`brain_only` projects it doesn't already have; full local scaffolding is deferred.
+
+```json
+{
+  "projects": [
+    { "slug": "northwind-aios", "name": "Northwind AIOS", "brain_only": false },
+    { "slug": "q3-planning",    "name": "Q3 Planning",    "brain_only": true }
+  ]
+}
+```
+
 ## `POST /api/v1/query` — natural-language query
 
 ```json
