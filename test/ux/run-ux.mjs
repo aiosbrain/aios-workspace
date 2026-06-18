@@ -40,6 +40,7 @@ import { judgeFlow } from "./judge.mjs";
 // so `node run-ux.mjs` is startable with no node_modules and reaches the no-key skip cleanly.
 import * as flowA from "./flows/onboarding-draft-from-link.mjs";
 import * as flowB from "./flows/skills-install-consent.mjs";
+import { killGroup } from "./proc.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -167,8 +168,10 @@ async function launchCockpit(fixture, stubUrl) {
       AIOS_GUI_TEST_POLICY: flowA.POLICY_NAME,
       ...(stubUrl ? { FIRECRAWL_API_URL: stubUrl } : {}),
     };
+    // detached → run-gui becomes its own process-group leader, so teardown can group-kill it
+    // AND the gui/server/index.mjs grandchild it forks (which a plain child.kill would orphan).
     const child = spawn(process.execPath, [path.join(ROOT, "scripts", "run-gui.mjs"), "--repo", fixture, "--port", String(port)], {
-      env, stdio: ["ignore", "inherit", "inherit"],
+      env, stdio: ["ignore", "inherit", "inherit"], detached: true,
     });
     let exited = false; child.on("exit", () => { exited = true; });
     try {
@@ -179,7 +182,7 @@ async function launchCockpit(fixture, stubUrl) {
       return { child, port, tokenUrl };
     } catch (e) {
       warn(`cockpit launch attempt ${tries + 1} failed: ${e.message}`);
-      try { child.kill("SIGTERM"); } catch { /* */ }
+      killGroup(child.pid); // group-kill the partially-started cockpit (run-gui + any grandchild)
       if (tries === 2) throw e;
     }
   }
@@ -294,10 +297,12 @@ function readToolPolicyEvents(fixture) {
 
 // ── teardown ────────────────────────────────────────────────────────────────────
 function killProc(child, label) {
-  if (!child) return;
-  try { child.kill("SIGTERM"); } catch { /* */ }
-  // Escalate after a moment if it lingers.
-  setTimeout(() => { try { if (!child.killed) child.kill("SIGKILL"); } catch { /* */ } }, 2000).unref?.();
+  if (!child || child.pid == null) return;
+  // Cockpit + stub are spawned `detached` (own process group); signal the WHOLE group so the
+  // grandchild server (run-gui.mjs → gui/server/index.mjs) is reaped, not orphaned. A plain
+  // child.kill() would leave it holding the port + the inherited stdout pipe (a hang).
+  const signaled = killGroup(child.pid);
+  if (!signaled) { try { child.kill("SIGKILL"); } catch { /* */ } } // fallback: not a group leader
   log(`killed ${label}`);
 }
 function closeBrowserSessions() {
@@ -338,7 +343,7 @@ async function main() {
     if (!REAL_FIRECRAWL) {
       const stubPort = await reserveFreePort();
       log("starting firecrawl stub on", stubPort);
-      stub = spawn(process.execPath, [path.join(HERE, "firecrawl-stub.mjs"), "--port", String(stubPort)], { stdio: ["ignore", "inherit", "inherit"] });
+      stub = spawn(process.execPath, [path.join(HERE, "firecrawl-stub.mjs"), "--port", String(stubPort)], { stdio: ["ignore", "inherit", "inherit"], detached: true });
       var stubUrl = `http://127.0.0.1:${stubPort}`;
     }
 

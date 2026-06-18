@@ -24,17 +24,28 @@ the runnable implementation of [`docs/plan-agentic-ux-testing.md`](../../docs/pl
 
 ## Run it
 
+### Prerequisites (by mode)
+
+| Mode | Needs |
+|------|-------|
+| Judge unit test | nothing — pure, zero-dep |
+| `--setup-only` (token-free) | `npm ci` (the cockpit's first launch builds `gui/client` with **vite** from `node_modules`; a clean clone without deps fails with `vite: command not found`) |
+| Live flows | `npm ci`, **`ANTHROPIC_API_KEY` exported in the shell** (the `test:ux` script is plain `node`, not `dotenvx`-wrapped — so the key must be in the env), **`agent-browser`** on `PATH` (`npm i -g agent-browser@0.28.0`, matching the nightly pin), and **Chrome** |
+
 ```bash
 # Offline: judge unit test (no API key, no browser) — what PR CI runs.
 node test/ux/judge.test.mjs
 
 # Offline smoke: prove fixture scaffold + firecrawl install + cockpit launch + readiness +
-# teardown WITHOUT spending tokens (no agent-browser / API needed).
+# teardown WITHOUT spending tokens (no agent-browser / API needed). Needs `npm ci` first.
+npm ci
 node test/ux/run-ux.mjs --setup-only
 
 # Live (needs ANTHROPIC_API_KEY + agent-browser + Chrome). Without a key → skipped_no_key.
-npm run test:ux -- --flow all
-node test/ux/run-ux.mjs --flow onboarding-draft-from-link --keep-evidence
+export ANTHROPIC_API_KEY=sk-ant-...          # the key must be in the env (test:ux is not dotenvx-wrapped)
+npm i -g agent-browser@0.28.0                # once; matches the CI/nightly pin
+npm run test:ux -- --flow skills-install-consent --keep-evidence   # start cheap to calibrate the judge
+npm run test:ux -- --flow all --keep-evidence
 node test/ux/run-ux.mjs --flow all --real-firecrawl   # hit real Firecrawl (opt-in, spends)
 ```
 
