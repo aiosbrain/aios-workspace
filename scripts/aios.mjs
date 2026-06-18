@@ -345,7 +345,7 @@ function parseDecisionRows(body) {
 
 function loadState(repo) {
   const p = path.join(repo, ".aios", "state.json");
-  if (!existsSync(p)) return { items: {}, last_pull: null, last_tasks_pull: null };
+  if (!existsSync(p)) return { items: {}, last_pull: null, last_tasks_pull: null, last_decisions_pull: null };
   try {
     return JSON.parse(readFileSync(p, "utf8"));
   } catch {
@@ -446,6 +446,19 @@ async function api(cfg, method, route, body = null) {
     throw new Error(`${res.status} ${json?.error?.code || ""}: ${msg}`);
   }
   return json;
+}
+
+// GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
+// `fallback`; surface any other failure (auth/server) as a visible warning rather than
+// silently swallowing it. Never throws — a missing writeback endpoint must not break pull.
+async function apiOptional(cfg, route, fallback) {
+  try {
+    return await api(cfg, "GET", route);
+  } catch (e) {
+    if (/^404\b/.test(String(e?.message))) return fallback;
+    console.warn(c.yellow(`  ${route} unavailable: ${e?.message ?? e}`));
+    return fallback;
+  }
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
@@ -770,11 +783,62 @@ async function cmdPull(repo, cfg, args = []) {
     writeFileSync(tasksPath, content);
   }
 
+  // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
+  // (mirrors the task writeback; keyed on the `#` column = row_key).
+  const decRes = await apiOptional(
+    cfg,
+    `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`,
+    { decisions: [] }
+  );
+  let mergedDecisions = 0;
+  const decPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
+    ? path.join(repo, "3-log", "decision-log.md")
+    : path.join(repo, "03-status", "decision-log.md");
+  if (existsSync(decPath) && (decRes.decisions || []).length) {
+    let content = readFileSync(decPath, "utf8");
+    for (const group of decRes.decisions) {
+      if (group.project !== cfg.project) continue;
+      for (const row of group.rows || []) {
+        const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
+        const re = new RegExp(`^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`, "m");
+        if (re.test(content)) content = content.replace(re, line);
+        else content = content.trimEnd() + "\n" + line + "\n";
+        mergedDecisions++;
+      }
+    }
+    writeFileSync(decPath, content);
+  }
+
+  // Project registration: brain-created projects (never pushed from a repo) → marker
+  // files under from-brain/_projects/ so the workspace is aware of them. Append-only;
+  // full local scaffold generation is deferred. Tolerates an older brain (404 → skip).
+  let registered = 0;
+  const projRes = await apiOptional(cfg, "/projects", { projects: [] });
+  const projDir = path.join(repo, inboxDir, "from-brain", "_projects");
+  for (const p of projRes.projects || []) {
+    if (!p.brain_only || p.slug === cfg.project) continue;
+    const marker = path.join(projDir, `${p.slug}.md`);
+    if (existsSync(marker)) continue;
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      marker,
+      `---\naccess: team\nkind: project-registration\nslug: ${p.slug}\n---\n\n# ${p.name || p.slug}\n\nBrain-created project \`${p.slug}\` (created in the team dashboard; no local workspace yet).\n`
+    );
+    registered++;
+  }
+
   state.last_pull = new Date().toISOString();
   state.last_tasks_pull = state.last_pull;
+  state.last_decisions_pull = state.last_pull;
   saveState(repo, state);
   console.log("");
-  console.log(c.green(`pulled ${fetched} item(s); merged ${merged} task row(s).`));
+  console.log(
+    c.green(
+      `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
+        (registered ? `, registered ${registered} brain project(s)` : "") +
+        "."
+    )
+  );
 }
 
 // ── skill + artifact share/pull (P4) ─────────────────────────────────────────
