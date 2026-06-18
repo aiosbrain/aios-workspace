@@ -32,6 +32,7 @@ import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
 import { readSkills, readIntegrations, firstSentence, frontmatter } from "../../scripts/gen-catalog.mjs";
 import { listConnectors, getDescriptor, validateConnector, storeConnector, unwireConnector, readBlueprint } from "../../scripts/connector.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
+import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -41,6 +42,14 @@ const AUTO_ALLOW = new Set([
   "Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite", "Task", "ExitPlanMode",
   "WebFetch", "WebSearch", "Write", "Edit", "MultiEdit", "NotebookEdit",
 ]);
+
+// Deterministic, env-gated, deny-by-default Bash policy used ONLY by the agentic
+// UX-testing harness to make Flow-A permission enforcement reproducible. Inert
+// unless AIOS_GUI_TEST_POLICY names a built-in policy (default off → production
+// unchanged). The env var selects a NAMED policy whose exact-argv command shapes
+// live in ./tool-policy.mjs — a test can pick one but cannot widen it, and
+// matching rejects shell metacharacters so chained commands can't slip through.
+const TEST_POLICY_NAME = (process.env.AIOS_GUI_TEST_POLICY || "").trim();
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
@@ -568,6 +577,18 @@ wss.on("connection", (ws, req) => {
   // still vets writes); other tools prompt. Returns the SDK { behavior } shape.
   const confirmClaudeTool = async (toolName, toolInput) => {
     if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: toolInput };
+    // Env-gated deterministic test policy (deny-by-default, exact-argv). Inert in
+    // production: only active when AIOS_GUI_TEST_POLICY names a built-in policy.
+    // Emits a tool_policy event so the UX harness can post-assert enforcement
+    // from the transcript (and re-derive each verdict independently).
+    if (TEST_POLICY_NAME) {
+      const cmd = (toolInput && toolInput.command) || "";
+      const verdict = evaluateToolPolicy(TEST_POLICY_NAME, toolName, cmd);
+      send({ type: "tool_policy", tool: toolName, command: cmd, allowed: verdict.allowed, reason: verdict.reason });
+      return verdict.allowed
+        ? { behavior: "allow", updatedInput: toolInput }
+        : { behavior: "deny", message: `denied by AIOS_GUI_TEST_POLICY=${TEST_POLICY_NAME}: ${verdict.reason}` };
+    }
     if (toolName === "AskUserQuestion") {
       return { behavior: "deny", message: "This chat can't render multiple-choice questions. Ask the user ONE short question at a time as a normal message and wait for their typed reply." };
     }

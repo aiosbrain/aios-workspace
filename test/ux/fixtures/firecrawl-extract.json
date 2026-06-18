@@ -1,0 +1,19 @@
+{
+  "title": "Sample Person — About",
+  "json": {
+    "person": {
+      "name": "Sample Tester",
+      "role": "Operations Lead",
+      "location": "Remote",
+      "links": ["https://example.com/about"]
+    },
+    "company": {
+      "name": "Example Org",
+      "what_they_do": "A sample organization used as fixture data for UX testing.",
+      "industry": "Software",
+      "website": "https://example.com"
+    },
+    "focus_areas": ["workflow automation", "team operations"],
+    "tools_mentioned": ["Slack", "Jira", "Notion"]
+  }
+}

@@ -1,0 +1,57 @@
+name: ux-nightly
+
+# Agentic e2e UX-testing harness (cockpit pilot). NIGHTLY / on-demand ONLY — never a
+# per-PR gate: it spends tokens and is mildly non-deterministic. The live harness runs ONLY
+# when the ANTHROPIC_API_KEY secret is present; otherwise it skips (exit 0). review_needed is
+# a triage signal (warn + upload artifacts), not a failure — only ux_fail fails the job.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      fail_on_review:
+        description: "Treat judge review_needed as a hard failure (exit 1)"
+        type: boolean
+        default: false
+
+jobs:
+  ux:
+    name: agentic UX harness (live, secret-gated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome (for agent-browser)
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install agent-browser (pinned)
+        run: npm i -g agent-browser@0.28.0
+
+      - name: Run the agentic UX harness (only with an API key)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FAIL_ON_REVIEW: ${{ inputs.fail_on_review }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY not set — skipping the live UX harness (skipped_no_key, exit 0)."
+            exit 0
+          fi
+          EXTRA=""
+          if [ "$FAIL_ON_REVIEW" = "true" ]; then EXTRA="--fail-on-review"; fi
+          node test/ux/run-ux.mjs --flow all --keep-evidence $EXTRA
+
+      - name: Upload evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-evidence
+          path: test/ux/evidence/**
+          if-no-files-found: ignore

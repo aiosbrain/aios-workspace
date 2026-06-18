@@ -28,6 +28,10 @@ EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
 # their example docs may mention generic names — not AIOS client identifiers.
 # skill-scan-fixtures/ holds DELIBERATELY-malicious scanner test fixtures (injection +
 # fake secret/exfil strings) — they are test inputs, never shipped to a workspace.
+# Note: the agentic UX harness's evidence/ output (test/ux/evidence/) is gitignored,
+# so it is never in the committed tree CI scans — no exclude entry needed. We do NOT
+# add a basename-scoped --exclude-dir=evidence: that would be a global blind spot
+# matching any directory named "evidence" anywhere in the tree.
 
 # STRONG terms — unambiguous; any occurrence is a leak. Case-insensitive substring.
 # Note: "company graph" is NOT gated — the Confidentiality Confirmation (§1.2(a))
