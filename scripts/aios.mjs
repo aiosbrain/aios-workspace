@@ -345,7 +345,7 @@ function parseDecisionRows(body) {
 
 function loadState(repo) {
   const p = path.join(repo, ".aios", "state.json");
-  if (!existsSync(p)) return { items: {}, last_pull: null, last_tasks_pull: null };
+  if (!existsSync(p)) return { items: {}, last_pull: null, last_tasks_pull: null, last_decisions_pull: null };
   try {
     return JSON.parse(readFileSync(p, "utf8"));
   } catch {
@@ -770,11 +770,41 @@ async function cmdPull(repo, cfg, args = []) {
     writeFileSync(tasksPath, content);
   }
 
+  // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
+  // (mirrors the task writeback; keyed on the `#` column = row_key).
+  const decRes = await api(
+    cfg, "GET",
+    `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`
+  );
+  let mergedDecisions = 0;
+  const decPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
+    ? path.join(repo, "3-log", "decision-log.md")
+    : path.join(repo, "03-status", "decision-log.md");
+  if (existsSync(decPath) && (decRes.decisions || []).length) {
+    let content = readFileSync(decPath, "utf8");
+    for (const group of decRes.decisions) {
+      if (group.project !== cfg.project) continue;
+      for (const row of group.rows || []) {
+        const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
+        const re = new RegExp(`^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`, "m");
+        if (re.test(content)) content = content.replace(re, line);
+        else content = content.trimEnd() + "\n" + line + "\n";
+        mergedDecisions++;
+      }
+    }
+    writeFileSync(decPath, content);
+  }
+
   state.last_pull = new Date().toISOString();
   state.last_tasks_pull = state.last_pull;
+  state.last_decisions_pull = state.last_pull;
   saveState(repo, state);
   console.log("");
-  console.log(c.green(`pulled ${fetched} item(s); merged ${merged} task row(s).`));
+  console.log(
+    c.green(
+      `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s).`
+    )
+  );
 }
 
 // ── skill + artifact share/pull (P4) ─────────────────────────────────────────
