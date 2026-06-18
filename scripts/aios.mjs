@@ -795,6 +795,24 @@ async function cmdPull(repo, cfg, args = []) {
     writeFileSync(decPath, content);
   }
 
+  // Project registration: brain-created projects (never pushed from a repo) → marker
+  // files under from-brain/_projects/ so the workspace is aware of them. Append-only;
+  // full local scaffold generation is deferred. Tolerates an older brain (404 → skip).
+  let registered = 0;
+  const projRes = await api(cfg, "GET", "/projects").catch(() => ({ projects: [] }));
+  const projDir = path.join(repo, inboxDir, "from-brain", "_projects");
+  for (const p of projRes.projects || []) {
+    if (!p.brain_only || p.slug === cfg.project) continue;
+    const marker = path.join(projDir, `${p.slug}.md`);
+    if (existsSync(marker)) continue;
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      marker,
+      `---\naccess: team\nkind: project-registration\nslug: ${p.slug}\n---\n\n# ${p.name || p.slug}\n\nBrain-created project \`${p.slug}\` (created in the team dashboard; no local workspace yet).\n`
+    );
+    registered++;
+  }
+
   state.last_pull = new Date().toISOString();
   state.last_tasks_pull = state.last_pull;
   state.last_decisions_pull = state.last_pull;
@@ -802,7 +820,9 @@ async function cmdPull(repo, cfg, args = []) {
   console.log("");
   console.log(
     c.green(
-      `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s).`
+      `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
+        (registered ? `, registered ${registered} brain project(s)` : "") +
+        "."
     )
   );
 }
