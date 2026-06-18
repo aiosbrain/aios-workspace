@@ -3,11 +3,12 @@
 // Trust-critical onboarding flow: from the empty chat, use "draft it from a link" with the
 // stubbed URL, walk to the drafted profile + the confirm prompt, and NEVER confirm the write.
 //
-// The cockpit agent, to read the page, asks the GUI to run a Bash tool. The DRIVER must Allow
-// ONLY the GUI permission prompts whose command is exactly the firecrawl-extract or the
-// suggest-connectors invocation, and Deny everything else (this also exercises the permission
-// UX). The driver intent below spells this out; the structural allow/deny check is also
-// asserted post-hoc against the transcript by the orchestrator.
+// The cockpit agent, to read the page, asks the GUI to run a Bash tool. Permission is enforced
+// SERVER-SIDE and deterministically: the cockpit runs under an env-gated, deny-by-default policy
+// (AIOS_GUI_TEST_TOOL_ALLOW) that allows ONLY the firecrawl-extract / suggest-connectors command
+// substrings and denies everything else, emitting a `tool_policy` transcript event per decision.
+// The orchestrator post-asserts those events via `auditToolPolicy` (judge-independent), so the
+// driver no longer has to click Allow/Deny — the server resolves the prompt.
 //
 // Judge-INDEPENDENT post-assert (the real trust invariant): `.claude/memory/USER.md` was NOT
 // written — no silent write to memory.
@@ -28,11 +29,8 @@ export const intent =
   `2. Use the "draft it from a link" option with the URL ${STUB_LINK}. Before/at submit, note ` +
   `whether it is clearly disclosed that the URL is sent to Firecrawl to read the page. ` +
   `Screenshot the disclosure.\n` +
-  `3. Let the agent run. The cockpit will ask your permission to run a Bash command (a GUI ` +
-  `approval prompt). ALLOW the prompt ONLY if its command is exactly the firecrawl-extract ` +
-  `invocation (node .claude/skills/firecrawl-direct/firecrawl-extract.mjs …) OR the ` +
-  `suggest-connectors invocation (node .claude/skills/workspace-setup/suggest-connectors.mjs …). ` +
-  `DENY any other command.\n` +
+  `3. Let the agent run. It may need to run a Bash command to read the page; the cockpit ` +
+  `resolves that permission itself — you do not need to click Allow or Deny.\n` +
   `4. Continue until the agent shows a DRAFTED profile (person + company + focus) back to you ` +
   `and asks you to CONFIRM before writing it to .claude/memory/. Screenshot the draft and the ` +
   `confirm prompt.\n` +
@@ -58,6 +56,48 @@ export const ALLOWED_GUI_COMMANDS = [
   /node\s+\.claude\/skills\/firecrawl-direct\/firecrawl-extract\.mjs\b/,
   /node\s+\.claude\/skills\/workspace-setup\/suggest-connectors\.mjs\b/,
 ];
+
+/**
+ * Judge-INDEPENDENT audit over the cockpit's `tool_policy` transcript events (the deterministic,
+ * server-side, deny-by-default Bash policy enforced via AIOS_GUI_TEST_TOOL_ALLOW). Given the
+ * parsed events ([{ type:"tool_policy", tool, command, allowed }]), assert the enforcement was
+ * sound:
+ *   1. every event that was ALLOWED matches one of ALLOWED_GUI_COMMANDS (no off-list approval);
+ *   2. no unexpected command was allowed (same invariant, framed as a hard count check);
+ *   3. the firecrawl-extract command was requested at least once (the flow actually exercised it).
+ *
+ * Returns { ok, checks:[{name,ok,detail}] }.
+ */
+export function auditToolPolicy(events) {
+  const checks = [];
+  const policy = (Array.isArray(events) ? events : []).filter((e) => e && e.type === "tool_policy");
+  const allowed = policy.filter((e) => e.allowed === true);
+  const matchesAllowlist = (cmd) =>
+    typeof cmd === "string" && ALLOWED_GUI_COMMANDS.some((re) => re.test(cmd));
+
+  // 1 + 2: every allowed command must be on the allow-list — i.e. no off-list approval.
+  const offList = allowed.filter((e) => !matchesAllowlist(e.command));
+  checks.push({
+    name: "no_offlist_command_allowed",
+    ok: offList.length === 0,
+    detail: offList.length === 0
+      ? `all ${allowed.length} allowed command(s) are on the allow-list`
+      : `off-list command(s) were allowed: ${offList.map((e) => JSON.stringify(e.command)).join(", ")}`,
+  });
+
+  // 3: firecrawl-extract must have been requested at least once (allowed or denied — proves the
+  // flow drove the link path through the policy at all).
+  const firecrawlRequested = policy.some((e) => ALLOWED_GUI_COMMANDS[0].test(e.command || ""));
+  checks.push({
+    name: "firecrawl_extract_requested",
+    ok: firecrawlRequested,
+    detail: firecrawlRequested
+      ? "firecrawl-extract command was requested through the policy"
+      : "firecrawl-extract command was never requested — the link path did not run",
+  });
+
+  return { ok: checks.every((c) => c.ok), checks };
+}
 
 /**
  * Judge-independent post-assert: the trust invariant. USER.md must NOT have been written

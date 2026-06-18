@@ -42,6 +42,16 @@ const AUTO_ALLOW = new Set([
   "WebFetch", "WebSearch", "Write", "Edit", "MultiEdit", "NotebookEdit",
 ]);
 
+// Deterministic, env-gated, deny-by-default Bash policy used ONLY by the agentic
+// UX-testing harness to make Flow-A permission enforcement reproducible. Inert
+// unless AIOS_GUI_TEST_TOOL_ALLOW is set (default off → production unchanged):
+// a comma-separated list of command substrings; a Bash command is allowed only
+// if it contains one of them, otherwise it is denied.
+const TEST_TOOL_ALLOW = (process.env.AIOS_GUI_TEST_TOOL_ALLOW || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.join(SCRIPT_DIR, "..", "client", "dist");
 
@@ -568,6 +578,17 @@ wss.on("connection", (ws, req) => {
   // still vets writes); other tools prompt. Returns the SDK { behavior } shape.
   const confirmClaudeTool = async (toolName, toolInput) => {
     if (AUTO_ALLOW.has(toolName)) return { behavior: "allow", updatedInput: toolInput };
+    // Env-gated deterministic test policy (deny-by-default). Inert in production:
+    // only active when AIOS_GUI_TEST_TOOL_ALLOW is non-empty. Emits a tool_policy
+    // event so the UX harness can post-assert enforcement from the transcript.
+    if (TEST_TOOL_ALLOW.length) {
+      const cmd = (toolInput && toolInput.command) || "";
+      const ok = !!cmd && TEST_TOOL_ALLOW.some((a) => cmd.includes(a));
+      send({ type: "tool_policy", tool: toolName, command: cmd, allowed: ok });
+      return ok
+        ? { behavior: "allow", updatedInput: toolInput }
+        : { behavior: "deny", message: "denied by AIOS_GUI_TEST_TOOL_ALLOW policy" };
+    }
     if (toolName === "AskUserQuestion") {
       return { behavior: "deny", message: "This chat can't render multiple-choice questions. Ask the user ONE short question at a time as a normal message and wait for their typed reply." };
     }

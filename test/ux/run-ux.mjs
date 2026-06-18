@@ -28,20 +28,23 @@ import net from "node:net";
 import http from "node:http";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { getDescriptor, storeConnector } from "../../scripts/connector.mjs";
 import { judgeFlow } from "./judge.mjs";
-import { runDriver } from "./driver.mjs";
+// NOTE: driver.mjs is imported LAZILY inside the live-flow path (it pulls in the Agent SDK),
+// so `node run-ux.mjs` is startable with no node_modules and reaches the no-key skip cleanly.
 import * as flowA from "./flows/onboarding-draft-from-link.mjs";
 import * as flowB from "./flows/skills-install-consent.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 const EVIDENCE_ROOT = path.join(HERE, "evidence");
-const KNOWN_TOKEN = "ux-harness-known-token";
+// Obviously-non-secret dummy used only to gate the throwaway local cockpit
+// fixture during UX testing — never a real credential.
+const KNOWN_TOKEN = "dummy-token";
 const DRIVER_MODEL = process.env.AIOS_UX_DRIVER_MODEL || "claude-sonnet-4-5";
 const JUDGE_MODEL = process.env.AIOS_UX_JUDGE_MODEL || "claude-sonnet-4-5";
 
@@ -54,6 +57,8 @@ const getArg = (n, d) => { const i = argv.indexOf(n); return i !== -1 ? argv[i +
 const KEEP_EVIDENCE = hasFlag("--keep-evidence");
 const REAL_FIRECRAWL = hasFlag("--real-firecrawl");
 const SETUP_ONLY = hasFlag("--setup-only");
+// Opt-in: make a judge review_needed a HARD failure (exit 1). Default off — review_needed → 0.
+const FAIL_ON_REVIEW = hasFlag("--fail-on-review");
 const FLOW_SEL = getArg("--flow", "all");
 
 const log = (...a) => console.log("[run-ux]", ...a);
@@ -153,6 +158,13 @@ async function launchCockpit(fixture, stubUrl) {
     const env = {
       ...process.env,
       AIOS_GUI_TOKEN: KNOWN_TOKEN,
+      // Deterministic, deny-by-default server-side Bash policy for Flow A: the cockpit allows
+      // ONLY these two command substrings and denies anything else, recording a tool_policy
+      // event per decision. (Flow B triggers no Bash, so it is unaffected by this allow-list.)
+      AIOS_GUI_TEST_TOOL_ALLOW: [
+        ".claude/skills/firecrawl-direct/firecrawl-extract.mjs",
+        ".claude/skills/workspace-setup/suggest-connectors.mjs",
+      ].join(","),
       ...(stubUrl ? { FIRECRAWL_API_URL: stubUrl } : {}),
     };
     const child = spawn(process.execPath, [path.join(ROOT, "scripts", "run-gui.mjs"), "--repo", fixture, "--port", String(port)], {
@@ -217,13 +229,20 @@ async function runFlow(flow, fixture, tokenUrl) {
   const baseline = typeof flow.captureBaseline === "function" ? flow.captureBaseline(fixture) : undefined;
 
   const sdk = await import("@anthropic-ai/claude-agent-sdk");
+  const { runDriver } = await import("./driver.mjs"); // lazy: only the live path needs the driver
   log(`[${flow.id}] driving…`);
   const driven = await runDriver({ flow, tokenUrl, evidenceDir, model: DRIVER_MODEL, sdk });
 
-  // Audit: for Flow A, only the firecrawl-extract / suggest-connectors GUI commands may have
-  // been approved. (Driver-level allow/deny is logged in the transcript; the GUI-prompt
-  // discipline is enforced by the intent + this audit over the transcript text.)
-  const guiAudit = auditGuiApprovals(flow, driven.transcript);
+  // Judge-INDEPENDENT enforcement audit (Flow A): the cockpit ran under the deny-by-default
+  // server-side Bash policy and recorded a `tool_policy` event per decision into its session
+  // transcript (.aios/sessions/<id>.jsonl). Read those events and assert that ONLY the allowed
+  // commands were approved (and that firecrawl-extract was actually requested). A failure here
+  // is a real enforcement regression → ux_fail.
+  let toolPolicyAudit = { ok: true, checks: [], note: "no tool_policy audit for this flow" };
+  if (typeof flow.auditToolPolicy === "function") {
+    const events = readToolPolicyEvents(fixture);
+    toolPolicyAudit = flow.auditToolPolicy(events);
+  }
 
   const evidence = { screenshots: driven.screenshots, errors: driven.errors, transcript: driven.transcript };
   const callModel = await makeRealCallModel(evidenceDir);
@@ -232,10 +251,10 @@ async function runFlow(flow, fixture, tokenUrl) {
 
   const post = typeof flow.postAssert === "function" ? flow.postAssert({ repo: fixture, baseline }) : { ok: true, checks: [] };
 
-  // Resolve flow status: a failed post-assert OR a judge fail → ux_fail. A judge
-  // review_needed (with post-asserts green) → review_needed. Otherwise pass.
+  // Resolve flow status: a failed post-assert OR a failed tool-policy audit OR a judge fail →
+  // ux_fail. A judge review_needed (with post-asserts green) → review_needed. Otherwise pass.
   let status;
-  if (!post.ok || judgeResult.status === "fail" || !guiAudit.ok) status = "ux_fail";
+  if (!post.ok || judgeResult.status === "fail" || !toolPolicyAudit.ok) status = "ux_fail";
   else if (judgeResult.status === "review_needed") status = "review_needed";
   else status = "pass";
 
@@ -243,29 +262,34 @@ async function runFlow(flow, fixture, tokenUrl) {
     flow: flow.id, status,
     judge: judgeResult,
     postAssert: post,
-    guiAudit,
+    toolPolicyAudit,
     evidenceDir,
     generatedAt: new Date().toISOString(),
   };
   writeFileSync(path.join(evidenceDir, "report.json"), JSON.stringify(report, null, 2) + "\n");
-  log(`[${flow.id}] status=${status} (judge=${judgeResult.status}, postAssert=${post.ok}, guiAudit=${guiAudit.ok})`);
+  log(`[${flow.id}] status=${status} (judge=${judgeResult.status}, postAssert=${post.ok}, toolPolicy=${toolPolicyAudit.ok})`);
   return report;
 }
 
-// Audit the driver transcript: every cockpit-GUI approval the driver issued must match the
-// flow's ALLOWED_GUI_COMMANDS (Flow A). Flows with no allow-list are not audited.
-function auditGuiApprovals(flow, transcript) {
-  if (!Array.isArray(flow.ALLOWED_GUI_COMMANDS)) return { ok: true, note: "no GUI allow-list for this flow" };
-  // The driver clicks "Allow"/"Deny" on the cockpit's permission modal via agent-browser; we
-  // can't fully see the cockpit's internal command from the transcript, so this is a
-  // best-effort textual audit: flag any approval of a command that isn't on the allow-list.
-  const approvals = transcript
-    .filter((e) => e.kind === "assistant_text" && /allow|approve|confirm/i.test(e.text || ""))
-    .map((e) => e.text);
-  // We treat the audit as passing unless we positively see an approval mentioning a
-  // non-allowed binary write/exec. (The hard trust guarantee is the post-assert: no write.)
-  const suspicious = approvals.filter((t) => /\bnode\b/.test(t) && !flow.ALLOWED_GUI_COMMANDS.some((re) => re.test(t)) && /skills|memory|write/i.test(t));
-  return { ok: suspicious.length === 0, suspicious };
+// Read every `tool_policy` event the cockpit recorded across its session transcripts
+// (.aios/sessions/*.jsonl) for the fixture. These are written server-side by confirmClaudeTool
+// under the env-gated deny-by-default policy. Returns a flat array of parsed events.
+function readToolPolicyEvents(fixture) {
+  const sessionsDir = path.join(fixture, ".aios", "sessions");
+  if (!existsSync(sessionsDir)) return [];
+  const events = [];
+  let files = [];
+  try { files = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl")); } catch { return []; }
+  for (const f of files) {
+    let text = "";
+    try { text = readFileSync(path.join(sessionsDir, f), "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      try { const obj = JSON.parse(t); if (obj && obj.type === "tool_policy") events.push(obj); } catch { /* skip */ }
+    }
+  }
+  return events;
 }
 
 // ── teardown ────────────────────────────────────────────────────────────────────
@@ -285,16 +309,30 @@ function closeBrowserSessions() {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 async function main() {
+  // 1) Parse selection first.
   const selected = FLOW_SEL === "all" ? Object.values(FLOWS) : (FLOWS[FLOW_SEL] ? [FLOWS[FLOW_SEL]] : null);
   if (!selected) { warn(`unknown --flow '${FLOW_SEL}'. Known: ${Object.keys(FLOWS).join(", ")}, or 'all'`); return 2; }
 
+  // 2) Ensure the evidence root exists BEFORE writing any summary into it.
+  mkdirSync(EVIDENCE_ROOT, { recursive: true });
+
   const haveKey = !!process.env.ANTHROPIC_API_KEY;
+
+  // 3) No-key skip happens BEFORE any fixture scaffold or cockpit launch — so the skip path
+  //    needs no node_modules and no cockpit. (Without a key there is nothing to drive/judge.)
+  if (!haveKey && !SETUP_ONLY) {
+    writeFileSync(path.join(EVIDENCE_ROOT, "summary.json"), JSON.stringify({ status: "skipped_no_key", flows: [] }, null, 2) + "\n");
+    log("ANTHROPIC_API_KEY unset → skipped_no_key (nothing to drive/judge without a key).");
+    return 0;
+  }
+
+  // 4) From here on we genuinely need to scaffold + launch (for --setup-only or a live run).
   const parentTmp = mkdtempSync(path.join(tmpdir(), "aios-ux-"));
   let cockpit = null, stub = null, fixture = null;
   let exitCode = 0;
 
   try {
-    // ── setup (always proven, even with no API key) ──
+    // ── setup (also proven on --setup-only, even with no API key) ──
     fixture = scaffoldFixture(parentTmp);
 
     if (!REAL_FIRECRAWL) {
@@ -312,14 +350,8 @@ async function main() {
       log("--setup-only: setup + launch + readiness proven; tearing down.");
       return 0;
     }
-    if (!haveKey) {
-      log("ANTHROPIC_API_KEY unset → skipped_no_key (setup/launch/readiness proven; tearing down).");
-      writeFileSync(path.join(EVIDENCE_ROOT, "summary.json"), JSON.stringify({ status: "skipped_no_key", flows: [] }, null, 2) + "\n");
-      return 0;
-    }
 
     // ── run flows ──
-    mkdirSync(EVIDENCE_ROOT, { recursive: true });
     const reports = [];
     for (const flow of selected) {
       try { reports.push(await runFlow(flow, fixture, tokenUrl)); }
@@ -336,7 +368,13 @@ async function main() {
     let overall;
     if (anyHarnessError) { overall = "harness_error"; exitCode = 2; }
     else if (anyFail) { overall = "ux_fail"; exitCode = 1; }
-    else if (anyReview) { overall = "review_needed"; exitCode = 0; warn("review_needed — judge did not reach agreement on at least one criterion; see artifacts."); }
+    else if (anyReview) {
+      overall = "review_needed";
+      // Default: a review_needed is NOT a regression → exit 0 + warning. Opt-in
+      // --fail-on-review (e.g. a gating nightly) turns it into a hard failure.
+      exitCode = FAIL_ON_REVIEW ? 1 : 0;
+      warn(`review_needed — judge did not reach agreement on at least one criterion; see artifacts.${FAIL_ON_REVIEW ? " (--fail-on-review → exit 1)" : ""}`);
+    }
     else { overall = "pass"; exitCode = 0; }
 
     writeFileSync(path.join(EVIDENCE_ROOT, "summary.json"), JSON.stringify({ status: overall, flows: reports.map((r) => ({ flow: r.flow, status: r.status })) }, null, 2) + "\n");
