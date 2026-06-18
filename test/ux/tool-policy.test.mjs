@@ -20,8 +20,11 @@ function check(label, cond) {
 }
 
 const P = "ux-onboarding";
-const FC = "node .claude/skills/firecrawl-direct/firecrawl-extract.mjs https://example.com/about";
-const SC = "node .claude/skills/workspace-setup/suggest-connectors.mjs";
+const FCBIN = "node .claude/skills/firecrawl-direct/firecrawl-extract.mjs";
+const SCBIN = "node .claude/skills/workspace-setup/suggest-connectors.mjs";
+// The exact documented shapes (workspace-setup/SKILL.md):
+const FC = `${FCBIN} --url https://example.com/about --out .aios/onboarding-extract.json`;
+const SC = `${SCBIN} --extract .aios/onboarding-extract.json --repo .`;
 const allow = (cmd, tool = "Bash") => evaluateToolPolicy(P, tool, cmd).allowed === true;
 const deny = (cmd, tool = "Bash") => evaluateToolPolicy(P, tool, cmd).allowed === false;
 
@@ -35,9 +38,28 @@ console.log("policy: inert / unknown-name handling");
 
 console.log("policy: ALLOW only the exact firecrawl/suggest argv shapes");
 {
-  check("firecrawl-extract with a URL arg", allow(FC));
-  check("suggest-connectors (no required args)", allow(SC));
-  check("suggest-connectors with an extra plain arg", allow(SC + " --json"));
+  check("firecrawl-extract --url + fixed --out (documented shape)", allow(FC));
+  check("firecrawl-extract positional URL only (no --out)", allow(`${FCBIN} https://example.com/about`));
+  check("firecrawl-extract repeated --url", allow(`${FCBIN} --url https://a.com --url https://b.com/in/me`));
+  check("firecrawl-extract with --repo . (pinned)", allow(`${FCBIN} --url https://x.com/a --repo .`));
+  check("suggest-connectors --extract fixed + --repo . (documented shape)", allow(SC));
+  check("suggest-connectors --extract only (no --repo)", allow(`${SCBIN} --extract .aios/onboarding-extract.json`));
+}
+
+console.log("policy: DENY off-shape args (the prefix-match write/read primitive)");
+{
+  check("THE WRITE PRIMITIVE — firecrawl --out to an arbitrary file", deny(`${FCBIN} --url https://x.com/a --out /tmp/policy-writes.json`));
+  check("firecrawl --out to a relative non-fixed file", deny(`${FCBIN} --url https://x.com/a --out notes.json`));
+  check("firecrawl --out absolute system path", deny(`${FCBIN} --url https://x.com/a --out /etc/cron.d/x`));
+  check("firecrawl --repo to an arbitrary dir (read primitive)", deny(`${FCBIN} --url https://x.com/a --repo /tmp`));
+  check("firecrawl unknown flag", deny(`${FCBIN} --url https://x.com/a --eval pwned`));
+  check("firecrawl non-URL positional arg", deny(`${FCBIN} notaurl`));
+  check("firecrawl --out with no value (dangling flag)", deny(`${FCBIN} --url https://x.com/a --out`));
+  check("firecrawl duplicate --out", deny(`${FCBIN} --url https://x.com/a --out .aios/onboarding-extract.json --out .aios/onboarding-extract.json`));
+  check("suggest-connectors without --extract", deny(`${SCBIN} --repo .`));
+  check("suggest-connectors --extract to an arbitrary file", deny(`${SCBIN} --extract /etc/passwd`));
+  check("suggest-connectors --repo to an arbitrary dir", deny(`${SCBIN} --extract .aios/onboarding-extract.json --repo /tmp`));
+  check("suggest-connectors unknown flag", deny(`${SCBIN} --extract .aios/onboarding-extract.json --eval pwned`));
 }
 
 console.log("policy: DENY shell metacharacters / chaining (the substring bypass)");

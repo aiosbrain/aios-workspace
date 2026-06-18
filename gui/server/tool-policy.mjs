@@ -35,24 +35,63 @@ export function tokenizeCommand(command) {
   return argv;
 }
 
-// A matcher asserts an exact argv shape. `node <scriptPath> [args…]` with the
-// script path matched EXACTLY (not as a substring) and a minimum trailing-arg count.
-function nodeScript(scriptPath, { minArgs = 0 } = {}) {
+// A matcher asserts an exact `node <scriptPath> [args…]` shape. The script path
+// is matched EXACTLY and EVERY trailing arg is validated by `validateArgs` — there
+// is no "extra args are fine" gap, so flags like `--out <anywhere>` or `--repo
+// <anywhere>` cannot smuggle a write/read primitive past the policy.
+function nodeScript(scriptPath, validateArgs) {
   return (argv) =>
     Array.isArray(argv) &&
-    argv.length >= 2 + minArgs &&
+    argv.length >= 2 &&
     argv[0] === "node" &&
-    argv[1] === scriptPath;
+    argv[1] === scriptPath &&
+    validateArgs(argv.slice(2));
+}
+
+// The only paths/values the onboarding flow is allowed to name. These mirror the
+// documented commands in scaffold/.claude/skills/workspace-setup/SKILL.md exactly:
+//   firecrawl-extract … --url <url> [--url …] --out .aios/onboarding-extract.json
+//   suggest-connectors --extract .aios/onboarding-extract.json --repo .
+const ONBOARDING_EXTRACT = ".aios/onboarding-extract.json"; // fixed, repo-relative output file
+const URL_RE = /^https?:\/\/[^\s]+$/i;                       // http(s) only (metachars already rejected)
+
+// firecrawl-extract: only `--url <http(s)>` (repeatable) / positional http(s) URLs,
+// optional `--out <fixed>` and `--repo .` (each at most once, pinned values). Any
+// unknown flag, non-URL positional, or off-path --out/--repo → deny.
+function firecrawlExtractArgs(rest) {
+  let urls = 0, sawOut = false, sawRepo = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--url") { const v = rest[++i]; if (!v || !URL_RE.test(v)) return false; urls++; continue; }
+    if (a === "--out") { const v = rest[++i]; if (v !== ONBOARDING_EXTRACT || sawOut) return false; sawOut = true; continue; }
+    if (a === "--repo") { const v = rest[++i]; if (v !== "." || sawRepo) return false; sawRepo = true; continue; }
+    if (URL_RE.test(a)) { urls++; continue; } // positional URL
+    return false;                              // any other token → deny
+  }
+  return urls >= 1;                            // at least one URL required
+}
+
+// suggest-connectors: required `--extract <fixed>` plus optional `--repo .`; nothing else.
+function suggestConnectorsArgs(rest) {
+  let sawExtract = false, sawRepo = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--extract") { const v = rest[++i]; if (v !== ONBOARDING_EXTRACT || sawExtract) return false; sawExtract = true; continue; }
+    if (a === "--repo") { const v = rest[++i]; if (v !== "." || sawRepo) return false; sawRepo = true; continue; }
+    return false;                              // any other token → deny
+  }
+  return sawExtract;                           // --extract is mandatory
 }
 
 // The named built-in policies. Each value is a list of exact-argv matchers; a
-// command is allowed iff it parses to a metacharacter-free argv that matches one.
+// command is allowed iff it parses to a metacharacter-free argv whose binary,
+// script path, AND every argument match one matcher.
 export const TEST_POLICIES = {
   // Flow A — onboarding draft-from-link: the cockpit agent may run ONLY the
-  // Firecrawl extract script (needs a URL arg) and the connector-suggest script.
+  // Firecrawl extract script and the connector-suggest script, in their exact shapes.
   "ux-onboarding": [
-    nodeScript(".claude/skills/firecrawl-direct/firecrawl-extract.mjs", { minArgs: 1 }),
-    nodeScript(".claude/skills/workspace-setup/suggest-connectors.mjs"),
+    nodeScript(".claude/skills/firecrawl-direct/firecrawl-extract.mjs", firecrawlExtractArgs),
+    nodeScript(".claude/skills/workspace-setup/suggest-connectors.mjs", suggestConnectorsArgs),
   ],
 };
 
