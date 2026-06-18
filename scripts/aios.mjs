@@ -448,6 +448,19 @@ async function api(cfg, method, route, body = null) {
   return json;
 }
 
+// GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
+// `fallback`; surface any other failure (auth/server) as a visible warning rather than
+// silently swallowing it. Never throws — a missing writeback endpoint must not break pull.
+async function apiOptional(cfg, route, fallback) {
+  try {
+    return await api(cfg, "GET", route);
+  } catch (e) {
+    if (/^404\b/.test(String(e?.message))) return fallback;
+    console.warn(c.yellow(`  ${route} unavailable: ${e?.message ?? e}`));
+    return fallback;
+  }
+}
+
 // ── commands ────────────────────────────────────────────────────────────────
 
 function cmdStatus(repo, cfg, patterns, args = []) {
@@ -772,9 +785,10 @@ async function cmdPull(repo, cfg, args = []) {
 
   // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
   // (mirrors the task writeback; keyed on the `#` column = row_key).
-  const decRes = await api(
-    cfg, "GET",
-    `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`
+  const decRes = await apiOptional(
+    cfg,
+    `/decisions?${new URLSearchParams({ since: state.last_decisions_pull || "1970-01-01T00:00:00Z" })}`,
+    { decisions: [] }
   );
   let mergedDecisions = 0;
   const decPath = existsSync(path.join(repo, "3-log", "decision-log.md"))
@@ -799,7 +813,7 @@ async function cmdPull(repo, cfg, args = []) {
   // files under from-brain/_projects/ so the workspace is aware of them. Append-only;
   // full local scaffold generation is deferred. Tolerates an older brain (404 → skip).
   let registered = 0;
-  const projRes = await api(cfg, "GET", "/projects").catch(() => ({ projects: [] }));
+  const projRes = await apiOptional(cfg, "/projects", { projects: [] });
   const projDir = path.join(repo, inboxDir, "from-brain", "_projects");
   for (const p of projRes.projects || []) {
     if (!p.brain_only || p.slug === cfg.project) continue;

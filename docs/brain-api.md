@@ -2,11 +2,20 @@
 
 **Version: 1** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
-sides build against this file; changes require a version bump and a matching change in
-both repos. Treat any drift between this doc and either implementation as a bug.
+sides build against this file. Treat any drift between this doc and either implementation
+as a bug.
 
-*Revisions (additive within v1 — old clients keep working, so no major bump):*
-- *2026-06-18 — added `GET /api/v1/decisions` (dashboard decision writeback), mirroring `GET /api/v1/tasks`.*
+**Change policy.** A **breaking** change (altering an existing endpoint's request/response
+shape or semantics) requires a **major version bump** (`/api/v2`) and a matching change in
+both repos. **Additive** changes — new endpoints, new item kinds — stay within the current
+major **only if both directions degrade gracefully**: the server keeps old endpoints, and
+**clients MUST tolerate a `404` on any endpoint they call** (the CLI does this for the
+writeback/registration pulls), so a newer client still works against an older brain.
+
+*Revisions (additive within v1):*
+- *2026-06-18 — added `GET /api/v1/decisions` (dashboard decision writeback) and
+  `GET /api/v1/projects` (brain-project registration). Newer CLIs call these but tolerate a
+  `404` from an older brain, so they remain backward-compatible.*
 
 ---
 
@@ -245,6 +254,11 @@ Merge semantics mirror tasks: match by `row_key` (the decision-log `#` column); 
 existing rows in place; append unknown rows; never delete local rows. UI-created rows
 carry a `ui-…` key; the brain never diff-deletes decisions, so a UI row survives until
 it is written back and re-pushed.
+
+> **Reserved key namespace.** Row keys beginning `ui-` are **reserved** for rows created in
+> the dashboard (a `ui-` + random-hex id minted by the brain). Markdown authors must not
+> hand-write `ui-*` keys in `tasks.md` / `decision-log.md`, so a round-tripped UI row keeps a
+> stable identity and can't collide with a human-authored row.
 
 ## `GET /api/v1/projects` — team project list (team-tier only)
 
