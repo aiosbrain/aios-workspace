@@ -129,6 +129,12 @@ export async function run({ repo, model, resume, sessionId, personality, input, 
     ? { type: "preset", preset: "claude_code", append: appendText }
     : { type: "preset", preset: "claude_code" };
 
+  // Under the UX-test tool policy, DROP "user" so the host's global allow-list
+  // (e.g. `Bash(node:*)`) / defaultMode can't pre-approve tools — otherwise the SDK
+  // auto-approves and never consults canUseTool, silently bypassing the test policy.
+  // "project" still loads the fixture's skills, CLAUDE.md, and PreToolUse guard hook.
+  // Inert in production: with AIOS_GUI_TEST_POLICY unset this stays ["user","project"].
+  const underTestPolicy = !!(process.env.AIOS_GUI_TEST_POLICY || "").trim();
   const q = query({
     prompt: prompt(),
     options: {
@@ -136,7 +142,8 @@ export async function run({ repo, model, resume, sessionId, personality, input, 
       model: active,
       ...(resume ? { resume } : sessionId ? { sessionId } : {}),
       systemPrompt,
-      settingSources: ["user", "project"], // CLAUDE.md + skills + PreToolUse guard hook fire
+      settingSources: underTestPolicy ? ["project"] : ["user", "project"], // CLAUDE.md + skills + PreToolUse guard hook fire
+      ...(underTestPolicy ? { permissionMode: "default" } : {}), // force canUseTool consultation
       includePartialMessages: true,
       canUseTool: confirmClaudeTool,
     },

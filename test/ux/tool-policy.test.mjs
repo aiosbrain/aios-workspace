@@ -46,6 +46,15 @@ console.log("policy: ALLOW only the exact firecrawl/suggest argv shapes");
   check("suggest-connectors --extract only (no --repo)", allow(`${SCBIN} --extract .aios/onboarding-extract.json`));
 }
 
+console.log("policy: accept the ABSOLUTE script path the SDK resolves against cwd");
+{
+  const ABS = "node /tmp/ux-fixture/.claude/skills/firecrawl-direct/firecrawl-extract.mjs";
+  check("absolute path ending in the script allowed", allow(`${ABS} --url https://x/a`));
+  check("absolute path + trailing 2>&1 (the real live command) allowed", allow(`${ABS} --url https://example.com/about 2>&1`));
+  check("path-boundary trick (no '/' before .claude) denied", deny("node evil.claude/skills/firecrawl-direct/firecrawl-extract.mjs --url https://x/a"));
+  check("absolute path but off-policy --out still denied", deny(`${ABS} --url https://x/a --out /tmp/x`));
+}
+
 console.log("policy: DENY off-shape args (the prefix-match write/read primitive)");
 {
   check("THE WRITE PRIMITIVE — firecrawl --out to an arbitrary file", deny(`${FCBIN} --url https://x.com/a --out /tmp/policy-writes.json`));
@@ -82,13 +91,36 @@ console.log("policy: DENY wrong shape / wrong binary / substring tricks");
   check("firecrawl-extract WITHOUT the required URL arg", deny("node .claude/skills/firecrawl-direct/firecrawl-extract.mjs"));
   check("quoted arg rejected (argv stays unambiguous)", deny('node .claude/skills/workspace-setup/suggest-connectors.mjs "a b"'));
   check("leading env-assignment rejected", deny("FOO=bar " + SC));
-  check("absolute path instead of repo-relative is not the exact shape", deny("node /tmp/.claude/skills/firecrawl-direct/firecrawl-extract.mjs https://x/a"));
+  check("absolute path to a DIFFERENT script name is denied", deny("node /tmp/.claude/skills/firecrawl-direct/other.mjs https://x/a"));
 }
 
-console.log("policy: only the Bash tool is ever allowable under a policy");
+console.log("policy: only Bash + the firecrawl Skill are allowable under a policy");
 {
   check("Write tool denied even with an allowed-looking command", deny(FC, "Write"));
   check("WebFetch tool denied", deny(FC, "WebFetch"));
+}
+
+console.log("policy: tolerate a trailing 2>&1 (fd-dup), reject every other redirection/chain");
+{
+  check("firecrawl --url … 2>&1 (the agent's real command) allowed", allow(FC + " 2>&1"));
+  check("suggest-connectors … 2>&1 allowed", allow(SC + " 2>&1"));
+  check("trailing 2>&1 with extra spaces allowed", allow(FC + "   2>&1  "));
+  check("2>&1 THEN a chained command still denied", deny(FC + " 2>&1 ; rm -rf ."));
+  check("2>&1 then a pipe still denied", deny(FC + " 2>&1 | sh"));
+  check("non-trailing (mid-command) 2>&1 still denied", deny(FCBIN + " 2>&1 --url https://x/a"));
+  check("real stderr-to-file redirection still denied", deny(FC + " 2>/tmp/err.log"));
+  check("2>/dev/null still denied (only exact trailing 2>&1 tolerated)", deny(FC + " 2>/dev/null"));
+}
+
+console.log("policy: allow the firecrawl-direct Skill (structured), deny other skills");
+{
+  const skill = (skillName, args) => evaluateToolPolicy(P, "Skill", { skill: skillName, args }).allowed;
+  check("Skill firecrawl-direct with an http(s) URL allowed", skill("firecrawl-direct", "https://example.com/about") === true);
+  check("Skill firecrawl-direct with array URL arg allowed", skill("firecrawl-direct", ["https://example.com/about"]) === true);
+  check("Skill firecrawl-direct with a non-URL arg denied", skill("firecrawl-direct", "not a url") === false);
+  check("Skill firecrawl-direct with URL + extra token denied", skill("firecrawl-direct", "https://x/a evil") === false);
+  check("a DIFFERENT skill denied", skill("shell-runner", "https://example.com/about") === false);
+  check("Skill with empty args denied", skill("firecrawl-direct", "") === false);
 }
 
 console.log("audit: re-derives verdicts from raw command (catches recorded drift)");
@@ -117,6 +149,30 @@ console.log("audit: re-derives verdicts from raw command (catches recorded drift
     a3.checks.some((c) => c.name === "firecrawl_extract_requested" && c.ok === false));
 
   check("empty/garbage events → audit fails (nothing exercised)", auditToolPolicy([], { policyName: P }).ok === false);
+
+  // Firecrawl requested via the Skill tool (structured input recorded by the server) → audit ok.
+  const viaSkill = [
+    { type: "tool_policy", tool: "Skill", command: "", input: { skill: "firecrawl-direct", args: "https://example.com/about" }, allowed: true },
+  ];
+  check("firecrawl via Skill event → audit ok", auditToolPolicy(viaSkill, { policyName: P }).ok === true);
+
+  // A non-firecrawl Skill recorded as allowed must be caught as off-list (re-derive denies it).
+  const badSkill = [
+    { type: "tool_policy", tool: "Skill", command: "", input: { skill: "evil", args: "x" }, allowed: true },
+  ];
+  const a5 = auditToolPolicy(badSkill, { policyName: P });
+  check("allowed non-firecrawl Skill → audit FAILS (off-list)", a5.ok === false &&
+    a5.checks.some((c) => c.name === "no_offlist_command_allowed" && c.ok === false));
+
+  // The agent's real Bash command (with 2>&1) recorded as allowed → audit still ok.
+  const real2 = [{ type: "tool_policy", tool: "Bash", command: FC + " 2>&1", allowed: true }];
+  check("real 2>&1 firecrawl command → audit ok", auditToolPolicy(real2, { policyName: P }).ok === true);
+
+  // The actual live shape: ABSOLUTE path + 2>&1 → audit detects firecrawl + re-verifies.
+  const live = [{ type: "tool_policy", tool: "Bash",
+    command: "node /tmp/ux-fixture/.claude/skills/firecrawl-direct/firecrawl-extract.mjs --url https://example.com/about 2>&1",
+    allowed: true }];
+  check("absolute-path + 2>&1 live command → audit ok", auditToolPolicy(live, { policyName: P }).ok === true);
 }
 
 console.log("tokenizeCommand: low-level behavior");

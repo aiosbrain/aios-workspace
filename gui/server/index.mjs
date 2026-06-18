@@ -583,8 +583,10 @@ wss.on("connection", (ws, req) => {
     // from the transcript (and re-derive each verdict independently).
     if (TEST_POLICY_NAME) {
       const cmd = (toolInput && toolInput.command) || "";
-      const verdict = evaluateToolPolicy(TEST_POLICY_NAME, toolName, cmd);
-      send({ type: "tool_policy", tool: toolName, command: cmd, allowed: verdict.allowed, reason: verdict.reason });
+      const verdict = evaluateToolPolicy(TEST_POLICY_NAME, toolName, toolInput);
+      // Record the structured input too (e.g. Skill `{skill,args}`) so the harness
+      // audit can re-derive each verdict, not just Bash command strings.
+      send({ type: "tool_policy", tool: toolName, command: cmd, input: toolInput, allowed: verdict.allowed, reason: verdict.reason });
       return verdict.allowed
         ? { behavior: "allow", updatedInput: toolInput }
         : { behavior: "deny", message: `denied by AIOS_GUI_TEST_POLICY=${TEST_POLICY_NAME}: ${verdict.reason}` };
