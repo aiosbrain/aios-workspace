@@ -41,6 +41,7 @@ import { judgeFlow } from "./judge.mjs";
 import * as flowA from "./flows/onboarding-draft-from-link.mjs";
 import * as flowB from "./flows/skills-install-consent.mjs";
 import { killGroup } from "./proc.mjs";
+import { extractJsonObject } from "./json-extract.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -218,7 +219,10 @@ async function makeRealCallModel(evidenceDir) {
       system: req.system,
       messages: [{ role: "user", content }],
     });
-    return resp.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    const raw = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+    // Models wrap their JSON in a ```json fence despite the "no fences" instruction; the judge
+    // gate is strict by contract, so normalize to a bare JSON object string here in the adapter.
+    return extractJsonObject(raw);
   };
 }
 
