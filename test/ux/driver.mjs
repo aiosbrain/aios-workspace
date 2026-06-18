@@ -72,7 +72,9 @@ function readAssistant(msg) {
  * @param {number} [args.maxTurns]
  * @returns {Promise<{transcript:Array, screenshots:string[], errors:any[]}>}
  */
-export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, session, maxTurns = 40 }) {
+export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, session, maxTurns = 60 }) {
+  // A flow may ask for more turns (e.g. the multi-step skills-consent flow); default 60.
+  const effectiveTurns = (flow && Number.isInteger(flow.maxTurns)) ? flow.maxTurns : maxTurns;
   mkdirSync(evidenceDir, { recursive: true });
   const transcriptPath = path.join(evidenceDir, "driver-transcript.jsonl");
   const transcript = [];
@@ -92,6 +94,18 @@ export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, sessi
     `@refs) → act on a @ref → re-snapshot after each state change. Capture an annotated ` +
     `screenshot at each meaningful step with \`screenshot --annotate <path>\` writing into ` +
     `"${evidenceDir}", and run \`errors\` to capture console errors.\n\n` +
+    `Tactics for RELIABLE interaction (use these — a bare \`click @ref\` often fails on React UIs ` +
+    `and panels that scroll internally):\n` +
+    `  • Click via a role/text locator, not just a @ref: \`find role button click --name <Word>\` or ` +
+    `\`find text "<visible text>" click\` — these dispatch a real user click. Locator VALUES must be ` +
+    `shell-safe: never include & | ; < > $ in them (they'll be rejected); match one distinctive WORD ` +
+    `(e.g. for a "Review & install" button, match \`--name Review\`).\n` +
+    `  • If a target is off-screen or inside a scrolling panel, bring it into view FIRST with ` +
+    `\`scrollintoview <@ref|selector>\` (it scrolls inner containers; plain \`scroll\` only moves the window).\n` +
+    `  • After an action that should open a dialog/modal/panel, VERIFY it opened before continuing: ` +
+    `\`wait --text "<text the dialog shows>"\`, then \`is visible <selector>\`, then re-\`snapshot -i\`. ` +
+    `If nothing changed, don't repeat the same \`click @ref\` — scrollintoview the element and click it ` +
+    `via a role/text locator instead.\n\n` +
     `First command to run:\n` +
     `  agent-browser --session ${sessionName} open "${tokenUrl}"\n` +
     `Then:\n` +
@@ -108,7 +122,7 @@ export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, sessi
       model,
       allowedTools: ["Bash"],
       permissionMode: "default",
-      maxTurns,
+      maxTurns: effectiveTurns,
       systemPrompt:
         "You are a meticulous UX test driver. You drive a real browser through the agent-browser " +
         "CLI only. You never invent shell pipelines; you run one simple agent-browser command at a " +
