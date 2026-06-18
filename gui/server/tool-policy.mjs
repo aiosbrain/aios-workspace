@@ -35,16 +35,27 @@ export function tokenizeCommand(command) {
   return argv;
 }
 
-// A matcher asserts an exact `node <scriptPath> [args…]` shape. The script path
-// is matched EXACTLY and EVERY trailing arg is validated by `validateArgs` — there
-// is no "extra args are fine" gap, so flags like `--out <anywhere>` or `--repo
-// <anywhere>` cannot smuggle a write/read primitive past the policy.
+// `2>&1` merges stderr into stdout — a benign fd-duplication that cannot write a
+// file or chain commands. Agents append it reflexively. Strip a SINGLE trailing
+// occurrence so the exact-argv policy still matches the real command; everything
+// else (`>file`, `2>file`, `2>/dev/null`, `;`, `|`, `&&`, `$()`, a non-trailing
+// `2>&1`) is left intact and still rejected by tokenizeCommand's metachar guard.
+export function stripTrailingFdDup(command) {
+  return typeof command === "string" ? command.replace(/\s*2>&1\s*$/, "") : command;
+}
+
+// A matcher asserts an exact `node <scriptPath> [args…]` shape. The script path is
+// the repo-relative path, but the agent often runs it as an ABSOLUTE path (the SDK
+// resolves it against the repo cwd), so we accept either the exact relative path OR
+// an absolute path ENDING in `/<scriptPath>` (the leading `/` is a path boundary, so
+// `evil.claude/skills/…` can't match). EVERY trailing arg is still validated by
+// `validateArgs` — no "extra args are fine" gap that could smuggle a write/read primitive.
 function nodeScript(scriptPath, validateArgs) {
   return (argv) =>
     Array.isArray(argv) &&
     argv.length >= 2 &&
     argv[0] === "node" &&
-    argv[1] === scriptPath &&
+    (argv[1] === scriptPath || argv[1].endsWith("/" + scriptPath)) &&
     validateArgs(argv.slice(2));
 }
 
@@ -83,6 +94,18 @@ function suggestConnectorsArgs(rest) {
   return sawExtract;                           // --extract is mandatory
 }
 
+// The agent's NATURAL path to firecrawl is the `Skill` tool (which then runs the
+// extract script internally), not always a raw Bash command. Allow that Skill under
+// the policy iff it is EXACTLY the firecrawl-direct skill and its single argument is
+// an http(s) URL — a structured shape with no shell string to smuggle through.
+export const FIRECRAWL_SKILL = "firecrawl-direct";
+function firecrawlSkillAllowed(toolInput) {
+  if (!toolInput || typeof toolInput !== "object") return false;
+  if (toolInput.skill !== FIRECRAWL_SKILL) return false;
+  const args = Array.isArray(toolInput.args) ? toolInput.args.join(" ") : String(toolInput.args ?? "");
+  return URL_RE.test(args.trim()); // a single http(s) URL, no whitespace/extra tokens
+}
+
 // The named built-in policies. Each value is a list of exact-argv matchers; a
 // command is allowed iff it parses to a metacharacter-free argv whose binary,
 // script path, AND every argument match one matcher.
@@ -97,21 +120,31 @@ export const TEST_POLICIES = {
 
 /**
  * Evaluate a tool call against a named policy.
+ * `toolInput` is the SDK tool input: a `{ command }` object (or bare command string,
+ * for back-compat) for Bash, or `{ skill, args }` for the Skill tool.
  * Returns { active, allowed, reason }:
  *   - active=false  → no policy is in force (empty name); caller falls through to
  *     its normal permission handling.
- *   - active=true   → the named policy decided; allowed reflects exact-argv match.
+ *   - active=true   → the named policy decided.
  * An unknown (non-empty) policy name is active + denied: a misconfigured test
  * fails closed rather than silently falling back to interactive prompts.
- * Only the Bash tool is ever allowable; every other tool is denied under a policy.
+ * Allowable under a policy: the exact-argv Bash commands, and the firecrawl Skill;
+ * every other tool/skill is denied.
  */
-export function evaluateToolPolicy(policyName, toolName, command) {
+export function evaluateToolPolicy(policyName, toolName, toolInput) {
   const name = (policyName || "").trim();
   if (!name) return { active: false, allowed: false, reason: "no policy in force" };
   const matchers = TEST_POLICIES[name];
   if (!matchers) return { active: true, allowed: false, reason: `unknown policy "${name}"` };
+
+  if (toolName === "Skill") {
+    const ok = firecrawlSkillAllowed(toolInput);
+    return { active: true, allowed: ok, reason: ok ? "firecrawl-direct skill with an http(s) URL" : "skill not permitted under policy" };
+  }
   if (toolName !== "Bash") return { active: true, allowed: false, reason: `tool ${toolName} not permitted under policy` };
-  const argv = tokenizeCommand(command);
+
+  const rawCmd = typeof toolInput === "string" ? toolInput : (toolInput && toolInput.command) || "";
+  const argv = tokenizeCommand(stripTrailingFdDup(rawCmd));
   if (!argv) return { active: true, allowed: false, reason: "command has shell metacharacters or is unparseable" };
   const allowed = matchers.some((m) => m(argv));
   return { active: true, allowed, reason: allowed ? "matched an exact-argv shape in policy" : "no matching argv shape in policy" };
@@ -119,42 +152,49 @@ export function evaluateToolPolicy(policyName, toolName, command) {
 
 /**
  * Judge-INDEPENDENT audit over the cockpit's recorded `tool_policy` transcript
- * events. Re-derives the verdict from the raw command via the SAME exact matcher
+ * events. Re-derives the verdict from the recorded tool INPUT via the SAME matcher
  * the server used, so the audit cannot drift from enforcement and a recorded
  * `allowed:true` on a chained command is caught. Asserts:
- *   1. every command the server ALLOWED still matches the policy exactly; and
- *   2. the Firecrawl extract command was actually requested (the link path ran).
+ *   1. every tool the server ALLOWED still matches the policy exactly; and
+ *   2. firecrawl was actually requested — via the extract Bash OR the firecrawl
+ *      Skill (the link path ran).
  * Returns { ok, checks:[{name,ok,detail}] }.
  */
 export function auditToolPolicy(events, { policyName = "ux-onboarding" } = {}) {
   const checks = [];
   const policy = (Array.isArray(events) ? events : []).filter((e) => e && e.type === "tool_policy");
   const allowed = policy.filter((e) => e.allowed === true);
+  // Prefer the structured `input` the server recorded; fall back to legacy `command`.
+  const reinput = (e) => (e.input !== undefined ? e.input : (e.command || ""));
 
-  // 1: re-evaluate each ALLOWED event from its raw command; any that does not
-  // independently pass the exact matcher is an off-list approval (enforcement bug).
-  const offList = allowed.filter((e) => !evaluateToolPolicy(policyName, e.tool, e.command || "").allowed);
+  // 1: re-evaluate each ALLOWED event from its recorded input; any that does not
+  // independently pass the matcher is an off-list approval (enforcement bug).
+  const offList = allowed.filter((e) => !evaluateToolPolicy(policyName, e.tool, reinput(e)).allowed);
   checks.push({
     name: "no_offlist_command_allowed",
     ok: offList.length === 0,
     detail: offList.length === 0
-      ? `all ${allowed.length} allowed command(s) independently re-verify against policy "${policyName}"`
-      : `off-list command(s) were allowed: ${offList.map((e) => JSON.stringify(e.command)).join(", ")}`,
+      ? `all ${allowed.length} allowed tool call(s) independently re-verify against policy "${policyName}"`
+      : `off-list tool call(s) were allowed: ${offList.map((e) => JSON.stringify(e.command || e.input)).join(", ")}`,
   });
 
-  // 2: the Firecrawl extract command must have been requested at least once
-  // (allowed or denied) — proves the flow actually drove the link path.
+  // 2: firecrawl must have been requested at least once (allowed or denied) — via
+  // the extract Bash command OR the firecrawl-direct Skill tool.
   const firecrawlScript = ".claude/skills/firecrawl-direct/firecrawl-extract.mjs";
   const firecrawlRequested = policy.some((e) => {
-    const argv = tokenizeCommand(e.command || "");
-    return !!argv && argv[0] === "node" && argv[1] === firecrawlScript;
+    if (e.tool === "Skill") {
+      const inp = reinput(e);
+      return !!inp && typeof inp === "object" && inp.skill === FIRECRAWL_SKILL;
+    }
+    const argv = tokenizeCommand(stripTrailingFdDup(e.command || ""));
+    return !!argv && argv[0] === "node" && (argv[1] === firecrawlScript || argv[1].endsWith("/" + firecrawlScript));
   });
   checks.push({
     name: "firecrawl_extract_requested",
     ok: firecrawlRequested,
     detail: firecrawlRequested
-      ? "firecrawl-extract command was requested through the policy"
-      : "firecrawl-extract command was never requested — the link path did not run",
+      ? "firecrawl was requested through the policy (extract command or firecrawl-direct skill)"
+      : "firecrawl was never requested — the link path did not run",
   });
 
   return { ok: checks.every((c) => c.ok), checks };
