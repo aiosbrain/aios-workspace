@@ -26,10 +26,15 @@ also accepted) for a self-hosted instance.
 
 ## How to run
 
+One page:
+
 ```bash
-# one page
 node .claude/skills/firecrawl-direct/firecrawl-extract.mjs --url https://example.com/about
-# a handful (e.g. site + LinkedIn + company page) — merge them into one draft
+```
+
+A handful (e.g. site + LinkedIn + company page) — merged into one draft:
+
+```bash
 node .claude/skills/firecrawl-direct/firecrawl-extract.mjs --url https://me.com --url https://linkedin.com/in/me
 ```
 

@@ -7,5 +7,6 @@ __pycache__/
 .env.local
 gui/.sessions/
 gui/client/dist/
+test/ux/evidence/
 
 .env.keys
