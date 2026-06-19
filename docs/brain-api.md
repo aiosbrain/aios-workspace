@@ -20,6 +20,9 @@ writeback/registration pulls), so a newer client still works against an older br
   added optional AEM **agent-readiness** fields to its metrics payload (`readiness_level`,
   `readiness_pct`, `readiness_pillars`, `readiness_rubric_version`). Additive — scanners that
   omit them are unaffected; an older brain that predates the columns ignores them.*
+- *2026-06-19 — added `POST /api/v1/metrics` (AEM **individual** maturity daily aggregate from
+  `aios analyze --push`). Team-tier only; `external`/`admin` rejected. A standalone endpoint, not
+  an `/items` kind. Newer CLIs tolerate a `404` from an older brain.*
 
 ---
 
@@ -110,6 +113,7 @@ Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_pay
 - `POST /items`: 120/min per key
 - `GET /items`, `GET /tasks`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
+- `POST /metrics`: 60/min per key
 
 ---
 
@@ -430,3 +434,61 @@ RLS backstop on the Postgres target, so this is an app-code gate). Rate limit: 6
 - Optional `contributions[]` and `issues[]` arrays carry per-author/day rollups and GitHub issues.
 
 **Response:** `201 { "status": "ok", "codebase_id": "uuid", "metrics_id": "uuid", ... }`
+
+---
+
+## Agentic-maturity endpoint (AEM individual scope)
+
+> **Status:** Implemented (brain: `app/api/v1/metrics/route.ts`, ingest
+> `lib/metrics/individual-maturity-ingest.ts`; client: `aios analyze --push`). Team-tier only.
+
+Records one day's agentic-maturity aggregate for a member, derived by `aios analyze` from that
+member's **local** agent-session logs (Claude Code / Codex / Cursor). **Raw session content never
+leaves the machine** — only the ratios, counts, and scores below cross the boundary. This is a
+standalone analytics endpoint, **not** an `/items` kind.
+
+### `POST /api/v1/metrics` — agentic-maturity daily aggregate
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier` (maturity is team-only
+intelligence; there is no RLS backstop on the Postgres target, so this is an app-code gate).
+Rate limit: 60/min per key.
+
+```json
+{
+  "member": "alex",
+  "metric": "aem-individual",
+  "date": "2026-06-19",
+  "window_days": 1,
+  "signals": {
+    "delegation_ratio": 0.18,
+    "correction_loop_avg": 1.4,
+    "error_rate": 0.05,
+    "cost_per_task": 0.42,
+    "tokens_per_task": 31000,
+    "cache_hit_rate": 0.71,
+    "tool_diversity": 9.0,
+    "verify_tool_rate": 0.22,
+    "subagent_usage": 0.06
+  },
+  "provisional": { "spine": "L3", "axes": {
+    "verification": 3.1, "context_hygiene": 3.8, "autonomy": 2.4,
+    "learning": 3.0, "cost_governance": 3.6
+  } },
+  "sessions": 41,
+  "tasks": 137
+}
+```
+
+- `member` is optional; it defaults to the authenticated key's member. A supplied `member`
+  must match a member on the caller's team or the push is rejected.
+- The point is keyed by `(team_id, member_id, date)` — idempotent: re-pushing the same day
+  updates in place, no duplicate snapshot.
+- `signals` are structural facts only (ratios + counts) — **no tool names, no branch, no cwd,
+  no message text, no per-session detail**. This is the entire privacy surface.
+- `provisional` carries the **client-side** AEM placement (axes 0–4 + Spine `L1`–`L5`) computed by
+  `scripts/analyze/aem.mjs`. The brain **recomputes the canonical** axis/Spine scores from
+  `signals` server-side (`lib/metrics/individual-maturity.ts`) so team rollups have one authority; it
+  persists `signals`, `provisional`, and `canonical`. Both scorers apply the Spine **verification
+  gate** (cap at L3 when the Verification axis ≤ 1) identically — keep their thresholds in sync.
+
+**Response:** `201 { "status": "ok", "snapshot_id": "uuid", "canonical": { "spine": "L3", "axes": { … } } }`

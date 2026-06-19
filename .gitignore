@@ -8,5 +8,6 @@ __pycache__/
 gui/.sessions/
 gui/client/dist/
 test/ux/evidence/
+.aios/
 
 .env.keys

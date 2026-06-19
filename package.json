@@ -5,6 +5,9 @@
   "description": "Agent-native operating system for an individual contributor: governed workspace scaffold, multi-agent harnesses with rubric-gated self-correction, AIOS Team Brain sync client, and a local GUI.",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "aios": "scripts/aios.mjs"
+  },
   "workspaces": [
     "gui/server",
     "gui/client"
