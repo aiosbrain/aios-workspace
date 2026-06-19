@@ -16,6 +16,10 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-06-18 — added `GET /api/v1/decisions` (dashboard decision writeback) and
   `GET /api/v1/projects` (brain-project registration). Newer CLIs call these but tolerate a
   `404` from an older brain, so they remain backward-compatible.*
+- *2026-06-18 — documented `POST /api/v1/codebases` (codebase scan ingest, team-tier) and
+  added optional AEM **agent-readiness** fields to its metrics payload (`readiness_level`,
+  `readiness_pct`, `readiness_pillars`, `readiness_rubric_version`). Additive — scanners that
+  omit them are unaffected; an older brain that predates the columns ignores them.*
 
 ---
 
@@ -386,3 +390,43 @@ for cross-project traversal without local file walking.
 
 The `--include-body` flag passes `include_body=true` to the endpoint (subject to the
 10/min rate limit). Without it, only frontmatter + links are pulled.
+
+---
+
+## Codebase analytics endpoint (extension)
+
+> **Status:** Implemented (brain: `app/api/v1/codebases/route.ts`, ingest
+> `lib/codebases/ingest.ts`; client: `aios assess-codebase --push`). Team-tier only.
+
+### `POST /api/v1/codebases` — codebase scan ingest
+
+Records a point-in-time scan of a repository. **Team-tier only** — an `external`-tier key
+gets `403 forbidden_tier` (codebase analytics never reach external stakeholders; there is no
+RLS backstop on the Postgres target, so this is an app-code gate). Rate limit: 60/min per key.
+
+```json
+{
+  "codebase": { "slug": "my-repo", "full_name": "org/my-repo", "provider": "github" },
+  "metrics": {
+    "head_sha": "abc123…",
+    "has_claude_md": true,
+    "has_agents_md": false,
+    "skills_count": 7,
+    "commands_count": 3,
+    "readiness_level": "L3",
+    "readiness_pct": 67.0,
+    "readiness_pillars": { "testing": { "passed": 2, "total": 2 }, "docs": { "passed": 2, "total": 3 } },
+    "readiness_rubric_version": "1.0.0"
+  }
+}
+```
+
+- The scan is keyed by `(team_id, slug)` for the codebase and `(codebase_id, head_sha)` for the
+  metrics point (idempotent: re-pushing the same commit updates in place, no duplicate point).
+- **AEM agent-readiness** fields (`readiness_*`) are **optional and scored scanner-side** against
+  the canonical rubric (`agentic-engineering-maturity/rubric/agent-readiness.json`); the brain
+  persists them verbatim and does not recompute them. The brain's own heuristic `agentic_score`
+  is computed separately from the raw scaffolding/coverage inputs.
+- Optional `contributions[]` and `issues[]` arrays carry per-author/day rollups and GitHub issues.
+
+**Response:** `201 { "status": "ok", "codebase_id": "uuid", "metrics_id": "uuid", ... }`
