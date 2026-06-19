@@ -10,14 +10,16 @@
  *   --dry-run        skip git operations
  */
 
-import { spawn } from 'node:child_process';
-import { execSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 
 const MERGE_TOKEN = 'MERGE_READY';
+// Allowlist: letters, digits, hyphens, underscores, forward-slash, dots only.
+// Rejects any shell metacharacter before it reaches execFileSync.
+const VALID_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
 const DEFAULT_SKILL = '/review-plan';
 
 const c = {
@@ -43,6 +45,7 @@ function parseArgs(args) {
   const hasFlag = (name) => args.includes(name);
 
   const dryRun    = hasFlag('--dry-run');
+  const autoMerge = hasFlag('--merge');
   const maxRounds = parseInt(flag('--rounds') ?? '5', 10);
   const skill     = flag('--skill') ?? DEFAULT_SKILL;
 
@@ -50,7 +53,7 @@ function parseArgs(args) {
     !a.startsWith('--') && args[i - 1] !== '--rounds' && args[i - 1] !== '--skill'
   );
   const [task, branch] = positional;
-  return { task, branch, dryRun, maxRounds, skill };
+  return { task, branch, dryRun, autoMerge, maxRounds, skill };
 }
 
 // ── prereq checks ─────────────────────────────────────────────────────────────
@@ -171,16 +174,22 @@ function buildReviewPrompt(skill, plan) {
 
 // ── git operations ────────────────────────────────────────────────────────────
 
+function validateBranch(branchName) {
+  if (!VALID_BRANCH_RE.test(branchName)) {
+    die(`invalid branch name '${branchName}' — only letters, digits, hyphens, underscores, dots, and slashes are allowed`);
+  }
+}
+
 function gitMergeAndDelete(repo, branchName, dryRun) {
+  validateBranch(branchName);
   if (dryRun) {
-    console.log(c.dim(`[dry-run] git merge --no-ff ${branchName} && git branch -d ${branchName}`));
+    console.log(c.dim(`[dry-run] git merge --no-ff -- ${branchName} && git branch -d -- ${branchName}`));
     return;
   }
-  execSync(
-    `git merge --no-ff ${branchName} -m "chore: auto-merge via aios relay"`,
-    { stdio: 'inherit', cwd: repo }
-  );
-  execSync(`git branch -d ${branchName}`, { stdio: 'inherit', cwd: repo });
+  execFileSync('git', ['merge', '--no-ff', '--', branchName, '-m', 'chore: merge via aios relay'],
+    { stdio: 'inherit', cwd: repo });
+  execFileSync('git', ['branch', '-d', '--', branchName],
+    { stdio: 'inherit', cwd: repo });
   console.log(c.green(`\n✓ Merged and deleted: ${branchName}`));
 }
 
@@ -202,6 +211,7 @@ export async function cmdRelay(repo, args) {
       'options:',
       '  --rounds N       max plan/review cycles (default: 5)',
       '  --skill /name    Cursor slash command (default: /review-plan)',
+      '  --merge          auto-merge the branch on approval (off by default — review the diff first)',
       '  --dry-run        skip git operations',
       '',
       'examples:',
@@ -212,7 +222,7 @@ export async function cmdRelay(repo, args) {
     return;
   }
 
-  const { task, branch, dryRun, maxRounds, skill } = parseArgs(args);
+  const { task, branch, dryRun, autoMerge, maxRounds, skill } = parseArgs(args);
   if (!task) die('task description is required.\nusage: aios relay "task" [branch] [options]');
 
   checkPrereqs();
@@ -247,10 +257,15 @@ export async function cmdRelay(repo, args) {
     const lastLine = review.split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? '';
     if (lastLine === MERGE_TOKEN) {
       console.log(c.green(`\n✓ ${MERGE_TOKEN} received after round ${round}.`));
-      if (branch) {
+      if (branch && autoMerge) {
         gitMergeAndDelete(repo, branch, dryRun);
+      } else if (branch) {
+        console.log(c.yellow('\nPlan approved. Review the diff before merging:'));
+        console.log(c.dim(`  git diff main...${branch}`));
+        console.log(c.dim(`  git merge --no-ff -- ${branch}`));
+        console.log(c.dim('Re-run with --merge to have aios relay merge automatically.'));
       } else {
-        console.log(c.dim('No branch specified — skipping git operations. Done.'));
+        console.log(c.dim('Plan approved. No branch specified — nothing to merge.'));
       }
       return;
     }

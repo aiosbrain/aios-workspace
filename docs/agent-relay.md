@@ -148,8 +148,7 @@ If any condition fails, Cursor issues another feedback `<prompt>` and the loop c
 ### Minimal test (no git, no side effects)
 
 ```bash
-cd /Users/iamjohndass/Projects/aios/aios-workspace
-node scripts/agent-relay.mjs "Add a status badge to the sync CLI output" --rounds 3 --dry-run
+npm run aios -- relay "Add a status badge to the sync CLI output" --rounds 3 --dry-run
 ```
 
 Watch for:
