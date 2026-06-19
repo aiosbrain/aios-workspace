@@ -44,16 +44,20 @@ function parseArgs(args) {
   };
   const hasFlag = (name) => args.includes(name);
 
-  const dryRun    = hasFlag('--dry-run');
-  const autoMerge = hasFlag('--merge');
-  const maxRounds = parseInt(flag('--rounds') ?? '5', 10);
-  const skill     = flag('--skill') ?? DEFAULT_SKILL;
+  const dryRun       = hasFlag('--dry-run');
+  const autoMerge    = hasFlag('--merge');
+  const maxRounds    = parseInt(flag('--rounds') ?? '5', 10);
+  const skill        = flag('--skill') ?? DEFAULT_SKILL;
+  const cursorTimeout = parseInt(flag('--cursor-timeout') ?? '300', 10) * 1000;
 
   const positional = args.filter((a, i) =>
-    !a.startsWith('--') && args[i - 1] !== '--rounds' && args[i - 1] !== '--skill'
+    !a.startsWith('--') &&
+    args[i - 1] !== '--rounds' &&
+    args[i - 1] !== '--skill' &&
+    args[i - 1] !== '--cursor-timeout'
   );
   const [task, branch] = positional;
-  return { task, branch, dryRun, autoMerge, maxRounds, skill };
+  return { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout };
 }
 
 // ── prereq checks ─────────────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ async function callOpus(anthropic, messages) {
 
 // ── Cursor agent subprocess ───────────────────────────────────────────────────
 
-async function callCursorAgent(prompt) {
+async function callCursorAgent(prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
     process.stdout.write('\n[cursor] invoking agent...\n');
 
@@ -105,6 +109,11 @@ async function callCursorAgent(prompt) {
       ['agent', '-p', prompt, '--output-format', 'stream-json'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`cursor agent timed out after ${timeoutMs / 1000}s — increase with --cursor-timeout <seconds>`));
+    }, timeoutMs);
 
     const rl = createInterface({ input: proc.stdout });
     const errBufs = [];
@@ -144,7 +153,8 @@ async function callCursorAgent(prompt) {
     });
 
     proc.on('close', (code) => {
-      if (code === 0) {
+      clearTimeout(timer);
+      if (code === 0 || (code === null && text)) {
         resolve(text.trim());
       } else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
@@ -209,10 +219,11 @@ export async function cmdRelay(repo, args) {
       '  branch    Git branch to merge when approved (optional; omit to skip git ops)',
       '',
       'options:',
-      '  --rounds N       max plan/review cycles (default: 5)',
-      '  --skill /name    Cursor slash command (default: /review-plan)',
-      '  --merge          auto-merge the branch on approval (off by default — review the diff first)',
-      '  --dry-run        skip git operations',
+      '  --rounds N              max plan/review cycles (default: 5)',
+      '  --skill /name           Cursor slash command (default: /review-plan)',
+      '  --cursor-timeout N      seconds before killing a stalled Cursor call (default: 300)',
+      '  --merge                 auto-merge the branch on approval (off by default — review the diff first)',
+      '  --dry-run               skip git operations',
       '',
       'examples:',
       '  aios relay "Add a --version flag to aios.mjs" --dry-run',
@@ -222,7 +233,7 @@ export async function cmdRelay(repo, args) {
     return;
   }
 
-  const { task, branch, dryRun, autoMerge, maxRounds, skill } = parseArgs(args);
+  const { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout } = parseArgs(args);
   if (!task) die('task description is required.\nusage: aios relay "task" [branch] [options]');
 
   checkPrereqs();
@@ -250,7 +261,7 @@ export async function cmdRelay(repo, args) {
     history.push({ role: 'assistant', content: plan });
 
     const reviewPrompt = buildReviewPrompt(skill, plan);
-    const review = await callCursorAgent(reviewPrompt);
+    const review = await callCursorAgent(reviewPrompt, cursorTimeout);
 
     console.log('\n\n── Cursor review done ──────────────────────────────────────');
 
