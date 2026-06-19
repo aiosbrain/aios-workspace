@@ -20,6 +20,12 @@ writeback/registration pulls), so a newer client still works against an older br
   added optional AEM **agent-readiness** fields to its metrics payload (`readiness_level`,
   `readiness_pct`, `readiness_pillars`, `readiness_rubric_version`). Additive — scanners that
   omit them are unaffected; an older brain that predates the columns ignores them.*
+- *2026-06-19 — `POST /api/v1/codebases` now **requires the full raw-metrics block** (commits /
+  loc / files / `recent_commits` / scaffolding). A sparse/partial push (e.g. readiness-only) is
+  rejected `422` — the metrics upsert REPLACES the row on `(codebase_id, head_sha)`, so a partial
+  push would zero existing analytics. Readiness fields stay optional. The canonical pusher is the
+  ingestion sidecar (`aios-ingest scan`); the workspace's `aios assess-codebase` is now
+  offline/read-only (its sparse `--push` was removed).*
 - *2026-06-19 — added `POST /api/v1/metrics` (AEM **individual** maturity daily aggregate from
   `aios analyze --push`). Team-tier only; `external`/`admin` rejected. A standalone endpoint, not
   an `/items` kind. Newer CLIs tolerate a `404` from an older brain.*
@@ -400,7 +406,8 @@ The `--include-body` flag passes `include_body=true` to the endpoint (subject to
 ## Codebase analytics endpoint (extension)
 
 > **Status:** Implemented (brain: `app/api/v1/codebases/route.ts`, ingest
-> `lib/codebases/ingest.ts`; client: `aios assess-codebase --push`). Team-tier only.
+> `lib/codebases/ingest.ts`; canonical pusher: the ingestion sidecar `aios-ingest scan`).
+> Team-tier only. `aios assess-codebase` scores locally (`--json`) but does not push.
 
 ### `POST /api/v1/codebases` — codebase scan ingest
 
@@ -413,18 +420,31 @@ RLS backstop on the Postgres target, so this is an app-code gate). Rate limit: 6
   "codebase": { "slug": "my-repo", "full_name": "org/my-repo", "provider": "github" },
   "metrics": {
     "head_sha": "abc123…",
+    "window_days": 90,
+    "loc": 12000,
+    "files": 240,
+    "commits_window": 40,
+    "ai_commits_window": 18,
+    "additions_window": 3200,
+    "deletions_window": 900,
+    "recent_commits": [{ "sha": "abc123", "author": "Jo", "ai": true, "committed_at": "2026-06-18T…" }],
     "has_claude_md": true,
     "has_agents_md": false,
+    "agents_md_count": 0,
     "skills_count": 7,
     "commands_count": 3,
+    "test_coverage_pct": null,
     "readiness_level": "L3",
-    "readiness_pct": 67.0,
+    "readiness_pct": 61.11,
     "readiness_pillars": { "testing": { "passed": 2, "total": 2 }, "docs": { "passed": 2, "total": 3 } },
     "readiness_rubric_version": "1.0.0"
   }
 }
 ```
 
+- The core raw-scan fields above (commits / loc / files / `recent_commits` / scaffolding) are
+  **required**; a sparse/partial push is rejected `422` (see the 2026-06-19 revision). `window_days`,
+  `test_coverage_pct`, and the cadence inputs may be omitted.
 - The scan is keyed by `(team_id, slug)` for the codebase and `(codebase_id, head_sha)` for the
   metrics point (idempotent: re-pushing the same commit updates in place, no duplicate point).
 - **AEM agent-readiness** fields (`readiness_*`) are **optional and scored scanner-side** against
