@@ -3,6 +3,8 @@ node_modules/
 __pycache__/
 *.pyc
 .venv/
+.aios/
+.claude/worktrees/
 .env
 .env.local
 gui/.sessions/
