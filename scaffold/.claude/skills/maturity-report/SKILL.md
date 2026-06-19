@@ -1,16 +1,15 @@
 ---
-name: vibrana-maturity-report
+name: maturity-report
 description: |
   Produce an AI-transformation maturity report + roadmap deliverable from the three AEM
-  scopes — the individual (workstation), the codebase(s), and the team. Pulls the
-  owner's placement, scores the relevant repos, folds in the team rollup if a brain is
-  connected, and writes a client-ready roadmap into 2-work/. Use when the user says
-  "maturity report", "transformation roadmap", "AEM report", "assess our agentic
-  maturity for the client", or when preparing a Vibrana engagement readout.
+  scopes — the individual (workstation), the codebase(s), and the team. Pulls the owner's
+  placement, scores the relevant repos, folds in the team rollup if a brain is connected,
+  and writes a client- or company-ready roadmap into 2-work/. Use when the user says
+  "maturity report", "transformation roadmap", "AEM report", "assess our agentic maturity",
+  or when preparing an engagement or team readout.
 kind: skill
 version: 1.0.0
 triggers:
-  - vibrana maturity report
   - maturity report
   - transformation roadmap
   - AEM report
@@ -18,7 +17,7 @@ triggers:
   - agentic maturity readout
 ---
 
-# Vibrana maturity report
+# Maturity report
 
 Assemble a single, honest AI-transformation readout from the three AEM scopes and write
 it as a deliverable. The AEM model is canonical in `agentic-engineering-maturity/` (root)
@@ -46,28 +45,27 @@ the cap plainly — it is usually the highest-leverage finding.
 
 For the individual, use `npm run aios -- learn` (maps the placement to patterns). For each
 codebase, the gaps from `assess-codebase` ARE the backlog to reach the next level. For the
-team, name the one or two systemic levers (shared evals, an AI stance, an internal
-platform of skills) that move the most repos.
+team, name the one or two systemic levers (shared evals, an AI stance, an internal platform
+of skills) that move the most repos.
 
 ## Step 4 — Write the deliverable
 
-Create `2-work/agentic-maturity-report.md` with `status: draft`, `owner`, and
-(for a client readout) `access: client`/`company`. Structure:
+Create `2-work/agentic-maturity-report.md` with `status: draft`, `owner`, and (for an
+outward readout) `access: client`/`company`. Structure:
 
 1. **Executive summary** — where they are in one paragraph + the single biggest lever.
 2. **Scorecard** — a table: scope · current level · weakest dimension · target.
 3. **Findings** — per scope, honest and specific (lead with the verification cap if it bit).
 4. **Roadmap** — sequenced next steps, each tied to a concrete AEM pattern and an owner.
    Order by leverage: verification first, then context/automation, then orchestration.
-5. **How we measure progress** — re-assess cadence (quarterly for people, per-PR for
-   repos via `assess-codebase`, quarterly for the team) and the headline metric
-   (% repos at L3+).
+5. **How we measure progress** — re-assess cadence (quarterly for people, per-PR for repos
+   via `assess-codebase`, quarterly for the team) and the headline metric (% repos at L3+).
 
 Keep it honest and non-inflating — a low placement stated plainly is more useful than a
-flattering one. Cite the canonical model (`/agentic`) so the client can self-serve.
+flattering one. Cite the canonical model (`/agentic`) so the reader can self-serve.
 
 ## Quality bar
 
 A real placement for every scope you could reach; the verification cap applied where it
-bites; every roadmap item tied to a named pattern and an owner; the deliverable written
-to `2-work/` with correct frontmatter (so the spine validators pass and it can be shared).
+bites; every roadmap item tied to a named pattern and an owner; the deliverable written to
+`2-work/` with correct frontmatter (so the spine validators pass and it can be shared).

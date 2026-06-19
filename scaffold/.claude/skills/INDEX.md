@@ -22,7 +22,7 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 |---|---|
 | `agentic-maturity` | Place the workspace owner on the Agentic Engineering Maturity (AEM) model and give them a prescribed next step. |
 | `aios-sync` | Sync this workspace with the AIOS Team Brain. |
-| `vibrana-maturity-report` | Produce an AI-transformation maturity report + roadmap deliverable from the three AEM scopes — the individual (workstation), the codebase(s), and the team. |
+| `maturity-report` | Produce an AI-transformation maturity report + roadmap deliverable from the three AEM scopes — the individual (workstation), the codebase(s), and the team. |
 | `workspace-setup` | Set up, update, or incrementally extend the owner's profile in this workspace: interview the user (or draft from a link), then write it into the workspace memory files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. |
 
 ## Share a skill
