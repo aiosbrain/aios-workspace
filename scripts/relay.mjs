@@ -70,7 +70,7 @@ function checkPrereqs() {
     die('ANTHROPIC_API_KEY is not set. Add it to your .env or export it in your shell.');
   }
   try {
-    execSync('cursor --version', { stdio: 'pipe' });
+    execFileSync('cursor', ['--version'], { stdio: 'pipe' });
   } catch {
     die('cursor CLI not found. Install: curl https://cursor.com/install -fsS | bash');
   }
@@ -206,7 +206,7 @@ function gitMergeAndDelete(repo, branchName, dryRun) {
     console.log(c.dim(`[dry-run] git merge --no-ff -- ${branchName} && git branch -d -- ${branchName}`));
     return;
   }
-  execFileSync('git', ['merge', '--no-ff', '--', branchName, '-m', 'chore: merge via aios relay'],
+  execFileSync('git', ['merge', '--no-ff', '-m', 'chore: merge via aios relay', '--', branchName],
     { stdio: 'inherit', cwd: repo });
   execFileSync('git', ['branch', '-d', '--', branchName],
     { stdio: 'inherit', cwd: repo });
