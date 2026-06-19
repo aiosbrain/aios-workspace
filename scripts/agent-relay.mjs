@@ -19,8 +19,7 @@
  * underlying prompt and set REVIEW_PREAMBLE below instead.
  */
 
-import { spawn } from 'child_process';
-import { execSync } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { createInterface } from 'readline';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -28,6 +27,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MERGE_TOKEN   = 'MERGE_READY';
 const DEFAULT_SKILL = '/review-plan';
+const VALID_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
 
 // Fallback preamble if your Cursor skill isn't triggered via CLI prefix.
 // Leave empty to rely on the slash command.
@@ -83,8 +83,9 @@ function checkPrereqs() {
 const anthropic = new Anthropic();
 
 async function callOpus(messages) {
-  process.stdout.write('\n[opus] planning...');
-  const res = await anthropic.messages.create({
+  process.stdout.write('\n[opus] planning (xhigh effort)...');
+  // xhigh effort can exceed 10 minutes — streaming is required by the SDK.
+  const stream = anthropic.messages.stream({
     model: 'claude-opus-4-8',
     max_tokens: 32000,
     thinking: { type: 'adaptive' },
@@ -96,6 +97,7 @@ async function callOpus(messages) {
     ].join(' '),
     messages,
   });
+  const res = await stream.finalMessage();
   process.stdout.write(' done.\n');
   const textBlock = res.content.find(b => b.type === 'text');
   if (!textBlock) throw new Error('Opus returned no text block');
@@ -213,12 +215,17 @@ function buildReviewPrompt(plan) {
 // ── Git operations ────────────────────────────────────────────────────────────
 
 function gitMergeAndDelete(branchName) {
+  if (!VALID_BRANCH_RE.test(branchName)) {
+    console.error(`error: invalid branch name '${branchName}'`);
+    process.exit(1);
+  }
   if (dryRun) {
-    console.log(`[dry-run] would run: git merge --no-ff ${branchName} && git branch -d ${branchName}`);
+    console.log(`[dry-run] git merge --no-ff -- ${branchName} && git branch -d -- ${branchName}`);
     return;
   }
-  execSync(`git merge --no-ff ${branchName} -m "chore: auto-merge via agent-relay"`, { stdio: 'inherit' });
-  execSync(`git branch -d ${branchName}`, { stdio: 'inherit' });
+  execFileSync('git', ['merge', '--no-ff', '--', branchName, '-m', 'chore: merge via agent-relay'],
+    { stdio: 'inherit' });
+  execFileSync('git', ['branch', '-d', '--', branchName], { stdio: 'inherit' });
   console.log(`\n✓ Merged and deleted: ${branchName}`);
 }
 
