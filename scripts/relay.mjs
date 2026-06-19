@@ -70,7 +70,9 @@ function checkPrereqs() {
 
 async function callOpus(anthropic, messages) {
   process.stdout.write('\n[opus] planning (xhigh effort)...');
-  const res = await anthropic.messages.create({
+  // xhigh effort can exceed 10 minutes — streaming is required by the SDK.
+  // .finalMessage() collects the full response once the stream completes.
+  const stream = anthropic.messages.stream({
     model: 'claude-opus-4-8',
     max_tokens: 32000,
     thinking: { type: 'adaptive' },
@@ -82,6 +84,7 @@ async function callOpus(anthropic, messages) {
     ].join(' '),
     messages,
   });
+  const res = await stream.finalMessage();
   process.stdout.write(' done.\n');
   const textBlock = res.content.find((b) => b.type === 'text');
   if (!textBlock) throw new Error('Opus returned no text block');
