@@ -1,0 +1,130 @@
+{
+  "$schema": "./individual.schema.json",
+  "id": "aios.individual-maturity",
+  "version": "1.0.0",
+  "title": "Individual Agentic Engineering Maturity Rubric",
+  "description": "Drives the workspace self-assessment + learning-journey skill. Places a person on the AEM Spine (L1-L5) and scores five cross-cutting Axes (0-4). The Spine level is CAPPED at L3 when the Verification axis scores <= 1 (the core AEM rule). Output maps the weakest axis to prescribed patterns via patternMap.",
+  "verificationCap": { "axis": "verification", "maxScore": 1, "capLevel": "L3" },
+  "spine": [
+    {
+      "id": "L1",
+      "name": "Prompting",
+      "tagline": "Ask and accept",
+      "placement": "I type requests into a chat and use what comes back; I rarely read diffs.",
+      "distinguishingSkill": "Knowing how to ask in natural language."
+    },
+    {
+      "id": "L2",
+      "name": "Prompt Engineering",
+      "tagline": "Reusable, structured asks",
+      "placement": "I keep reusable prompts (roles, examples, format constraints) and review diffs before accepting.",
+      "distinguishingSkill": "Repeatable prompt design for discrete, one-shot tasks."
+    },
+    {
+      "id": "L3",
+      "name": "Context Engineering",
+      "tagline": "Build the system that feeds the model",
+      "placement": "I maintain a personal/project CLAUDE.md, curate my tools/MCPs, and manage context deliberately (/clear, /compact, just-in-time retrieval).",
+      "distinguishingSkill": "Moving from prompt to system."
+    },
+    {
+      "id": "L4",
+      "name": "Agentic Engineering",
+      "tagline": "Delegate, verify, stay in the loop",
+      "placement": "I run agents in a loop against a written spec + a check they can run, and I review every diff. A meaningful share of my work is delegated-and-verified.",
+      "distinguishingSkill": "Running agents against specs + verifiable success criteria, reviewing every diff."
+    },
+    {
+      "id": "L5",
+      "name": "Agentic Orchestration",
+      "tagline": "Coordinate fleets, close the loops",
+      "placement": "I orchestrate multiple/parallel agents, run my own evals, and feed learnings back across sessions.",
+      "distinguishingSkill": "Task decomposition, managing context across agents, building systems that improve without re-engineering."
+    }
+  ],
+  "axes": [
+    {
+      "key": "verification",
+      "title": "Verification",
+      "note": "The differentiator. Caps the Spine at L3 if at the bottom.",
+      "bands": [
+        { "score": 0, "label": "Eyeballs output" },
+        { "score": 2, "label": "Runs tests/build manually before merge" },
+        { "score": 4, "label": "Agent runs its own check (tests/screenshot/goal); personal eval harness" }
+      ]
+    },
+    {
+      "key": "context_hygiene",
+      "title": "Context hygiene",
+      "bands": [
+        { "score": 0, "label": "One long session for everything" },
+        { "score": 2, "label": "/clear between tasks" },
+        { "score": 4, "label": "Curated CLAUDE.md + subagents isolate exploration + compaction" }
+      ]
+    },
+    {
+      "key": "autonomy",
+      "title": "Autonomy / leash",
+      "bands": [
+        { "score": 0, "label": "Approves every action, or blindly auto-accepts" },
+        { "score": 2, "label": "Auto-accepts low-risk behind a check" },
+        { "score": 4, "label": "Dials leash per risk; earns longer leash via proven checks; sandboxes the rest" }
+      ]
+    },
+    {
+      "key": "learning",
+      "title": "Learning / compounding",
+      "bands": [
+        { "score": 0, "label": "Repeats the same corrections" },
+        { "score": 2, "label": "Adds fixes to CLAUDE.md sometimes" },
+        { "score": 4, "label": "Corrections + memory feed back systematically; builds skills/commands" }
+      ]
+    },
+    {
+      "key": "cost_governance",
+      "title": "Cost & governance",
+      "bands": [
+        { "score": 0, "label": "No cost sense" },
+        { "score": 2, "label": "Aware of token cost" },
+        { "score": 4, "label": "Token-efficient tooling; respects tier/permission discipline" }
+      ]
+    }
+  ],
+  "questions": [
+    { "id": "q_spine", "type": "spine-placement", "prompt": "Pick the highest statement that is reliably true under pressure (not your best day).", "options": "spine[].placement" },
+    { "id": "q_verification", "type": "axis", "axis": "verification", "prompt": "When an agent finishes a task, how do you confirm it's correct?" },
+    { "id": "q_context", "type": "axis", "axis": "context_hygiene", "prompt": "How do you manage what the model sees across a working session?" },
+    { "id": "q_autonomy", "type": "axis", "axis": "autonomy", "prompt": "How do you decide how much an agent does on its own?" },
+    { "id": "q_learning", "type": "axis", "axis": "learning", "prompt": "When an agent makes a mistake, what happens next time?" },
+    { "id": "q_cost", "type": "axis", "axis": "cost_governance", "prompt": "How aware are you of token cost and tier/permission discipline?" },
+    { "id": "q_delegation", "type": "signal", "metric": "delegation_ratio", "prompt": "Roughly what % of your work is delegated-and-verified to agents (the 'and-verified' matters)?" }
+  ],
+  "patternMap": [
+    { "when": { "spine": "L1" }, "prescribe": ["A3", "B5", "A1"], "module": "start-reviewing" },
+    { "when": { "spine": "L2" }, "prescribe": ["A1", "A2", "B1"], "module": "build-context-discipline" },
+    { "when": { "spine": "L3", "weakestAxis": "verification" }, "prescribe": ["B2", "B3", "D3"], "module": "verification-first", "priority": "highest" },
+    { "when": { "spine": "L3" }, "prescribe": ["B1", "B2", "C1"], "module": "into-agentic" },
+    { "when": { "spine": "L4", "weakestAxis": "verification" }, "prescribe": ["D3", "D4", "B7"], "module": "evals" },
+    { "when": { "spine": "L4" }, "prescribe": ["C3", "C2", "D1"], "module": "parallelize" },
+    { "when": { "spine": "L5" }, "prescribe": ["C6", "D6"], "module": "compound-and-learn" }
+  ],
+  "patternTitles": {
+    "A1": "CLAUDE.md as compounding infrastructure",
+    "A2": "Just-in-time context, not kitchen-sink",
+    "A3": "Point at examples, name the files",
+    "B1": "Explore → Plan → Code → Commit",
+    "B2": "Give it a check it can run",
+    "B3": "Spec-first: let the agent interview you",
+    "B5": "Watch it like a hawk (review every diff)",
+    "B7": "Adversarial prompting",
+    "C1": "If you do it twice a day, make it a command/skill",
+    "C2": "Subagents for investigation (context isolation)",
+    "C3": "Parallel sessions / git worktrees",
+    "C6": "The Ralph loop (autonomous while-loop)",
+    "D1": "The five workflow patterns",
+    "D2": "Orchestrator-worker with isolated context",
+    "D3": "Eval-driven development (EDD)",
+    "D4": "LLM-as-judge / Agent-as-judge",
+    "D6": "Autoresearch swarm"
+  }
+}
