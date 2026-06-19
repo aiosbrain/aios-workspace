@@ -24,7 +24,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 
 // The pure Bash allowlist lives in allowlist.mjs (zero-dep, unit-tested without the SDK).
-import { tokenizeSimpleCommand, isAgentBrowserCommand } from "./allowlist.mjs";
+import { isAgentBrowserCommand } from "./allowlist.mjs";
 
 /**
  * Build the SDK `canUseTool` callback for the driver. Default-deny: Bash is gated by the
@@ -35,13 +35,19 @@ export function makeBashAllowlist(log) {
   return async (toolName, toolInput /*, options */) => {
     if (toolName !== "Bash") {
       log({ kind: "tool_denied", tool: toolName, reason: "only Bash(agent-browser) is permitted" });
-      return { behavior: "deny", message: `Tool '${toolName}' is not permitted. Use only: Bash running agent-browser.` };
+      return {
+        behavior: "deny",
+        message: `Tool '${toolName}' is not permitted. Use only: Bash running agent-browser.`,
+      };
     }
     const command = toolInput && typeof toolInput.command === "string" ? toolInput.command : "";
     const verdict = isAgentBrowserCommand(command);
     if (!verdict.allow) {
       log({ kind: "bash_denied", command, reason: verdict.reason });
-      return { behavior: "deny", message: `Denied: ${verdict.reason}. Only 'agent-browser <subcommand> …' is allowed (no shell features).` };
+      return {
+        behavior: "deny",
+        message: `Denied: ${verdict.reason}. Only 'agent-browser <subcommand> …' is allowed (no shell features).`,
+      };
     }
     log({ kind: "bash_allowed", command });
     return { behavior: "allow", updatedInput: toolInput };
@@ -72,16 +78,28 @@ function readAssistant(msg) {
  * @param {number} [args.maxTurns]
  * @returns {Promise<{transcript:Array, screenshots:string[], errors:any[]}>}
  */
-export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, session, maxTurns = 60 }) {
+export async function runDriver({
+  flow,
+  tokenUrl,
+  evidenceDir,
+  model,
+  sdk,
+  session,
+  maxTurns = 60,
+}) {
   // A flow may ask for more turns (e.g. the multi-step skills-consent flow); default 60.
-  const effectiveTurns = (flow && Number.isInteger(flow.maxTurns)) ? flow.maxTurns : maxTurns;
+  const effectiveTurns = flow && Number.isInteger(flow.maxTurns) ? flow.maxTurns : maxTurns;
   mkdirSync(evidenceDir, { recursive: true });
   const transcriptPath = path.join(evidenceDir, "driver-transcript.jsonl");
   const transcript = [];
   const log = (entry) => {
     const rec = { ts: new Date().toISOString(), ...entry };
     transcript.push(rec);
-    try { appendFileSync(transcriptPath, JSON.stringify(rec) + "\n"); } catch { /* best-effort */ }
+    try {
+      appendFileSync(transcriptPath, JSON.stringify(rec) + "\n");
+    } catch {
+      /* best-effort */
+    }
   };
   const sessionName = session || flow.id;
 
@@ -141,7 +159,10 @@ export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, sessi
         log({ kind: "tool_use", name: tu.name, input: tu.input });
         // Track screenshot paths the agent asked for (best-effort; the file is written by
         // agent-browser itself when the command is allowed + runs).
-        const cmd = tu.name === "Bash" && tu.input && typeof tu.input.command === "string" ? tu.input.command : "";
+        const cmd =
+          tu.name === "Bash" && tu.input && typeof tu.input.command === "string"
+            ? tu.input.command
+            : "";
         const m = cmd.match(/screenshot\s+(?:--annotate\s+)?("?)([^"\s]+\.png)\1/);
         if (m) screenshots.push(m[2]);
       }
@@ -160,8 +181,17 @@ export async function runDriver({ flow, tokenUrl, evidenceDir, model, sdk, sessi
     .map((e) => e.text);
 
   // Write a manifest so run-ux.mjs / the judge can find the evidence deterministically.
-  const manifest = { flow: flow.id, tokenUrl, screenshots, transcriptPath, resultSubtype: lastResult?.subtype || null };
-  writeFileSync(path.join(evidenceDir, "driver-manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+  const manifest = {
+    flow: flow.id,
+    tokenUrl,
+    screenshots,
+    transcriptPath,
+    resultSubtype: lastResult?.subtype || null,
+  };
+  writeFileSync(
+    path.join(evidenceDir, "driver-manifest.json"),
+    JSON.stringify(manifest, null, 2) + "\n"
+  );
 
   return { transcript, screenshots, errors };
 }

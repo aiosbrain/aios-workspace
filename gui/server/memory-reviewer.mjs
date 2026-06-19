@@ -19,8 +19,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MEMORY_FILES, SECTIONS, LEARNED_MARKER, byFile, MEMORY_ABSENT } from "./memory-files.mjs";
 
-const FACT_MAX = 240;            // a "fact" is a short bullet, not a paragraph
-const TURN_MAX = 6000;           // cap what we send to the reviewer model
+const FACT_MAX = 240; // a "fact" is a short bullet, not a paragraph
+const TURN_MAX = 6000; // cap what we send to the reviewer model
 const MODEL = "claude-haiku-4-5";
 
 // ── secret patterns (shared single source; workspace copy, else toolkit, else builtin) ──
@@ -37,19 +37,36 @@ const BUILTIN_SECRETS = [
 export function loadSecretPatterns(repo) {
   const candidates = [
     path.join(repo, "validation", "secret-patterns.txt"),
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "validation", "secret-patterns.txt"),
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "validation",
+      "secret-patterns.txt"
+    ),
   ];
   for (const f of candidates) {
     try {
-      const lines = readFileSync(f, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+      const lines = readFileSync(f, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"));
       if (lines.length) return compile(lines);
-    } catch { /* try next */ }
+    } catch {
+      /* try next */
+    }
   }
   return compile(BUILTIN_SECRETS);
 }
 function compile(list) {
   const out = [];
-  for (const p of list) { try { out.push(new RegExp(p)); } catch { /* skip bad pattern */ } }
+  for (const p of list) {
+    try {
+      out.push(new RegExp(p));
+    } catch {
+      /* skip bad pattern */
+    }
+  }
   return out;
 }
 export const containsSecret = (text, patterns) => patterns.some((re) => re.test(text || ""));
@@ -68,12 +85,13 @@ export function redactSecrets(text, patterns) {
 
 // ── pre-gates (cheap, before any model call) ──
 // Trivial acks/greetings — skip. NOT length-based: "I use Linear" is short but durable.
-const ACK_RE = /^(?:(?:ok(?:ay)?|k|kk|ty|thx|thanks(?: a lot| so much)?|thank you|cheers|got it|gotcha|sounds good|sg|great|nice|cool|perfect|awesome|yep|yup|yeah|yes|no|nope|sure|done|fine|right|makes sense|will do|wilco|np)[\s!.,]*)+$/i;
+const ACK_RE =
+  /^(?:(?:ok(?:ay)?|k|kk|ty|thx|thanks(?: a lot| so much)?|thank you|cheers|got it|gotcha|sounds good|sg|great|nice|cool|perfect|awesome|yep|yup|yeah|yes|no|nope|sure|done|fine|right|makes sense|will do|wilco|np)[\s!.,]*)+$/i;
 export function isTrivialAck(userText) {
   const t = (userText || "").trim();
   if (!t) return true;
   if (ACK_RE.test(t)) return true;
-  if (!/[a-z0-9]/i.test(t)) return true;     // emoji/punctuation only
+  if (!/[a-z0-9]/i.test(t)) return true; // emoji/punctuation only
   return false;
 }
 
@@ -81,17 +99,18 @@ export function isTrivialAck(userText) {
 // Narrow injection denylist: phrases that reference the agent's own
 // instructions/safety have no legit place in a profile fact. Deliberately narrow so
 // real preferences ("never deploy on Fridays", "always use TypeScript") survive.
-const INJECTION_RE = /\b(?:system prompt|safety (?:check|guard|filter|instruction)|ignore (?:your|all|previous|prior|the)\b|disregard (?:your|all|previous|prior|the)\b|override (?:your|the)|bypass (?:the|your)|forget (?:your|all|previous|the)\b)/i;
+const INJECTION_RE =
+  /\b(?:system prompt|safety (?:check|guard|filter|instruction)|ignore (?:your|all|previous|prior|the)\b|disregard (?:your|all|previous|prior|the)\b|override (?:your|the)|bypass (?:the|your)|forget (?:your|all|previous|the)\b)/i;
 
 export function sanitizeFact(fact) {
   if (typeof fact !== "string") return null;
   let f = fact.trim();
   if (!f) return null;
-  if (/[\r\n]/.test(f)) return null;          // single-line only
+  if (/[\r\n]/.test(f)) return null; // single-line only
   if (/[`]/.test(f) || f.includes("```")) return null; // no code / backticks
-  if (/<!--|-->/.test(f)) return null;        // no comment-marker injection
-  if (f.length > FACT_MAX) return null;        // a fact, not a paragraph
-  if (INJECTION_RE.test(f)) return null;       // instruction-injection denylist
+  if (/<!--|-->/.test(f)) return null; // no comment-marker injection
+  if (f.length > FACT_MAX) return null; // a fact, not a paragraph
+  if (INJECTION_RE.test(f)) return null; // instruction-injection denylist
   return f;
 }
 
@@ -101,14 +120,19 @@ function splitLearned(content) {
   if (i === -1) return { head: content.replace(/\s*$/, ""), bullets: [] };
   const head = content.slice(0, i).replace(/\s*$/, "");
   const after = content.slice(i + LEARNED_MARKER.length);
-  const bullets = after.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("- "));
+  const bullets = after
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("- "));
   return { head, bullets };
 }
 function renderLearned(head, bullets) {
   if (!bullets.length) return head + "\n";
   return `${head}\n\n${LEARNED_MARKER}\n${bullets.join("\n")}\n`;
 }
-function bulletFor(fact, section) { return `- ${fact} (${section})`; }
+function bulletFor(fact, section) {
+  return `- ${fact} (${section})`;
+}
 
 // Append facts to a file's learned block; dedupe; evict oldest until <= cap.
 // Returns { content, added } or null if nothing changed / can't fit.
@@ -119,7 +143,9 @@ export function buildUpdatedContent(current, fileFacts, cap) {
   for (const { fact, section } of fileFacts) {
     const b = bulletFor(fact, section);
     if (seen.has(b)) continue;
-    bullets.push(b); seen.add(b); added++;
+    bullets.push(b);
+    seen.add(b);
+    added++;
   }
   if (!added) return null;
   let content = renderLearned(head, bullets);
@@ -128,7 +154,7 @@ export function buildUpdatedContent(current, fileFacts, cap) {
     bullets.shift();
     content = renderLearned(head, bullets);
   }
-  if (content.length > cap) return null;       // seed content alone exceeds cap — give up
+  if (content.length > cap) return null; // seed content alone exceeds cap — give up
   return { content, added };
 }
 
@@ -146,7 +172,7 @@ export function buildPrompt(turn, fileContents) {
     "workarounds. Skip anything transient, speculative, or already recorded. Most turns",
     "yield NOTHING — return an empty list then.",
     "",
-    "Return ONLY JSON: {\"facts\":[{\"file\":<file>,\"section\":<section>,\"fact\":<short plain statement>,\"reason\":<why durable>}]}",
+    'Return ONLY JSON: {"facts":[{"file":<file>,"section":<section>,"fact":<short plain statement>,"reason":<why durable>}]}',
     `Allowed file:section — ${allowed}`,
     "Each fact: one short plain sentence, no markup, no instructions to the assistant.",
     "",
@@ -162,27 +188,36 @@ export function buildPrompt(turn, fileContents) {
 
 function extractJson(text) {
   if (!text) return null;
-  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  const a = text.indexOf("{"),
+    b = text.lastIndexOf("}");
   if (a === -1 || b <= a) return null;
-  try { return JSON.parse(text.slice(a, b + 1)); } catch { return null; }
+  try {
+    return JSON.parse(text.slice(a, b + 1));
+  } catch {
+    return null;
+  }
 }
 
 // callModel: (prompt) => Promise<string>. Injected so tests run offline.
 export async function reviewTurn({ turn, fileContents, callModel }) {
   let raw;
-  try { raw = await callModel(buildPrompt(turn, fileContents)); }
-  catch { return []; }                          // model/auth error → skip silently
+  try {
+    raw = await callModel(buildPrompt(turn, fileContents));
+  } catch {
+    return [];
+  } // model/auth error → skip silently
   const parsed = extractJson(raw);
   const facts = parsed && Array.isArray(parsed.facts) ? parsed.facts : [];
   const out = [];
   for (const f of facts) {
     if (!f || typeof f !== "object") continue;
-    const file = f.file, section = f.section;
-    if (!byFile(file)) continue;                 // file enum
+    const file = f.file,
+      section = f.section;
+    if (!byFile(file)) continue; // file enum
     if (!SECTIONS[file]?.includes(section)) continue; // section enum
     if (typeof f.fact !== "string") continue;
     out.push({ file, section, fact: f.fact, reason: typeof f.reason === "string" ? f.reason : "" });
-    if (out.length >= 5) break;                   // hard ceiling per turn
+    if (out.length >= 5) break; // hard ceiling per turn
   }
   return out;
 }
@@ -190,9 +225,17 @@ export async function reviewTurn({ turn, fileContents, callModel }) {
 // ── step 2: deterministic, fail-closed apply ──
 // deps: { repo, facts, baselines (file->contentAtSessionStart/lastWrite), socketOpen,
 //         guardWrite, secretPatterns }. Mutates baselines on write. Returns {events, undos}.
-export function applyMemoryUpdates({ repo, facts, baselines, socketOpen, guardWrite, secretPatterns }) {
-  const events = [], undos = [];
-  if (!socketOpen) return { events, undos };     // no write the user can't see/undo
+export function applyMemoryUpdates({
+  repo,
+  facts,
+  baselines,
+  socketOpen,
+  guardWrite,
+  secretPatterns,
+}) {
+  const events = [],
+    undos = [];
+  if (!socketOpen) return { events, undos }; // no write the user can't see/undo
   if (!facts?.length) return { events, undos };
 
   // group sanitized facts by file (enum-checked)
@@ -211,7 +254,11 @@ export function applyMemoryUpdates({ repo, facts, baselines, socketOpen, guardWr
     const abs = path.join(repo, ".claude", "memory", m.file);
     if (!existsSync(abs)) continue;
     let current;
-    try { current = readFileSync(abs, "utf8"); } catch { continue; }
+    try {
+      current = readFileSync(abs, "utf8");
+    } catch {
+      continue;
+    }
 
     // dirty-tree (fail-closed): only write a file we observed at session start and
     // that is still byte-identical to our baseline. ABSENT → it appeared mid-session;
@@ -220,24 +267,41 @@ export function applyMemoryUpdates({ repo, facts, baselines, socketOpen, guardWr
     if (base === MEMORY_ABSENT || base === undefined || base !== current) continue;
 
     const built = buildUpdatedContent(current, fileFacts, m.cap);
-    if (!built) continue;                         // nothing added / can't fit cap
+    if (!built) continue; // nothing added / can't fit cap
     const next = built.content;
 
     // fail-closed JS secret scan on the assembled content (authoritative)
     if (containsSecret(next, secretPatterns)) continue;
 
     // second layer: host guard (may fail open; JS scan above already gated)
-    const verdict = guardWrite({ repo, path: path.join(".claude", "memory", m.file), content: next, operation: "Write" });
+    const verdict = guardWrite({
+      repo,
+      path: path.join(".claude", "memory", m.file),
+      content: next,
+      operation: "Write",
+    });
     if (!verdict?.ok) continue;
     const target = verdict.path || abs;
 
-    try { writeFileSync(target, next); } catch { continue; }
-    baselines[m.file] = next;                      // our write becomes the new baseline
+    try {
+      writeFileSync(target, next);
+    } catch {
+      continue;
+    }
+    baselines[m.file] = next; // our write becomes the new baseline
 
     const id = randomUUID();
     undos.push({ id, file: m.file, path: target, prevContent: current, writtenHash: hash(next) });
-    events.push({ type: "memory_updated", id, file: m.file, count: built.added,
-      summary: fileFacts.map((x) => x.fact).join("; ").slice(0, 200) });
+    events.push({
+      type: "memory_updated",
+      id,
+      file: m.file,
+      count: built.added,
+      summary: fileFacts
+        .map((x) => x.fact)
+        .join("; ")
+        .slice(0, 200),
+    });
   }
   return { events, undos };
 }
@@ -246,9 +310,18 @@ export function applyMemoryUpdates({ repo, facts, baselines, socketOpen, guardWr
 export function undoMemoryWrite(undo) {
   if (!undo) return false;
   let current;
-  try { current = readFileSync(undo.path, "utf8"); } catch { return false; }
+  try {
+    current = readFileSync(undo.path, "utf8");
+  } catch {
+    return false;
+  }
   if (hash(current) !== undo.writtenHash) return false; // a later write happened — don't clobber
-  try { writeFileSync(undo.path, undo.prevContent); return true; } catch { return false; }
+  try {
+    writeFileSync(undo.path, undo.prevContent);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── the locked-down Haiku call (reuses the agent SDK's ambient auth) ──
@@ -257,8 +330,8 @@ export async function callModel(prompt, { query }) {
     prompt,
     options: {
       model: MODEL,
-      settingSources: [],      // no project/user settings, no CLAUDE.md, no skills
-      allowedTools: [],        // explicitly toolless — never rely on a default
+      settingSources: [], // no project/user settings, no CLAUDE.md, no skills
+      allowedTools: [], // explicitly toolless — never rely on a default
       mcpServers: {},
       maxTurns: 1,
       includePartialMessages: false,

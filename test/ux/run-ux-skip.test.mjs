@@ -18,10 +18,15 @@ const RUN_UX = path.join(HERE, "run-ux.mjs");
 const SUMMARY = path.join(HERE, "evidence", "summary.json");
 
 let failed = 0;
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 function check(label, cond) {
   if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
-  else { console.log(`  ${RED}✗${NC} ${label}`); failed++; }
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
 }
 
 // Run with NO ANTHROPIC_API_KEY (cloned env, key removed).
@@ -39,13 +44,27 @@ check("exit code is 0", exitCode === 0);
 check("summary.json written", existsSync(SUMMARY));
 
 let summary = null;
-try { summary = JSON.parse(readFileSync(SUMMARY, "utf8")); } catch { /* leave null */ }
+try {
+  summary = JSON.parse(readFileSync(SUMMARY, "utf8"));
+} catch {
+  /* leave null */
+}
 check("status is skipped_no_key", summary && summary.status === "skipped_no_key");
-check("flows is an empty array", summary && Array.isArray(summary.flows) && summary.flows.length === 0);
+check(
+  "flows is an empty array",
+  summary && Array.isArray(summary.flows) && summary.flows.length === 0
+);
 
 // Clean up the evidence file this test wrote (gitignored, but keep the tree tidy).
-try { rmSync(SUMMARY, { force: true }); } catch { /* */ }
+try {
+  rmSync(SUMMARY, { force: true });
+} catch {
+  /* */
+}
 
 console.log("");
-if (failed) { console.log(`${RED}run-ux-skip.test: ${failed} check(s) failed${NC}`); process.exit(1); }
+if (failed) {
+  console.log(`${RED}run-ux-skip.test: ${failed} check(s) failed${NC}`);
+  process.exit(1);
+}
 console.log(`${GREEN}run-ux-skip.test: all checks passed${NC}`);

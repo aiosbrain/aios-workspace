@@ -22,31 +22,66 @@ test("authHeader: uses HTTP Basic auth with username 'opencode' (not Bearer)", (
 });
 
 const SID = "ses_mine";
-const textPart = (over) => ({ id: "p1", sessionID: SID, messageID: "m1", type: "text", text: "", ...over });
-const toolPart = (state, over) => ({ id: "p2", sessionID: SID, messageID: "m1", type: "tool", callID: "call_1", tool: "bash", state, ...over });
+const textPart = (over) => ({
+  id: "p1",
+  sessionID: SID,
+  messageID: "m1",
+  type: "text",
+  text: "",
+  ...over,
+});
+const toolPart = (state, over) => ({
+  id: "p2",
+  sessionID: SID,
+  messageID: "m1",
+  type: "tool",
+  callID: "call_1",
+  tool: "bash",
+  state,
+  ...over,
+});
 
 test("text part delta → delta{text}", () => {
-  const ev = { type: "message.part.updated", properties: { part: textPart({ text: "hello world" }), delta: "hello " } };
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: textPart({ text: "hello world" }), delta: "hello " },
+  };
   assert.deepEqual(mapOpencodeEvent(ev, SID), [{ type: "delta", text: "hello " }]);
 });
 
 test("text part with no delta → nothing (avoid full-text re-send dupes)", () => {
-  const ev = { type: "message.part.updated", properties: { part: textPart({ text: "hello world" }) } };
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: textPart({ text: "hello world" }) },
+  };
   assert.deepEqual(mapOpencodeEvent(ev, SID), []);
 });
 
 test("events from another session are filtered out", () => {
-  const ev = { type: "message.part.updated", properties: { part: textPart({ sessionID: "ses_other", text: "x" }), delta: "x" } };
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: textPart({ sessionID: "ses_other", text: "x" }), delta: "x" },
+  };
   assert.deepEqual(mapOpencodeEvent(ev, SID), []);
 });
 
 test("tool running → tool_use{name,input,id=callID}", () => {
-  const ev = { type: "message.part.updated", properties: { part: toolPart({ status: "running", input: { command: "ls" } }) } };
-  assert.deepEqual(mapOpencodeEvent(ev, SID), [{ type: "tool_use", name: "bash", input: { command: "ls" }, id: "call_1" }]);
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: toolPart({ status: "running", input: { command: "ls" } }) },
+  };
+  assert.deepEqual(mapOpencodeEvent(ev, SID), [
+    { type: "tool_use", name: "bash", input: { command: "ls" }, id: "call_1" },
+  ]);
 });
 
 test("tool completed → tool_result(is_error=false) with output", () => {
-  const ev = { type: "message.part.updated", properties: { part: toolPart({ status: "completed", input: {}, output: "file.txt", title: "ls" }) } };
+  const ev = {
+    type: "message.part.updated",
+    properties: {
+      part: toolPart({ status: "completed", input: {}, output: "file.txt", title: "ls" }),
+    },
+  };
   const out = mapOpencodeEvent(ev, SID);
   assert.equal(out[0].type, "tool_result");
   assert.equal(out[0].id, "call_1");
@@ -56,17 +91,31 @@ test("tool completed → tool_result(is_error=false) with output", () => {
 });
 
 test("tool error → tool_result(is_error=true) with error text", () => {
-  const ev = { type: "message.part.updated", properties: { part: toolPart({ status: "error", input: {}, error: "boom" }) } };
-  assert.deepEqual(mapOpencodeEvent(ev, SID), [{ type: "tool_result", id: "call_1", text: "boom", is_error: true }]);
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: toolPart({ status: "error", input: {}, error: "boom" }) },
+  };
+  assert.deepEqual(mapOpencodeEvent(ev, SID), [
+    { type: "tool_result", id: "call_1", text: "boom", is_error: true },
+  ]);
 });
 
 test("tool pending → nothing (tool_use waits for running)", () => {
-  const ev = { type: "message.part.updated", properties: { part: toolPart({ status: "pending", input: {}, raw: "" }) } };
+  const ev = {
+    type: "message.part.updated",
+    properties: { part: toolPart({ status: "pending", input: {}, raw: "" }) },
+  };
   assert.deepEqual(mapOpencodeEvent(ev, SID), []);
 });
 
 test("session.error → error event (message extracted)", () => {
-  const ev = { type: "session.error", properties: { sessionID: SID, error: { name: "ProviderAuthError", data: { message: "no api key" } } } };
+  const ev = {
+    type: "session.error",
+    properties: {
+      sessionID: SID,
+      error: { name: "ProviderAuthError", data: { message: "no api key" } },
+    },
+  };
   assert.deepEqual(mapOpencodeEvent(ev, SID), [{ type: "error", message: "no api key" }]);
 });
 

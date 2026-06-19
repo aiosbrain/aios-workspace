@@ -64,34 +64,65 @@ function nodeScript(scriptPath, validateArgs) {
 //   firecrawl-extract … --url <url> [--url …] --out .aios/onboarding-extract.json
 //   suggest-connectors --extract .aios/onboarding-extract.json --repo .
 const ONBOARDING_EXTRACT = ".aios/onboarding-extract.json"; // fixed, repo-relative output file
-const URL_RE = /^https?:\/\/[^\s]+$/i;                       // http(s) only (metachars already rejected)
+const URL_RE = /^https?:\/\/[^\s]+$/i; // http(s) only (metachars already rejected)
 
 // firecrawl-extract: only `--url <http(s)>` (repeatable) / positional http(s) URLs,
 // optional `--out <fixed>` and `--repo .` (each at most once, pinned values). Any
 // unknown flag, non-URL positional, or off-path --out/--repo → deny.
 function firecrawlExtractArgs(rest) {
-  let urls = 0, sawOut = false, sawRepo = false;
+  let urls = 0,
+    sawOut = false,
+    sawRepo = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === "--url") { const v = rest[++i]; if (!v || !URL_RE.test(v)) return false; urls++; continue; }
-    if (a === "--out") { const v = rest[++i]; if (v !== ONBOARDING_EXTRACT || sawOut) return false; sawOut = true; continue; }
-    if (a === "--repo") { const v = rest[++i]; if (v !== "." || sawRepo) return false; sawRepo = true; continue; }
-    if (URL_RE.test(a)) { urls++; continue; } // positional URL
-    return false;                              // any other token → deny
+    if (a === "--url") {
+      const v = rest[++i];
+      if (!v || !URL_RE.test(v)) return false;
+      urls++;
+      continue;
+    }
+    if (a === "--out") {
+      const v = rest[++i];
+      if (v !== ONBOARDING_EXTRACT || sawOut) return false;
+      sawOut = true;
+      continue;
+    }
+    if (a === "--repo") {
+      const v = rest[++i];
+      if (v !== "." || sawRepo) return false;
+      sawRepo = true;
+      continue;
+    }
+    if (URL_RE.test(a)) {
+      urls++;
+      continue;
+    } // positional URL
+    return false; // any other token → deny
   }
-  return urls >= 1;                            // at least one URL required
+  return urls >= 1; // at least one URL required
 }
 
 // suggest-connectors: required `--extract <fixed>` plus optional `--repo .`; nothing else.
 function suggestConnectorsArgs(rest) {
-  let sawExtract = false, sawRepo = false;
+  let sawExtract = false,
+    sawRepo = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === "--extract") { const v = rest[++i]; if (v !== ONBOARDING_EXTRACT || sawExtract) return false; sawExtract = true; continue; }
-    if (a === "--repo") { const v = rest[++i]; if (v !== "." || sawRepo) return false; sawRepo = true; continue; }
-    return false;                              // any other token → deny
+    if (a === "--extract") {
+      const v = rest[++i];
+      if (v !== ONBOARDING_EXTRACT || sawExtract) return false;
+      sawExtract = true;
+      continue;
+    }
+    if (a === "--repo") {
+      const v = rest[++i];
+      if (v !== "." || sawRepo) return false;
+      sawRepo = true;
+      continue;
+    }
+    return false; // any other token → deny
   }
-  return sawExtract;                           // --extract is mandatory
+  return sawExtract; // --extract is mandatory
 }
 
 // The agent's NATURAL path to firecrawl is the `Skill` tool (which then runs the
@@ -102,7 +133,9 @@ export const FIRECRAWL_SKILL = "firecrawl-direct";
 function firecrawlSkillAllowed(toolInput) {
   if (!toolInput || typeof toolInput !== "object") return false;
   if (toolInput.skill !== FIRECRAWL_SKILL) return false;
-  const args = Array.isArray(toolInput.args) ? toolInput.args.join(" ") : String(toolInput.args ?? "");
+  const args = Array.isArray(toolInput.args)
+    ? toolInput.args.join(" ")
+    : String(toolInput.args ?? "");
   return URL_RE.test(args.trim()); // a single http(s) URL, no whitespace/extra tokens
 }
 
@@ -139,15 +172,31 @@ export function evaluateToolPolicy(policyName, toolName, toolInput) {
 
   if (toolName === "Skill") {
     const ok = firecrawlSkillAllowed(toolInput);
-    return { active: true, allowed: ok, reason: ok ? "firecrawl-direct skill with an http(s) URL" : "skill not permitted under policy" };
+    return {
+      active: true,
+      allowed: ok,
+      reason: ok
+        ? "firecrawl-direct skill with an http(s) URL"
+        : "skill not permitted under policy",
+    };
   }
-  if (toolName !== "Bash") return { active: true, allowed: false, reason: `tool ${toolName} not permitted under policy` };
+  if (toolName !== "Bash")
+    return { active: true, allowed: false, reason: `tool ${toolName} not permitted under policy` };
 
   const rawCmd = typeof toolInput === "string" ? toolInput : (toolInput && toolInput.command) || "";
   const argv = tokenizeCommand(stripTrailingFdDup(rawCmd));
-  if (!argv) return { active: true, allowed: false, reason: "command has shell metacharacters or is unparseable" };
+  if (!argv)
+    return {
+      active: true,
+      allowed: false,
+      reason: "command has shell metacharacters or is unparseable",
+    };
   const allowed = matchers.some((m) => m(argv));
-  return { active: true, allowed, reason: allowed ? "matched an exact-argv shape in policy" : "no matching argv shape in policy" };
+  return {
+    active: true,
+    allowed,
+    reason: allowed ? "matched an exact-argv shape in policy" : "no matching argv shape in policy",
+  };
 }
 
 /**
@@ -165,17 +214,20 @@ export function auditToolPolicy(events, { policyName = "ux-onboarding" } = {}) {
   const policy = (Array.isArray(events) ? events : []).filter((e) => e && e.type === "tool_policy");
   const allowed = policy.filter((e) => e.allowed === true);
   // Prefer the structured `input` the server recorded; fall back to legacy `command`.
-  const reinput = (e) => (e.input !== undefined ? e.input : (e.command || ""));
+  const reinput = (e) => (e.input !== undefined ? e.input : e.command || "");
 
   // 1: re-evaluate each ALLOWED event from its recorded input; any that does not
   // independently pass the matcher is an off-list approval (enforcement bug).
-  const offList = allowed.filter((e) => !evaluateToolPolicy(policyName, e.tool, reinput(e)).allowed);
+  const offList = allowed.filter(
+    (e) => !evaluateToolPolicy(policyName, e.tool, reinput(e)).allowed
+  );
   checks.push({
     name: "no_offlist_command_allowed",
     ok: offList.length === 0,
-    detail: offList.length === 0
-      ? `all ${allowed.length} allowed tool call(s) independently re-verify against policy "${policyName}"`
-      : `off-list tool call(s) were allowed: ${offList.map((e) => JSON.stringify(e.command || e.input)).join(", ")}`,
+    detail:
+      offList.length === 0
+        ? `all ${allowed.length} allowed tool call(s) independently re-verify against policy "${policyName}"`
+        : `off-list tool call(s) were allowed: ${offList.map((e) => JSON.stringify(e.command || e.input)).join(", ")}`,
   });
 
   // 2: firecrawl must have been requested at least once (allowed or denied) — via
@@ -187,7 +239,11 @@ export function auditToolPolicy(events, { policyName = "ux-onboarding" } = {}) {
       return !!inp && typeof inp === "object" && inp.skill === FIRECRAWL_SKILL;
     }
     const argv = tokenizeCommand(stripTrailingFdDup(e.command || ""));
-    return !!argv && argv[0] === "node" && (argv[1] === firecrawlScript || argv[1].endsWith("/" + firecrawlScript));
+    return (
+      !!argv &&
+      argv[0] === "node" &&
+      (argv[1] === firecrawlScript || argv[1].endsWith("/" + firecrawlScript))
+    );
   });
   checks.push({
     name: "firecrawl_extract_requested",

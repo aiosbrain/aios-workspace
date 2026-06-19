@@ -5,7 +5,15 @@
 // installs with consent; and the HIGH → typed-confirm path (via a temp community.json
 // that points at the high-risk evil fixture). Zero-dep. Run: node test/skill-install.test.mjs
 
-import { mkdtempSync, mkdirSync, existsSync, cpSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  existsSync,
+  cpSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +24,15 @@ const LIBRARY_DIR = path.join(DIR, "..", "gui", "server", "skill-library");
 const COMMUNITY_JSON = path.join(LIBRARY_DIR, "community.json");
 
 let failed = 0;
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 function check(label, cond) {
   if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
-  else { console.log(`  ${RED}✗${NC} ${label}`); failed++; }
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
 }
 function freshRepo() {
   const repo = mkdtempSync(path.join(tmpdir(), "skrepo-"));
@@ -41,11 +54,20 @@ console.log("install: community 'community-example' (elevated) requires consent"
   const scan = scanSkillById("community-example");
   check("scan is elevated", scan.riskClass === "elevated");
   check("no typed confirm needed", scan.requiresTypedConfirm === false);
-  let refused = false, scanAttached = false;
-  try { installSkill(repo, "community-example"); } catch (e) { refused = true; scanAttached = !!e.scan; }
+  let refused = false,
+    scanAttached = false;
+  try {
+    installSkill(repo, "community-example");
+  } catch (e) {
+    refused = true;
+    scanAttached = !!e.scan;
+  }
   check("refused without consent", refused);
   check("scan attached to error", scanAttached);
-  check("not on disk after refusal", !existsSync(path.join(repo, ".claude/skills/community-example")));
+  check(
+    "not on disk after refusal",
+    !existsSync(path.join(repo, ".claude/skills/community-example"))
+  );
   const out = installSkill(repo, "community-example", { accepted: true });
   check("installs with consent.accepted", out.installed === true && out.tier === "community");
 }
@@ -57,25 +79,49 @@ console.log("install: a HIGH community skill requires a typed confirm");
   const evilDest = path.join(LIBRARY_DIR, "community", "evil-demo");
   try {
     cpSync(path.join(DIR, "skill-scan-fixtures", "evil-skill"), evilDest, { recursive: true });
-    writeFileSync(COMMUNITY_JSON, JSON.stringify({
-      skills: [{ id: "evil-demo", name: "evil-demo", category: "Community (unverified)", trust: "community",
-        source: { kind: "vendored-demo", dir: "community/evil-demo" } }],
-    }, null, 2) + "\n");
+    writeFileSync(
+      COMMUNITY_JSON,
+      JSON.stringify(
+        {
+          skills: [
+            {
+              id: "evil-demo",
+              name: "evil-demo",
+              category: "Community (unverified)",
+              trust: "community",
+              source: { kind: "vendored-demo", dir: "community/evil-demo" },
+            },
+          ],
+        },
+        null,
+        2
+      ) + "\n"
+    );
 
     const scan = scanSkillById("evil-demo");
     check("scan is high", scan.riskClass === "high");
     check("requiresTypedConfirm true", scan.requiresTypedConfirm === true);
-    check("listed in community", listLibrary(freshRepo()).community.some((s) => s.id === "evil-demo"));
+    check(
+      "listed in community",
+      listLibrary(freshRepo()).community.some((s) => s.id === "evil-demo")
+    );
 
     const repo = freshRepo();
     let refusedAccepted = false;
-    try { installSkill(repo, "evil-demo", { accepted: true }); } // accepted but no typed
-    catch { refusedAccepted = true; }
+    try {
+      installSkill(repo, "evil-demo", { accepted: true });
+    } catch {
+      // accepted but no typed
+      refusedAccepted = true;
+    }
     check("refused with accepted-but-no-typed", refusedAccepted);
 
     let refusedWrongTyped = false;
-    try { installSkill(repo, "evil-demo", { accepted: true, typed: "wrong" }); }
-    catch { refusedWrongTyped = true; }
+    try {
+      installSkill(repo, "evil-demo", { accepted: true, typed: "wrong" });
+    } catch {
+      refusedWrongTyped = true;
+    }
     check("refused with wrong typed value", refusedWrongTyped);
 
     const out = installSkill(repo, "evil-demo", { accepted: true, typed: "evil-demo" });
@@ -87,5 +133,9 @@ console.log("install: a HIGH community skill requires a typed confirm");
 }
 
 console.log("================================================");
-if (failed === 0) { console.log(`${GREEN}skill-install tests PASSED${NC}`); process.exit(0); }
-console.log(`${RED}skill-install tests FAILED — ${failed} assertion(s)${NC}`); process.exit(1);
+if (failed === 0) {
+  console.log(`${GREEN}skill-install tests PASSED${NC}`);
+  process.exit(0);
+}
+console.log(`${RED}skill-install tests FAILED — ${failed} assertion(s)${NC}`);
+process.exit(1);

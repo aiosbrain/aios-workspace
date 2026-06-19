@@ -83,7 +83,11 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     // recency. Capability-gated on the sqlite3 CLI.
     if (tool === "cursor") {
       if (!sqlite3Available()) {
-        console.warn(color.yellow("  cursor: sqlite3 CLI not found on PATH — skipping (install sqlite3 to enable)"));
+        console.warn(
+          color.yellow(
+            "  cursor: sqlite3 CLI not found on PATH — skipping (install sqlite3 to enable)"
+          )
+        );
         continue;
       }
       for (const db of files) {
@@ -101,7 +105,11 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
       const st = fileStat(f);
       if (!opts.full && st && st.mtime_ms < sinceMs) continue; // inactive session
       let text;
-      try { text = readFileSync(f, "utf8"); } catch { continue; }
+      try {
+        text = readFileSync(f, "utf8");
+      } catch {
+        continue;
+      }
       const fallbackId = path.basename(f).replace(/\.jsonl$/, "");
       for (const ev of parse(text, fallbackId)) events.push(ev);
     }
@@ -172,21 +180,34 @@ async function pushDays(repo, cfg, result, helpers, state) {
   if (!cfg.brain_url) missing.push("AIOS_BRAIN_URL");
   if (!cfg.api_key) missing.push("AIOS_API_KEY");
   if (missing.length) {
-    console.warn(color.yellow(`  --push skipped: brain not configured (missing ${missing.join(" + ")}).`));
+    console.warn(
+      color.yellow(`  --push skipped: brain not configured (missing ${missing.join(" + ")}).`)
+    );
     console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));
     console.warn(color.dim("      export AIOS_BRAIN_URL=https://your-brain.example.com"));
-    console.warn(color.dim("      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"));
-    console.warn(color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them)."));
+    console.warn(
+      color.dim(
+        "      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"
+      )
+    );
+    console.warn(
+      color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them).")
+    );
     return;
   }
   const member = resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {});
   if (!state.pushed) state.pushed = {}; // date → last-pushed sha
 
-  let sent = 0, skipped = 0, failed = 0;
+  let sent = 0,
+    skipped = 0,
+    failed = 0;
   for (const day of result.days) {
     const payload = buildPushPayload(day, member);
     const sha = simpleHash(JSON.stringify(payload));
-    if (state.pushed[day.date] === sha) { skipped++; continue; }
+    if (state.pushed[day.date] === sha) {
+      skipped++;
+      continue;
+    }
     try {
       await api(cfg, "POST", "/metrics", payload);
       state.pushed[day.date] = sha;
@@ -196,7 +217,13 @@ async function pushDays(repo, cfg, result, helpers, state) {
       console.warn(color.yellow(`  push ${day.date} failed: ${e.message}`));
     }
   }
-  console.log(color.green(`\n  pushed ${sent} day(s) to brain` + (skipped ? `, ${skipped} unchanged` : "") + (failed ? `, ${failed} failed` : "")));
+  console.log(
+    color.green(
+      `\n  pushed ${sent} day(s) to brain` +
+        (skipped ? `, ${skipped} unchanged` : "") +
+        (failed ? `, ${failed} failed` : "")
+    )
+  );
 }
 
 /** Tiny non-crypto hash for change-detection of a day's already-pushed payload. */

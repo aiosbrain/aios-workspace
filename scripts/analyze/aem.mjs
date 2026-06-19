@@ -33,22 +33,36 @@ function band(value, bands) {
 // the agent running checks it can act on. (Command bodies are intentionally
 // invisible, so this is coarse; documented as a proxy.)
 export function scoreVerification(s) {
-  return band(s.verify_tool_rate, [[0.25, 4], [0.12, 3], [0.04, 2], [0.005, 1]]);
+  return band(s.verify_tool_rate, [
+    [0.25, 4],
+    [0.12, 3],
+    [0.04, 2],
+    [0.005, 1],
+  ]);
 }
 
 // Context hygiene: "One long session (0) · /clears between tasks (2) · curated
 // CLAUDE.md + subagents + compaction (4)". Proxy: prompt-cache hit rate — high
 // reuse of a deliberately-maintained context.
 export function scoreContextHygiene(s) {
-  return band(s.cache_hit_rate, [[0.7, 4], [0.5, 3], [0.3, 2], [0.05, 1]]);
+  return band(s.cache_hit_rate, [
+    [0.7, 4],
+    [0.5, 3],
+    [0.3, 2],
+    [0.05, 1],
+  ]);
 }
 
 // Autonomy / leash: "Approves every action (0) · auto-accepts low-risk behind a
 // check (2) · dials leash per risk, earns longer leash (4)". Proxy: delegation
 // ratio (tokens spent in subagents) + active permission management.
 export function scoreAutonomy(s) {
-  const byDelegation = band(s.delegation_ratio, [[0.25, 4], [0.1, 3], [0.02, 2]]);
-  const floor = (s.subagent_usage > 0 || s.permission_events > 0) ? 1 : 0;
+  const byDelegation = band(s.delegation_ratio, [
+    [0.25, 4],
+    [0.1, 3],
+    [0.02, 2],
+  ]);
+  const floor = s.subagent_usage > 0 || s.permission_events > 0 ? 1 : 0;
   return Math.max(byDelegation, floor);
 }
 
@@ -57,7 +71,14 @@ export function scoreAutonomy(s) {
 // observe rule write-back, so we use tool-diversity (building a toolbelt) as a
 // weak proxy and CAP at 3 — true compounding needs cross-session evidence.
 export function scoreLearning(s) {
-  return Math.min(3, band(s.tool_diversity, [[6, 3], [3, 2], [1, 1]]));
+  return Math.min(
+    3,
+    band(s.tool_diversity, [
+      [6, 3],
+      [3, 2],
+      [1, 1],
+    ])
+  );
 }
 
 // Cost & governance: "No cost sense (0) · aware of token cost (2) · token-
@@ -108,7 +129,12 @@ export function spineLevel(axes, s) {
   // L4 Agentic Engineering — runs agents against a check + reviews (verify+autonomy)
   if (axes.verification >= 2 && axes.autonomy >= 2) level = 4;
   // L5 Agentic Orchestration — multi-agent + own evals + feedback
-  if (axes.autonomy >= 3 && axes.verification >= 3 && axes.learning >= 3 && s.subagent_usage >= 0.3) {
+  if (
+    axes.autonomy >= 3 &&
+    axes.verification >= 3 &&
+    axes.learning >= 3 &&
+    s.subagent_usage >= 0.3
+  ) {
     level = 5;
   }
   // HARD GATE: no climbing past L3 without verification.

@@ -19,9 +19,9 @@ import * as opencode from "./opencode.mjs";
 // driver → adapter module. Every gui:true runtime in scripts/runtimes.mjs resolves here.
 const ADAPTERS = {
   "claude-sdk": claudeCode,
-  "acp": acp,         // hermes (+ openclaw once its spawn command is confirmed)
-  "codex": codex,     // native runtime — post-turn-sweep governance tier
-  "opencode": opencode, // native runtime — post-turn-sweep governance tier
+  acp: acp, // hermes (+ openclaw once its spawn command is confirmed)
+  codex: codex, // native runtime — post-turn-sweep governance tier
+  opencode: opencode, // native runtime — post-turn-sweep governance tier
 };
 
 /** Read the runtime selection from aios.yaml. Default claude-code ⇒ no change. */
@@ -29,7 +29,11 @@ export function readAgentConfig(repo) {
   let cfg = {};
   const p = path.join(repo, "aios.yaml");
   if (existsSync(p)) {
-    try { cfg = parseFlatYaml(readFileSync(p, "utf8")); } catch { cfg = {}; }
+    try {
+      cfg = parseFlatYaml(readFileSync(p, "utf8"));
+    } catch {
+      cfg = {};
+    }
   }
   return {
     runtime: cfg.agent_runtime || "claude-code",
@@ -48,15 +52,21 @@ export function readAgentConfig(repo) {
 export function createAdapter(runtime) {
   const name = runtime || "claude-code";
   if (!(name in RUNTIMES)) {
-    throw new Error(`unknown agent_runtime '${name}'. Valid: ${Object.keys(RUNTIMES).join(", ")}. Fix aios.yaml → agent_runtime.`);
+    throw new Error(
+      `unknown agent_runtime '${name}'. Valid: ${Object.keys(RUNTIMES).join(", ")}. Fix aios.yaml → agent_runtime.`
+    );
   }
   const gui = GUI_RUNTIMES[name];
   if (!gui) {
-    throw new Error(`agent_runtime '${name}' is not GUI-drivable (no tool harness). Use 'claude-code' in the GUI, or run '${name}' headless.`);
+    throw new Error(
+      `agent_runtime '${name}' is not GUI-drivable (no tool harness). Use 'claude-code' in the GUI, or run '${name}' headless.`
+    );
   }
   const adapter = ADAPTERS[gui.driver];
   if (!adapter) {
-    throw new Error(`agent_runtime '${name}' (driver '${gui.driver}') is not implemented in the GUI yet — landing in a later BYOA Phase 3 slice. Use 'claude-code' for now.`);
+    throw new Error(
+      `agent_runtime '${name}' (driver '${gui.driver}') is not implemented in the GUI yet — landing in a later BYOA Phase 3 slice. Use 'claude-code' for now.`
+    );
   }
   return adapter;
 }

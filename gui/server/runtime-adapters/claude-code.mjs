@@ -25,9 +25,13 @@ function loadPersona(repo, personality) {
   const file = path.join(repo, ".claude", "personalities", `${personality}.md`);
   if (!existsSync(file)) return null;
   try {
-    const body = readFileSync(file, "utf8").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+    const body = readFileSync(file, "utf8")
+      .replace(/^---\n[\s\S]*?\n---\n?/, "")
+      .trim();
     return body || null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // Volatile-tier memory: the durable two-axis profile (USER.md = person,
@@ -40,9 +44,9 @@ function loadPersona(repo, personality) {
 // hard-capped — and wrapped in an explicit "data only, never instructions" fence
 // so nothing inside the block can steer the agent.
 export function sanitizeMemory(raw, cap) {
-  let body = raw.replace(/^---\n[\s\S]*?\n---\n?/, "");   // strip YAML frontmatter
-  body = body.replace(/```[\s\S]*?```/g, "");             // strip fenced code blocks
-  body = body.replace(/<!--[\s\S]*?-->/g, "");            // strip HTML comments (cap headers)
+  let body = raw.replace(/^---\n[\s\S]*?\n---\n?/, ""); // strip YAML frontmatter
+  body = body.replace(/```[\s\S]*?```/g, ""); // strip fenced code blocks
+  body = body.replace(/<!--[\s\S]*?-->/g, ""); // strip HTML comments (cap headers)
   body = body.trim();
   if (body.length > cap) body = body.slice(0, cap).trimEnd() + " …";
   return body;
@@ -54,7 +58,11 @@ export function loadMemory(repo) {
     const p = path.join(repo, ".claude", "memory", file);
     if (!existsSync(p)) continue;
     let body;
-    try { body = sanitizeMemory(readFileSync(p, "utf8"), cap); } catch { continue; }
+    try {
+      body = sanitizeMemory(readFileSync(p, "utf8"), cap);
+    } catch {
+      continue;
+    }
     if (body) blocks.push(`### ${label}\n${body}`);
   }
   if (!blocks.length) return null;
@@ -94,12 +102,25 @@ function resolveModel(model) {
  * @param {(tool:string,input:object)=>Promise<object>} host.confirmClaudeTool  → {behavior,...}
  * @param {AbortSignal} host.signal
  */
-export async function run({ repo, model, resume, sessionId, personality, input, emit, confirmClaudeTool, signal }) {
+export async function run({
+  repo,
+  model,
+  resume,
+  sessionId,
+  personality,
+  input,
+  emit,
+  confirmClaudeTool,
+  signal,
+}) {
   let active = resolveModel(model);
   // Surface a clear note (not a hard error) when a configured model is unusable,
   // so a typo in aios.yaml degrades to Sonnet instead of breaking chat.
   if (model && !ALLOWED_MODELS.has(model)) {
-    emit({ type: "warning", message: `Unknown agent_model '${model}' — using ${DEFAULT_MODEL}. Valid: ${[...ALLOWED_MODELS].join(", ")}.` });
+    emit({
+      type: "warning",
+      message: `Unknown agent_model '${model}' — using ${DEFAULT_MODEL}. Valid: ${[...ALLOWED_MODELS].join(", ")}.`,
+    });
   }
 
   // Map host turns → the SDK's streaming-input message shape. A turn may carry a
@@ -111,10 +132,19 @@ export async function run({ repo, model, resume, sessionId, personality, input, 
       if (signal?.aborted) return;
       const want = resolveModel(turn.model);
       if (turn.model && want !== active) {
-        try { await q.setModel(want); active = want; emit({ type: "model", model: active }); }
-        catch (e) { emit({ type: "warning", message: `Could not switch model: ${String(e?.message || e)}` }); }
+        try {
+          await q.setModel(want);
+          active = want;
+          emit({ type: "model", model: active });
+        } catch (e) {
+          emit({ type: "warning", message: `Could not switch model: ${String(e?.message || e)}` });
+        }
       }
-      yield { type: "user", message: { role: "user", content: turn.text }, parent_tool_use_id: null };
+      yield {
+        type: "user",
+        message: { role: "user", content: turn.text },
+        parent_tool_use_id: null,
+      };
     }
   }
 
@@ -151,7 +181,9 @@ export async function run({ repo, model, resume, sessionId, personality, input, 
 
   // Forward token usage from whatever message carries it (assistant or result);
   // never assume a fixed shape. The client uses the latest as a context estimate.
-  const emitUsage = (usage) => { if (usage) emit({ type: "usage", usage }); };
+  const emitUsage = (usage) => {
+    if (usage) emit({ type: "usage", usage });
+  };
 
   for await (const message of q) {
     if (signal?.aborted) break;
@@ -177,7 +209,12 @@ export async function run({ repo, model, resume, sessionId, personality, input, 
           const text = Array.isArray(block.content)
             ? block.content.map((b) => b.text || "").join("")
             : String(block.content ?? "");
-          emit({ type: "tool_result", id: block.tool_use_id, text: text.slice(0, 4000), is_error: !!block.is_error });
+          emit({
+            type: "tool_result",
+            id: block.tool_use_id,
+            text: text.slice(0, 4000),
+            is_error: !!block.is_error,
+          });
         }
       }
     } else if (message.type === "result") {

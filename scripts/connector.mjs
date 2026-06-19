@@ -15,7 +15,7 @@
  * Zero npm deps (Node >= 18: built-in fetch; dotenvx CLI on PATH with .env fallback).
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,8 +31,11 @@ const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
 export function readBlueprint(repo) {
   const p = path.join(repo, ".aios", "blueprint.json");
   if (!existsSync(p)) return null;
-  try { return JSON.parse(readFileSync(p, "utf8")); }
-  catch { return null; }
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 // List connectable tools = descriptors, with live status merged from integrations.json,
@@ -41,17 +44,32 @@ export function listConnectors(repo) {
   const descs = readDescriptors(repo);
   const statuses = {};
   try {
-    const ints = JSON.parse(readFileSync(path.join(repo, ".claude", "integrations.json"), "utf8")).integrations || [];
+    const ints =
+      JSON.parse(readFileSync(path.join(repo, ".claude", "integrations.json"), "utf8"))
+        .integrations || [];
     for (const i of ints) statuses[i.id] = i.status;
-  } catch { /* none */ }
+  } catch {
+    /* none */
+  }
   const bp = readBlueprint(repo);
   const teamConn = (bp && bp.connectors) || {};
   return Object.values(descs).map((d) => {
     const t = teamConn[d.id];
     return {
-      id: d.id, name: d.name, category: d.category, transport: d.transport, auth_mode: d.auth_mode || "token",
-      summary: d.summary || "", scopes: d.scopes || [], scopes_advisory: !!d.scopes_advisory,
-      secrets: (d.secrets || []).map((s) => ({ env: s.env, label: s.label, required: s.required !== false, placeholder: s.placeholder || "" })),
+      id: d.id,
+      name: d.name,
+      category: d.category,
+      transport: d.transport,
+      auth_mode: d.auth_mode || "token",
+      summary: d.summary || "",
+      scopes: d.scopes || [],
+      scopes_advisory: !!d.scopes_advisory,
+      secrets: (d.secrets || []).map((s) => ({
+        env: s.env,
+        label: s.label,
+        required: s.required !== false,
+        placeholder: s.placeholder || "",
+      })),
       docs: d.docs || {},
       // shared, lead-set config fields (e.g. the Jira site URL) the Team tab collects
       team_instance: d.team_instance || [],
@@ -73,7 +91,9 @@ export function getDescriptor(repo, id) {
 // ── template + path helpers ──────────────────────────────────────────────────
 
 function resolve(str, values) {
-  return String(str).replace(/\$\{([A-Za-z0-9_.]+)\}/g, (_, k) => (values[k] != null ? values[k] : ""));
+  return String(str).replace(/\$\{([A-Za-z0-9_.]+)\}/g, (_, k) =>
+    values[k] != null ? values[k] : ""
+  );
 }
 function getPath(obj, dotted) {
   return dotted.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -88,7 +108,13 @@ function getPath(obj, dotted) {
  */
 export async function validateConnector(descriptor, secretValues, { timeoutMs = 9000 } = {}) {
   const v = descriptor.validate;
-  if (!v) return { ok: true, checks: [{ name: "config", ok: true, detail: "no validation configured" }], identity: null, instance: null };
+  if (!v)
+    return {
+      ok: true,
+      checks: [{ name: "config", ok: true, detail: "no validation configured" }],
+      identity: null,
+      instance: null,
+    };
   const values = { ...secretValues, ...(descriptor.instance || {}) };
 
   // headers (resolve ${ENV}); optional "basic:${EMAIL}:${TOKEN}" shorthand
@@ -116,26 +142,55 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
     clearTimeout(t);
   } catch (e) {
     const offline = e.name === "AbortError";
-    return { ok: false, checks: [{ name: "reachable", ok: false, detail: offline ? "timed out — check your connection" : "couldn't reach the service" }], identity: null, instance: null, error: offline ? "offline" : "network" };
+    return {
+      ok: false,
+      checks: [
+        {
+          name: "reachable",
+          ok: false,
+          detail: offline ? "timed out — check your connection" : "couldn't reach the service",
+        },
+      ],
+      identity: null,
+      instance: null,
+      error: offline ? "offline" : "network",
+    };
   }
-  try { json = await res.json(); } catch { json = null; }
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
 
   // reachable + auth
   const wantStatus = (v.expect && v.expect.status) || 200;
   if (res.status === 401 || res.status === 403) {
-    checks.push({ name: "reachable", ok: false, detail: "key rejected — it may be invalid, revoked, or lack access" });
+    checks.push({
+      name: "reachable",
+      ok: false,
+      detail: "key rejected — it may be invalid, revoked, or lack access",
+    });
     return { ok: false, checks, identity: null, instance: null, error: "invalid_key" };
   }
   if (res.status !== wantStatus) {
-    checks.push({ name: "reachable", ok: false, detail: `unexpected response (HTTP ${res.status})` });
+    checks.push({
+      name: "reachable",
+      ok: false,
+      detail: `unexpected response (HTTP ${res.status})`,
+    });
     return { ok: false, checks, identity: null, instance: null, error: "unexpected_status" };
   }
   // Some APIs return 200 even for bad keys (Slack `{ok:false}`, GraphQL `{errors}`):
   // treat a declared `expect.ok_path` / `expect.json_has` miss as a rejected key.
   const okPathFail = v.expect && v.expect.ok_path && getPath(json, v.expect.ok_path) !== true;
-  const jsonHasFail = (v.expect && v.expect.json_has || []).some((k) => !(json && getPath(json, k) != null));
+  const jsonHasFail = ((v.expect && v.expect.json_has) || []).some(
+    (k) => !(json && getPath(json, k) != null)
+  );
   if (okPathFail || jsonHasFail) {
-    const reason = json && json.error ? `rejected (${json.error})` : "key rejected — invalid, revoked, or lacks access";
+    const reason =
+      json && json.error
+        ? `rejected (${json.error})`
+        : "key rejected — invalid, revoked, or lacks access";
     checks.push({ name: "reachable", ok: false, detail: reason });
     return { ok: false, checks, identity: null, instance: null, error: "invalid_key" };
   }
@@ -151,7 +206,11 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
       const exp = v.scope_probe.expect || {};
       const got = exp.json_path ? getPath(sJson, exp.json_path) : sRes.ok;
       const pass = exp.equals !== undefined ? got === exp.equals : !!got;
-      checks.push({ name: "scope", ok: pass, detail: pass ? "required permissions present" : "missing a required permission" });
+      checks.push({
+        name: "scope",
+        ok: pass,
+        detail: pass ? "required permissions present" : "missing a required permission",
+      });
       if (!pass) ok = false;
     } catch {
       checks.push({ name: "scope", ok: false, detail: "couldn't verify permissions" });
@@ -159,9 +218,20 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
   }
 
   // identity + instance (workspace) — for the confident "connected as … in …" message
-  const identity = v.identity ? { label: v.identity.label || "Account", value: v.identity.json_path ? getPath(json, v.identity.json_path) : null } : null;
-  const instance = v.instance_check ? { label: v.instance_check.label || "Workspace", value: v.instance_check.json_path ? getPath(json, v.instance_check.json_path) : null } : null;
-  if (instance && instance.value) checks.push({ name: "workspace", ok: true, detail: instance.value });
+  const identity = v.identity
+    ? {
+        label: v.identity.label || "Account",
+        value: v.identity.json_path ? getPath(json, v.identity.json_path) : null,
+      }
+    : null;
+  const instance = v.instance_check
+    ? {
+        label: v.instance_check.label || "Workspace",
+        value: v.instance_check.json_path ? getPath(json, v.instance_check.json_path) : null,
+      }
+    : null;
+  if (instance && instance.value)
+    checks.push({ name: "workspace", ok: true, detail: instance.value });
 
   // capture derived env values from the response (e.g. Slack team_id) to store too
   const captured = {};
@@ -175,7 +245,9 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
 
 // ── secret vault (dotenvx) ───────────────────────────────────────────────────
 
-function envPath(repo) { return path.join(repo, ".env"); }
+function envPath(repo) {
+  return path.join(repo, ".env");
+}
 
 // Encrypt+store a secret. dotenvx generates .env.keys + DOTENV_PUBLIC_KEY on first use.
 export function vaultSet(repo, env, value) {
@@ -185,15 +257,25 @@ export function vaultSet(repo, env, value) {
   if (!existsSync(ep)) writeFileSync(ep, "");
   // Note: value passes as an execFile arg (no shell); on a shared host this is briefly
   // visible via `ps`. Acceptable for a single-user local app; hardening tracked for M5.
-  execFileSync("dotenvx", ["set", env, value, "-f", ep], { cwd: repo, stdio: ["ignore", "ignore", "pipe"] });
+  execFileSync("dotenvx", ["set", env, value, "-f", ep], {
+    cwd: repo,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   // dotenvx returns 0 even on some no-ops; assert the value actually landed encrypted.
   const back = vaultGet(repo, env);
   if (back !== value) throw new Error(`vault: failed to store ${env}`);
 }
 export function vaultGet(repo, env) {
   try {
-    return execFileSync("dotenvx", ["get", env, "-f", envPath(repo)], { cwd: repo, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch { return ""; }
+    return execFileSync("dotenvx", ["get", env, "-f", envPath(repo)], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    return "";
+  }
 }
 
 export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
@@ -201,7 +283,11 @@ export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
   let txt = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   const lines = new Set(txt.split("\n").map((l) => l.trim()));
   let changed = false;
-  for (const n of entries) if (!lines.has(n)) { txt = txt.replace(/\s*$/, "\n") + n + "\n"; changed = true; }
+  for (const n of entries)
+    if (!lines.has(n)) {
+      txt = txt.replace(/\s*$/, "\n") + n + "\n";
+      changed = true;
+    }
   if (changed) writeFileSync(gi, txt);
 }
 
@@ -210,7 +296,8 @@ export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
 export function copyDir(src, dest) {
   mkdirSync(dest, { recursive: true });
   for (const e of readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, e.name), d = path.join(dest, e.name);
+    const s = path.join(src, e.name),
+      d = path.join(dest, e.name);
     if (e.isDirectory()) copyDir(s, d);
     else writeFileSync(d, readFileSync(s));
   }
@@ -223,14 +310,24 @@ function flipStatus(repo, id, status) {
     try {
       const j = JSON.parse(readFileSync(ip, "utf8"));
       const e = (j.integrations || []).find((x) => x.id === id);
-      if (e) { e.status = status; writeFileSync(ip, JSON.stringify(j, null, 2) + "\n"); }
-    } catch { /* ignore */ }
+      if (e) {
+        e.status = status;
+        writeFileSync(ip, JSON.stringify(j, null, 2) + "\n");
+      }
+    } catch {
+      /* ignore */
+    }
   }
   // per-repo descriptor copy (so status survives + overrides bundled)
   const dp = path.join(repo, ".claude", "descriptors", `${id}.json`);
   if (existsSync(dp)) {
-    try { const d = JSON.parse(readFileSync(dp, "utf8")); d.status = status; writeFileSync(dp, JSON.stringify(d, null, 2) + "\n"); }
-    catch { /* ignore */ }
+    try {
+      const d = JSON.parse(readFileSync(dp, "utf8"));
+      d.status = status;
+      writeFileSync(dp, JSON.stringify(d, null, 2) + "\n");
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -244,9 +341,20 @@ export function storeConnector(repo, descriptor, secretValues) {
   if (descriptor.transport === "mcp") {
     const mcpPath = path.join(repo, ".mcp.json");
     let mcp = { mcpServers: {} };
-    if (existsSync(mcpPath)) { try { mcp = JSON.parse(readFileSync(mcpPath, "utf8")); mcp.mcpServers = mcp.mcpServers || {}; } catch { /* reset */ } }
+    if (existsSync(mcpPath)) {
+      try {
+        mcp = JSON.parse(readFileSync(mcpPath, "utf8"));
+        mcp.mcpServers = mcp.mcpServers || {};
+      } catch {
+        /* reset */
+      }
+    }
     const m = descriptor.mcp;
-    mcp.mcpServers[m.server_key] = { command: m.command, args: m.args, ...(m.env_map ? { env: m.env_map } : {}) };
+    mcp.mcpServers[m.server_key] = {
+      command: m.command,
+      args: m.args,
+      ...(m.env_map ? { env: m.env_map } : {}),
+    };
     writeFileSync(mcpPath, JSON.stringify(mcp, null, 2) + "\n");
   } else if (descriptor.transport === "skill") {
     const name = descriptor.skill.skill_name;
@@ -258,7 +366,13 @@ export function storeConnector(repo, descriptor, secretValues) {
     const src = candidates.find((p) => existsSync(p));
     if (!src) throw new Error(`skill source not found for '${name}'`);
     copyDir(src, path.join(repo, ".claude", "skills", name));
-    try { execFileSync(process.execPath, [path.join(SCRIPT_DIR, "gen-catalog.mjs"), "--repo", repo], { stdio: "ignore" }); } catch { /* catalog refresh best-effort */ }
+    try {
+      execFileSync(process.execPath, [path.join(SCRIPT_DIR, "gen-catalog.mjs"), "--repo", repo], {
+        stdio: "ignore",
+      });
+    } catch {
+      /* catalog refresh best-effort */
+    }
   } else {
     throw new Error(`unknown transport '${descriptor.transport}'`);
   }
@@ -272,14 +386,25 @@ export function unwireConnector(repo, descriptor) {
   if (descriptor.transport === "mcp") {
     const mcpPath = path.join(repo, ".mcp.json");
     if (existsSync(mcpPath)) {
-      try { const mcp = JSON.parse(readFileSync(mcpPath, "utf8")); if (mcp.mcpServers) delete mcp.mcpServers[descriptor.mcp.server_key]; writeFileSync(mcpPath, JSON.stringify(mcp, null, 2) + "\n"); } catch { /* ignore */ }
+      try {
+        const mcp = JSON.parse(readFileSync(mcpPath, "utf8"));
+        if (mcp.mcpServers) delete mcp.mcpServers[descriptor.mcp.server_key];
+        writeFileSync(mcpPath, JSON.stringify(mcp, null, 2) + "\n");
+      } catch {
+        /* ignore */
+      }
     }
   }
   // drop the secret lines from .env (leave .env.keys/public key intact)
   const ep = envPath(repo);
   if (existsSync(ep)) {
     const envs = new Set((descriptor.secrets || []).map((s) => s.env));
-    const kept = readFileSync(ep, "utf8").split("\n").filter((l) => { const m = l.match(/^\s*([A-Za-z0-9_]+)\s*=/); return !(m && envs.has(m[1])); });
+    const kept = readFileSync(ep, "utf8")
+      .split("\n")
+      .filter((l) => {
+        const m = l.match(/^\s*([A-Za-z0-9_]+)\s*=/);
+        return !(m && envs.has(m[1]));
+      });
     writeFileSync(ep, kept.join("\n"));
   }
   flipStatus(repo, descriptor.id, "available");

@@ -25,9 +25,14 @@ import { buildManifest, LIBRARY_DIR } from "../scripts/lock-skill-library.mjs";
 import { structuralCheck as marketplaceStructuralCheck } from "../scripts/lock-marketplace.mjs";
 import { scanSkill } from "../scripts/skill-scan.mjs";
 
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 let errors = 0;
-const fail = (m) => { console.log(`  ${RED}✗${NC} ${m}`); errors++; };
+const fail = (m) => {
+  console.log(`  ${RED}✗${NC} ${m}`);
+  errors++;
+};
 const ok = (m) => console.log(`  ${GREEN}✓${NC} ${m}`);
 
 const PROPRIETARY = ["docx", "pdf", "pptx", "xlsx"];
@@ -46,13 +51,15 @@ try {
 
 // 2. No proprietary document skill vendored (license forbids redistribution).
 for (const id of PROPRIETARY) {
-  if (existsSync(path.join(LIBRARY_DIR, id))) fail(`proprietary doc skill '${id}' must NOT be vendored (pointer-only)`);
+  if (existsSync(path.join(LIBRARY_DIR, id)))
+    fail(`proprietary doc skill '${id}' must NOT be vendored (pointer-only)`);
 }
 // …and they must be declared pointer-only in referenced.json.
 try {
   const ref = JSON.parse(readFileSync(path.join(LIBRARY_DIR, "referenced.json"), "utf8"));
   const refIds = new Set((ref.skills || []).map((s) => s.id));
-  for (const id of PROPRIETARY) if (!refIds.has(id)) fail(`referenced.json is missing the pointer for '${id}'`);
+  for (const id of PROPRIETARY)
+    if (!refIds.has(id)) fail(`referenced.json is missing the pointer for '${id}'`);
   if (!errors) ok("proprietary doc skills are pointer-only (referenced.json), not vendored");
 } catch (e) {
   fail(`referenced.json unreadable: ${e.message}`);
@@ -82,16 +89,40 @@ const communityIds = new Set();
       let allGood = true;
       for (const s of com.skills || []) {
         communityIds.add(s.id);
-        if (!/^[a-z0-9-]+$/.test(s.id)) { fail(`community skill id '${s.id}' must match ^[a-z0-9-]+$`); allGood = false; continue; }
-        if (officialIds.has(s.id)) { fail(`community skill '${s.id}' collides with an OFFICIAL id — community is never promoted to official`); allGood = false; }
-        if (s.trust && s.trust !== "community") { fail(`community skill '${s.id}' has trust='${s.trust}' — must be 'community'`); allGood = false; }
+        if (!/^[a-z0-9-]+$/.test(s.id)) {
+          fail(`community skill id '${s.id}' must match ^[a-z0-9-]+$`);
+          allGood = false;
+          continue;
+        }
+        if (officialIds.has(s.id)) {
+          fail(
+            `community skill '${s.id}' collides with an OFFICIAL id — community is never promoted to official`
+          );
+          allGood = false;
+        }
+        if (s.trust && s.trust !== "community") {
+          fail(`community skill '${s.id}' has trust='${s.trust}' — must be 'community'`);
+          allGood = false;
+        }
         const rel = (s.source && s.source.dir) || `community/${s.id}`;
         const dir = path.resolve(LIBRARY_DIR, rel);
-        if (!dir.startsWith(path.resolve(LIBRARY_DIR) + path.sep)) { fail(`community '${s.id}' source escapes the library tree`); allGood = false; continue; }
-        try { scanSkill(dir); } // proves the source exists, has SKILL.md, and is scannable
-        catch (e) { fail(`community '${s.id}' is not scannable: ${e.message}`); allGood = false; }
+        if (!dir.startsWith(path.resolve(LIBRARY_DIR) + path.sep)) {
+          fail(`community '${s.id}' source escapes the library tree`);
+          allGood = false;
+          continue;
+        }
+        try {
+          scanSkill(dir);
+        } catch (e) {
+          // proves the source exists, has SKILL.md, and is scannable
+          fail(`community '${s.id}' is not scannable: ${e.message}`);
+          allGood = false;
+        }
       }
-      if (allGood) ok(`community tier: ${(com.skills || []).length} skill(s), disjoint from official, all scannable`);
+      if (allGood)
+        ok(
+          `community tier: ${(com.skills || []).length} skill(s), disjoint from official, all scannable`
+        );
     } catch (e) {
       fail(`community.json unreadable: ${e.message}`);
     }
@@ -113,10 +144,19 @@ const communityIds = new Set();
       for (const p of problems) fail(`marketplace ${p}`);
       let disjoint = true;
       for (const s of mkt.skills || []) {
-        if (officialIds.has(s.id)) { fail(`marketplace skill '${s.id}' collides with an OFFICIAL id`); disjoint = false; }
-        if (communityIds.has(s.id)) { fail(`marketplace skill '${s.id}' collides with a COMMUNITY id`); disjoint = false; }
+        if (officialIds.has(s.id)) {
+          fail(`marketplace skill '${s.id}' collides with an OFFICIAL id`);
+          disjoint = false;
+        }
+        if (communityIds.has(s.id)) {
+          fail(`marketplace skill '${s.id}' collides with a COMMUNITY id`);
+          disjoint = false;
+        }
       }
-      if (!problems.length && disjoint) ok(`marketplace tier: ${(mkt.skills || []).length} skill(s) @ ${(mkt.upstream_commit || "").slice(0, 7)}, disjoint, valid source + declared hashes`);
+      if (!problems.length && disjoint)
+        ok(
+          `marketplace tier: ${(mkt.skills || []).length} skill(s) @ ${(mkt.upstream_commit || "").slice(0, 7)}, disjoint, valid source + declared hashes`
+        );
     } catch (e) {
       fail(`marketplace.json unreadable: ${e.message}`);
     }
@@ -124,5 +164,9 @@ const communityIds = new Set();
 }
 
 console.log("================================================");
-if (errors === 0) { console.log(`${GREEN}OGR09 PASSED${NC}`); process.exit(0); }
-console.log(`${RED}OGR09 FAILED — ${errors} issue(s)${NC}`); process.exit(1);
+if (errors === 0) {
+  console.log(`${GREEN}OGR09 PASSED${NC}`);
+  process.exit(0);
+}
+console.log(`${RED}OGR09 FAILED — ${errors} issue(s)${NC}`);
+process.exit(1);

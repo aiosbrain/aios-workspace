@@ -59,7 +59,11 @@ export function queryBubbles(dbPath) {
   }
   const s = out.trim();
   if (!s) return [];
-  try { return JSON.parse(s); } catch { return []; }
+  try {
+    return JSON.parse(s);
+  } catch {
+    return [];
+  }
 }
 
 /** composerId is the middle segment of `bubbleId:<composerId>:<bubbleId>`. */
@@ -86,15 +90,26 @@ export function rowsToEvents(rows) {
     } else if (r.type === 2) {
       // assistant bubble — a tool call and/or a token-bearing turn
       if (r.tool) {
-        events.push(makeEvent({ ...base, actor: "assistant", block_type: "tool_use", tool_name: r.tool }));
+        events.push(
+          makeEvent({ ...base, actor: "assistant", block_type: "tool_use", tool_name: r.tool })
+        );
       }
       const tin = r.in_tok || 0;
       const tout = r.out_tok || 0;
       if (tin > 0 || tout > 0) {
-        events.push(makeEvent({
-          ...base, actor: "assistant", block_type: "text",
-          tokens: { input_tokens: tin, output_tokens: tout, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-        }));
+        events.push(
+          makeEvent({
+            ...base,
+            actor: "assistant",
+            block_type: "text",
+            tokens: {
+              input_tokens: tin,
+              output_tokens: tout,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+          })
+        );
       } else if (!r.tool) {
         events.push(makeEvent({ ...base, actor: "assistant", block_type: "text" }));
       }

@@ -63,7 +63,11 @@ export function renderText(result, color) {
   const { window: win, tools, totals, placement } = result;
   const L = [];
   L.push(`AIOS analyze — ${win.since} → ${win.until} (${tools.join(", ")})`);
-  L.push(c.dim(`  ${totals.sessions} sessions · ${totals.tasks} tasks · ${fmtTokens(totals.total_tokens)} tokens`));
+  L.push(
+    c.dim(
+      `  ${totals.sessions} sessions · ${totals.tasks} tasks · ${fmtTokens(totals.total_tokens)} tokens`
+    )
+  );
   L.push("");
   L.push(`You're at Spine ${placement.spine} — ${SPINE_GLOSS[placement.spine] || ""}`);
   L.push(c.dim(`  overall ${fmtNum(placement.overall)}/4 · each axis scored 0–4`));
@@ -77,7 +81,9 @@ export function renderText(result, color) {
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
   L.push(`    ${AXIS_GUIDE[w].steps[0]}`);
   L.push(c.dim("  Run `aios analyze --report` for a step-by-step plan on this."));
-  L.push(c.dim("  Raw sessions stay on your machine — `aios analyze --push` shares only these scores."));
+  L.push(
+    c.dim("  Raw sessions stay on your machine — `aios analyze --push` shares only these scores.")
+  );
   return L.join("\n");
 }
 
@@ -108,7 +114,11 @@ export function renderReport(result, color) {
   L.push(c.dim("  Your other axes:"));
   for (const [key, label] of Object.entries(AXIS_LABELS)) {
     if (key === w) continue;
-    L.push(c.dim(`    ${label.padEnd(22)} ${fmtNum(placement.axes[key], 1)}/4 — ${plainStat(key, signals)}`));
+    L.push(
+      c.dim(
+        `    ${label.padEnd(22)} ${fmtNum(placement.axes[key], 1)}/4 — ${plainStat(key, signals)}`
+      )
+    );
   }
   return L.join("\n");
 }
