@@ -12,6 +12,7 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
@@ -44,20 +45,22 @@ function parseArgs(args) {
   };
   const hasFlag = (name) => args.includes(name);
 
-  const dryRun       = hasFlag('--dry-run');
-  const autoMerge    = hasFlag('--merge');
-  const maxRounds    = parseInt(flag('--rounds') ?? '5', 10);
-  const skill        = flag('--skill') ?? DEFAULT_SKILL;
+  const dryRun        = hasFlag('--dry-run');
+  const autoMerge     = hasFlag('--merge');
+  const maxRounds     = parseInt(flag('--rounds') ?? '3', 10);
+  const skill         = flag('--skill') ?? DEFAULT_SKILL;
   const cursorTimeout = parseInt(flag('--cursor-timeout') ?? '300', 10) * 1000;
+  const logFile       = flag('--log') ?? null;
 
   const positional = args.filter((a, i) =>
     !a.startsWith('--') &&
     args[i - 1] !== '--rounds' &&
     args[i - 1] !== '--skill' &&
-    args[i - 1] !== '--cursor-timeout'
+    args[i - 1] !== '--cursor-timeout' &&
+    args[i - 1] !== '--log'
   );
   const [task, branch] = positional;
-  return { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout };
+  return { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout, logFile };
 }
 
 // ── prereq checks ─────────────────────────────────────────────────────────────
@@ -166,18 +169,25 @@ async function callCursorAgent(prompt, timeoutMs) {
 
 // ── prompt builder ────────────────────────────────────────────────────────────
 
-function buildReviewPrompt(skill, plan) {
+function buildReviewPrompt(skill, plan, round, maxRounds) {
+  const isLastRound = round >= maxRounds;
+  const roundNote = isLastRound
+    ? `**This is the final round (${round}/${maxRounds}). Approve unless there is a Blocker. Do not raise new Majors or Minors at this stage.**`
+    : `Round ${round} of ${maxRounds}. If only Minors remain after this round, approve on the next.`;
+
   return [
     skill,
+    '',
+    `> ${roundNote}`,
     '',
     '## Plan to review',
     '',
     plan,
     '',
     '---',
-    'Review the plan above thoroughly.',
-    'List any concerns, gaps, or changes needed.',
-    `When the plan is solid and ready to implement, place this token alone on the very last line:`,
+    'Review the plan above.',
+    'List any Blockers or approach-level Majors. Minor issues do not block approval.',
+    `When the plan is ready to implement, place this token alone on the very last line:`,
     MERGE_TOKEN,
   ].join('\n');
 }
@@ -219,32 +229,44 @@ export async function cmdRelay(repo, args) {
       '  branch    Git branch to merge when approved (optional; omit to skip git ops)',
       '',
       'options:',
-      '  --rounds N              max plan/review cycles (default: 5)',
+      '  --rounds N              max plan/review cycles (default: 3)',
+      '  --log <file>            save the final approved plan to a file',
       '  --skill /name           Cursor slash command (default: /review-plan)',
       '  --cursor-timeout N      seconds before killing a stalled Cursor call (default: 300)',
-      '  --merge                 auto-merge the branch on approval (off by default — review the diff first)',
+      '  --merge                 auto-merge the branch on approval (off by default)',
       '  --dry-run               skip git operations',
       '',
       'examples:',
       '  aios relay "Add a --version flag to aios.mjs" --dry-run',
-      '  aios relay "Migrate validators to Zod" --rounds 6 --dry-run',
-      '  aios relay "Add rate-limit headers" feat/rate-limit --rounds 5',
+      '  aios relay "Add m365 integration" --rounds 3 --log plan.md --dry-run',
+      '  aios relay "Add rate-limit headers" feat/rate-limit --rounds 3 --log plan.md',
     ].join('\n'));
     return;
   }
 
-  const { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout } = parseArgs(args);
+  const { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout, logFile } = parseArgs(args);
   if (!task) die('task description is required.\nusage: aios relay "task" [branch] [options]');
 
   checkPrereqs();
 
   const anthropic = new Anthropic();
 
+  // Initialise log file with a header so partial runs are recoverable
+  if (logFile) {
+    writeFileSync(logFile, `# aios relay plan\n\nTask: ${task}\n\n`);
+  }
+
+  const log = (label, text) => {
+    if (!logFile) return;
+    appendFileSync(logFile, `\n---\n## ${label}\n\n${text}\n`);
+  };
+
   console.log('\n── aios relay ───────────────────────────────────────────────');
   console.log(`Task:       ${task}`);
   console.log(`Branch:     ${branch ?? c.dim('(none — git ops skipped)')}`);
   console.log(`Skill:      ${skill}`);
   console.log(`Max rounds: ${maxRounds}`);
+  if (logFile) console.log(`Log:        ${logFile}`);
   if (dryRun) console.log(c.yellow('Mode:       dry-run'));
   console.log('─────────────────────────────────────────────────────────────');
 
@@ -258,16 +280,22 @@ export async function cmdRelay(repo, args) {
     const plan = await callOpus(anthropic, history);
     console.log('\n── Opus plan ───────────────────────────────────────────────\n');
     console.log(plan);
+    log(`Round ${round} — Opus plan`, plan);
     history.push({ role: 'assistant', content: plan });
 
-    const reviewPrompt = buildReviewPrompt(skill, plan);
+    const reviewPrompt = buildReviewPrompt(skill, plan, round, maxRounds);
     const review = await callCursorAgent(reviewPrompt, cursorTimeout);
+    log(`Round ${round} — Cursor review`, review);
 
     console.log('\n\n── Cursor review done ──────────────────────────────────────');
 
     const lastLine = review.split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? '';
     if (lastLine === MERGE_TOKEN) {
       console.log(c.green(`\n✓ ${MERGE_TOKEN} received after round ${round}.`));
+      if (logFile) {
+        appendFileSync(logFile, `\n---\n## Approved plan (round ${round})\n\n${plan}\n`);
+        console.log(c.dim(`Plan saved to ${logFile}`));
+      }
       if (branch && autoMerge) {
         gitMergeAndDelete(repo, branch, dryRun);
       } else if (branch) {
@@ -287,6 +315,14 @@ export async function cmdRelay(repo, args) {
     });
   }
 
-  console.error(c.red(`\n✗ Reached max rounds (${maxRounds}) without receiving ${MERGE_TOKEN}.`));
+  // Save the last plan even if unapproved — don't lose the work
+  const lastPlan = history.filter(m => m.role === 'assistant').at(-1)?.content ?? '';
+  if (logFile && lastPlan) {
+    appendFileSync(logFile, `\n---\n## Last plan (round limit reached — unapproved)\n\n${lastPlan}\n`);
+    console.log(c.yellow(`\nRound limit reached. Last plan saved to ${logFile}`));
+    console.log(c.dim('Review it, answer any open questions, then re-run or hand off to your build agent.'));
+  } else {
+    console.error(c.red(`\n✗ Reached max rounds (${maxRounds}) without receiving ${MERGE_TOKEN}.`));
+  }
   process.exit(1);
 }
