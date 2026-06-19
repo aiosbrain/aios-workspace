@@ -32,6 +32,7 @@ import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
+import { cmdRelay } from "./relay.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -1832,6 +1833,10 @@ usage:
   aios assess-codebase [path]           score a repo's AEM agent-readiness (offline)
     [--push] [--json]                   --push records the score in the Team Brain (team-tier)
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
+  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop
+    [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
+    [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
+    [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -1840,10 +1845,10 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
-// export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze
+// export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
 // are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs;
 // --push uses env/.env or aios.yaml brain config).
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn", "analyze"]);
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn", "analyze", "relay"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1875,6 +1880,7 @@ try {
   else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
+  else if (cmd === "relay") await cmdRelay(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);
