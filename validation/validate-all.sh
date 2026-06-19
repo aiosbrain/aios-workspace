@@ -59,6 +59,7 @@ case "$MODE" in
     run_check "OGR07 — Runtime Adapters (BYOA)" "$SCRIPT_DIR/check-runtime-adapters.mjs"
     run_check "OGR08 — Scaffold Guard" "$SCRIPT_DIR/check-scaffold-guard.mjs"
     run_check "OGR09 — Skill Library" "$SCRIPT_DIR/check-skill-library.mjs"
+    run_check "OGR10 — Agent Readiness (advisory)" "$SCRIPT_DIR/check-agent-readiness.mjs"
     ;;
 esac
 

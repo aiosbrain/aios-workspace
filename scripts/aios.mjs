@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
+import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -1670,6 +1671,116 @@ function installIntoHermes(runtime, installable) {
   console.log(`installed ${ok}/${installable.length} into Hermes (any ✗ were rejected by Hermes' own scanner).`);
 }
 
+// ── assess-codebase ───────────────────────────────────────────────────────────
+
+// Count entries in a directory (skills/commands), 0 if absent — cheap scaffolding signal.
+function countDir(dir) {
+  try { return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.name.endsWith(".md")).length; }
+  catch { return 0; }
+}
+
+// `aios assess-codebase [path] [--push] [--json]` — score a repo's agent-readiness
+// against the canonical AEM rubric (validation/agent-readiness.rubric.json). Offline
+// by default; --push sends the result to the Team Brain (POST /api/v1/codebases,
+// team-tier). Scoring lives in validation/agent-readiness-lib.mjs (shared with OGR10).
+async function cmdAssessCodebase(repo, cfg, patterns, args = []) {
+  const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
+  const asJson = args.includes("--json");
+  const push = args.includes("--push");
+
+  const result = scoreRepo(target, loadRubric());
+
+  if (asJson) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`${c.bold ? c.bold("Agent-readiness") : "Agent-readiness"}: ${target}`);
+    console.log(`  Level ${result.level} — ${result.levelName}  (${result.pct}% of checks, ${result.passed}/${result.total})`);
+    if (result.capped) console.log(`  ⚠ verification cap applied (no passing verification checks)`);
+    for (const p of result.pillars) console.log(`    ${p.passed === p.total ? "✓" : p.passed === 0 ? "✗" : "•"} ${p.title} (${p.passed}/${p.total})`);
+    if (result.nextLevel && result.gaps.length) {
+      console.log(`  To reach ${result.nextLevel}: ${result.gaps.slice(0, 4).map((g) => g.title).join(", ")}${result.gaps.length > 4 ? ", …" : ""}`);
+    }
+  }
+
+  if (!push) {
+    if (!asJson) console.log(`\n(run with --push to record this in the Team Brain)`);
+    return;
+  }
+
+  requireOnline(cfg);
+  // git HEAD anchors the time-series point; uncommitted trees collapse to one row.
+  let headSha = "uncommitted";
+  try { headSha = execFileSync("git", ["-C", target, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || headSha; } catch { /* not a git repo */ }
+  const slug = (path.basename(target).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")) || "repo";
+
+  const payload = {
+    codebase: { slug, full_name: slug, provider: "local" },
+    metrics: {
+      head_sha: headSha,
+      has_claude_md: existsSync(path.join(target, "CLAUDE.md")),
+      has_agents_md: existsSync(path.join(target, "AGENTS.md")),
+      skills_count: countDir(path.join(target, ".claude", "skills")),
+      commands_count: countDir(path.join(target, ".claude", "commands")),
+      readiness_level: result.level,
+      readiness_pct: result.pct,
+      readiness_pillars: Object.fromEntries(result.pillars.map((p) => [p.key, { passed: p.passed, total: p.total }])),
+      readiness_rubric_version: result.rubricVersion,
+    },
+  };
+
+  const res = await api(cfg, "POST", "/codebases", payload);
+  console.log(`\n✓ pushed to brain — codebase '${slug}' @ ${headSha.slice(0, 8)} (${res.status || "ok"})`);
+}
+
+// `aios learn` — read the owner's saved AEM placement (.claude/memory/MATURITY.md)
+// and prescribe the next module + patterns from the individual rubric's patternMap.
+// Offline. The `agentic-maturity` skill is what writes MATURITY.md; this is the quick
+// "what should I practise next" lookup on top of it.
+function cmdLearn(repo, cfg, patterns, args = []) {
+  // The rubric ships beside the skill — in a stamped workspace at .claude/…, in the
+  // toolkit dev repo under scaffold/.claude/…. Try both.
+  const rubricPath = [
+    path.join(repo, ".claude", "skills", "agentic-maturity", "individual.rubric.json"),
+    path.join(repo, "scaffold", ".claude", "skills", "agentic-maturity", "individual.rubric.json"),
+  ].find((p) => existsSync(p));
+  if (!rubricPath) die("agentic-maturity rubric not found — is this an AIOS workspace?");
+  const rubric = JSON.parse(readFileSync(rubricPath, "utf8"));
+
+  const memPath = [
+    path.join(repo, ".claude", "memory", "MATURITY.md"),
+    path.join(repo, "scaffold", ".claude", "memory", "MATURITY.md"),
+  ].find((p) => existsSync(p));
+  const mem = memPath ? readFileSync(memPath, "utf8") : "";
+  const spine = (mem.match(/Spine level:\s*(L[1-5])/) || [])[1] || null;
+  const weakest = (mem.match(/Weakest axis:\s*([a-z_]+)/) || [])[1] || null;
+
+  if (!spine) {
+    console.log("No AEM placement found yet.");
+    console.log("  Run the assessment first:");
+    console.log("    • in the cockpit: ask \"assess my agentic maturity\" (agentic-maturity skill)");
+    console.log("    • or from signals:  npm run aios -- analyze --since 30d");
+    return;
+  }
+
+  // Prefer a patternMap entry matching spine + weakest axis; fall back to spine-only.
+  const entries = rubric.patternMap || [];
+  const match =
+    entries.find((e) => e.when?.spine === spine && e.when?.weakestAxis === weakest) ||
+    entries.find((e) => e.when?.spine === spine && !e.when?.weakestAxis) ||
+    entries.find((e) => e.when?.spine === spine);
+
+  console.log(`Your AEM placement: ${spine}${weakest ? `  (weakest axis: ${weakest})` : ""}`);
+  if (!match) { console.log("  No prescription mapped — see /agentic/patterns."); return; }
+
+  if (match.priority === "highest") console.log("  ▲ highest-priority focus — verification is the differentiator");
+  console.log(`\n  Next module: ${match.module}`);
+  console.log("  Practise these patterns:");
+  for (const id of match.prescribe || []) {
+    console.log(`    ${id} — ${rubric.patternTitles?.[id] || id}`);
+  }
+  console.log(`\n  Details: .claude/skills/agentic-maturity/curriculum.md  ·  full library: /agentic/patterns`);
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -1707,6 +1818,9 @@ usage:
   aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
     [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
     [--install]                         for hermes: also run hermes skills install on each
+  aios assess-codebase [path]           score a repo's AEM agent-readiness (offline)
+    [--push] [--json]                   --push records the score in the Team Brain (team-tier)
+  aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -1716,7 +1830,7 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
 }
 
 // export-okf, graph, install-skill, connect are offline-only: no aios.yaml required.
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills"]);
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1745,6 +1859,8 @@ try {
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
   else if (cmd === "graph") cmdGraph(repo, cfg, rest);
   else if (cmd === "skills") cmdSkills(repo, rest);
+  else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
+  else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else {
     console.log(USAGE);
     process.exit(1);
