@@ -31,6 +31,7 @@ import { listConnectors, getDescriptor, validateConnector, storeConnector } from
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
+import { cmdAnalyze } from "./analyze/index.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -140,14 +141,21 @@ function loadOfflineConfig(repo) {
     const p = path.join(repo, f);
     if (existsSync(p)) { projCfg = parseFlatYaml(readFileSync(p, "utf8")); break; }
   }
+  // Brain config from env/.env so offline-capable commands that opt into the
+  // network (e.g. `aios analyze --push`) work outside a stamped workspace — the
+  // toolkit repo and ad-hoc dirs have no aios.yaml. Mirrors loadConfig's resolution.
+  const dotenv = loadDotEnv(repo);
+  const keyEnv = "AIOS_API_KEY";
   return {
     project: projCfg.slug || slugify(path.basename(repo)),
     project_members: projCfg.members || [],
     sync_tiers: ["team", "external"],
     sync_include: [],
     sync_exclude: [],
-    brain_url: "",
-    api_key: "",
+    brain_url: process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || "",
+    api_key: process.env[keyEnv] || dotenv[keyEnv] || "",
+    api_key_env: keyEnv,
+    team_id: process.env.AIOS_TEAM || dotenv.AIOS_TEAM || "",
   };
 }
 
@@ -1810,6 +1818,9 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios analyze [--since 7d] [--tool x]   agentic-maturity (AEM) report from local session logs
+    [--report] [--json] [--push]        tools: claude|codex|cursor (default: all); --report = deep
+    [--full]                            dive on your weakest axis; --push needs brain config
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -1829,8 +1840,10 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
-// export-okf, graph, install-skill, connect are offline-only: no aios.yaml required.
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn"]);
+// export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze
+// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs;
+// --push uses env/.env or aios.yaml brain config).
+const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn", "analyze"]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
@@ -1861,6 +1874,7 @@ try {
   else if (cmd === "skills") cmdSkills(repo, rest);
   else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
+  else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else {
     console.log(USAGE);
     process.exit(1);
