@@ -7,6 +7,7 @@
  * connect → validate → store flow over two transports:
  *   - "mcp"   → writes an MCP server block into .mcp.json
  *   - "skill" → installs a direct-API skill into .claude/skills/<name>/
+ *   - "api"   → validates and stores local env only (no runtime artifact)
  *
  * Secrets are validated in memory (provider→localhost only), then stored ENCRYPTED
  * via dotenvx (.env ciphertext + .env.keys private key). Plaintext secrets are never
@@ -373,6 +374,8 @@ export function storeConnector(repo, descriptor, secretValues) {
     } catch {
       /* catalog refresh best-effort */
     }
+  } else if (descriptor.transport === "api") {
+    // Secret/config only: validation + vault storage above, then status flip below.
   } else {
     throw new Error(`unknown transport '${descriptor.transport}'`);
   }

@@ -1,0 +1,27 @@
+{
+  "id": "plane",
+  "name": "Plane",
+  "category": "issue-tracking",
+  "descriptor_version": "1.0.0",
+  "transport": "api",
+  "auth_mode": "token",
+  "status": "available",
+  "summary": "Validate and store a Plane API key for backlog scripts and Team Brain PM sync.",
+  "secrets": [
+    { "env": "PLANE_API_KEY", "label": "Personal access token", "required": true, "placeholder": "plane_..." }
+  ],
+  "scopes": ["read", "write"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": "https://app.plane.so",
+    "instructions": "Plane → Profile settings → Personal Access Tokens → Add token. Team Brain also needs workspaceSlug/projectId in Admin → Integrations.",
+    "verified_against_docs": "2026-06-20"
+  },
+  "validate": {
+    "method": "GET",
+    "url": "https://api.plane.so/api/v1/users/me/",
+    "headers": { "X-API-Key": "${PLANE_API_KEY}", "Content-Type": "application/json" },
+    "expect": { "status": 200, "json_has": ["id"] },
+    "identity": { "json_path": "email", "label": "Account" }
+  }
+}

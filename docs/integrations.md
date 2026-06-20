@@ -37,9 +37,18 @@ The `atlassian` server covers both. Create an API token at
 id.atlassian.com → Security → API tokens. Set `ATLASSIAN_URL`
 (e.g. `https://your-org.atlassian.net`), `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`.
 
-### Linear (MCP)
-Add the `linear` server; on first use it runs an OAuth flow in your browser. No
-static token needed.
+### Linear (direct API skill + Team Brain PM sync)
+The shipped workspace connector uses a personal Linear API key (`LINEAR_API_KEY`)
+and the `linear-direct` skill, because Linear's official MCP is OAuth-oriented.
+Team Brain can also store a Linear integration with non-secret mapping hints
+(`teamId`, `projectId`, `doneStateName`) and an encrypted token so merged AIOS
+work can move linked Linear issues to a completed workflow state.
+
+### Plane (REST/API key + Team Brain PM sync)
+Use Plane personal access tokens through `PLANE_API_KEY`. Team Brain stores the
+workspace/project mapping (`workspaceSlug`, `projectId`, `doneStateName`,
+`externalSource`) and an encrypted token. Merged AIOS work uses task row keys
+and Plane `external_id` / `external_source` to move linked work items to DONE.
 
 ### Notion (MCP)
 Create an internal integration at notion.so/my-integrations, copy its token into

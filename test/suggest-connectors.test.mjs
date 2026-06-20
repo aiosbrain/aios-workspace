@@ -51,11 +51,11 @@ function catalogWithStatus(id, status) {
   return { descriptors, connectableIndex, recognizedIndex: baseCatalog.recognizedIndex };
 }
 
-console.log("suggest-connectors: catalog loads the 6 descriptors");
+console.log("suggest-connectors: catalog loads the expected descriptors");
 {
   check(
-    "descriptors include slack/jira/notion/linear/granola/firecrawl",
-    ["slack", "jira", "notion", "linear", "granola", "firecrawl"].every((id) =>
+    "descriptors include slack/jira/notion/linear/plane/granola/firecrawl",
+    ["slack", "jira", "notion", "linear", "plane", "granola", "firecrawl"].every((id) =>
       baseCatalog.descriptors.some((d) => d.id === id)
     )
   );
