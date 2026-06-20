@@ -73,3 +73,17 @@ jobs:
           node scripts/aios.mjs status --repo /tmp/ci-sample-team-ops
           node scripts/aios.mjs push --dry-run --repo /tmp/ci-sample-team-ops
           node scripts/aios.mjs status --porcelain --repo /tmp/ci-sample-team-ops
+
+  lint:
+    name: lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Prettier (format check)
+        run: npm run format:check

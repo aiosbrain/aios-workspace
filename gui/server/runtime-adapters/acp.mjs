@@ -29,7 +29,12 @@ import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { postTurnSweep, SWEEP_MAX_FILES } from "./sweep.mjs";
-import { ClientSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
+import {
+  ClientSideConnection,
+  PROTOCOL_VERSION,
+  RequestError,
+  ndJsonStream,
+} from "@agentclientprotocol/sdk";
 import { GUI_RUNTIMES } from "../../../scripts/runtimes.mjs";
 
 export const meta = { driver: "acp" };
@@ -43,7 +48,8 @@ function extractToolText(content) {
   const parts = [];
   for (const item of content) {
     if (!item || typeof item !== "object") continue;
-    if (item.type === "content" && item.content?.type === "text") parts.push(item.content.text || "");
+    if (item.type === "content" && item.content?.type === "text")
+      parts.push(item.content.text || "");
     else if (item.type === "diff") parts.push(item.newText || "");
     // `terminal` content is live output — surfaced as it streams, not snapshotted here.
   }
@@ -63,16 +69,23 @@ export function mapSessionUpdate(update) {
       // Close any open assistant text bubble, then surface the tool invocation.
       return [
         { type: "assistant_done" },
-        { type: "tool_use", name: update.title || update.kind || "tool", input: update.rawInput ?? {}, id: update.toolCallId },
+        {
+          type: "tool_use",
+          name: update.title || update.kind || "tool",
+          input: update.rawInput ?? {},
+          id: update.toolCallId,
+        },
       ];
     case "tool_call_update":
       if (update.status === "completed" || update.status === "failed") {
-        return [{
-          type: "tool_result",
-          id: update.toolCallId,
-          text: extractToolText(update.content).slice(0, 4000),
-          is_error: update.status === "failed",
-        }];
+        return [
+          {
+            type: "tool_result",
+            id: update.toolCallId,
+            text: extractToolText(update.content).slice(0, 4000),
+            is_error: update.status === "failed",
+          },
+        ];
       }
       return [];
     default:
@@ -88,10 +101,11 @@ function inRepo(repo, target) {
     const repoReal = realpathSync(repo);
     const real = realpathSync(path.resolve(repo, target));
     if (real === repoReal || real.startsWith(repoReal + path.sep)) return real;
-  } catch { /* not found / bad path */ }
+  } catch {
+    /* not found / bad path */
+  }
   return null;
 }
-
 
 // A stable, repo-scoped session key for the OpenClaw bridge (exported for unit
 // testing). WHY this is required, not cosmetic: invoked bare, `openclaw acp`
@@ -122,7 +136,8 @@ export function acpSpawnArgs(bin, baseArgs, env = process.env, opts = {}) {
   if (bin === "openclaw") {
     const args = [...baseArgs];
     if (opts.sessionKey) args.push("--session", opts.sessionKey);
-    if (env.OPENCLAW_GATEWAY_PASSWORD_FILE) args.push("--password-file", env.OPENCLAW_GATEWAY_PASSWORD_FILE);
+    if (env.OPENCLAW_GATEWAY_PASSWORD_FILE)
+      args.push("--password-file", env.OPENCLAW_GATEWAY_PASSWORD_FILE);
     else if (env.OPENCLAW_GATEWAY_PASSWORD) args.push("--password", env.OPENCLAW_GATEWAY_PASSWORD);
     return args;
   }
@@ -144,15 +159,26 @@ export function jsonRpcLines(nodeReadable) {
         buf += chunk.toString();
         let i;
         while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i + 1); buf = buf.slice(i + 1);
+          const line = buf.slice(0, i + 1);
+          buf = buf.slice(i + 1);
           if (line.trimStart().startsWith("{")) controller.enqueue(enc.encode(line));
         }
       });
       nodeReadable.on("end", () => {
         if (buf.trimStart().startsWith("{")) controller.enqueue(enc.encode(buf));
-        try { controller.close(); } catch { /* already closed */ }
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       });
-      nodeReadable.on("error", (e) => { try { controller.error(e); } catch { /* */ } });
+      nodeReadable.on("error", (e) => {
+        try {
+          controller.error(e);
+        } catch {
+          /* */
+        }
+      });
     },
   });
 }
@@ -173,18 +199,33 @@ export async function run(host) {
   const child = spawn(bin, args, { cwd: repo, stdio: ["pipe", "pipe", "pipe"] });
   let stderrTail = "";
   let spawnErr = null;
-  child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d).slice(-2000); });
-  child.on("error", (e) => { spawnErr = e; });
+  child.stderr?.on("data", (d) => {
+    stderrTail = (stderrTail + d).slice(-2000);
+  });
+  child.on("error", (e) => {
+    spawnErr = e;
+  });
 
   let sessionId = null;
   let conn = null;
   let aborted = false;
   const onAbort = () => {
     aborted = true;
-    try { if (sessionId && conn) conn.cancel({ sessionId }); } catch { /* gone */ }
-    try { child.kill("SIGTERM"); } catch { /* gone */ }
+    try {
+      if (sessionId && conn) conn.cancel({ sessionId });
+    } catch {
+      /* gone */
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* gone */
+    }
   };
-  if (signal?.aborted) { onAbort(); return; }
+  if (signal?.aborted) {
+    onAbort();
+    return;
+  }
   signal?.addEventListener?.("abort", onAbort, { once: true });
 
   try {
@@ -199,7 +240,11 @@ export async function run(host) {
         const choice = await requestPermission({
           title: (toolCall && (toolCall.title || toolCall.kind)) || "tool",
           content: toolCall ? (toolCall.rawInput ?? {}) : {},
-          options: (options || []).map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind })),
+          options: (options || []).map((o) => ({
+            optionId: o.optionId,
+            name: o.name,
+            kind: o.kind,
+          })),
         });
         // host returns the chosen optionId (string), or a non-string when the tab
         // closed / the user denied / it timed out → ACP "cancelled".
@@ -214,7 +259,10 @@ export async function run(host) {
         // the server without cwd=repo). guardWrite returns that safe path.
         const verdict = guardWrite({ path: target, content, operation: "Write" });
         if (!verdict.ok || !verdict.path) {
-          throw RequestError.internalError({ reason: verdict.reason }, verdict.reason || "write blocked");
+          throw RequestError.internalError(
+            { reason: verdict.reason },
+            verdict.reason || "write blocked"
+          );
         }
         await writeFile(verdict.path, content);
         return {};
@@ -250,7 +298,11 @@ export async function run(host) {
         ? `agent_runtime '${runtime}' selected but '${bin}' is not on PATH. Install it, then: aios skills export --runtime ${runtime} --install`
         : `failed to start '${[bin, ...args].join(" ")}' (${String(e?.message || e)})${stderrTail ? `\n${stderrTail.trim()}` : ""}`,
     });
-    try { child.kill("SIGKILL"); } catch { /* gone */ }
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* gone */
+    }
     return;
   }
 
@@ -261,7 +313,10 @@ export async function run(host) {
       if (aborted || signal?.aborted) break;
       const turnStart = Date.now(); // baseline for the post-turn sweep
       try {
-        const { stopReason } = await conn.prompt({ sessionId, prompt: [{ type: "text", text: turn.text }] });
+        const { stopReason } = await conn.prompt({
+          sessionId,
+          prompt: [{ type: "text", text: turn.text }],
+        });
         emit({ type: "assistant_done" });
         // Catch in-process / shell-driven writes that bypassed the fs/write
         // pre-gate. A violation is reported as a blocking error (the file is
@@ -273,12 +328,18 @@ export async function run(host) {
           }
           // Fail loud: never let a too-large sweep look like a clean turn.
           if (truncated) {
-            emit({ type: "error", message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some shell-driven changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.` });
+            emit({
+              type: "error",
+              message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some shell-driven changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.`,
+            });
           }
         } catch (e) {
           // The sweep IS the governance for in-process writes — if it can't run,
           // say so rather than implying the turn was clean.
-          emit({ type: "error", message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.` });
+          emit({
+            type: "error",
+            message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.`,
+          });
         }
         emit({ type: "result", subtype: stopReason, cost_usd: null });
       } catch (e) {
@@ -287,7 +348,15 @@ export async function run(host) {
       }
     }
   } finally {
-    try { if (sessionId && !aborted) conn.cancel({ sessionId }); } catch { /* gone */ }
-    try { child.kill("SIGTERM"); } catch { /* gone */ }
+    try {
+      if (sessionId && !aborted) conn.cancel({ sessionId });
+    } catch {
+      /* gone */
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* gone */
+    }
   }
 }

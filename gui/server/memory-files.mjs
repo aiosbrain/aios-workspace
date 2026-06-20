@@ -24,7 +24,8 @@ export const SECTIONS = {
 // The reviewer's managed block lives below this marker. It is an HTML comment, so
 // claude-code.mjs's sanitizeMemory() strips the marker itself from what's injected
 // — but the learned bullets beneath it remain (they're the point).
-export const LEARNED_MARKER = "<!-- reviewer:learned (auto, conservative — edit above this line) -->";
+export const LEARNED_MARKER =
+  "<!-- reviewer:learned (auto, conservative — edit above this line) -->";
 
 export const byFile = (name) => MEMORY_FILES.find((m) => m.file === name) || null;
 

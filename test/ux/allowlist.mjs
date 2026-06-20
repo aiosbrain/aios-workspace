@@ -58,19 +58,23 @@ export function isAgentBrowserCommand(command) {
   if (!argv.length) return { allow: false, reason: "no argv" };
   // Leading env-assignment (e.g. `FOO=bar agent-browser …`) — the first token must be the
   // binary itself, never `NAME=value`.
-  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) return { allow: false, reason: "leading env-assignment" };
-  if (argv[0] !== "agent-browser") return { allow: false, reason: `non-allowed binary '${argv[0]}'` };
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]))
+    return { allow: false, reason: "leading env-assignment" };
+  if (argv[0] !== "agent-browser")
+    return { allow: false, reason: `non-allowed binary '${argv[0]}'` };
   // Skip leading GLOBAL flags (e.g. `--session <name>`, `--json`) to find the subcommand.
   // A flag is `--name` / `-x`; `--session` and `--profile` take a following value.
   const VALUE_FLAGS = new Set(["--session", "--profile", "--cwd", "--timeout"]);
   let i = 1;
   while (i < argv.length && argv[i].startsWith("-")) {
-    if (!/^--?[a-z][a-z0-9-]*$/.test(argv[i])) return { allow: false, reason: `bad flag '${argv[i]}'` };
+    if (!/^--?[a-z][a-z0-9-]*$/.test(argv[i]))
+      return { allow: false, reason: `bad flag '${argv[i]}'` };
     if (VALUE_FLAGS.has(argv[i])) i++; // consume its value
     i++;
   }
   if (i >= argv.length) return { allow: false, reason: "missing subcommand" };
   // Subcommand must be a plain word (defense in depth; metachars already rejected).
-  if (!/^[a-z][a-z-]*$/.test(argv[i])) return { allow: false, reason: `bad subcommand '${argv[i]}'` };
+  if (!/^[a-z][a-z-]*$/.test(argv[i]))
+    return { allow: false, reason: `bad subcommand '${argv[i]}'` };
   return { allow: true, reason: "ok" };
 }

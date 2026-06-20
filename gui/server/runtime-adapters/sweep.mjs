@@ -20,9 +20,16 @@ export const SWEEP_MAX_FILES = 5000; // backstop so a giant tree can't wedge a t
 // caller can FAIL LOUD rather than silently skip the unscanned tail.
 async function* changedFiles(repo, sinceMs, budget) {
   let entries;
-  try { entries = await readdir(repo, { withFileTypes: true }); } catch { return; }
+  try {
+    entries = await readdir(repo, { withFileTypes: true });
+  } catch {
+    return;
+  }
   for (const e of entries) {
-    if (budget.n <= 0) { budget.truncated = true; return; }
+    if (budget.n <= 0) {
+      budget.truncated = true;
+      return;
+    }
     if (SWEEP_SKIP_DIRS.has(e.name)) continue;
     const abs = path.join(repo, e.name);
     if (e.isDirectory()) {
@@ -31,7 +38,11 @@ async function* changedFiles(repo, sinceMs, budget) {
     } else if (e.isFile() && SWEEP_EXTS.has(path.extname(e.name))) {
       budget.n--;
       let st;
-      try { st = await stat(abs); } catch { continue; }
+      try {
+        st = await stat(abs);
+      } catch {
+        continue;
+      }
       if (st.mtimeMs >= sinceMs) yield abs;
     }
   }
@@ -46,7 +57,11 @@ export async function postTurnSweep(repo, guardWrite, sinceMs, maxFiles = SWEEP_
   const budget = { n: maxFiles, truncated: false };
   for await (const abs of changedFiles(repo, sinceMs, budget)) {
     let content;
-    try { content = await readFile(abs, "utf8"); } catch { continue; }
+    try {
+      content = await readFile(abs, "utf8");
+    } catch {
+      continue;
+    }
     const verdict = guardWrite({ path: abs, content, operation: "Write" });
     if (!verdict.ok) violations.push({ path: path.relative(repo, abs), reason: verdict.reason });
   }

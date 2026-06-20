@@ -49,11 +49,26 @@ export const rubric = {
   flow: id,
   threshold: 1.0,
   criteria: [
-    { id: "scan_findings_shown", ask: "Does the Review & install modal show the advisory scan: at least one finding with a file:line and a risk badge?" },
-    { id: "consent_required_pre_install", ask: "Is install blocked until an explicit consent control is satisfied (no install without consent)?" },
-    { id: "no_typed_confirm_for_elevated", ask: "Since this skill is elevated (not high-risk), is plain consent sufficient — i.e. the user was NOT forced to type the skill id?" },
-    { id: "install_reflected", ask: "After consent + install, does the UI clearly reflect that the skill is now installed?" },
-    { id: "no_console_errors", ask: "Did the flow complete with no console errors? (evidence: the captured errors output)" },
+    {
+      id: "scan_findings_shown",
+      ask: "Does the Review & install modal show the advisory scan: at least one finding with a file:line and a risk badge?",
+    },
+    {
+      id: "consent_required_pre_install",
+      ask: "Is install blocked until an explicit consent control is satisfied (no install without consent)?",
+    },
+    {
+      id: "no_typed_confirm_for_elevated",
+      ask: "Since this skill is elevated (not high-risk), is plain consent sufficient — i.e. the user was NOT forced to type the skill id?",
+    },
+    {
+      id: "install_reflected",
+      ask: "After consent + install, does the UI clearly reflect that the skill is now installed?",
+    },
+    {
+      id: "no_console_errors",
+      ask: "Did the flow complete with no console errors? (evidence: the captured errors output)",
+    },
   ],
 };
 
@@ -68,12 +83,22 @@ export function postAssert({ repo }) {
 
   const dir = path.join(repo, ".claude", "skills", SKILL_ID);
   const installed = existsSync(dir) && existsSync(path.join(dir, "SKILL.md"));
-  checks.push({ name: "skill_installed", ok: installed, detail: installed ? `${SKILL_ID} present in .claude/skills` : `${SKILL_ID} missing from .claude/skills` });
+  checks.push({
+    name: "skill_installed",
+    ok: installed,
+    detail: installed
+      ? `${SKILL_ID} present in .claude/skills`
+      : `${SKILL_ID} missing from .claude/skills`,
+  });
 
   // Contract check: community-example must be elevated with NO typed-confirm requirement.
   // (If it were high, the typed-confirm path applies — already covered by skill-install.test.mjs.)
   let scan = null;
-  try { scan = scanSkillById(SKILL_ID); } catch { /* leave null */ }
+  try {
+    scan = scanSkillById(SKILL_ID);
+  } catch {
+    /* leave null */
+  }
   const contractOk = !!scan && scan.riskClass === "elevated" && scan.requiresTypedConfirm === false;
   checks.push({
     name: "consent_contract",
@@ -88,6 +113,9 @@ export function postAssert({ repo }) {
 
 // Whether a typed confirm is expected for this skill (drives the flow assertion).
 export function requiresTypedConfirm() {
-  try { return scanSkillById(SKILL_ID).requiresTypedConfirm === true; }
-  catch { return false; }
+  try {
+    return scanSkillById(SKILL_ID).requiresTypedConfirm === true;
+  } catch {
+    return false;
+  }
 }

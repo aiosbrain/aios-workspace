@@ -16,19 +16,23 @@ import { totalTokens } from "./normalize.mjs";
 // Coarse per-million-token USD price map (estimate only — for cost/task signal).
 // Matched by substring against the model id; cache_read priced at ~0.1× input.
 const PRICES = [
-  { match: "opus",   in: 15,   out: 75,   cache_read: 1.5,  cache_create: 18.75 },
-  { match: "sonnet", in: 3,    out: 15,   cache_read: 0.3,  cache_create: 3.75 },
-  { match: "haiku",  in: 0.8,  out: 4,    cache_read: 0.08, cache_create: 1.0 },
-  { match: "gpt",    in: 2.5,  out: 10,   cache_read: 0.25, cache_create: 2.5 },
-  { match: "codex",  in: 2.5,  out: 10,   cache_read: 0.25, cache_create: 2.5 },
+  { match: "opus", in: 15, out: 75, cache_read: 1.5, cache_create: 18.75 },
+  { match: "sonnet", in: 3, out: 15, cache_read: 0.3, cache_create: 3.75 },
+  { match: "haiku", in: 0.8, out: 4, cache_read: 0.08, cache_create: 1.0 },
+  { match: "gpt", in: 2.5, out: 10, cache_read: 0.25, cache_create: 2.5 },
+  { match: "codex", in: 2.5, out: 10, cache_read: 0.25, cache_create: 2.5 },
 ];
 const DEFAULT_PRICE = { in: 3, out: 15, cache_read: 0.3, cache_create: 3.75 };
 
 // Tool names that stand in for "the agent ran a check it can verify against".
 // Coarse proxy: we can't see command bodies (by design), so Bash is the signal.
 const VERIFY_TOOLS = new Set([
-  "Bash", "shell", "run_terminal_cmd", "execute_command", // Claude / generic
-  "exec_command", "local_shell_call", // Codex
+  "Bash",
+  "shell",
+  "run_terminal_cmd",
+  "execute_command", // Claude / generic
+  "exec_command",
+  "local_shell_call", // Codex
 ]);
 
 function priceFor(model) {
@@ -42,8 +46,8 @@ function eventCostUsd(ev) {
   const p = priceFor(ev.model);
   const t = ev.tokens;
   return (
-    (t.in * p.in + t.out * p.out + t.cache_read * p.cache_read + t.cache_create * p.cache_create)
-    / 1_000_000
+    (t.in * p.in + t.out * p.out + t.cache_read * p.cache_read + t.cache_create * p.cache_create) /
+    1_000_000
   );
 }
 
@@ -87,8 +91,8 @@ export function computeSignals(events) {
   }
 
   let tasks = 0;
-  let totalTok = 0;     // all four buckets (display/totals)
-  let workTok = 0;      // in + out + cache_create — "fresh" effort, excludes cheap cache reads
+  let totalTok = 0; // all four buckets (display/totals)
+  let workTok = 0; // in + out + cache_create — "fresh" effort, excludes cheap cache reads
   let subagentTok = 0;
   let sumIn = 0;
   let sumCacheRead = 0;

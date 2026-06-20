@@ -21,7 +21,13 @@
 
 import { createHash } from "node:crypto";
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, cpSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  cpSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline";
@@ -36,7 +42,6 @@ import { cmdRelay } from "./relay.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
-const VALID_KINDS = ["deliverable", "transcript", "decision", "task", "artifact", "skill"];
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
 
 // Embedded fallback if validation/secret-patterns.txt is unavailable
@@ -68,7 +73,11 @@ function sha256(buf) {
 }
 
 function slugify(s) {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function gitConfig(repo, key) {
@@ -129,7 +138,8 @@ function findRepoRootOffline(start) {
       existsSync(path.join(dir, "project.yaml")) ||
       existsSync(path.join(dir, "engagement.yaml")) ||
       existsSync(path.join(dir, "README.md"))
-    ) return dir;
+    )
+      return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -140,7 +150,10 @@ function loadOfflineConfig(repo) {
   let projCfg = {};
   for (const f of ["project.yaml", "engagement.yaml"]) {
     const p = path.join(repo, f);
-    if (existsSync(p)) { projCfg = parseFlatYaml(readFileSync(p, "utf8")); break; }
+    if (existsSync(p)) {
+      projCfg = parseFlatYaml(readFileSync(p, "utf8"));
+      break;
+    }
   }
   // Brain config from env/.env so offline-capable commands that opt into the
   // network (e.g. `aios analyze --push`) work outside a stamped workspace — the
@@ -193,8 +206,7 @@ function loadConfig(repo) {
   cfg.sync_exclude = cfg.sync_exclude || [];
 
   const dotenv = loadDotEnv(repo);
-  cfg.brain_url =
-    process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || cfg.brain_url || "";
+  cfg.brain_url = process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || cfg.brain_url || "";
   const keyEnv = cfg.api_key_env || "AIOS_API_KEY";
   cfg.api_key = process.env[keyEnv] || dotenv[keyEnv] || "";
 
@@ -258,8 +270,7 @@ function findSecret(content, patterns) {
 function walkFiles(repo, cfg) {
   const files = [];
   const excludes = cfg.sync_exclude.map((e) => e.replace(/\/$/, ""));
-  const isExcluded = (rel) =>
-    excludes.some((e) => rel === e || rel.startsWith(e + "/"));
+  const isExcluded = (rel) => excludes.some((e) => rel === e || rel.startsWith(e + "/"));
 
   for (const inc of cfg.sync_include) {
     const abs = path.join(repo, inc);
@@ -293,8 +304,7 @@ function classifyKind(rel, frontmatter) {
   const base = rel.split("/").pop();
   if (base === "decision-log.md") return "decision";
   if (base === "tasks.md") return "task";
-  if (frontmatter?.type === "transcript" || rel.includes("/transcripts/"))
-    return "transcript";
+  if (frontmatter?.type === "transcript" || rel.includes("/transcripts/")) return "transcript";
   if (/^(2-work|02-deliverables)[/\\]/.test(rel)) return "deliverable";
   return "artifact";
 }
@@ -306,7 +316,10 @@ function parseTableRows(body) {
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("|")) continue;
-    const cells = t.split("|").slice(1, -1).map((x) => x.trim());
+    const cells = t
+      .split("|")
+      .slice(1, -1)
+      .map((x) => x.trim());
     if (!cells.length) continue;
     if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
     rows.push(cells);
@@ -321,14 +334,17 @@ function parseTaskRows(body) {
   const header = rows[0].map((h) => h.toLowerCase());
   if (!header.includes("id") || !header.includes("task")) return [];
   const idx = (name) => header.indexOf(name);
-  return rows.slice(1).map((cells) => ({
-    row_key: cells[idx("id")] || "",
-    title: cells[idx("task")] || "",
-    assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
-    status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
-    sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
-    due: idx("due") >= 0 ? cells[idx("due")] || null : null,
-  })).filter((r) => r.row_key);
+  return rows
+    .slice(1)
+    .map((cells) => ({
+      row_key: cells[idx("id")] || "",
+      title: cells[idx("task")] || "",
+      assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
+      status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
+      sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
+      due: idx("due") >= 0 ? cells[idx("due")] || null : null,
+    }))
+    .filter((r) => r.row_key);
 }
 
 function parseDecisionRows(body) {
@@ -338,24 +354,27 @@ function parseDecisionRows(body) {
   const header = rows[0].map((h) => h.toLowerCase());
   if (!header.includes("decision")) return [];
   const idx = (name) => header.findIndex((h) => h.startsWith(name));
-  return rows.slice(1).map((cells) => ({
-    row_key: cells[idx("#")] ?? cells[0] ?? "",
-    decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
-    title: cells[idx("decision")] || "",
-    rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-    decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-    impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-    tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
-    audience:
-      idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
-  })).filter((r) => r.row_key);
+  return rows
+    .slice(1)
+    .map((cells) => ({
+      row_key: cells[idx("#")] ?? cells[0] ?? "",
+      decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
+      title: cells[idx("decision")] || "",
+      rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
+      decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
+      impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
+      tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
+      audience: idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
+    }))
+    .filter((r) => r.row_key);
 }
 
 // ── state ───────────────────────────────────────────────────────────────────
 
 function loadState(repo) {
   const p = path.join(repo, ".aios", "state.json");
-  if (!existsSync(p)) return { items: {}, last_pull: null, last_tasks_pull: null, last_decisions_pull: null };
+  if (!existsSync(p))
+    return { items: {}, last_pull: null, last_tasks_pull: null, last_decisions_pull: null };
   try {
     return JSON.parse(readFileSync(p, "utf8"));
   } catch {
@@ -415,7 +434,13 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     if (kind === "task") rows = parseTaskRows(body);
     if (kind === "decision") rows = parseDecisionRows(body);
     plan.push.push({
-      rel, kind, hash, tier, frontmatter, body, rows,
+      rel,
+      kind,
+      hash,
+      tier,
+      frontmatter,
+      body,
+      rows,
       isNew: !prev,
     });
   }
@@ -476,17 +501,24 @@ async function apiOptional(cfg, route, fallback) {
 function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
   if (args.includes("--json")) {
-    const item = (i) => ({ rel: i.rel, kind: i.kind || null, tier: i.tier || null, isNew: !!i.isNew });
-    console.log(JSON.stringify({
-      project: cfg.project,
-      brain_url: cfg.brain_url || null,
-      items: {
-        new: plan.push.filter((i) => i.isNew).map(item),
-        modified: plan.push.filter((i) => !i.isNew).map(item),
-        blocked: plan.blocked.map((i) => ({ rel: i.rel, reason: i.reason })),
-        clean: plan.clean.map((i) => ({ rel: i.rel })),
-      },
-    }));
+    const item = (i) => ({
+      rel: i.rel,
+      kind: i.kind || null,
+      tier: i.tier || null,
+      isNew: !!i.isNew,
+    });
+    console.log(
+      JSON.stringify({
+        project: cfg.project,
+        brain_url: cfg.brain_url || null,
+        items: {
+          new: plan.push.filter((i) => i.isNew).map(item),
+          modified: plan.push.filter((i) => !i.isNew).map(item),
+          blocked: plan.blocked.map((i) => ({ rel: i.rel, reason: i.reason })),
+          clean: plan.clean.map((i) => ({ rel: i.rel })),
+        },
+      })
+    );
     return;
   }
   if (args.includes("--porcelain")) {
@@ -510,20 +542,31 @@ function cmdStatus(repo, cfg, patterns, args = []) {
     for (const i of items) console.log(`  ${fmt(i)}`);
     console.log("");
   };
-  section(c.green(`new (${newItems.length}):`), newItems,
-    (i) => `${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)}`);
-  section(c.yellow(`modified (${modified.length}):`), modified,
-    (i) => `${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)}`);
-  section(c.red(`blocked (${plan.blocked.length}):`), plan.blocked,
-    (i) => `${i.rel} — ${i.reason}`);
+  section(
+    c.green(`new (${newItems.length}):`),
+    newItems,
+    (i) => `${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)}`
+  );
+  section(
+    c.yellow(`modified (${modified.length}):`),
+    modified,
+    (i) => `${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)}`
+  );
+  section(
+    c.red(`blocked (${plan.blocked.length}):`),
+    plan.blocked,
+    (i) => `${i.rel} — ${i.reason}`
+  );
   console.log(c.dim(`clean (already synced): ${plan.clean.length}`));
 
   if (plan.blocked.length) {
     console.log("");
-    console.log(c.dim(
-      "blocked files never leave this machine. To sync one: add `access: team` " +
-      "(or `external`) frontmatter — promotion is deliberate."
-    ));
+    console.log(
+      c.dim(
+        "blocked files never leave this machine. To sync one: add `access: team` " +
+          "(or `external`) frontmatter — promotion is deliberate."
+      )
+    );
   }
 }
 
@@ -534,17 +577,27 @@ async function cmdConnect(repo, args) {
     console.log(c.blue("connectable integrations:"));
     for (const conn of listConnectors(repo)) {
       const badge = conn.status === "wired" ? c.green("✓ wired") : c.dim("○ available");
-      console.log(`  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}`);
+      console.log(
+        `  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}`
+      );
     }
     console.log(c.dim("\nrun: aios connect <id>"));
     return;
   }
   let d;
-  try { d = getDescriptor(repo, id); } catch (e) { die(e.message); }
+  try {
+    d = getDescriptor(repo, id);
+  } catch (e) {
+    die(e.message);
+  }
 
   // collect secret values: --token sets the primary required secret; --set ENV=VALUE for others.
   const sets = {};
-  for (let i = 0; i < args.length; i++) if (args[i] === "--set" && args[i + 1]) { const [k, ...v] = args[i + 1].split("="); sets[k] = v.join("="); }
+  for (let i = 0; i < args.length; i++)
+    if (args[i] === "--set" && args[i + 1]) {
+      const [k, ...v] = args[i + 1].split("=");
+      sets[k] = v.join("=");
+    }
   const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
   const required = (d.secrets || []).filter((s) => s.required !== false);
 
@@ -552,7 +605,12 @@ async function cmdConnect(repo, args) {
   console.log(c.blue(`\nConnect ${d.name}`));
   if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
   if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
-  if (d.scopes?.length) console.log(c.dim(`  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`));
+  if (d.scopes?.length)
+    console.log(
+      c.dim(
+        `  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`
+      )
+    );
   console.log("");
 
   const values = {};
@@ -570,10 +628,12 @@ async function cmdConnect(repo, args) {
   process.stdout.write(c.dim("  validating… "));
   const result = await validateConnector(d, values);
   console.log("");
-  for (const ch of result.checks) console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
+  for (const ch of result.checks)
+    console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
   if (!result.ok) {
     console.log(c.red(`\n${d.name} not connected (${result.error}).`));
-    if (d.docs?.token_create_url) console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
+    if (d.docs?.token_create_url)
+      console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
     process.exitCode = 1;
     return;
   }
@@ -583,11 +643,15 @@ async function cmdConnect(repo, args) {
   const who = result.identity?.value ? ` as ${result.identity.value}` : "";
   const where = result.instance?.value ? ` in ${result.instance.value}` : "";
   console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
-  console.log(c.dim(`  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`));
+  console.log(
+    c.dim(
+      `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
+    )
+  );
 }
 
 // aios review — interactive review-and-push panel for the terminal.
-async function cmdReview(repo, cfg, patterns, args) {
+async function cmdReview(repo, cfg, patterns, _args) {
   const { plan } = buildPlan(repo, cfg, patterns);
   const pushable = plan.push;
 
@@ -603,13 +667,17 @@ async function cmdReview(repo, cfg, patterns, args) {
   const selected = new Set(pushable.map((_, i) => i));
   const render = () => {
     console.log("");
-    console.log(c.blue(`aios review — project '${cfg.project}' → ${cfg.brain_url || c.dim("<offline>")}`));
+    console.log(
+      c.blue(`aios review — project '${cfg.project}' → ${cfg.brain_url || c.dim("<offline>")}`)
+    );
     console.log(c.dim("toggle inclusion, then push only what you chose. Promotion is deliberate."));
     console.log("");
     pushable.forEach((i, idx) => {
       const box = selected.has(idx) ? c.green("[x]") : "[ ]";
       const tag = i.isNew ? c.green("NEW") : c.yellow("MOD");
-      console.log(`  ${box} ${String(idx + 1).padStart(2)}. ${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)} ${tag}`);
+      console.log(
+        `  ${box} ${String(idx + 1).padStart(2)}. ${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)} ${tag}`
+      );
     });
     if (plan.blocked.length) {
       console.log("");
@@ -618,43 +686,79 @@ async function cmdReview(repo, cfg, patterns, args) {
     }
     console.log(c.dim(`\n  clean (already synced): ${plan.clean.length}`));
     console.log("");
-    console.log(c.dim("  commands: <n> toggle · a all · n none · d dry-run · p push selected · q quit"));
+    console.log(
+      c.dim("  commands: <n> toggle · a all · n none · d dry-run · p push selected · q quit")
+    );
   };
 
   // Queue-based line reader: buffers lines from the 'line' event (so piped input
   // isn't lost to a race) and returns null only once the queue is drained at EOF.
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const queue = [];
-  let waiting = null, ended = false;
-  rl.on("line", (l) => { if (waiting) { const w = waiting; waiting = null; w(l); } else queue.push(l); });
-  rl.on("close", () => { ended = true; if (waiting) { const w = waiting; waiting = null; w(null); } });
+  let waiting = null,
+    ended = false;
+  rl.on("line", (l) => {
+    if (waiting) {
+      const w = waiting;
+      waiting = null;
+      w(l);
+    } else queue.push(l);
+  });
+  rl.on("close", () => {
+    ended = true;
+    if (waiting) {
+      const w = waiting;
+      waiting = null;
+      w(null);
+    }
+  });
   const ask = (q) => {
     process.stdout.write(q);
     if (queue.length) return Promise.resolve(queue.shift());
     if (ended) return Promise.resolve(null);
-    return new Promise((res) => { waiting = res; });
+    return new Promise((res) => {
+      waiting = res;
+    });
   };
 
   for (;;) {
     render();
     const ans = await ask(c.blue("> "));
-    if (ans === null) { rl.close(); console.log("\naborted — nothing pushed."); return; }
+    if (ans === null) {
+      rl.close();
+      console.log("\naborted — nothing pushed.");
+      return;
+    }
     const raw = ans.trim().toLowerCase();
-    if (raw === "" || raw === "q") { rl.close(); console.log("aborted — nothing pushed."); return; }
-    if (raw === "a") { pushable.forEach((_, i) => selected.add(i)); continue; }
-    if (raw === "n") { selected.clear(); continue; }
+    if (raw === "" || raw === "q") {
+      rl.close();
+      console.log("aborted — nothing pushed.");
+      return;
+    }
+    if (raw === "a") {
+      pushable.forEach((_, i) => selected.add(i));
+      continue;
+    }
+    if (raw === "n") {
+      selected.clear();
+      continue;
+    }
     if (/^\d/.test(raw)) {
       for (const tok of raw.split(/[\s,]+/)) {
         const idx = parseInt(tok, 10) - 1;
         if (idx >= 0 && idx < pushable.length) {
-          if (selected.has(idx)) selected.delete(idx); else selected.add(idx);
+          if (selected.has(idx)) selected.delete(idx);
+          else selected.add(idx);
         }
       }
       continue;
     }
     if (raw === "d" || raw === "p") {
       const chosen = [...selected].sort((a, b) => a - b).map((i) => pushable[i].rel);
-      if (!chosen.length) { console.log(c.yellow("nothing selected.")); continue; }
+      if (!chosen.length) {
+        console.log(c.yellow("nothing selected."));
+        continue;
+      }
       rl.close();
       const flags = raw === "d" ? ["--dry-run"] : [];
       return cmdPush(repo, cfg, patterns, [...chosen, ...flags]);
@@ -681,7 +785,9 @@ async function cmdPush(repo, cfg, patterns, args) {
     console.log(c.yellow(`DRY RUN — would push ${plan.push.length} item(s):`));
     for (const item of plan.push) {
       const rowInfo = item.rows ? ` rows=${item.rows.length}` : "";
-      console.log(`  ${item.rel} [${item.kind}, ${item.tier}]${rowInfo} sha=${item.hash.slice(0, 12)}`);
+      console.log(
+        `  ${item.rel} [${item.kind}, ${item.tier}]${rowInfo} sha=${item.hash.slice(0, 12)}`
+      );
     }
     if (plan.blocked.length) {
       console.log(c.red(`blocked (${plan.blocked.length}):`));
@@ -771,7 +877,8 @@ async function cmdPull(repo, cfg, args = []) {
 
   // Task writeback: UI-created/modified rows → merge into 03-status/tasks.md
   const tasksRes = await api(
-    cfg, "GET",
+    cfg,
+    "GET",
     `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
   );
   let merged = 0;
@@ -784,7 +891,10 @@ async function cmdPull(repo, cfg, args = []) {
       if (group.project !== cfg.project) continue;
       for (const row of group.rows || []) {
         const line = `| ${row.row_key} | ${row.title} | ${row.assignee || ""} | ${row.status} | ${row.sprint || ""} | ${row.due || ""} |`;
-        const re = new RegExp(`^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`, "m");
+        const re = new RegExp(
+          `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
+          "m"
+        );
         if (re.test(content)) content = content.replace(re, line);
         else content = content.trimEnd() + "\n" + line + "\n";
         merged++;
@@ -810,7 +920,10 @@ async function cmdPull(repo, cfg, args = []) {
       if (group.project !== cfg.project) continue;
       for (const row of group.rows || []) {
         const line = `| ${row.row_key} | ${row.decided_at || ""} | ${row.title} | ${row.rationale || ""} | ${row.decided_by || ""} | ${row.impact || ""} | ${row.tier ?? ""} | ${row.audience || ""} |`;
-        const re = new RegExp(`^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`, "m");
+        const re = new RegExp(
+          `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
+          "m"
+        );
         if (re.test(content)) content = content.replace(re, line);
         else content = content.trimEnd() + "\n" + line + "\n";
         mergedDecisions++;
@@ -891,18 +1004,26 @@ async function cmdPushSkill(repo, cfg, patterns, args) {
   const raw = readFileSync(skillMd, "utf8");
   const { frontmatter } = parseFrontmatter(raw);
   const tier = normalizeTier(frontmatter?.access || "team");
-  if (tier === "admin") die(`skill '${name}' is access: private — cannot share. Set access: team to share.`);
-  if (!SYNCABLE_TIERS.includes(tier)) die(`skill tier '${tier}' is not syncable (use team or an outward tier)`);
+  if (tier === "admin")
+    die(`skill '${name}' is access: private — cannot share. Set access: team to share.`);
+  if (!SYNCABLE_TIERS.includes(tier))
+    die(`skill tier '${tier}' is not syncable (use team or an outward tier)`);
 
   // reference files = everything under the skill dir except SKILL.md
   const refs = [];
   for (const r of listFilesRec(skillDir).sort()) {
     if (r === "SKILL.md") continue;
     const buf = readFileSync(path.join(skillDir, r));
-    if (isBinary(buf)) { console.log(c.yellow(`  skip (binary): ${r}`)); continue; }
+    if (isBinary(buf)) {
+      console.log(c.yellow(`  skip (binary): ${r}`));
+      continue;
+    }
     const text = buf.toString("utf8");
     const secret = findSecret(text, patterns);
-    if (secret) { console.log(c.red(`  skip (secret '${secret}'): ${r}`)); continue; }
+    if (secret) {
+      console.log(c.red(`  skip (secret '${secret}'): ${r}`));
+      continue;
+    }
     refs.push({ rel: r, body: text, hash: sha256(text) });
   }
 
@@ -911,21 +1032,31 @@ async function cmdPushSkill(repo, cfg, patterns, args) {
   const base = `.claude/skills/${name}`;
   const items = [
     {
-      path: `${base}/SKILL.md`, kind: "skill", body: raw, hash: sha256(raw),
+      path: `${base}/SKILL.md`,
+      kind: "skill",
+      body: raw,
+      hash: sha256(raw),
       frontmatter: {
-        skill: name, access: tier,
+        skill: name,
+        access: tier,
         manifest: { references: refs.map((r) => r.rel) },
-        source_project: cfg.project, source_actor: member,
+        source_project: cfg.project,
+        source_actor: member,
       },
     },
     ...refs.map((r) => ({
-      path: `${base}/${r.rel}`, kind: "artifact", body: r.body, hash: r.hash,
+      path: `${base}/${r.rel}`,
+      kind: "artifact",
+      body: r.body,
+      hash: r.hash,
       frontmatter: { skill: name, access: tier, skill_ref: true },
     })),
   ];
 
   if (dryRun) {
-    console.log(c.yellow(`DRY RUN — would share skill '${name}' (${items.length} file(s), tier ${tier}):`));
+    console.log(
+      c.yellow(`DRY RUN — would share skill '${name}' (${items.length} file(s), tier ${tier}):`)
+    );
     for (const it of items) console.log(`  ${it.path} [${it.kind}] sha=${it.hash.slice(0, 12)}`);
     return;
   }
@@ -936,10 +1067,20 @@ async function cmdPushSkill(repo, cfg, patterns, args) {
   for (const it of items) {
     try {
       const res = await api(cfg, "POST", "/items", {
-        project: cfg.project, path: it.path, kind: it.kind, content_sha256: it.hash,
-        actor: member, access: tier, frontmatter: it.frontmatter, body: it.body,
+        project: cfg.project,
+        path: it.path,
+        kind: it.kind,
+        content_sha256: it.hash,
+        actor: member,
+        access: tier,
+        frontmatter: it.frontmatter,
+        body: it.body,
       });
-      state.items[it.path] = { sha: it.hash, remote_id: res.id || null, pushed_at: new Date().toISOString() };
+      state.items[it.path] = {
+        sha: it.hash,
+        remote_id: res.id || null,
+        pushed_at: new Date().toISOString(),
+      };
       pushed++;
       console.log(`  ${c.green("✓")} ${it.path} ${c.dim(`${it.kind} ${res.status || ""}`)}`);
     } catch (e) {
@@ -948,7 +1089,9 @@ async function cmdPushSkill(repo, cfg, patterns, args) {
   }
   saveState(repo, state);
   console.log("");
-  console.log(c.green(`shared skill '${name}': ${pushed}/${items.length} file(s) at tier ${tier}.`));
+  console.log(
+    c.green(`shared skill '${name}': ${pushed}/${items.length} file(s) at tier ${tier}.`)
+  );
 }
 
 // aios pull skill <name> — fetch SKILL.md + references → 1-inbox/from-brain/skills/<name>/
@@ -965,7 +1108,8 @@ async function cmdPullSkill(repo, cfg, args) {
   const destBase = path.join(repo, inboxDir, "from-brain", "skills", name);
   mkdirSync(destBase, { recursive: true });
 
-  let wrote = 0, provenance = null;
+  let wrote = 0,
+    provenance = null;
   for (const it of items) {
     const rel = it.path.startsWith(prefix) ? it.path.slice(prefix.length) : path.basename(it.path);
     if (!rel) continue;
@@ -978,9 +1122,16 @@ async function cmdPullSkill(repo, cfg, args) {
   }
   console.log("");
   console.log(c.green(`pulled skill '${name}': ${wrote} file(s).`));
-  if (provenance) console.log(c.dim(`  source: ${provenance.source_project || "?"} · by ${provenance.source_actor || "?"}`));
+  if (provenance)
+    console.log(
+      c.dim(`  source: ${provenance.source_project || "?"} · by ${provenance.source_actor || "?"}`)
+    );
   console.log(c.dim(`  review it, then promote: aios install-skill ${name}`));
-  console.log(c.dim(`  (pulled skills are executable code — install is a deliberate act; they never auto-activate)`));
+  console.log(
+    c.dim(
+      `  (pulled skills are executable code — install is a deliberate act; they never auto-activate)`
+    )
+  );
 }
 
 // aios pull deliverable <path> — fetch one item (or a folder by prefix) on demand
@@ -999,16 +1150,26 @@ async function cmdPullDeliverable(repo, cfg, args) {
     const dest = safeJoin(fromBrain, path.join(it.project, it.path));
     mkdirSync(path.dirname(dest), { recursive: true });
     const fm = [
-      "---", "from_brain: true", `origin_project: ${it.project}`, `origin_path: ${it.path}`,
-      `origin_actor: ${it.actor || "unknown"}`, `access: ${it.access}`,
-      `pulled_at: ${new Date().toISOString()}`, "---", "",
+      "---",
+      "from_brain: true",
+      `origin_project: ${it.project}`,
+      `origin_path: ${it.path}`,
+      `origin_actor: ${it.actor || "unknown"}`,
+      `access: ${it.access}`,
+      `pulled_at: ${new Date().toISOString()}`,
+      "---",
+      "",
     ].join("\n");
     writeFileSync(dest, fm + (it.body || ""));
     wrote++;
-    console.log(`  ${c.green("✓")} ${inboxDir}/from-brain/${it.project}/${it.path} ${c.dim(it.kind)}`);
+    console.log(
+      `  ${c.green("✓")} ${inboxDir}/from-brain/${it.project}/${it.path} ${c.dim(it.kind)}`
+    );
   }
   console.log("");
-  console.log(c.green(`pulled ${wrote} item(s) on demand → ${inboxDir}/from-brain/ (append-only).`));
+  console.log(
+    c.green(`pulled ${wrote} item(s) on demand → ${inboxDir}/from-brain/ (append-only).`)
+  );
 }
 
 // aios install-skill <name> — promote a pulled skill into .claude/skills/ (offline, explicit)
@@ -1018,10 +1179,15 @@ function cmdInstallSkill(repo, args) {
   if (!name) die("usage: aios install-skill <name> [--force]");
   const inboxDir = existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake";
   const src = path.join(repo, inboxDir, "from-brain", "skills", name);
-  if (!existsSync(src)) die(`no pulled skill '${name}' at ${inboxDir}/from-brain/skills/${name}/ — run: aios pull skill ${name}`);
+  if (!existsSync(src))
+    die(
+      `no pulled skill '${name}' at ${inboxDir}/from-brain/skills/${name}/ — run: aios pull skill ${name}`
+    );
   const dest = path.join(repo, ".claude", "skills", name);
   if (existsSync(dest) && !force) {
-    die(`.claude/skills/${name}/ already exists — refusing to overwrite (append-only). Re-run with --force to replace.`);
+    die(
+      `.claude/skills/${name}/ already exists — refusing to overwrite (append-only). Re-run with --force to replace.`
+    );
   }
   let copied = 0;
   for (const rel of listFilesRec(src)) {
@@ -1031,30 +1197,46 @@ function cmdInstallSkill(repo, args) {
     copied++;
   }
   console.log(c.green(`installed skill '${name}' → .claude/skills/${name}/ (${copied} file(s)).`));
-  console.log(c.dim("pulled skills are executable code — review SKILL.md + workflow before trusting."));
+  console.log(
+    c.dim("pulled skills are executable code — review SKILL.md + workflow before trusting.")
+  );
   console.log(c.dim("refresh the catalog: npm run gen:catalog"));
 }
 
 // ── team blueprint (P4 lead→IC) ──────────────────────────────────────────────
 
 // aios push blueprint — publish the team's tool set (from .aios/team-blueprint.json).
-async function cmdPushBlueprint(repo, cfg, args) {
+async function cmdPushBlueprint(repo, cfg, _args) {
   const selPath = path.join(repo, ".aios", "team-blueprint.json");
-  if (!existsSync(selPath)) die("no .aios/team-blueprint.json — define the team's tools (Team tab) first");
+  if (!existsSync(selPath))
+    die("no .aios/team-blueprint.json — define the team's tools (Team tab) first");
   let sel;
-  try { sel = JSON.parse(readFileSync(selPath, "utf8")); } catch { die("team-blueprint.json is not valid JSON"); }
+  try {
+    sel = JSON.parse(readFileSync(selPath, "utf8"));
+  } catch {
+    die("team-blueprint.json is not valid JSON");
+  }
   requireOnline(cfg);
   const member = resolveMember(repo, cfg, loadDotEnv(repo));
-  const body = JSON.stringify({
-    blueprint_version: 1,
-    team: cfg.team_id || "",
-    published_by: member,
-    connectors: sel.connectors || {},
-  }, null, 2);
+  const body = JSON.stringify(
+    {
+      blueprint_version: 1,
+      team: cfg.team_id || "",
+      published_by: member,
+      connectors: sel.connectors || {},
+    },
+    null,
+    2
+  );
   const payload = {
-    project: "_team", path: ".aios/blueprint.json", kind: "blueprint",
-    content_sha256: sha256(body), actor: member, access: "team",
-    frontmatter: { blueprint_version: 1, published_by: member }, body,
+    project: "_team",
+    path: ".aios/blueprint.json",
+    kind: "blueprint",
+    content_sha256: sha256(body),
+    actor: member,
+    access: "team",
+    frontmatter: { blueprint_version: 1, published_by: member },
+    body,
   };
   try {
     const res = await api(cfg, "POST", "/items", payload);
@@ -1070,13 +1252,25 @@ async function cmdPullBlueprint(repo, cfg) {
   requireOnline(cfg);
   const res = await api(cfg, "GET", `/items?${new URLSearchParams({ kinds: "blueprint" })}`);
   const items = res.items || [];
-  if (!items.length) { console.log(c.dim("no team blueprint published yet.")); return; }
+  if (!items.length) {
+    console.log(c.dim("no team blueprint published yet."));
+    return;
+  }
   const latest = items[items.length - 1]; // GET returns ascending by updated_at
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
   writeFileSync(path.join(repo, ".aios", "blueprint.json"), latest.body || "{}");
-  let n = 0, by = "";
-  try { const b = JSON.parse(latest.body || "{}"); n = Object.values(b.connectors || {}).filter((c) => c.enabled).length; by = b.published_by || ""; } catch { /* */ }
-  console.log(c.green(`pulled team blueprint: ${n} tool(s)${by ? ` (by ${by})` : ""} → .aios/blueprint.json`));
+  let n = 0,
+    by = "";
+  try {
+    const b = JSON.parse(latest.body || "{}");
+    n = Object.values(b.connectors || {}).filter((c) => c.enabled).length;
+    by = b.published_by || "";
+  } catch {
+    /* */
+  }
+  console.log(
+    c.green(`pulled team blueprint: ${n} tool(s)${by ? ` (by ${by})` : ""} → .aios/blueprint.json`)
+  );
 }
 
 // aios whoami — print the authenticated member's identity + role (JSON). Lets the
@@ -1088,7 +1282,10 @@ async function cmdWhoami(repo, cfg) {
 }
 
 async function cmdQuery(repo, cfg, args) {
-  const question = args.filter((a) => !a.startsWith("--")).join(" ").trim();
+  const question = args
+    .filter((a) => !a.startsWith("--"))
+    .join(" ")
+    .trim();
   if (!question) die('usage: aios query "your question"');
   requireOnline(cfg);
 
@@ -1122,20 +1319,29 @@ async function cmdQuery(repo, cfg, args) {
       const dataLine = (block.match(/^data:\s*(.*)$/m) || [])[1];
       if (!dataLine) continue;
       let data;
-      try { data = JSON.parse(dataLine); } catch { continue; }
+      try {
+        data = JSON.parse(dataLine);
+      } catch {
+        continue;
+      }
       if (event === "delta") process.stdout.write(data.text || "");
       else if (event === "sources") sources = data.sources || [];
       else if (event === "done") {
         process.stdout.write("\n");
         if (typeof data.cost_usd === "number")
-          console.log(c.dim(`(${data.input_tokens} in / ${data.output_tokens} out · $${data.cost_usd.toFixed(4)})`));
+          console.log(
+            c.dim(
+              `(${data.input_tokens} in / ${data.output_tokens} out · $${data.cost_usd.toFixed(4)})`
+            )
+          );
       }
     }
   }
   if (sources.length) {
     console.log("");
     console.log(c.blue("sources:"));
-    for (const s of sources) console.log(`  [${s.id}] ${s.project}/${s.path} ${c.dim(`(${s.kind})`)}`);
+    for (const s of sources)
+      console.log(`  [${s.id}] ${s.project}/${s.path} ${c.dim(`(${s.kind})`)}`);
   }
 }
 
@@ -1143,9 +1349,18 @@ async function cmdQuery(repo, cfg, args) {
 
 const OKF_SPINE_DIRS = [
   // new intent-named spine
-  "0-context", "1-inbox", "2-work", "3-log", "4-shared",
+  "0-context",
+  "1-inbox",
+  "2-work",
+  "3-log",
+  "4-shared",
   // legacy numbered spine (back-compat)
-  "00-engagement", "00-project", "01-intake", "02-deliverables", "03-status", "04-client-surface",
+  "00-engagement",
+  "00-project",
+  "01-intake",
+  "02-deliverables",
+  "03-status",
+  "04-client-surface",
 ];
 
 function inferOkfType(rel, frontmatter) {
@@ -1161,7 +1376,8 @@ function inferOkfType(rel, frontmatter) {
   if (/sprint-\d+-ledger\.md$/.test(rel)) return "Sprint Ledger";
   if (/scope-baseline\.md$|scope-ledger\.md$|role\.md$|okrs\.md$/.test(rel)) return "Scope";
   if (/[/\\]transcripts[/\\]/.test(rel)) return "Transcript";
-  if (/^(2-work|02-deliverables)[/\\]|[/\\](2-work|02-deliverables)[/\\]/.test(rel)) return "Deliverable";
+  if (/^(2-work|02-deliverables)[/\\]|[/\\](2-work|02-deliverables)[/\\]/.test(rel))
+    return "Deliverable";
   if (/^(4-shared|04-client-surface|04-shared)[/\\]/.test(rel)) return "Deliverable";
   return "Artifact";
 }
@@ -1180,7 +1396,10 @@ function walkOkfFiles(repo, tierFilter) {
         if (entry.name === "index.md") continue; // reserved; generated, not source content
         const absChild = path.join(cur, entry.name);
         const rel = path.relative(repo, absChild);
-        if (entry.isDirectory()) { stack.push(absChild); continue; }
+        if (entry.isDirectory()) {
+          stack.push(absChild);
+          continue;
+        }
         if (!entry.name.endsWith(".md")) continue;
         const raw = readFileSync(absChild, "utf8");
         const { frontmatter } = parseFrontmatter(raw);
@@ -1199,7 +1418,10 @@ function injectOkfFrontmatter(raw, frontmatter, okfType) {
   if (!raw.startsWith("---")) return raw;
   const end = raw.indexOf("\n---", 3);
   if (end === -1) return raw;
-  const fmLines = raw.slice(raw.indexOf("\n") + 1, end).split("\n").filter((l) => l !== "");
+  const fmLines = raw
+    .slice(raw.indexOf("\n") + 1, end)
+    .split("\n")
+    .filter((l) => l !== "");
   const today = new Date().toISOString().slice(0, 10);
   if (!frontmatter.type) fmLines.push(`type: "${okfType}"`);
   if (!frontmatter.timestamp) {
@@ -1240,8 +1462,12 @@ function generateRootLogMd(decisionRows) {
     const title = row.title || "(untitled)";
     const by = row.decided_by ? ` — ${row.decided_by}` : "";
     lines.push(`## ${date}${date && title ? " — " : ""}${title}${by}`);
-    if (row.rationale) { lines.push("", row.rationale); }
-    if (row.impact) { lines.push("", `Impact: ${row.impact}`); }
+    if (row.rationale) {
+      lines.push("", row.rationale);
+    }
+    if (row.impact) {
+      lines.push("", `Impact: ${row.impact}`);
+    }
     lines.push("");
   }
   return lines.join("\n");
@@ -1249,9 +1475,10 @@ function generateRootLogMd(decisionRows) {
 
 function generateRootIndex(project, members, tierFilter, spineFound) {
   const today = new Date().toISOString().slice(0, 10);
-  const memberList = Array.isArray(members) && members.length
-    ? members.map((m) => `- ${m}`).join("\n")
-    : "- (see project.yaml)";
+  const memberList =
+    Array.isArray(members) && members.length
+      ? members.map((m) => `- ${m}`).join("\n")
+      : "- (see project.yaml)";
   const contentLinks = spineFound.map((d) => `* [${d}/](${d}/index.md)`).join("\n");
   return [
     "---",
@@ -1283,25 +1510,32 @@ async function cmdExportOkf(repo, cfg, args) {
   let tierFilter = "external";
   const positional = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--tier") { tierFilter = args[++i] || "external"; continue; }
-    if (args[i].startsWith("--")) { i++; continue; } // skip unknown flag + value
+    if (args[i] === "--tier") {
+      tierFilter = args[++i] || "external";
+      continue;
+    }
+    if (args[i].startsWith("--")) {
+      i++;
+      continue;
+    } // skip unknown flag + value
     positional.push(args[i]);
   }
   if (!["external", "team"].includes(tierFilter))
     die(`--tier must be 'external' or 'team'; got '${tierFilter}'`);
   const outputArg = positional[0] || null;
-  const outputDir = outputArg
-    ? path.resolve(outputArg)
-    : path.join(repo, ".aios", "okf-export");
+  const outputDir = outputArg ? path.resolve(outputArg) : path.join(repo, ".aios", "okf-export");
 
-  console.log(c.blue(`aios export-okf — project '${cfg.project}' tier=${tierFilter} → ${outputDir}`));
+  console.log(
+    c.blue(`aios export-okf — project '${cfg.project}' tier=${tierFilter} → ${outputDir}`)
+  );
   if (existsSync(outputDir))
     console.log(c.yellow("  warning: output dir exists — files will be overwritten"));
   mkdirSync(outputDir, { recursive: true });
 
   const files = walkOkfFiles(repo, tierFilter);
   if (!files.length) {
-    console.log(c.yellow("  nothing to export — no files matched tier filter")); return;
+    console.log(c.yellow("  nothing to export — no files matched tier filter"));
+    return;
   }
 
   const dirEntries = {};
@@ -1377,11 +1611,18 @@ async function cmdPullBundle(repo, cfg, args) {
 
   const dest = path.join(repo, ".aios", "bundle.json");
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
-  writeFileSync(dest, JSON.stringify({
-    project: cfg.project,
-    pulled_at: new Date().toISOString(),
-    nodes: allNodes,
-  }, null, 2));
+  writeFileSync(
+    dest,
+    JSON.stringify(
+      {
+        project: cfg.project,
+        pulled_at: new Date().toISOString(),
+        nodes: allNodes,
+      },
+      null,
+      2
+    )
+  );
   console.log(c.green(`pulled ${allNodes.length} node(s) → .aios/bundle.json`));
   if (!includeBody)
     console.log(c.dim("(frontmatter + links only; add --include-body for full text)"));
@@ -1403,7 +1644,10 @@ function cmdGraph(repo, cfg, args) {
     // Default: first index.md in a spine dir
     for (const dir of OKF_SPINE_DIRS) {
       const candidate = path.join(dir, "index.md");
-      if (existsSync(path.join(repo, candidate))) { seedRel = candidate; break; }
+      if (existsSync(path.join(repo, candidate))) {
+        seedRel = candidate;
+        break;
+      }
     }
     if (!seedRel && existsSync(path.join(repo, "index.md"))) seedRel = "index.md";
   }
@@ -1421,7 +1665,10 @@ function cmdGraph(repo, cfg, args) {
     const { rel, depth } = queue.shift();
     if (visited.has(rel)) continue;
     const absPath = path.join(repo, rel);
-    if (!existsSync(absPath)) { broken.push(rel); continue; }
+    if (!existsSync(absPath)) {
+      broken.push(rel);
+      continue;
+    }
 
     const raw = readFileSync(absPath, "utf8");
     const { frontmatter, body } = parseFrontmatter(raw);
@@ -1507,8 +1754,11 @@ function readFmField(fmText, key) {
     const base = (lines[i].match(/^\s*/) || [""])[0].length;
     const collected = [];
     for (let j = i + 1; j < lines.length; j++) {
-      if (lines[j].trim() === "") { collected.push(""); continue; }
-      if (((lines[j].match(/^\s*/) || [""])[0].length) <= base) break;
+      if (lines[j].trim() === "") {
+        collected.push("");
+        continue;
+      }
+      if ((lines[j].match(/^\s*/) || [""])[0].length <= base) break;
       collected.push(lines[j].trim());
     }
     return collected.join(" ").replace(/\s+/g, " ").trim();
@@ -1519,7 +1769,9 @@ function readFmField(fmText, key) {
 // Pull a leading `# Title` off the body so renderers emit exactly one H1.
 function splitTitle(body, fallback) {
   const m = body.match(/^#\s+(.+?)\n+/);
-  return m ? { title: m[1].trim(), rest: body.slice(m[0].length) } : { title: fallback, rest: body };
+  return m
+    ? { title: m[1].trim(), rest: body.slice(m[0].length) }
+    : { title: fallback, rest: body };
 }
 
 // Read .claude/skills/<name>/SKILL.md → {dir,name,kind,description,triggers,workflow,body}
@@ -1555,14 +1807,21 @@ function readWorkspaceSkills(repo) {
 }
 
 function degradeNote(runtime) {
-  return `> ⚠ Authored as a multi-agent harness for Claude Code. On \`${runtime}\` ` +
+  return (
+    `> ⚠ Authored as a multi-agent harness for Claude Code. On \`${runtime}\` ` +
     `it runs **single-agent**: follow the steps below directly, without the parallel ` +
-    `sub-agent + adversarial-verification passes. Expect more false positives — spot-check results.\n\n`;
+    `sub-agent + adversarial-verification passes. Expect more false positives — spot-check results.\n\n`
+  );
 }
 
 function triggersToTags(triggers) {
   return triggers
-    .map((t) => String(t).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))
+    .map((t) =>
+      String(t)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+    )
     .filter(Boolean)
     .slice(0, 12);
 }
@@ -1594,15 +1853,21 @@ function renderSkillMd(runtime, s, degrade) {
 function renderInstructions(runtime, s, degrade) {
   const { title, rest } = splitTitle(s.body, s.name);
   const use = s.triggers.length ? `**Use when:** ${s.triggers.join(" · ")}\n\n` : "";
-  return `# ${title}\n\n` +
+  return (
+    `# ${title}\n\n` +
     `> Skill exported from aios-workspace for \`${runtime}\` (BYOA).\n\n` +
-    (degrade ? degradeNote(runtime) : "") + use + `${rest}\n`;
+    (degrade ? degradeNote(runtime) : "") +
+    use +
+    `${rest}\n`
+  );
 }
 
 function cmdSkills(repo, args) {
   if (args[0] !== "export") {
-    die('usage: aios skills export --runtime <name> [--skill <name>] [--out <dir>]\n' +
-      `       runtimes: ${Object.keys(SKILL_RUNTIMES).join(", ")}`);
+    die(
+      "usage: aios skills export --runtime <name> [--skill <name>] [--out <dir>]\n" +
+        `       runtimes: ${Object.keys(SKILL_RUNTIMES).join(", ")}`
+    );
   }
   const runtime = flagValue(args, "--runtime");
   const rt = SKILL_RUNTIMES[runtime];
@@ -1614,7 +1879,9 @@ function cmdSkills(repo, args) {
   let skills = readWorkspaceSkills(repo);
   if (only) skills = skills.filter((s) => s.name === only);
   if (!skills.length) {
-    die(only ? `no skill named '${only}' in .claude/skills/` : "no skills found in .claude/skills/");
+    die(
+      only ? `no skill named '${only}' in .claude/skills/` : "no skills found in .claude/skills/"
+    );
   }
 
   mkdirSync(outBase, { recursive: true });
@@ -1636,16 +1903,24 @@ function cmdSkills(repo, args) {
     }
     console.log(`  ${s.name}${willDegrade ? " (harness→single-agent)" : ""}`);
   }
-  console.log(`\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`);
+  console.log(
+    `\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`
+  );
   if (degraded.length) {
-    console.log(`\n⚠ multi-agent harness(es) degraded to single-agent instructions: ${degraded.join(", ")}`);
-    console.log(`  Only claude-code runs the .workflow.js multi-agent harness; ${runtime} uses the SKILL.md body.`);
+    console.log(
+      `\n⚠ multi-agent harness(es) degraded to single-agent instructions: ${degraded.join(", ")}`
+    );
+    console.log(
+      `  Only claude-code runs the .workflow.js multi-agent harness; ${runtime} uses the SKILL.md body.`
+    );
   }
 
   if (doInstall) {
     installIntoHermes(runtime, installable);
   } else if (runtime === "hermes") {
-    console.log(`\ninstall into Hermes:  hermes skills install <path-to-SKILL.md> --name <skill> --yes`);
+    console.log(
+      `\ninstall into Hermes:  hermes skills install <path-to-SKILL.md> --name <skill> --yes`
+    );
     console.log(`  (or re-run with --install to install them now)`);
   }
 }
@@ -1661,91 +1936,78 @@ function installIntoHermes(runtime, installable) {
   try {
     execFileSync("hermes", ["--version"], { stdio: "pipe" });
   } catch {
-    console.log(`\n⚠ 'hermes' not found on PATH — skipping --install. Install Hermes, then re-run.`);
+    console.log(
+      `\n⚠ 'hermes' not found on PATH — skipping --install. Install Hermes, then re-run.`
+    );
     return;
   }
   console.log(`\ninstalling ${installable.length} skill(s) into Hermes…`);
   let ok = 0;
   for (const { name, md } of installable) {
     try {
-      execFileSync("hermes", ["skills", "install", md, "--name", name, "--category", "aios", "--yes"],
-        { stdio: "pipe" });
+      execFileSync(
+        "hermes",
+        ["skills", "install", md, "--name", name, "--category", "aios", "--yes"],
+        { stdio: "pipe" }
+      );
       console.log(`  ✓ ${name}`);
       ok++;
     } catch (e) {
-      const last = String(e.stdout || e.stderr || e.message).split("\n").filter((l) => l.trim()).pop();
+      const last = String(e.stdout || e.stderr || e.message)
+        .split("\n")
+        .filter((l) => l.trim())
+        .pop();
       console.log(`  ✗ ${name} — ${last || "install failed"}`);
     }
   }
-  console.log(`installed ${ok}/${installable.length} into Hermes (any ✗ were rejected by Hermes' own scanner).`);
+  console.log(
+    `installed ${ok}/${installable.length} into Hermes (any ✗ were rejected by Hermes' own scanner).`
+  );
 }
 
 // ── assess-codebase ───────────────────────────────────────────────────────────
 
-// Count entries in a directory (skills/commands), 0 if absent — cheap scaffolding signal.
-function countDir(dir) {
-  try { return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.name.endsWith(".md")).length; }
-  catch { return 0; }
-}
-
-// `aios assess-codebase [path] [--push] [--json]` — score a repo's agent-readiness
-// against the canonical AEM rubric (validation/agent-readiness.rubric.json). Offline
-// by default; --push sends the result to the Team Brain (POST /api/v1/codebases,
-// team-tier). Scoring lives in validation/agent-readiness-lib.mjs (shared with OGR10).
-async function cmdAssessCodebase(repo, cfg, patterns, args = []) {
+// `aios assess-codebase [path] [--json]` — score a repo's agent-readiness against the
+// canonical AEM rubric (validation/agent-readiness.rubric.json). Offline, read-only.
+// Scoring lives in validation/agent-readiness-lib.mjs (shared with OGR10). This does NOT
+// push to the Team Brain: the brain's ingestion scanner (`aios-ingest scan`) is the single
+// canonical codebase-metrics writer — it sends the FULL raw-metrics block + readiness, so
+// the row is never overwritten with a sparse readiness-only payload.
+async function cmdAssessCodebase(repo, _cfg, _patterns, args = []) {
   const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
   const asJson = args.includes("--json");
-  const push = args.includes("--push");
 
   const result = scoreRepo(target, loadRubric());
 
   if (asJson) {
     console.log(JSON.stringify(result, null, 2));
-  } else {
-    console.log(`${c.bold ? c.bold("Agent-readiness") : "Agent-readiness"}: ${target}`);
-    console.log(`  Level ${result.level} — ${result.levelName}  (${result.pct}% of checks, ${result.passed}/${result.total})`);
-    if (result.capped) console.log(`  ⚠ verification cap applied (no passing verification checks)`);
-    for (const p of result.pillars) console.log(`    ${p.passed === p.total ? "✓" : p.passed === 0 ? "✗" : "•"} ${p.title} (${p.passed}/${p.total})`);
-    if (result.nextLevel && result.gaps.length) {
-      console.log(`  To reach ${result.nextLevel}: ${result.gaps.slice(0, 4).map((g) => g.title).join(", ")}${result.gaps.length > 4 ? ", …" : ""}`);
-    }
-  }
-
-  if (!push) {
-    if (!asJson) console.log(`\n(run with --push to record this in the Team Brain)`);
     return;
   }
 
-  requireOnline(cfg);
-  // git HEAD anchors the time-series point; uncommitted trees collapse to one row.
-  let headSha = "uncommitted";
-  try { headSha = execFileSync("git", ["-C", target, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || headSha; } catch { /* not a git repo */ }
-  const slug = (path.basename(target).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")) || "repo";
-
-  const payload = {
-    codebase: { slug, full_name: slug, provider: "local" },
-    metrics: {
-      head_sha: headSha,
-      has_claude_md: existsSync(path.join(target, "CLAUDE.md")),
-      has_agents_md: existsSync(path.join(target, "AGENTS.md")),
-      skills_count: countDir(path.join(target, ".claude", "skills")),
-      commands_count: countDir(path.join(target, ".claude", "commands")),
-      readiness_level: result.level,
-      readiness_pct: result.pct,
-      readiness_pillars: Object.fromEntries(result.pillars.map((p) => [p.key, { passed: p.passed, total: p.total }])),
-      readiness_rubric_version: result.rubricVersion,
-    },
-  };
-
-  const res = await api(cfg, "POST", "/codebases", payload);
-  console.log(`\n✓ pushed to brain — codebase '${slug}' @ ${headSha.slice(0, 8)} (${res.status || "ok"})`);
+  console.log(`${c.bold ? c.bold("Agent-readiness") : "Agent-readiness"}: ${target}`);
+  console.log(
+    `  Level ${result.level} — ${result.levelName}  (${result.pct}% of checks, ${result.passed}/${result.total})`
+  );
+  if (result.capped) console.log(`  ⚠ verification cap applied (no passing verification checks)`);
+  for (const p of result.pillars)
+    console.log(
+      `    ${p.passed === p.total ? "✓" : p.passed === 0 ? "✗" : "•"} ${p.title} (${p.passed}/${p.total})`
+    );
+  if (result.nextLevel && result.gaps.length) {
+    console.log(
+      `  To reach ${result.nextLevel}: ${result.gaps
+        .slice(0, 4)
+        .map((g) => g.title)
+        .join(", ")}${result.gaps.length > 4 ? ", …" : ""}`
+    );
+  }
 }
 
 // `aios learn` — read the owner's saved AEM placement (.claude/memory/MATURITY.md)
 // and prescribe the next module + patterns from the individual rubric's patternMap.
 // Offline. The `agentic-maturity` skill is what writes MATURITY.md; this is the quick
 // "what should I practise next" lookup on top of it.
-function cmdLearn(repo, cfg, patterns, args = []) {
+function cmdLearn(repo, cfg, patterns, _args = []) {
   // The rubric ships beside the skill — in a stamped workspace at .claude/…, in the
   // toolkit dev repo under scaffold/.claude/…. Try both.
   const rubricPath = [
@@ -1766,7 +2028,7 @@ function cmdLearn(repo, cfg, patterns, args = []) {
   if (!spine) {
     console.log("No AEM placement found yet.");
     console.log("  Run the assessment first:");
-    console.log("    • in the cockpit: ask \"assess my agentic maturity\" (agentic-maturity skill)");
+    console.log('    • in the cockpit: ask "assess my agentic maturity" (agentic-maturity skill)');
     console.log("    • or from signals:  npm run aios -- analyze --since 30d");
     return;
   }
@@ -1779,15 +2041,21 @@ function cmdLearn(repo, cfg, patterns, args = []) {
     entries.find((e) => e.when?.spine === spine);
 
   console.log(`Your AEM placement: ${spine}${weakest ? `  (weakest axis: ${weakest})` : ""}`);
-  if (!match) { console.log("  No prescription mapped — see /agentic/patterns."); return; }
+  if (!match) {
+    console.log("  No prescription mapped — see /agentic/patterns.");
+    return;
+  }
 
-  if (match.priority === "highest") console.log("  ▲ highest-priority focus — verification is the differentiator");
+  if (match.priority === "highest")
+    console.log("  ▲ highest-priority focus — verification is the differentiator");
   console.log(`\n  Next module: ${match.module}`);
   console.log("  Practise these patterns:");
   for (const id of match.prescribe || []) {
     console.log(`    ${id} — ${rubric.patternTitles?.[id] || id}`);
   }
-  console.log(`\n  Details: .claude/skills/agentic-maturity/curriculum.md  ·  full library: /agentic/patterns`);
+  console.log(
+    `\n  Details: .claude/skills/agentic-maturity/curriculum.md  ·  full library: /agentic/patterns`
+  );
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -1830,8 +2098,8 @@ usage:
   aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
     [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
     [--install]                         for hermes: also run hermes skills install on each
-  aios assess-codebase [path]           score a repo's AEM agent-readiness (offline)
-    [--push] [--json]                   --push records the score in the Team Brain (team-tier)
+  aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
+    [--json]                            machine output; the Team Brain scanner records scores
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
   aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
@@ -1848,15 +2116,23 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
 // export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
 // are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs;
 // --push uses env/.env or aios.yaml brain config).
-const OFFLINE_CMDS = new Set(["export-okf", "graph", "install-skill", "connect", "skills", "assess-codebase", "learn", "analyze", "relay"]);
+const OFFLINE_CMDS = new Set([
+  "export-okf",
+  "graph",
+  "install-skill",
+  "connect",
+  "skills",
+  "assess-codebase",
+  "learn",
+  "analyze",
+  "relay",
+]);
 
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
   repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
   if (!repo) die("could not locate repo root — pass --repo <path>");
-  cfg = existsSync(path.join(repo, "aios.yaml"))
-    ? loadConfig(repo)
-    : loadOfflineConfig(repo);
+  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
 } else {
   repo = repoArg ? path.resolve(repoArg) : findRepoRoot(process.cwd());
   if (!repo) die("no aios.yaml found walking up from cwd — pass --repo <path>");

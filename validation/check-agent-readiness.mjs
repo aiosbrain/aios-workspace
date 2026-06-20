@@ -15,7 +15,11 @@
 
 import { loadRubric, scoreRepo } from "./agent-readiness-lib.mjs";
 
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", YELLOW = "\x1b[0;33m", BLUE = "\x1b[0;34m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  YELLOW = "\x1b[0;33m",
+  BLUE = "\x1b[0;34m",
+  NC = "\x1b[0m";
 
 const args = process.argv.slice(2);
 const json = args.includes("--json");
@@ -41,10 +45,14 @@ const bar = (passed, total) => {
 
 console.log("OGR10: Codebase Agent-Readiness (advisory)");
 console.log("================================================");
-console.log(`  Level:  ${BLUE}${result.level} — ${result.levelName}${NC}  (${result.pct}% of all checks, ${result.passed}/${result.total})`);
+console.log(
+  `  Level:  ${BLUE}${result.level} — ${result.levelName}${NC}  (${result.pct}% of all checks, ${result.passed}/${result.total})`
+);
 console.log(`          ${result.levelBlurb}`);
 if (result.capped) {
-  console.log(`  ${YELLOW}⚠ Verification cap applied — no passing verification checks, so the level is held at the cap.${NC}`);
+  console.log(
+    `  ${YELLOW}⚠ Verification cap applied — no passing verification checks, so the level is held at the cap.${NC}`
+  );
 }
 console.log("");
 console.log("  Pillars:");

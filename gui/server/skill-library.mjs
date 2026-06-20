@@ -37,19 +37,34 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const GEN_CATALOG = path.join(SCRIPT_DIR, "..", "..", "scripts", "gen-catalog.mjs");
 const ID_RE = /^[a-z0-9-]+$/;
 
-function manifest() { return JSON.parse(readFileSync(path.join(LIBRARY_DIR, "index.json"), "utf8")); }
+function manifest() {
+  return JSON.parse(readFileSync(path.join(LIBRARY_DIR, "index.json"), "utf8"));
+}
 function referenced() {
-  try { return JSON.parse(readFileSync(path.join(LIBRARY_DIR, "referenced.json"), "utf8")); }
-  catch { return { skills: [], docs_url: "" }; }
+  try {
+    return JSON.parse(readFileSync(path.join(LIBRARY_DIR, "referenced.json"), "utf8"));
+  } catch {
+    return { skills: [], docs_url: "" };
+  }
 }
 // Community (non-official) skills — NO first-party provenance, gated behind scan+consent.
 function communityManifest() {
-  try { const j = JSON.parse(readFileSync(path.join(LIBRARY_DIR, "community.json"), "utf8")); if (Array.isArray(j.skills)) return j; } catch { /* none */ }
+  try {
+    const j = JSON.parse(readFileSync(path.join(LIBRARY_DIR, "community.json"), "utf8"));
+    if (Array.isArray(j.skills)) return j;
+  } catch {
+    /* none */
+  }
   return { skills: [] };
 }
 // Marketplace (first-party vetted) skills — a LIVE catalog, fetched-on-install + byte-diffed.
 function marketplaceManifest() {
-  try { const j = JSON.parse(readFileSync(path.join(LIBRARY_DIR, "marketplace.json"), "utf8")); if (Array.isArray(j.skills)) return j; } catch { /* none */ }
+  try {
+    const j = JSON.parse(readFileSync(path.join(LIBRARY_DIR, "marketplace.json"), "utf8"));
+    if (Array.isArray(j.skills)) return j;
+  } catch {
+    /* none */
+  }
   return { skills: [] };
 }
 
@@ -60,15 +75,33 @@ function marketplaceManifest() {
 // repo-controlled, not user input) — no path traversal from a request.
 function resolveSource(id) {
   const off = manifest().skills.find((s) => s.id === id);
-  if (off) return { tier: "official", sourceDir: path.join(LIBRARY_DIR, id), entry: off, commit: manifest().upstream_commit };
+  if (off)
+    return {
+      tier: "official",
+      sourceDir: path.join(LIBRARY_DIR, id),
+      entry: off,
+      commit: manifest().upstream_commit,
+    };
   const mkt = marketplaceManifest().skills.find((s) => s.id === id);
-  if (mkt) return { tier: "marketplace", sourceDir: null, entry: mkt, commit: (mkt.source && mkt.source.commit) || null };
+  if (mkt)
+    return {
+      tier: "marketplace",
+      sourceDir: null,
+      entry: mkt,
+      commit: (mkt.source && mkt.source.commit) || null,
+    };
   const com = communityManifest().skills.find((s) => s.id === id);
   if (com) {
     const rel = (com.source && com.source.dir) || `community/${id}`;
     const dir = path.resolve(LIBRARY_DIR, rel);
-    if (!dir.startsWith(path.resolve(LIBRARY_DIR) + path.sep)) throw new Error(`community source escapes library: ${id}`);
-    return { tier: "community", sourceDir: dir, entry: com, commit: (com.source && com.source.upstream_commit) || null };
+    if (!dir.startsWith(path.resolve(LIBRARY_DIR) + path.sep))
+      throw new Error(`community source escapes library: ${id}`);
+    return {
+      tier: "community",
+      sourceDir: dir,
+      entry: com,
+      commit: (com.source && com.source.upstream_commit) || null,
+    };
   }
   throw new Error(`unknown skill '${id}'`);
 }
@@ -84,12 +117,19 @@ function resolveSource(id) {
  */
 function withMarketplaceSource(entry, fn) {
   const src = entry.source || {};
-  if (!src.repo || !src.commit || !src.path_in_repo) throw new Error(`'${entry.id}' has no valid marketplace source`);
-  if (!Array.isArray(entry.files) || entry.files.length === 0) throw new Error(`'${entry.id}' declares no files to verify`);
+  if (!src.repo || !src.commit || !src.path_in_repo)
+    throw new Error(`'${entry.id}' has no valid marketplace source`);
+  if (!Array.isArray(entry.files) || entry.files.length === 0)
+    throw new Error(`'${entry.id}' declares no files to verify`);
 
   let fetched;
-  try { fetched = gitFetchSubdir(src.repo, src.commit, src.path_in_repo); }
-  catch (e) { throw new Error(`could not fetch '${entry.id}' from ${src.repo}@${String(src.commit).slice(0, 7)} — ${e.message} (marketplace installs need network access)`); }
+  try {
+    fetched = gitFetchSubdir(src.repo, src.commit, src.path_in_repo);
+  } catch (e) {
+    throw new Error(
+      `could not fetch '${entry.id}' from ${src.repo}@${String(src.commit).slice(0, 7)} — ${e.message} (marketplace installs need network access)`
+    );
+  }
 
   try {
     // hashDir throws on symlinks; the byte-diff below is order-independent.
@@ -104,10 +144,14 @@ function withMarketplaceSource(entry, fn) {
     }
     for (const p of gotMap.keys()) if (!wantMap.has(p)) mismatches.push(`unexpected ${p}`);
     if (mismatches.length) {
-      throw new Error(`authenticity check FAILED for '${entry.id}' — fetched bytes do not match the pinned catalog (${mismatches.slice(0, 5).join("; ")}${mismatches.length > 5 ? "; …" : ""})`);
+      throw new Error(
+        `authenticity check FAILED for '${entry.id}' — fetched bytes do not match the pinned catalog (${mismatches.slice(0, 5).join("; ")}${mismatches.length > 5 ? "; …" : ""})`
+      );
     }
     return fn(fetched.dir, rollupHash(want));
-  } finally { fetched.cleanup(); }
+  } finally {
+    fetched.cleanup();
+  }
 }
 
 /**
@@ -118,11 +162,13 @@ function withMarketplaceSource(entry, fn) {
 export function scanSkillById(id) {
   if (!ID_RE.test(id)) throw new Error("bad skill id");
   const { tier, sourceDir, entry } = resolveSource(id);
-  const res = tier === "marketplace"
-    ? withMarketplaceSource(entry, (dir) => scanSkill(dir))
-    : scanSkill(sourceDir);
+  const res =
+    tier === "marketplace"
+      ? withMarketplaceSource(entry, (dir) => scanSkill(dir))
+      : scanSkill(sourceDir);
   return {
-    id, tier,
+    id,
+    tier,
     name: entry.name || id,
     riskClass: res.riskClass,
     findings: res.findings,
@@ -132,9 +178,16 @@ export function scanSkillById(id) {
     requiresTypedConfirm: res.riskClass === "high" && tier === "community",
   };
 }
-function ledgerPath(repo) { return path.join(repo, ".aios", "skills-installed.json"); }
+function ledgerPath(repo) {
+  return path.join(repo, ".aios", "skills-installed.json");
+}
 function readLedger(repo) {
-  try { const j = JSON.parse(readFileSync(ledgerPath(repo), "utf8")); if (Array.isArray(j.skills)) return j; } catch { /* fresh */ }
+  try {
+    const j = JSON.parse(readFileSync(ledgerPath(repo), "utf8"));
+    if (Array.isArray(j.skills)) return j;
+  } catch {
+    /* fresh */
+  }
   return { skills: [] };
 }
 function writeLedger(repo, led) {
@@ -144,7 +197,11 @@ function writeLedger(repo, led) {
   renameSync(tmp, ledgerPath(repo)); // atomic
 }
 function refreshCatalog(repo) {
-  try { execFileSync(process.execPath, [GEN_CATALOG, "--repo", repo], { stdio: "ignore" }); } catch { /* best-effort */ }
+  try {
+    execFileSync(process.execPath, [GEN_CATALOG, "--repo", repo], { stdio: "ignore" });
+  } catch {
+    /* best-effort */
+  }
 }
 
 /** Library skills (official + marketplace + community, with installed status) + Anthropic-hosted pointers. */
@@ -156,27 +213,65 @@ export function listLibrary(repo) {
   // Marketplace cards are derived purely from the committed catalog (no fetch here — the
   // list stays fast/offline; bytes are fetched+verified only on scan/install).
   const marketplace = mkt.skills.map((s) => ({
-    id: s.id, name: s.name || s.id, description: s.description || "", category: s.category || "Marketplace · Anthropic",
+    id: s.id,
+    name: s.name || s.id,
+    description: s.description || "",
+    category: s.category || "Marketplace · Anthropic",
     trust: "marketplace",
-    capabilities: { bundles_code: (s.files || []).some((f) => /\.(py|mjs|cjs|js|jsx|ts|tsx|sh|bash|zsh|rb|go|pl|php|ps1)$/i.test(f.path)) },
-    source: { repo: s.source?.repo, commit: s.source?.commit, path_in_repo: s.source?.path_in_repo },
-    bundled: false, installed: installed.has(s.id),
+    capabilities: {
+      bundles_code: (s.files || []).some((f) =>
+        /\.(py|mjs|cjs|js|jsx|ts|tsx|sh|bash|zsh|rb|go|pl|php|ps1)$/i.test(f.path)
+      ),
+    },
+    source: {
+      repo: s.source?.repo,
+      commit: s.source?.commit,
+      path_in_repo: s.source?.path_in_repo,
+    },
+    bundled: false,
+    installed: installed.has(s.id),
   }));
   const community = communityManifest().skills.map((s) => {
     // Compute a lightweight per-skill summary from SKILL.md frontmatter (no scan here —
     // scanning is on demand, so the list stays fast). riskClass is fetched on Review.
     let description = "";
-    try { description = (frontmatter(readFileSync(path.join(LIBRARY_DIR, (s.source && s.source.dir) || `community/${s.id}`, "SKILL.md"), "utf8")).description || "").replace(/\s+/g, " ").trim(); } catch { /* keep empty */ }
+    try {
+      description = (
+        frontmatter(
+          readFileSync(
+            path.join(LIBRARY_DIR, (s.source && s.source.dir) || `community/${s.id}`, "SKILL.md"),
+            "utf8"
+          )
+        ).description || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+    } catch {
+      /* keep empty */
+    }
     return {
-      id: s.id, name: s.name || s.id, description, category: s.category || "Community (unverified)",
-      trust: "community", provenance: null, bundled: false, installed: installed.has(s.id),
+      id: s.id,
+      name: s.name || s.id,
+      description,
+      category: s.category || "Community (unverified)",
+      trust: "community",
+      provenance: null,
+      bundled: false,
+      installed: installed.has(s.id),
     };
   });
   return {
     skills: m.skills.map((s) => ({
-      id: s.id, name: s.name, description: s.description, category: s.category,
-      license: s.license, trust: "official", provenance: s.provenance, capabilities: s.capabilities,
-      bundled: true, installed: installed.has(s.id),
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      category: s.category,
+      license: s.license,
+      trust: "official",
+      provenance: s.provenance,
+      capabilities: s.capabilities,
+      bundled: true,
+      installed: installed.has(s.id),
     })),
     marketplace,
     community,
@@ -217,7 +312,9 @@ function landSkill(repo, id, tier, commit, sourceDir, rollup) {
     const rec = readLedger(repo).skills.find((s) => s.id === id);
     const onDisk = rollupHash(hashDir(dest));
     if (!(rec && rec.sha === rollup && onDisk === rollup)) {
-      throw new Error(`'${id}' already exists in .claude/skills — refusing to overwrite a non-library or modified skill`);
+      throw new Error(
+        `'${id}' already exists in .claude/skills — refusing to overwrite a non-library or modified skill`
+      );
     }
   }
   copyDir(sourceDir, dest);
@@ -226,7 +323,13 @@ function landSkill(repo, id, tier, commit, sourceDir, rollup) {
 
   const led = readLedger(repo);
   led.skills = led.skills.filter((s) => s.id !== id);
-  led.skills.push({ id, tier, upstream_commit: commit, sha: rollup, installedAt: new Date().toISOString() });
+  led.skills.push({
+    id,
+    tier,
+    upstream_commit: commit,
+    sha: rollup,
+    installedAt: new Date().toISOString(),
+  });
   writeLedger(repo, led);
   return { id, installed: true, tier };
 }
@@ -256,7 +359,9 @@ export function installSkill(repo, id, consent = {}) {
     return withMarketplaceSource(entry, (dir, rollup) => {
       const scan = scanSkill(dir);
       if (!consent || consent.accepted !== true) {
-        const err = new Error(`'${id}' is a marketplace skill (first-party vetted) — install requires accepting after reviewing the scan`);
+        const err = new Error(
+          `'${id}' is a marketplace skill (first-party vetted) — install requires accepting after reviewing the scan`
+        );
         err.scan = { riskClass: scan.riskClass, counts: scan.counts, requiresTypedConfirm: false };
         throw err;
       }
@@ -268,12 +373,20 @@ export function installSkill(repo, id, consent = {}) {
   // Community: run the advisory scan and enforce consent proportional to risk.
   const scan = scanSkill(sourceDir); // hashDir-equivalent walk; throws on symlink below via hashDir
   if (!consent || consent.accepted !== true) {
-    const err = new Error(`'${id}' is a community (non-official) skill — install requires explicit consent after reviewing the scan`);
-    err.scan = { riskClass: scan.riskClass, counts: scan.counts, requiresTypedConfirm: scan.riskClass === "high" };
+    const err = new Error(
+      `'${id}' is a community (non-official) skill — install requires explicit consent after reviewing the scan`
+    );
+    err.scan = {
+      riskClass: scan.riskClass,
+      counts: scan.counts,
+      requiresTypedConfirm: scan.riskClass === "high",
+    };
     throw err;
   }
   if (scan.riskClass === "high" && consent.typed !== id) {
-    const err = new Error(`'${id}' scanned HIGH risk — type the skill id to confirm you accept the risk`);
+    const err = new Error(
+      `'${id}' scanned HIGH risk — type the skill id to confirm you accept the risk`
+    );
     err.scan = { riskClass: scan.riskClass, counts: scan.counts, requiresTypedConfirm: true };
     throw err;
   }
@@ -287,14 +400,20 @@ export function uninstallSkill(repo, id) {
   const led = readLedger(repo);
   const rec = led.skills.find((s) => s.id === id);
 
-  if (!existsSync(dest)) { // nothing on disk → drop any stale ledger entry
+  if (!existsSync(dest)) {
+    // nothing on disk → drop any stale ledger entry
     led.skills = led.skills.filter((s) => s.id !== id);
     writeLedger(repo, led);
     return { id, installed: false };
   }
-  if (!rec) throw new Error(`'${id}' was not installed from the library — refusing to delete (it may be user-authored)`);
+  if (!rec)
+    throw new Error(
+      `'${id}' was not installed from the library — refusing to delete (it may be user-authored)`
+    );
   if (rollupHash(hashDir(dest)) !== rec.sha) {
-    throw new Error(`'${id}' has local edits since install — refusing to delete; remove it by hand if you really mean to`);
+    throw new Error(
+      `'${id}' has local edits since install — refusing to delete; remove it by hand if you really mean to`
+    );
   }
   rmSync(dest, { recursive: true, force: true });
   led.skills = led.skills.filter((s) => s.id !== id);

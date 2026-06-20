@@ -22,7 +22,12 @@ export function killGroup(pid, { signals = ["SIGTERM", "SIGKILL"], kill = proces
   if (!Number.isInteger(pid) || pid <= 1) return false;
   let signaled = false;
   for (const sig of signals) {
-    try { kill(-pid, sig); signaled = true; } catch { /* group already gone / no perms */ }
+    try {
+      kill(-pid, sig);
+      signaled = true;
+    } catch {
+      /* group already gone / no perms */
+    }
   }
   return signaled;
 }

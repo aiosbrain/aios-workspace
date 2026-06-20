@@ -42,23 +42,38 @@ function walkFiles(root, rel = "") {
 
 /** Sorted [{path, sha256}] for a dir. Throws on any symlink (via walkFiles). */
 export function hashDir(dir) {
-  return walkFiles(dir).map((rel) => ({ path: rel, sha256: sha256(readFileSync(path.join(dir, rel))) }));
+  return walkFiles(dir).map((rel) => ({
+    path: rel,
+    sha256: sha256(readFileSync(path.join(dir, rel))),
+  }));
 }
 
 /** Order-independent rollup of a file list, for tamper/edit detection. */
 export function rollupHash(files) {
-  return sha256([...files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => `${f.path}:${f.sha256}`).join("\n"));
+  return sha256(
+    [...files]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((f) => `${f.path}:${f.sha256}`)
+      .join("\n")
+  );
 }
 
 function assertApache2(skillDir, id) {
   const lic = path.join(skillDir, "LICENSE.txt");
-  if (!existsSync(lic)) throw new Error(`skill '${id}' is missing LICENSE.txt — only Apache-2.0 official skills may be vendored`);
+  if (!existsSync(lic))
+    throw new Error(
+      `skill '${id}' is missing LICENSE.txt — only Apache-2.0 official skills may be vendored`
+    );
   const text = readFileSync(lic, "utf8");
   if (/outside the Services|Distribute, sublicense, or transfer these materials/i.test(text)) {
-    throw new Error(`skill '${id}' carries a PROPRIETARY license — it must be pointer-only (referenced.json), never vendored`);
+    throw new Error(
+      `skill '${id}' carries a PROPRIETARY license — it must be pointer-only (referenced.json), never vendored`
+    );
   }
   if (!/Apache License/i.test(text)) {
-    throw new Error(`skill '${id}' LICENSE.txt is not recognizably Apache-2.0 — refusing to vendor`);
+    throw new Error(
+      `skill '${id}' LICENSE.txt is not recognizably Apache-2.0 — refusing to vendor`
+    );
   }
 }
 
@@ -88,11 +103,19 @@ export function buildManifest(libDir = LIBRARY_DIR) {
       category: sources.skills[id].category || "Skills",
       license: "Apache-2.0",
       provenance,
-      capabilities: { bundles_code: codeFiles.length > 0, code_files: codeFiles, file_count: files.length },
+      capabilities: {
+        bundles_code: codeFiles.length > 0,
+        code_files: codeFiles,
+        file_count: files.length,
+      },
       files,
     });
   }
-  return { upstream_repo: provenance.upstream_repo, upstream_commit: provenance.upstream_commit, skills };
+  return {
+    upstream_repo: provenance.upstream_repo,
+    upstream_commit: provenance.upstream_commit,
+    skills,
+  };
 }
 
 function main() {
@@ -110,7 +133,9 @@ function main() {
     return;
   }
   writeFileSync(indexPath, serialized);
-  console.log(`wrote ${indexPath} — ${built.skills.length} skills @ ${built.upstream_commit.slice(0, 7)}`);
+  console.log(
+    `wrote ${indexPath} — ${built.skills.length} skills @ ${built.upstream_commit.slice(0, 7)}`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

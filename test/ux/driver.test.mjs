@@ -11,10 +11,15 @@
 import { tokenizeSimpleCommand, isAgentBrowserCommand } from "./allowlist.mjs";
 
 let failed = 0;
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 function check(label, cond) {
   if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
-  else { console.log(`  ${RED}✗${NC} ${label}`); failed++; }
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
 }
 const allow = (cmd) => isAgentBrowserCommand(cmd).allow === true;
 const deny = (cmd) => isAgentBrowserCommand(cmd).allow === false;
@@ -23,7 +28,10 @@ console.log("allowlist: ALLOW well-formed agent-browser commands");
 {
   check("plain snapshot", allow("agent-browser snapshot"));
   check("snapshot with -i flag", allow("agent-browser snapshot -i"));
-  check("--session + open with quoted query URL", allow('agent-browser --session s open "https://x/?a=b"'));
+  check(
+    "--session + open with quoted query URL",
+    allow('agent-browser --session s open "https://x/?a=b"')
+  );
   check("screenshot with output path", allow("agent-browser screenshot out.png"));
   check("screenshot --annotate path", allow("agent-browser screenshot --annotate /tmp/e/step.png"));
   check("--session value then subcommand", allow("agent-browser --session flowA wait"));
@@ -81,7 +89,10 @@ console.log("allowlist: DENY missing subcommand / bad flags / bad subcommand");
 console.log("allowlist: tokenizeSimpleCommand low-level behavior");
 {
   const t1 = tokenizeSimpleCommand('agent-browser --session s open "https://x/?a=b"');
-  check("tokenizes quoted URL as one arg", t1.ok && t1.argv.length === 5 && t1.argv[4] === "https://x/?a=b");
+  check(
+    "tokenizes quoted URL as one arg",
+    t1.ok && t1.argv.length === 5 && t1.argv[4] === "https://x/?a=b"
+  );
   const t2 = tokenizeSimpleCommand("agent-browser snapshot; ls");
   check("metachar rejected at tokenize", t2.ok === false && /metacharacter/.test(t2.reason));
   const t3 = tokenizeSimpleCommand(42);
@@ -89,5 +100,8 @@ console.log("allowlist: tokenizeSimpleCommand low-level behavior");
 }
 
 console.log("");
-if (failed) { console.log(`${RED}driver.test: ${failed} check(s) failed${NC}`); process.exit(1); }
+if (failed) {
+  console.log(`${RED}driver.test: ${failed} check(s) failed${NC}`);
+  process.exit(1);
+}
 console.log(`${GREEN}driver.test: all checks passed${NC}`);

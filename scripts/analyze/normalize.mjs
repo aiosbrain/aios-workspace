@@ -17,8 +17,14 @@
 export const TOOLS = ["claude", "codex", "cursor"];
 export const ACTORS = ["user", "assistant", "subagent"];
 export const BLOCK_TYPES = [
-  "thinking", "text", "tool_use", "tool_result",
-  "mode", "permission", "meta", null,
+  "thinking",
+  "text",
+  "tool_use",
+  "tool_result",
+  "mode",
+  "permission",
+  "meta",
+  null,
 ];
 
 /**

@@ -1,0 +1,18 @@
+# Single format policy (shared by `format` and `format:check`).
+# Format first-party source only; leave templates, docs, and generated/vendor artifacts alone.
+node_modules
+**/dist
+src-tauri/target
+scaffold
+examples
+docs
+**/*.md
+package-lock.json
+**/package-lock.json
+**/*.lock
+# recorded test fixtures (byte-compared by fixtures.test.mjs)
+**/__fixtures__
+# skill-scan bait fixtures (intentionally crafted; scanned for exact patterns)
+**/skill-scan-fixtures
+# generated / locked skill library + vendored skill assets (lock-marketplace --check guards these)
+gui/server/skill-library

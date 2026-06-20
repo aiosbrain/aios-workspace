@@ -18,10 +18,15 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
-const flag = (n, d) => { const i = argv.indexOf(n); return i !== -1 ? argv[i + 1] : d; };
+const flag = (n, d) => {
+  const i = argv.indexOf(n);
+  return i !== -1 ? argv[i + 1] : d;
+};
 const port = parseInt(flag("--port", "0"), 10);
 
-const fixture = JSON.parse(readFileSync(path.join(HERE, "fixtures", "firecrawl-extract.json"), "utf8"));
+const fixture = JSON.parse(
+  readFileSync(path.join(HERE, "fixtures", "firecrawl-extract.json"), "utf8")
+);
 
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
@@ -30,18 +35,27 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && req.url.startsWith("/v2/scrape")) {
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 1e6) req.destroy(); });
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e6) req.destroy();
+    });
     req.on("end", () => {
       let url = null;
-      try { url = JSON.parse(body || "{}").url || null; } catch { /* ignore */ }
+      try {
+        url = JSON.parse(body || "{}").url || null;
+      } catch {
+        /* ignore */
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        success: true,
-        data: {
-          json: fixture.json,
-          metadata: { title: fixture.title || "Example", sourceURL: url },
-        },
-      }));
+      res.end(
+        JSON.stringify({
+          success: true,
+          data: {
+            json: fixture.json,
+            metadata: { title: fixture.title || "Example", sourceURL: url },
+          },
+        })
+      );
     });
     return;
   }
@@ -55,4 +69,12 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 // Clean shutdown on signals so the orchestrator's teardown is reliable.
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { try { server.close(); } catch { /* */ } process.exit(0); });
+for (const sig of ["SIGINT", "SIGTERM"])
+  process.on(sig, () => {
+    try {
+      server.close();
+    } catch {
+      /* */
+    }
+    process.exit(0);
+  });
