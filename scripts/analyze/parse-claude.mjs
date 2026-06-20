@@ -28,14 +28,22 @@ export function parseJsonl(text) {
   for (const line of text.split("\n")) {
     const s = line.trim();
     if (!s) continue;
-    try { out.push(JSON.parse(s)); } catch { /* partial tail / corrupt line */ }
+    try {
+      out.push(JSON.parse(s));
+    } catch {
+      /* partial tail / corrupt line */
+    }
   }
   return out;
 }
 
 function projectFromCwd(cwd) {
   if (!cwd) return null;
-  try { return path.basename(cwd); } catch { return null; }
+  try {
+    return path.basename(cwd);
+  } catch {
+    return null;
+  }
 }
 
 /** Is this user record a genuine human prompt (vs. an auto tool_result turn)? */
@@ -70,16 +78,26 @@ export function recordsToEvents(records, fallbackId) {
     if (type === "assistant" && msg?.role === "assistant") {
       const actor = r.isSidechain ? "subagent" : "assistant";
       // The turn itself, carrying usage exactly once.
-      events.push(makeEvent({
-        ...base, actor, block_type: "text", tokens: msg.usage || null,
-      }));
+      events.push(
+        makeEvent({
+          ...base,
+          actor,
+          block_type: "text",
+          tokens: msg.usage || null,
+        })
+      );
       // Each tool invocation in this turn (no tokens — avoids double counting).
       const content = Array.isArray(msg.content) ? msg.content : [];
       for (const b of content) {
         if (b && b.type === "tool_use") {
-          events.push(makeEvent({
-            ...base, actor, block_type: "tool_use", tool_name: b.name || null,
-          }));
+          events.push(
+            makeEvent({
+              ...base,
+              actor,
+              block_type: "tool_use",
+              tool_name: b.name || null,
+            })
+          );
         }
       }
       continue;
@@ -93,10 +111,14 @@ export function recordsToEvents(records, fallbackId) {
         // Auto-generated turn carrying tool results back to the model.
         for (const b of content) {
           if (b && b.type === "tool_result") {
-            events.push(makeEvent({
-              ...base, actor: "user", block_type: "tool_result",
-              is_error: Boolean(b.is_error),
-            }));
+            events.push(
+              makeEvent({
+                ...base,
+                actor: "user",
+                block_type: "tool_result",
+                is_error: Boolean(b.is_error),
+              })
+            );
           }
         }
       }
@@ -104,10 +126,13 @@ export function recordsToEvents(records, fallbackId) {
     }
 
     if (type === "mode" || type === "permission-mode") {
-      events.push(makeEvent({
-        ...base, actor: "user",
-        block_type: type === "permission-mode" ? "permission" : "mode",
-      }));
+      events.push(
+        makeEvent({
+          ...base,
+          actor: "user",
+          block_type: type === "permission-mode" ? "permission" : "mode",
+        })
+      );
       continue;
     }
     // attachment / last-prompt / ai-title / file-history-snapshot / summary → noise

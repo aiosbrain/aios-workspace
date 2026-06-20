@@ -45,7 +45,10 @@ function assertWsEvent(e, ctx) {
       break;
     case "result":
       assert.ok("subtype" in e, `${ctx}: result.subtype required`);
-      assert.ok(e.cost_usd === null || typeof e.cost_usd === "number", `${ctx}: result.cost_usd must be number|null`);
+      assert.ok(
+        e.cost_usd === null || typeof e.cost_usd === "number",
+        `${ctx}: result.cost_usd must be number|null`
+      );
       break;
     case "error":
       assert.equal(typeof e.message, "string", `${ctx}: error.message must be string`);
@@ -70,7 +73,10 @@ function replay(events, mapFn, label) {
 test("opencode fixture → valid WS contract + snapshot", () => {
   const { sessionId, events } = load("opencode.events.json");
   const ws = replay(events, (e) => mapOpencodeEvent(e, sessionId), "opencode");
-  assert.deepEqual(ws.map((e) => e.type), ["tool_use", "tool_result"]);
+  assert.deepEqual(
+    ws.map((e) => e.type),
+    ["tool_use", "tool_result"]
+  );
   // the write tool: running → tool_use, completed → tool_result(ok)
   assert.equal(ws[1].is_error, false);
   assert.equal(ws[0].id, ws[1].id);
@@ -79,8 +85,10 @@ test("opencode fixture → valid WS contract + snapshot", () => {
 test("codex fixture → valid WS contract + snapshot", () => {
   const { events } = load("codex.events.json");
   const ws = replay(events, mapCodexEvent, "codex");
-  assert.deepEqual(ws.map((e) => e.type),
-    ["delta", "assistant_done", "tool_use", "tool_result", "delta", "assistant_done"]);
+  assert.deepEqual(
+    ws.map((e) => e.type),
+    ["delta", "assistant_done", "tool_use", "tool_result", "delta", "assistant_done"]
+  );
   assert.equal(ws.find((e) => e.type === "tool_use").name, "apply_patch");
   assert.equal(ws.find((e) => e.type === "tool_result").is_error, false);
 });
@@ -88,15 +96,19 @@ test("codex fixture → valid WS contract + snapshot", () => {
 test("acp (hermes) fixture → valid WS contract + snapshot", () => {
   const { updates } = load("acp.events.json");
   const ws = replay(updates, mapSessionUpdate, "acp");
-  assert.deepEqual(ws.map((e) => e.type),
-    ["assistant_done", "tool_use", "delta", "delta", "delta", "delta", "delta"]);
+  assert.deepEqual(
+    ws.map((e) => e.type),
+    ["assistant_done", "tool_use", "delta", "delta", "delta", "delta", "delta"]
+  );
   // the 5 agent_message_chunks streamed as deltas
   assert.equal(ws.filter((e) => e.type === "delta").length, 5);
 });
 
 test("assertWsEvent rejects off-contract shapes", () => {
   assert.throws(() => assertWsEvent({ type: "nope" }, "t"));
-  assert.throws(() => assertWsEvent({ type: "tool_result", id: "x", text: "y", is_error: "no" }, "t"));
+  assert.throws(() =>
+    assertWsEvent({ type: "tool_result", id: "x", text: "y", is_error: "no" }, "t")
+  );
   assert.throws(() => assertWsEvent({ type: "result", subtype: "ok", cost_usd: "free" }, "t"));
   assert.doesNotThrow(() => assertWsEvent({ type: "result", subtype: "ok", cost_usd: null }, "t"));
 });

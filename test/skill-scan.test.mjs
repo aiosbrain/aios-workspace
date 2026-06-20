@@ -13,12 +13,18 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const fx = (name) => path.join(DIR, "skill-scan-fixtures", name);
 
 let failed = 0;
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 function check(label, cond) {
   if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
-  else { console.log(`  ${RED}✗${NC} ${label}`); failed++; }
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
 }
-const has = (findings, file, line, rule) => findings.some((f) => f.file === file && f.line === line && f.rule === rule);
+const has = (findings, file, line, rule) =>
+  findings.some((f) => f.file === file && f.line === line && f.rule === rule);
 
 console.log("skill-scan: clean instructions-only skill → low");
 {
@@ -58,17 +64,31 @@ console.log("skill-scan: extensionless executable helper → code is detected + 
   check("bundlesCode true (shebang, no extension)", r.bundlesCode === true);
   check("extensionless helper recorded as code", r.codeFiles.includes("scripts/helper"));
   check("riskClass is high (secret read inside)", r.riskClass === "high");
-  check("secret-read found in scripts/helper", r.findings.some((f) => f.file === "scripts/helper" && f.rule === "secret-read"));
-  check("process-exec found in scripts/helper", r.findings.some((f) => f.file === "scripts/helper" && f.rule === "process-exec"));
+  check(
+    "secret-read found in scripts/helper",
+    r.findings.some((f) => f.file === "scripts/helper" && f.rule === "secret-read")
+  );
+  check(
+    "process-exec found in scripts/helper",
+    r.findings.some((f) => f.file === "scripts/helper" && f.rule === "process-exec")
+  );
 }
 
 console.log("skill-scan: error cases");
 {
   let threw = false;
-  try { scanSkill(fx("does-not-exist")); } catch { threw = true; }
+  try {
+    scanSkill(fx("does-not-exist"));
+  } catch {
+    threw = true;
+  }
   check("throws on missing dir", threw);
 }
 
 console.log("================================================");
-if (failed === 0) { console.log(`${GREEN}skill-scan tests PASSED${NC}`); process.exit(0); }
-console.log(`${RED}skill-scan tests FAILED — ${failed} assertion(s)${NC}`); process.exit(1);
+if (failed === 0) {
+  console.log(`${GREEN}skill-scan tests PASSED${NC}`);
+  process.exit(0);
+}
+console.log(`${RED}skill-scan tests FAILED — ${failed} assertion(s)${NC}`);
+process.exit(1);

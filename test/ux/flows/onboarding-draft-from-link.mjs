@@ -48,11 +48,26 @@ export const rubric = {
   flow: id,
   threshold: 1.0,
   criteria: [
-    { id: "empty_state_offers_both", ask: "Does the empty chat clearly offer BOTH 'Set up your profile' AND a 'draft it from a link' option?" },
-    { id: "firecrawl_disclosure", ask: "Before or at submit, is it clearly disclosed that the URL is sent to Firecrawl to read the page?" },
-    { id: "draft_shown", ask: "Is a drafted profile (person + company + focus) shown back to the user?" },
-    { id: "confirm_before_write", ask: "Is the user clearly required to CONFIRM before anything is written to .claude/memory/ (no silent write)?" },
-    { id: "no_console_errors", ask: "Did the flow complete with no console errors? (evidence: the captured errors output)" },
+    {
+      id: "empty_state_offers_both",
+      ask: "Does the empty chat clearly offer BOTH 'Set up your profile' AND a 'draft it from a link' option?",
+    },
+    {
+      id: "firecrawl_disclosure",
+      ask: "Before or at submit, is it clearly disclosed that the URL is sent to Firecrawl to read the page?",
+    },
+    {
+      id: "draft_shown",
+      ask: "Is a drafted profile (person + company + focus) shown back to the user?",
+    },
+    {
+      id: "confirm_before_write",
+      ask: "Is the user clearly required to CONFIRM before anything is written to .claude/memory/ (no silent write)?",
+    },
+    {
+      id: "no_console_errors",
+      ask: "Did the flow complete with no console errors? (evidence: the captured errors output)",
+    },
   ],
 };
 
@@ -77,7 +92,11 @@ export function postAssert({ repo, baseline }) {
   const checks = [];
   const userMd = path.join(repo, ".claude", "memory", "USER.md");
   let content = null;
-  try { content = readFileSync(userMd, "utf8"); } catch { content = null; }
+  try {
+    content = readFileSync(userMd, "utf8");
+  } catch {
+    content = null;
+  }
 
   // "Not written" = either absent, or identical to the pre-run baseline we captured. A
   // freshly scaffolded USER.md is a placeholder; any drafted profile being written would
@@ -86,7 +105,9 @@ export function postAssert({ repo, baseline }) {
   checks.push({
     name: "user_md_not_written",
     ok: notWritten,
-    detail: notWritten ? "USER.md unchanged (no silent write)" : "USER.md was modified — a write happened without explicit confirm",
+    detail: notWritten
+      ? "USER.md unchanged (no silent write)"
+      : "USER.md was modified — a write happened without explicit confirm",
   });
 
   return { ok: checks.every((c) => c.ok), checks };
@@ -96,5 +117,9 @@ export function postAssert({ repo, baseline }) {
 export function captureBaseline(repo) {
   const userMd = path.join(repo, ".claude", "memory", "USER.md");
   if (!existsSync(userMd)) return null;
-  try { return readFileSync(userMd, "utf8"); } catch { return null; }
+  try {
+    return readFileSync(userMd, "utf8");
+  } catch {
+    return null;
+  }
 }

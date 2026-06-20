@@ -24,7 +24,11 @@ import { parseJsonl } from "./parse-claude.mjs";
 
 function projectFromCwd(cwd) {
   if (!cwd) return null;
-  try { return path.basename(cwd); } catch { return null; }
+  try {
+    return path.basename(cwd);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -80,15 +84,27 @@ export function recordsToEvents(records, fallbackId) {
           events.push(makeEvent({ ...base(), actor: "user", block_type: "text" }));
         } else if (p.type === "token_count") {
           const usage = codexTokens(p.info?.last_token_usage);
-          if (usage) events.push(makeEvent({ ...base(), actor: "assistant", block_type: "text", tokens: usage }));
+          if (usage)
+            events.push(
+              makeEvent({ ...base(), actor: "assistant", block_type: "text", tokens: usage })
+            );
         } else if (p.type === "error") {
-          events.push(makeEvent({ ...base(), actor: "assistant", block_type: "tool_result", is_error: true }));
+          events.push(
+            makeEvent({ ...base(), actor: "assistant", block_type: "tool_result", is_error: true })
+          );
         }
         break;
 
       case "response_item":
         if (p.type === "function_call") {
-          events.push(makeEvent({ ...base(), actor: "assistant", block_type: "tool_use", tool_name: p.name || null }));
+          events.push(
+            makeEvent({
+              ...base(),
+              actor: "assistant",
+              block_type: "tool_use",
+              tool_name: p.name || null,
+            })
+          );
         } else if (p.type === "function_call_output") {
           events.push(makeEvent({ ...base(), actor: "assistant", block_type: "tool_result" }));
         }

@@ -10,7 +10,12 @@
   "levels": [
     { "id": "L1", "name": "Functional", "blurb": "A human can build and run it." },
     { "id": "L2", "name": "Structured", "blurb": "Conventions are explicit and enforced." },
-    { "id": "L3", "name": "Agent-ready", "blurb": "An agent can work here safely and verifiably.", "target": true },
+    {
+      "id": "L3",
+      "name": "Agent-ready",
+      "blurb": "An agent can work here safely and verifiably.",
+      "target": true
+    },
     { "id": "L4", "name": "Measured", "blurb": "Quality is enforced and evaluated." },
     { "id": "L5", "name": "Self-improving", "blurb": "The repo helps agents improve it." }
   ],
@@ -32,7 +37,9 @@
       "level": "L1",
       "title": "README exists",
       "rationale": "Baseline orientation for any worker, human or agent.",
-      "signal": { "anyFileExists": ["README.md", "README.mdx", "README.rst", "README.txt", "readme.md"] }
+      "signal": {
+        "anyFileExists": ["README.md", "README.mdx", "README.rst", "README.txt", "readme.md"]
+      }
     },
     {
       "id": "buildable",
@@ -40,7 +47,20 @@
       "level": "L1",
       "title": "Declares how to build/run (package manifest)",
       "rationale": "A worker must be able to install and run the project.",
-      "signal": { "anyFileExists": ["package.json", "pyproject.toml", "requirements.txt", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "Gemfile", "composer.json", "Makefile"] }
+      "signal": {
+        "anyFileExists": [
+          "package.json",
+          "pyproject.toml",
+          "requirements.txt",
+          "Cargo.toml",
+          "go.mod",
+          "pom.xml",
+          "build.gradle",
+          "Gemfile",
+          "composer.json",
+          "Makefile"
+        ]
+      }
     },
     {
       "id": "agent_instructions_present",
@@ -48,7 +68,15 @@
       "level": "L2",
       "title": "CLAUDE.md or AGENTS.md exists",
       "rationale": "Agents need a conventions/gotchas file to work effectively (the highest-leverage agent-readiness signal).",
-      "signal": { "anyFileExists": ["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md"] }
+      "signal": {
+        "anyFileExists": [
+          "CLAUDE.md",
+          "AGENTS.md",
+          ".claude/CLAUDE.md",
+          ".cursorrules",
+          ".github/copilot-instructions.md"
+        ]
+      }
     },
     {
       "id": "agent_instructions_nontrivial",
@@ -56,7 +84,9 @@
       "level": "L2",
       "title": "Agent instructions are non-trivial (>= 400 bytes)",
       "rationale": "A stub CLAUDE.md doesn't help; substance does.",
-      "signal": { "fileMinBytes": { "anyOf": ["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md"], "bytes": 400 } }
+      "signal": {
+        "fileMinBytes": { "anyOf": ["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md"], "bytes": 400 }
+      }
     },
     {
       "id": "linter_configured",
@@ -64,7 +94,26 @@
       "level": "L2",
       "title": "Linter configured",
       "rationale": "Static guardrail that keeps agent output consistent.",
-      "signal": { "anyFileExists": [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs", ".ruff.toml", "ruff.toml", ".flake8", ".rubocop.yml", ".golangci.yml", ".golangci.yaml"], "orConfigKey": [{ "file": "package.json", "key": "eslintConfig" }, { "file": "pyproject.toml", "section": "tool.ruff" }] }
+      "signal": {
+        "anyFileExists": [
+          ".eslintrc",
+          ".eslintrc.json",
+          ".eslintrc.js",
+          ".eslintrc.cjs",
+          "eslint.config.js",
+          "eslint.config.mjs",
+          ".ruff.toml",
+          "ruff.toml",
+          ".flake8",
+          ".rubocop.yml",
+          ".golangci.yml",
+          ".golangci.yaml"
+        ],
+        "orConfigKey": [
+          { "file": "package.json", "key": "eslintConfig" },
+          { "file": "pyproject.toml", "section": "tool.ruff" }
+        ]
+      }
     },
     {
       "id": "formatter_configured",
@@ -72,7 +121,22 @@
       "level": "L2",
       "title": "Formatter configured",
       "rationale": "Deterministic formatting handles the 'last 10%' agents miss.",
-      "signal": { "anyFileExists": [".prettierrc", ".prettierrc.json", ".prettierrc.js", "prettier.config.js", ".editorconfig", "rustfmt.toml", ".rustfmt.toml"], "orConfigKey": [{ "file": "package.json", "key": "prettier" }, { "file": "pyproject.toml", "section": "tool.black" }, { "file": "pyproject.toml", "section": "tool.ruff.format" }] }
+      "signal": {
+        "anyFileExists": [
+          ".prettierrc",
+          ".prettierrc.json",
+          ".prettierrc.js",
+          "prettier.config.js",
+          ".editorconfig",
+          "rustfmt.toml",
+          ".rustfmt.toml"
+        ],
+        "orConfigKey": [
+          { "file": "package.json", "key": "prettier" },
+          { "file": "pyproject.toml", "section": "tool.black" },
+          { "file": "pyproject.toml", "section": "tool.ruff.format" }
+        ]
+      }
     },
     {
       "id": "tests_present",
@@ -80,7 +144,18 @@
       "level": "L2",
       "title": "A test suite exists",
       "rationale": "The agent's primary feedback loop; verification is the AEM differentiator.",
-      "signal": { "anyPathMatches": ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*_test.go", "**/tests/**", "**/test/**", "**/__tests__/**", "**/spec/**"] }
+      "signal": {
+        "anyPathMatches": [
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/test_*.py",
+          "**/*_test.go",
+          "**/tests/**",
+          "**/test/**",
+          "**/__tests__/**",
+          "**/spec/**"
+        ]
+      }
     },
     {
       "id": "ci_on_pr",
@@ -88,7 +163,18 @@
       "level": "L3",
       "title": "CI runs on PRs",
       "rationale": "Automates the verification loop so agent changes are checked before merge.",
-      "signal": { "anyFileExists": [".github/workflows", ".gitlab-ci.yml", ".circleci/config.yml", "azure-pipelines.yml", ".buildkite/pipeline.yml", "Jenkinsfile", ".github/workflows/ci.yml", ".github/workflows/test.yml"] }
+      "signal": {
+        "anyFileExists": [
+          ".github/workflows",
+          ".gitlab-ci.yml",
+          ".circleci/config.yml",
+          "azure-pipelines.yml",
+          ".buildkite/pipeline.yml",
+          "Jenkinsfile",
+          ".github/workflows/ci.yml",
+          ".github/workflows/test.yml"
+        ]
+      }
     },
     {
       "id": "type_checker",
@@ -96,7 +182,13 @@
       "level": "L3",
       "title": "Type-checker configured",
       "rationale": "Types are a strong guardrail that catches a class of agent mistakes at edit time.",
-      "signal": { "anyFileExists": ["tsconfig.json", "mypy.ini", ".mypy.ini", "pyrightconfig.json"], "orConfigKey": [{ "file": "pyproject.toml", "section": "tool.mypy" }, { "file": "pyproject.toml", "section": "tool.pyright" }] }
+      "signal": {
+        "anyFileExists": ["tsconfig.json", "mypy.ini", ".mypy.ini", "pyrightconfig.json"],
+        "orConfigKey": [
+          { "file": "pyproject.toml", "section": "tool.mypy" },
+          { "file": "pyproject.toml", "section": "tool.pyright" }
+        ]
+      }
     },
     {
       "id": "one_command_setup",
@@ -104,7 +196,20 @@
       "level": "L3",
       "title": "One-command setup / dev environment",
       "rationale": "Agents (and humans) get a reproducible environment without guesswork.",
-      "signal": { "anyFileExists": ["Makefile", "Taskfile.yml", "justfile", ".devcontainer/devcontainer.json", "docker-compose.yml", "docker-compose.yaml", "flake.nix", "scripts/setup.sh", "scripts/bootstrap.sh", "bin/setup"] }
+      "signal": {
+        "anyFileExists": [
+          "Makefile",
+          "Taskfile.yml",
+          "justfile",
+          ".devcontainer/devcontainer.json",
+          "docker-compose.yml",
+          "docker-compose.yaml",
+          "flake.nix",
+          "scripts/setup.sh",
+          "scripts/bootstrap.sh",
+          "bin/setup"
+        ]
+      }
     },
     {
       "id": "setup_docs",
@@ -112,7 +217,16 @@
       "level": "L3",
       "title": "Setup/contributing docs present",
       "rationale": "Documents how to work in the repo beyond the README stub.",
-      "signal": { "anyFileExists": ["CONTRIBUTING.md", "docs/", "DEVELOPMENT.md", "docs/development.md", "docs/setup.md", "doc/"] }
+      "signal": {
+        "anyFileExists": [
+          "CONTRIBUTING.md",
+          "docs/",
+          "DEVELOPMENT.md",
+          "docs/development.md",
+          "docs/setup.md",
+          "doc/"
+        ]
+      }
     },
     {
       "id": "secret_scanning",
@@ -120,7 +234,16 @@
       "level": "L3",
       "title": "Secret scanning / ignore hygiene",
       "rationale": "Prevents agents from committing or surfacing secrets.",
-      "signal": { "anyFileExists": [".gitleaks.toml", ".github/workflows/secret-scan.yml", ".pre-commit-config.yaml", ".secrets.baseline", ".trufflehog.yml"], "orFileContains": [{ "file": ".gitignore", "anyOf": [".env", "*.pem", "secrets"] }] }
+      "signal": {
+        "anyFileExists": [
+          ".gitleaks.toml",
+          ".github/workflows/secret-scan.yml",
+          ".pre-commit-config.yaml",
+          ".secrets.baseline",
+          ".trufflehog.yml"
+        ],
+        "orFileContains": [{ "file": ".gitignore", "anyOf": [".env", "*.pem", "secrets"] }]
+      }
     },
     {
       "id": "precommit_hooks",
@@ -128,7 +251,16 @@
       "level": "L4",
       "title": "Pre-commit / pre-push hooks",
       "rationale": "Enforces quality gates deterministically, not by reminder.",
-      "signal": { "anyFileExists": [".pre-commit-config.yaml", ".husky", ".husky/pre-commit", ".githooks", "lefthook.yml", ".lefthook.yml"] }
+      "signal": {
+        "anyFileExists": [
+          ".pre-commit-config.yaml",
+          ".husky",
+          ".husky/pre-commit",
+          ".githooks",
+          "lefthook.yml",
+          ".lefthook.yml"
+        ]
+      }
     },
     {
       "id": "observability",
@@ -136,7 +268,19 @@
       "level": "L4",
       "title": "Logging / monitoring present",
       "rationale": "Agent actions and runtime behavior are inspectable.",
-      "signal": { "anyFileExists": ["**/logger.*", "**/logging.*"], "orDependency": ["pino", "winston", "structlog", "loguru", "opentelemetry", "@opentelemetry/api", "sentry-sdk", "@sentry/node"] }
+      "signal": {
+        "anyFileExists": ["**/logger.*", "**/logging.*"],
+        "orDependency": [
+          "pino",
+          "winston",
+          "structlog",
+          "loguru",
+          "opentelemetry",
+          "@opentelemetry/api",
+          "sentry-sdk",
+          "@sentry/node"
+        ]
+      }
     },
     {
       "id": "eval_harness",
@@ -144,7 +288,17 @@
       "level": "L4",
       "title": "Eval suite or LLM-as-judge harness",
       "rationale": "Verification becomes a first-class, measured artifact (EDD).",
-      "signal": { "anyPathMatches": ["**/evals/**", "**/eval/**", "**/*.eval.*", "**/promptfoo*.{yml,yaml,json}", "**/braintrust*", "**/.promptfoo*"], "orDependency": ["promptfoo", "braintrust", "deepeval", "ragas"] }
+      "signal": {
+        "anyPathMatches": [
+          "**/evals/**",
+          "**/eval/**",
+          "**/*.eval.*",
+          "**/promptfoo*.{yml,yaml,json}",
+          "**/braintrust*",
+          "**/.promptfoo*"
+        ],
+        "orDependency": ["promptfoo", "braintrust", "deepeval", "ragas"]
+      }
     },
     {
       "id": "compounding_instructions",
@@ -152,7 +306,9 @@
       "level": "L5",
       "title": "Agent instructions show compounding (substantial, sectioned)",
       "rationale": "A living, frequently-updated CLAUDE.md that has grown past a single page is a signal of compounding engineering.",
-      "signal": { "fileMinBytes": { "anyOf": ["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md"], "bytes": 2000 } }
+      "signal": {
+        "fileMinBytes": { "anyOf": ["CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md"], "bytes": 2000 }
+      }
     },
     {
       "id": "shared_skills_commands",
@@ -160,7 +316,9 @@
       "level": "L5",
       "title": "Shared agent skills / commands",
       "rationale": "The repo ships reusable agent harnesses (skills, slash-commands), not just prose.",
-      "signal": { "anyFileExists": [".claude/skills", ".claude/commands", ".claude/agents", ".cursor/rules"] }
+      "signal": {
+        "anyFileExists": [".claude/skills", ".claude/commands", ".claude/agents", ".cursor/rules"]
+      }
     },
     {
       "id": "agent_readable_docs",
@@ -168,7 +326,9 @@
       "level": "L5",
       "title": "Agent-readable docs (llms.txt)",
       "rationale": "Built for agents as a first-class consumer of the repo's information.",
-      "signal": { "anyFileExists": ["llms.txt", "llms-full.txt", "public/llms.txt", ".well-known/llms.txt"] }
+      "signal": {
+        "anyFileExists": ["llms.txt", "llms-full.txt", "public/llms.txt", ".well-known/llms.txt"]
+      }
     }
   ],
   "remediationOrder": [

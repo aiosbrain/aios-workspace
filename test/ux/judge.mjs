@@ -47,11 +47,23 @@ export function validateVerdict(parsed) {
   if (typeof parsed.reason !== "string") {
     return { ok: false, error: "reason must be a string" };
   }
-  if (typeof parsed.confidence !== "number" || Number.isNaN(parsed.confidence) ||
-      parsed.confidence < 0 || parsed.confidence > 1) {
+  if (
+    typeof parsed.confidence !== "number" ||
+    Number.isNaN(parsed.confidence) ||
+    parsed.confidence < 0 ||
+    parsed.confidence > 1
+  ) {
     return { ok: false, error: "confidence must be a number in [0,1]" };
   }
-  return { ok: true, value: { criterion: parsed.criterion, verdict: parsed.verdict, reason: parsed.reason, confidence: parsed.confidence } };
+  return {
+    ok: true,
+    value: {
+      criterion: parsed.criterion,
+      verdict: parsed.verdict,
+      reason: parsed.reason,
+      confidence: parsed.confidence,
+    },
+  };
 }
 
 // Parse strict JSON from a model reply. Accepts a bare JSON object only; tolerates
@@ -60,8 +72,11 @@ function parseStrict(raw) {
   if (typeof raw !== "string") return { ok: false, error: "model returned non-string" };
   const trimmed = raw.trim();
   let parsed;
-  try { parsed = JSON.parse(trimmed); }
-  catch (e) { return { ok: false, error: `malformed JSON: ${e.message}` }; }
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (e) {
+    return { ok: false, error: `malformed JSON: ${e.message}` };
+  }
   return { ok: true, parsed };
 }
 
@@ -73,7 +88,7 @@ function buildMessages(flow, criterion, evidence) {
     "You are an isolated UX judge. You grade EXACTLY ONE criterion about a product flow " +
     "from the supplied evidence (screenshots, console errors, and a transcript). Grade the " +
     "OUTCOME shown in the evidence, not the path taken. If the evidence is insufficient to " +
-    "decide, answer \"unknown\" — never guess. Reply with STRICT JSON only, no prose, no " +
+    'decide, answer "unknown" — never guess. Reply with STRICT JSON only, no prose, no ' +
     "markdown fences, exactly these four fields: " +
     '{"criterion": string, "verdict": "pass"|"fail"|"unknown", "reason": string, "confidence": number between 0 and 1}.';
   const user =
@@ -96,12 +111,32 @@ async function judgeCriterionOnce(flow, criterion, evidence, callModel) {
   const req = buildMessages(flow, criterion, evidence);
   for (let attempt = 0; attempt < 2; attempt++) {
     let raw;
-    try { raw = await callModel(req); }
-    catch (e) { if (attempt === 1) return { verdict: "review_needed", reason: `judge call error: ${e.message}`, confidence: 0 }; continue; }
+    try {
+      raw = await callModel(req);
+    } catch (e) {
+      if (attempt === 1)
+        return {
+          verdict: "review_needed",
+          reason: `judge call error: ${e.message}`,
+          confidence: 0,
+        };
+      continue;
+    }
     const parsed = parseStrict(raw);
-    if (!parsed.ok) { if (attempt === 1) return { verdict: "review_needed", reason: parsed.error, confidence: 0 }; continue; }
+    if (!parsed.ok) {
+      if (attempt === 1) return { verdict: "review_needed", reason: parsed.error, confidence: 0 };
+      continue;
+    }
     const valid = validateVerdict(parsed.parsed);
-    if (!valid.ok) { if (attempt === 1) return { verdict: "review_needed", reason: `invalid verdict: ${valid.error}`, confidence: 0 }; continue; }
+    if (!valid.ok) {
+      if (attempt === 1)
+        return {
+          verdict: "review_needed",
+          reason: `invalid verdict: ${valid.error}`,
+          confidence: 0,
+        };
+      continue;
+    }
     return valid.value;
   }
   // Unreachable, but stay safe.

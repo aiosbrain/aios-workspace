@@ -2,7 +2,7 @@
 //
 // Single source of scoring logic, consumed by:
 //   - validation/check-agent-readiness.mjs  (OGR10, advisory)
-//   - scripts/aios.mjs  (`aios assess-codebase [--push]`)
+//   - scripts/aios.mjs  (`aios assess-codebase`, offline/read-only)
 //
 // The rubric itself is data: validation/agent-readiness.rubric.json, vendored from
 // the monorepo-canonical agentic-engineering-maturity/rubric/agent-readiness.json.
@@ -14,9 +14,23 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IGNORE_DIRS = new Set([
-  ".git", "node_modules", "dist", "build", "out", "target", "vendor",
-  ".venv", "venv", "__pycache__", ".next", ".astro", "coverage", ".cache",
-  ".turbo", "tmp", ".aios",
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "vendor",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".next",
+  ".astro",
+  "coverage",
+  ".cache",
+  ".turbo",
+  "tmp",
+  ".aios",
 ]);
 const MAX_FILES = 40000;
 
@@ -31,7 +45,11 @@ function indexRepo(repo) {
   const walk = (dir, rel, depth) => {
     if (out.length > MAX_FILES || depth > 12) return;
     let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const e of entries) {
       if (out.length > MAX_FILES) return;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
@@ -54,8 +72,11 @@ function globToRegex(glob) {
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === "*") {
-      if (glob[i + 1] === "*") { re += ".*"; i++; if (glob[i + 1] === "/") i++; }
-      else re += "[^/]*";
+      if (glob[i + 1] === "*") {
+        re += ".*";
+        i++;
+        if (glob[i + 1] === "/") i++;
+      } else re += "[^/]*";
     } else if (".+^${}()|[]\\".includes(c)) {
       re += "\\" + c;
     } else if (c === "{") {
@@ -74,11 +95,19 @@ function globToRegex(glob) {
 const isGlob = (s) => s.includes("*") || s.includes("{");
 
 function readFileSafe(repo, rel) {
-  try { return readFileSync(path.join(repo, rel), "utf8"); } catch { return null; }
+  try {
+    return readFileSync(path.join(repo, rel), "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function fileBytes(repo, rel) {
-  try { return statSync(path.join(repo, rel)).size; } catch { return -1; }
+  try {
+    return statSync(path.join(repo, rel)).size;
+  } catch {
+    return -1;
+  }
 }
 
 // Resolve dependency names from common manifests (best-effort).
@@ -88,12 +117,27 @@ function repoDependencies(repo) {
   if (pkg) {
     try {
       const j = JSON.parse(pkg);
-      for (const k of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      for (const k of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+      ]) {
         for (const name of Object.keys(j[k] || {})) deps.add(name);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
-  for (const f of ["pyproject.toml", "requirements.txt", "poetry.lock", "Pipfile", "go.mod", "Cargo.toml", "Gemfile"]) {
+  for (const f of [
+    "pyproject.toml",
+    "requirements.txt",
+    "poetry.lock",
+    "Pipfile",
+    "go.mod",
+    "Cargo.toml",
+    "Gemfile",
+  ]) {
     const text = readFileSafe(repo, f);
     if (text) deps.add("__raw__:" + f + ":" + text.toLowerCase());
   }
@@ -135,7 +179,11 @@ function evalSignal(signal, ctx) {
       const text = readFileSafe(repo, c.file);
       if (!text) return false;
       if (c.key) {
-        try { return c.key in JSON.parse(text); } catch { return false; }
+        try {
+          return c.key in JSON.parse(text);
+        } catch {
+          return false;
+        }
       }
       if (c.section) return text.includes("[" + c.section);
       return false;
@@ -186,7 +234,9 @@ export function scoreRepo(repo, rubric) {
   }
 
   // Verification cap: cannot exceed capLevel with zero passing checks in the cap pillar.
-  const capPillarPasses = results.filter((r) => r.pillar === rubric.verificationCapPillar && r.pass).length;
+  const capPillarPasses = results.filter(
+    (r) => r.pillar === rubric.verificationCapPillar && r.pass
+  ).length;
   let capped = false;
   if (capPillarPasses === 0 && level > rubric.verificationCapLevel) {
     level = rubric.verificationCapLevel;
@@ -194,16 +244,26 @@ export function scoreRepo(repo, rubric) {
   }
 
   const levelId = level === 0 ? "L0" : levelOrder[level - 1];
-  const levelMeta = rubric.levels.find((l) => l.id === levelId) || { id: "L0", name: "Pre-functional", blurb: "Does not yet clear L1." };
+  const levelMeta = rubric.levels.find((l) => l.id === levelId) || {
+    id: "L0",
+    name: "Pre-functional",
+    blurb: "Does not yet clear L1.",
+  };
 
   // Overall composite %.
   const passedAll = results.filter((r) => r.pass).length;
-  const pct = Math.round((passedAll / results.length) * 100);
+  // 2-decimal to match the Team Brain Python scanner (round(x, 2)) + the numeric(5,2) column.
+  const pct = Math.round((passedAll / results.length) * 10000) / 100;
 
   // Pillar rollup.
   const pillars = rubric.pillars.map((p) => {
     const subset = results.filter((r) => r.pillar === p.key);
-    return { key: p.key, title: p.title, passed: subset.filter((r) => r.pass).length, total: subset.length };
+    return {
+      key: p.key,
+      title: p.title,
+      passed: subset.filter((r) => r.pass).length,
+      total: subset.length,
+    };
   });
 
   // Gaps to the NEXT level, ranked by remediationOrder.
@@ -211,7 +271,10 @@ export function scoreRepo(repo, rubric) {
   const order = rubric.remediationOrder || results.map((r) => r.id);
   const failing = results.filter((r) => !r.pass);
   const nextLevelFailing = failing.filter((r) => levelIndex(r.level) <= nextLevelIdx);
-  const rank = (id) => { const i = order.indexOf(id); return i === -1 ? 999 : i; };
+  const rank = (id) => {
+    const i = order.indexOf(id);
+    return i === -1 ? 999 : i;
+  };
   const gaps = (nextLevelFailing.length ? nextLevelFailing : failing)
     .sort((a, b) => rank(a.id) - rank(b.id))
     .map((r) => ({ id: r.id, title: r.title, level: r.level, pillar: r.pillar }));

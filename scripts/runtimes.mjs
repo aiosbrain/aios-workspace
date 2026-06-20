@@ -13,19 +13,19 @@ export const RUNTIMES = {
     export: { layout: "claude", harness: true },
     gui: { driver: "claude-sdk" },
   },
-  "hermes": {
+  hermes: {
     export: { layout: "skillmd", harness: false },
     gui: { driver: "acp", command: ["hermes", "acp"] },
   },
-  "openclaw": {
+  openclaw: {
     export: { layout: "skillmd", harness: false },
     gui: { driver: "acp", command: ["openclaw", "acp"] }, // `openclaw acp` = stdio ACP bridge (Gateway-backed)
   },
-  "codex": {
+  codex: {
     export: { layout: "instructions", harness: false },
     gui: { driver: "codex" },
   },
-  "opencode": {
+  opencode: {
     export: { layout: "instructions", harness: false },
     gui: { driver: "opencode" },
   },
@@ -39,10 +39,14 @@ export const RUNTIME_NAMES = Object.keys(RUNTIMES);
 
 // View consumed by `aios skills export` (Phase 2): { runtime: {layout, harness} }
 export const EXPORT_RUNTIMES = Object.fromEntries(
-  Object.entries(RUNTIMES).filter(([, r]) => r.export).map(([k, r]) => [k, r.export]),
+  Object.entries(RUNTIMES)
+    .filter(([, r]) => r.export)
+    .map(([k, r]) => [k, r.export])
 );
 
 // View consumed by the GUI registry (Phase 3): { runtime: {driver, command?} }
 export const GUI_RUNTIMES = Object.fromEntries(
-  Object.entries(RUNTIMES).filter(([, r]) => r.gui).map(([k, r]) => [k, r.gui]),
+  Object.entries(RUNTIMES)
+    .filter(([, r]) => r.gui)
+    .map(([k, r]) => [k, r.gui])
 );

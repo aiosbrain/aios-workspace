@@ -48,13 +48,29 @@ export function mapOpencodeEvent(event, sessionId) {
       if (part.type === "tool") {
         const st = part.state || {};
         if (st.status === "running") {
-          return [{ type: "tool_use", name: part.tool || "tool", input: st.input ?? {}, id: part.callID }];
+          return [
+            { type: "tool_use", name: part.tool || "tool", input: st.input ?? {}, id: part.callID },
+          ];
         }
         if (st.status === "completed") {
-          return [{ type: "tool_result", id: part.callID, text: String(st.output ?? "").slice(0, 4000), is_error: false }];
+          return [
+            {
+              type: "tool_result",
+              id: part.callID,
+              text: String(st.output ?? "").slice(0, 4000),
+              is_error: false,
+            },
+          ];
         }
         if (st.status === "error") {
-          return [{ type: "tool_result", id: part.callID, text: String(st.error ?? "").slice(0, 4000), is_error: true }];
+          return [
+            {
+              type: "tool_result",
+              id: part.callID,
+              text: String(st.error ?? "").slice(0, 4000),
+              is_error: true,
+            },
+          ];
         }
       }
       return [];
@@ -99,18 +115,38 @@ export async function run(host) {
 
   // 1. Spawn a headless opencode server scoped to the repo (random free port).
   const child = spawn("opencode", ["serve", "--port", "0", "--hostname", "127.0.0.1"], {
-    cwd: repo, stdio: ["ignore", "pipe", "pipe"],
+    cwd: repo,
+    stdio: ["ignore", "pipe", "pipe"],
   });
   let stderrTail = "";
   let spawnError = null;
-  child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d).slice(-2000); });
-  child.on("error", (e) => { spawnError = e; });
+  child.stderr?.on("data", (d) => {
+    stderrTail = (stderrTail + d).slice(-2000);
+  });
+  child.on("error", (e) => {
+    spawnError = e;
+  });
 
   const ac = new AbortController(); // aborts SSE + in-flight fetches
   let baseUrl = null;
   let aborted = false;
-  const onAbort = () => { aborted = true; try { ac.abort(); } catch { /* */ } try { child.kill("SIGTERM"); } catch { /* */ } };
-  if (signal?.aborted) { onAbort(); return; }
+  const onAbort = () => {
+    aborted = true;
+    try {
+      ac.abort();
+    } catch {
+      /* */
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* */
+    }
+  };
+  if (signal?.aborted) {
+    onAbort();
+    return;
+  }
   signal?.addEventListener?.("abort", onAbort, { once: true });
 
   // Wait for "listening on http://127.0.0.1:PORT".
@@ -119,7 +155,10 @@ export async function run(host) {
     const onData = (d) => {
       buf += d;
       const m = buf.match(/http:\/\/127\.0\.0\.1:\d+/);
-      if (m) { child.stdout.off("data", onData); resolve(m[0]); }
+      if (m) {
+        child.stdout.off("data", onData);
+        resolve(m[0]);
+      }
     };
     child.stdout.on("data", onData);
     child.on("close", () => resolve(null));
@@ -128,10 +167,17 @@ export async function run(host) {
   if (!baseUrl) {
     if (aborted) return;
     const enoent = spawnError?.code === "ENOENT";
-    emit({ type: "error", message: enoent
-      ? "agent_runtime 'opencode' selected but 'opencode' is not on PATH. Install OpenCode, then retry."
-      : `failed to start 'opencode serve'${stderrTail ? `: ${stderrTail.trim().slice(-400)}` : ""}` });
-    try { child.kill("SIGKILL"); } catch { /* */ }
+    emit({
+      type: "error",
+      message: enoent
+        ? "agent_runtime 'opencode' selected but 'opencode' is not on PATH. Install OpenCode, then retry."
+        : `failed to start 'opencode serve'${stderrTail ? `: ${stderrTail.trim().slice(-400)}` : ""}`,
+    });
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* */
+    }
     return;
   }
 
@@ -141,13 +187,25 @@ export async function run(host) {
   // 2. Create a session.
   let sessionId;
   try {
-    const res = await fetch(`${baseUrl}/session`, { method: "POST", headers: json(), body: "{}", signal: ac.signal });
+    const res = await fetch(`${baseUrl}/session`, {
+      method: "POST",
+      headers: json(),
+      body: "{}",
+      signal: ac.signal,
+    });
     sessionId = (await res.json())?.id;
     if (!sessionId) throw new Error("no session id");
   } catch (e) {
     if (aborted) return;
-    emit({ type: "error", message: `opencode: failed to create session (${String(e?.message || e)})` });
-    try { child.kill("SIGKILL"); } catch { /* */ }
+    emit({
+      type: "error",
+      message: `opencode: failed to create session (${String(e?.message || e)})`,
+    });
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* */
+    }
     return;
   }
 
@@ -156,10 +214,16 @@ export async function run(host) {
   //    `session.idle` is the authoritative turn-end; `session.error` taints it.
   const handledPerms = new Set();
   let turnErrored = false; // set by any session.error for our session this turn
-  let onIdle = null;       // resolves the current turn's idle wait
-  const forUs = (ev) => { const s = ev.properties?.sessionID; return !s || s === sessionId; };
+  let onIdle = null; // resolves the current turn's idle wait
+  const forUs = (ev) => {
+    const s = ev.properties?.sessionID;
+    return !s || s === sessionId;
+  };
   async function handleEvent(ev) {
-    if (ev.type === "session.idle" && ev.properties?.sessionID === sessionId) { onIdle?.(); return; }
+    if (ev.type === "session.idle" && ev.properties?.sessionID === sessionId) {
+      onIdle?.();
+      return;
+    }
     if (ev.type === "session.error" && forUs(ev)) turnErrored = true; // fall through to emit it too
     if (ev.type === "permission.updated") {
       const p = ev.properties;
@@ -172,9 +236,14 @@ export async function run(host) {
       });
       try {
         await fetch(`${baseUrl}/session/${sessionId}/permissions/${p.id}`, {
-          method: "POST", headers: json(), body: JSON.stringify({ response: toPermissionResponse(choice) }), signal: ac.signal,
+          method: "POST",
+          headers: json(),
+          body: JSON.stringify({ response: toPermissionResponse(choice) }),
+          signal: ac.signal,
         });
-      } catch { /* server gone / aborted */ }
+      } catch {
+        /* server gone / aborted */
+      }
       return;
     }
     for (const wsEvent of mapOpencodeEvent(ev, sessionId)) emit(wsEvent);
@@ -182,8 +251,11 @@ export async function run(host) {
 
   (async () => {
     let res;
-    try { res = await fetch(`${baseUrl}/event`, { headers: authHeaders, signal: ac.signal }); }
-    catch { return; }
+    try {
+      res = await fetch(`${baseUrl}/event`, { headers: authHeaders, signal: ac.signal });
+    } catch {
+      return;
+    }
     const reader = res.body?.getReader?.();
     if (!reader) return;
     const decoder = new TextDecoder();
@@ -195,14 +267,22 @@ export async function run(host) {
         buf += decoder.decode(value, { stream: true });
         let idx;
         while ((idx = buf.indexOf("\n\n")) >= 0) {
-          const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          let ev;
+          try {
+            ev = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
           handleEvent(ev);
         }
       }
-    } catch { /* aborted / stream ended */ }
+    } catch {
+      /* aborted / stream ended */
+    }
   })();
 
   // model "providerID/modelID" → {providerID, modelID}; omit to use opencode's default.
@@ -221,14 +301,23 @@ export async function run(host) {
       let failed = false;
       // Resolve when the session goes idle (true turn-end), with a fallback so a
       // missing idle event can't wedge the turn.
-      const idle = new Promise((r) => { onIdle = r; });
+      const idle = new Promise((r) => {
+        onIdle = r;
+      });
       try {
         const res = await fetch(`${baseUrl}/session/${sessionId}/message`, {
-          method: "POST", headers: json(),
-          body: JSON.stringify({ parts: [{ type: "text", text: turn.text }], ...(modelBody ? { model: modelBody } : {}) }),
+          method: "POST",
+          headers: json(),
+          body: JSON.stringify({
+            parts: [{ type: "text", text: turn.text }],
+            ...(modelBody ? { model: modelBody } : {}),
+          }),
           signal: ac.signal,
         });
-        if (!res.ok) { failed = true; emit({ type: "error", message: `opencode: message failed (HTTP ${res.status})` }); }
+        if (!res.ok) {
+          failed = true;
+          emit({ type: "error", message: `opencode: message failed (HTTP ${res.status})` });
+        }
         // Drain trailing events (a provider error often arrives as session.error
         // just after the POST resolves) before deciding the result.
         await Promise.race([idle, new Promise((r) => setTimeout(r, 4000).unref?.())]);
@@ -245,22 +334,46 @@ export async function run(host) {
       // Post-turn governance sweep (opencode writes files in-process).
       try {
         const { violations, truncated } = await postTurnSweep(repo, guardWrite, turnStart);
-        for (const v of violations) emit({ type: "error", message: `post-turn guard: ${v.path} — ${v.reason}` });
+        for (const v of violations)
+          emit({ type: "error", message: `post-turn guard: ${v.path} — ${v.reason}` });
         if (violations.length) failed = true;
         if (truncated) {
-          emit({ type: "error", message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.` });
+          emit({
+            type: "error",
+            message: `post-turn guard: workspace exceeds the ${SWEEP_MAX_FILES}-file sweep cap — some changes this turn were NOT validated. Review changes manually or run validation/validate-all.sh.`,
+          });
           failed = true;
         }
       } catch (e) {
-        emit({ type: "error", message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.` });
+        emit({
+          type: "error",
+          message: `post-turn guard: sweep failed to run (${String(e?.message || e)}) — changes this turn were NOT validated.`,
+        });
         failed = true;
       }
 
       emit({ type: "result", subtype: failed ? "error" : "success", cost_usd: null });
     }
   } finally {
-    try { if (!aborted) await fetch(`${baseUrl}/session/${sessionId}/abort`, { method: "POST", headers: json(), body: "{}" }); } catch { /* */ }
-    try { ac.abort(); } catch { /* */ }
-    try { child.kill("SIGTERM"); } catch { /* */ }
+    try {
+      if (!aborted)
+        await fetch(`${baseUrl}/session/${sessionId}/abort`, {
+          method: "POST",
+          headers: json(),
+          body: "{}",
+        });
+    } catch {
+      /* */
+    }
+    try {
+      ac.abort();
+    } catch {
+      /* */
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* */
+    }
   }
 }

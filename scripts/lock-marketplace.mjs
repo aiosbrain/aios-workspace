@@ -33,7 +33,16 @@
 // local fixture upstream. Run a real refresh (no --check) manually to re-pin a commit.
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, readdirSync, lstatSync, mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  lstatSync,
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,12 +68,18 @@ const UPSTREAM_MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
 // community tiers and match ^[a-z0-9-]+$.
 //   plugin               skill id (dir under plugins/<plugin>/skills/)   category
 const CURATED = [
-  { plugin: "claude-md-management", skill: "claude-md-improver", category: "Marketplace · Anthropic" },
-  { plugin: "session-report",       skill: "session-report",     category: "Marketplace · Anthropic" },
-  { plugin: "math-olympiad",        skill: "math-olympiad",      category: "Marketplace · Anthropic" },
+  {
+    plugin: "claude-md-management",
+    skill: "claude-md-improver",
+    category: "Marketplace · Anthropic",
+  },
+  { plugin: "session-report", skill: "session-report", category: "Marketplace · Anthropic" },
+  { plugin: "math-olympiad", skill: "math-olympiad", category: "Marketplace · Anthropic" },
 ];
 
-export function sha256(buf) { return createHash("sha256").update(buf).digest("hex"); }
+export function sha256(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
 
 // Walk a dir → sorted relative POSIX paths. Throws on ANY symlink (a fetched skill must be
 // plain files — a link could escape the tree). Mirrors lock-skill-library's walkFiles.
@@ -73,7 +88,8 @@ function walkFiles(root, rel = "") {
   for (const name of readdirSync(path.join(root, rel)).sort()) {
     const relChild = rel ? `${rel}/${name}` : name;
     const st = lstatSync(path.join(root, relChild));
-    if (st.isSymbolicLink()) throw new Error(`symlink not allowed in marketplace skill: ${relChild}`);
+    if (st.isSymbolicLink())
+      throw new Error(`symlink not allowed in marketplace skill: ${relChild}`);
     if (st.isDirectory()) out.push(...walkFiles(root, relChild));
     else if (st.isFile()) out.push(relChild);
   }
@@ -82,7 +98,10 @@ function walkFiles(root, rel = "") {
 
 /** Sorted [{path, sha256}] for a dir. Throws on any symlink. */
 export function hashDir(dir) {
-  return walkFiles(dir).map((rel) => ({ path: rel, sha256: sha256(readFileSync(path.join(dir, rel))) }));
+  return walkFiles(dir).map((rel) => ({
+    path: rel,
+    sha256: sha256(readFileSync(path.join(dir, rel))),
+  }));
 }
 
 // Extract the `description:` value from raw frontmatter, tolerating YAML block scalars and
@@ -99,7 +118,12 @@ function descFromRaw(md) {
     if (/^[A-Za-z0-9_-]+:/.test(fmLines[j])) break; // next top-level key
     parts.push(fmLines[j].trim());
   }
-  return parts.join(" ").replace(/^["'|>+-]+/, "").replace(/["']/g, "").replace(/\s+/g, " ").trim();
+  return parts
+    .join(" ")
+    .replace(/^["'|>+-]+/, "")
+    .replace(/["']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -111,10 +135,13 @@ function descFromRaw(md) {
  * Pure w.r.t. the source repo: only writes under a fresh os.tmpdir() scratch dir.
  */
 export function gitFetchSubdir(repoUrl, commit, pathInRepo) {
-  if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error(`commit must be a full 40-char sha: ${commit}`);
-  if (/(^|\/)\.\.(\/|$)/.test(pathInRepo) || path.isAbsolute(pathInRepo)) throw new Error(`bad path_in_repo: ${pathInRepo}`);
+  if (!/^[0-9a-f]{40}$/i.test(commit))
+    throw new Error(`commit must be a full 40-char sha: ${commit}`);
+  if (/(^|\/)\.\.(\/|$)/.test(pathInRepo) || path.isAbsolute(pathInRepo))
+    throw new Error(`bad path_in_repo: ${pathInRepo}`);
   const scratch = mkdtempSync(path.join(tmpdir(), "aios-mkt-"));
-  const run = (args) => execFileSync("git", ["-C", scratch, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const run = (args) =>
+    execFileSync("git", ["-C", scratch, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   try {
     run(["init", "-q"]);
     run(["sparse-checkout", "init", "--no-cone"]);
@@ -124,7 +151,9 @@ export function gitFetchSubdir(repoUrl, commit, pathInRepo) {
     run(["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"]);
   } catch (e) {
     rmSync(scratch, { recursive: true, force: true });
-    throw new Error(`fetch failed for ${repoUrl}@${commit.slice(0, 7)}:${pathInRepo} — ${e.stderr ? e.stderr.toString().trim() : e.message}`);
+    throw new Error(
+      `fetch failed for ${repoUrl}@${commit.slice(0, 7)}:${pathInRepo} — ${e.stderr ? e.stderr.toString().trim() : e.message}`
+    );
   }
   const sub = path.join(scratch, pathInRepo);
   if (!existsSync(sub)) {
@@ -137,18 +166,25 @@ export function gitFetchSubdir(repoUrl, commit, pathInRepo) {
 // ── refresh (network) ─────────────────────────────────────────────────────────
 
 function ghReadJson(ghRepo, repoPath, ref) {
-  const out = execFileSync("gh", ["api", `repos/${ghRepo}/contents/${repoPath}?ref=${ref}`, "--jq", ".content"], { encoding: "utf8" });
+  const out = execFileSync(
+    "gh",
+    ["api", `repos/${ghRepo}/contents/${repoPath}?ref=${ref}`, "--jq", ".content"],
+    { encoding: "utf8" }
+  );
   return JSON.parse(Buffer.from(out, "base64").toString("utf8"));
 }
 
 /** Refresh marketplace.json from upstream. Requires network + `gh`. */
 function refresh() {
-  const head = execFileSync("gh", ["api", `repos/${UPSTREAM_GH}/commits/main`, "--jq", ".sha"], { encoding: "utf8" }).trim();
+  const head = execFileSync("gh", ["api", `repos/${UPSTREAM_GH}/commits/main`, "--jq", ".sha"], {
+    encoding: "utf8",
+  }).trim();
   console.log(`upstream HEAD: ${head}`);
 
   // 1. read + verify upstream marketplace.json schema.
   const upstream = ghReadJson(UPSTREAM_GH, UPSTREAM_MARKETPLACE_PATH, head);
-  if (!Array.isArray(upstream.plugins)) throw new Error("upstream marketplace.json: expected a `plugins` array");
+  if (!Array.isArray(upstream.plugins))
+    throw new Error("upstream marketplace.json: expected a `plugins` array");
 
   const skills = [];
   for (const c of CURATED) {
@@ -157,7 +193,9 @@ function refresh() {
     // We only admit FIRST-PARTY, in-repo plugins (source is a relative "./plugins/<name>"
     // string). Third-party `git-subdir`/`url` sources are intentionally out of scope for v1.
     if (typeof plugin.source !== "string" || !plugin.source.startsWith("./plugins/")) {
-      throw new Error(`curated plugin '${c.plugin}' is not first-party in-repo (source=${JSON.stringify(plugin.source)})`);
+      throw new Error(
+        `curated plugin '${c.plugin}' is not first-party in-repo (source=${JSON.stringify(plugin.source)})`
+      );
     }
     const pathInRepo = `${plugin.source.replace(/^\.\//, "")}/skills/${c.skill}`;
     const { dir, cleanup } = gitFetchSubdir(UPSTREAM_REPO, head, pathInRepo);
@@ -167,7 +205,9 @@ function refresh() {
       const id = c.skill;
       if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`skill id '${id}' must match ^[a-z0-9-]+$`);
       const files = hashDir(dir);
-      const fmDesc = Array.isArray(fm.description) ? fm.description.join(" ") : (fm.description || "");
+      const fmDesc = Array.isArray(fm.description)
+        ? fm.description.join(" ")
+        : fm.description || "";
       const description = String(fmDesc).replace(/\s+/g, " ").trim() || descFromRaw(skillMd);
       skills.push({
         id,
@@ -179,7 +219,9 @@ function refresh() {
         files,
       });
       console.log(`  + ${id}  (${files.length} files)`);
-    } finally { cleanup(); }
+    } finally {
+      cleanup();
+    }
   }
   skills.sort((a, b) => a.id.localeCompare(b.id));
   return { upstream_repo: UPSTREAM_REPO, upstream_commit: head, skills };
@@ -191,8 +233,12 @@ export function structuralCheck(catalog) {
   const problems = [];
   if (!catalog || typeof catalog !== "object") return ["marketplace.json is not an object"];
   if (!catalog.upstream_repo) problems.push("missing upstream_repo");
-  if (!/^[0-9a-f]{40}$/i.test(catalog.upstream_commit || "")) problems.push("upstream_commit must be a full 40-char sha");
-  if (!Array.isArray(catalog.skills)) { problems.push("missing skills[]"); return problems; }
+  if (!/^[0-9a-f]{40}$/i.test(catalog.upstream_commit || ""))
+    problems.push("upstream_commit must be a full 40-char sha");
+  if (!Array.isArray(catalog.skills)) {
+    problems.push("missing skills[]");
+    return problems;
+  }
   const seen = new Set();
   for (const s of catalog.skills) {
     const id = s.id || "(no id)";
@@ -200,18 +246,25 @@ export function structuralCheck(catalog) {
     if (seen.has(s.id)) problems.push(`${id}: duplicate id`);
     seen.add(s.id);
     if (s.trust !== "marketplace") problems.push(`${id}: trust must be "marketplace"`);
-    if (!s.source || !s.source.repo || !s.source.path_in_repo) problems.push(`${id}: source must have {repo, commit, path_in_repo}`);
+    if (!s.source || !s.source.repo || !s.source.path_in_repo)
+      problems.push(`${id}: source must have {repo, commit, path_in_repo}`);
     else {
-      if (!/^[0-9a-f]{40}$/i.test(s.source.commit || "")) problems.push(`${id}: source.commit must be a full 40-char sha`);
-      if (/(^|\/)\.\.(\/|$)/.test(s.source.path_in_repo) || path.isAbsolute(s.source.path_in_repo)) problems.push(`${id}: source.path_in_repo escapes the repo`);
+      if (!/^[0-9a-f]{40}$/i.test(s.source.commit || ""))
+        problems.push(`${id}: source.commit must be a full 40-char sha`);
+      if (/(^|\/)\.\.(\/|$)/.test(s.source.path_in_repo) || path.isAbsolute(s.source.path_in_repo))
+        problems.push(`${id}: source.path_in_repo escapes the repo`);
     }
-    if (!Array.isArray(s.files) || s.files.length === 0) problems.push(`${id}: must declare at least one file with sha256`);
+    if (!Array.isArray(s.files) || s.files.length === 0)
+      problems.push(`${id}: must declare at least one file with sha256`);
     else {
       for (const f of s.files) {
-        if (!f.path || /(^|\/)\.\.(\/|$)/.test(f.path) || path.isAbsolute(f.path)) problems.push(`${id}: bad file path '${f.path}'`);
-        if (!/^[0-9a-f]{64}$/i.test(f.sha256 || "")) problems.push(`${id}: file '${f.path}' has a malformed sha256`);
+        if (!f.path || /(^|\/)\.\.(\/|$)/.test(f.path) || path.isAbsolute(f.path))
+          problems.push(`${id}: bad file path '${f.path}'`);
+        if (!/^[0-9a-f]{64}$/i.test(f.sha256 || ""))
+          problems.push(`${id}: file '${f.path}' has a malformed sha256`);
       }
-      if (!s.files.some((f) => f.path === "SKILL.md")) problems.push(`${id}: must declare a SKILL.md`);
+      if (!s.files.some((f) => f.path === "SKILL.md"))
+        problems.push(`${id}: must declare a SKILL.md`);
     }
   }
   return problems;
@@ -220,17 +273,27 @@ export function structuralCheck(catalog) {
 function main() {
   const check = process.argv.includes("--check");
   if (check) {
-    if (!existsSync(MARKETPLACE_JSON)) { console.log("no marketplace.json — marketplace tier not registered"); return; }
+    if (!existsSync(MARKETPLACE_JSON)) {
+      console.log("no marketplace.json — marketplace tier not registered");
+      return;
+    }
     const cat = JSON.parse(readFileSync(MARKETPLACE_JSON, "utf8"));
     const problems = structuralCheck(cat);
-    if (problems.length) { console.error("marketplace.json STRUCTURAL ERRORS:\n  - " + problems.join("\n  - ")); process.exit(1); }
-    console.log(`marketplace lock OK — ${cat.skills.length} skill(s) @ ${cat.upstream_commit.slice(0, 7)} (structural; authenticity verified at install)`);
+    if (problems.length) {
+      console.error("marketplace.json STRUCTURAL ERRORS:\n  - " + problems.join("\n  - "));
+      process.exit(1);
+    }
+    console.log(
+      `marketplace lock OK — ${cat.skills.length} skill(s) @ ${cat.upstream_commit.slice(0, 7)} (structural; authenticity verified at install)`
+    );
     return;
   }
   const built = refresh();
   mkdirSync(LIBRARY_DIR, { recursive: true });
   writeFileSync(MARKETPLACE_JSON, JSON.stringify(built, null, 2) + "\n");
-  console.log(`wrote ${MARKETPLACE_JSON} — ${built.skills.length} skill(s) @ ${built.upstream_commit.slice(0, 7)}`);
+  console.log(
+    `wrote ${MARKETPLACE_JSON} — ${built.skills.length} skill(s) @ ${built.upstream_commit.slice(0, 7)}`
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main();

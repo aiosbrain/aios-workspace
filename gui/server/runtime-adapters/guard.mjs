@@ -19,7 +19,12 @@ import { fileURLToPath } from "node:url";
 // fallback so scaffolded workspaces (which don't ship hooks/ yet) are still
 // governed rather than silently allowing every write.
 const TOOLKIT_GUARD = path.join(
-  path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "hooks", "team-ops-guard.sh",
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "hooks",
+  "team-ops-guard.sh"
 );
 
 // Resolve `target` to an absolute path proven to live inside `repo`, realpath-ing
@@ -27,7 +32,11 @@ const TOOLKIT_GUARD = path.join(
 // symlinked parent. Returns null if it escapes.
 function resolveInRepo(repo, target) {
   let repoReal;
-  try { repoReal = realpathSync(repo); } catch { return null; }
+  try {
+    repoReal = realpathSync(repo);
+  } catch {
+    return null;
+  }
   const abs = path.resolve(repo, target);
   let probe = abs;
   const tail = [];
@@ -36,7 +45,11 @@ function resolveInRepo(repo, target) {
     probe = path.dirname(probe);
   }
   let baseReal;
-  try { baseReal = realpathSync(probe); } catch { return null; }
+  try {
+    baseReal = realpathSync(probe);
+  } catch {
+    return null;
+  }
   const real = tail.length ? path.join(baseReal, ...tail) : baseReal;
   if (real !== repoReal && !real.startsWith(repoReal + path.sep)) return null;
   return real;
@@ -53,20 +66,28 @@ export function guardWrite({ repo, path: target, content = "", operation = "Writ
   // Prefer the workspace's own guard (workspace-specific rules); otherwise fall
   // back to the toolkit guard so we never silently allow ungoverned writes.
   const workspaceGuard = path.join(repo, "hooks", "team-ops-guard.sh");
-  const guard = existsSync(workspaceGuard) ? workspaceGuard
-    : existsSync(TOOLKIT_GUARD) ? TOOLKIT_GUARD
-    : null;
+  const guard = existsSync(workspaceGuard)
+    ? workspaceGuard
+    : existsSync(TOOLKIT_GUARD)
+      ? TOOLKIT_GUARD
+      : null;
   // `real` is the resolved, in-repo, symlink-safe absolute path. Callers MUST
   // write to THIS path, never the raw input (which may be relative and resolve
   // against the wrong cwd) — that's the only path we actually vetted.
   if (!guard) return { ok: true, path: real }; // no guard available anywhere — allow
 
   const isEdit = operation === "Edit";
-  const toolInput = isEdit ? { file_path: real, new_string: content } : { file_path: real, content };
+  const toolInput = isEdit
+    ? { file_path: real, new_string: content }
+    : { file_path: real, content };
   try {
     execFileSync("bash", [guard], {
       cwd: repo,
-      env: { ...process.env, CC_TOOL_NAME: isEdit ? "Edit" : "Write", CC_TOOL_INPUT: JSON.stringify(toolInput) },
+      env: {
+        ...process.env,
+        CC_TOOL_NAME: isEdit ? "Edit" : "Write",
+        CC_TOOL_INPUT: JSON.stringify(toolInput),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return { ok: true, path: real };

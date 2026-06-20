@@ -20,10 +20,15 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCAFFOLD = path.join(DIR, "..", "scaffold");
 
 let failed = 0;
-const RED = "\x1b[0;31m", GREEN = "\x1b[0;32m", NC = "\x1b[0m";
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
 function check(label, cond) {
   if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
-  else { console.log(`  ${RED}✗${NC} ${label}`); failed++; }
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
 }
 const ids = (r) => r.connectable.map((c) => c.id);
 const recNames = (r) => r.recognized_not_connectable.map((c) => c.name);
@@ -32,10 +37,15 @@ const extract = (tools) => ({ results: [{ extracted: { tools_mentioned: tools } 
 const baseCatalog = loadCatalog(SCAFFOLD);
 // clone helper so tests can mutate status without polluting other tests
 function catalogWithStatus(id, status) {
-  const descriptors = baseCatalog.descriptors.map((d) => (d.id === id ? { ...d, status } : { ...d }));
+  const descriptors = baseCatalog.descriptors.map((d) =>
+    d.id === id ? { ...d, status } : { ...d }
+  );
   // rebuild indexes referencing the cloned descriptor objects
   const connectableIndex = new Map();
-  for (const d of descriptors) { connectableIndex.set(normalize(d.id), d); connectableIndex.set(normalize(d.name), d); }
+  for (const d of descriptors) {
+    connectableIndex.set(normalize(d.id), d);
+    connectableIndex.set(normalize(d.name), d);
+  }
   const jira = descriptors.find((d) => d.id === "jira");
   if (jira) connectableIndex.set(normalize("atlassian"), jira);
   return { descriptors, connectableIndex, recognizedIndex: baseCatalog.recognizedIndex };
@@ -43,9 +53,12 @@ function catalogWithStatus(id, status) {
 
 console.log("suggest-connectors: catalog loads the 6 descriptors");
 {
-  check("descriptors include slack/jira/notion/linear/granola/firecrawl",
+  check(
+    "descriptors include slack/jira/notion/linear/granola/firecrawl",
     ["slack", "jira", "notion", "linear", "granola", "firecrawl"].every((id) =>
-      baseCatalog.descriptors.some((d) => d.id === id)));
+      baseCatalog.descriptors.some((d) => d.id === id)
+    )
+  );
 }
 
 console.log("suggest-connectors: raw strings match by name");
@@ -90,7 +103,10 @@ console.log("suggest-connectors: descriptor-less tools -> recognized_not_connect
   check("google NOT connectable", !ids(r).includes("google"));
   check("slack IS connectable", ids(r).includes("slack"));
   check("github in recognized_not_connectable", recNames(r).includes("GitHub"));
-  check("google in recognized_not_connectable", recNames(r).some((n) => /Google/.test(n)));
+  check(
+    "google in recognized_not_connectable",
+    recNames(r).some((n) => /Google/.test(n))
+  );
 }
 
 console.log("suggest-connectors: stable catalog order (not tools order)");
@@ -98,14 +114,29 @@ console.log("suggest-connectors: stable catalog order (not tools order)");
   // tools_mentioned in reverse-alpha; output must follow descriptor (catalog) order
   const r = suggest(baseCatalog, ["Slack", "Notion", "Linear", "Jira", "Granola", "Firecrawl"]);
   const sorted = [...ids(r)].sort();
-  check("connectable ids are in stable (sorted catalog) order", JSON.stringify(ids(r)) === JSON.stringify(sorted));
+  check(
+    "connectable ids are in stable (sorted catalog) order",
+    JSON.stringify(ids(r)) === JSON.stringify(sorted)
+  );
 }
 
 console.log("suggest-connectors: toolsFromExtract parses results[].extracted.tools_mentioned");
 {
-  const tools = toolsFromExtract({ results: [{ extracted: { tools_mentioned: ["Slack"] } }, { extracted: { tools_mentioned: ["Jira"] } }, { error: "boom" }] });
-  check("collects across results, skips errors", JSON.stringify(tools) === JSON.stringify(["Slack", "Jira"]));
-  check("malformed extract -> []", toolsFromExtract({}).length === 0 && toolsFromExtract(null).length === 0);
+  const tools = toolsFromExtract({
+    results: [
+      { extracted: { tools_mentioned: ["Slack"] } },
+      { extracted: { tools_mentioned: ["Jira"] } },
+      { error: "boom" },
+    ],
+  });
+  check(
+    "collects across results, skips errors",
+    JSON.stringify(tools) === JSON.stringify(["Slack", "Jira"])
+  );
+  check(
+    "malformed extract -> []",
+    toolsFromExtract({}).length === 0 && toolsFromExtract(null).length === 0
+  );
 }
 
 console.log("suggest-connectors: end-to-end via extract shape");
@@ -114,9 +145,16 @@ console.log("suggest-connectors: end-to-end via extract shape");
   // single comma string is one token → matches nothing; ensures we don't tokenize sentences
   check("a sentence is not split into matches", ids(r).length === 0 && recNames(r).length === 0);
   const r2 = suggest(baseCatalog, toolsFromExtract(extract(["Slack", "Jira", "GitHub"])));
-  check("discrete tokens match", ids(r2).includes("slack") && ids(r2).includes("jira") && recNames(r2).includes("GitHub"));
+  check(
+    "discrete tokens match",
+    ids(r2).includes("slack") && ids(r2).includes("jira") && recNames(r2).includes("GitHub")
+  );
 }
 
 console.log("================================================");
-if (failed === 0) { console.log(`${GREEN}suggest-connectors tests PASSED${NC}`); process.exit(0); }
-console.log(`${RED}suggest-connectors tests FAILED — ${failed} assertion(s)${NC}`); process.exit(1);
+if (failed === 0) {
+  console.log(`${GREEN}suggest-connectors tests PASSED${NC}`);
+  process.exit(0);
+}
+console.log(`${RED}suggest-connectors tests FAILED — ${failed} assertion(s)${NC}`);
+process.exit(1);

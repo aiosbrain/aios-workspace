@@ -13,7 +13,11 @@ import path from "node:path";
 /** Recursively collect files under `dir` matching `pred(basename, fullpath)`. */
 function walk(dir, pred, out = []) {
   let entries;
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walk(full, pred, out);
