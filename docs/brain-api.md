@@ -32,6 +32,9 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-06-19 — added `GET /api/v1/integrations` (enabled integration selections for connector
   tooling). Non-secret only: secrets stay encrypted at rest and are never returned over HTTP.
   Newer CLIs/connectors tolerate a `404` from an older brain.*
+- *2026-06-20 — added optional task PM-link fields and `POST /api/v1/work-events`
+  for merged-work completion events. Additive: older CLIs keep sending the six-column
+  task table, and newer automation tolerates a `404` from an older brain.*
 
 ---
 
@@ -124,6 +127,7 @@ Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_pay
 - `GET /integrations`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
+- `POST /work-events`: 60/min per key
 
 ---
 
@@ -151,15 +155,21 @@ One item per request. Idempotent.
   brain side; unknown actors are accepted but flagged in the dashboard provenance).
 - `rows`: present **only** for `kind: decision|task`. Shapes below.
 
-**Task rows** (parsed from `tasks.md` `| ID | Task | Assignee | Status | Sprint | Due |`):
+**Task rows** (parsed from `tasks.md` `| ID | Task | Assignee | Status | Sprint | Due |`;
+newer CLIs also accept optional `PM` and `PM URL` columns):
 
 ```json
 { "row_key": "T-01", "title": "...", "assignee": "alex",
-  "status": "in_progress", "sprint": "sprint-1", "due": "2026-03-27" }
+  "status": "in_progress", "sprint": "sprint-1", "due": "2026-03-27",
+  "pm_provider": "plane", "pm_external_id": "T-01", "pm_url": "https://..." }
 ```
 
 Status values the client sends verbatim; the server normalizes to
 `backlog|ready|in_progress|blocked|done` (unknown → `backlog`, raw value preserved).
+The PM-link fields are optional and provider-neutral. `pm_provider` identifies the
+external project-management system (`plane` or `linear` in v1), `pm_external_id` is
+the provider's durable issue/work-item key, and `pm_url` is display/provenance only.
+The six-column table remains valid and is the default scaffold.
 
 **Decision rows** (parsed from `decision-log.md`
 `| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |`):
@@ -332,6 +342,53 @@ X-AIOS-Team: <slug-or-id>
 - Results are team-scoped to the key's team. Disabled integrations are omitted.
 
 **Errors:** `401` invalid key/team; `429` rate-limited (60/min/key).
+
+## `POST /api/v1/work-events` — merged-work completion event
+
+Records an observable work event (currently a merged PR) and advances matching AIOS
+task rows to `done`. This is the automation path used by repo-level CI after a PR
+lands on `main`; it is also safe for local tooling to call after manually completing
+work.
+
+```json
+{
+  "project": "northwind-aios",
+  "event_kind": "merged",
+  "repo": "AIOS-alpha/aios-team-brain",
+  "merged_sha": "abc123...",
+  "pr_url": "https://github.com/AIOS-alpha/aios-team-brain/pull/42",
+  "pr_title": "W1.2.1 Add per-member cost aggregation",
+  "pr_body": "AIOS-Work: W1.2.1",
+  "work_keys": ["W1.2.1"],
+  "actor": "alex"
+}
+```
+
+**Server semantics (normative):**
+
+1. Team-tier keys only; `external` keys receive `403 forbidden_tier`.
+2. `project`, `repo`, `merged_sha`, and `event_kind` are required. `event_kind` is
+   currently `merged`; future event kinds are additive.
+3. `work_keys[]` is preferred. If omitted, the server may derive keys from PR title,
+   body, branch, or trailers using the same conservative grammar as the client helper.
+4. For each key, insert or update one idempotent `work_events` row keyed by
+   `(team_id, repo, merged_sha, row_key, event_kind)`.
+5. If a task row exists in the named project, update that row to `status: "done"` and
+   trigger PM-provider sync through the task's PM link. Re-sending the same event is a
+   no-op apart from refreshing timestamps.
+6. If no task row exists, preserve the event as `unresolved` for dashboard/admin
+   reconciliation; never silently create a done task.
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "applied": [{ "row_key": "W1.2.1", "task_id": "uuid" }],
+  "unresolved": [],
+  "pm_sync": [{ "row_key": "W1.2.1", "provider": "plane", "status": "synced" }]
+}
+```
 
 ## `POST /api/v1/query` — natural-language query
 

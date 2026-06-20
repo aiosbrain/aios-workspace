@@ -328,7 +328,7 @@ function parseTableRows(body) {
 }
 
 function parseTaskRows(body) {
-  // | ID | Task | Assignee | Status | Sprint | Due |
+  // | ID | Task | Assignee | Status | Sprint | Due | PM | PM URL |
   const rows = parseTableRows(body);
   if (!rows.length) return [];
   const header = rows[0].map((h) => h.toLowerCase());
@@ -336,15 +336,32 @@ function parseTaskRows(body) {
   const idx = (name) => header.indexOf(name);
   return rows
     .slice(1)
-    .map((cells) => ({
-      row_key: cells[idx("id")] || "",
+    .map((cells) => {
+      const rowKey = cells[idx("id")] || "";
+      const pm = idx("pm") >= 0 ? parsePmCell(cells[idx("pm")] || "", rowKey) : {};
+      return {
+      row_key: rowKey,
       title: cells[idx("task")] || "",
       assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
       status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
       sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
       due: idx("due") >= 0 ? cells[idx("due")] || null : null,
-    }))
+      ...pm,
+      pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
+      };
+    })
     .filter((r) => r.row_key);
+}
+
+function parsePmCell(raw, rowKey) {
+  const value = raw.trim();
+  if (!value) return {};
+  const m = value.match(/^(plane|linear)(?::|\s+)?(.+)?$/i);
+  if (!m) return {};
+  return {
+    pm_provider: m[1].toLowerCase(),
+    pm_external_id: (m[2] || rowKey).trim(),
+  };
 }
 
 function parseDecisionRows(body) {
@@ -2058,6 +2075,105 @@ function cmdLearn(repo, cfg, patterns, _args = []) {
   );
 }
 
+function tasksFile(repo) {
+  const modern = path.join(repo, "3-log", "tasks.md");
+  if (existsSync(modern)) return { abs: modern, rel: "3-log/tasks.md" };
+  const legacy = path.join(repo, "03-status", "tasks.md");
+  if (existsSync(legacy)) return { abs: legacy, rel: "03-status/tasks.md" };
+  die("no tasks.md found at 3-log/tasks.md or 03-status/tasks.md");
+}
+
+function rowCells(line) {
+  return line.split("|").slice(1, -1).map((x) => x.trim());
+}
+
+function renderRow(cells) {
+  return `| ${cells.join(" | ")} |`;
+}
+
+function setTaskStatus(repo, key, status) {
+  const file = tasksFile(repo);
+  const lines = readFileSync(file.abs, "utf8").split("\n");
+  const headerIdx = lines.findIndex((line) => {
+    const cells = rowCells(line).map((h) => h.toLowerCase());
+    return cells.includes("id") && cells.includes("task");
+  });
+  if (headerIdx === -1) die("tasks.md has no task table header");
+  const header = rowCells(lines[headerIdx]).map((h) => h.toLowerCase());
+  const idIdx = header.indexOf("id");
+  const statusIdx = header.indexOf("status");
+  if (statusIdx === -1) die("tasks.md task table has no Status column");
+
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed.startsWith("|")) continue;
+    const cells = rowCells(lines[i]);
+    if (cells.every((x) => /^[-: ]*$/.test(x))) continue;
+    if (cells[idIdx] !== key) continue;
+    while (cells.length < header.length) cells.push("");
+    cells[statusIdx] = status;
+    lines[i] = renderRow(cells);
+    writeFileSync(file.abs, lines.join("\n"));
+    return file;
+  }
+  die(`task key '${key}' not found in ${file.rel}`);
+}
+
+function gitSha(repo) {
+  try {
+    return execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return `manual-${Date.now()}`;
+  }
+}
+
+function repoFullName(repo) {
+  const remote = gitConfig(repo, "remote.origin.url");
+  const m = remote.match(/[:/]([^/:]+\/[^/.]+)(?:\.git)?$/);
+  return m ? m[1] : path.basename(repo);
+}
+
+async function postWorkEvent(repo, cfg, key, actor) {
+  try {
+    const res = await api(cfg, "POST", "/work-events", {
+      project: cfg.project,
+      event_kind: "merged",
+      repo: repoFullName(repo),
+      merged_sha: gitSha(repo),
+      pr_url: "",
+      pr_title: `Manual completion ${key}`,
+      pr_body: `AIOS-Work: ${key}`,
+      work_keys: [key],
+      actor,
+    });
+    console.log(`  ${c.green("✓")} PM sync event ${c.dim(`${res.applied?.length ?? 0} applied, ${res.unresolved?.length ?? 0} unresolved`)}`);
+  } catch (e) {
+    if (String(e.message).startsWith("404")) {
+      console.log(c.dim("work-events endpoint not available on this Team Brain; task push succeeded."));
+      return;
+    }
+    throw e;
+  }
+}
+
+async function cmdWork(repo, cfg, patterns, args) {
+  const sub = args[0];
+  if (sub !== "done") die("usage: aios work done <key> [--push]");
+  const key = args.find((a, i) => i > 0 && !a.startsWith("--"));
+  if (!key) die("usage: aios work done <key> [--push]");
+  const push = args.includes("--push");
+  const file = setTaskStatus(repo, key, "done");
+  console.log(`${c.green("✓")} ${file.rel}: ${key} → done`);
+  if (!push) {
+    console.log(c.dim("run with --push to notify the Team Brain and PM provider"));
+    return;
+  }
+  requireOnline(cfg);
+  const member = resolveMember(repo, cfg, loadDotEnv(repo));
+  await cmdPush(repo, cfg, patterns, [file.rel]);
+  await postWorkEvent(repo, cfg, key, member);
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -2079,6 +2195,7 @@ usage:
     [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
   aios push [--dry-run] [paths…]
+  aios work done <key> [--push]         mark a task done; --push notifies Brain/PM sync
   aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
   aios push blueprint                   publish the team's tool set (lead/admin only)
   aios pull blueprint                   fetch the team's tool set → .aios/blueprint.json
@@ -2144,6 +2261,7 @@ try {
   if (cmd === "status") cmdStatus(repo, cfg, patterns, rest);
   else if (cmd === "review") await cmdReview(repo, cfg, patterns, rest);
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
+  else if (cmd === "work") await cmdWork(repo, cfg, patterns, rest);
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "connect") await cmdConnect(repo, rest);

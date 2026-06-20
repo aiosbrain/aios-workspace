@@ -36,11 +36,21 @@
       "id": "linear",
       "name": "Linear",
       "category": "issue-tracking",
-      "transport": "mcp",
+      "transport": "skill",
       "status": "available",
-      "summary": "Query issues/projects/cycles, create and update issues, track status.",
-      "connect": "Add the Linear MCP server to .mcp.json; authenticate via OAuth on first use.",
-      "env": []
+      "summary": "Query issues/projects/cycles through the direct GraphQL skill; Team Brain can sync linked tasks to completed states.",
+      "connect": "Run `aios connect linear` and provide LINEAR_API_KEY. Add the same provider in Team Brain Admin → Integrations for PM status sync.",
+      "env": ["LINEAR_API_KEY"]
+    },
+    {
+      "id": "plane",
+      "name": "Plane",
+      "category": "issue-tracking",
+      "transport": "api",
+      "status": "available",
+      "summary": "Seed/read Plane work items and let Team Brain move linked AIOS task rows to DONE after merge.",
+      "connect": "Set PLANE_API_KEY locally for scripts/skills. Add Plane in Team Brain Admin → Integrations with workspaceSlug, projectId, doneStateName, and externalSource.",
+      "env": ["PLANE_API_KEY"]
     },
     {
       "id": "notion",
