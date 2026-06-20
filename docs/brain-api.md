@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.1** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -23,6 +23,9 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-06-19 — added `POST /api/v1/metrics` (AEM **individual** maturity daily aggregate from
   `aios analyze --push`). Team-tier only; `external`/`admin` rejected. A standalone endpoint, not
   an `/items` kind. Newer CLIs tolerate a `404` from an older brain.*
+- *2026-06-19 — added `GET /api/v1/integrations` (enabled integration selections for connector
+  tooling). Non-secret only: secrets stay encrypted at rest and are never returned over HTTP.
+  Newer CLIs/connectors tolerate a `404` from an older brain.*
 
 ---
 
@@ -112,6 +115,7 @@ Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_pay
 
 - `POST /items`: 120/min per key
 - `GET /items`, `GET /tasks`: 60/min per key
+- `GET /integrations`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
 
@@ -283,6 +287,45 @@ pushed from a repo) as local marker files under `1-inbox/from-brain/_projects/`.
   ]
 }
 ```
+
+## `GET /api/v1/integrations` — enabled integration selections (non-secret)
+
+Returns the authenticated team's **enabled** integration selections for connector
+tooling. This endpoint is intentionally non-secret: it returns selection/config metadata
+only, never connector credentials.
+
+**Auth:** same API-key scheme as the other v1 routes:
+
+```
+Authorization: Bearer aios_<key_id>_<secret>
+X-AIOS-Team: <slug-or-id>
+```
+
+**Request:** no body.
+
+**Response `200`:**
+
+```json
+{
+  "integrations": [
+    {
+      "id": "uuid",
+      "type": "slack",
+      "name": "eng",
+      "config": { "channelIds": ["C1", "C2"] },
+      "status": "enabled"
+    }
+  ]
+}
+```
+
+- `config` is the per-type **non-secret** selection (channels, repos, keywords, etc.).
+- The connector secret is never returned by this endpoint: no `secret`, no
+  `secret_ciphertext`. Secrets are stored encrypted at rest and decrypted only
+  in-process by the ingestion runner; they never cross the API boundary.
+- Results are team-scoped to the key's team. Disabled integrations are omitted.
+
+**Errors:** `401` invalid key/team; `429` rate-limited (60/min/key).
 
 ## `POST /api/v1/query` — natural-language query
 
