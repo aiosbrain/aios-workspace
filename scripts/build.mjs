@@ -1,0 +1,763 @@
+/**
+ * build.mjs — the *build* half of the agent relay, packaged as an aios sub-command.
+ *
+ * The plan half (scripts/relay.mjs) produces an approved plan. This half implements
+ * it: a Cursor agent writes the code on an isolated git worktree, the /ai-code-review
+ * Cursor skill reviews the REAL diff, the loop repeats until the reviewer emits
+ * MERGE_READY or the round budget is spent, a fail-closed secrets gate runs, and
+ * (only with --merge) the branch is merged.
+ *
+ * Exported entry points:
+ *   cmdBuild(repo, args)                    — CLI:  aios build <plan-file|task> [branch] [opts]
+ *   runBuild({ repo, plan, branch, opts })  — chained from `aios relay --build` (in-memory plan)
+ *
+ * Design notes (informed by the planning relay's own review of this feature):
+ *  - The TOOL owns one authoritative change set. After each build round we auto-commit
+ *    any stragglers so `base..HEAD` is the exact set that gets reviewed, scanned, and merged.
+ *  - The secrets scan runs BEFORE the review (its result is fed to the reviewer) AND again,
+ *    fail-closed, immediately before any merge.
+ *  - All agent file edits happen in the worktree (cwd), never the primary checkout; a
+ *    tripwire aborts if the primary checkout is touched.
+ */
+
+import {
+  existsSync,
+  readFileSync,
+  symlinkSync,
+  rmSync,
+  mkdtempSync,
+  mkdirSync,
+  cpSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import {
+  MERGE_READY_TOKEN,
+  c,
+  die,
+  checkPrereqs,
+  callCursorAgent,
+  gitMergeAndDelete,
+  makeLogger,
+  validateBranch,
+} from "./relay-core.mjs";
+
+const DEFAULT_REVIEW_SKILL = "/ai-code-review";
+const DEFAULT_ROUNDS = 4;
+const DEFAULT_BUILD_TIMEOUT = 1800; // seconds — building + running tests is slow
+const DEFAULT_REVIEW_TIMEOUT = 300; // seconds — reviewing a diff is fast
+const DIFF_CAP = 50000; // chars of `git diff` to send the reviewer before falling back to --stat
+
+// Exit-code contract (see docs/agent-build.md):
+export const EXIT = {
+  OK: 0, // converged on MERGE_READY (merged if --merge)
+  FATAL: 1, // prereqs / bad args / plan file / primary-checkout tripwire
+  NONCONVERGENCE: 2, // round budget spent, or a stalled round — worktree preserved
+  NO_DIFF: 3, // builder produced no commits at all
+  GATE_FAILED: 4, // pre-merge secrets gate failed — merge blocked
+  TIMEOUT: 124, // builder timed out
+};
+
+// ── pure helpers (exported for tests) ─────────────────────────────────────────
+
+export function parseBuildArgs(args) {
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+  const hasFlag = (name) => args.includes(name);
+
+  const valueFlags = [
+    "--rounds",
+    "--build-rounds",
+    "--build-timeout",
+    "--cursor-timeout",
+    "--worktree",
+    "--base",
+    "--log",
+    "--skill",
+    "--verify",
+  ];
+
+  const rounds = parseInt(flag("--rounds") ?? flag("--build-rounds") ?? String(DEFAULT_ROUNDS), 10);
+  const buildTimeout =
+    parseInt(flag("--build-timeout") ?? String(DEFAULT_BUILD_TIMEOUT), 10) * 1000;
+  const cursorTimeout =
+    parseInt(flag("--cursor-timeout") ?? String(DEFAULT_REVIEW_TIMEOUT), 10) * 1000;
+
+  const positional = args.filter(
+    (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
+  );
+  const [planSource, branch] = positional;
+
+  return {
+    planSource,
+    branch,
+    isTask: hasFlag("--task"),
+    rounds: Number.isFinite(rounds) && rounds > 0 ? rounds : DEFAULT_ROUNDS,
+    buildTimeout,
+    cursorTimeout,
+    skill: flag("--skill") ?? DEFAULT_REVIEW_SKILL,
+    worktreePath: flag("--worktree") ?? null,
+    base: flag("--base") ?? "origin/main",
+    verify: flag("--verify") ?? null,
+    logFile: flag("--log") ?? null,
+    merge: hasFlag("--merge"),
+    noGate: hasFlag("--no-gate"),
+    keepWorktree: hasFlag("--keep-worktree"),
+    dryRun: hasFlag("--dry-run"),
+    // set true by `relay --build` so the shared --log file is appended, not overwritten.
+    chained: false,
+  };
+}
+
+// Pull the plan text out of a relay --log file. Prefers the approved section, falls
+// back to the last (unapproved) plan, else uses the whole file. Throws when empty.
+// relay --log files are `\n---\n`-separated sections, each starting with `## <label>`.
+export function extractPlanFromLog(text) {
+  if (!text || !text.trim()) throw new Error("plan is empty");
+  const sections = text.split(/\n---\n/);
+  const find = (prefix) => {
+    for (const s of sections) {
+      const m = s.match(/^\s*## (.+)\n/);
+      if (m && m[1].trim().startsWith(prefix)) {
+        return s.replace(/^\s*## .+\n/, "").trim();
+      }
+    }
+    return null;
+  };
+  return find("Approved plan") ?? find("Last plan") ?? text.trim();
+}
+
+// The build reviewer approves by placing MERGE_READY alone on the final non-blank line.
+export function detectMergeToken(text) {
+  const lastLine =
+    (text ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .at(-1) ?? "";
+  return lastLine === MERGE_READY_TOKEN;
+}
+
+export function slugify(s) {
+  return (
+    String(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "task"
+  );
+}
+
+// Reject shell metacharacters (via VALID_BRANCH_RE in validateBranch), and refuse to
+// build on the primary checkout's current branch (worktree isolation is mandatory).
+export function assertSafeBuildBranch(branch, currentBranch) {
+  validateBranch(branch);
+  if (currentBranch && branch === currentBranch) {
+    die(
+      `refusing to build on '${branch}' — that is the primary checkout's current branch. ` +
+        `The build phase only runs in an isolated worktree; pass a feature branch.`
+    );
+  }
+}
+
+// Classify what the builder produced this round from git counts.
+export function classifyDiff({ totalCommits, newCommits }) {
+  if (totalCommits === 0) return "no-commits";
+  if (newCommits === 0) return "no-progress";
+  return "has-changes";
+}
+
+export function buildImplementPrompt(plan, { review, resumeLog, branch } = {}) {
+  const parts = [
+    `You are implementing an approved plan in THIS git worktree (branch \`${branch ?? "?"}\`).`,
+    "You may edit files, run commands, and make git commits. Do ALL work inside this worktree only.",
+    "",
+    "## Approved plan",
+    "",
+    plan,
+    "",
+    "## Rules",
+    "- Implement every step. Make small, logical commits as you go (commit after each completed step).",
+    "- Run the project's tests/validators and fix failures before you finish.",
+    "- NEVER commit secrets, credentials, or absolute machine paths (e.g. /Users/...).",
+    "- NEVER weaken files under validation/ or hooks/ to make a check pass.",
+    "- Stay within the plan's scope; defer anything the plan marks optional.",
+    "",
+    "When done, briefly summarize: files changed, commits made, and the test result.",
+  ];
+  if (resumeLog) {
+    parts.splice(
+      7,
+      0,
+      "",
+      "## Work already on this branch (continue — do NOT redo it)",
+      "",
+      resumeLog
+    );
+  }
+  if (review) {
+    parts.push(
+      "",
+      "## Reviewer feedback on your current diff",
+      "Address EVERY Blocker/Critical/High, then re-run the tests and commit:",
+      "",
+      review
+    );
+  }
+  return parts.join("\n");
+}
+
+export function buildCodeReviewPrompt({
+  skill,
+  plan,
+  diff,
+  diffStat,
+  logOneline,
+  secretsResult,
+  branch,
+  round,
+  maxRounds,
+}) {
+  const isLast = round >= maxRounds;
+  const roundNote = isLast
+    ? `**Final round (${round}/${maxRounds}). Do not raise new Low/Medium nits — but you MUST still withhold ${MERGE_READY_TOKEN} for any Critical/High finding or any unverified safety-critical surface.**`
+    : `Round ${round} of ${maxRounds}.`;
+
+  return [
+    skill,
+    "",
+    `> ${roundNote}`,
+    "",
+    `You are reviewing a diff that is supposed to implement the plan below, on branch \`${branch}\` in an isolated worktree. Run the project's tests/validators yourself to gather evidence before you decide.`,
+    "",
+    "## Original plan (what the diff must deliver)",
+    "",
+    plan,
+    "",
+    "## Commits (base..HEAD)",
+    "",
+    logOneline || "(none)",
+    "",
+    "## git diff --stat",
+    "",
+    diffStat || "(empty)",
+    "",
+    "## git diff",
+    "",
+    diff,
+    "",
+    "## Pre-merge secrets scan (run by the tool)",
+    "",
+    secretsResult,
+    "Note: the tool re-runs this scan fail-closed before any merge — a leak blocks the merge regardless of your verdict.",
+    "",
+    "---",
+    `Review per your skill. Emit ${MERGE_READY_TOKEN} (alone on the very last line) ONLY when the code is truly ready to merge. Otherwise list the findings for the builder to fix.`,
+  ].join("\n");
+}
+
+// ── impure helpers ────────────────────────────────────────────────────────────
+
+function git(args, cwd, { capture = true } = {}) {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+  });
+}
+
+function gitQuiet(args, cwd) {
+  try {
+    return git(args, cwd).trim();
+  } catch {
+    return "";
+  }
+}
+
+function currentBranch(repo) {
+  return gitQuiet(["rev-parse", "--abbrev-ref", "HEAD"], repo);
+}
+
+function branchExists(repo, branch) {
+  try {
+    git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function worktreeForBranch(repo, branch) {
+  const out = gitQuiet(["worktree", "list", "--porcelain"], repo);
+  const blocks = out.split("\n\n");
+  for (const b of blocks) {
+    if (b.includes(`branch refs/heads/${branch}`)) {
+      const line = b.split("\n").find((l) => l.startsWith("worktree "));
+      if (line) return line.slice("worktree ".length).trim();
+    }
+  }
+  return null;
+}
+
+function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
+  assertSafeBuildBranch(branch, currentBranch(repo));
+
+  const wt = worktreePath
+    ? path.resolve(worktreePath)
+    : path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
+
+  if (path.resolve(wt) === path.resolve(repo)) {
+    die("refusing to build inside the primary checkout — choose a separate --worktree path");
+  }
+
+  const existing = worktreeForBranch(repo, branch);
+  if (existing) {
+    console.log(c.dim(`Reusing existing worktree for ${branch}: ${existing}`));
+    return { worktreePath: existing, resumed: true };
+  }
+
+  if (dryRun) {
+    console.log(c.dim(`[dry-run] git worktree add for ${branch} at ${wt}`));
+  } else if (branchExists(repo, branch)) {
+    git(["worktree", "add", wt, branch], repo); // resume an existing branch
+  } else {
+    try {
+      git(["worktree", "add", "-b", branch, wt, base], repo);
+    } catch {
+      // base ref may be unfetched — try fetching origin once, then retry.
+      gitQuiet(["fetch", "origin"], repo);
+      git(["worktree", "add", "-b", branch, wt, base], repo);
+    }
+    // Make the worktree runnable: share the primary checkout's deps if present.
+    const repoModules = path.join(repo, "node_modules");
+    if (existsSync(repoModules) && !existsSync(path.join(wt, "node_modules"))) {
+      try {
+        symlinkSync(repoModules, path.join(wt, "node_modules"));
+      } catch {
+        /* best-effort: tests just won't run from the worktree */
+      }
+    }
+  }
+  return { worktreePath: wt, resumed: branchExists(repo, branch) };
+}
+
+function snapshotDiff(worktree, base) {
+  // Auto-commit any stragglers so base..HEAD is the authoritative change set.
+  git(["add", "-A"], worktree);
+  const staged = gitQuiet(["diff", "--cached", "--name-only"], worktree);
+  if (staged) {
+    git(["commit", "-m", "build: auto-commit working changes", "--no-verify"], worktree);
+  }
+  const totalCommits = parseInt(
+    gitQuiet(["rev-list", "--count", `${base}..HEAD`], worktree) || "0",
+    10
+  );
+  const diffStat = gitQuiet(["diff", "--stat", `${base}...HEAD`], worktree);
+  const logOneline = gitQuiet(["log", "--oneline", `${base}..HEAD`], worktree);
+  let diff = gitQuiet(["diff", `${base}...HEAD`], worktree);
+  if (diff.length > DIFF_CAP) {
+    const files = gitQuiet(["diff", "--name-only", `${base}...HEAD`], worktree);
+    diff = `(diff is ${diff.length} chars — truncated. Files changed:\n${files}\n\nReview the worktree directly: git -C ${worktree} diff ${base}...HEAD)`;
+  }
+  return { totalCommits, diffStat, logOneline, diff };
+}
+
+// Fail-closed secrets scan over EXACTLY the change set. Copies the changed files
+// into a throwaway dir and runs the repo's gates on that — never the whole worktree.
+// (Scanning the worktree false-fails: its `.git` file embeds the primary checkout's
+// absolute path, leak-gate.sh embeds the denylist itself, and examples/ is synthetic.)
+// Uses leak-gate.sh + validate-all.sh --critical (OGR03 secrets only — the full
+// validator suite checks OKF workspace structure and would false-fail a code repo).
+function runSecretsScan(repo, worktree, baseSha) {
+  const changed = gitQuiet(["diff", "--name-only", `${baseSha}..HEAD`], worktree)
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!changed.length) return { ok: true, output: "(no changed files to scan)" };
+
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "aios-scan-"));
+  try {
+    for (const f of changed) {
+      const src = path.join(worktree, f);
+      if (!existsSync(src)) continue; // deleted file — nothing to scan
+      const dst = path.join(tmp, f);
+      mkdirSync(path.dirname(dst), { recursive: true });
+      cpSync(src, dst);
+    }
+    const checks = [
+      { script: path.join(repo, "scripts", "leak-gate.sh"), args: [tmp] },
+      { script: path.join(repo, "validation", "validate-all.sh"), args: [tmp, "--critical"] },
+    ];
+    let ok = true;
+    const chunks = [`Scanned ${changed.length} changed file(s).`];
+    for (const { script, args } of checks) {
+      if (!existsSync(script)) {
+        chunks.push(`[skipped: ${path.basename(script)} not found]`);
+        continue;
+      }
+      try {
+        const out = execFileSync("bash", [script, ...args], {
+          cwd: repo,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        chunks.push(`[PASS ${path.basename(script)}]\n${out.trim()}`);
+      } catch (e) {
+        ok = false;
+        const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+        chunks.push(`[FAIL ${path.basename(script)}]\n${out}`);
+      }
+    }
+    return { ok, output: chunks.join("\n\n") };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// Optional verification gate (e.g. `--verify "npm test"`). Runs the user's command
+// in the worktree and captures pass/fail + a tail of output. The command is supplied
+// by the operator (same trust as running it themselves), so a shell is acceptable.
+function runVerification(worktree, cmd) {
+  try {
+    const out = execFileSync(cmd, {
+      cwd: worktree,
+      shell: true,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { ok: true, output: out.slice(-3000) };
+  } catch (e) {
+    const out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    return { ok: false, output: out.slice(-3000) };
+  }
+}
+
+// ── core loop ─────────────────────────────────────────────────────────────────
+
+export async function runBuild({ repo, plan, branch, opts }) {
+  checkPrereqs({ requireAnthropic: false });
+
+  if (!plan || !plan.trim()) die("no plan to build — pass a plan file or task.");
+  if (!branch) {
+    branch = `feat/aios-build-${slugify(plan.split("\n")[0] || "task")}`;
+  }
+
+  const {
+    rounds,
+    buildTimeout,
+    cursorTimeout,
+    skill,
+    base,
+    verify,
+    worktreePath,
+    logFile,
+    merge,
+    noGate,
+    keepWorktree,
+    dryRun,
+    chained,
+  } = opts;
+
+  const { worktreePath: wt, resumed } = resolveWorktree({
+    repo,
+    branch,
+    base,
+    worktreePath,
+    dryRun,
+  });
+
+  // Resolve the base ref to an immutable SHA once, so every diff/scan/merge-window
+  // computation is stable even if origin/main advances mid-run.
+  const baseSha = (wt && existsSync(wt) && gitQuiet(["rev-parse", base], wt)) || base;
+
+  // Create the log first, THEN snapshot the tripwire baseline — so a --log file
+  // written inside the repo is part of the baseline (our write, not the agent's)
+  // and doesn't trip the "primary checkout changed" guard below.
+  const log = makeLogger(logFile, `# aios build\n\nBranch: ${branch}\nWorktree: ${wt}\n`, {
+    append: chained,
+  });
+
+  // Tripwire baseline: the primary checkout must not change during the build.
+  const primaryStatusBefore = gitQuiet(["status", "--porcelain"], repo);
+
+  console.log("\n── aios build ───────────────────────────────────────────────");
+  console.log(`Branch:     ${branch}`);
+  console.log(`Worktree:   ${wt}${resumed ? c.dim(" (resumed)") : ""}`);
+  console.log(`Review:     ${skill}`);
+  console.log(`Max rounds: ${rounds}`);
+  console.log(`Merge:      ${merge ? "yes (on approval)" : c.dim("no (review diff yourself)")}`);
+  if (logFile) console.log(`Log:        ${logFile}`);
+  if (dryRun) console.log(c.yellow("Mode:       dry-run (no merge)"));
+  console.log("─────────────────────────────────────────────────────────────");
+
+  if (dryRun && !existsSync(wt)) {
+    console.log(
+      c.yellow("\n[dry-run] worktree not created — nothing to build. Re-run without --dry-run.")
+    );
+    return EXIT.OK;
+  }
+
+  let prevReview = null;
+  let blockedOnGate = false; // true when the last round failed verify/secrets, not review
+  let prevCommits = parseInt(gitQuiet(["rev-list", "--count", `${baseSha}..HEAD`], wt) || "0", 10);
+
+  for (let round = 1; round <= rounds; round++) {
+    console.log(`\n══ Build round ${round}/${rounds} ${"═".repeat(46 - String(round).length)}`);
+
+    // 1. BUILD
+    const buildPrompt = buildImplementPrompt(plan, {
+      review: prevReview,
+      resumeLog:
+        round === 1 && prevCommits > 0
+          ? gitQuiet(["log", "--oneline", `${baseSha}..HEAD`], wt)
+          : null,
+      branch,
+    });
+    console.log(c.dim("[cursor] building..."));
+    try {
+      const builderOut = await callCursorAgent(buildPrompt, buildTimeout, { cwd: wt });
+      log(`Build round ${round} — builder`, builderOut.slice(-4000));
+    } catch (e) {
+      if (/timed out/.test(e.message)) {
+        console.error(
+          c.red(
+            `\nerror: builder timed out after ${buildTimeout / 1000}s — increase with --build-timeout <seconds>.`
+          )
+        );
+        console.error(c.dim(`Partial work may be uncommitted: git -C ${wt} status`));
+        return EXIT.TIMEOUT;
+      }
+      die(`builder failed: ${e.message}`);
+    }
+
+    // 2. CAPTURE the authoritative change set (auto-commit stragglers)
+    const snap = snapshotDiff(wt, baseSha);
+    const newCommits = snap.totalCommits - prevCommits;
+    prevCommits = snap.totalCommits;
+    console.log(c.dim(`→ ${snap.totalCommits} commit(s) on branch (${newCommits} new this round)`));
+    if (snap.diffStat) console.log(snap.diffStat);
+
+    // 3. TRIPWIRE: the primary checkout must be untouched
+    if (gitQuiet(["status", "--porcelain"], repo) !== primaryStatusBefore) {
+      die(
+        `SAFETY — the primary checkout at ${repo} changed during the build. Aborting. Inspect: git -C ${repo} status`
+      );
+    }
+
+    // 4. Did the builder produce anything?
+    const klass = classifyDiff({ totalCommits: snap.totalCommits, newCommits });
+    if (klass === "no-commits") {
+      console.error(c.red("\nerror: builder made no commits — nothing to review."));
+      console.error(c.dim(`Inspect: git -C ${wt} status`));
+      return EXIT.NO_DIFF;
+    }
+    // A feedback round that produced no new commits is a stall — don't spin.
+    if (round > 1 && newCommits === 0) {
+      console.error(
+        c.yellow(`\nBuilder made no new commits this round and the diff is not approved.`)
+      );
+      console.error(c.dim(`Worktree preserved: ${wt}. Resume: aios build <plan> ${branch}`));
+      return EXIT.NONCONVERGENCE;
+    }
+
+    // 5. GATES (run BEFORE review so the reviewer has evidence; a failing gate sends
+    //    feedback to the builder and loops WITHOUT spending a review round).
+    let gateFeedback = null;
+    if (verify) {
+      const v = runVerification(wt, verify);
+      console.log(v.ok ? c.green("✓ verify passed") : c.red("✗ verify failed"));
+      log(`Build round ${round} — verify`, v.output);
+      if (!v.ok) gateFeedback = `Verification command failed (\`${verify}\`):\n\n${v.output}`;
+    }
+    const secrets = runSecretsScan(repo, wt, baseSha);
+    console.log(secrets.ok ? c.green("✓ secrets scan clean") : c.red("✗ secrets scan FAILED"));
+    log(`Build round ${round} — secrets scan`, secrets.output);
+    if (!secrets.ok) {
+      gateFeedback =
+        (gateFeedback ? gateFeedback + "\n\n" : "") +
+        `Secrets/leak scan FAILED — remove these before continuing:\n\n${secrets.output}`;
+    }
+    if (gateFeedback) {
+      console.log(
+        c.yellow("gate failed — sending feedback to the builder; skipping review this round")
+      );
+      prevReview = gateFeedback;
+      blockedOnGate = true;
+      continue;
+    }
+    blockedOnGate = false;
+
+    // 6. REVIEW the real diff
+    const reviewPrompt = buildCodeReviewPrompt({
+      skill,
+      plan,
+      diff: snap.diff,
+      diffStat: snap.diffStat,
+      logOneline: snap.logOneline,
+      secretsResult: secrets.output || "(scan produced no output)",
+      branch,
+      round,
+      maxRounds: rounds,
+    });
+    console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
+    const review = await callCursorAgent(reviewPrompt, cursorTimeout, { cwd: wt });
+    log(`Build round ${round} — review`, review);
+    console.log("\n── review done ─────────────────────────────────────────────");
+
+    // 7. CONVERGENCE
+    if (detectMergeToken(review)) {
+      console.log(c.green(`\n✓ ${MERGE_READY_TOKEN} received after round ${round}.`));
+      return finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun, log });
+    }
+
+    prevReview = review;
+  }
+
+  // Round budget spent — preserve the branch for a human (never force-merge code).
+  if (blockedOnGate) {
+    console.error(c.red(`\n✗ Build blocked by the secrets/verify gate after ${rounds} round(s).`));
+    console.error(
+      c.dim(`Branch '${branch}' preserved. Fix the gate failure, then re-run. Worktree: ${wt}`)
+    );
+    return EXIT.GATE_FAILED;
+  }
+  console.error(c.yellow(`\nReached max build rounds (${rounds}) without ${MERGE_READY_TOKEN}.`));
+  console.error(c.dim(`Branch '${branch}' preserved with work. Worktree: ${wt}`));
+  console.error(
+    c.dim(
+      `Resume: aios build <plan> ${branch}   ·   Inspect: git -C ${wt} log --oneline ${baseSha}..HEAD`
+    )
+  );
+  return EXIT.NONCONVERGENCE;
+}
+
+function finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun, log }) {
+  // Fail-closed secrets gate immediately before merge.
+  if (!noGate) {
+    const gate = runSecretsScan(repo, wt, baseSha);
+    log("Pre-merge secrets gate", gate.output);
+    if (!gate.ok) {
+      console.error(c.red("\n✗ pre-merge secrets gate FAILED — merge blocked."));
+      console.error(gate.output);
+      console.error(
+        c.dim(`\nBranch '${branch}' preserved. Remove the leak, then re-run. (CLAUDE.md §7)`)
+      );
+      return EXIT.GATE_FAILED;
+    }
+    console.log(c.green("✓ pre-merge secrets gate clean"));
+  } else {
+    console.log(c.yellow("⚠ --no-gate: skipping the pre-merge secrets gate (not recommended)"));
+  }
+
+  if (merge && !dryRun) {
+    // Remove the worktree BEFORE deleting the branch — git refuses to delete a
+    // branch that is still checked out in a worktree.
+    if (!keepWorktree) {
+      try {
+        git(["worktree", "remove", "--force", wt], repo);
+        console.log(c.dim(`Removed worktree ${wt}`));
+      } catch {
+        rmSync(wt, { recursive: true, force: true });
+        try {
+          git(["worktree", "prune"], repo);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    try {
+      // keepWorktree leaves the branch checked out, so only delete it when we removed
+      // the worktree (gitMergeAndDelete does merge + branch -d).
+      if (keepWorktree) {
+        git(["merge", "--no-ff", "-m", "chore: merge via aios build", "--", branch], repo, {
+          capture: false,
+        });
+        console.log(c.green(`\n✓ Merged: ${branch} (worktree kept)`));
+      } else {
+        gitMergeAndDelete(repo, branch, false, "chore: merge via aios build");
+      }
+    } catch (e) {
+      console.error(c.red(`\nmerge failed (likely a conflict): ${e.message}`));
+      console.error(c.dim(`Branch '${branch}' preserved. Resolve and merge manually.`));
+      return EXIT.NONCONVERGENCE;
+    }
+  } else if (merge && dryRun) {
+    gitMergeAndDelete(repo, branch, true, "chore: merge via aios build");
+  } else {
+    console.log(c.yellow("\nCode approved. Review the diff before merging:"));
+    console.log(c.dim(`  git -C ${repo} diff ${branch}`));
+    console.log(c.dim(`  git -C ${repo} merge --no-ff -- ${branch}`));
+    console.log(c.dim("Re-run with --merge to have aios build merge automatically."));
+  }
+  return EXIT.OK;
+}
+
+// ── CLI entry point ─────────────────────────────────────────────────────────────
+
+export async function cmdBuild(repo, args) {
+  if (!args.length || args[0] === "--help" || args[0] === "-h") {
+    console.log(
+      [
+        "",
+        c.blue("aios build — implement an approved plan with Cursor on an isolated worktree"),
+        "",
+        "usage:",
+        "  aios build <plan-file|task> [branch] [options]",
+        "",
+        "arguments:",
+        "  plan-file   Path to an approved plan (a relay --log file). If it is not a",
+        "              readable file it is treated as an inline task (skips plan review).",
+        "  branch      Worktree branch to build on (optional; auto-derived if omitted).",
+        "",
+        "options:",
+        "  --task                  treat the first argument as an inline task, not a file",
+        "  --rounds N              max build/review cycles (default: 4)",
+        "  --build-timeout N       seconds before killing a stalled builder call (default: 1800)",
+        "  --cursor-timeout N      seconds before killing a stalled review call (default: 300)",
+        "  --skill /name           Cursor review skill (default: /ai-code-review)",
+        '  --verify "<cmd>"        run this command in the worktree before each review;',
+        '                          a failure loops feedback to the builder (e.g. "npm test")',
+        "  --base <ref>            base ref for a new worktree branch (default: origin/main)",
+        "  --worktree <path>       worktree directory (default: ../<repo>-<branch>)",
+        "  --merge                 merge the branch on approval (off by default)",
+        "  --no-gate               skip the pre-merge secrets gate (NOT recommended)",
+        "  --keep-worktree         keep the worktree after a successful merge",
+        "  --log <file>            save build rounds + reviews to a Markdown file",
+        "  --dry-run               run the loop but never merge",
+        "",
+        "examples:",
+        "  aios build plan.md feat/my-feature",
+        "  aios build plan.md feat/my-feature --merge",
+        '  aios build "Add a --version flag to aios.mjs" --task feat/version',
+      ].join("\n")
+    );
+    return;
+  }
+
+  const opts = parseBuildArgs(args);
+  if (!opts.planSource) die("a plan file (or --task <task>) is required.");
+
+  let plan;
+  if (!opts.isTask && existsSync(opts.planSource)) {
+    try {
+      plan = extractPlanFromLog(readFileSync(opts.planSource, "utf8"));
+    } catch (e) {
+      die(`could not read plan from ${opts.planSource}: ${e.message}`);
+    }
+  } else {
+    if (!opts.isTask) {
+      console.log(
+        c.yellow(
+          `'${opts.planSource}' is not a file — treating it as an inline task (no plan review).`
+        )
+      );
+    }
+    plan = opts.planSource;
+  }
+
+  const code = await runBuild({ repo, plan, branch: opts.branch, opts });
+  process.exit(code);
+}

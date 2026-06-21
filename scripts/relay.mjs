@@ -1,38 +1,45 @@
 /**
- * relay.mjs — Opus 4.8 ↔ Cursor review loop, packaged as an aios sub-command.
+ * relay.mjs — Opus 4.8 ↔ Cursor plan-review loop, packaged as an aios sub-command.
  *
  * Exported entry point: cmdRelay(repo, args)
  * Called by aios.mjs as:  aios relay "task" [branch] [options]
  *
+ * The relay produces an *approved plan*. To then implement it, hand the plan to
+ * the build phase (scripts/build.mjs) — either with the --build flag here, or by
+ * running `aios build <plan-file>` against this relay's --log output.
+ *
  * Options:
- *   --rounds N       max plan/review cycles (default: 5)
+ *   --rounds N       max plan/review cycles (default: 3)
  *   --skill /name    Cursor slash command (default: /review-plan)
  *   --dry-run        skip git operations
  */
 
-import { spawn, execFileSync } from "node:child_process";
-import { createInterface } from "node:readline";
-import { appendFileSync, writeFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  PLAN_READY_TOKEN,
+  c,
+  die,
+  checkPrereqs,
+  callCursorAgent,
+  gitMergeAndDelete,
+  makeLogger,
+} from "./relay-core.mjs";
+import { runBuild, parseBuildArgs } from "./build.mjs";
 
-const MERGE_TOKEN = "MERGE_READY";
-// Allowlist: letters, digits, hyphens, underscores, forward-slash, dots only.
-// Rejects any shell metacharacter before it reaches execFileSync.
-const VALID_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
 const DEFAULT_SKILL = "/review-plan";
 
-const c = {
-  red: (s) => `\x1b[0;31m${s}\x1b[0m`,
-  green: (s) => `\x1b[0;32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
-  blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
-
-function die(msg) {
-  console.error(c.red(`error: ${msg}`));
-  process.exit(1);
-}
+// Value-flags whose following token is a value, not the task/branch positional.
+const VALUE_FLAGS = [
+  "--rounds",
+  "--skill",
+  "--cursor-timeout",
+  "--log",
+  "--build-rounds",
+  "--build-timeout",
+  "--base",
+  "--worktree",
+  "--verify",
+];
 
 // ── arg parsing ───────────────────────────────────────────────────────────────
 
@@ -49,30 +56,25 @@ function parseArgs(args) {
   const skill = flag("--skill") ?? DEFAULT_SKILL;
   const cursorTimeout = parseInt(flag("--cursor-timeout") ?? "300", 10) * 1000;
   const logFile = flag("--log") ?? null;
+  const build = hasFlag("--build");
+  const buildRounds = parseInt(flag("--build-rounds") ?? "4", 10);
 
   const positional = args.filter(
-    (a, i) =>
-      !a.startsWith("--") &&
-      args[i - 1] !== "--rounds" &&
-      args[i - 1] !== "--skill" &&
-      args[i - 1] !== "--cursor-timeout" &&
-      args[i - 1] !== "--log"
+    (a, i) => !a.startsWith("--") && !VALUE_FLAGS.includes(args[i - 1])
   );
   const [task, branch] = positional;
-  return { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout, logFile };
-}
-
-// ── prereq checks ─────────────────────────────────────────────────────────────
-
-function checkPrereqs() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    die("ANTHROPIC_API_KEY is not set. Add it to your .env or export it in your shell.");
-  }
-  try {
-    execFileSync("cursor", ["--version"], { stdio: "pipe" });
-  } catch {
-    die("cursor CLI not found. Install: curl https://cursor.com/install -fsS | bash");
-  }
+  return {
+    task,
+    branch,
+    dryRun,
+    autoMerge,
+    maxRounds,
+    skill,
+    cursorTimeout,
+    logFile,
+    build,
+    buildRounds,
+  };
 }
 
 // ── Anthropic client ──────────────────────────────────────────────────────────
@@ -100,84 +102,6 @@ async function callOpus(anthropic, messages) {
   return textBlock.text;
 }
 
-// ── Cursor agent subprocess ───────────────────────────────────────────────────
-
-async function callCursorAgent(prompt, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    process.stdout.write("\n[cursor] invoking agent...\n");
-
-    const proc = spawn("cursor", ["agent", "-p", prompt, "--output-format", "stream-json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const timer = setTimeout(() => {
-      proc.kill();
-      reject(
-        new Error(
-          `cursor agent timed out after ${timeoutMs / 1000}s — increase with --cursor-timeout <seconds>`
-        )
-      );
-    }, timeoutMs);
-
-    const rl = createInterface({ input: proc.stdout });
-    const errBufs = [];
-    let text = "";
-
-    proc.stderr.on("data", (d) => errBufs.push(d));
-
-    rl.on("line", (line) => {
-      const raw = line.trim();
-      if (!raw) return;
-
-      try {
-        const ev = JSON.parse(raw);
-
-        // Shape 1: {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
-        if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
-          for (const block of ev.message.content) {
-            if (block.type === "text") {
-              process.stdout.write(block.text);
-              text += block.text;
-            }
-          }
-          return;
-        }
-        // Shape 2: {type:"text", text:"..."}
-        if (ev.type === "text" && typeof ev.text === "string") {
-          process.stdout.write(ev.text);
-          text += ev.text;
-          return;
-        }
-        // Shape 3: {type:"result", result:"..."} (final summary in some Cursor versions)
-        if (ev.type === "result" && typeof ev.result === "string" && !text) {
-          text = ev.result;
-          return;
-        }
-        // Shape 4: {type:"content_block_delta", delta:{type:"text_delta",text:"..."}}
-        if (ev.delta?.type === "text_delta" && typeof ev.delta.text === "string") {
-          process.stdout.write(ev.delta.text);
-          text += ev.delta.text;
-          return;
-        }
-      } catch {
-        process.stdout.write(raw + "\n");
-      }
-    });
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0 || (code === null && text)) {
-        resolve(text.trim());
-      } else {
-        const errMsg = Buffer.concat(errBufs).toString().trim();
-        reject(
-          new Error(`cursor agent exited ${code}${errMsg ? ": " + errMsg.slice(0, 400) : ""}`)
-        );
-      }
-    });
-  });
-}
-
 // ── prompt builder ────────────────────────────────────────────────────────────
 
 function buildReviewPrompt(skill, plan, round, maxRounds) {
@@ -199,34 +123,8 @@ function buildReviewPrompt(skill, plan, round, maxRounds) {
     "Review the plan above.",
     "List any Blockers or approach-level Majors. Minor issues do not block approval.",
     `When the plan is ready to implement, place this token alone on the very last line:`,
-    MERGE_TOKEN,
+    PLAN_READY_TOKEN,
   ].join("\n");
-}
-
-// ── git operations ────────────────────────────────────────────────────────────
-
-function validateBranch(branchName) {
-  if (!VALID_BRANCH_RE.test(branchName)) {
-    die(
-      `invalid branch name '${branchName}' — only letters, digits, hyphens, underscores, dots, and slashes are allowed`
-    );
-  }
-}
-
-function gitMergeAndDelete(repo, branchName, dryRun) {
-  validateBranch(branchName);
-  if (dryRun) {
-    console.log(
-      c.dim(`[dry-run] git merge --no-ff -- ${branchName} && git branch -d -- ${branchName}`)
-    );
-    return;
-  }
-  execFileSync("git", ["merge", "--no-ff", "-m", "chore: merge via aios relay", "--", branchName], {
-    stdio: "inherit",
-    cwd: repo,
-  });
-  execFileSync("git", ["branch", "-d", "--", branchName], { stdio: "inherit", cwd: repo });
-  console.log(c.green(`\n✓ Merged and deleted: ${branchName}`));
 }
 
 // ── main entry point ──────────────────────────────────────────────────────────
@@ -252,6 +150,12 @@ export async function cmdRelay(repo, args) {
         "  --cursor-timeout N      seconds before killing a stalled Cursor call (default: 300)",
         "  --merge                 auto-merge the branch on approval (off by default)",
         "  --dry-run               skip git operations",
+        "  --build                 on approval, hand the plan to the build phase",
+        "  --build-rounds N        max build/review cycles when --build is set (default: 4)",
+        "",
+        "next step:",
+        "  Hand the approved plan to the build phase to implement it:",
+        "    aios build <plan-file> [branch]",
         "",
         "examples:",
         '  aios relay "Add a --version flag to aios.mjs" --dry-run',
@@ -262,23 +166,26 @@ export async function cmdRelay(repo, args) {
     return;
   }
 
-  const { task, branch, dryRun, autoMerge, maxRounds, skill, cursorTimeout, logFile } =
-    parseArgs(args);
+  const {
+    task,
+    branch,
+    dryRun,
+    autoMerge,
+    maxRounds,
+    skill,
+    cursorTimeout,
+    logFile,
+    build,
+    buildRounds,
+  } = parseArgs(args);
   if (!task) die('task description is required.\nusage: aios relay "task" [branch] [options]');
 
   checkPrereqs();
 
   const anthropic = new Anthropic();
 
-  // Initialise log file with a header so partial runs are recoverable
-  if (logFile) {
-    writeFileSync(logFile, `# aios relay plan\n\nTask: ${task}\n\n`);
-  }
-
-  const log = (label, text) => {
-    if (!logFile) return;
-    appendFileSync(logFile, `\n---\n## ${label}\n\n${text}\n`);
-  };
+  // Initialise log file with a header so partial runs are recoverable.
+  const log = makeLogger(logFile, `# aios relay plan\n\nTask: ${task}\n\n`);
 
   console.log("\n── aios relay ───────────────────────────────────────────────");
   console.log(`Task:       ${task}`);
@@ -312,12 +219,22 @@ export async function cmdRelay(repo, args) {
         .map((l) => l.trim())
         .filter(Boolean)
         .at(-1) ?? "";
-    if (lastLine === MERGE_TOKEN) {
-      console.log(c.green(`\n✓ ${MERGE_TOKEN} received after round ${round}.`));
-      if (logFile) {
-        appendFileSync(logFile, `\n---\n## Approved plan (round ${round})\n\n${plan}\n`);
-        console.log(c.dim(`Plan saved to ${logFile}`));
+    if (lastLine === PLAN_READY_TOKEN) {
+      console.log(c.green(`\n✓ ${PLAN_READY_TOKEN} received after round ${round}.`));
+      log(`Approved plan (round ${round})`, plan);
+      if (logFile) console.log(c.dim(`Plan saved to ${logFile}`));
+
+      // Chained one-shot: hand the in-memory approved plan to the build phase.
+      if (build) {
+        console.log(c.blue("\n── handing approved plan to the build phase ──────────────────"));
+        const buildOpts = parseBuildArgs(args);
+        buildOpts.rounds = buildRounds; // relay --rounds governs the PLAN loop; build uses --build-rounds
+        buildOpts.skill = "/ai-code-review"; // relay --skill is the plan reviewer, not the code reviewer
+        buildOpts.chained = true; // append to the shared --log instead of overwriting it
+        const code = await runBuild({ repo, plan, branch, opts: buildOpts });
+        process.exit(code);
       }
+
       if (branch && autoMerge) {
         gitMergeAndDelete(repo, branch, dryRun);
       } else if (branch) {
@@ -328,6 +245,9 @@ export async function cmdRelay(repo, args) {
       } else {
         console.log(c.dim("Plan approved. No branch specified — nothing to merge."));
       }
+      if (logFile) {
+        console.log(c.dim(`Build it:  aios build ${logFile}${branch ? " " + branch : ""}`));
+      }
       return;
     }
 
@@ -337,19 +257,18 @@ export async function cmdRelay(repo, args) {
     });
   }
 
-  // Save the last plan even if unapproved — don't lose the work
+  // Save the last plan even if unapproved — don't lose the work.
   const lastPlan = history.filter((m) => m.role === "assistant").at(-1)?.content ?? "";
   if (logFile && lastPlan) {
-    appendFileSync(
-      logFile,
-      `\n---\n## Last plan (round limit reached — unapproved)\n\n${lastPlan}\n`
-    );
+    log("Last plan (round limit reached — unapproved)", lastPlan);
     console.log(c.yellow(`\nRound limit reached. Last plan saved to ${logFile}`));
     console.log(
       c.dim("Review it, answer any open questions, then re-run or hand off to your build agent.")
     );
   } else {
-    console.error(c.red(`\n✗ Reached max rounds (${maxRounds}) without receiving ${MERGE_TOKEN}.`));
+    console.error(
+      c.red(`\n✗ Reached max rounds (${maxRounds}) without receiving ${PLAN_READY_TOKEN}.`)
+    );
   }
   process.exit(1);
 }

@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+// Fake `cursor` binary for build-loop.test.mjs. Put this dir on PATH so the build
+// loop drives it instead of the real Cursor CLI. It runs in the worktree (the loop
+// passes cwd), so it can make real commits there.
+//
+// Behaviour is driven by env:
+//   FAKE_CURSOR_SCRIPT = approve | reject | reject-then-approve | empty | leak
+//   FAKE_CURSOR_STATE  = path to a counter file (for reject-then-approve)
+//
+// - On a BUILD prompt it writes + commits a file (a leak string when mode=leak;
+//   nothing when mode=empty).
+// - On a REVIEW prompt it emits findings ending in MERGE_READY (or not).
+
+import { execFileSync } from "node:child_process";
+import { writeFileSync, appendFileSync, readFileSync, existsSync } from "node:fs";
+
+const argv = process.argv.slice(2);
+
+if (argv[0] === "--version") {
+  console.log("fake-cursor 0.0.0");
+  process.exit(0);
+}
+
+// cursor agent -p <prompt> --output-format stream-json
+const pIdx = argv.indexOf("-p");
+const prompt = pIdx >= 0 ? argv[pIdx + 1] : "";
+const mode = process.env.FAKE_CURSOR_SCRIPT || "approve";
+
+function emit(text) {
+  console.log(
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
+  );
+}
+function git(args) {
+  execFileSync("git", args, { cwd: process.cwd(), stdio: "pipe" });
+}
+
+const isReview = prompt.includes("Review per your skill") || prompt.includes("## git diff");
+
+if (isReview) {
+  let approve = mode === "approve";
+  if (mode === "reject-then-approve") {
+    const f = process.env.FAKE_CURSOR_STATE;
+    let n = 0;
+    if (f && existsSync(f)) n = parseInt(readFileSync(f, "utf8") || "0", 10);
+    n += 1;
+    if (f) writeFileSync(f, String(n));
+    approve = n >= 2; // reject the first review, approve the second
+  }
+  if (approve) {
+    emit("## Findings\n\nNone.\n\n## Mergeability\n\nReady to merge.\n\nMERGE_READY");
+  } else {
+    emit(
+      "## Findings\n\n- High: not done yet, add more.\n\n## Mergeability\n\nNot ready to merge."
+    );
+  }
+  process.exit(0);
+}
+
+// BUILD prompt
+if (mode === "empty") {
+  emit("I reviewed the plan but made no changes.");
+  process.exit(0);
+}
+
+// Append a unique line each round so every build round produces a real new commit.
+const marker = `// build ${Date.now()}-${process.pid}\n`;
+const leak = mode === "leak" ? "const home = '/Users/iamjohndass/secret';\n" : "";
+appendFileSync("feature.js", "export const built = true;\n" + leak + marker);
+git(["add", "-A"]);
+git(["commit", "-m", "build: implement feature", "--no-verify"]);
+emit("Implemented the plan: updated feature.js and committed.");
+process.exit(0);

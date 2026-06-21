@@ -46,6 +46,7 @@ import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
+import { cmdBuild } from "./build.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -2331,10 +2332,15 @@ usage:
   aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
-  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop
+  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
     [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
     [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
+    [--build] [--build-rounds N]        after approval, hand the plan to the build phase
+  aios build <plan-file|task> [branch]  implement an approved plan with Cursor (MERGE_READY)
+    [--rounds N] [--merge] [--task]     build/review on an isolated worktree; --merge on approval
+    [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
+    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -2357,6 +2363,7 @@ const OFFLINE_CMDS = new Set([
   "learn",
   "analyze",
   "relay",
+  "build",
 ]);
 
 let repo, cfg;
@@ -2390,6 +2397,7 @@ try {
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
+  else if (cmd === "build") await cmdBuild(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);
