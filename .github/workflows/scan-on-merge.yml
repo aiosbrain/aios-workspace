@@ -6,7 +6,7 @@ name: scan-on-merge
 # the brain (keyed by head_sha).
 #
 # Required repo secrets (until set, the job logs "skipping" and exits 0 — never red):
-#   BRAIN_URL         — e.g. https://aios-team-brain-production.up.railway.app
+#   AIOS_BRAIN_URL    — e.g. https://aios-team-brain-production.up.railway.app
 #   AIOS_TEAM         — team slug (e.g. aios)
 #   AIOS_API_KEY      — a TEAM-TIER api key (codebase scans are team-tier; least-privilege)
 #   BRAIN_REPO_TOKEN  — a read-only token (PAT / fine-grained) that can checkout AIOS-alpha/
@@ -28,7 +28,7 @@ jobs:
     if: github.repository == 'AIOS-alpha/aios-workspace'
     env:
       AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
-      BRAIN_URL: ${{ secrets.BRAIN_URL }}
+      BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
       AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
     steps:
       - uses: actions/checkout@v4
