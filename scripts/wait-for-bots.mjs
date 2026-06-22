@@ -16,7 +16,7 @@
  *   1 — usage error
  */
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 
 const BOT_USERS = ["cursor[bot]", "coderabbitai[bot]"];
@@ -167,7 +167,7 @@ while (Date.now() < deadline) {
     continue;
   }
 
-  const { posted, missing } = checkBotsPosted(comments, reviews, requiredBots);
+  const { missing } = checkBotsPosted(comments, reviews, requiredBots);
 
   if (missing.length === 0) {
     console.log("all bots posted!\n");
