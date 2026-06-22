@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Button, EyebrowLabel } from "@aios-alpha/ui";
 
 const MODELS = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
@@ -561,6 +562,7 @@ export default function App() {
           </div>
         </div>
         <div className="side-foot">
+          <ThemeToggle />
           {runtime && (
             <div className="runtime-badge" title={`Agent runtime: ${runtime}`}>
               <span className="runtime-dot" />
@@ -626,15 +628,20 @@ export default function App() {
               )}
               {messages.length === 0 && (
                 <div className="empty">
+                  <EyebrowLabel className="empty-eyebrow">Start a turn</EyebrowLabel>
                   <div className="empty-chips">
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       className="empty-chip"
                       disabled={!canStartMessage}
                       onClick={() => sendMessage("what changed this week?")}
                     >
                       what changed this week?
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       className="empty-chip"
                       disabled={!canStartMessage}
                       onClick={() => {
@@ -643,7 +650,7 @@ export default function App() {
                       }}
                     >
                       draft from a link
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -831,6 +838,35 @@ const NAV_ICONS = {
     </svg>
   ),
 };
+
+// Dark is the workspace GUI's terminal-native default; light is opt-in.
+// Tiny localStorage + classList toggle (no next-themes — this is plain Vite/React).
+const THEME_KEY = "aios.gui.theme";
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem(THEME_KEY, next ? "dark" : "light");
+    } catch {
+      /* storage blocked */
+    }
+  };
+  return (
+    <button
+      className="theme-toggle"
+      onClick={toggle}
+      title={dark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label="Toggle color theme"
+    >
+      <span className="theme-toggle-icon">{dark ? "☾" : "☀"}</span>
+      {dark ? "Dark" : "Light"}
+    </button>
+  );
+}
 
 function SettingsPanel({ model, onModelChange, onPersonalityApplied }) {
   const [personalities, setPersonalities] = useState(null);
