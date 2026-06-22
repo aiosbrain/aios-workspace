@@ -47,6 +47,7 @@ import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
+import { cmdReviewBugbot } from "./review-bugbot.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_VERSION = "v1";
@@ -2341,6 +2342,9 @@ usage:
     [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
     [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews
+    [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
+    [--base ref] [--worktree path]      requires an existing build worktree for the branch
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -2364,6 +2368,7 @@ const OFFLINE_CMDS = new Set([
   "analyze",
   "relay",
   "build",
+  "review-bugbot",
 ]);
 
 let repo, cfg;
@@ -2398,6 +2403,7 @@ try {
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);

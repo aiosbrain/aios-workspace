@@ -57,7 +57,9 @@ function parseArgs(args) {
   const cursorTimeout = parseInt(flag("--cursor-timeout") ?? "300", 10) * 1000;
   const logFile = flag("--log") ?? null;
   const build = hasFlag("--build");
-  const buildRounds = parseInt(flag("--build-rounds") ?? "4", 10);
+  const buildRoundsRaw = parseInt(flag("--build-rounds") ?? "4", 10);
+  const buildRounds =
+    Number.isFinite(buildRoundsRaw) && buildRoundsRaw > 0 ? buildRoundsRaw : 4;
 
   const positional = args.filter(
     (a, i) => !a.startsWith("--") && !VALUE_FLAGS.includes(args[i - 1])

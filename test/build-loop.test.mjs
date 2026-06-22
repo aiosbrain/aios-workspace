@@ -82,6 +82,8 @@ function opts(over) {
     logFile: null,
     merge: false,
     noGate: false,
+    bugbot: false,
+    noBugbot: true,
     keepWorktree: false,
     dryRun: false,
     chained: false,
@@ -161,6 +163,43 @@ console.log("builder touches the PRIMARY checkout → tripwire trips, exit 1");
     existsSync(path.join(repo, "TRIPWIRE_TEST.txt"))
   );
   rmSync(path.join(repo, "TRIPWIRE_TEST.txt"), { force: true });
+}
+
+console.log("builder commits on PRIMARY checkout (HEAD tripwire) → exit 1");
+{
+  const repo = freshRepo();
+  const code = await run({ repo, branch: "feat/t4d", mode: "touch-primary-head", o: opts() });
+  check("exit FATAL (HEAD tripwire)", code === EXIT.FATAL);
+}
+
+console.log("Bugbot blocks merge on Critical/High → exit 4");
+{
+  const repo = freshRepo();
+  const wt = wtPath(repo, "feat/t4e");
+  const code = await run({
+    repo,
+    branch: "feat/t4e",
+    mode: "bugbot-block",
+    o: opts({ merge: true, bugbot: true, noBugbot: false }),
+  });
+  check("exit GATE_FAILED (Bugbot)", code === EXIT.GATE_FAILED);
+  check("not merged to main", !existsSync(path.join(repo, "feature.js")));
+  check("worktree preserved", existsSync(wt));
+}
+
+console.log("approve + --merge + bugbot → merged after BUGBOT_CLEAR, exit 0");
+{
+  const repo = freshRepo();
+  const wt = wtPath(repo, "feat/t4f");
+  const code = await run({
+    repo,
+    branch: "feat/t4f",
+    mode: "approve",
+    o: opts({ merge: true, bugbot: true, noBugbot: false }),
+  });
+  check("exit OK", code === EXIT.OK);
+  check("main has the built file", existsSync(path.join(repo, "feature.js")));
+  check("worktree removed", !existsSync(wt));
 }
 
 console.log("missing gate scripts → fail closed (exit 4), never a silent pass");
