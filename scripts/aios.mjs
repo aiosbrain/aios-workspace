@@ -33,7 +33,14 @@ import { execFileSync } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
+import {
+  listConnectors,
+  getDescriptor,
+  validateConnector,
+  storeConnector,
+  vaultSet,
+  ensureGitignore,
+} from "./connector.mjs";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -587,6 +594,67 @@ function cmdStatus(repo, cfg, patterns, args = []) {
   }
 }
 
+// Connect one already-resolved descriptor: print guidance → collect secrets → validate
+// live → store. Returns true on success, false on a skipped/failed attempt (callers decide
+// how to signal that). Pass `ask` to share one readline across several connects (onboard);
+// omit it and connectFlow opens+closes its own for a single standalone connect.
+async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
+  const required = (d.secrets || []).filter((s) => s.required !== false);
+
+  // print connect guidance (the "exact URL + scopes" moment)
+  console.log(c.blue(`\nConnect ${d.name}`));
+  if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
+  if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
+  if (d.scopes?.length)
+    console.log(
+      c.dim(
+        `  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`
+      )
+    );
+  console.log("");
+
+  const ownRl = ask
+    ? null
+    : readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask_ = ask || ((q) => new Promise((res) => ownRl.question(q, res)));
+  const values = {};
+  for (const s of required) {
+    if (sets[s.env] != null) values[s.env] = sets[s.env];
+    else if (tokenFlag && s === required[0]) values[s.env] = tokenFlag;
+    else values[s.env] = (await ask_(`  ${s.label} (${s.env}): `)).trim();
+  }
+  if (ownRl) ownRl.close();
+  if (required.some((s) => !values[s.env])) {
+    console.log(c.red("  missing required value(s) — skipped."));
+    return false;
+  }
+
+  // validate live
+  process.stdout.write(c.dim("  validating… "));
+  const result = await validateConnector(d, values);
+  console.log("");
+  for (const ch of result.checks)
+    console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
+  if (!result.ok) {
+    console.log(c.red(`\n${d.name} not connected (${result.error}).`));
+    if (d.docs?.token_create_url)
+      console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
+    return false;
+  }
+
+  // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
+  const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
+  const who = result.identity?.value ? ` as ${result.identity.value}` : "";
+  const where = result.instance?.value ? ` in ${result.instance.value}` : "";
+  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
+  console.log(
+    c.dim(
+      `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
+    )
+  );
+  return true;
+}
+
 // aios connect [<id>] — guided connect→validate→store for an integration (headless engine).
 async function cmdConnect(repo, args) {
   const id = args.find((a) => !a.startsWith("--"));
@@ -616,55 +684,92 @@ async function cmdConnect(repo, args) {
       sets[k] = v.join("=");
     }
   const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
-  const required = (d.secrets || []).filter((s) => s.required !== false);
 
-  // print connect guidance (the "exact URL + scopes" moment)
-  console.log(c.blue(`\nConnect ${d.name}`));
-  if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
-  if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
-  if (d.scopes?.length)
+  const ok = await connectFlow(repo, d, { sets, tokenFlag });
+  if (!ok) process.exitCode = 1;
+}
+
+// aios onboard — guided first-run setup: connect Firecrawl (so the GUI's "draft from a
+// link" works), the Team Brain key, and any other tools the workspace knows about. Every
+// step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints the
+// same guidance and exits 0 so it never blocks.
+async function cmdOnboard(repo, _args) {
+  const connectors = listConnectors(repo);
+  const isWired = (id) => connectors.find((conn) => conn.id === id)?.status === "wired";
+
+  if (!process.stdin.isTTY) {
+    console.log(c.blue("AIOS onboarding"));
+    console.log("  Run these from an interactive terminal:");
+    console.log(c.dim("    aios onboard              # guided setup (Firecrawl, brain, tools)"));
+    console.log(c.dim("    aios connect firecrawl    # read a link to draft your profile"));
+    console.log(c.dim("    aios connect <id>         # any other tool"));
     console.log(
       c.dim(
-        `  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`
+        "  Brain: set AIOS_API_KEY in .env, fill brain_url + team_id in aios.yaml, then: aios status"
       )
     );
-  console.log("");
-
-  const values = {};
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise((res) => rl.question(q, res));
-  for (const s of required) {
-    if (sets[s.env] != null) values[s.env] = sets[s.env];
-    else if (tokenFlag && s === required[0]) values[s.env] = tokenFlag;
-    else values[s.env] = (await ask(`  ${s.label} (${s.env}): `)).trim();
-  }
-  rl.close();
-  if (required.some((s) => !values[s.env])) die("missing required value(s)");
-
-  // validate live
-  process.stdout.write(c.dim("  validating… "));
-  const result = await validateConnector(d, values);
-  console.log("");
-  for (const ch of result.checks)
-    console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
-  if (!result.ok) {
-    console.log(c.red(`\n${d.name} not connected (${result.error}).`));
-    if (d.docs?.token_create_url)
-      console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
-    process.exitCode = 1;
     return;
   }
 
-  // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
-  const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
-  const who = result.identity?.value ? ` as ${result.identity.value}` : "";
-  const where = result.instance?.value ? ` in ${result.instance.value}` : "";
-  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
-  console.log(
-    c.dim(
-      `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
-    )
-  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  const yes = async (q) => /^y(es)?$/i.test((await ask(q)).trim());
+
+  console.log(c.blue("\nWelcome to AIOS. Let's connect a few things — every step is optional.\n"));
+
+  // 1) Firecrawl — powers "draft from a link" in the GUI.
+  try {
+    if (isWired("firecrawl")) {
+      console.log(c.green("✓ Firecrawl already connected."));
+    } else if (await yes("Connect Firecrawl, so you can draft your profile from a link? [y/N] ")) {
+      await connectFlow(repo, getDescriptor(repo, "firecrawl"), { ask });
+    }
+  } catch (e) {
+    console.log(c.dim(`  (skipping Firecrawl — ${e.message})`));
+  }
+
+  // 2) Team Brain — store the API key so push/pull/status work (same dotenvx vault).
+  console.log("");
+  if (await yes("Connect the Team Brain now (set AIOS_API_KEY)? [y/N] ")) {
+    const key = (await ask("  AIOS_API_KEY: ")).trim();
+    if (!key) {
+      console.log(c.dim("  (no key entered — skipped)"));
+    } else {
+      try {
+        vaultSet(repo, "AIOS_API_KEY", key);
+        ensureGitignore(repo);
+        console.log(c.green("  ✓ AIOS_API_KEY encrypted into .env (dotenvx)"));
+        console.log(c.dim("    confirm brain_url + team_id in aios.yaml, then run: aios status"));
+      } catch (e) {
+        console.log(c.red(`  could not store the key (${e.message}).`));
+        console.log(
+          c.dim("    install dotenvx, or run: aios connect <a tool> to bootstrap the vault.")
+        );
+      }
+    }
+  }
+
+  // 3) Any other tools the workspace knows about.
+  const others = connectors.filter((conn) => conn.id !== "firecrawl" && conn.status !== "wired");
+  if (others.length) {
+    console.log("");
+    if (await yes(`Connect any other tools (${others.map((o) => o.id).join(", ")})? [y/N] `)) {
+      for (const conn of others) {
+        if (await yes(`  Connect ${conn.id}? [y/N] `)) {
+          try {
+            await connectFlow(repo, getDescriptor(repo, conn.id), { ask });
+          } catch (e) {
+            console.log(c.dim(`    (skipping ${conn.id} — ${e.message})`));
+          }
+        }
+      }
+    }
+  }
+
+  rl.close();
+  console.log(c.green("\n✓ You're set."));
+  console.log(c.dim("  Start the workspace GUI:  npm run gui -- --repo ."));
+  console.log(c.dim("  Re-run anytime:           aios onboard"));
 }
 
 // aios review — interactive review-and-push panel for the terminal.
@@ -2198,6 +2303,7 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
+  aios onboard                          guided first-run setup (Firecrawl, brain, tools)
   aios connect [<id>]                   connect an integration (guided + live-validated)
     [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
@@ -2245,6 +2351,7 @@ const OFFLINE_CMDS = new Set([
   "graph",
   "install-skill",
   "connect",
+  "onboard",
   "skills",
   "assess-codebase",
   "learn",
@@ -2272,6 +2379,7 @@ try {
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "connect") await cmdConnect(repo, rest);
+  else if (cmd === "onboard") await cmdOnboard(repo, rest);
   else if (cmd === "whoami") await cmdWhoami(repo, cfg);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);

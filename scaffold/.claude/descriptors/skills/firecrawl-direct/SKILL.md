@@ -3,16 +3,18 @@ name: firecrawl-direct
 description: |
   Read one or a handful of web pages (a personal site, profile, or company page) with
   Firecrawl and return structured profile facts (person, company, focus areas, tools).
-  Use when the user wants to draft or enrich their workspace profile from a link, or asks
-  to "enrich my profile from <url>". Requires Firecrawl connected (FIRECRAWL_API_KEY).
+  Use when the user wants to draft or enrich their workspace profile from a link — e.g.
+  "draft my profile from this link: <url>" or "enrich my profile from <url>". Requires
+  Firecrawl connected (FIRECRAWL_API_KEY).
 kind: skill
 version: 1.0.0
 access: team
 triggers:
+  - draft my profile from this link
+  - draft my profile from
   - enrich my profile from
   - set up my profile from this link
   - read this page about me
-  - draft my profile from
 ---
 
 # Firecrawl (direct)

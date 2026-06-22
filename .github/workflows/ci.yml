@@ -43,6 +43,7 @@ jobs:
           node test/ux/run-ux-skip.test.mjs
           node test/analyze.test.mjs
           node test/analyze-multitool.test.mjs
+          node --test gui/server/session-index.test.mjs
           node scripts/lock-marketplace.mjs --check
 
       - name: Runtime-adapter contract tests (BYOA Phase 3)
@@ -74,6 +75,9 @@ jobs:
           node scripts/aios.mjs status --repo /tmp/ci-sample-team-ops
           node scripts/aios.mjs push --dry-run --repo /tmp/ci-sample-team-ops
           node scripts/aios.mjs status --porcelain --repo /tmp/ci-sample-team-ops
+
+      - name: Onboard non-TTY smoke (prints guidance, exits 0)
+        run: node scripts/aios.mjs onboard --repo /tmp/ci-sample-team-ops < /dev/null
 
   lint:
     name: lint + format

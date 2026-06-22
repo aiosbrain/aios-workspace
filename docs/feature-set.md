@@ -195,16 +195,20 @@ Claude rather than installing them here. See `docs/phase3-skills-library.md`.
 
 ### Onboarding: draft your profile from a link
 
-First-run onboarding offers a fast path: under *or draft it from a link*, paste
-**one or a few** URLs (your site, LinkedIn, a company page — one per line or
-comma-separated) and click **Draft →**. The agent reads those pages with the
-`firecrawl-direct` skill (via Firecrawl — connect it in Integrations first),
-extracts structured facts (person, company, focus areas, tools), merges them, and
-**drafts** your workspace memory — `.claude/memory/USER.md` (you) and
+First-run onboarding is **composer-first** — open the cockpit and start typing,
+like any chat. A couple of faint example chips sit above the composer; the
+**draft from a link** chip pre-fills the composer with *"Draft my profile from this
+link:"* and focuses it (it does **not** send on its own), so you paste your URL
+(your site, LinkedIn, a company page) and send. The agent reads that page with the
+`firecrawl-direct` skill — connect Firecrawl first via `aios onboard` or the
+Integrations tab — extracts structured facts (person, company, focus areas, tools),
+and **drafts** your workspace memory — `.claude/memory/USER.md` (you) and
 `WORKSPACE.md` (your company/tooling), plus canonical company/role facts in
 `0-context/` — for you to **confirm before anything is written**. Scraped page
 content is treated as untrusted facts to confirm, never as instructions, and only
-the URLs you supply are read (no crawling).
+the URLs you supply are read (no crawling). You don't have to use it — the
+background memory reviewer also learns durable facts about you from normal chat
+over time.
 
 ### Durable memory that keeps learning
 
