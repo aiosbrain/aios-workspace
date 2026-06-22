@@ -173,6 +173,40 @@ test("brain_get_item url-encodes the id into the path", async () => {
   assert.equal(client.calls[0].route, "/items/abc%2F123");
 });
 
+test("tools/call validates required args → -32602 instead of a confused downstream call", async () => {
+  const client = stubClient();
+  const dispatch = createDispatcher({ client });
+
+  // missing required `question`
+  const q = await dispatch({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: { name: "brain_query", arguments: {} },
+  });
+  assert.equal(q.error.code, -32602, "missing question → Invalid params");
+  assert.match(q.error.message, /question/);
+
+  // missing required `id` must NOT reach the client (no GET /items/undefined)
+  const g = await dispatch({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: { name: "brain_get_item", arguments: {} },
+  });
+  assert.equal(g.error.code, -32602, "missing id → Invalid params");
+  assert.equal(client.calls.length, 0, "no downstream request made for invalid args");
+
+  // unexpected arg rejected (additionalProperties:false)
+  const u = await dispatch({
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: { name: "brain_status", arguments: { bogus: 1 } },
+  });
+  assert.equal(u.error.code, -32602, "unexpected arg → Invalid params");
+});
+
 test("a failing tool reports in-band isError, not a JSON-RPC error", async () => {
   const client = stubClient({
     fetchJson: async () => {
