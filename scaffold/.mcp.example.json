@@ -1,6 +1,16 @@
 {
   "_comment": "Starter MCP server configs for AIOS workspace integrations. Copy the servers you want into .mcp.json, fill in the env values (use a secrets manager or your shell env — never commit real tokens), then flip the integration's status to 'wired' in .claude/integrations.json. See docs/integrations.md for per-tool setup.",
   "mcpServers": {
+    "aios-team-brain": {
+      "_note": "First-party: exposes YOUR Team Brain (read-only) to GUI agents that can't run the aios CLI — Claude Desktop, Cowork, Codex, Conductor. Shell agents should use `aios query`/`aios pull` directly. Env-first; no workspace required. See docs/integrations.md.",
+      "command": "aios",
+      "args": ["mcp"],
+      "env": {
+        "AIOS_BRAIN_URL": "${AIOS_BRAIN_URL}",
+        "AIOS_API_KEY": "${AIOS_API_KEY}",
+        "AIOS_TEAM": "${AIOS_TEAM}"
+      }
+    },
     "atlassian": {
       "command": "npx",
       "args": ["-y", "mcp-atlassian"],

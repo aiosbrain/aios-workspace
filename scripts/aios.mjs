@@ -2319,6 +2319,9 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios mcp                              run the Team Brain MCP server over stdio, for
+                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
+                                        that can't shell out; env-first, no workspace needed
   aios analyze [--since 7d] [--tool x]   agentic-maturity (AEM) report from local session logs
     [--report] [--json] [--push]        tools: claude|codex|cursor (default: all); --report = deep
     [--full]                            dive on your weakest axis; --push needs brain config
@@ -2350,6 +2353,23 @@ options:
 
 if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   console.log(USAGE);
+  process.exit(0);
+}
+
+// `mcp` is the GUI-surface bridge: a long-lived stdio MCP server for agents that can't
+// shell out to this CLI (Claude Desktop/Cowork/Codex/Conductor). It must run with NO
+// workspace — config is env-first — so it's handled before any repo resolution, and it
+// owns the process (blocks on stdin) until the client disconnects.
+if (cmd === "mcp") {
+  const { resolveBrainConfig, runStdio } = await import("./brain-mcp.mjs");
+  const mcpCfg = resolveBrainConfig();
+  if (mcpCfg.missing.length) {
+    die(
+      `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")}. ` +
+        `Set them in the MCP client's env block, a local .env, or aios.yaml.`
+    );
+  }
+  await runStdio(mcpCfg);
   process.exit(0);
 }
 

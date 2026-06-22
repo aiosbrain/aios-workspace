@@ -14,8 +14,6 @@ import {
   classifyDiff,
   buildCodeReviewPrompt,
   buildImplementPrompt,
-  primarySnapshot,
-  tripwireTripped,
   snapshotsDiffer,
   EXIT,
 } from "../scripts/build.mjs";

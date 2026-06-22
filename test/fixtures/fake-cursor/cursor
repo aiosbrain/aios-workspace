@@ -32,7 +32,8 @@ function emit(text) {
 }
 
 const isBugbot =
-  prompt.startsWith("/review-bugbot") || prompt.includes(`${BUGBOT_CLEAR_TOKEN} alone on the very last line`);
+  prompt.startsWith("/review-bugbot") ||
+  prompt.includes(`${BUGBOT_CLEAR_TOKEN} alone on the very last line`);
 if (isBugbot) {
   if (mode === "bugbot-block") {
     emit("## Findings\n\n- High: blocking issue in test.\n");
