@@ -18,7 +18,6 @@ reviews:
     - "!node_modules/**"
     - "!dist/**"
     - "!src-tauri/target/**"
-    - "!scaffold/**"
     - "!examples/**"
     - "!test/ux/evidence/**"
     - "!*.lock"

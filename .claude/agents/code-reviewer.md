@@ -62,9 +62,17 @@ If any validator regex is weakened or a skip condition is added, flag it as High
 # CI check status
 gh pr checks <PR_NUMBER> --repo AIOS-alpha/aios-workspace
 
-# All bot comments
+# Bot issue comments (walkthrough summaries)
 gh api repos/AIOS-alpha/aios-workspace/issues/<PR_NUMBER>/comments \
-  --jq '[.[] | select(.user.login | test("cursor|coderabbit")) | {user: .user.login, body: .body}]'
+  --jq '[.[] | select(.user.login | test("cursor|coderabbit")) | {user: .user.login, body: .body, created_at: .created_at}]'
+
+# Bot inline diff comments — Bugbot and CodeRabbit post findings here, not in issue comments
+gh api repos/AIOS-alpha/aios-workspace/pulls/<PR_NUMBER>/comments \
+  --jq '[.[] | select(.user.login | test("cursor|coderabbit")) | {user: .user.login, path: .path, line: .line, body: .body}]'
+
+# Bot PR reviews (submitted review objects)
+gh api repos/AIOS-alpha/aios-workspace/pulls/<PR_NUMBER>/reviews \
+  --jq '[.[] | select(.user.login | test("cursor|coderabbit")) | {user: .user.login, state: .state, body: .body}]'
 
 # PR diff
 gh pr diff <PR_NUMBER> --repo AIOS-alpha/aios-workspace
