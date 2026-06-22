@@ -436,6 +436,15 @@ export default function App() {
       ws.send(JSON.stringify({ type: "user_message", text, model }));
     } catch (e) {
       setBusy(false);
+      // The message never left the client (connect/send failed). Roll back the optimistic
+      // user bubble and restore the text so the turn can be retried, instead of leaving an
+      // orphaned bubble that looks sent.
+      setMessages((prev) =>
+        prev[prev.length - 1]?.kind === "user" && prev[prev.length - 1]?.text === text
+          ? prev.slice(0, -1)
+          : prev
+      );
+      setInput((cur) => cur || text);
       append({ kind: "meta", text: `error: ${e.message}`, error: true });
     }
   };
