@@ -24,6 +24,8 @@
 import {
   existsSync,
   readFileSync,
+  writeFileSync,
+  readlinkSync,
   symlinkSync,
   rmSync,
   mkdtempSync,
@@ -46,8 +48,10 @@ import {
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
+import { runLocalBugbotReview } from "./review-bugbot.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
+export const BASE_SHA_MARK = ".aios-build-base-sha";
 // Builder = Opus via Claude Code; reviewer = Cursor /ai-code-review. This mirrors the
 // plan phase (Opus produces, Cursor reviews) and keeps model diversity in the loop.
 const BUILDER_MODEL = "claude-opus-4-8";
@@ -106,6 +110,10 @@ export function parseBuildArgs(args) {
   );
   const [planSource, branch] = positional;
 
+  const merge = hasFlag("--merge");
+  const noBugbot = hasFlag("--no-bugbot");
+  const bugbot = hasFlag("--bugbot") || (merge && !noBugbot);
+
   return {
     planSource,
     branch,
@@ -118,7 +126,9 @@ export function parseBuildArgs(args) {
     base: flag("--base") ?? "origin/main",
     verify: flag("--verify") ?? null,
     logFile: flag("--log") ?? null,
-    merge: hasFlag("--merge"),
+    merge,
+    bugbot,
+    noBugbot,
     noGate: hasFlag("--no-gate"),
     keepWorktree: hasFlag("--keep-worktree"),
     dryRun: hasFlag("--dry-run"),
@@ -317,6 +327,69 @@ function worktreeForBranch(repo, branch) {
   return null;
 }
 
+export function readPersistedBaseSha(wt) {
+  const f = path.join(wt, BASE_SHA_MARK);
+  if (!existsSync(f)) return null;
+  return readFileSync(f, "utf8").trim();
+}
+
+function appendWorktreeExclude(wt, entry) {
+  try {
+    const ex = git(
+      ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+      wt
+    ).trim();
+    const cur = existsSync(ex) ? readFileSync(ex, "utf8") : "";
+    if (!cur.includes(entry)) appendFileSync(ex, `\n${entry}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Share node_modules + exclude markers on every worktree (new or resumed). */
+export function hardenWorktree(wt, repo, dryRun) {
+  if (dryRun || !wt || !existsSync(wt)) return;
+  appendWorktreeExclude(wt, "/node_modules");
+  appendWorktreeExclude(wt, `/${BASE_SHA_MARK}`);
+  const repoModules = path.join(repo, "node_modules");
+  if (existsSync(repoModules) && !existsSync(path.join(wt, "node_modules"))) {
+    try {
+      symlinkSync(repoModules, path.join(wt, "node_modules"));
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+/** Persist fork SHA on first run; reuse on resume so diff/scan windows stay stable. */
+export function resolveBaseSha({ wt, base, resumed, dryRun, repo }) {
+  if (!wt || dryRun || !existsSync(wt)) return base;
+  hardenWorktree(wt, repo, dryRun);
+  const persisted = readPersistedBaseSha(wt);
+  if (persisted) return persisted;
+  const resolved = gitQuiet(["rev-parse", base], wt) || base;
+  const sha = resumed
+    ? gitQuiet(["merge-base", resolved, "HEAD"], wt) || resolved
+    : resolved;
+  writeFileSync(path.join(wt, BASE_SHA_MARK), `${sha}\n`);
+  return sha;
+}
+
+export function primarySnapshot(repo) {
+  return {
+    status: gitQuiet(["status", "--porcelain"], repo),
+    head: gitQuiet(["rev-parse", "HEAD"], repo),
+  };
+}
+
+export function snapshotsDiffer(before, after) {
+  return after.status !== before.status || after.head !== before.head;
+}
+
+export function tripwireTripped(before, repo) {
+  return snapshotsDiffer(before, primarySnapshot(repo));
+}
+
 function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
   assertSafeBuildBranch(branch, currentBranch(repo));
 
@@ -331,6 +404,7 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
   const existing = worktreeForBranch(repo, branch);
   if (existing) {
     console.log(c.dim(`Reusing existing worktree for ${branch}: ${existing}`));
+    if (!dryRun) hardenWorktree(existing, repo, dryRun);
     return { worktreePath: existing, resumed: true };
   }
 
@@ -338,38 +412,16 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
   if (dryRun) {
     console.log(c.dim(`[dry-run] git worktree add for ${branch} at ${wt}`));
   } else if (branchPreExisted) {
-    git(["worktree", "add", wt, branch], repo); // resume an existing branch
+    git(["worktree", "add", wt, branch], repo);
+    hardenWorktree(wt, repo, dryRun);
   } else {
     try {
       git(["worktree", "add", "-b", branch, wt, base], repo);
     } catch {
-      // base ref may be unfetched — try fetching origin once, then retry.
       gitQuiet(["fetch", "origin"], repo);
       git(["worktree", "add", "-b", branch, wt, base], repo);
     }
-    // Make the worktree runnable: share the primary checkout's deps if present.
-    const repoModules = path.join(repo, "node_modules");
-    if (existsSync(repoModules) && !existsSync(path.join(wt, "node_modules"))) {
-      try {
-        symlinkSync(repoModules, path.join(wt, "node_modules"));
-      } catch {
-        /* best-effort: tests just won't run from the worktree */
-      }
-    }
-    // Keep the node_modules symlink out of the change set. The repo's .gitignore
-    // uses `node_modules/` (directory), which does NOT match a symlink, so without
-    // this the symlink would be staged, reviewed, scanned, and merged.
-    if (!dryRun) {
-      try {
-        const ex = git(
-          ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-          wt
-        ).trim();
-        appendFileSync(ex, "\n/node_modules\n");
-      } catch {
-        /* best-effort */
-      }
-    }
+    hardenWorktree(wt, repo, dryRun);
   }
   return { worktreePath: wt, resumed: branchPreExisted };
 }
@@ -414,26 +466,48 @@ function runSecretsScan(repo, worktree, baseSha) {
 
   const tmp = mkdtempSync(path.join(os.tmpdir(), "aios-scan-"));
   try {
+    let ok = true;
+    const chunks = [`Scanned ${changed.length} changed file(s).`];
     for (const f of changed) {
       const src = path.join(worktree, f);
-      if (!existsSync(src)) continue; // deleted file — nothing to scan
+      if (!existsSync(src)) continue;
       let st;
       try {
         st = lstatSync(src);
       } catch {
         continue;
       }
-      if (!st.isFile()) continue; // skip symlinks/dirs (e.g. a stray node_modules symlink)
       const dst = path.join(tmp, f);
       mkdirSync(path.dirname(dst), { recursive: true });
+      if (st.isSymbolicLink()) {
+        let target;
+        try {
+          target = readlinkSync(src);
+        } catch {
+          ok = false;
+          chunks.push(`[FAIL unreadable symlink ${f}]`);
+          continue;
+        }
+        const resolved = path.resolve(path.dirname(src), target);
+        if (!existsSync(resolved) || !lstatSync(resolved).isFile()) {
+          ok = false;
+          chunks.push(`[FAIL symlink ${f} -> ${target} (not a regular file)]`);
+          continue;
+        }
+        cpSync(resolved, dst);
+        continue;
+      }
+      if (!st.isFile()) {
+        ok = false;
+        chunks.push(`[FAIL non-file path in change set: ${f}]`);
+        continue;
+      }
       cpSync(src, dst);
     }
     const checks = [
       { script: path.join(repo, "scripts", "leak-gate.sh"), args: [tmp] },
       { script: path.join(repo, "validation", "validate-all.sh"), args: [tmp, "--critical"] },
     ];
-    let ok = true;
-    const chunks = [`Scanned ${changed.length} changed file(s).`];
     for (const { script, args } of checks) {
       if (!existsSync(script)) {
         // Fail closed: a missing gate script means the change set is unscanned.
@@ -522,6 +596,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
     keepWorktree,
     dryRun,
     chained,
+    bugbot,
   } = opts;
 
   const { worktreePath: wt, resumed } = resolveWorktree({
@@ -532,9 +607,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
     dryRun,
   });
 
-  // Resolve the base ref to an immutable SHA once, so every diff/scan/merge-window
-  // computation is stable even if origin/main advances mid-run.
-  const baseSha = (wt && existsSync(wt) && gitQuiet(["rev-parse", base], wt)) || base;
+  const baseSha = resolveBaseSha({ wt, base, resumed, dryRun, repo });
 
   // Create the log first, THEN snapshot the tripwire baseline — so a --log file
   // written inside the repo is part of the baseline (our write, not the agent's)
@@ -543,8 +616,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
     append: chained,
   });
 
-  // Tripwire baseline: the primary checkout must not change during the build.
-  const primaryStatusBefore = gitQuiet(["status", "--porcelain"], repo);
+  // Tripwire baseline: primary checkout status AND HEAD must not change during the build.
+  const primaryBefore = primarySnapshot(repo);
 
   console.log("\n── aios build ───────────────────────────────────────────────");
   console.log(`Branch:     ${branch}`);
@@ -552,6 +625,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
   console.log(`Review:     ${skill}`);
   console.log(`Max rounds: ${rounds}`);
   console.log(`Merge:      ${merge ? "yes (on approval)" : c.dim("no (review diff yourself)")}`);
+  if (bugbot && merge) console.log(`Bugbot:     ${c.dim("local /review-bugbot before merge")}`);
   if (logFile) console.log(`Log:        ${logFile}`);
   if (dryRun) console.log(c.yellow("Mode:       dry-run (no merge)"));
   console.log("─────────────────────────────────────────────────────────────");
@@ -607,8 +681,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
     console.log(c.dim(`→ ${snap.totalCommits} commit(s) on branch (${newCommits} new this round)`));
     if (snap.diffStat) console.log(snap.diffStat);
 
-    // 3. TRIPWIRE: the primary checkout must be untouched
-    if (gitQuiet(["status", "--porcelain"], repo) !== primaryStatusBefore) {
+    // 3. TRIPWIRE: the primary checkout must be untouched (status + HEAD)
+    if (tripwireTripped(primaryBefore, repo)) {
       console.error(
         c.red(
           `\nSAFETY — the primary checkout at ${repo} changed during the build. Aborting. Inspect: git -C ${repo} status`
@@ -683,7 +757,22 @@ export async function runBuild({ repo, plan, branch, opts }) {
     // 7. CONVERGENCE
     if (detectMergeToken(review)) {
       console.log(c.green(`\n✓ ${MERGE_READY_TOKEN} received after round ${round}.`));
-      return finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun, log });
+      const approvedHeadSha = gitQuiet(["rev-parse", "HEAD"], wt);
+      return finish({
+        repo,
+        branch,
+        wt,
+        baseSha,
+        merge,
+        noGate,
+        keepWorktree,
+        dryRun,
+        log,
+        approvedHeadSha,
+        verify,
+        bugbot,
+        cursorTimeout,
+      });
     }
 
     prevReview = review;
@@ -707,7 +796,44 @@ export async function runBuild({ repo, plan, branch, opts }) {
   return EXIT.NONCONVERGENCE;
 }
 
-function finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun, log }) {
+async function finish({
+  repo,
+  branch,
+  wt,
+  baseSha,
+  merge,
+  noGate,
+  keepWorktree,
+  dryRun,
+  log,
+  approvedHeadSha,
+  verify,
+  bugbot,
+  cursorTimeout,
+}) {
+  // Re-capture: reviewer (--force) may have committed after MERGE_READY was emitted.
+  snapshotDiff(wt, baseSha);
+  const headNow = gitQuiet(["rev-parse", "HEAD"], wt);
+  if (approvedHeadSha && headNow !== approvedHeadSha) {
+    console.error(
+      c.red(
+        "\n✗ worktree HEAD moved after review approval — merge blocked. Re-run build to re-review."
+      )
+    );
+    log("Merge blocked — HEAD drift", `approved ${approvedHeadSha} → now ${headNow}`);
+    return EXIT.GATE_FAILED;
+  }
+
+  if (verify) {
+    const v = runVerification(wt, verify);
+    log("Pre-merge verify", v.output);
+    if (!v.ok) {
+      console.error(c.red("\n✗ pre-merge verify FAILED — merge blocked."));
+      return EXIT.GATE_FAILED;
+    }
+    console.log(c.green("✓ pre-merge verify passed"));
+  }
+
   // Fail-closed secrets gate immediately before merge.
   if (!noGate) {
     const gate = runSecretsScan(repo, wt, baseSha);
@@ -723,6 +849,23 @@ function finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun
     console.log(c.green("✓ pre-merge secrets gate clean"));
   } else {
     console.log(c.yellow("⚠ --no-gate: skipping the pre-merge secrets gate (not recommended)"));
+  }
+
+  if (bugbot && merge && !dryRun) {
+    const bb = await runLocalBugbotReview({
+      repo,
+      worktree: wt,
+      baseSha,
+      branch,
+      cursorTimeout,
+    });
+    log("Pre-merge Bugbot review", bb.output.slice(-8000));
+    if (!bb.ok) {
+      console.error(c.red("\n✗ local Bugbot found Critical/High issues — merge blocked."));
+      console.error(c.dim("Fix findings or pass --no-bugbot to skip (not recommended)."));
+      return EXIT.GATE_FAILED;
+    }
+    console.log(c.green("✓ local Bugbot clear (BUGBOT_CLEAR)"));
   }
 
   // The merge lands in the PRIMARY checkout's current branch (--base only seeds the
@@ -805,6 +948,8 @@ export async function cmdBuild(repo, args) {
         "  --base <ref>            base ref for a new worktree branch (default: origin/main)",
         "  --worktree <path>       worktree directory (default: ../<repo>-<branch>)",
         "  --merge                 merge the branch on approval (off by default)",
+        "  --bugbot                run local /review-bugbot before merge (default with --merge)",
+        "  --no-bugbot             skip the local Bugbot gate even when --merge is set",
         "  --no-gate               skip the pre-merge secrets gate (NOT recommended)",
         "  --keep-worktree         keep the worktree after a successful merge",
         "  --log <file>            save build rounds + reviews to a Markdown file",

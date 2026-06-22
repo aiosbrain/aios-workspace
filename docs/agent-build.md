@@ -71,6 +71,8 @@ Options:
   --merge             on approval, merge into the PRIMARY checkout's current branch
                       (NOT --base). OFF by default — check out your target first, or
                       omit --merge and merge the branch yourself.
+  --bugbot            run local /review-bugbot before merge (default when --merge)
+  --no-bugbot         skip the local Bugbot gate even with --merge
   --no-gate           skip the pre-merge secrets gate (NOT recommended; logged loudly)
   --keep-worktree     keep the worktree after a successful merge
   --log <file>        save build rounds + reviews to a Markdown file
@@ -96,10 +98,28 @@ For each round, the tool — not the agent — owns one authoritative change set
    to the reviewer as evidence.
 5. **Review.** `/ai-code-review` inspects the real diff + the original plan and emits `MERGE_READY`
    only when the code is genuinely ready.
-6. **Finish.** On `MERGE_READY`, re-run the secrets gate fail-closed, then (with `--merge`) merge and
-   remove the worktree. The merge lands in the **primary checkout's current branch** (`--base` only
-   seeds the worktree), and the target is printed before merging — so check out your intended branch
-   first. Without `--merge`, print the diff + merge command for you to run.
+6. **Finish.** On `MERGE_READY`, re-capture the change set (reviewer may have committed with
+   `--force`), re-run verify + secrets gate fail-closed, run **local `/review-bugbot`** when
+   `--merge` is set (unless `--no-bugbot`), then merge and remove the worktree. The merge lands
+   in the **primary checkout's current branch** (`--base` only seeds the worktree), and the target
+   is printed before merging — so check out your intended branch first. Without `--merge`, print
+   the diff + merge command for you to run.
+
+### Local Bugbot hook (`/review-bugbot`)
+
+When `--merge` is set, `aios build` runs a **local Cursor Bugbot review** on the real worktree
+diff before merging (same skill as `/review-bugbot` in the IDE). It blocks merge on Critical/High
+findings unless you pass `--no-bugbot`. Standalone:
+
+```bash
+npm run aios -- review-bugbot feat/my-branch
+```
+
+Poll remote GitHub Bugbot on a PR (no email):
+
+```bash
+scripts/bugbot-status.sh <pr-number>
+```
 
 > The straggler auto-commit in step 2 uses `git commit --no-verify`, so repo commit hooks (format,
 > custom validators) are skipped for it. The fail-closed secrets gate and the reviewer (which runs
