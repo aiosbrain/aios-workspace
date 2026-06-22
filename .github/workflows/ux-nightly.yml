@@ -30,7 +30,7 @@ jobs:
         run: npm ci
 
       - name: Install Chrome (for agent-browser)
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
 
       - name: Install agent-browser (pinned)
         run: npm i -g agent-browser@0.28.0
