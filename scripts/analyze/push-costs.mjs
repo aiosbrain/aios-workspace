@@ -1,10 +1,17 @@
 /**
- * push-costs.mjs — push Cursor dashboard billing to POST /api/v1/costs (W2.1).
+ * push-costs.mjs — gather provider spend + push to POST /api/v1/costs (W2.1).
  * Called from `aios analyze --push` after session-log metrics. Zero dependencies.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { fetchCursorUsage } from "./cursor-api.mjs";
-import { buildCostPushPayloads } from "./cost-report.mjs";
+import {
+  buildClaudeCostFromEvents,
+  buildCostPushPayloads,
+  renderAiSpendMarkdown,
+} from "./cost-report.mjs";
 import { loadCostsState, saveCostsState, pushKey, payloadHash } from "./costs-state.mjs";
 
 const color = {
@@ -14,45 +21,36 @@ const color = {
 };
 
 /**
- * Push daily Cursor billing rows (authoritative USD) to the brain.
- * @param {string} project — contribution tag (default aios)
+ * Fetch Cursor billing + build Claude session-log estimates for the window.
+ * Safe to call without brain credentials (display-only).
  */
-export async function pushCursorCosts(
-  repo,
-  cfg,
-  helpers,
-  { sinceMs, endMs, member, project = "aios" }
-) {
-  const { api } = helpers || {};
-  if (!api || !cfg.brain_url || !cfg.api_key) return { sent: 0, skipped: 0, failed: 0 };
-
-  let cursor;
+export async function gatherCostData({ sinceMs, endMs, events, window }) {
+  const out = { window, claude: buildClaudeCostFromEvents(events, sinceMs) };
   try {
-    cursor = await fetchCursorUsage(sinceMs, endMs);
+    out.cursor = await fetchCursorUsage(sinceMs, endMs);
   } catch (e) {
-    console.warn(color.yellow(`  cursor billing skipped: ${e.message}`));
-    return { sent: 0, skipped: 0, failed: 0 };
+    out.cursor_error = e.message;
   }
+  return out;
+}
 
-  if (cursor.truncated) {
-    console.warn(
-      color.yellow(
-        `  cursor billing incomplete: ${cursor.events_fetched}/${cursor.events_total} events fetched — daily costs may be undercounted`
-      )
-    );
-  }
+/** Write team-tier 3-log/ai-spend.md in the target workspace. */
+export function writeAiSpendMarkdown(repo, costData) {
+  const dir = path.join(repo, "3-log");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "ai-spend.md");
+  writeFileSync(file, renderAiSpendMarkdown(costData), "utf8");
+  return file;
+}
 
-  const state = loadCostsState(repo);
-  if (!state.pushed) state.pushed = {};
-
+async function pushPayloadRows(repo, cfg, api, payloads, state) {
   let sent = 0,
     skipped = 0,
     failed = 0;
+  let costs404 = false;
 
-  for (const day of cursor.days || []) {
-    if (day.date === "unknown") continue;
-    const [payload] = buildCostPushPayloads({ cursor: { days: [day] } }, member, project);
-    if (!payload) continue;
+  for (const payload of payloads) {
+    if (payload.date === "unknown") continue;
     const key = pushKey(payload);
     const hash = payloadHash(payload);
     if (state.pushed[key] === hash) {
@@ -66,24 +64,105 @@ export async function pushCursorCosts(
     } catch (e) {
       failed++;
       if (String(e.message).includes("404")) {
-        console.warn(
-          color.dim("  POST /costs not on brain yet (W2.1) — maturity metrics still pushed")
-        );
+        costs404 = true;
         break;
       }
-      console.warn(color.yellow(`  cursor cost push ${day.date} failed: ${e.message}`));
+      console.warn(
+        color.yellow(
+          `  ${payload.provider} cost push ${payload.date} failed: ${e.message}`
+        )
+      );
     }
   }
-
-  saveCostsState(repo, state);
-  if (sent || failed) {
-    console.log(
-      color.green(
-        `  cursor billing: pushed ${sent} day(s)` +
-          (skipped ? `, ${skipped} unchanged` : "") +
-          (failed ? `, ${failed} failed` : "")
-      )
+  if (costs404) {
+    console.warn(
+      color.dim("  POST /costs not on brain yet (W2.1) — maturity metrics still pushed")
     );
   }
   return { sent, skipped, failed };
+}
+
+/**
+ * Push daily Cursor billing + Claude estimate rows to the brain.
+ * @param {string} project — contribution tag (default aios)
+ */
+export async function pushProviderCosts(
+  repo,
+  cfg,
+  helpers,
+  costData,
+  { member, project = "aios", writeMarkdown = false }
+) {
+  const { api } = helpers || {};
+  if (!api || !cfg.brain_url || !cfg.api_key) {
+    return { cursor: { sent: 0, skipped: 0, failed: 0 }, claude: { sent: 0, skipped: 0, failed: 0 } };
+  }
+
+  if (costData.cursor?.truncated) {
+    console.warn(
+      color.yellow(
+        `  cursor billing incomplete: ${costData.cursor.events_fetched}/${costData.cursor.events_total} events fetched — daily costs may be undercounted`
+      )
+    );
+  }
+
+  const state = loadCostsState(repo);
+  if (!state.pushed) state.pushed = {};
+
+  const rollup = {
+    window: costData.window,
+    cursor: costData.cursor ? { days: costData.cursor.days, totals: costData.cursor.totals } : null,
+    claude: costData.claude,
+  };
+
+  const cursorPayloads = buildCostPushPayloads(
+    { cursor: rollup.cursor },
+    member,
+    project
+  );
+  const claudePayloads = buildCostPushPayloads({ claude: rollup.claude }, member, project);
+
+  const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
+  const claudeStats = await pushPayloadRows(repo, cfg, api, claudePayloads, state);
+
+  saveCostsState(repo, state);
+
+  if (writeMarkdown) {
+    try {
+      const file = writeAiSpendMarkdown(repo, rollup);
+      console.log(color.green(`  wrote ${path.relative(repo, file)}`));
+    } catch (e) {
+      console.warn(color.yellow(`  ai-spend.md write failed: ${e.message}`));
+    }
+  }
+
+  logPushSummary("cursor", cursorStats);
+  logPushSummary("claude", claudeStats);
+
+  return { cursor: cursorStats, claude: claudeStats };
+}
+
+function logPushSummary(provider, { sent, skipped, failed }) {
+  if (!sent && !failed) return;
+  console.log(
+    color.green(
+      `  ${provider} billing: pushed ${sent} day(s)` +
+        (skipped ? `, ${skipped} unchanged` : "") +
+        (failed ? `, ${failed} failed` : "")
+    )
+  );
+}
+
+/** @deprecated use pushProviderCosts */
+export async function pushCursorCosts(repo, cfg, helpers, opts) {
+  const costData = await gatherCostData({
+    sinceMs: opts.sinceMs,
+    endMs: opts.endMs,
+    events: [],
+    window: { since: new Date(opts.sinceMs).toISOString().slice(0, 10), until: new Date(opts.endMs).toISOString().slice(0, 10) },
+  });
+  return pushProviderCosts(repo, cfg, helpers, costData, {
+    member: opts.member,
+    project: opts.project,
+  }).then((s) => s.cursor);
 }

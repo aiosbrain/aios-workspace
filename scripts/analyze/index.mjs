@@ -27,7 +27,8 @@ import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
 import { renderText, renderReport, toJson, buildPushPayload } from "./report.mjs";
 import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
-import { pushCursorCosts } from "./push-costs.mjs";
+import { gatherCostData, pushProviderCosts } from "./push-costs.mjs";
+import { renderCostSummary } from "./cost-report.mjs";
 import { cursorBillingStart } from "./cursor-api.mjs";
 
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
@@ -157,10 +158,19 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     days,
   };
 
+  const costData = await gatherCostData({
+    sinceMs,
+    endMs: until.getTime(),
+    events: inWindow,
+    window: result.window,
+  });
+
   if (opts.json) {
-    console.log(JSON.stringify(toJson(result), null, 2));
+    console.log(JSON.stringify(toJson(result, costData), null, 2));
   } else {
     console.log(renderText(result, color));
+    const costBlock = renderCostSummary(costData, color);
+    if (costBlock) console.log(costBlock);
     if (opts.report) console.log(renderReport(result, color));
   }
 
@@ -171,11 +181,10 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     const member = resolveMember
       ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {})
       : "";
-    await pushCursorCosts(repo, cfg, helpers, {
-      sinceMs,
-      endMs: until.getTime(),
+    await pushProviderCosts(repo, cfg, helpers, costData, {
       member,
       project: process.env.AIOS_COST_PROJECT || "aios",
+      writeMarkdown: true,
     });
   }
 
