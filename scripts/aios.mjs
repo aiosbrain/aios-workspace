@@ -168,7 +168,6 @@ function loadOfflineConfig(repo) {
   // Brain config from env/.env so offline-capable commands that opt into the
   // network (e.g. `aios analyze --push`) work outside a stamped workspace — the
   // toolkit repo and ad-hoc dirs have no aios.yaml. Mirrors loadConfig's resolution.
-  const dotenv = loadDotEnv(repo);
   const keyEnv = "AIOS_API_KEY";
   const cfg = {
     project: projCfg.slug || slugify(path.basename(repo)),
