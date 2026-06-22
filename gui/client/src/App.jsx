@@ -103,7 +103,36 @@ function buildMessagesFromEvents(events) {
  * skills, rules, and the guard hook fire exactly as in Claude Code.
  */
 
-const token = new URLSearchParams(window.location.search).get("token") || "";
+const GUI_TOKEN_KEY = "aios.gui.token";
+
+// Persist the localhost session token so a refresh to / still works. The server
+// mints a random token at startup; the first visit must use ?token=… from the
+// terminal, after which we reuse it for this browser tab/session.
+function resolveGuiToken() {
+  const fromUrl = new URLSearchParams(window.location.search).get("token") || "";
+  if (fromUrl) {
+    try {
+      sessionStorage.setItem(GUI_TOKEN_KEY, fromUrl);
+    } catch {
+      /* storage blocked */
+    }
+    return fromUrl;
+  }
+  try {
+    return sessionStorage.getItem(GUI_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+const token = resolveGuiToken();
+
+function connectErrorMessage(reason) {
+  if (!token) {
+    return "Missing session token — open the full link printed by `npm run gui` once, then refresh";
+  }
+  return `${reason} — if you restarted the GUI, open the new link from \`npm run gui\``;
+}
 
 export default function App() {
   const [repo, setRepo] = useState("");
@@ -120,11 +149,12 @@ export default function App() {
   const [usage, setUsage] = useState(null); // latest token usage → context meter
   const [chats, setChats] = useState([]); // past sessions for the sidebar
   const [currentSession, setCurrentSession] = useState(null); // active chat id
-  const [enrichLinks, setEnrichLinks] = useState(""); // onboarding: draft profile from one or more links
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const composerRef = useRef(null); // footer textarea — chips pre-fill + focus it
   const usageRef = useRef(null); // latest usage for the result line (state is async)
   const prevCostRef = useRef(0); // session cost so far, to show a per-turn delta
+  const connectSeqRef = useRef(0); // ignore close/open callbacks from superseded sockets
 
   // Who am I? Only a brain lead/admin sees the Team (publish) surface.
   useEffect(() => {
@@ -134,12 +164,21 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // Keep repo chrome populated even while a fresh draft has not opened a WebSocket.
+  useEffect(() => {
+    fetch("/api/info")
+      .then((r) => r.json())
+      .then((d) => setRepo(d.repo || ""))
+      .catch(() => {});
+  }, []);
+
   // Restore the persisted model choice (agent_model in aios.yaml), if it's one we offer.
   useEffect(() => {
     fetch(`/api/config?token=${token}`)
       .then((r) => r.json())
       .then((d) => {
         if (MODELS.some((m) => m.id === d.model)) setModel(d.model);
+        setRuntime(d.runtime || "");
       })
       .catch(() => {});
   }, []);
@@ -174,28 +213,52 @@ export default function App() {
     );
   }, []);
 
-  const loadChats = useCallback(() => {
-    fetch(`/api/sessions?token=${token}`)
-      .then((r) => r.json())
-      .then((d) => setChats(d.sessions || []))
-      .catch(() => {});
+  const loadChats = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/sessions?token=${token}`);
+      const d = await r.json();
+      setChats(d.sessions || []);
+      return d;
+    } catch {
+      return { sessions: [], lastSelected: null };
+    }
   }, []);
 
   // Open (or reopen) a WebSocket. With a sessionId, the server resumes that chat's
   // SDK session so prior context is intact; without one it mints a fresh chat.
   const connect = useCallback(
     (sessionId) => {
+      if (!token) {
+        return Promise.reject(new Error(connectErrorMessage("Cannot connect")));
+      }
       try {
         wsRef.current?.close();
       } catch {
         /* already closed */
       }
+      const seq = ++connectSeqRef.current;
+      setConnected(false);
       const proto = window.location.protocol === "https:" ? "wss" : "ws";
       const qs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
       const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${token}${qs}`);
       wsRef.current = ws;
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => setConnected(false);
+      const opened = new Promise((resolve, reject) => {
+        let didOpen = false;
+        const fail = (reason) => {
+          if (didOpen || connectSeqRef.current !== seq) return;
+          reject(new Error(connectErrorMessage(reason)));
+        };
+        ws.onopen = () => {
+          didOpen = true;
+          if (connectSeqRef.current === seq) setConnected(true);
+          resolve(ws);
+        };
+        ws.onerror = () => fail("WebSocket connection failed");
+        ws.onclose = () => {
+          if (connectSeqRef.current === seq) setConnected(false);
+          fail("WebSocket connection closed before opening");
+        };
+      });
       ws.onmessage = (e) => {
         let msg;
         try {
@@ -212,7 +275,8 @@ export default function App() {
             loadChats();
             break;
           case "echo_user":
-            break; // already rendered optimistically
+            loadChats(); // server registered/updated session on user_message
+            break; // user bubble already rendered optimistically
           case "delta":
             appendDelta(msg.text);
             break;
@@ -273,6 +337,7 @@ export default function App() {
             break;
         }
       };
+      return opened;
     },
     [append, appendDelta, finishAssistant, loadChats]
   );
@@ -287,12 +352,20 @@ export default function App() {
   }, []);
 
   const newChat = useCallback(() => {
+    connectSeqRef.current++;
+    try {
+      wsRef.current?.close();
+    } catch {
+      /* already closed */
+    }
+    wsRef.current = null;
+    setConnected(false);
     resetChatState();
     setMessages([]);
+    setInput("");
     setCurrentSession(null);
     setView("chat");
-    connect(); // no session → server mints a new chat
-  }, [connect, resetChatState]);
+  }, [resetChatState]);
 
   // Replay a stored transcript, then resume its SDK session for new turns.
   const openChat = useCallback(
@@ -317,22 +390,26 @@ export default function App() {
       } catch {
         setMessages([]);
       }
-      connect(id);
+      setCurrentSession(id);
+      connect(id).catch((e) => append({ kind: "meta", text: `error: ${e.message}`, error: true }));
     },
-    [connect, resetChatState]
+    [append, connect, resetChatState]
   );
 
-  // On launch, restore the last chat if there is one; otherwise start fresh.
+  // On launch, restore a real saved chat if there is one; otherwise stay in a local draft.
   useEffect(() => {
-    fetch(`/api/sessions?token=${token}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setChats(d.sessions || []);
-        if (d.lastSelected) openChat(d.lastSelected);
-        else connect();
-      })
-      .catch(() => connect());
+    loadChats().then((d) => {
+      const validLast = d.lastSelected && (d.sessions || []).some((c) => c.id === d.lastSelected);
+      if (validLast) openChat(d.lastSelected);
+      else {
+        resetChatState();
+        setMessages([]);
+        setCurrentSession(null);
+        setView("chat");
+      }
+    });
     return () => {
+      connectSeqRef.current++;
       try {
         wsRef.current?.close();
       } catch {
@@ -346,13 +423,21 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, permissions]);
 
-  const sendMessage = (override) => {
+  const sendMessage = async (override) => {
     const text = (typeof override === "string" ? override : input).trim();
-    if (!text || !connected) return;
+    if (!text) return;
+    const openSocket = wsRef.current?.readyState === WebSocket.OPEN ? wsRef.current : null;
+    if (!openSocket && currentSession !== null) return;
     append({ kind: "user", text });
-    wsRef.current?.send(JSON.stringify({ type: "user_message", text, model }));
     setInput("");
     setBusy(true);
+    try {
+      const ws = openSocket || (await connect());
+      ws.send(JSON.stringify({ type: "user_message", text, model }));
+    } catch (e) {
+      setBusy(false);
+      append({ kind: "meta", text: `error: ${e.message}`, error: true });
+    }
   };
 
   const respondPermission = (id, allow) => {
@@ -371,6 +456,19 @@ export default function App() {
     setPermissions((prev) => prev.filter((p) => p.id !== id));
   };
 
+  const sortedChats = [...chats].sort((a, b) =>
+    (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")
+  );
+  const activeChat =
+    currentSession &&
+    sortedChats.find((c) => c.id === currentSession && String(c.title || "").trim());
+  const historyChats = sortedChats.filter((c) => c.id !== activeChat?.id);
+  const isDraft = currentSession === null;
+  const isEmptyDraft = isDraft && messages.length === 0 && !input.trim() && !connected && !busy;
+  const draftConnecting = isDraft && busy && !connected;
+  const composerDisabled = draftConnecting || (!connected && !isDraft);
+  const canStartMessage = !composerDisabled;
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -380,7 +478,7 @@ export default function App() {
           <span
             className="brand-status"
             data-on={connected}
-            title={connected ? "Connected" : "Connecting…"}
+            title={connected ? "Connected" : isDraft ? "Draft" : "Connecting…"}
           />
         </div>
         <nav className="side-nav">
@@ -424,11 +522,24 @@ export default function App() {
           </button>
         </nav>
         <div className="side-chats">
-          <button className="side-newchat" onClick={newChat}>
+          {activeChat && (
+            <button
+              className="chat-item on"
+              onClick={() => openChat(activeChat.id)}
+              title={activeChat.title}
+            >
+              {activeChat.title}
+            </button>
+          )}
+          <button
+            className={`side-newchat${isDraft ? " draft" : ""}`}
+            onClick={newChat}
+            disabled={isEmptyDraft}
+          >
             + New chat
           </button>
           <div className="chat-list">
-            {chats.map((c) => (
+            {historyChats.map((c) => (
               <button
                 key={c.id}
                 className={`chat-item${c.id === currentSession ? " on" : ""}`}
@@ -490,6 +601,12 @@ export default function App() {
               </label>
             </div>
             <main>
+              {!token && (
+                <div className="safety-banner">
+                  Missing session token. Open the full link printed by <code>npm run gui</code> once
+                  — after that, refreshing this page will keep working in this tab.
+                </div>
+              )}
               {safetyNote && (
                 <div
                   className="safety-banner"
@@ -500,66 +617,25 @@ export default function App() {
               )}
               {messages.length === 0 && (
                 <div className="empty">
-                  <p>Welcome to your workspace. Start by letting the agent learn who you are.</p>
-                  <button
-                    className="empty-cta"
-                    disabled={!connected}
-                    onClick={() =>
-                      sendMessage(
-                        "Set me up — interview me about who I am and what I'm working on, then update my workspace memory (.claude/memory/USER.md + WORKSPACE.md)."
-                      )
-                    }
-                  >
-                    ✨ Set up your profile
-                  </button>
-                  <div className="enrich">
-                    <div className="enrich-or">or draft it from a link</div>
-                    <form
-                      className="enrich-form"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const urls = [
-                          ...new Set(
-                            enrichLinks
-                              .split(/[\s,]+/)
-                              .map((s) => s.trim())
-                              .filter((s) => /^https?:\/\//i.test(s))
-                          ),
-                        ];
-                        if (!urls.length || !connected) return;
-                        const list = urls.join(", ");
-                        const phrase =
-                          urls.length === 1
-                            ? `Enrich my profile from this link: ${list} — read it with the firecrawl-direct skill, then draft and confirm my workspace memory (.claude/memory/).`
-                            : `Enrich my profile from these links: ${list} — read them with the firecrawl-direct skill, merge the facts, then draft and confirm my workspace memory (.claude/memory/).`;
-                        sendMessage(phrase);
-                        setEnrichLinks("");
+                  <div className="empty-chips">
+                    <button
+                      className="empty-chip"
+                      disabled={!canStartMessage}
+                      onClick={() => sendMessage("what changed this week?")}
+                    >
+                      what changed this week?
+                    </button>
+                    <button
+                      className="empty-chip"
+                      disabled={!canStartMessage}
+                      onClick={() => {
+                        setInput("Draft my profile from this link: ");
+                        composerRef.current?.focus();
                       }}
                     >
-                      <textarea
-                        className="enrich-input"
-                        rows={2}
-                        placeholder="https://your-company.com/about&#10;https://linkedin.com/in/you  (one per line, or comma-separated)"
-                        value={enrichLinks}
-                        onChange={(e) => setEnrichLinks(e.target.value)}
-                        disabled={!connected}
-                      />
-                      <button
-                        type="submit"
-                        disabled={!connected || !/^https?:\/\//im.test(enrichLinks)}
-                      >
-                        Draft →
-                      </button>
-                    </form>
-                    <div className="enrich-note">
-                      🔗 We send these URLs to Firecrawl to read the pages. Connect Firecrawl in{" "}
-                      <em>Integrations</em> first.
-                    </div>
+                      draft from a link
+                    </button>
                   </div>
-                  <p className="empty-sub">
-                    …or just chat. Skills, rules, and the guard hook are live — try{" "}
-                    <em>"what changed this week?"</em> or connect a tool in <em>Integrations</em>.
-                  </p>
                 </div>
               )}
               {messages.map((m, i) => {
@@ -637,13 +713,16 @@ export default function App() {
 
             <footer>
               <textarea
+                ref={composerRef}
                 value={input}
                 placeholder={
-                  connected
-                    ? "Message your repo… (Enter to send, Shift+Enter for newline)"
-                    : "connecting…"
+                  !connected && !isDraft
+                    ? "connecting…"
+                    : messages.length === 0
+                      ? "What are you working on?"
+                      : "Message your workspace… (Enter to send, Shift+Enter for newline)"
                 }
-                disabled={!connected}
+                disabled={composerDisabled}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -652,7 +731,7 @@ export default function App() {
                   }
                 }}
               />
-              <button onClick={sendMessage} disabled={!connected || !input.trim()}>
+              <button onClick={sendMessage} disabled={composerDisabled || !input.trim()}>
                 {busy ? "…" : "Send"}
               </button>
             </footer>
