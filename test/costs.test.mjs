@@ -23,7 +23,16 @@ test("buildCostPushPayloads emits cursor + claude rows", () => {
       ],
     },
     claude: {
-      days: [{ date: "2026-06-22", cost_usd: 12.5, events: 40, input_tokens: 100, output_tokens: 50, cache_read_tokens: 0 }],
+      days: [
+        {
+          date: "2026-06-22",
+          cost_usd: 12.5,
+          events: 40,
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_tokens: 0,
+        },
+      ],
     },
   };
   const payloads = buildCostPushPayloads(result, "john", "aios");
