@@ -124,8 +124,8 @@ export function renderReport(result, color) {
 }
 
 /** Machine-readable shape (no raw events, no message text). */
-export function toJson(result) {
-  return {
+export function toJson(result, costData) {
+  const out = {
     window: result.window,
     tools: result.tools,
     totals: result.totals,
@@ -133,6 +133,20 @@ export function toJson(result) {
     placement: result.placement,
     days: result.days.map((d) => ({ date: d.date, signals: d.signals, placement: d.placement })),
   };
+  if (costData) {
+    out.costs = {
+      cursor: costData.cursor
+        ? {
+            totals: costData.cursor.totals,
+            days: costData.cursor.days,
+            truncated: !!costData.cursor.truncated,
+          }
+        : null,
+      claude: costData.claude,
+      cursor_error: costData.cursor_error || null,
+    };
+  }
+  return out;
 }
 
 /**
