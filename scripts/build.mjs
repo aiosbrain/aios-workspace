@@ -368,9 +368,7 @@ export function resolveBaseSha({ wt, base, resumed, dryRun, repo }) {
   const persisted = readPersistedBaseSha(wt);
   if (persisted) return persisted;
   const resolved = gitQuiet(["rev-parse", base], wt) || base;
-  const sha = resumed
-    ? gitQuiet(["merge-base", resolved, "HEAD"], wt) || resolved
-    : resolved;
+  const sha = resumed ? gitQuiet(["merge-base", resolved, "HEAD"], wt) || resolved : resolved;
   writeFileSync(path.join(wt, BASE_SHA_MARK), `${sha}\n`);
   return sha;
 }

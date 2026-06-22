@@ -23,7 +23,11 @@ const DEFAULT_TIMEOUT = 300;
 
 function gitQuiet(args, cwd) {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
   } catch {
     return "";
   }
@@ -92,7 +96,6 @@ export function captureBranchDiff(worktree, baseSha) {
 }
 
 export async function runLocalBugbotReview({
-  repo,
   worktree,
   baseSha,
   branch,
@@ -156,7 +159,11 @@ export async function cmdReviewBugbot(repo, args) {
   const baseSha = gitQuiet(["rev-parse", base], repo) || base;
   const worktreePath =
     flag("--worktree") ??
-    path.resolve(repo, "..", `${path.basename(repo)}-${branch.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
+    path.resolve(
+      repo,
+      "..",
+      `${path.basename(repo)}-${branch.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
+    );
 
   if (!existsSync(worktreePath)) {
     die(`worktree not found: ${worktreePath} — run aios build first or pass --worktree`);

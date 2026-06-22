@@ -32,6 +32,34 @@ The brain is the hub; each person's workspace is a spoke. A spoke only ever send
 content the person has explicitly tagged and pushed; the brain re-applies tier
 filtering on retrieval so a query never returns content above the caller's ceiling.
 
+## Access surfaces — how callers reach the brain
+
+The brain has **one contract** ([`brain-api.md`](brain-api.md) v1) and **two ways to
+reach it**, chosen by a single question: *does the calling agent have a shell?*
+
+| Caller | Surface | Why |
+|--------|---------|-----|
+| Shell-capable agents (Claude Code, Codex, OpenCode, cron, CI) | the **`aios` CLI** — *primary, canonical* | faster, cheaper, no per-turn tool-schema cost; it owns the contract and the tier default-deny |
+| Shell-less agents (Claude Desktop, Claude Cowork, Claude.ai, Conductor) | **`aios mcp`** — a stdio MCP server bridge | MCP is the only way an agent without a shell can call out; same contract, schema-described tools |
+
+The MCP bridge (`scripts/brain-mcp.mjs`) is intentionally **thin and read-only**: it
+wraps the v1 read endpoints (`query`, `projects`, `tasks`, `decisions`, `items`) and
+re-uses the brain's server-side tier filtering as its safety boundary. It requires no
+workspace — config is resolved env-first — so a Claude Desktop user with no scaffolded
+repo can still query the team's shared memory. It never drives the contract: capability
+lands in `brain-api.md` for product reasons, and both the CLI and the MCP bridge follow.
+
+> Don't confuse this with BYOA. The **MCP bridge** decides which *AI surfaces* can reach
+> the **brain**; the **runtime adapters** (`gui/server/runtime-adapters/`, `aios skills
+> export`) decide which *agent runtimes* can run the **local harness**. Different lever,
+> different layer. See the [MCP connector PRD](prd-team-brain-mcp-connector.md). <!-- maintainer-only:
+> the deeper rationale lives in strategy/team-brain-access-strategy.md, which is removed at public
+> release; this section is the release-safe summary, so don't add a hard link to it here. -->
+
+> **This section is the public, release-safe summary of the access doctrine.** The full strategy
+> brief (`strategy/team-brain-access-strategy.md`) is maintainer-only and is removed before public
+> release — link *here*, not there, from public docs.
+
 ## Context-driven spine
 
 At onboarding the individual answers one question — *consultant working in a team
