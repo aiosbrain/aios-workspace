@@ -42,6 +42,7 @@ jobs:
           node test/ux/run-ux-skip.test.mjs
           node test/analyze.test.mjs
           node test/analyze-multitool.test.mjs
+          node --test gui/server/session-index.test.mjs
           node scripts/lock-marketplace.mjs --check
 
       - name: Runtime-adapter contract tests (BYOA Phase 3)

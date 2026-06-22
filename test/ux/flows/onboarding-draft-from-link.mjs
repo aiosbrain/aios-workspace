@@ -1,7 +1,12 @@
 // test/ux/flows/onboarding-draft-from-link.mjs — Flow A.
 //
-// Trust-critical onboarding flow: from the empty chat, use "draft it from a link" with the
+// Trust-critical onboarding flow: from the empty chat, use the "draft from a link" chip with the
 // stubbed URL, walk to the drafted profile + the confirm prompt, and NEVER confirm the write.
+//
+// Note: the empty state is composer-first (example chips, no profile-setup form and no inline
+// Firecrawl disclosure). The chip pre-fills the composer ("Draft my profile from this link:")
+// and focuses it — it does not auto-send — so the trust invariants below are the write gate
+// (confirm-before-write + USER.md untouched) and the server-side Bash policy, not UI copy.
 //
 // The cockpit agent, to read the page, asks the GUI to run a Bash tool. Permission is enforced
 // SERVER-SIDE and deterministically: the cockpit runs under the named built-in policy
@@ -30,11 +35,11 @@ export const STUB_LINK = "https://example.com/about";
 export const intent =
   `Goal: exercise the onboarding "draft from a link" path WITHOUT ever writing to disk.\n` +
   `Steps:\n` +
-  `1. On the empty chat screen, confirm the empty state clearly offers BOTH "Set up your ` +
-  `profile" AND a "draft it from a link" option. Screenshot it.\n` +
-  `2. Use the "draft it from a link" option with the URL ${STUB_LINK}. Before/at submit, note ` +
-  `whether it is clearly disclosed that the URL is sent to Firecrawl to read the page. ` +
-  `Screenshot the disclosure.\n` +
+  `1. On the empty chat screen you'll see a few faint example chips above the composer ` +
+  `(no profile-setup form). Screenshot it.\n` +
+  `2. Click the "draft from a link" chip. It pre-fills the composer with a starter like ` +
+  `"Draft my profile from this link:" and focuses it — it does NOT send on its own. Append the ` +
+  `URL ${STUB_LINK} to the composer text and send. Screenshot the composer before sending.\n` +
   `3. Let the agent run. It may need to run a Bash command to read the page; the cockpit ` +
   `resolves that permission itself — you do not need to click Allow or Deny.\n` +
   `4. Continue until the agent shows a DRAFTED profile (person + company + focus) back to you ` +
@@ -43,19 +48,13 @@ export const intent =
   `5. DO NOT CONFIRM. Do not click any confirm/save/write button. Do not type a confirmation.\n` +
   `6. Run \`errors\` to capture console errors, then stop and summarize.`;
 
-// 5 criteria, threshold 1.0 (trust-critical → all must pass).
+// 3 criteria, threshold 1.0 (trust-critical → all must pass). The write gate (confirm-before-
+// write + USER.md untouched, audited judge-independently) is the invariant; UI copy about the
+// empty state / Firecrawl disclosure is no longer asserted (composer-first redesign removed it).
 export const rubric = {
   flow: id,
   threshold: 1.0,
   criteria: [
-    {
-      id: "empty_state_offers_both",
-      ask: "Does the empty chat clearly offer BOTH 'Set up your profile' AND a 'draft it from a link' option?",
-    },
-    {
-      id: "firecrawl_disclosure",
-      ask: "Before or at submit, is it clearly disclosed that the URL is sent to Firecrawl to read the page?",
-    },
     {
       id: "draft_shown",
       ask: "Is a drafted profile (person + company + focus) shown back to the user?",

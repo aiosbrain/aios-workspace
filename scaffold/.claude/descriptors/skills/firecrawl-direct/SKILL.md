@@ -12,7 +12,6 @@ access: team
 triggers:
   - draft my profile from this link
   - draft my profile from
-  - draft from a link
   - enrich my profile from
   - set up my profile from this link
   - read this page about me
