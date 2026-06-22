@@ -54,6 +54,7 @@ import {
 } from "../../scripts/connector.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
+import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -121,37 +122,6 @@ const SESSIONS_DIR = path.join(repo, ".aios", "sessions");
 const SESSIONS_INDEX = path.join(SESSIONS_DIR, "index.json");
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 mkdirSync(SESSIONS_DIR, { recursive: true });
-
-// ── session index (repo-scoped) ─────────────────────────────────────────────
-function readSessionIndex() {
-  try {
-    const idx = JSON.parse(readFileSync(SESSIONS_INDEX, "utf8"));
-    if (Array.isArray(idx.sessions))
-      return { sessions: idx.sessions, lastSelected: idx.lastSelected || null };
-  } catch {
-    /* missing/corrupt → fresh */
-  }
-  return { sessions: [], lastSelected: null };
-}
-function writeSessionIndex(idx) {
-  try {
-    fsWriteFileSync(SESSIONS_INDEX, JSON.stringify(idx, null, 2));
-  } catch {
-    /* best-effort */
-  }
-}
-// Insert or update one session entry (merge fields), bump updatedAt, set lastSelected.
-function upsertSession(id, fields) {
-  const idx = readSessionIndex();
-  let s = idx.sessions.find((x) => x.id === id);
-  if (!s) {
-    s = { id, title: "", createdAt: new Date().toISOString(), model: "" };
-    idx.sessions.push(s);
-  }
-  Object.assign(s, fields, { updatedAt: new Date().toISOString() });
-  idx.lastSelected = id;
-  writeSessionIndex(idx);
-}
 
 // ── static client ───────────────────────────────────────────────────────────
 const MIME = {
@@ -368,12 +338,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    const idx = readSessionIndex();
-    const sessions = [...idx.sessions].sort((a, b) =>
-      (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")
-    );
+    const idx = visibleSessionIndex(SESSIONS_DIR, readSessionIndex(SESSIONS_INDEX));
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ sessions, lastSelected: idx.lastSelected }));
+    return res.end(JSON.stringify(idx));
   }
   const sessMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
   if (sessMatch && req.method === "GET") {
@@ -693,7 +660,9 @@ wss.on("connection", (ws, req) => {
     UUID_RE.test(wanted) && existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) ? wanted : null;
   const sessionId = resumeId || randomUUID();
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
-  let titleSet = !!readSessionIndex().sessions.find((s) => s.id === sessionId)?.title;
+  const existingSession = readSessionIndex(SESSIONS_INDEX).sessions.find((s) => s.id === sessionId);
+  let sessionRegistered = !!existingSession;
+  let titleSet = !!existingSession?.title;
 
   // ── background memory reviewer state (claude-code only; opt-out read LIVE) ──
   let reviewerRuntimeOk = false; // runtime gate (set at config read); enablement re-read each turn
@@ -791,10 +760,10 @@ wss.on("connection", (ws, req) => {
   const emit = (obj) => {
     send(obj);
     if (obj.type === "delta" && typeof obj.text === "string") curTurn.assistant += obj.text; // capture for the reviewer
-    if ((obj.type === "session" || obj.type === "model") && obj.model)
-      upsertSession(sessionId, { model: obj.model });
+    if ((obj.type === "session" || obj.type === "model") && obj.model && sessionRegistered)
+      upsertSession(SESSIONS_INDEX, sessionId, { model: obj.model });
     else if (obj.type === "result") {
-      upsertSession(sessionId, {});
+      if (sessionRegistered) upsertSession(SESSIONS_INDEX, sessionId, {});
       runMemoryReview();
     } // bump updatedAt + learn (async)
   };
@@ -832,13 +801,19 @@ wss.on("connection", (ws, req) => {
       return;
     }
     if (msg.type === "user_message" && typeof msg.text === "string") {
-      send({ type: "echo_user", text: msg.text });
+      const userText = msg.text.trim();
+      if (!userText) return;
+      send({ type: "echo_user", text: userText });
       if (!titleSet) {
-        upsertSession(sessionId, { title: msg.text.replace(/\s+/g, " ").trim().slice(0, 80) });
+        upsertSession(SESSIONS_INDEX, sessionId, {
+          title: userText.replace(/\s+/g, " ").slice(0, 80),
+          ...(typeof msg.model === "string" ? { model: msg.model } : {}),
+        });
+        sessionRegistered = true;
         titleSet = true;
       }
-      curTurn = { user: msg.text, assistant: "" }; // start a fresh turn for the reviewer
-      pushUser(msg.text, typeof msg.model === "string" ? msg.model : undefined);
+      curTurn = { user: userText, assistant: "" }; // start a fresh turn for the reviewer
+      pushUser(userText, typeof msg.model === "string" ? msg.model : undefined);
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
       const resolve = pending.get(msg.id);
       pending.delete(msg.id);
@@ -953,8 +928,6 @@ wss.on("connection", (ws, req) => {
     driver && driver !== "claude-sdk"
       ? "Shell-driven file changes are validated after each turn, not pre-gated."
       : null;
-  // Register/refresh this chat so it appears in the sidebar list and is restorable.
-  upsertSession(sessionId, { model });
   send({ type: "hello", repo, sessionId, runtime, safetyNote, resumed: !!resumeId });
 
   (async () => {
