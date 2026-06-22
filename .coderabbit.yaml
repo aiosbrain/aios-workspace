@@ -1,0 +1,52 @@
+version: "2"
+language: "en-US"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  path_filters:
+    - "!node_modules/**"
+    - "!dist/**"
+    - "!src-tauri/target/**"
+    - "!examples/**"
+    - "!test/ux/evidence/**"
+    - "!*.lock"
+
+  path_instructions:
+    - path: "scripts/aios.mjs"
+      instructions: |
+        This is the sync CLI. Changes must not break the brain-api.md v1.2 contract
+        (docs/brain-api.md). Push must only transmit team/external tier content —
+        admin/private content must never leave. Default-deny on missing access: frontmatter.
+    - path: "validation/**"
+      instructions: |
+        OGR validators (OGR01–OGR10) are the integrity guarantee. Do not weaken
+        regex patterns or add bypass paths to make a test pass.
+    - path: "hooks/**"
+      instructions: |
+        Claude Code hooks run on PreToolUse (write/edit). The secrets hook must block
+        on exit code 2. Do not change exit codes or skip patterns without justification.
+    - path: "scaffold/.claude/skills/**"
+      instructions: |
+        Skills are multi-agent harnesses. Each must have a corresponding rubric in
+        scaffold/.claude/rubrics/. If a skill changes, check its rubric is still honest.
+    - path: "scaffold/**"
+      instructions: |
+        This is the product template. Changes here affect every scaffolded workspace.
+        Both --context consultant and --context employee must keep working after any change.
+
+  finishing_touches:
+    docstrings: false
+
+chat:
+  auto_reply: true

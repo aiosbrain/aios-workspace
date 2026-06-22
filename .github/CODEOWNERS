@@ -1,0 +1,8 @@
+# AIOS Workspace — code owners
+* @AIOS-alpha/core
+
+# Sync contract and validators — extra scrutiny
+docs/brain-api.md @AIOS-alpha/core
+scripts/aios.mjs @AIOS-alpha/core
+validation/ @AIOS-alpha/core
+hooks/ @AIOS-alpha/core
