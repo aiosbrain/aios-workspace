@@ -56,12 +56,22 @@ export function checkPrereqs({ requireAnthropic = true } = {}) {
 // isolated worktree so file edits land there, never in the primary checkout.
 // When omitted the agent inherits the current process cwd (the plan loop's
 // original behaviour, which only reviews and never edits).
+// opts.extraArgs are appended to the `cursor agent` argv — the build phase passes
+// --trust (a fresh worktree is otherwise untrusted) and --force (autonomous edits).
 
 export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
   return new Promise((resolve, reject) => {
     process.stdout.write("\n[cursor] invoking agent...\n");
 
-    const proc = spawn("cursor", ["agent", "-p", prompt, "--output-format", "stream-json"], {
+    const args = [
+      "agent",
+      "-p",
+      prompt,
+      "--output-format",
+      "stream-json",
+      ...(opts.extraArgs ?? []),
+    ];
+    const proc = spawn("cursor", args, {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd ?? process.cwd(),
     });

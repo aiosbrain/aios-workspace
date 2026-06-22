@@ -44,10 +44,16 @@ import {
 } from "./relay-core.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
+// The builder/reviewer run in a fresh worktree (untrusted) and must act autonomously:
+// --trust skips the workspace-trust prompt (headless), --force auto-allows commands.
+const CURSOR_AGENT_FLAGS = ["--force", "--trust"];
 const DEFAULT_ROUNDS = 4;
 const DEFAULT_BUILD_TIMEOUT = 1800; // seconds — building + running tests is slow
 const DEFAULT_REVIEW_TIMEOUT = 300; // seconds — reviewing a diff is fast
 const DIFF_CAP = 50000; // chars of `git diff` to send the reviewer before falling back to --stat
+// Cursor's backend occasionally drops the connection mid-call; retry these (but not
+// real timeouts or agent errors, which are not transient).
+const TRANSIENT_RE = /ECONNRESET|aborted|socket hang up|ETIMEDOUT|EAI_AGAIN|fetch failed|network/i;
 
 // Exit-code contract (see docs/agent-build.md):
 export const EXIT = {
@@ -319,9 +325,10 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
     return { worktreePath: existing, resumed: true };
   }
 
+  const branchPreExisted = branchExists(repo, branch);
   if (dryRun) {
     console.log(c.dim(`[dry-run] git worktree add for ${branch} at ${wt}`));
-  } else if (branchExists(repo, branch)) {
+  } else if (branchPreExisted) {
     git(["worktree", "add", wt, branch], repo); // resume an existing branch
   } else {
     try {
@@ -341,7 +348,7 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
       }
     }
   }
-  return { worktreePath: wt, resumed: branchExists(repo, branch) };
+  return { worktreePath: wt, resumed: branchPreExisted };
 }
 
 function snapshotDiff(worktree, base) {
@@ -435,6 +442,24 @@ function runVerification(worktree, cmd) {
   }
 }
 
+// Call the Cursor agent, retrying transient backend drops (ECONNRESET etc.) — but
+// never real timeouts or agent errors.
+async function cursorWithRetry(prompt, timeoutMs, opts, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await callCursorAgent(prompt, timeoutMs, opts);
+    } catch (e) {
+      const transient = TRANSIENT_RE.test(e.message) && !/timed out/.test(e.message);
+      if (!transient || i >= attempts) throw e;
+      console.log(
+        c.yellow(
+          `cursor call failed (transient): ${e.message.slice(0, 100)} — retry ${i}/${attempts - 1}`
+        )
+      );
+    }
+  }
+}
+
 // ── core loop ─────────────────────────────────────────────────────────────────
 
 export async function runBuild({ repo, plan, branch, opts }) {
@@ -518,7 +543,10 @@ export async function runBuild({ repo, plan, branch, opts }) {
     });
     console.log(c.dim("[cursor] building..."));
     try {
-      const builderOut = await callCursorAgent(buildPrompt, buildTimeout, { cwd: wt });
+      const builderOut = await cursorWithRetry(buildPrompt, buildTimeout, {
+        cwd: wt,
+        extraArgs: CURSOR_AGENT_FLAGS,
+      });
       log(`Build round ${round} — builder`, builderOut.slice(-4000));
     } catch (e) {
       if (/timed out/.test(e.message)) {
@@ -603,7 +631,10 @@ export async function runBuild({ repo, plan, branch, opts }) {
       maxRounds: rounds,
     });
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
-    const review = await callCursorAgent(reviewPrompt, cursorTimeout, { cwd: wt });
+    const review = await cursorWithRetry(reviewPrompt, cursorTimeout, {
+      cwd: wt,
+      extraArgs: CURSOR_AGENT_FLAGS,
+    });
     log(`Build round ${round} — review`, review);
     console.log("\n── review done ─────────────────────────────────────────────");
 
