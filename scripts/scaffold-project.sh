@@ -286,6 +286,14 @@ type: "Task List"
 
 | ID | Task | Assignee | Status | Sprint | Due |
 |----|------|----------|--------|--------|-----|
+
+<!--
+Optional columns (brain-api v1.2) — add any of these to project a structured board into your
+PM tool (Plane/Linear): \`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\`
+(none|low|medium|high|urgent), plus \`PM\` / \`PM URL\`. The six columns above stay valid on their
+own. A task's long description/body is edited in the brain dashboard — it does not live in this table.
+e.g.  | ID | Task | Assignee | Status | Sprint | Due | Parent | Labels | Priority |
+-->
 EOF
 
 # Hours: billable framing for consultant, lightweight for employee — both stay local (no access tier → never syncs).
