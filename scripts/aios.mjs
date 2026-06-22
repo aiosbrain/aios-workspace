@@ -42,6 +42,7 @@ import {
   ensureGitignore,
 } from "./connector.mjs";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
+import { parseTableRows, parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
@@ -320,58 +321,6 @@ function classifyKind(rel, frontmatter) {
 
 // ── markdown table row parsers ──────────────────────────────────────────────
 
-function parseTableRows(body) {
-  const rows = [];
-  for (const line of body.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("|")) continue;
-    const cells = t
-      .split("|")
-      .slice(1, -1)
-      .map((x) => x.trim());
-    if (!cells.length) continue;
-    if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
-    rows.push(cells);
-  }
-  return rows;
-}
-
-function parseTaskRows(body) {
-  // | ID | Task | Assignee | Status | Sprint | Due | PM | PM URL |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("id") || !header.includes("task")) return [];
-  const idx = (name) => header.indexOf(name);
-  return rows
-    .slice(1)
-    .map((cells) => {
-      const rowKey = cells[idx("id")] || "";
-      const pm = idx("pm") >= 0 ? parsePmCell(cells[idx("pm")] || "", rowKey) : {};
-      return {
-        row_key: rowKey,
-        title: cells[idx("task")] || "",
-        assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
-        status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
-        sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
-        due: idx("due") >= 0 ? cells[idx("due")] || null : null,
-        ...pm,
-        pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
-      };
-    })
-    .filter((r) => r.row_key);
-}
-
-function parsePmCell(raw, rowKey) {
-  const value = raw.trim();
-  if (!value) return {};
-  const m = value.match(/^(plane|linear)(?::|\s+)?(.+)?$/i);
-  if (!m) return {};
-  return {
-    pm_provider: m[1].toLowerCase(),
-    pm_external_id: (m[2] || rowKey).trim(),
-  };
-}
 
 function parseDecisionRows(body) {
   // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
@@ -1009,21 +958,12 @@ async function cmdPull(repo, cfg, args = []) {
   const tasksPath = existsSync(path.join(repo, "3-log", "tasks.md"))
     ? path.join(repo, "3-log", "tasks.md")
     : path.join(repo, "03-status", "tasks.md");
-  if (existsSync(tasksPath) && (tasksRes.tasks || []).length) {
-    let content = readFileSync(tasksPath, "utf8");
-    for (const group of tasksRes.tasks) {
-      if (group.project !== cfg.project) continue;
-      for (const row of group.rows || []) {
-        const line = `| ${row.row_key} | ${row.title} | ${row.assignee || ""} | ${row.status} | ${row.sprint || ""} | ${row.due || ""} |`;
-        const re = new RegExp(
-          `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
-          "m"
-        );
-        if (re.test(content)) content = content.replace(re, line);
-        else content = content.trimEnd() + "\n" + line + "\n";
-        merged++;
-      }
-    }
+  const incomingTaskRows = (tasksRes.tasks || [])
+    .filter((g) => g.project === cfg.project)
+    .flatMap((g) => g.rows || []);
+  if (existsSync(tasksPath) && incomingTaskRows.length) {
+    let content = mergeTaskWriteback(readFileSync(tasksPath, "utf8"), incomingTaskRows);
+    merged += incomingTaskRows.length;
     writeFileSync(tasksPath, content);
   }
 
