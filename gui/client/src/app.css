@@ -1,15 +1,58 @@
-:root {
-  --bg: #0f1117;
-  --surface: #171a23;
-  --surface-2: #1e2230;
-  --border: #2a2f40;
-  --text: #e8eaf0;
-  --text-dim: #8b91a5;
-  --accent: #7c3aed;
-  --accent-soft: rgba(124, 58, 237, 0.16);
-  --green: #34d399;
-  --red: #f87171;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+/* ──────────────────────────────────────────────────────────────────────────
+   AIOS unified design system (W2.5.8 P3).
+   The proven consumption recipe — order matters:
+     1. tokens.css          → light = :root, dark = .dark (the --aios-* vars)
+     2. tailwind-theme.css  → Tailwind v4 @theme inline bridge (bg-*, text-*, …)
+     3. tailwindcss          → the engine
+     4. @source              → so @aios-alpha/ui's compiled utilities get generated
+                               (node_modules is workspace-hoisted to the repo root)
+     5. @custom-variant dark → class-driven dark mode
+   Self-host the three ecosystem fonts (no Google CDN).
+   ────────────────────────────────────────────────────────────────────────── */
+@import "@aios-alpha/design/tokens.css";
+@import "@aios-alpha/design/tailwind-theme.css";
+@import "tailwindcss";
+@source "../../../node_modules/@aios-alpha/ui/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import "@fontsource/space-grotesk/400.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/500.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/600.css";
+
+/* ── Bridge the GUI's hand-rolled variables onto the design tokens ──────────
+   The whole stylesheet below speaks in --bg/--surface/--text/--accent/…; we
+   map each onto an --aios-* token so the entire surface inherits the design
+   system AND both modes (light :root, dark .dark) for free.
+   --accent stays VIOLET (the brand/CTA color); lime is rationed via --live. */
+:root,
+.dark {
+  --bg: var(--aios-bg);
+  --surface: var(--aios-surface);
+  --surface-2: var(--aios-elevated);
+  --muted: var(--aios-muted);
+  --border: var(--aios-border-visible);
+  --border-soft: var(--aios-border);
+  --text: var(--aios-fg);
+  --text-dim: var(--aios-fg-muted);
+  --accent: var(--aios-primary);
+  --accent-hover: var(--aios-primary-hover);
+  --accent-fg: var(--aios-primary-fg);
+  /* subtle violet wash for active nav / user bubbles (mode-tuned below) */
+  --accent-soft: color-mix(in srgb, var(--aios-primary) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--aios-primary) 35%, transparent);
+  /* lime — the live/active color, rationed to status dots, checks, success */
+  --live: var(--aios-accent);
+  --green: var(--aios-emerald);
+  --red: var(--aios-destructive);
+  --display: var(--aios-font-display);
+  --body: var(--aios-font-body);
+  --mono: var(--aios-font-mono);
+  --glow-violet: 0 0 20px rgba(139, 92, 246, 0.4);
 }
 
 * {
@@ -24,11 +67,9 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font:
-    15px/1.55 -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  font: var(--aios-text-body) / var(--aios-leading-normal) var(--body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .app {
@@ -53,25 +94,30 @@ body {
   align-items: center;
   gap: 10px;
   padding: 4px 8px 14px;
-  font-weight: 650;
-  font-size: 15px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: var(--aios-tracking-snug);
 }
 .brand-mark {
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--aios-radius-md);
   flex-shrink: 0;
-  background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 50%, #2dd4bf 100%);
+  /* AIOS prism: violet → emerald → lime */
+  background: linear-gradient(135deg, #8b5cf6 0%, #10b981 50%, #84cc16 100%);
 }
 .brand-status {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-  background: var(--red);
+  border-radius: var(--aios-radius-full);
+  background: var(--text-dim);
   margin-left: auto;
 }
 .brand-status[data-on="true"] {
-  background: var(--green);
+  /* lime = live/connected (a running process) */
+  background: var(--live);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 60%, transparent);
 }
 .side-nav {
   display: flex;
@@ -84,23 +130,24 @@ body {
   gap: 10px;
   width: 100%;
   padding: 9px 10px;
-  border-radius: 9px;
+  border-radius: var(--aios-radius-md);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   font: inherit;
   font-size: 14px;
+  font-weight: 500;
   text-align: left;
 }
 .side-link:hover {
-  background: var(--surface-2);
+  background: var(--muted);
   color: var(--text);
 }
 .side-link.on {
   background: var(--accent-soft);
   color: var(--text);
-  border-color: rgba(124, 58, 237, 0.35);
+  border-color: var(--accent-line);
 }
 .side-link svg {
   width: 17px;
@@ -121,13 +168,14 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 9px;
+  border-radius: var(--aios-radius-md);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
   text-align: left;
   margin-top: 4px;
 }
@@ -176,7 +224,7 @@ body {
 .chat-item.on {
   background: var(--accent-soft);
   color: var(--text);
-  border-color: rgba(124, 58, 237, 0.35);
+  border-color: var(--accent-line);
 }
 
 .side-foot {
@@ -188,11 +236,11 @@ body {
 }
 .safety-banner {
   align-self: stretch;
-  font-size: 12px;
-  color: #e8c37a;
-  background: rgba(232, 195, 122, 0.1);
-  border: 1px solid rgba(232, 195, 122, 0.3);
-  border-radius: 8px;
+  font-size: var(--aios-text-small);
+  color: var(--aios-amber);
+  background: color-mix(in srgb, var(--aios-amber) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--aios-amber) 30%, transparent);
+  border-radius: var(--aios-radius-md);
   padding: 7px 11px;
   margin-bottom: 4px;
 }
@@ -212,8 +260,34 @@ body {
 .runtime-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
+  border-radius: var(--aios-radius-full);
+  background: var(--live);
+}
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: var(--aios-radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.theme-toggle-icon {
+  font-size: 13px;
+  line-height: 1;
 }
 .privacy {
   font-size: 12px;
@@ -252,26 +326,35 @@ main {
 
 .empty {
   margin: auto;
-  max-width: 420px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   text-align: center;
   color: var(--text-dim);
+}
+.empty-eyebrow {
+  /* EyebrowLabel already styles itself; just space it */
+  margin-bottom: 2px;
 }
 
 .msg {
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: var(--aios-radius-xl);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .msg.user {
   background: var(--accent-soft);
-  border: 1px solid rgba(124, 58, 237, 0.35);
+  border: 1px solid var(--accent-line);
   align-self: flex-end;
   max-width: 80%;
 }
 .msg.assistant {
   background: var(--surface);
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
   align-self: flex-start;
   max-width: 92%;
 }
@@ -303,8 +386,8 @@ main {
   font-size: 12px;
   color: var(--text-dim);
   background: var(--accent-soft);
-  border: 1px solid rgba(124, 58, 237, 0.25);
-  border-radius: 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--aios-radius-md);
   padding: 6px 11px;
   display: flex;
   align-items: center;
@@ -371,7 +454,10 @@ main {
 .msg.assistant h3,
 .msg.assistant h4 {
   margin: 14px 0 6px;
-  line-height: 1.3;
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: var(--aios-tracking-snug);
+  line-height: var(--aios-leading-snug);
 }
 .msg.assistant h1 {
   font-size: 1.3em;
@@ -396,14 +482,15 @@ main {
 }
 .msg.assistant code {
   font: 12.5px var(--mono);
-  background: var(--surface-2);
+  background: var(--aios-code-bg);
+  border: 1px solid var(--border-soft);
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: var(--aios-radius-sm);
 }
 .msg.assistant pre {
-  background: var(--surface-2);
+  background: var(--aios-code-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--aios-radius-lg);
   padding: 11px 13px;
   overflow-x: auto;
   margin: 0 0 8px;
@@ -460,7 +547,7 @@ main {
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--aios-radius-md);
   padding: 5px 9px;
   font: inherit;
   font-size: 13px;
@@ -494,7 +581,7 @@ main {
 }
 .ctx-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--live);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -559,7 +646,7 @@ main {
 
 .permission {
   border: 1px solid var(--accent);
-  border-radius: 12px;
+  border-radius: var(--aios-radius-xl);
   background: var(--accent-soft);
   padding: 12px 14px;
   align-self: stretch;
@@ -581,14 +668,15 @@ main {
 }
 .perm-actions button {
   padding: 6px 18px;
-  border-radius: 8px;
+  border-radius: var(--aios-radius-md);
   border: none;
   cursor: pointer;
   font-weight: 600;
 }
 .perm-actions .allow {
-  background: var(--green);
-  color: #06281c;
+  /* the one lime CTA on this card — the affirmative/go action */
+  background: var(--live);
+  color: var(--aios-accent-fg);
 }
 .perm-actions .deny {
   background: var(--surface-2);
@@ -610,22 +698,31 @@ footer textarea {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--aios-radius-lg);
   padding: 11px 14px;
   font: inherit;
+  font-family: var(--body);
   outline: none;
 }
 footer textarea:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--aios-ring) 18%, transparent);
 }
 footer button {
   padding: 0 22px;
-  border-radius: 10px;
+  border-radius: var(--aios-radius-md);
   border: none;
   cursor: pointer;
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
   font-weight: 600;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+footer button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--glow-violet);
 }
 footer button:disabled {
   opacity: 0.4;
@@ -665,9 +762,13 @@ footer button:disabled {
 }
 .rev-btn.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: transparent;
   font-weight: 600;
+}
+.rev-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--glow-violet);
 }
 .rev-btn:disabled {
   opacity: 0.4;
@@ -749,7 +850,10 @@ footer button:disabled {
 }
 .int-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: var(--aios-text-h3);
+  letter-spacing: var(--aios-tracking-snug);
 }
 .int-sub {
   margin: 4px 0 0;
@@ -769,15 +873,16 @@ footer button:disabled {
 }
 .int-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--aios-radius-xl);
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 .int-card.wired {
-  border-color: color-mix(in srgb, var(--green) 50%, var(--border));
+  border-color: color-mix(in srgb, var(--live) 50%, var(--border));
 }
 .int-card-top {
   display: flex;
@@ -792,7 +897,7 @@ footer button:disabled {
   color: var(--text-dim);
 }
 .int-status.wired {
-  color: var(--green);
+  color: var(--live);
 }
 .int-summary {
   font-size: 12.5px;
@@ -814,14 +919,21 @@ footer button:disabled {
 }
 .int-connect {
   padding: 5px 12px;
-  border-radius: 8px;
+  border-radius: var(--aios-radius-md);
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.int-connect:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--glow-violet);
 }
 .int-foot {
   font-size: 12px;
@@ -843,15 +955,15 @@ footer button:disabled {
 }
 .skill-caps .cap.code {
   color: var(--accent);
-  border-color: rgba(124, 58, 237, 0.4);
+  border-color: var(--accent-line);
 }
 .skill-caps .cap.trust.community {
-  color: #d97706;
-  border-color: rgba(217, 119, 6, 0.45);
+  color: var(--aios-amber);
+  border-color: color-mix(in srgb, var(--aios-amber) 45%, transparent);
 }
 .skill-caps .cap.trust.marketplace {
-  color: #0ea5e9;
-  border-color: rgba(14, 165, 233, 0.45);
+  color: var(--aios-cyan);
+  border-color: color-mix(in srgb, var(--aios-cyan) 45%, transparent);
 }
 .skill-err {
   font-size: 12px;
@@ -989,9 +1101,10 @@ footer button:disabled {
   width: min(520px, 100%);
   max-height: 90vh;
   overflow-y: auto;
-  background: var(--surface);
+  background: var(--aios-elevated);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--aios-radius-2xl);
+  box-shadow: var(--shadow-overlay);
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -1115,13 +1228,20 @@ footer button:disabled {
 }
 .wiz-go {
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: var(--aios-radius-md);
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-weight: 600;
   cursor: pointer;
   font: inherit;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.wiz-go:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: var(--glow-violet);
 }
 .wiz-go:disabled {
   opacity: 0.4;
