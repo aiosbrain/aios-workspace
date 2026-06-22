@@ -30,6 +30,7 @@ jobs:
 
       - name: Skill-scan + install-gate tests
         run: |
+          node test/agent-readiness-glob.test.mjs
           node test/skill-scan.test.mjs
           node test/skill-install.test.mjs
           node test/suggest-connectors.test.mjs

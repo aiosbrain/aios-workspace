@@ -1,0 +1,64 @@
+name: scan-on-merge
+
+# Keep this workspace's agent-readiness fresh: on every merge to main, scan the repo and push a
+# full scan (raw metrics + readiness) to the Team Brain. The scanner lives in the aios-team-brain
+# repo (ingestion sidecar), so we sparse-checkout it. Read-only against the repo; idempotent on
+# the brain (keyed by head_sha).
+#
+# Required repo secrets (until set, the job logs "skipping" and exits 0 — never red):
+#   AIOS_BRAIN_URL    — e.g. https://aios-team-brain-production.up.railway.app
+#   AIOS_TEAM         — team slug (e.g. aios)
+#   AIOS_API_KEY      — a TEAM-TIER api key (codebase scans are team-tier; least-privilege)
+#   BRAIN_REPO_TOKEN  — a read-only token (PAT / fine-grained) that can checkout AIOS-alpha/
+#                       aios-team-brain (to fetch the scanner). The built-in GITHUB_TOKEN can't
+#                       read a sibling private repo.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: scan-on-merge
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: codebase readiness scan → brain
+    runs-on: ubuntu-latest
+    if: github.repository == 'AIOS-alpha/aios-workspace'
+    env:
+      AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+      BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+      AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — the scanner reads the commit window
+
+      - name: Fetch the ingestion scanner from aios-team-brain
+        if: env.AIOS_API_KEY != ''
+        uses: actions/checkout@v4
+        with:
+          repository: AIOS-alpha/aios-team-brain
+          path: .brain-scanner
+          sparse-checkout: ingestion
+          token: ${{ secrets.BRAIN_REPO_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        if: env.AIOS_API_KEY != ''
+        with:
+          python-version: "3.12"
+
+      - name: Install the scanner
+        if: env.AIOS_API_KEY != ''
+        run: pip install -e .brain-scanner/ingestion
+
+      - name: Scan this repo into the brain
+        if: env.AIOS_API_KEY != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: aios-ingest scan --path . --slug aios-workspace --full-name "$GITHUB_REPOSITORY"
+
+      - name: Skip note
+        if: env.AIOS_API_KEY == ''
+        run: echo "scan secrets not configured (BRAIN_URL/AIOS_TEAM/AIOS_API_KEY/BRAIN_REPO_TOKEN) — skipping."

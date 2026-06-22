@@ -66,30 +66,46 @@ function indexRepo(repo) {
   return out;
 }
 
-function globToRegex(glob) {
-  // Supports **, *, and literal segments. ** matches across "/", * does not.
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        re += ".*";
-        i++;
-        if (glob[i + 1] === "/") i++;
-      } else re += "[^/]*";
-    } else if (".+^${}()|[]\\".includes(c)) {
-      re += "\\" + c;
-    } else if (c === "{") {
-      re += "(";
-    } else if (c === "}") {
-      re += ")";
-    } else if (c === ",") {
-      re += "|";
-    } else {
-      re += c;
+// Expand one-level brace alternations: `a.{yml,yaml}` -> ["a.yml", "a.yaml"]. Recurses so
+// multiple groups expand fully. Must run BEFORE regex translation — the previous inline
+// approach turned `{yml,yaml,json}` into an UNANCHORED alternation (`\{yml|yaml|json\}`),
+// so the bare `yaml` arm matched any path containing "yaml" (false positives).
+function expandBraces(glob) {
+  const m = glob.match(/\{([^{}]*)\}/);
+  if (!m) return [glob];
+  const pre = glob.slice(0, m.index);
+  const post = glob.slice(m.index + m[0].length);
+  return m[1].split(",").flatMap((opt) => expandBraces(pre + opt + post));
+}
+
+// Translate a glob to an anchored regex with the SAME segment semantics as the Team Brain
+// Python scanner (ingestion/aios_ingest/analyzers/readiness.py): `**/` = zero-or-more leading
+// segments, `**` = anything, `*`/`?` stay within a segment. Keep the two engines in lockstep —
+// see test/agent-readiness-glob.test.mjs.
+export function globToRegex(glob) {
+  const alts = expandBraces(glob).map((g) => {
+    let re = "";
+    for (let i = 0; i < g.length; i++) {
+      const c = g[i];
+      if (c === "*") {
+        if (g[i + 1] === "*") {
+          i++;
+          if (g[i + 1] === "/") {
+            re += "(?:.*/)?";
+            i++;
+          } else re += ".*";
+        } else re += "[^/]*";
+      } else if (c === "?") {
+        re += "[^/]";
+      } else if (".+^$()|[]\\/".includes(c)) {
+        re += "\\" + c;
+      } else {
+        re += c;
+      }
     }
-  }
-  return new RegExp("^(.*/)?" + re + "$");
+    return "^" + re + "$";
+  });
+  return new RegExp(alts.join("|"));
 }
 
 const isGlob = (s) => s.includes("*") || s.includes("{");

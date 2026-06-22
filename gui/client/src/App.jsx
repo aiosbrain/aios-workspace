@@ -275,7 +275,8 @@ export default function App() {
             loadChats();
             break;
           case "echo_user":
-            break; // already rendered optimistically
+            loadChats(); // server registered/updated session on user_message
+            break; // user bubble already rendered optimistically
           case "delta":
             appendDelta(msg.text);
             break;
