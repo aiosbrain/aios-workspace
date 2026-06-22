@@ -411,7 +411,23 @@ git -c user.email="workspace@aios.local" -c user.name="AIOS Workspace" \
 
 echo ""
 echo -e "${GREEN}Workspace ready: $OUTPUT${NC}"
+
+# Offer guided onboarding (connect Firecrawl + brain + tools) when we're on a real
+# terminal and node is present. `aios onboard` handles "no" to each step itself, and on a
+# non-TTY it just prints guidance — so nothing here can block CI or a piped run.
+if [ -t 0 ] && [ -t 1 ] && command -v node >/dev/null 2>&1; then
+  echo ""
+  printf "Run guided setup now — connect Firecrawl, the brain, and your tools? [y/N] "
+  read -r ONBOARD_ANS || ONBOARD_ANS=""
+  case "$ONBOARD_ANS" in
+    [Yy]*) node "$SCRIPT_DIR/aios.mjs" onboard --repo "$OUTPUT" || true ;;
+    *) echo -e "  skipped — run it anytime: ${GREEN}aios onboard${NC}" ;;
+  esac
+fi
+
+echo ""
 echo "Next:"
-echo "  1. Connect the brain: set AIOS_API_KEY in .env, fill aios.yaml (brain_url, team_id)"
-echo "  2. aios status   # what would sync"
-echo "  3. Validate: $REPO_ROOT/validation/validate-all.sh $OUTPUT"
+echo "  • Connect tools + brain:   aios onboard      (or: aios connect <id>)"
+echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: aios status"
+echo "  • Validate the workspace:  $REPO_ROOT/validation/validate-all.sh $OUTPUT"
+echo "  • Start the GUI:           npm run gui -- --repo $OUTPUT"
