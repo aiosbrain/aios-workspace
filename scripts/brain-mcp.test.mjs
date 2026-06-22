@@ -290,6 +290,36 @@ test("createBrainClient.query parses an SSE answer stream into text + sources", 
   assert.equal(sources[0].path, "3-log/decision-log.md");
 });
 
+test("createBrainClient.query handles multi-line data: fields and CRLF line endings", async () => {
+  // A robust SSE parser must join multiple `data:` lines within one event block
+  // (the JSON payload spans lines) and tolerate CRLF framing. The old single-`\n`
+  // split parser broke on both.
+  const sse = [
+    "event: delta",
+    'data: {"text":', // JSON payload split across two data: lines (joined with \n)
+    'data: "hello world"}',
+    "",
+    "event: sources",
+    'data: {"sources":[',
+    'data:   {"id":"S1","path":"2-work/spec.md"}',
+    "data: ]}",
+    "",
+  ].join("\r\n"); // CRLF throughout
+  const fakeFetch = async () => ({
+    ok: true,
+    async text() {
+      return sse;
+    },
+  });
+  const client = createBrainClient(
+    { brain_url: "https://b", api_key: "k", team_id: "t" },
+    { fetch: fakeFetch }
+  );
+  const { text, sources } = await client.query("multi-line?");
+  assert.equal(text, "hello world");
+  assert.equal(sources[0].path, "2-work/spec.md");
+});
+
 test("createBrainClient.fetchJson surfaces brain error envelope", async () => {
   const fakeFetch = async () => ({
     ok: false,
