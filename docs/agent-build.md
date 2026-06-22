@@ -1,14 +1,15 @@
-# aios build — implement an approved plan with Cursor
+# aios build — implement an approved plan with Opus, reviewed by Cursor
 
 `aios build` is the **build** half of the agent relay. Where [`aios relay`](./agent-relay.md)
-produces an _approved plan_ (the planning half), `aios build` _implements_ it: a Cursor agent
-writes the code on an **isolated git worktree**, the `/ai-code-review` Cursor skill reviews the
-**real diff**, and the loop repeats until the reviewer emits `MERGE_READY` or the round budget is
-spent. A fail-closed secrets gate runs before any merge, and merging is opt-in.
+produces an _approved plan_ (the planning half), `aios build` _implements_ it: **Opus** (via the
+Claude Code CLI) writes the code on an **isolated git worktree**, the `/ai-code-review` Cursor skill
+reviews the **real diff**, and the loop repeats until the reviewer emits `MERGE_READY` or the round
+budget is spent. A fail-closed secrets gate runs before any merge, and merging is opt-in. This
+mirrors the plan phase — **Opus produces, Cursor reviews** — keeping model diversity in the loop.
 
 ```
 PLAN  (aios relay)                          BUILD  (aios build)
-Opus 4.8 ⇄ Cursor /review-plan              Cursor agent ⇄ Cursor /ai-code-review
+Opus 4.8 ⇄ Cursor /review-plan              Opus (Claude Code) ⇄ Cursor /ai-code-review
    → PLAN_READY  → approved plan  ───────▶     → MERGE_READY  → secrets gate → merge
 ```
 
@@ -22,14 +23,16 @@ npm run aios -- build "<plan-file>" [branch] [options]
 
 ## Prerequisites
 
-| Requirement      | How to check         | Notes                                                   |
-| ---------------- | -------------------- | ------------------------------------------------------- |
-| Node 18+         | `node --version`     |                                                         |
-| `cursor` CLI     | `cursor --version`   | The builder and reviewer are both Cursor agent runs     |
-| `/ai-code-review`| skill file present   | `~/.cursor/skills/ai-code-review/SKILL.md` — the reviewer |
-| a git repo       | `git status`         | build runs in a **worktree** off `origin/main`          |
+| Requirement       | How to check       | Notes                                                       |
+| ----------------- | ------------------ | ---------------------------------------------------------- |
+| Node 18+          | `node --version`   |                                                            |
+| `claude` CLI      | `claude --version` | Claude Code — the **builder** (Opus implements the plan)   |
+| `cursor` CLI      | `cursor --version` | The **reviewer** (`/ai-code-review`)                       |
+| `/ai-code-review` | skill file present | `~/.cursor/skills/ai-code-review/SKILL.md` — the reviewer  |
+| a git repo        | `git status`       | build runs in a **worktree** off `origin/main`             |
 
-`aios build` does **not** need `ANTHROPIC_API_KEY` (only `aios relay` calls Opus directly).
+`aios build` does **not** need `ANTHROPIC_API_KEY` — the builder runs through Claude Code, which uses
+its own authentication.
 
 ---
 
@@ -81,8 +84,8 @@ Options:
 
 For each round, the tool — not the agent — owns one authoritative change set:
 
-1. **Build.** A Cursor agent implements the plan (round 1) or addresses the prior review (later rounds)
-   in the worktree, committing as it goes.
+1. **Build.** Opus (via Claude Code) implements the plan (round 1) or addresses the prior review (later
+   rounds) in the worktree, committing as it goes.
 2. **Capture.** Any stragglers are auto-committed so `baseSha..HEAD` is the exact set that will be
    reviewed, scanned, and merged (`baseSha` is the base ref resolved once, so it can't drift mid-run).
 3. **Tripwire.** If the primary checkout changed, abort hard — the agent must only touch the worktree.

@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+// Fake `claude` (Claude Code) binary for build-loop.test.mjs — the BUILDER.
+// Put this dir on PATH so the build loop drives it instead of the real CLI. It runs
+// in the worktree (the loop passes cwd), so it makes real commits there.
+//
+//   FAKE_AGENT_SCRIPT = approve | reject | reject-then-approve | empty | leak
+//
+// On a build prompt it appends to + commits feature.js (a leak string when
+// mode=leak; nothing when mode=empty). The reviewer decision lives in fake cursor.
+
+import { execFileSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+
+const argv = process.argv.slice(2);
+
+if (argv[0] === "--version" || argv.includes("--version")) {
+  console.log("fake-claude 0.0.0 (Claude Code)");
+  process.exit(0);
+}
+
+const pIdx = argv.indexOf("-p");
+const prompt = pIdx >= 0 ? argv[pIdx + 1] : "";
+const mode = process.env.FAKE_AGENT_SCRIPT || "approve";
+
+function emit(text) {
+  console.log(
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
+  );
+}
+function git(args) {
+  execFileSync("git", args, { cwd: process.cwd(), stdio: "pipe" });
+}
+
+// Defensive: if somehow handed a review prompt, do nothing.
+if (prompt.includes("Review per your skill") || prompt.includes("## git diff")) {
+  emit("(builder received a review prompt — ignoring)");
+  process.exit(0);
+}
+
+if (mode === "empty") {
+  emit("I reviewed the plan but made no changes.");
+  process.exit(0);
+}
+
+// Append a unique line each round so every build round produces a real new commit.
+const marker = `// build ${Date.now()}-${process.pid}\n`;
+const leak = mode === "leak" ? "const home = '/Users/iamjohndass/secret';\n" : "";
+appendFileSync("feature.js", "export const built = true;\n" + leak + marker);
+git(["add", "-A"]);
+git(["commit", "-m", "build: implement feature", "--no-verify"]);
+emit("Implemented the plan: updated feature.js and committed.");
+process.exit(0);

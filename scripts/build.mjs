@@ -2,10 +2,11 @@
  * build.mjs — the *build* half of the agent relay, packaged as an aios sub-command.
  *
  * The plan half (scripts/relay.mjs) produces an approved plan. This half implements
- * it: a Cursor agent writes the code on an isolated git worktree, the /ai-code-review
- * Cursor skill reviews the REAL diff, the loop repeats until the reviewer emits
- * MERGE_READY or the round budget is spent, a fail-closed secrets gate runs, and
- * (only with --merge) the branch is merged.
+ * it: Opus (via Claude Code) writes the code on an isolated git worktree, the Cursor
+ * /ai-code-review skill reviews the REAL diff, the loop repeats until the reviewer
+ * emits MERGE_READY or the round budget is spent, a fail-closed secrets gate runs,
+ * and (only with --merge) the branch is merged. (Mirrors the plan phase: Opus
+ * produces, Cursor reviews.)
  *
  * Exported entry points:
  *   cmdBuild(repo, args)                    — CLI:  aios build <plan-file|task> [branch] [opts]
@@ -28,6 +29,8 @@ import {
   mkdtempSync,
   mkdirSync,
   cpSync,
+  lstatSync,
+  appendFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
@@ -38,15 +41,21 @@ import {
   die,
   checkPrereqs,
   callCursorAgent,
+  callClaudeAgent,
   gitMergeAndDelete,
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
-// The builder/reviewer run in a fresh worktree (untrusted) and must act autonomously:
-// --trust skips the workspace-trust prompt (headless), --force auto-allows commands.
-const CURSOR_AGENT_FLAGS = ["--force", "--trust"];
+// Builder = Opus via Claude Code; reviewer = Cursor /ai-code-review. This mirrors the
+// plan phase (Opus produces, Cursor reviews) and keeps model diversity in the loop.
+const BUILDER_MODEL = "claude-opus-4-8";
+// The builder edits autonomously in the sandboxed worktree.
+const CLAUDE_BUILD_FLAGS = ["--dangerously-skip-permissions"];
+// The reviewer runs in a fresh worktree (untrusted): --trust skips the headless
+// workspace-trust prompt, --force lets it run tests/validators to gather evidence.
+const CURSOR_REVIEW_FLAGS = ["--force", "--trust"];
 const DEFAULT_ROUNDS = 4;
 const DEFAULT_BUILD_TIMEOUT = 1800; // seconds — building + running tests is slow
 const DEFAULT_REVIEW_TIMEOUT = 300; // seconds — reviewing a diff is fast
@@ -347,6 +356,20 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
         /* best-effort: tests just won't run from the worktree */
       }
     }
+    // Keep the node_modules symlink out of the change set. The repo's .gitignore
+    // uses `node_modules/` (directory), which does NOT match a symlink, so without
+    // this the symlink would be staged, reviewed, scanned, and merged.
+    if (!dryRun) {
+      try {
+        const ex = git(
+          ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+          wt
+        ).trim();
+        appendFileSync(ex, "\n/node_modules\n");
+      } catch {
+        /* best-effort */
+      }
+    }
   }
   return { worktreePath: wt, resumed: branchPreExisted };
 }
@@ -390,6 +413,13 @@ function runSecretsScan(repo, worktree, baseSha) {
     for (const f of changed) {
       const src = path.join(worktree, f);
       if (!existsSync(src)) continue; // deleted file — nothing to scan
+      let st;
+      try {
+        st = lstatSync(src);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue; // skip symlinks/dirs (e.g. a stray node_modules symlink)
       const dst = path.join(tmp, f);
       mkdirSync(path.dirname(dst), { recursive: true });
       cpSync(src, dst);
@@ -442,18 +472,18 @@ function runVerification(worktree, cmd) {
   }
 }
 
-// Call the Cursor agent, retrying transient backend drops (ECONNRESET etc.) — but
-// never real timeouts or agent errors.
-async function cursorWithRetry(prompt, timeoutMs, opts, attempts = 3) {
+// Call an agent (Claude builder or Cursor reviewer), retrying transient backend
+// drops (ECONNRESET etc.) — but never real timeouts or agent errors.
+async function withRetry(callFn, prompt, timeoutMs, opts, attempts = 3) {
   for (let i = 1; ; i++) {
     try {
-      return await callCursorAgent(prompt, timeoutMs, opts);
+      return await callFn(prompt, timeoutMs, opts);
     } catch (e) {
       const transient = TRANSIENT_RE.test(e.message) && !/timed out/.test(e.message);
       if (!transient || i >= attempts) throw e;
       console.log(
         c.yellow(
-          `cursor call failed (transient): ${e.message.slice(0, 100)} — retry ${i}/${attempts - 1}`
+          `agent call failed (transient): ${e.message.slice(0, 100)} — retry ${i}/${attempts - 1}`
         )
       );
     }
@@ -463,7 +493,9 @@ async function cursorWithRetry(prompt, timeoutMs, opts, attempts = 3) {
 // ── core loop ─────────────────────────────────────────────────────────────────
 
 export async function runBuild({ repo, plan, branch, opts }) {
-  checkPrereqs({ requireAnthropic: false });
+  // Builder = Claude Code (Opus); reviewer = Cursor. Claude Code uses its own auth,
+  // so ANTHROPIC_API_KEY is not required here.
+  checkPrereqs({ requireAnthropic: false, requireClaude: true, requireCursor: true });
 
   if (!plan || !plan.trim()) die("no plan to build — pass a plan file or task.");
   if (!branch) {
@@ -541,11 +573,12 @@ export async function runBuild({ repo, plan, branch, opts }) {
           : null,
       branch,
     });
-    console.log(c.dim("[cursor] building..."));
+    console.log(c.dim(`[claude] building (${BUILDER_MODEL})...`));
     try {
-      const builderOut = await cursorWithRetry(buildPrompt, buildTimeout, {
+      const builderOut = await withRetry(callClaudeAgent, buildPrompt, buildTimeout, {
         cwd: wt,
-        extraArgs: CURSOR_AGENT_FLAGS,
+        model: BUILDER_MODEL,
+        extraArgs: CLAUDE_BUILD_FLAGS,
       });
       log(`Build round ${round} — builder`, builderOut.slice(-4000));
     } catch (e) {
@@ -631,9 +664,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
       maxRounds: rounds,
     });
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
-    const review = await cursorWithRetry(reviewPrompt, cursorTimeout, {
+    const review = await withRetry(callCursorAgent, reviewPrompt, cursorTimeout, {
       cwd: wt,
-      extraArgs: CURSOR_AGENT_FLAGS,
+      extraArgs: CURSOR_REVIEW_FLAGS,
     });
     log(`Build round ${round} — review`, review);
     console.log("\n── review done ─────────────────────────────────────────────");

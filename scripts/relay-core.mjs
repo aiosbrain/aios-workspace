@@ -1,10 +1,10 @@
 /**
  * relay-core.mjs — primitives shared by the aios relay (plan) and build phases.
  *
- * Both scripts/relay.mjs (Opus ↔ Cursor plan loop) and scripts/build.mjs (Cursor
- * build/review loop) import from here so the Cursor subprocess driver, git helpers,
- * colours, prereq checks, branch validation, approval tokens, and the --log writer
- * all have a single source of truth.
+ * Both scripts/relay.mjs (Opus plans ↔ Cursor reviews) and scripts/build.mjs (Opus
+ * builds via Claude Code ↔ Cursor reviews) import from here so the agent subprocess
+ * drivers, git helpers, colours, prereq checks, branch validation, approval tokens,
+ * and the --log writer all have a single source of truth.
  */
 
 import { spawn, execFileSync } from "node:child_process";
@@ -37,41 +37,45 @@ export function die(msg) {
 }
 
 // ── prereq checks ───────────────────────────────────────────────────────────
-// The plan loop needs ANTHROPIC_API_KEY (it calls Opus); the build loop drives
-// Cursor only, so it passes { requireAnthropic: false }.
+// The plan loop calls Opus via the SDK (needs ANTHROPIC_API_KEY) and reviews with
+// Cursor. The build loop drives Claude Code (the Opus builder) + Cursor (the
+// reviewer), so it passes { requireAnthropic: false, requireClaude: true }.
 
-export function checkPrereqs({ requireAnthropic = true } = {}) {
+export function checkPrereqs({
+  requireAnthropic = true,
+  requireClaude = false,
+  requireCursor = true,
+} = {}) {
   if (requireAnthropic && !process.env.ANTHROPIC_API_KEY) {
     die("ANTHROPIC_API_KEY is not set. Add it to your .env or export it in your shell.");
   }
-  try {
-    execFileSync("cursor", ["--version"], { stdio: "pipe" });
-  } catch {
-    die("cursor CLI not found. Install: curl https://cursor.com/install -fsS | bash");
+  if (requireCursor) {
+    try {
+      execFileSync("cursor", ["--version"], { stdio: "pipe" });
+    } catch {
+      die("cursor CLI not found. Install: curl https://cursor.com/install -fsS | bash");
+    }
+  }
+  if (requireClaude) {
+    try {
+      execFileSync("claude", ["--version"], { stdio: "pipe" });
+    } catch {
+      die("claude CLI (Claude Code) not found. See https://docs.claude.com/claude-code");
+    }
   }
 }
 
-// ── Cursor agent subprocess ─────────────────────────────────────────────────
-// opts.cwd runs the agent in a specific directory — the build phase passes its
-// isolated worktree so file edits land there, never in the primary checkout.
-// When omitted the agent inherits the current process cwd (the plan loop's
-// original behaviour, which only reviews and never edits).
-// opts.extraArgs are appended to the `cursor agent` argv — the build phase passes
-// --trust (a fresh worktree is otherwise untrusted) and --force (autonomous edits).
+// ── agent subprocesses (Cursor + Claude Code) ────────────────────────────────
+// Both the Cursor CLI and the Claude Code CLI stream NDJSON in the same handful of
+// event shapes, so one driver parses both. opts.cwd runs the agent in a specific
+// directory — the build phase passes its isolated worktree so edits land there,
+// never in the primary checkout. opts.extraArgs are appended to the argv.
 
-export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
+function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
   return new Promise((resolve, reject) => {
-    process.stdout.write("\n[cursor] invoking agent...\n");
+    process.stdout.write(`\n[${label}] invoking agent...\n`);
 
-    const args = [
-      "agent",
-      "-p",
-      prompt,
-      "--output-format",
-      "stream-json",
-      ...(opts.extraArgs ?? []),
-    ];
-    const proc = spawn("cursor", args, {
+    const proc = spawn(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd ?? process.cwd(),
     });
@@ -80,7 +84,7 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
       proc.kill();
       reject(
         new Error(
-          `cursor agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
+          `${label} agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
         )
       );
     }, timeoutMs);
@@ -99,6 +103,7 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
         const ev = JSON.parse(raw);
 
         // Shape 1: {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
+        // (Cursor and Claude Code both use this; tool_use blocks are ignored.)
         if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
           for (const block of ev.message.content) {
             if (block.type === "text") {
@@ -114,7 +119,7 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
           text += ev.text;
           return;
         }
-        // Shape 3: {type:"result", result:"..."} (final summary in some Cursor versions)
+        // Shape 3: {type:"result", result:"..."} (final summary — Cursor + Claude Code)
         if (ev.type === "result" && typeof ev.result === "string" && !text) {
           text = ev.result;
           return;
@@ -137,11 +142,37 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
       } else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
         reject(
-          new Error(`cursor agent exited ${code}${errMsg ? ": " + errMsg.slice(0, 400) : ""}`)
+          new Error(`${label} agent exited ${code}${errMsg ? ": " + errMsg.slice(0, 400) : ""}`)
         );
       }
     });
   });
+}
+
+// Cursor agent — used as the build-phase code reviewer (/ai-code-review). The build
+// phase passes --trust (a fresh worktree is otherwise untrusted) and --force.
+export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
+  const args = ["agent", "-p", prompt, "--output-format", "stream-json", ...(opts.extraArgs ?? [])];
+  return spawnAgentStream("cursor", "cursor", args, timeoutMs, opts);
+}
+
+// Claude Code agent — used as the build-phase builder (Opus implements the plan,
+// edits files, runs tests, commits). opts.model selects the model (default Opus);
+// the build phase passes --dangerously-skip-permissions for autonomous edits in the
+// sandboxed worktree.
+export async function callClaudeAgent(prompt, timeoutMs, opts = {}) {
+  const model = opts.model ?? "claude-opus-4-8";
+  const args = [
+    "-p",
+    prompt,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    model,
+    ...(opts.extraArgs ?? []),
+  ];
+  return spawnAgentStream("claude", "claude", args, timeoutMs, opts);
 }
 
 // ── git operations ───────────────────────────────────────────────────────────

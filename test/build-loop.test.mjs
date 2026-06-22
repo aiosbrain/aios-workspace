@@ -25,7 +25,8 @@ import { runBuild, slugify, EXIT } from "../scripts/build.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
-const FAKE_DIR = path.join(DIR, "fixtures", "fake-cursor");
+const FAKE_CURSOR = path.join(DIR, "fixtures", "fake-cursor");
+const FAKE_CLAUDE = path.join(DIR, "fixtures", "fake-claude");
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -39,9 +40,10 @@ function check(label, cond) {
   }
 }
 
-// Put the fake cursor on PATH for the whole run.
-chmodSync(path.join(FAKE_DIR, "cursor"), 0o755);
-process.env.PATH = FAKE_DIR + path.delimiter + process.env.PATH;
+// Put the fake builder (claude) and reviewer (cursor) on PATH for the whole run.
+chmodSync(path.join(FAKE_CURSOR, "cursor"), 0o755);
+chmodSync(path.join(FAKE_CLAUDE, "claude"), 0o755);
+process.env.PATH = [FAKE_CLAUDE, FAKE_CURSOR, process.env.PATH].join(path.delimiter);
 
 const cleanups = [];
 function freshRepo() {
@@ -90,7 +92,7 @@ const origErr = process.stderr.write.bind(process.stderr);
 const origLog = console.log;
 const origError = console.error;
 async function run({ repo, branch, mode, o }) {
-  process.env.FAKE_CURSOR_SCRIPT = mode;
+  process.env.FAKE_AGENT_SCRIPT = mode;
   process.stdout.write = () => true;
   process.stderr.write = () => true;
   console.log = () => {};
@@ -165,7 +167,7 @@ console.log("reject-then-approve → converges round 2, merges, logs both rounds
   const repo = freshRepo();
   const stateFile = mkdtempSync(path.join(tmpdir(), "fc-state-"));
   cleanups.push(stateFile);
-  process.env.FAKE_CURSOR_STATE = path.join(stateFile, "n");
+  process.env.FAKE_REVIEW_STATE = path.join(stateFile, "n");
   const logFile = path.join(repo, "build.log.md");
   const code = await run({
     repo,
@@ -173,7 +175,7 @@ console.log("reject-then-approve → converges round 2, merges, logs both rounds
     mode: "reject-then-approve",
     o: opts({ rounds: 3, merge: true, logFile }),
   });
-  delete process.env.FAKE_CURSOR_STATE;
+  delete process.env.FAKE_REVIEW_STATE;
   check("exit OK", code === EXIT.OK);
   check("merged to main", existsSync(path.join(repo, "feature.js")));
   const logTxt = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
