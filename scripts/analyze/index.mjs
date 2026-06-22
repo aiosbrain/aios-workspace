@@ -55,12 +55,15 @@ function parseArgs(rest) {
 }
 
 /** Resolve --since ("7d" | "billing" | ISO date) to a Date. */
-async function resolveSince(spec) {
+async function resolveSince(spec, warn = console.warn) {
   if (spec === "billing") {
     try {
       return await cursorBillingStart();
-    } catch {
-      /* fall through to 30d */
+    } catch (e) {
+      warn(
+        `  --since billing: Cursor session unavailable (${e.message}) — falling back to 30d window`
+      );
+      return new Date(Date.now() - 30 * 86_400_000);
     }
   }
   const m = String(spec).match(/^(\d+)d$/);
@@ -76,7 +79,7 @@ function isoDate(d) {
 
 export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const opts = parseArgs(rest);
-  const since = await resolveSince(opts.since);
+  const since = await resolveSince(opts.since, (msg) => console.warn(color.yellow(msg)));
   const until = new Date();
   const sinceMs = since.getTime();
   const home = os.homedir();
