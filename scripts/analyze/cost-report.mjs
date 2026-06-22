@@ -3,8 +3,97 @@
  * Used by analyze --push (W2.1) and tests.
  */
 
+import { bucketByDay, computeSignals } from "./metrics.mjs";
+
 function roundUsd(n) {
   return Math.round(Number(n || 0) * 100000) / 100000;
+}
+
+function fmtUsd(n, { estimated = false } = {}) {
+  const v = Number(n || 0);
+  const s = `$${v.toFixed(2)}`;
+  return estimated ? `~${s}` : s;
+}
+
+/**
+ * Claude Code daily spend from local session logs (token estimate, not billing API).
+ * @param {import("./normalize.mjs").NormalizedEvent[]} events
+ */
+export function buildClaudeCostFromEvents(events, sinceMs) {
+  const claude = events.filter((ev) => {
+    if (ev.tool !== "claude") return false;
+    if (!ev.ts) return true;
+    const t = new Date(ev.ts).getTime();
+    return Number.isFinite(t) ? t >= sinceMs : true;
+  });
+  if (!claude.length) return null;
+
+  const days = [];
+  let totalCost = 0;
+  let totalEvents = 0;
+  for (const [date, evs] of [...bucketByDay(claude).entries()]
+    .filter(([d]) => d !== "undated")
+    .sort((a, b) => a[0].localeCompare(b[0]))) {
+    const sig = computeSignals(evs);
+    const turns = evs.filter(
+      (e) => (e.actor === "assistant" || e.actor === "subagent") && e.tokens
+    ).length;
+    days.push({
+      date,
+      cost_usd: sig.total_cost_usd,
+      events: turns,
+      input_tokens: sig.input_tokens,
+      output_tokens: sig.output_tokens,
+      cache_read_tokens: sig.cache_read_tokens,
+    });
+    totalCost += sig.total_cost_usd;
+    totalEvents += turns;
+  }
+  return {
+    totals: { cost_usd: totalCost, events: totalEvents },
+    days,
+  };
+}
+
+/** Terminal spend block (Cursor authoritative + Claude estimated). */
+export function renderCostSummary(costData, color) {
+  if (!costData?.cursor && !costData?.claude) return "";
+  const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
+  const { window: win } = costData;
+  const L = [];
+  L.push("");
+  L.push(`Provider spend — ${win.since} → ${win.until}`);
+  if (costData.cursor?.totals) {
+    const t = costData.cursor.totals;
+    L.push(
+      c.dim(
+        `  Cursor (billing)     ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} events`
+      )
+    );
+    if (costData.cursor.truncated) {
+      L.push(
+        c.yellow(
+          "    billing fetch incomplete — daily totals may be undercounted"
+        )
+      );
+    }
+  } else if (costData.cursor_error) {
+    L.push(c.yellow(`  Cursor (billing)     unavailable (${costData.cursor_error})`));
+  }
+  if (costData.claude?.totals) {
+    const t = costData.claude.totals;
+    L.push(
+      c.dim(
+        `  Claude (est.)        ${fmtUsd(t.cost_usd, { estimated: true }).padStart(9)}   ${t.events} turns`
+      )
+    );
+  }
+  L.push(
+    c.dim(
+      "  Cursor = dashboard API · Claude = token estimate from session logs · see brain Usage for team totals"
+    )
+  );
+  return L.join("\n");
 }
 
 /** Build POST /api/v1/costs payloads for each provider-day. */
