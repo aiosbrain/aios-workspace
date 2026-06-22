@@ -74,18 +74,34 @@ export function parseTaskRows(body) {
 export function mergeTaskWriteback(content, rows) {
   const cellFor = (col, row) => {
     switch (col) {
-      case "id": return row.row_key || "";
-      case "task": return row.title || "";
-      case "assignee": return row.assignee || "";
-      case "status": return row.status || "";
-      case "sprint": return row.sprint || "";
-      case "due": return row.due || "";
-      case "parent": return row.parent || "";
-      case "labels": return Array.isArray(row.labels) ? row.labels.join(", ") : row.labels || "";
-      case "priority": return row.priority || "";
-      case "pm": return row.pm_provider ? (row.pm_external_id ? `${row.pm_provider}:${row.pm_external_id}` : row.pm_provider) : "";
-      case "pm url": return row.pm_url || "";
-      default: return "";
+      case "id":
+        return row.row_key || "";
+      case "task":
+        return row.title || "";
+      case "assignee":
+        return row.assignee || "";
+      case "status":
+        return row.status || "";
+      case "sprint":
+        return row.sprint || "";
+      case "due":
+        return row.due || "";
+      case "parent":
+        return row.parent || "";
+      case "labels":
+        return Array.isArray(row.labels) ? row.labels.join(", ") : row.labels || "";
+      case "priority":
+        return row.priority || "";
+      case "pm":
+        return row.pm_provider
+          ? row.pm_external_id
+            ? `${row.pm_provider}:${row.pm_external_id}`
+            : row.pm_provider
+          : "";
+      case "pm url":
+        return row.pm_url || "";
+      default:
+        return "";
     }
   };
   const reFor = (rowKey) =>
@@ -95,7 +111,10 @@ export function mergeTaskWriteback(content, rows) {
     return re.test(text) ? text.replace(re, () => line) : text.trimEnd() + "\n" + line + "\n";
   };
   const isSeparator = (line) => {
-    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
     return cells.length > 0 && cells.every((c) => /^[-: ]*$/.test(c));
   };
 
@@ -103,20 +122,44 @@ export function mergeTaskWriteback(content, rows) {
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     if (!/^\s*\|/.test(lines[i])) continue;
-    const cells = lines[i].split("|").slice(1, -1).map((c) => c.trim().toLowerCase());
-    if (cells.includes("id") && cells.includes("task")) { headerIdx = i; break; }
+    const cells = lines[i]
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim().toLowerCase());
+    if (cells.includes("id") && cells.includes("task")) {
+      headerIdx = i;
+      break;
+    }
   }
   if (headerIdx < 0) {
-    // No recognizable table — append legacy six-column lines.
+    // No recognizable table — append legacy six-column lines. NOTE: hierarchy values on the
+    // incoming rows are dropped here (there is no header to widen). This only happens when
+    // tasks.md has no parseable table; the scaffold always ships one. Revisit if the brain
+    // half ever needs to materialize a fresh hierarchical table from nothing.
     const order = ["id", "task", "assignee", "status", "sprint", "due"];
     let out = content;
-    for (const row of rows) out = upsert(out, row.row_key, `| ${order.map((c) => cellFor(c, row)).join(" | ")} |`);
+    for (const row of rows)
+      out = upsert(out, row.row_key, `| ${order.map((c) => cellFor(c, row)).join(" | ")} |`);
     return out;
   }
 
-  // Upgrade the header in place when hierarchy fields are incoming but the columns are absent.
-  if (rows.some((r) => "parent" in r || "labels" in r || "priority" in r)) {
-    const headerCells = lines[headerIdx].split("|").slice(1, -1).map((c) => c.trim());
+  // Upgrade the header in place only when a row carries a MEANINGFUL hierarchy value — not merely
+  // the key. The brain writeback always includes parent/labels/priority (possibly null/[]/"none"),
+  // so keying on presence would widen a six-column table on every pull; the contract says a table
+  // with no hierarchy edits stays structurally untouched.
+  const hasMeaningfulHierarchy = rows.some(
+    (r) =>
+      (typeof r.parent === "string" && r.parent.trim() !== "") ||
+      (Array.isArray(r.labels) && r.labels.length > 0) ||
+      (typeof r.priority === "string" &&
+        r.priority.trim() !== "" &&
+        r.priority.trim().toLowerCase() !== "none")
+  );
+  if (hasMeaningfulHierarchy) {
+    const headerCells = lines[headerIdx]
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
     const lower = headerCells.map((c) => c.toLowerCase());
     const added = ["Parent", "Labels", "Priority"].filter((c) => !lower.includes(c.toLowerCase()));
     if (added.length) {
@@ -128,7 +171,10 @@ export function mergeTaskWriteback(content, rows) {
       }
       for (let i = sepIdx + 1; i < lines.length; i++) {
         if (!/^\s*\|/.test(lines[i])) continue;
-        const cells = lines[i].split("|").slice(1, -1).map((c) => c.trim());
+        const cells = lines[i]
+          .split("|")
+          .slice(1, -1)
+          .map((c) => c.trim());
         if (!cells.length) continue;
         while (cells.length < headerCells.length) cells.push("");
         lines[i] = `| ${cells.join(" | ")} |`;
@@ -137,7 +183,11 @@ export function mergeTaskWriteback(content, rows) {
   }
 
   let out = lines.join("\n");
-  const order = lines[headerIdx].split("|").slice(1, -1).map((c) => c.trim().toLowerCase());
-  for (const row of rows) out = upsert(out, row.row_key, `| ${order.map((c) => cellFor(c, row)).join(" | ")} |`);
+  const order = lines[headerIdx]
+    .split("|")
+    .slice(1, -1)
+    .map((c) => c.trim().toLowerCase());
+  for (const row of rows)
+    out = upsert(out, row.row_key, `| ${order.map((c) => cellFor(c, row)).join(" | ")} |`);
   return out;
 }
