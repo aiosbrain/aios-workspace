@@ -8,10 +8,10 @@
 # Requires: gh CLI (with jq), authenticated for the target repo.
 #
 # Exit codes:
-#   0 — Bugbot check completed with success (no unresolved findings per GitHub)
+#   0 — Bugbot passed (success or intentional skip on config/docs-only PR)
 #   1 — usage / gh error
-#   2 — Bugbot completed with neutral or failure, or usage-limit / skip comments
-#   3 — Bugbot still pending / in progress
+#   2 — Bugbot failed or has unresolved inline threads, or hit usage/spend limit
+#   3 — Bugbot still pending / in progress / not yet triggered
 
 set -euo pipefail
 
@@ -27,9 +27,9 @@ Examples:
   scripts/bugbot-status.sh 57 AIOS-alpha/aios-workspace
 
 Exit codes:
-  0  Bugbot check success
-  2  Bugbot neutral/failure, or cursor[bot] reported it could not run
-  3  Bugbot still in progress
+  0  Bugbot passed (success or intentional skip — config/docs-only PR)
+  2  Bugbot failure or unresolved threads, or usage/spend limit hit
+  3  Bugbot still in progress or not yet triggered
 EOF
   exit 1
 fi
@@ -76,14 +76,19 @@ else
   echo "$CHECK_JSON" | jq -r '.[] | "\(.name): \(.status) / \(.conclusion // "pending") — \(.html_url)"'
   BUGBOT_PENDING=0
   BUGBOT_BAD=0
+  BUGBOT_SKIPPED=0
   while IFS= read -r line; do
     status="$(echo "$line" | jq -r .status)"
     conclusion="$(echo "$line" | jq -r '.conclusion // ""')"
     if [[ "$status" == "queued" || "$status" == "in_progress" ]]; then
       BUGBOT_PENDING=1
     fi
-    if [[ "$conclusion" == "neutral" || "$conclusion" == "failure" ]]; then
+    if [[ "$conclusion" == "failure" ]]; then
       BUGBOT_BAD=1
+    fi
+    # neutral = Bugbot ran but intentionally skipped (e.g. config/docs-only PR) — treat as pass
+    if [[ "$conclusion" == "neutral" ]]; then
+      BUGBOT_SKIPPED=1
     fi
   done < <(echo "$CHECK_JSON" | jq -c '.[]')
 fi
@@ -146,6 +151,10 @@ fi
 if [[ "$BUGBOT_BAD" -eq 1 || "$COUNT" -gt 0 ]]; then
   echo "Bugbot reported issues or unresolved inline threads."
   exit 2
+fi
+if [[ "$BUGBOT_SKIPPED" -eq 1 ]]; then
+  echo "Bugbot passed (skipped — no code changes to review, e.g. config/docs-only PR)."
+  exit 0
 fi
 if [[ "$CHECK_JSON" != "[]" ]]; then
   echo "Bugbot check passed (success)."
