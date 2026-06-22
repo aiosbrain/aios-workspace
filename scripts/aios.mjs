@@ -340,14 +340,14 @@ function parseTaskRows(body) {
       const rowKey = cells[idx("id")] || "";
       const pm = idx("pm") >= 0 ? parsePmCell(cells[idx("pm")] || "", rowKey) : {};
       return {
-      row_key: rowKey,
-      title: cells[idx("task")] || "",
-      assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
-      status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
-      sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
-      due: idx("due") >= 0 ? cells[idx("due")] || null : null,
-      ...pm,
-      pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
+        row_key: rowKey,
+        title: cells[idx("task")] || "",
+        assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
+        status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
+        sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
+        due: idx("due") >= 0 ? cells[idx("due")] || null : null,
+        ...pm,
+        pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
       };
     })
     .filter((r) => r.row_key);
@@ -2084,7 +2084,10 @@ function tasksFile(repo) {
 }
 
 function rowCells(line) {
-  return line.split("|").slice(1, -1).map((x) => x.trim());
+  return line
+    .split("|")
+    .slice(1, -1)
+    .map((x) => x.trim());
 }
 
 function renderRow(cells) {
@@ -2146,10 +2149,14 @@ async function postWorkEvent(repo, cfg, key, actor) {
       work_keys: [key],
       actor,
     });
-    console.log(`  ${c.green("✓")} PM sync event ${c.dim(`${res.applied?.length ?? 0} applied, ${res.unresolved?.length ?? 0} unresolved`)}`);
+    console.log(
+      `  ${c.green("✓")} PM sync event ${c.dim(`${res.applied?.length ?? 0} applied, ${res.unresolved?.length ?? 0} unresolved`)}`
+    );
   } catch (e) {
     if (String(e.message).startsWith("404")) {
-      console.log(c.dim("work-events endpoint not available on this Team Brain; task push succeeded."));
+      console.log(
+        c.dim("work-events endpoint not available on this Team Brain; task push succeeded.")
+      );
       return;
     }
     throw e;
