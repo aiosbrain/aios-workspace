@@ -199,22 +199,32 @@ async function pushDays(repo, cfg, result, helpers, state) {
     return;
   }
   const missing = [];
-  if (!cfg.brain_url) missing.push("AIOS_BRAIN_URL");
-  if (!cfg.api_key) missing.push("AIOS_API_KEY");
+  if (!cfg.brain_url?.trim()) missing.push("AIOS_BRAIN_URL");
+  if (!cfg.api_key?.trim()) missing.push("AIOS_API_KEY");
   if (missing.length) {
     console.warn(
       color.yellow(`  --push skipped: brain not configured (missing ${missing.join(" + ")}).`)
     );
-    console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));
-    console.warn(color.dim("      export AIOS_BRAIN_URL=https://your-brain.example.com"));
-    console.warn(
-      color.dim(
-        "      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"
-      )
-    );
-    console.warn(
-      color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them).")
-    );
+    if (missing.includes("AIOS_BRAIN_URL") && "AIOS_BRAIN_URL" in process.env) {
+      console.warn(
+        color.yellow(
+          "    AIOS_BRAIN_URL is present but empty — dotenvx decrypted an empty value. Re-set it:"
+        )
+      );
+      console.warn(color.dim("      dotenvx set AIOS_BRAIN_URL=https://your-brain.example.com -f .env"));
+      console.warn(color.dim("      dotenvx encrypt -f .env"));
+    } else {
+      console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));
+      console.warn(color.dim("      export AIOS_BRAIN_URL=https://your-brain.example.com"));
+      console.warn(
+        color.dim(
+          "      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"
+        )
+      );
+      console.warn(
+        color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them).")
+      );
+    }
     return;
   }
   const member = resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {});
