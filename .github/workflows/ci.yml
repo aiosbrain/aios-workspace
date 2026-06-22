@@ -93,3 +93,15 @@ jobs:
         run: npm run lint
       - name: Prettier (format check)
         run: npm run format:check
+
+  tests:
+    name: unit tests (npm test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: npm test
+        run: npm test
