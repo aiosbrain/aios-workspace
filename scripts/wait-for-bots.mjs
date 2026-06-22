@@ -85,7 +85,12 @@ function getLatestPushTime(repo, pr) {
   // Use the PR's updated_at as a proxy for the latest push — conservative lower bound.
   // More accurate: latest commit author date from the PR's commit list.
   try {
-    const raw = gh(["api", `repos/${repo}/pulls/${pr}/commits`, "--jq", ".[-1].commit.author.date"]);
+    const raw = gh([
+      "api",
+      `repos/${repo}/pulls/${pr}/commits`,
+      "--jq",
+      ".[-1].commit.author.date",
+    ]);
     return raw ? new Date(raw) : null;
   } catch {
     return null;
@@ -94,8 +99,10 @@ function getLatestPushTime(repo, pr) {
 
 function fetchIssueComments(repo, pr) {
   const raw = gh([
-    "api", `repos/${repo}/issues/${pr}/comments`,
-    "--jq", "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "api",
+    `repos/${repo}/issues/${pr}/comments`,
+    "--jq",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
   ]);
   return JSON.parse(raw);
 }
@@ -103,27 +110,43 @@ function fetchIssueComments(repo, pr) {
 function fetchPullReviewComments(repo, pr) {
   // Inline diff comments (pulls endpoint, not issues)
   const raw = gh([
-    "api", `repos/${repo}/pulls/${pr}/comments`,
-    "--jq", "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "api",
+    `repos/${repo}/pulls/${pr}/comments`,
+    "--jq",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
   ]);
   return JSON.parse(raw);
 }
 
 function fetchPullReviews(repo, pr) {
   const raw = gh([
-    "api", `repos/${repo}/pulls/${pr}/reviews`,
-    "--jq", "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at}]",
+    "api",
+    `repos/${repo}/pulls/${pr}/reviews`,
+    "--jq",
+    "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at}]",
   ]);
   return JSON.parse(raw);
 }
 
 function fetchCheckRuns(repo, pr) {
   try {
-    const sha = gh(["pr", "view", String(pr), "--repo", repo, "--json", "headRefOid", "--jq", ".headRefOid"]);
+    const sha = gh([
+      "pr",
+      "view",
+      String(pr),
+      "--repo",
+      repo,
+      "--json",
+      "headRefOid",
+      "--jq",
+      ".headRefOid",
+    ]);
     if (!sha) return [];
     const raw = gh([
-      "api", `repos/${repo}/commits/${sha}/check-runs`,
-      "--jq", "[.check_runs[] | {name, status, conclusion, completed_at}]",
+      "api",
+      `repos/${repo}/commits/${sha}/check-runs`,
+      "--jq",
+      "[.check_runs[] | {name, status, conclusion, completed_at}]",
     ]);
     return JSON.parse(raw);
   } catch {
@@ -145,7 +168,15 @@ function isSubstantive(body) {
  * Determine if a bot has posted a substantive signal after latestPush.
  * Checks: issue comments, inline PR comments, PR reviews, and check runs.
  */
-function checkBotReady(botUser, config, issueComments, pullComments, reviews, checkRuns, latestPush) {
+function checkBotReady(
+  botUser,
+  config,
+  issueComments,
+  pullComments,
+  reviews,
+  checkRuns,
+  latestPush
+) {
   const after = (dateStr) => {
     if (!latestPush || !dateStr) return true; // no push time → don't filter
     return new Date(dateStr) > latestPush;
@@ -274,7 +305,15 @@ while (Date.now() < deadline) {
 
   const results = {};
   for (const [botUser, config] of Object.entries(BOT_CONFIG)) {
-    results[botUser] = checkBotReady(botUser, config, issueComments, pullComments, reviews, checkRuns, latestPush);
+    results[botUser] = checkBotReady(
+      botUser,
+      config,
+      issueComments,
+      pullComments,
+      reviews,
+      checkRuns,
+      latestPush
+    );
   }
 
   const missing = botUsers.filter((b) => !results[b].ready);
@@ -307,7 +346,15 @@ try {
 
 const finalResults = {};
 for (const [botUser, config] of Object.entries(BOT_CONFIG)) {
-  finalResults[botUser] = checkBotReady(botUser, config, issueComments, pullComments, reviews, checkRuns, latestPush);
+  finalResults[botUser] = checkBotReady(
+    botUser,
+    config,
+    issueComments,
+    pullComments,
+    reviews,
+    checkRuns,
+    latestPush
+  );
 }
 const finalMissing = botUsers.filter((b) => !finalResults[b].ready);
 
