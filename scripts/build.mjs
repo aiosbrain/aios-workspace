@@ -502,6 +502,25 @@ function runSecretsScan(repo, worktree, baseSha) {
       }
       cpSync(src, dst);
     }
+    // Absolute machine paths (e.g. /Users/<name>/…, /home/<name>/…) leak the
+    // builder's environment and are forbidden by the build prompt. The shared
+    // OGR03 scanner deliberately tolerates dummy paths in committed test code, so
+    // we enforce this on the BUILT change set here — never on the whole repo.
+    for (const f of changed) {
+      const dst = path.join(tmp, f);
+      if (!existsSync(dst)) continue;
+      let body;
+      try {
+        body = readFileSync(dst, "utf8");
+      } catch {
+        continue;
+      }
+      const hit = body.match(/\/(Users|home)\/[A-Za-z0-9._-]+\//);
+      if (hit) {
+        ok = false;
+        chunks.push(`[FAIL absolute machine path in ${f}] matched: ${hit[0]}`);
+      }
+    }
     const checks = [
       { script: path.join(repo, "scripts", "leak-gate.sh"), args: [tmp] },
       { script: path.join(repo, "validation", "validate-all.sh"), args: [tmp, "--critical"] },
