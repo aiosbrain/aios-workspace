@@ -1,15 +1,27 @@
+/* ─────────────────────────────────────────────────────────────
+   Unified AIOS design system (@aios-alpha/design).
+   tokens.css publishes --aios-* runtime vars: :root = light, .dark =
+   dark overrides. The GUI is terminal-native app chrome → defaults to
+   dark (class="dark" on <html> in index.html); add/remove that class
+   to switch modes. The local var names below are kept as thin aliases
+   onto the unified tokens so the existing stylesheet inherits the
+   shared palette + dual-mode without a rewrite.
+   See @aios-alpha/design/DESIGN.md — the pinned design contract.
+   ───────────────────────────────────────────────────────────── */
+@import "@aios-alpha/design/tokens.css";
+
 :root {
-  --bg: #0f1117;
-  --surface: #171a23;
-  --surface-2: #1e2230;
-  --border: #2a2f40;
-  --text: #e8eaf0;
-  --text-dim: #8b91a5;
-  --accent: #7c3aed;
-  --accent-soft: rgba(124, 58, 237, 0.16);
-  --green: #34d399;
-  --red: #f87171;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --bg: var(--aios-bg);
+  --surface: var(--aios-surface);
+  --surface-2: var(--aios-elevated);
+  --border: var(--aios-border-visible);
+  --text: var(--aios-fg);
+  --text-dim: var(--aios-fg-muted);
+  --accent: var(--aios-primary);
+  --accent-soft: color-mix(in srgb, var(--aios-primary) 16%, transparent);
+  --green: var(--aios-emerald);
+  --red: var(--aios-destructive);
+  --mono: var(--aios-font-mono);
 }
 
 * {
@@ -61,7 +73,7 @@ body {
   height: 26px;
   border-radius: 7px;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #7c3aed 0%, #3b82f6 50%, #2dd4bf 100%);
+  background: var(--aios-gradient-prism);
 }
 .brand-status {
   width: 7px;
