@@ -321,7 +321,6 @@ function classifyKind(rel, frontmatter) {
 
 // ── markdown table row parsers ──────────────────────────────────────────────
 
-
 function parseDecisionRows(body) {
   // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
   const rows = parseTableRows(body);

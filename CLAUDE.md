@@ -64,7 +64,7 @@ no resolvable `access:` frontmatter is **not** pushed. The brain rejects `admin`
 
 ## 4. The pinned sync contract — do not drift ⚠️
 
-**`docs/brain-api.md` is the single pinned contract (Version 1, `/api/v1`)** between this toolkit and
+**`docs/brain-api.md` is the single pinned contract (currently **v1.2**, major `/api/v1`)** between this toolkit and
 the Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change
 in that file first** — bump the version and make the matching change in `aios-team-brain`. A silent
 drift breaks `aios push`/`aios pull` for everyone. Forward-compat rule: clients MUST ignore item kinds

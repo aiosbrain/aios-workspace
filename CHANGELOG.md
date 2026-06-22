@@ -5,8 +5,21 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately and is **unchanged** by the
-entries below — no sync-protocol change, still `v1`.
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.2**
+(additive within major `v1`). Entries predating a bump did not change the protocol.
+
+## [Unreleased]
+
+### Changed
+- **Sync contract → v1.2** (`docs/brain-api.md`, additive): optional task-row
+  `parent` / `labels` / `priority` on both `POST /api/v1/items` and the
+  `GET /api/v1/tasks` writeback, so the brain can be the source of truth that projects a
+  structured board (epics → sub-issues, labels, priority) into the primary PM tool.
+  `body`/description is explicitly **not** a contract field — it is canonical in the
+  brain's Postgres `tasks.body` (dashboard-authored) and never round-trips through markdown.
+  The `aios` CLI now parses and writes the optional `Parent | Labels | Priority` columns
+  (six-column tables stay valid). Workspace half of the brain-as-source-of-truth projection;
+  the matching `aios-team-brain` schema/materialize changes land separately.
 
 ## [0.4.0] — 2026-06-17
 
