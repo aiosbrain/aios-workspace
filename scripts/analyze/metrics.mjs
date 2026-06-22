@@ -51,6 +51,29 @@ function eventCostUsd(ev) {
   );
 }
 
+/** Sum estimated USD for assistant usage events (session-log cost estimates). */
+export function totalCostUsd(events) {
+  let sum = 0;
+  for (const ev of events) {
+    if (ev.actor === "assistant" || ev.actor === "subagent") sum += eventCostUsd(ev);
+  }
+  return sum;
+}
+
+/** Sum token counts from assistant usage events. */
+export function totalTokensFromEvents(events) {
+  let input = 0,
+    output = 0,
+    cache_read = 0;
+  for (const ev of events) {
+    if (!ev.tokens) continue;
+    input += ev.tokens.in || 0;
+    output += ev.tokens.out || 0;
+    cache_read += ev.tokens.cache_read || 0;
+  }
+  return { input, output, cache_read, total: input + output + cache_read };
+}
+
 /** UTC day (YYYY-MM-DD) of an event; null when it has no usable timestamp. */
 export function dayOf(ev) {
   if (!ev.ts) return null;
@@ -147,6 +170,10 @@ export function computeSignals(events) {
     tasks,
     events: events.length,
     total_tokens: totalTok,
+    total_cost_usd: totalCost,
+    input_tokens: sumIn,
+    output_tokens: events.reduce((s, ev) => s + (ev.tokens?.out || 0), 0),
+    cache_read_tokens: sumCacheRead,
     delegation_ratio: ratio(subagentTok, totalTok),
     correction_loop_avg: ratio(toolResults, tasks),
     error_rate: ratio(toolResultErrors, toolResults),

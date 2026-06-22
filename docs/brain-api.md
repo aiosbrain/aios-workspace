@@ -43,6 +43,9 @@ writeback/registration pulls), so a newer client still works against an older br
   fields and an older brain ignores them. Task **`body`/description is intentionally NOT a contract
   field** — it is canonical in the brain's Postgres `tasks.body`, authored in the dashboard, and
   never round-trips through markdown.*
+- *2026-06-22 — added `POST /api/v1/costs` (external AI provider daily spend from
+  `aios analyze --push`). Team-tier only. Cursor dashboard USD + Claude session-log estimates.
+  Newer CLIs tolerate a `404` from an older brain.*
 
 ---
 
@@ -639,3 +642,49 @@ Rate limit: 60/min per key.
   gate** (cap at L3 when the Verification axis ≤ 1) identically — keep their thresholds in sync.
 
 **Response:** `201 { "status": "ok", "snapshot_id": "uuid", "canonical": { "spine": "L3", "axes": { … } } }`
+
+---
+
+## External AI cost endpoint (W2.1)
+
+> **Status:** Implemented (brain: `app/api/v1/costs/route.ts`, ingest `lib/costs/ingest.ts`;
+> client: `aios analyze --push`). Team-tier only.
+
+Records one day's external AI provider spend for a member, pushed from a workstation via
+`aios analyze --push`. **Cursor** figures come from the billing dashboard API (authoritative USD).
+**Claude** figures are token-based estimates from local session logs (`source: session-logs`).
+This is a standalone analytics endpoint, **not** an `/items` kind.
+
+### `POST /api/v1/costs` — daily provider spend
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier`. Rate limit: 120/min per key.
+
+```json
+{
+  "member": "john",
+  "date": "2026-06-22",
+  "provider": "cursor",
+  "source": "dashboard-api",
+  "project": "aios",
+  "input_tokens": 17220546,
+  "output_tokens": 1184106,
+  "cache_read_tokens": 199447220,
+  "cost_usd": 83.57,
+  "events": 116,
+  "meta": {
+    "models": { "composer-2.5-fast": 40.69, "gpt-5.3-codex": 31.25 },
+    "included_usd": 40.69,
+    "overage_usd": 40.81
+  }
+}
+```
+
+- `provider`: `cursor` | `claude` | `anthropic` | `openai` | `codex` | `other`
+- `source`: e.g. `dashboard-api` (Cursor billing) or `session-logs` (Claude estimate)
+- `project`: optional contribution tag (default `aios` from CLI; empty string = untagged)
+- Idempotent on `(team_id, member_id, date, provider, source, project)` — re-push updates in place.
+- `meta` is opaque JSON for model breakdowns; no raw session content.
+
+**Response:** `201 { "status": "ok", "cost_id": "uuid", "member_id": "uuid" }`
+
+Dashboard: Admin → Usage shows brain spend + external provider spend combined.

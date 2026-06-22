@@ -2226,9 +2226,9 @@ usage:
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed
-  aios analyze [--since 7d] [--tool x]   agentic-maturity (AEM) report from local session logs
-    [--report] [--json] [--push]        tools: claude|codex|cursor (default: all); --report = deep
-    [--full]                            dive on your weakest axis; --push needs brain config
+  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
+    [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
+    [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json

@@ -27,6 +27,8 @@ import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
 import { renderText, renderReport, toJson, buildPushPayload } from "./report.mjs";
 import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
+import { pushCursorCosts } from "./push-costs.mjs";
+import { cursorBillingStart } from "./cursor-api.mjs";
 
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
 const PARSERS = { claude: parseClaude, codex: parseCodex };
@@ -52,8 +54,15 @@ function parseArgs(rest) {
   return opts;
 }
 
-/** Resolve --since ("7d" | "30d" | ISO date) to a Date. */
-function resolveSince(spec) {
+/** Resolve --since ("7d" | "billing" | ISO date) to a Date. */
+async function resolveSince(spec) {
+  if (spec === "billing") {
+    try {
+      return await cursorBillingStart();
+    } catch {
+      /* fall through to 30d */
+    }
+  }
   const m = String(spec).match(/^(\d+)d$/);
   if (m) return new Date(Date.now() - Number(m[1]) * 86_400_000);
   const d = new Date(spec);
@@ -67,7 +76,7 @@ function isoDate(d) {
 
 export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const opts = parseArgs(rest);
-  const since = resolveSince(opts.since);
+  const since = await resolveSince(opts.since);
   const until = new Date();
   const sinceMs = since.getTime();
   const home = os.homedir();
@@ -155,6 +164,14 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const state = loadAnalyzeState(repo);
   if (opts.push) {
     await pushDays(repo, cfg, result, helpers, state);
+    const { resolveMember, loadDotEnv } = helpers || {};
+    const member = resolveMember ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {}) : "";
+    await pushCursorCosts(repo, cfg, helpers, {
+      sinceMs,
+      endMs: until.getTime(),
+      member,
+      project: process.env.AIOS_COST_PROJECT || "aios",
+    });
   }
 
   // Record the run (push dedup + future tail-parse offsets build on this).
