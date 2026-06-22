@@ -71,7 +71,12 @@ export function renderAiSpendMarkdown(result) {
     lines.push(`| Total USD | $${result.cursor.totals.cost_usd.toFixed(2)} |`);
     lines.push(`| Events | ${result.cursor.totals.events} |`);
     lines.push("");
-    lines.push("### Daily", "", "| Date | Cost | Events | Overage |", "|------|------|--------|---------|");
+    lines.push(
+      "### Daily",
+      "",
+      "| Date | Cost | Events | Overage |",
+      "|------|------|--------|---------|"
+    );
     for (const d of result.cursor.days || []) {
       lines.push(
         `| ${d.date} | $${d.cost_usd.toFixed(2)} | ${d.events} | $${(d.overage_usd || 0).toFixed(2)} |`

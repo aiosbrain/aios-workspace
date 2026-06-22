@@ -17,7 +17,12 @@ const color = {
  * Push daily Cursor billing rows (authoritative USD) to the brain.
  * @param {string} project — contribution tag (default aios)
  */
-export async function pushCursorCosts(repo, cfg, helpers, { sinceMs, endMs, member, project = "aios" }) {
+export async function pushCursorCosts(
+  repo,
+  cfg,
+  helpers,
+  { sinceMs, endMs, member, project = "aios" }
+) {
   const { api } = helpers || {};
   if (!api || !cfg.brain_url || !cfg.api_key) return { sent: 0, skipped: 0, failed: 0 };
 
@@ -38,11 +43,7 @@ export async function pushCursorCosts(repo, cfg, helpers, { sinceMs, endMs, memb
 
   for (const day of cursor.days || []) {
     if (day.date === "unknown") continue;
-    const [payload] = buildCostPushPayloads(
-      { cursor: { days: [day] } },
-      member,
-      project
-    );
+    const [payload] = buildCostPushPayloads({ cursor: { days: [day] } }, member, project);
     if (!payload) continue;
     const key = pushKey(payload);
     const hash = payloadHash(payload);

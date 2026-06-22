@@ -165,7 +165,9 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   if (opts.push) {
     await pushDays(repo, cfg, result, helpers, state);
     const { resolveMember, loadDotEnv } = helpers || {};
-    const member = resolveMember ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {}) : "";
+    const member = resolveMember
+      ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {})
+      : "";
     await pushCursorCosts(repo, cfg, helpers, {
       sinceMs,
       endMs: until.getTime(),

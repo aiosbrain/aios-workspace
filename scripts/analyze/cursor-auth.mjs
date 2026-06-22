@@ -69,7 +69,12 @@ function fromStateDb() {
     try {
       const out = execFileSync(
         "sqlite3",
-        ["-readonly", "-json", dbPath, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'"],
+        [
+          "-readonly",
+          "-json",
+          dbPath,
+          "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'",
+        ],
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
       );
       const rows = JSON.parse(out.trim() || "[]");
