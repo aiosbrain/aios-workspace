@@ -220,7 +220,9 @@ async function pushDays(repo, cfg, result, helpers, state) {
           "    AIOS_BRAIN_URL is present but empty — dotenvx decrypted an empty value. Re-set it:"
         )
       );
-      console.warn(color.dim("      dotenvx set AIOS_BRAIN_URL=https://your-brain.example.com -f .env"));
+      console.warn(
+        color.dim("      dotenvx set AIOS_BRAIN_URL=https://your-brain.example.com -f .env")
+      );
       console.warn(color.dim("      dotenvx encrypt -f .env"));
     } else {
       console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));

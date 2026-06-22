@@ -136,7 +136,11 @@ export function toJson(result, costData) {
   if (costData) {
     out.costs = {
       cursor: costData.cursor
-        ? { totals: costData.cursor.totals, days: costData.cursor.days, truncated: !!costData.cursor.truncated }
+        ? {
+            totals: costData.cursor.totals,
+            days: costData.cursor.days,
+            truncated: !!costData.cursor.truncated,
+          }
         : null,
       claude: costData.claude,
       cursor_error: costData.cursor_error || null,
