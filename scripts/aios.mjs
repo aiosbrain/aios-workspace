@@ -2337,8 +2337,8 @@ usage:
     [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
     [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
     [--build] [--build-rounds N]        after approval, hand the plan to the build phase
-  aios build <plan-file|task> [branch]  implement an approved plan with Cursor (MERGE_READY)
-    [--rounds N] [--merge] [--task]     build/review on an isolated worktree; --merge on approval
+  aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)
+    [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
     [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews
 options:

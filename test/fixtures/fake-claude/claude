@@ -9,7 +9,8 @@
 // mode=leak; nothing when mode=empty). The reviewer decision lives in fake cursor.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const argv = process.argv.slice(2);
 
@@ -39,6 +40,18 @@ if (prompt.includes("Review per your skill") || prompt.includes("## git diff")) 
 
 if (mode === "empty") {
   emit("I reviewed the plan but made no changes.");
+  process.exit(0);
+}
+
+// Misbehaving builder: write into the PRIMARY checkout (should trip the tripwire).
+if (mode === "touch-primary") {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  }).trim();
+  const primary = path.dirname(common);
+  writeFileSync(path.join(primary, "TRIPWIRE_TEST.txt"), "escaped the worktree\n");
+  emit("Touched the primary checkout (test).");
   process.exit(0);
 }
 

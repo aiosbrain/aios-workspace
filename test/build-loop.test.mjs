@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// test/build-loop.test.mjs — end-to-end build loop with a FAKE cursor on PATH.
-// No real Cursor/Opus/network. Run: node test/build-loop.test.mjs
+// test/build-loop.test.mjs — end-to-end build loop with FAKE agents on PATH.
+// No real Cursor/Claude/network. Run: node test/build-loop.test.mjs
 //
-// A stub `cursor` (test/fixtures/fake-cursor/cursor) makes real commits in the
-// worktree and emits MERGE_READY (or not) per FAKE_CURSOR_SCRIPT. We assert the
-// exit-code contract, worktree isolation (primary checkout untouched), the
-// fail-closed secrets gate, and merge/worktree cleanup.
+// A stub `claude` (the builder, test/fixtures/fake-claude) makes real commits in
+// the worktree; a stub `cursor` (the reviewer, test/fixtures/fake-cursor) emits
+// MERGE_READY (or not). Both branch on FAKE_AGENT_SCRIPT. We assert the exit-code
+// contract, worktree isolation + tripwire, the fail-closed secrets gate (incl.
+// missing scanners), and merge/worktree cleanup.
 
 import {
   mkdtempSync,
@@ -46,17 +47,19 @@ chmodSync(path.join(FAKE_CLAUDE, "claude"), 0o755);
 process.env.PATH = [FAKE_CLAUDE, FAKE_CURSOR, process.env.PATH].join(path.delimiter);
 
 const cleanups = [];
-function freshRepo() {
+function freshRepo({ withGate = true } = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "aios-build-"));
   cleanups.push(repo);
   const g = (args) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
   g(["init", "-b", "main"]);
   g(["config", "user.email", "test@example.com"]);
   g(["config", "user.name", "Test"]);
-  // give the build phase the real secrets gate to run
-  mkdirSync(path.join(repo, "scripts"), { recursive: true });
-  cpSync(path.join(REPO, "scripts", "leak-gate.sh"), path.join(repo, "scripts", "leak-gate.sh"));
-  cpSync(path.join(REPO, "validation"), path.join(repo, "validation"), { recursive: true });
+  if (withGate) {
+    // give the build phase the real secrets gate to run
+    mkdirSync(path.join(repo, "scripts"), { recursive: true });
+    cpSync(path.join(REPO, "scripts", "leak-gate.sh"), path.join(repo, "scripts", "leak-gate.sh"));
+    cpSync(path.join(REPO, "validation"), path.join(repo, "validation"), { recursive: true });
+  }
   writeFileSync(path.join(repo, "README.md"), "# base\n");
   g(["add", "-A"]);
   g(["commit", "-m", "base"]);
@@ -146,6 +149,25 @@ console.log("builder produces nothing → exit 3");
   const repo = freshRepo();
   const code = await run({ repo, branch: "feat/t4", mode: "empty", o: opts() });
   check("exit NO_DIFF", code === EXIT.NO_DIFF);
+}
+
+console.log("builder touches the PRIMARY checkout → tripwire trips, exit 1");
+{
+  const repo = freshRepo();
+  const code = await run({ repo, branch: "feat/t4b", mode: "touch-primary", o: opts() });
+  check("exit FATAL (tripwire)", code === EXIT.FATAL);
+  check(
+    "the escape was detected (file landed in primary)",
+    existsSync(path.join(repo, "TRIPWIRE_TEST.txt"))
+  );
+  rmSync(path.join(repo, "TRIPWIRE_TEST.txt"), { force: true });
+}
+
+console.log("missing gate scripts → fail closed (exit 4), never a silent pass");
+{
+  const repo = freshRepo({ withGate: false });
+  const code = await run({ repo, branch: "feat/t4c", mode: "approve", o: opts({ rounds: 1 }) });
+  check("exit GATE_FAILED (fail-closed on missing scanners)", code === EXIT.GATE_FAILED);
 }
 
 console.log("secrets introduced → gate blocks merge, exit 4, not merged");

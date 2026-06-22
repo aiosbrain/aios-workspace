@@ -66,9 +66,11 @@ Options:
   --skill /name       Cursor review skill (default: /ai-code-review)
   --verify "<cmd>"    run this in the worktree before each review; a failure loops feedback
                       to the builder without spending a review round (e.g. "npm test")
-  --base <ref>        base ref for a new worktree branch (default: origin/main)
+  --base <ref>        base ref the new worktree branch is created from (default: origin/main)
   --worktree <path>   worktree directory (default: ../<repo>-<branch-slug>)
-  --merge             merge the branch into base on approval (OFF by default)
+  --merge             on approval, merge into the PRIMARY checkout's current branch
+                      (NOT --base). OFF by default — check out your target first, or
+                      omit --merge and merge the branch yourself.
   --no-gate           skip the pre-merge secrets gate (NOT recommended; logged loudly)
   --keep-worktree     keep the worktree after a successful merge
   --log <file>        save build rounds + reviews to a Markdown file
@@ -95,7 +97,13 @@ For each round, the tool — not the agent — owns one authoritative change set
 5. **Review.** `/ai-code-review` inspects the real diff + the original plan and emits `MERGE_READY`
    only when the code is genuinely ready.
 6. **Finish.** On `MERGE_READY`, re-run the secrets gate fail-closed, then (with `--merge`) merge and
-   remove the worktree. Without `--merge`, print the diff + merge command for you to run.
+   remove the worktree. The merge lands in the **primary checkout's current branch** (`--base` only
+   seeds the worktree), and the target is printed before merging — so check out your intended branch
+   first. Without `--merge`, print the diff + merge command for you to run.
+
+> The straggler auto-commit in step 2 uses `git commit --no-verify`, so repo commit hooks (format,
+> custom validators) are skipped for it. The fail-closed secrets gate and the reviewer (which runs
+> lint/tests) compensate, but hook-only checks are not enforced on auto-committed changes.
 
 ### The secrets gate
 

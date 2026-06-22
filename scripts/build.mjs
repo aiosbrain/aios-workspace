@@ -374,23 +374,27 @@ function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
   return { worktreePath: wt, resumed: branchPreExisted };
 }
 
-function snapshotDiff(worktree, base) {
-  // Auto-commit any stragglers so base..HEAD is the authoritative change set.
+function snapshotDiff(worktree, baseSha) {
+  // Auto-commit any stragglers so baseSha..HEAD is the authoritative change set.
+  // NOTE: --no-verify skips repo commit hooks for this straggler commit; the
+  // secrets gate runs separately (fail-closed), but hook-only checks are skipped.
   git(["add", "-A"], worktree);
   const staged = gitQuiet(["diff", "--cached", "--name-only"], worktree);
   if (staged) {
     git(["commit", "-m", "build: auto-commit working changes", "--no-verify"], worktree);
   }
+  // Two-dot against the frozen baseSha everywhere, so the reviewer and the secrets
+  // scanner (runSecretsScan) operate on the exact same change set even after rebases.
   const totalCommits = parseInt(
-    gitQuiet(["rev-list", "--count", `${base}..HEAD`], worktree) || "0",
+    gitQuiet(["rev-list", "--count", `${baseSha}..HEAD`], worktree) || "0",
     10
   );
-  const diffStat = gitQuiet(["diff", "--stat", `${base}...HEAD`], worktree);
-  const logOneline = gitQuiet(["log", "--oneline", `${base}..HEAD`], worktree);
-  let diff = gitQuiet(["diff", `${base}...HEAD`], worktree);
+  const diffStat = gitQuiet(["diff", "--stat", `${baseSha}..HEAD`], worktree);
+  const logOneline = gitQuiet(["log", "--oneline", `${baseSha}..HEAD`], worktree);
+  let diff = gitQuiet(["diff", `${baseSha}..HEAD`], worktree);
   if (diff.length > DIFF_CAP) {
-    const files = gitQuiet(["diff", "--name-only", `${base}...HEAD`], worktree);
-    diff = `(diff is ${diff.length} chars — truncated. Files changed:\n${files}\n\nReview the worktree directly: git -C ${worktree} diff ${base}...HEAD)`;
+    const files = gitQuiet(["diff", "--name-only", `${baseSha}..HEAD`], worktree);
+    diff = `(diff is ${diff.length} chars — truncated. Files changed:\n${files}\n\nReview the worktree directly: git -C ${worktree} diff ${baseSha}..HEAD)`;
   }
   return { totalCommits, diffStat, logOneline, diff };
 }
@@ -432,7 +436,9 @@ function runSecretsScan(repo, worktree, baseSha) {
     const chunks = [`Scanned ${changed.length} changed file(s).`];
     for (const { script, args } of checks) {
       if (!existsSync(script)) {
-        chunks.push(`[skipped: ${path.basename(script)} not found]`);
+        // Fail closed: a missing gate script means the change set is unscanned.
+        ok = false;
+        chunks.push(`[MISSING ${path.basename(script)} — cannot scan; failing closed]`);
         continue;
       }
       try {
@@ -603,9 +609,12 @@ export async function runBuild({ repo, plan, branch, opts }) {
 
     // 3. TRIPWIRE: the primary checkout must be untouched
     if (gitQuiet(["status", "--porcelain"], repo) !== primaryStatusBefore) {
-      die(
-        `SAFETY — the primary checkout at ${repo} changed during the build. Aborting. Inspect: git -C ${repo} status`
+      console.error(
+        c.red(
+          `\nSAFETY — the primary checkout at ${repo} changed during the build. Aborting. Inspect: git -C ${repo} status`
+        )
       );
+      return EXIT.FATAL;
     }
 
     // 4. Did the builder produce anything?
@@ -716,7 +725,14 @@ function finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun
     console.log(c.yellow("⚠ --no-gate: skipping the pre-merge secrets gate (not recommended)"));
   }
 
+  // The merge lands in the PRIMARY checkout's current branch (--base only seeds the
+  // worktree). Make the target explicit so an unexpected checkout can't be merged into.
+  const target = currentBranch(repo) || "(detached HEAD)";
+
   if (merge && !dryRun) {
+    console.log(
+      c.dim(`Merging ${branch} into '${target}' (the primary checkout's current branch).`)
+    );
     // Remove the worktree BEFORE deleting the branch — git refuses to delete a
     // branch that is still checked out in a worktree.
     if (!keepWorktree) {
@@ -753,7 +769,7 @@ function finish({ repo, branch, wt, baseSha, merge, noGate, keepWorktree, dryRun
   } else {
     console.log(c.yellow("\nCode approved. Review the diff before merging:"));
     console.log(c.dim(`  git -C ${repo} diff ${branch}`));
-    console.log(c.dim(`  git -C ${repo} merge --no-ff -- ${branch}`));
+    console.log(c.dim(`  git -C ${repo} merge --no-ff -- ${branch}   # lands in '${target}'`));
     console.log(c.dim("Re-run with --merge to have aios build merge automatically."));
   }
   return EXIT.OK;
@@ -766,7 +782,9 @@ export async function cmdBuild(repo, args) {
     console.log(
       [
         "",
-        c.blue("aios build — implement an approved plan with Cursor on an isolated worktree"),
+        c.blue(
+          "aios build — implement an approved plan with Opus (Claude Code), reviewed by Cursor"
+        ),
         "",
         "usage:",
         "  aios build <plan-file|task> [branch] [options]",
