@@ -35,10 +35,14 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
+import { createBrainClient } from "./brain-client.mjs";
+
+// Re-exported so existing importers (and tests) can keep pulling the brain client
+// from this module; the implementation now lives in the shared brain-client.mjs.
+export { createBrainClient };
 
 export const SERVER_NAME = "aios-team-brain-mcp-server";
 export const SERVER_VERSION = "0.1.0";
-const API_VERSION = "v1";
 // MCP revision we implement. Clients negotiate; we echo back our supported value.
 const PROTOCOL_VERSION = "2024-11-05";
 // Truncate tool payloads so a single pull can't blow out the client's context window.
@@ -109,92 +113,10 @@ export function resolveBrainConfig({ cwd = process.cwd(), env = process.env } = 
 }
 
 // ── brain HTTP client ────────────────────────────────────────────────────────
-
-/**
- * Build the client the dispatcher calls. Two methods:
- *   fetchJson(method, route, body?) → parsed JSON (throws Error "<status> <code>: <msg>")
- *   query(question, project?)       → { text, sources } (consumes the SSE answer stream)
- * `deps.fetch` is injectable for tests.
- */
-export function createBrainClient(config, deps = {}) {
-  const doFetch = deps.fetch || globalThis.fetch;
-  const headers = {
-    Authorization: `Bearer ${config.api_key}`,
-    "X-AIOS-Team": config.team_id || "",
-  };
-  const base = `${config.brain_url}/api/${API_VERSION}`;
-
-  async function fetchJson(method, route, body = null) {
-    const res = await doFetch(`${base}${route}`, {
-      method,
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const text = await res.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
-    if (!res.ok) {
-      const msg = json?.error?.message || text.slice(0, 200);
-      throw new Error(`${res.status} ${json?.error?.code || ""}: ${msg}`.trim());
-    }
-    return json;
-  }
-
-  async function query(question, project = null) {
-    const res = await doFetch(`${base}/query`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify({ question, project: project || null }),
-    });
-    const raw = await res.text();
-    if (!res.ok) {
-      let json;
-      try {
-        json = JSON.parse(raw);
-      } catch {
-        json = null;
-      }
-      throw new Error(
-        `${res.status} ${json?.error?.code || ""}: ${json?.error?.message || raw.slice(0, 200)}`.trim()
-      );
-    }
-    // Parse the SSE transcript: `event: <name>` + `data: <json>` blocks.
-    let answer = "";
-    let sources = [];
-    let event = null;
-    for (const line of raw.split("\n")) {
-      if (line.startsWith("event:")) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        let data;
-        try {
-          data = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        if (event === "delta" && typeof data.text === "string") answer += data.text;
-        else if (event === "sources" && Array.isArray(data.sources)) sources = data.sources;
-      }
-    }
-    return { text: answer, sources };
-  }
-
-  // Non-secret connection metadata the brain_status tool can echo. The API key is
-  // deliberately absent — nothing here may leak a credential.
-  const meta = {
-    brain_url: config.brain_url,
-    team: config.team_id || null,
-    member: config.member || null,
-  };
-
-  return { fetchJson, query, meta };
-}
+// The HTTP/auth client (fetchJson + query + meta) now lives in the shared
+// scripts/brain-client.mjs, imported above and re-exported. The MCP server keeps
+// its own env-first config resolution (resolveBrainConfig) and passes the result
+// into createBrainClient(config, deps).
 
 // ── tool surface (read-only v1) ──────────────────────────────────────────────
 
