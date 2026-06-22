@@ -62,14 +62,19 @@ export async function fetchCursorUsage(startMs, endMs) {
     input += Number(r.inputTokens || 0);
     output += Number(r.outputTokens || 0);
     cache_read += Number(r.cacheReadTokens || 0);
-    models[r.modelIntent || "unknown"] = cents / 100;
+    const model = r.modelIntent || "unknown";
+    models[model] = (models[model] || 0) + cents / 100;
   }
 
   const days = new Map();
+  const PAGE_SIZE = 1000;
   let page = 1;
   let fetched = 0;
-  let total = 1;
-  while (fetched < total && page <= 20) {
+  let total = 0;
+  let truncated = false;
+
+  // Paginate until all events are fetched — a hard page cap silently undercounts billing.
+  while (true) {
     const chunk = await cursorFetch("/api/dashboard/get-filtered-usage-events", {
       method: "POST",
       body: {
@@ -78,11 +83,12 @@ export async function fetchCursorUsage(startMs, endMs) {
         endDate: String(endMs),
         userId: uid,
         page,
-        pageSize: 1000,
+        pageSize: PAGE_SIZE,
       },
     });
-    total = Number(chunk.totalUsageEventsCount || 0);
-    for (const ev of chunk.usageEventsDisplay || []) {
+    const events = chunk.usageEventsDisplay || [];
+    if (page === 1) total = Number(chunk.totalUsageEventsCount || 0);
+    for (const ev of events) {
       const ts = Number(ev.timestamp || 0);
       const date = ts ? new Date(ts).toISOString().slice(0, 10) : "unknown";
       const tu = ev.tokenUsage || {};
@@ -110,15 +116,35 @@ export async function fetchCursorUsage(startMs, endMs) {
       cur.models[model] = (cur.models[model] || 0) + value;
       days.set(date, cur);
     }
-    fetched += (chunk.usageEventsDisplay || []).length;
+    fetched += events.length;
+    if (!events.length || fetched >= total) break;
     page += 1;
-    if (!(chunk.usageEventsDisplay || []).length) break;
   }
+
+  if (total > 0 && fetched < total) {
+    truncated = true;
+    console.warn(
+      `Cursor billing: fetched ${fetched}/${total} usage events — daily costs may be undercounted`
+    );
+  }
+
+  const dayList = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const dayCostUsd = dayList.reduce((s, d) => s + d.cost_usd, 0);
 
   return {
     email: me.email,
-    days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    days: dayList,
     models,
-    totals: { input, output, cache_read, cost_usd, events: total },
+    totals: {
+      input,
+      output,
+      cache_read,
+      cost_usd,
+      events: total || fetched,
+      day_cost_usd: dayCostUsd,
+    },
+    truncated,
+    events_fetched: fetched,
+    events_total: total,
   };
 }

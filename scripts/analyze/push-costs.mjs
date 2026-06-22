@@ -34,6 +34,14 @@ export async function pushCursorCosts(
     return { sent: 0, skipped: 0, failed: 0 };
   }
 
+  if (cursor.truncated) {
+    console.warn(
+      color.yellow(
+        `  cursor billing incomplete: ${cursor.events_fetched}/${cursor.events_total} events fetched — daily costs may be undercounted`
+      )
+    );
+  }
+
   const state = loadCostsState(repo);
   if (!state.pushed) state.pushed = {};
 
