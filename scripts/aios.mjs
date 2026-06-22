@@ -48,9 +48,9 @@ import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
+import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const API_VERSION = "v1";
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
 
 // Embedded fallback if validation/secret-patterns.txt is unavailable
@@ -484,29 +484,19 @@ function requireOnline(cfg) {
   }
 }
 
-async function api(cfg, method, route, body = null) {
-  const url = `${cfg.brain_url.replace(/\/$/, "")}/api/${API_VERSION}${route}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${cfg.api_key}`,
-      "X-AIOS-Team": cfg.team_id || "",
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
+// Resolved-config → shared brain client. Config resolution stays here (workspace-
+// walking, see loadConfig); only the authed-request/SSE layer is shared with the
+// MCP server via scripts/brain-client.mjs.
+function brainClient(cfg) {
+  return createBrainClient({
+    brain_url: cfg.brain_url,
+    api_key: cfg.api_key,
+    team_id: cfg.team_id,
   });
-  const text = await res.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text };
-  }
-  if (!res.ok) {
-    const msg = json?.error?.message || text.slice(0, 200);
-    throw new Error(`${res.status} ${json?.error?.code || ""}: ${msg}`);
-  }
-  return json;
+}
+
+async function api(cfg, method, route, body = null) {
+  return brainClient(cfg).fetchJson(method, route, body);
 }
 
 // GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
@@ -1413,44 +1403,17 @@ async function cmdQuery(repo, cfg, args) {
   if (!question) die('usage: aios query "your question"');
   requireOnline(cfg);
 
-  const url = `${cfg.brain_url.replace(/\/$/, "")}/api/${API_VERSION}/query`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.api_key}`,
-      "X-AIOS-Team": cfg.team_id || "",
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify({ question }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    die(`query failed: ${res.status} ${text.slice(0, 200)}`);
-  }
-
-  // SSE stream: delta / sources / done
-  const decoder = new TextDecoder();
-  let buffer = "";
+  // SSE stream: delta / sources / done. The shared client owns the request,
+  // error mapping, and robust event-block parsing; we keep the CLI's live
+  // side effects (stream deltas to stdout, print the done cost line) in handlers.
   let sources = [];
-  for await (const chunk of res.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      const event = (block.match(/^event:\s*(.*)$/m) || [])[1] || "message";
-      const dataLine = (block.match(/^data:\s*(.*)$/m) || [])[1];
-      if (!dataLine) continue;
-      let data;
-      try {
-        data = JSON.parse(dataLine);
-      } catch {
-        continue;
-      }
-      if (event === "delta") process.stdout.write(data.text || "");
-      else if (event === "sources") sources = data.sources || [];
-      else if (event === "done") {
+  try {
+    await brainClient(cfg).streamQuery(question, null, {
+      onDelta: (text) => process.stdout.write(text || ""),
+      onSources: (s) => {
+        sources = s || [];
+      },
+      onDone: (data) => {
         process.stdout.write("\n");
         if (typeof data.cost_usd === "number")
           console.log(
@@ -1458,8 +1421,10 @@ async function cmdQuery(repo, cfg, args) {
               `(${data.input_tokens} in / ${data.output_tokens} out · $${data.cost_usd.toFixed(4)})`
             )
           );
-      }
-    }
+      },
+    });
+  } catch (e) {
+    die(`query failed: ${e?.message ?? e}`);
   }
   if (sources.length) {
     console.log("");
