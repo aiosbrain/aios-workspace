@@ -33,6 +33,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 
 export const SERVER_NAME = "aios-team-brain-mcp-server";
@@ -415,6 +416,48 @@ function rpcError(id, code, message, data) {
 }
 
 /**
+ * Validate `tools/call` arguments against a tool's inputSchema before invoking the
+ * handler, so a missing/mistyped required arg becomes a clean JSON-RPC -32602
+ * (Invalid params) rather than a confused downstream request (e.g. GET /items/undefined)
+ * or an empty answer. Covers the JSON-Schema subset our inputSchemas use:
+ * object · properties · type · required · additionalProperties:false.
+ * Returns an array of human-readable problems (empty = valid).
+ */
+function validateArgs(schema, args) {
+  if (!schema || schema.type !== "object") return [];
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    return ["arguments must be an object"];
+  }
+  const errors = [];
+  const props = schema.properties || {};
+  for (const key of schema.required || []) {
+    const v = args[key];
+    if (v === undefined || v === null || (typeof v === "string" && v.trim() === "")) {
+      errors.push(`missing required argument: ${key}`);
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(args)) {
+      if (!(key in props)) errors.push(`unexpected argument: ${key}`);
+    }
+  }
+  for (const [key, spec] of Object.entries(props)) {
+    const v = args[key];
+    if (v === undefined || v === null) continue;
+    const t = spec?.type;
+    const ok =
+      (t === "string" && typeof v === "string") ||
+      (t === "number" && typeof v === "number") ||
+      (t === "boolean" && typeof v === "boolean") ||
+      (t === "array" && Array.isArray(v)) ||
+      (t === "object" && typeof v === "object" && !Array.isArray(v)) ||
+      t === undefined;
+    if (!ok) errors.push(`argument ${key} must be a ${t}`);
+  }
+  return errors;
+}
+
+/**
  * Create the message dispatcher. Returns `async dispatch(message)` → a response object,
  * or `null` for notifications (no `id`) and unknown notifications, which get no reply.
  */
@@ -464,6 +507,12 @@ export function createDispatcher({
         const tool = toolByName.get(name);
         if (!tool) {
           return rpcError(id, -32602, `Unknown tool: ${name}`);
+        }
+        const argErrors = validateArgs(tool.inputSchema, args);
+        if (argErrors.length) {
+          return rpcError(id, -32602, `Invalid params for ${name}: ${argErrors.join("; ")}`, {
+            errors: argErrors,
+          });
         }
         try {
           const out = await tool.handler(args, client);
@@ -545,7 +594,10 @@ export function runStdio(config, deps = {}) {
 }
 
 // Direct execution (`node scripts/brain-mcp.mjs`) — used by `aios mcp`.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare resolved paths (robust across platforms / symlinks vs a raw file:// string).
+const invokedDirectly =
+  process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+if (invokedDirectly) {
   const config = resolveBrainConfig();
   if (config.missing.length) {
     process.stderr.write(
