@@ -191,7 +191,7 @@ function checkBotReady(botUser, config, issueComments, pullComments, reviews, ch
   return { ready: false };
 }
 
-function summarizeBot(botUser, result, issueComments) {
+function summarizeBot(botUser, result) {
   if (!result.ready) return `  ${botUser}: waiting…`;
   const preview = (result.preview ?? "")
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -282,7 +282,7 @@ while (Date.now() < deadline) {
   if (missing.length === 0) {
     console.log("all bots ready!\n");
     console.log("=== Bot review summaries ===");
-    for (const bot of botUsers) console.log(summarizeBot(bot, results[bot], issueComments));
+    for (const bot of botUsers) console.log(summarizeBot(bot, results[bot]));
     console.log("\nProceeding to Code Reviewer.");
     process.exit(0);
   }
@@ -314,7 +314,7 @@ const finalMissing = botUsers.filter((b) => !finalResults[b].ready);
 if (finalMissing.length === 0) {
   console.log("\n[final-check] All bots posted just before timeout.\n");
   console.log("=== Bot review summaries ===");
-  for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot], issueComments));
+  for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
   console.log("\nProceeding to Code Reviewer.");
   process.exit(0);
 }
@@ -322,6 +322,6 @@ if (finalMissing.length === 0) {
 const elapsed = Math.round(timeoutMs / 1000);
 console.log(`\n[timeout after ${elapsed}s] Still waiting for: ${finalMissing.join(", ")}`);
 console.log("=== Bot review summaries (partial) ===");
-for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot], issueComments));
+for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
 console.log("\nProceeding to Code Reviewer (some bot results may be missing).");
 process.exit(requireAll ? 2 : 0);
