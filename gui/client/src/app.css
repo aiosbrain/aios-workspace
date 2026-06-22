@@ -129,6 +129,7 @@ body {
   font: inherit;
   font-size: 13px;
   text-align: left;
+  margin-top: 4px;
 }
 .side-newchat:hover {
   border-color: var(--accent);
@@ -148,6 +149,8 @@ body {
   flex-direction: column;
   gap: 1px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
   margin-top: 4px;
 }
 .chat-item {

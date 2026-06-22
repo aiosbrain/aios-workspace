@@ -531,23 +531,16 @@ export default function App() {
           </button>
         </nav>
         <div className="side-chats">
-          {activeChat && (
-            <button
-              className="chat-item on"
-              onClick={() => openChat(activeChat.id)}
-              title={activeChat.title}
-            >
-              {activeChat.title}
-            </button>
-          )}
-          <button
-            className={`side-newchat${isDraft ? " draft" : ""}`}
-            onClick={newChat}
-            disabled={isEmptyDraft}
-          >
-            + New chat
-          </button>
           <div className="chat-list">
+            {activeChat && (
+              <button
+                className="chat-item on"
+                onClick={() => openChat(activeChat.id)}
+                title={activeChat.title}
+              >
+                {activeChat.title}
+              </button>
+            )}
             {historyChats.map((c) => (
               <button
                 key={c.id}
@@ -558,6 +551,13 @@ export default function App() {
                 {c.title || "New chat"}
               </button>
             ))}
+            <button
+              className={`side-newchat${isDraft ? " draft" : ""}`}
+              onClick={newChat}
+              disabled={isEmptyDraft}
+            >
+              + New chat
+            </button>
           </div>
         </div>
         <div className="side-foot">
