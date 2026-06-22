@@ -68,9 +68,7 @@ async function pushPayloadRows(repo, cfg, api, payloads, state) {
         break;
       }
       console.warn(
-        color.yellow(
-          `  ${payload.provider} cost push ${payload.date} failed: ${e.message}`
-        )
+        color.yellow(`  ${payload.provider} cost push ${payload.date} failed: ${e.message}`)
       );
     }
   }
@@ -95,7 +93,10 @@ export async function pushProviderCosts(
 ) {
   const { api } = helpers || {};
   if (!api || !cfg.brain_url || !cfg.api_key) {
-    return { cursor: { sent: 0, skipped: 0, failed: 0 }, claude: { sent: 0, skipped: 0, failed: 0 } };
+    return {
+      cursor: { sent: 0, skipped: 0, failed: 0 },
+      claude: { sent: 0, skipped: 0, failed: 0 },
+    };
   }
 
   if (costData.cursor?.truncated) {
@@ -115,11 +116,7 @@ export async function pushProviderCosts(
     claude: costData.claude,
   };
 
-  const cursorPayloads = buildCostPushPayloads(
-    { cursor: rollup.cursor },
-    member,
-    project
-  );
+  const cursorPayloads = buildCostPushPayloads({ cursor: rollup.cursor }, member, project);
   const claudePayloads = buildCostPushPayloads({ claude: rollup.claude }, member, project);
 
   const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
@@ -159,7 +156,10 @@ export async function pushCursorCosts(repo, cfg, helpers, opts) {
     sinceMs: opts.sinceMs,
     endMs: opts.endMs,
     events: [],
-    window: { since: new Date(opts.sinceMs).toISOString().slice(0, 10), until: new Date(opts.endMs).toISOString().slice(0, 10) },
+    window: {
+      since: new Date(opts.sinceMs).toISOString().slice(0, 10),
+      until: new Date(opts.endMs).toISOString().slice(0, 10),
+    },
   });
   return pushProviderCosts(repo, cfg, helpers, costData, {
     member: opts.member,

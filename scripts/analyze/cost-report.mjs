@@ -65,17 +65,9 @@ export function renderCostSummary(costData, color) {
   L.push(`Provider spend — ${win.since} → ${win.until}`);
   if (costData.cursor?.totals) {
     const t = costData.cursor.totals;
-    L.push(
-      c.dim(
-        `  Cursor (billing)     ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} events`
-      )
-    );
+    L.push(c.dim(`  Cursor (billing)     ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} events`));
     if (costData.cursor.truncated) {
-      L.push(
-        c.yellow(
-          "    billing fetch incomplete — daily totals may be undercounted"
-        )
-      );
+      L.push(c.yellow("    billing fetch incomplete — daily totals may be undercounted"));
     }
   } else if (costData.cursor_error) {
     L.push(c.yellow(`  Cursor (billing)     unavailable (${costData.cursor_error})`));
