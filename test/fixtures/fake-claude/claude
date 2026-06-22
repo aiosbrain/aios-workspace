@@ -55,9 +55,24 @@ if (mode === "touch-primary") {
   process.exit(0);
 }
 
+// Commit on the PRIMARY checkout without dirty porcelain (HEAD-only tripwire).
+if (mode === "touch-primary-head") {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  }).trim();
+  const primary = path.dirname(common);
+  execFileSync("git", ["commit", "--allow-empty", "-m", "tripwire head test"], {
+    cwd: primary,
+    stdio: "pipe",
+  });
+  emit("Empty commit on primary checkout (test).");
+  process.exit(0);
+}
+
 // Append a unique line each round so every build round produces a real new commit.
 const marker = `// build ${Date.now()}-${process.pid}\n`;
-const leak = mode === "leak" ? "const home = '/Users/iamjohndass/secret';\n" : "";
+const leak = mode === "leak" ? "const home = '/Users/example/secret';\n" : "";
 appendFileSync("feature.js", "export const built = true;\n" + leak + marker);
 git(["add", "-A"]);
 git(["commit", "-m", "build: implement feature", "--no-verify"]);

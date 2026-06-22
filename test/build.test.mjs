@@ -14,6 +14,9 @@ import {
   classifyDiff,
   buildCodeReviewPrompt,
   buildImplementPrompt,
+  primarySnapshot,
+  tripwireTripped,
+  snapshotsDiffer,
   EXIT,
 } from "../scripts/build.mjs";
 import { PLAN_READY_TOKEN, MERGE_READY_TOKEN } from "../scripts/relay-core.mjs";
@@ -60,6 +63,12 @@ console.log("parseBuildArgs");
   check(
     "value-flag value not taken as branch",
     parseBuildArgs(["p.md", "--base", "main"]).branch === undefined
+  );
+  check("bugbot default off without merge", parseBuildArgs(["p.md", "b"]).bugbot === false);
+  check("bugbot on with --merge", parseBuildArgs(["p.md", "b", "--merge"]).bugbot === true);
+  check(
+    "--no-bugbot overrides merge default",
+    parseBuildArgs(["p.md", "b", "--merge", "--no-bugbot"]).bugbot === false
   );
 }
 
@@ -162,6 +171,14 @@ console.log("buildImplementPrompt");
     "includes resume context",
     resume.includes("abc earlier work") && resume.includes("do NOT redo")
   );
+}
+
+console.log("snapshotsDiffer (tripwire)");
+{
+  const before = { status: "", head: "aaa" };
+  check("status change trips", snapshotsDiffer(before, { status: " M x", head: "aaa" }));
+  check("head change trips", snapshotsDiffer(before, { status: "", head: "bbb" }));
+  check("unchanged ok", !snapshotsDiffer(before, before));
 }
 
 console.log("EXIT codes");
