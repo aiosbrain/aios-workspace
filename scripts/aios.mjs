@@ -170,17 +170,18 @@ function loadOfflineConfig(repo) {
   // toolkit repo and ad-hoc dirs have no aios.yaml. Mirrors loadConfig's resolution.
   const dotenv = loadDotEnv(repo);
   const keyEnv = "AIOS_API_KEY";
-  return {
+  const cfg = {
     project: projCfg.slug || slugify(path.basename(repo)),
     project_members: projCfg.members || [],
     sync_tiers: ["team", "external"],
     sync_include: [],
     sync_exclude: [],
-    brain_url: process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || "",
-    api_key: process.env[keyEnv] || dotenv[keyEnv] || "",
+    brain_url: "",
+    api_key: "",
     api_key_env: keyEnv,
-    team_id: process.env.AIOS_TEAM || dotenv.AIOS_TEAM || "",
+    team_id: "",
   };
+  return mergeBrainSecrets(cfg, repo);
 }
 
 function loadDotEnv(repo) {
@@ -200,6 +201,36 @@ function loadDotEnv(repo) {
   return out;
 }
 
+/** First non-empty env value (process.env wins, then .env files). Empty string ≠ set. */
+function envGet(name, ...dotenvs) {
+  const fromProcess = process.env[name];
+  if (fromProcess != null && String(fromProcess).trim()) return String(fromProcess).trim();
+  for (const dotenv of dotenvs) {
+    const v = dotenv?.[name];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  return "";
+}
+
+/**
+ * Resolve brain URL + API key from process.env and .env files on the target
+ * workspace AND the aios-workspace toolkit root. Supports `npm run aios --
+ * analyze --repo ~/other-workspace` when secrets live in the toolkit .env
+ * (dotenvx-decrypted into process.env) rather than the stamped workspace.
+ */
+function mergeBrainSecrets(cfg, repo) {
+  const toolkit = path.join(SCRIPT_DIR, "..");
+  const repoRoot = path.resolve(repo);
+  const dotenvs = [loadDotEnv(repo)];
+  if (path.resolve(toolkit) !== repoRoot) dotenvs.push(loadDotEnv(toolkit));
+  const keyEnv = cfg.api_key_env || "AIOS_API_KEY";
+  cfg.brain_url = envGet("AIOS_BRAIN_URL", ...dotenvs) || (cfg.brain_url || "").trim();
+  cfg.api_key = envGet(keyEnv, ...dotenvs);
+  const team = envGet("AIOS_TEAM", ...dotenvs);
+  if (team) cfg.team_id = team;
+  return cfg;
+}
+
 function loadConfig(repo) {
   const cfgPath = path.join(repo, "aios.yaml");
   if (!existsSync(cfgPath)) die(`no aios.yaml found in ${repo}`);
@@ -215,10 +246,7 @@ function loadConfig(repo) {
   cfg.sync_include = cfg.sync_include || [];
   cfg.sync_exclude = cfg.sync_exclude || [];
 
-  const dotenv = loadDotEnv(repo);
-  cfg.brain_url = process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || cfg.brain_url || "";
-  const keyEnv = cfg.api_key_env || "AIOS_API_KEY";
-  cfg.api_key = process.env[keyEnv] || dotenv[keyEnv] || "";
+  mergeBrainSecrets(cfg, repo);
 
   // Project slug from project.yaml | engagement.yaml
   let projCfg = {};
@@ -235,9 +263,10 @@ function loadConfig(repo) {
 }
 
 function resolveMember(repo, cfg, dotenv) {
+  const toolkit = path.join(SCRIPT_DIR, "..");
+  const extra = path.resolve(toolkit) !== path.resolve(repo) ? loadDotEnv(toolkit) : {};
   const candidate =
-    process.env.AIOS_MEMBER ||
-    dotenv.AIOS_MEMBER ||
+    envGet("AIOS_MEMBER", dotenv, extra) ||
     cfg.member ||
     gitConfig(repo, "aios.member") ||
     slugify(gitConfig(repo, "user.name"));
