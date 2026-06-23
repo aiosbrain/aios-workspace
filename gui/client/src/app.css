@@ -853,7 +853,7 @@ footer button:disabled {
 .int-head h2 {
   margin: 0;
   font-family: var(--display);
-  font-weight: 600;
+  font-weight: 400;
   font-size: var(--aios-text-h3);
   letter-spacing: var(--aios-tracking-snug);
 }
