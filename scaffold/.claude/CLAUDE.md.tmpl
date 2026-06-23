@@ -59,6 +59,13 @@ a scope conversation, `weekly-synthesis` at week boundaries. Synthesis harnesses
 are rubric-gated (`.claude/rubrics/`): an independent verifier grades the output
 and the harness self-corrects until the rubric passes or its budget is spent.
 
+## Design system (UI surfaces)
+Scaffolded workspaces are **markdown-first** — no frontend ships in the template. When you
+or an agent add UI, inherit the shared system: **`@aios-alpha/design`** (tokens) +
+**`@aios-alpha/ui`** (React). Agent rules live in `.claude/rules/design-system.md`; the
+toolkit contract is `docs/design-system.md`; the **workspace GUI** (`gui/client/`) is the
+reference implementation. Public docs: [Design System](https://aios-alpha.github.io/reference/design-system/).
+
 ## Team Brain
 If `aios.yaml` has a `brain_url`, this workspace syncs tier-tagged content to the
 AIOS Team Brain. Use the `aios-sync` skill (or `aios status|push|pull|query`).
