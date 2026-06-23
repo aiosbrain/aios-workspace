@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button, EyebrowLabel } from "@aios-alpha/ui";
+import { THEME_KEY } from "./theme.js";
 
 const MODELS = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
@@ -840,9 +841,6 @@ const NAV_ICONS = {
 };
 
 // Dark is the workspace GUI's terminal-native default; light is opt-in.
-// Tiny localStorage + classList toggle (no next-themes — this is plain Vite/React).
-const THEME_KEY = "aios.gui.theme";
-
 function ThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
   const toggle = () => {

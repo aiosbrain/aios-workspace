@@ -52,6 +52,8 @@
   --display: var(--aios-font-display);
   --body: var(--aios-font-body);
   --mono: var(--aios-font-mono);
+  --shadow-card: var(--aios-shadow-card);
+  --shadow-overlay: var(--aios-shadow-overlay);
   --glow-violet: 0 0 20px rgba(139, 92, 246, 0.4);
 }
 
