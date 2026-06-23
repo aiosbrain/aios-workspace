@@ -47,7 +47,8 @@ workspace. (`scaffold-engagement.sh` remains as a back-compat shim → consultan
 
 The template (`scaffold/.claude/`) ships:
 - **Conventions** (`rules/`): decision-log format + type/audience taxonomy, frontmatter
-  schema by directory, the promotion/publishing flow, and hours logging.
+  schema by directory, the promotion/publishing flow, hours logging, and **design-system**
+  rules (when you add UI — pin `@aios-alpha/design` + `@aios-alpha/ui`; see `docs/design-system.md`).
 - **Harnesses** (`skills/`): the dynamic-workflow skills below.
 
 ---
