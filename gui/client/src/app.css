@@ -15,12 +15,11 @@
 @source "../../../node_modules/@aios-alpha/ui/dist";
 @custom-variant dark (&:where(.dark, .dark *));
 
-@import "@fontsource/space-grotesk/400.css";
-@import "@fontsource/space-grotesk/600.css";
-@import "@fontsource/space-grotesk/700.css";
-@import "@fontsource/plus-jakarta-sans/400.css";
-@import "@fontsource/plus-jakarta-sans/500.css";
-@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-sans/400.css";
+@import "@fontsource/instrument-sans/500.css";
+@import "@fontsource/instrument-sans/600.css";
+@import "@fontsource/instrument-sans/700.css";
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/600.css";
 
@@ -28,7 +27,7 @@
    The whole stylesheet below speaks in --bg/--surface/--text/--accent/…; we
    map each onto an --aios-* token so the entire surface inherits the design
    system AND both modes (light :root, dark .dark) for free.
-   --accent stays VIOLET (the brand/CTA color); lime is rationed via --live. */
+   --accent = editorial pill buttons (primary); violet wash for nav/links. */
 :root,
 .dark {
   --bg: var(--aios-bg);
@@ -42,9 +41,9 @@
   --accent: var(--aios-primary);
   --accent-hover: var(--aios-primary-hover);
   --accent-fg: var(--aios-primary-fg);
-  /* subtle violet wash for active nav / user bubbles (mode-tuned below) */
-  --accent-soft: color-mix(in srgb, var(--aios-primary) 14%, transparent);
-  --accent-line: color-mix(in srgb, var(--aios-primary) 35%, transparent);
+  --accent-soft: color-mix(in srgb, var(--aios-violet) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--aios-violet) 35%, transparent);
+  --link: var(--aios-violet);
   /* lime — the live/active color, rationed to status dots, checks, success */
   --live: var(--aios-accent);
   --green: var(--aios-emerald);
@@ -54,7 +53,7 @@
   --mono: var(--aios-font-mono);
   --shadow-card: var(--aios-shadow-card);
   --shadow-overlay: var(--aios-shadow-overlay);
-  --glow-violet: 0 0 20px rgba(139, 92, 246, 0.4);
+  --glow-violet: none;
 }
 
 * {
@@ -72,6 +71,7 @@ body {
   font: var(--aios-text-body) / var(--aios-leading-normal) var(--body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-synthesis: none;
 }
 
 .app {
@@ -97,7 +97,7 @@ body {
   gap: 10px;
   padding: 4px 8px 14px;
   font-family: var(--display);
-  font-weight: 600;
+  font-weight: 400;
   font-size: 16px;
   letter-spacing: var(--aios-tracking-snug);
 }
@@ -457,7 +457,7 @@ main {
 .msg.assistant h4 {
   margin: 14px 0 6px;
   font-family: var(--display);
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: var(--aios-tracking-snug);
   line-height: var(--aios-leading-snug);
 }
@@ -479,7 +479,7 @@ main {
   margin: 2px 0;
 }
 .msg.assistant a {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
 }
 .msg.assistant code {

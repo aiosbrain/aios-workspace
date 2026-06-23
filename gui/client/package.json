@@ -8,17 +8,17 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@aios-alpha/design": "^0.1.0",
-    "@aios-alpha/ui": "^0.1.0",
+    "@aios-alpha/design": "^0.2.1",
+    "@aios-alpha/ui": "^0.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@fontsource/instrument-sans": "^5.2.8",
+    "@fontsource/instrument-serif": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "@fontsource/plus-jakarta-sans": "^5.2.8",
-    "@fontsource/space-grotesk": "^5.2.10",
     "@tailwindcss/vite": "^4.3.1",
     "@vitejs/plugin-react": "^4.3.0",
     "tailwindcss": "^4.3.1",
