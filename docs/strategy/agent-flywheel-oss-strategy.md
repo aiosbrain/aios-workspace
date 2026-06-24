@@ -172,18 +172,19 @@ Our codebase topology should **embody** the deployment topology. If we preach fe
 
 ---
 
-## 7. The other decision: the open/closed boundary
+## 7. The open/closed boundary — **DECIDED: MIT** (2026-06-24)
 
-Apache-2.0 is my call for the open core. The remaining question is *which components are open at all*, and *under which license*. The test I apply per component:
+**MIT is the call for the OSS open core.** Decision log #1 + PRD v0.3.1 amendment. Apache-2.0 and optional AGPL were considered; MIT wins on adoption friction, matches all shipped AIOS-alpha repos, and aligns with Chetan's preference. Revenue stays in hosted ops, the advanced Intelligence Engine, industry presets, and onboarding methodology — not license enforcement.
+
+The remaining question is *which components are open at all* (unchanged). The test:
 
 ```
 For each component:
 ─ Is it the standard/substrate we want everyone to adopt?
-   ├─ YES → Apache-2.0  (maximize adoption; win the category)
+   ├─ YES → MIT  (maximize adoption; win the category)
    └─ NO
        ─ Does open-sourcing it drive demand for a paid layer?
           ├─ YES → open the engine/primitive; keep the hosted layer commercial
-          │        (Apache-2.0 if adoption matters most; AGPL if free-rider risk is real)
           └─ NO
               ─ Meaningful cloud-free-rider risk (a competitor reselling our code as SaaS)?
                  ├─ YES → if opening at all, AGPL/SSPL; else keep closed
@@ -194,22 +195,16 @@ Applied:
 
 | Component | Open? | License | Why |
 |---|---|---|---|
-| Company Graph schema + spec | **Open** | Apache-2.0 | The standard we want everyone to adopt. |
-| Company Graph reference engine | **Open** | Apache-2.0 | Proves the spec; drives managed-connector demand. |
-| Team Agentic OS framework | **Open** | Apache-2.0 | Empty open-source niche; plant the flag. |
-| Shared skills + design system | **Open** | Apache-2.0 | Cheap to give, compounding to own. |
-| Learning **engine** (personalization core + Graph-read contract) | **Open core** | Apache-2.0 | Completes the flywheel; feeds adoption. |
+| Company Graph schema + spec | **Open** | MIT | The standard we want everyone to adopt. |
+| Company Graph reference engine | **Open** | MIT | Proves the spec; drives managed-connector demand. |
+| Team Agentic OS framework | **Open** | MIT | Empty open-source niche; plant the flag. |
+| Shared skills + design system | **Open** | MIT | Cheap to give, compounding to own. |
+| Learning **engine** (personalization core + Graph-read contract) | **Open core** | MIT | Completes the flywheel; feeds adoption. |
 | Hosted Learning **Platform** (provisioning, anonymity, dashboards, multi-tenant ops) | **Commercial** | — | Most saturated category; monetize the experience, not the source. |
 | Managed connectors, enterprise governance, multi-client ops | **Commercial** | — | Operational moat + paid upsell. |
 
-### The case for opening the platform too (optionality I want to keep)
-I'm not ideologically closed on the platform — there's a real case to open it later, most likely under **AGPL**:
-
-**For:** a fully-open end-to-end stack is a stronger credibility claim; community-contributed curricula create content network effects; **self-hosting directly answers the same data-sovereignty concern from §6** (some enterprises will only run software they can audit and host); AGPL keeps it open *and* self-hostable while neutralizing SaaS free-riders.
-
-**Against:** most saturated, best-funded category — open-sourcing hands a working platform to incumbents; the hosted experience is monetizable regardless of license; the support burden splits focus from the two pillars that win the category.
-
-**My call:** open the *engine* now (Apache-2.0); keep the *hosted platform* commercial; **revisit fully-open (AGPL) once the open core has traction and if self-host demand from trust-sensitive enterprises proves strong.** Opening the platform later is itself a trust play — it closes the same loop §6 opens. *(Question for you: does the AGPL "open + self-hostable" angle change your read on whether to open the platform from day one?)*
+### Platform licensing (unchanged posture)
+Open the *reference engine* now (MIT); keep the *hosted platform* commercial. AGPL remains a future option for a specific hosted component if free-rider pressure becomes real — not adopted for initial OSS release.
 
 ---
 
@@ -223,4 +218,4 @@ I'm not ideologically closed on the platform — there's a real case to open it 
 
 ---
 
-*Open decisions still to lock after this review: final repo names, repo topology (§6), and the platform's license treatment (§7).*
+*Open decisions still to lock after this review: final repo names and repo topology (§6). License posture locked MIT (§7, 2026-06-24).*
