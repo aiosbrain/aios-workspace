@@ -8,8 +8,8 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@aios-alpha/design": "^0.2.1",
-    "@aios-alpha/ui": "^0.2.1",
+    "@aios-alpha/design": "^0.3.0",
+    "@aios-alpha/ui": "^0.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.1.0",

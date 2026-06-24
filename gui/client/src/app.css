@@ -16,6 +16,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
 @import "@fontsource/instrument-sans/400.css";
 @import "@fontsource/instrument-sans/500.css";
 @import "@fontsource/instrument-sans/600.css";
@@ -53,7 +54,8 @@
   --mono: var(--aios-font-mono);
   --shadow-card: var(--aios-shadow-card);
   --shadow-overlay: var(--aios-shadow-overlay);
-  --glow-violet: none;
+  /* editorial effects layer: soft violet glow on primary hover */
+  --glow-violet: var(--aios-shadow-glow-featured);
 }
 
 * {
@@ -853,7 +855,8 @@ footer button:disabled {
 .int-head h2 {
   margin: 0;
   font-family: var(--display);
-  font-weight: 600;
+  /* Instrument Serif is weight 400 only — never synthesize bold */
+  font-weight: 400;
   font-size: var(--aios-text-h3);
   letter-spacing: var(--aios-tracking-snug);
 }
