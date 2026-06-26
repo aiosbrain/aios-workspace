@@ -2,7 +2,7 @@
 // cockpit componentization (Phase 2 strangler bridge). They keep the non-chat surfaces
 // working while each is rewritten in TypeScript (Phase 3); do not polish here.
 /* eslint-disable */
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button, EyebrowLabel } from "@aios-alpha/ui";
 import { resolveGuiToken } from "../lib/token";
 
