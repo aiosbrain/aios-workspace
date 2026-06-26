@@ -35,9 +35,9 @@ import {
   containsSecret,
   redactSecrets,
 } from "./memory-reviewer.mjs";
-import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
+import { ALLOWED_MODELS, MODEL_OPTIONS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
-import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
+import { GUI_RUNTIMES, runtimeCapabilities } from "../../scripts/runtimes.mjs";
 import {
   readSkills,
   readIntegrations,
@@ -928,7 +928,10 @@ wss.on("connection", (ws, req) => {
     driver && driver !== "claude-sdk"
       ? "Shell-driven file changes are validated after each turn, not pre-gated."
       : null;
-  send({ type: "hello", repo, sessionId, runtime, safetyNote, resumed: !!resumeId });
+  // BYOA: additive capability descriptor so the cockpit UI adapts to the active
+  // runtime without branching on its name. Older clients ignore the extra field.
+  const capabilities = runtimeCapabilities(runtime, MODEL_OPTIONS);
+  send({ type: "hello", repo, sessionId, runtime, safetyNote, capabilities, resumed: !!resumeId });
 
   (async () => {
     try {
