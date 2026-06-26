@@ -83,7 +83,12 @@ export function loadMemory(repo) {
 // unknown `agent_model` to the default here — so global `agent_model: ""` keeps
 // meaning "runtime default" for every other runtime (see docs/byoa.md), while the
 // GUI gets a fast, cheap default instead of Claude Code's heavy fallback.
-export const ALLOWED_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
+// id + display label co-located so the picker and the allow-list never drift.
+export const MODEL_OPTIONS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+];
+export const ALLOWED_MODELS = new Set(MODEL_OPTIONS.map((m) => m.id));
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 function resolveModel(model) {
