@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import App from "./App";
 import "./app.css";
 import { applySavedTheme } from "./theme.js";
 
