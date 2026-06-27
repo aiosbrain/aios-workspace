@@ -1,5 +1,8 @@
 # Cockpit roadmap — next workstreams
 
+For the broader product sequence, see the three-milestone roadmap:
+[`product-roadmap-three-milestones.md`](./product-roadmap-three-milestones.md).
+
 The cockpit overhaul (model picker, resumable sessions, personality, Skills library)
 shipped in #16 + #17. These are the planned follow-ups, in priority order. Each has
 its own plan doc; this file is the index.
