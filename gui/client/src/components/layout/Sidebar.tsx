@@ -1,19 +1,8 @@
 import { useState } from "react";
-import { Plus, Search, Blocks, Zap, UploadCloud, Settings, FolderGit2 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Plus, Search, UploadCloud, FolderGit2 } from "lucide-react";
 import { useConnection, useRuntime, useSession } from "../../state/cockpit";
-import type { ViewKey } from "../../hooks/useCockpit";
 import { groupChatsByRecency } from "../../lib/recency";
 import type { SessionSummary } from "../../types/protocol";
-import { ThemeToggle } from "./ThemeToggle";
-
-// Secondary tools — utilities, kept compact below the (primary) chat history.
-const TOOLS: { key: ViewKey; label: string; icon: LucideIcon }[] = [
-  { key: "integrations", label: "Integrations", icon: Blocks },
-  { key: "skills", label: "Skills", icon: Zap },
-  { key: "review", label: "Review & Push", icon: UploadCloud },
-  { key: "settings", label: "Settings", icon: Settings },
-];
 
 export function Sidebar() {
   const { repo } = useConnection();
@@ -25,11 +14,10 @@ export function Sidebar() {
   const isDraft = currentSession === null;
   const isEmptyDraft = isDraft && messages.length === 0 && !input.trim() && !connected && !busy;
   const repoName = repo ? repo.split("/").filter(Boolean).pop() : "workspace";
+  const initial = (repoName?.[0] || "A").toUpperCase();
 
   const q = query.trim().toLowerCase();
-  const filtered = q
-    ? chats.filter((c) => (c.title || "").toLowerCase().includes(q))
-    : null;
+  const filtered = q ? chats.filter((c) => (c.title || "").toLowerCase().includes(q)) : null;
   const groups = filtered ? null : groupChatsByRecency(chats);
 
   const ChatItem = (c: SessionSummary) => (
@@ -61,7 +49,7 @@ export function Sidebar() {
           <kbd className="side-kbd">⌘N</kbd>
         </button>
         <div className="side-search">
-          <Search size={14} />
+          <Search size={15} />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -102,26 +90,24 @@ export function Sidebar() {
       </div>
 
       <nav className="side-tools">
-        {TOOLS.map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            className={`side-link${view === key ? " on" : ""}`}
-            onClick={() => setView(key)}
-          >
-            <Icon size={15} strokeWidth={2} /> {label}
-          </button>
-        ))}
+        <button
+          className={`side-link${view === "review" ? " on" : ""}`}
+          onClick={() => setView("review")}
+        >
+          <UploadCloud size={15} strokeWidth={2} /> Review &amp; Push
+        </button>
       </nav>
 
-      <div className="side-foot">
-        <ThemeToggle />
-        <div
-          className="privacy"
-          title="Your keys are encrypted on this machine and never sent to the team brain."
-        >
-          🔒 Keys stay on this machine
-        </div>
-      </div>
+      <button
+        className={`side-account${view === "settings" ? " on" : ""}`}
+        onClick={() => setView("settings")}
+      >
+        <span className="side-avatar">{initial}</span>
+        <span className="side-account-text">
+          <span className="side-account-title">Settings</span>
+          <span className="side-account-sub">Account &amp; integrations</span>
+        </span>
+      </button>
     </aside>
   );
 }

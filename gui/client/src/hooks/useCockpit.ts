@@ -13,7 +13,7 @@ import type {
 } from "../types/protocol";
 import type { UiMessage, PendingPermission } from "../types/messages";
 
-export type ViewKey = "chat" | "skills" | "integrations" | "review" | "settings";
+export type ViewKey = "chat" | "review" | "settings";
 
 const token = resolveGuiToken();
 const api = createApi(token);
