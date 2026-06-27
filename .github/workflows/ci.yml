@@ -35,6 +35,7 @@ jobs:
           node test/skill-install.test.mjs
           node test/suggest-connectors.test.mjs
           node test/skill-install-marketplace.test.mjs
+          node test/slack-cli-sync.test.mjs
           node test/ux/judge.test.mjs
           node test/ux/driver.test.mjs
           node test/ux/tool-policy.test.mjs
