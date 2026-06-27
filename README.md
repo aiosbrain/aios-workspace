@@ -202,4 +202,4 @@ GUI are here; more harnesses and integration adapters are on the
 
 ## License
 
-[Apache-2.0](LICENSE).
+[MIT](LICENSE).

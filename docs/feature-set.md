@@ -115,7 +115,7 @@ outputs from one run live in `examples/sample-output/`.
 - `scripts/leak-gate.sh` — a confidentiality gate (built from a client's confidential-
   information definition) that blocks client/firm/person identifiers and business-data
   patterns. CI runs it on every PR, so the repo stays clean as it grows.
-- Apache-2.0 licensed; contributions gated on the leak gate + secret scan + validators.
+- MIT licensed; contributions gated on the leak gate + secret scan + validators.
 
 ---
 
