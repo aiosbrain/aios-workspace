@@ -1,10 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Input } from "@aios-alpha/ui";
 import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { SkillCard } from "./SkillCard";
 import { SkillReviewModal, type SkillUnderReview } from "./SkillReviewModal";
 import type { SkillConsent, SkillEntry, SkillsResponse } from "../../types/protocol";
+
+const GRID = "grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]";
 
 function matches(s: { name: string; description: string }, q: string): boolean {
   if (!q) return true;
@@ -51,19 +53,26 @@ export function SkillsPanel() {
     }
   };
 
-  // group official skills by category (filtered by the search query)
-  const { groups, marketplace, community, referenced, installedCount } = useMemo(() => {
-    const g: Record<string, SkillEntry[]> = {};
-    const official = (data?.skills || []).filter((s) => matches(s, query));
-    for (const s of official) (g[s.category] ||= []).push(s);
-    return {
-      groups: g,
+  // Two clear groups — Official + Marketplace — plus Community only when present.
+  // Per-category subheadings are intentionally dropped.
+  const { official, marketplace, community, installedCount } = useMemo(
+    () => ({
+      official: (data?.skills || []).filter((s) => matches(s, query)),
       marketplace: (data?.marketplace || []).filter((s) => matches(s, query)),
       community: (data?.community || []).filter((s) => matches(s, query)),
-      referenced: (data?.referenced || []).filter((s) => matches(s, query)),
       installedCount: (data?.skills || []).filter((s) => s.installed).length,
-    };
-  }, [data, query]);
+    }),
+    [data, query],
+  );
+
+  const cardProps = (s: SkillEntry) => ({
+    skill: s,
+    acting: acting === s.id,
+    rowErr: rowErr[s.id],
+    onInstall: () => act(s.id, "install"),
+    onUninstall: () => act(s.id, "uninstall"),
+    onReview: setReview,
+  });
 
   if (error)
     return (
@@ -80,9 +89,9 @@ export function SkillsPanel() {
             <p className="int-sub">Loading the skill library…</p>
           </div>
         </div>
-        <div className="int-grid">
+        <div className={GRID}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-32 rounded-xl" />
+            <Skeleton key={i} className="h-40 rounded-xl" />
           ))}
         </div>
       </div>
@@ -94,13 +103,8 @@ export function SkillsPanel() {
         <div>
           <h2>Skills</h2>
           <p className="int-sub">
-            Official Anthropic skills are vendored from <code>anthropics/skills</code> and
-            hash-locked — one-click install into <code>.claude/skills/</code>. Marketplace skills
-            come from Anthropic's official plugin directory (<code>claude-plugins-official</code>):
-            first-party vetted, but fetched-on-install at a pinned commit and byte-verified against
-            the catalog. Community skills carry no first-party provenance and require your review.
-            Scanning is <strong>advisory</strong> — provenance and your own review are the real
-            safeguard.
+            One-click install into <code>.claude/skills/</code>. Provenance and your own review are
+            the real safeguard — the scan is advisory.
           </p>
         </div>
         <div className="int-progress">
@@ -116,74 +120,48 @@ export function SkillsPanel() {
         className="mb-4 max-w-md"
       />
 
-      {Object.keys(groups)
-        .sort()
-        .map((cat) => (
-          <Fragment key={cat}>
-            <h3 className="int-section">{cat}</h3>
-            <div className="int-grid">
-              {groups[cat].map((s) => (
-                <SkillCard
-                  key={s.id}
-                  skill={s}
-                  acting={acting === s.id}
-                  rowErr={rowErr[s.id]}
-                  onInstall={() => act(s.id, "install")}
-                  onUninstall={() => act(s.id, "uninstall")}
-                  onReview={setReview}
-                />
-              ))}
-            </div>
-          </Fragment>
-        ))}
+      {official.length > 0 && (
+        <>
+          <h3 className="int-section">Official</h3>
+          <p className="int-sub">
+            Vendored from <code>anthropics/skills</code> and hash-locked.
+          </p>
+          <div className={GRID}>
+            {official.map((s) => (
+              <SkillCard key={s.id} {...cardProps(s)} />
+            ))}
+          </div>
+        </>
+      )}
 
       {marketplace.length > 0 && (
         <>
-          <h3 className="int-section">Marketplace — Anthropic official plugins</h3>
-          <div className="int-grid">
+          <h3 className="int-section">Marketplace</h3>
+          <p className="int-sub">
+            First-party (Anthropic) plugins, fetched on install at a pinned commit and byte-verified
+            against the catalog before anything lands in <code>.claude/skills/</code>. Installing
+            needs network access.
+          </p>
+          <div className={GRID}>
             {marketplace.map((s) => (
-              <SkillCard
-                key={s.id}
-                skill={s}
-                acting={acting === s.id}
-                rowErr={rowErr[s.id]}
-                onInstall={() => act(s.id, "install")}
-                onUninstall={() => act(s.id, "uninstall")}
-                onReview={setReview}
-              />
+              <SkillCard key={s.id} {...cardProps(s)} />
             ))}
           </div>
-          <p className="int-foot">
-            ↪ Marketplace skills are first-party (Anthropic) but <strong>fetched on install</strong>{" "}
-            from <code>claude-plugins-official</code> at a pinned commit. The fetched bytes are
-            byte-verified against the catalog before anything lands in <code>.claude/skills/</code>{" "}
-            — a tampered or drifted upstream is refused. Installing needs network access.
-          </p>
         </>
       )}
 
       {community.length > 0 && (
         <>
-          <h3 className="int-section int-section-muted">
-            Community — unverified (scan + consent required)
-          </h3>
-          <div className="int-grid">
+          <h3 className="int-section int-section-muted">Community</h3>
+          <p className="int-sub">
+            ⚠ Unverified, no first-party provenance. Installing runs its bundled
+            instructions/code — review the source and scan, then confirm.
+          </p>
+          <div className={GRID}>
             {community.map((s) => (
-              <SkillCard
-                key={s.id}
-                skill={s}
-                acting={acting === s.id}
-                rowErr={rowErr[s.id]}
-                onInstall={() => act(s.id, "install")}
-                onUninstall={() => act(s.id, "uninstall")}
-                onReview={setReview}
-              />
+              <SkillCard key={s.id} {...cardProps(s)} />
             ))}
           </div>
-          <p className="int-foot">
-            ⚠ Community skills are not vendored or first-party. Installing one runs its bundled
-            instructions/code in your workspace — treat it like installing software from a stranger.
-          </p>
         </>
       )}
 
@@ -195,37 +173,6 @@ export function SkillsPanel() {
           onClose={() => setReview(null)}
           onInstall={(consent) => act(review.id, "install", consent)}
         />
-      )}
-
-      {referenced.length > 0 && (
-        <>
-          <h3 className="int-section int-section-muted">Documents — available in Claude</h3>
-          <div className="int-grid">
-            {referenced.map((s) => (
-              <div key={s.id} className="int-card">
-                <div className="int-card-top">
-                  <span className="int-name">{s.name}</span>
-                </div>
-                <p className="int-summary">{s.description}</p>
-                <div className="int-card-foot">
-                  <span className="int-transport">official · hosted</span>
-                  <a
-                    className="int-connect"
-                    href={data.referenced_docs_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Enable in Claude ↗
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="int-foot">
-            These document skills are Anthropic-hosted (proprietary license) — used inside Claude,
-            not copied here.
-          </p>
-        </>
       )}
     </div>
   );

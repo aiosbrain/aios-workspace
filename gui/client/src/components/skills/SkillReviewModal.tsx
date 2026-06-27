@@ -12,6 +12,7 @@ export interface SkillUnderReview {
   id: string;
   name: string;
   trust: string;
+  source?: string | null;
 }
 
 /**
@@ -61,6 +62,17 @@ export function SkillReviewModal({
             ✕
           </button>
         </div>
+
+        {skill.source && (
+          <a
+            className="mb-1 inline-block font-mono text-[11px] text-[color:var(--link)] underline-offset-2 hover:underline"
+            href={skill.source}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View source on GitHub ↗
+          </a>
+        )}
 
         {scanErr && (
           <div className="wiz-error">
