@@ -126,9 +126,10 @@ How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep
   guarded by `test/sync-plan.test.mjs` (drives the real `aios status --json` and asserts the
   blocked outcomes). Tier normalization is single-sourced (`normalizeTier`).
 - **The GUI server is a thin local gateway.** `gui/server/` binds `127.0.0.1` only, gates on a
-  per-session token, and imports just catalog/connector/skill helpers from `scripts/`
-  (`runtimes.mjs`, `gen-catalog.mjs`, `connector.mjs`, the `lock-*` helpers). It holds no sync
-  logic and never calls `brain-client` — it stays a presentation/orchestration shell.
+  per-session token, and imports just catalog/connector/skill helpers from `scripts/` —
+  `runtimes.mjs`, `gen-catalog.mjs`, `connector.mjs` (via `index.mjs`) and the `lock-*` helpers
+  (via `gui/server/skill-library.mjs`). It holds no sync logic and never calls `brain-client` —
+  it stays a presentation/orchestration shell.
 - **Validators + hooks are fail-closed.** `validation/validate-all.sh` (`set -euo pipefail`) and
   the PreToolUse `hooks/` exit non-zero on any violation; never weaken them to make a change pass.
 
