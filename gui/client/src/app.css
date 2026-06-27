@@ -260,6 +260,8 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   align-self: flex-start;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .runtime-dot {
   width: 6px;
@@ -1420,6 +1422,8 @@ footer button:disabled {
   flex-shrink: 0;
 }
 .side-project-name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1486,24 +1490,14 @@ footer button:disabled {
   margin: 0 0 4px;
   font-family: var(--display);
   font-weight: 400;
-  font-size: var(--aios-text-h2);
+  font-size: clamp(1.4rem, 1.1rem + 1.2vw, 1.9rem);
   letter-spacing: var(--aios-tracking-tight);
   text-align: center;
   color: var(--text);
 }
-.chat-hero footer {
+.chat-hero .composer-wrap {
   border-top: none;
-  border: 1px solid var(--border);
-  border-radius: var(--aios-radius-2xl);
-  background: var(--surface);
-  padding: 14px;
-}
-.chat-hero footer textarea {
-  border: none;
-  background: transparent;
-}
-.chat-hero footer textarea:focus {
-  box-shadow: none;
+  padding: 0;
 }
 .hero-controls {
   display: flex;
@@ -1511,4 +1505,79 @@ footer button:disabled {
 }
 .chat-hero .empty-chips {
   justify-content: center;
+}
+
+/* compact composer (Codex/Cursor style) — rounded box, small round send button */
+.composer-wrap {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--aios-radius-xl);
+  background: var(--surface);
+  padding: 6px 6px 6px 14px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--aios-ring) 18%, transparent);
+}
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  min-height: 24px;
+  max-height: 180px;
+  padding: 7px 0;
+  line-height: 1.5;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--body);
+}
+.composer textarea::placeholder {
+  color: var(--text-dim);
+}
+.composer-send {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--aios-radius-full);
+  border: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+}
+.composer-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.composer-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.composer-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--accent-fg) 40%, transparent);
+  border-top-color: var(--accent-fg);
+  border-radius: 50%;
+  animation: composer-spin 0.7s linear infinite;
+}
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

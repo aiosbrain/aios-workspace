@@ -200,6 +200,18 @@ export interface SkillCapabilities {
   code_files?: string[];
 }
 
+/** Where a skill's source lives (sent by the server; used to build a "View source" link). */
+export interface SkillProvenance {
+  upstream_repo?: string;
+  upstream_commit?: string;
+  vendored_at?: string;
+}
+export interface SkillSource {
+  repo?: string;
+  commit?: string;
+  path_in_repo?: string;
+}
+
 export interface SkillEntry {
   id: string;
   name: string;
@@ -210,6 +222,10 @@ export interface SkillEntry {
   installed: boolean;
   license?: string;
   bundled?: boolean;
+  /** Official skills: vendored-from provenance. */
+  provenance?: SkillProvenance | null;
+  /** Marketplace skills: fetched-on-install upstream source (precise path_in_repo). */
+  source?: SkillSource | null;
 }
 
 export interface ReferencedSkill {

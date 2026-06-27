@@ -10,6 +10,8 @@ import type {
   ConnectorsResponse,
 } from "../../types/protocol";
 
+const GRID = "grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]";
+
 function matches(c: Connector, q: string): boolean {
   if (!q) return true;
   const needle = q.toLowerCase();
@@ -68,9 +70,9 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
             <p className="int-sub">Loading your tools…</p>
           </div>
         </div>
-        <div className="int-grid">
+        <div className={GRID}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
+            <Skeleton key={i} className="h-40 rounded-xl" />
           ))}
         </div>
       </div>
@@ -109,7 +111,7 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
           <h3 className="int-section">
             Your team uses these {team.length} tool{team.length === 1 ? "" : "s"}
           </h3>
-          <div className="int-grid">
+          <div className={GRID}>
             {team.map((c) => (
               <ConnectorCard key={c.id} connector={c} onConnect={setActive} />
             ))}
@@ -117,7 +119,7 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
           <h3 className="int-section int-section-muted">More integrations</h3>
         </>
       )}
-      <div className="int-grid">
+      <div className={GRID}>
         {(showTeam ? rest : filtered).map((c) => (
           <ConnectorCard key={c.id} connector={c} onConnect={setActive} />
         ))}

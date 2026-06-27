@@ -24,6 +24,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
+    "simple-icons": "^16.24.0",
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.6.0"
   },
