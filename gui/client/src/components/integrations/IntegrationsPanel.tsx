@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Input } from "@aios-alpha/ui";
+import { Input, EyebrowLabel } from "@aios-alpha/ui";
 import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
-import { ConnectorCard } from "./ConnectorCard";
+import { ConnectorRow } from "./ConnectorRow";
 import { ConnectWizard } from "./ConnectWizard";
 import type {
   BlueprintResponse,
@@ -10,12 +10,23 @@ import type {
   ConnectorsResponse,
 } from "../../types/protocol";
 
-const GRID = "grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]";
+// Two compact rows per row on wide widths; one when narrow.
+const GRID = "grid gap-2 sm:grid-cols-2";
 
 function matches(c: Connector, q: string): boolean {
   if (!q) return true;
   const needle = q.toLowerCase();
   return c.name.toLowerCase().includes(needle) || (c.summary || "").toLowerCase().includes(needle);
+}
+
+/** Eyebrow + count header that opens each section. */
+function SectionHead({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="mb-2 mt-5 flex items-baseline gap-2 first:mt-0">
+      <EyebrowLabel>{label}</EyebrowLabel>
+      <span className="font-mono text-[11px] text-muted-foreground">{count}</span>
+    </div>
+  );
 }
 
 export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: string) => void }) {
@@ -61,6 +72,33 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
         <div className="msg meta error">error: {error}</div>
       </div>
     );
+
+  const search = (
+    <label className="relative block">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="m21 21-4.3-4.3" />
+      </svg>
+      <Input
+        type="search"
+        placeholder="Search integrations by name or what they do…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="h-11 w-full pl-9 text-sm"
+        disabled={!connectors}
+      />
+    </label>
+  );
+
   if (!connectors)
     return (
       <div className="integrations">
@@ -70,18 +108,19 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
             <p className="int-sub">Loading your tools…</p>
           </div>
         </div>
+        {search}
         <div className={GRID}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-40 rounded-xl" />
+            <Skeleton key={i} className="h-[60px] rounded-lg" />
           ))}
         </div>
       </div>
     );
 
-  const wired = connectors.filter((c) => c.status === "wired").length;
-  const team = filtered.filter((c) => c.team_enabled);
-  const rest = filtered.filter((c) => !c.team_enabled);
-  const showTeam = team.length > 0;
+  const installed = filtered.filter((c) => c.status === "wired");
+  const available = filtered.filter((c) => c.status !== "wired");
+  const wiredTotal = connectors.filter((c) => c.status === "wired").length;
+  const noResults = filtered.length === 0;
 
   return (
     <div className="integrations">
@@ -94,36 +133,40 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
           </p>
         </div>
         <div className="int-progress">
-          {wired} of {connectors.length} connected
+          {wiredTotal} of {connectors.length} connected
         </div>
       </div>
 
-      <Input
-        type="search"
-        placeholder="Filter integrations by name or description…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="mb-4 max-w-md"
-      />
+      {search}
 
-      {showTeam && (
-        <>
-          <h3 className="int-section">
-            Your team uses these {team.length} tool{team.length === 1 ? "" : "s"}
-          </h3>
+      {noResults && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          No integrations match “{query}”. Try a different name.
+        </p>
+      )}
+
+      {installed.length > 0 && (
+        <section>
+          <SectionHead label="Installed" count={installed.length} />
           <div className={GRID}>
-            {team.map((c) => (
-              <ConnectorCard key={c.id} connector={c} onConnect={setActive} />
+            {installed.map((c) => (
+              <ConnectorRow key={c.id} connector={c} onConnect={setActive} />
             ))}
           </div>
-          <h3 className="int-section int-section-muted">More integrations</h3>
-        </>
+        </section>
       )}
-      <div className={GRID}>
-        {(showTeam ? rest : filtered).map((c) => (
-          <ConnectorCard key={c.id} connector={c} onConnect={setActive} />
-        ))}
-      </div>
+
+      {available.length > 0 && (
+        <section>
+          <SectionHead label="Available" count={available.length} />
+          <div className={GRID}>
+            {available.map((c) => (
+              <ConnectorRow key={c.id} connector={c} onConnect={setActive} />
+            ))}
+          </div>
+        </section>
+      )}
+
       <p className="int-foot">
         🔒 Every key is encrypted on this machine (dotenvx) and never sent to the team brain.
       </p>
