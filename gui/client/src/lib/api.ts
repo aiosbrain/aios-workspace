@@ -6,10 +6,13 @@
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The parsed error response body (when JSON), so callers can read structured failure detail. */
+  body: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -35,13 +38,15 @@ export function createApi(token: string): Api {
     });
     if (!res.ok) {
       let detail = res.statusText;
+      let body: unknown;
       try {
-        const data = await res.json();
+        body = await res.json();
+        const data = body as { error?: string; message?: string } | null;
         detail = (data && (data.error || data.message)) || detail;
       } catch {
         /* non-JSON error body */
       }
-      throw new ApiError(res.status, detail);
+      throw new ApiError(res.status, detail, body);
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
