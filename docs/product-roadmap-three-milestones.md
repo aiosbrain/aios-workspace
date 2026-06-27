@@ -3,6 +3,10 @@
 Status: draft product definition
 Scope: AIOS Workspace + Team Brain product direction
 
+> **Where to find this:** `docs/product-roadmap-three-milestones.md` on [aios-workspace `main`](https://github.com/aiosbrain/aios-workspace/blob/main/docs/product-roadmap-three-milestones.md) · also linked from [`docs/roadmap.md`](./roadmap.md) (cockpit index).
+>
+> **When you're back:** Linear → AIO team → Backlog → search **"three-milestone product roadmap"**. If missing, create with title `Review: three-milestone product roadmap (draft on main)` and paste the handoff block from the commit message / agent note below.
+
 ## Product thesis
 
 AIOS wins if it becomes the trusted operating layer for agent-assisted work: local enough to respect private context, structured enough for agents to do real work, and verified enough that humans can safely act on the output.
