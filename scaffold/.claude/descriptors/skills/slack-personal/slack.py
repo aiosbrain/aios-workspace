@@ -91,7 +91,8 @@ def _brain_request(method, path, body=None):
 
 def _brain_token():
     """Fetch THIS member's own Slack user token from the brain (GET /api/v1/me/slack-token),
-    when brain.url + AIOS_API_KEY are configured. Returns the xoxp token or None."""
+    when brain.url + AIOS_API_KEY are configured. Returns the xoxp token, None if not
+    connected (404), or exits with a clear error on auth/network failure."""
     url, key, team = _brain_config()
     if not (url and key):
         return None
@@ -100,8 +101,19 @@ def _brain_token():
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return (json.load(r) or {}).get("token") or None
-    except Exception:
-        return None
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        msg = None
+        try:
+            body = json.load(e)
+            err = body.get("error")
+            msg = err.get("message") if isinstance(err, dict) else err
+        except Exception:
+            pass
+        die(f"team brain token fetch failed (HTTP {e.code}{': ' + msg if msg else ''})", 3)
+    except (urllib.error.URLError, TimeoutError) as e:
+        die(f"could not reach the team brain for token: {e}", 5)
 
 
 _TOKEN = None
@@ -295,12 +307,23 @@ def cmd_react(a):
 
 
 # ---------- connect / status / disconnect (store the token in the brain) ----------
+def _connect_token(a):
+    """Resolve a connect token without leaving it in argv when --stdin or env is used."""
+    if a.stdin:
+        return sys.stdin.read().strip()
+    if a.token:
+        return a.token.strip()
+    return os.environ.get("SLACK_USER_TOKEN", "").strip()
+
+
 def cmd_connect(a):
     """Store YOUR Slack user token in the team brain (the brain validates it against Slack
     and captures your Slack identity). Thereafter the CLI fetches it automatically."""
-    tok = (a.token or "").strip()
+    tok = _connect_token(a)
+    if not tok:
+        die("provide your Slack USER token: slack connect --stdin | SLACK_USER_TOKEN=… slack connect | slack connect xoxp-…", 2)
     if not tok.startswith("xoxp-"):
-        die("provide your Slack USER token: slack connect xoxp-…", 2)
+        die("token must be a Slack USER token (xoxp-…)", 2)
     status, resp = _brain_request("POST", "/api/v1/me/slack-token", {"token": tok})
     if status >= 400 or not resp.get("ok"):
         die(f"connect failed: {(resp.get('error') or {}).get('message') if isinstance(resp.get('error'), dict) else resp.get('error') or status}", 4)
@@ -346,7 +369,9 @@ def main():
     p.add_argument("--message", required=True); p.add_argument("--thread")
     p = sub.add_parser("react", parents=[common])
     p.add_argument("--target", required=True); p.add_argument("--ts", required=True); p.add_argument("--emoji", required=True)
-    p = sub.add_parser("connect", parents=[common]); p.add_argument("token", help="your Slack user token (xoxp-…)")
+    p = sub.add_parser("connect", parents=[common])
+    p.add_argument("token", nargs="?", help="your Slack user token (xoxp-…); prefer --stdin or SLACK_USER_TOKEN")
+    p.add_argument("--stdin", action="store_true", help="read token from stdin (avoids shell history/ps)")
     sub.add_parser("status", parents=[common])
     sub.add_parser("disconnect", parents=[common])
 

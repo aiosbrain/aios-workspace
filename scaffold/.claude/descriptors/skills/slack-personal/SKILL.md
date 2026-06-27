@@ -34,11 +34,14 @@ The CLI finds your token in this order — you don't manage it manually:
    `AIOS_API_KEY` — this is where `aios connect slack` stores it (encrypted, per-member).
 
 If neither is present, the CLI tells you to connect. To connect (one-time), paste your
-Slack **user** token (xoxp) — it's validated and stored encrypted in the brain, per-member:
+Slack **user** token (xoxp) — it's validated and stored encrypted in the brain, per-member.
+Prefer `--stdin` or env on Mac (avoids shell history / `ps`):
 
 ```bash
-slack connect xoxp-…    # store your token in the brain (then `slack whoami` works anywhere)
-slack status            # check connection   ·   slack disconnect   to remove it
+slack connect --stdin              # paste token, then Ctrl-D
+SLACK_USER_TOKEN=xoxp-… slack connect
+slack connect xoxp-…               # positional (legacy)
+slack status                     # check connection   ·   slack disconnect   to remove it
 ```
 
 Get a user token: api.slack.com/apps → create an app → OAuth & Permissions → add User
