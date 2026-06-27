@@ -23,7 +23,7 @@ EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
   --exclude-dir=__pycache__ --exclude-dir=store --exclude-dir=strategy
   --exclude-dir=skill-library --exclude-dir=skill-scan-fixtures
   --exclude-dir=target
-  --exclude=test/ux/evidence/* --exclude=.env --exclude=.env.local --exclude=.env.keys
+  --exclude-dir=evidence --exclude=.env --exclude=.env.local --exclude=.env.keys
   --exclude=.git --exclude=leak-gate.sh --exclude=LICENSE
   --exclude=*.png --exclude=*.jpg --exclude=*.pdf --exclude=*.lock)
 # skill-library/ holds vendored, integrity-locked official upstream skills (OGR09);
@@ -31,7 +31,7 @@ EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
 # skill-scan-fixtures/ holds DELIBERATELY-malicious scanner test fixtures (injection +
 # fake secret/exfil strings) — they are test inputs, never shipped to a workspace.
 # target/ — Rust/Tauri build output embeds absolute local paths in .d files; gitignored.
-# test/ux/evidence/ — gitignored UX harness output (transcripts with local paths); CI never has it.
+# evidence/ — gitignored UX harness output under test/ux/ (transcripts with local paths); not in CI.
 # .env* — local-only config (gitignored); may contain member handles for local dev.
 
 # STRONG terms — unambiguous; any occurrence is a leak. Case-insensitive substring.
