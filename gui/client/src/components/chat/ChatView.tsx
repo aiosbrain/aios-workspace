@@ -29,14 +29,15 @@ export function ChatView() {
   const draftConnecting = isDraft && busy && !connected;
   const composerDisabled = draftConnecting || (!connected && !isDraft);
   const canStartMessage = !composerDisabled;
+  const isEmpty = messages.length === 0;
 
   const placeholder = !connected && !isDraft
     ? "connecting…"
-    : messages.length === 0
-      ? "What are you working on?"
+    : isEmpty
+      ? "Describe a task — Enter to send, Shift+Enter for a newline"
       : "Message your workspace… (Enter to send, Shift+Enter for newline)";
 
-  const header = (
+  const banners = (
     <>
       {!token && (
         <div className="safety-banner">
@@ -52,18 +53,44 @@ export function ChatView() {
           ⚠ {safetyNote}
         </div>
       )}
-      {messages.length === 0 && (
-        <EmptyState
-          canStart={canStartMessage}
-          onPick={(prompt) => sendMessage(prompt)}
-          onDraftFromLink={() => {
-            setInput("Draft my profile from this link: ");
-            composerRef.current?.focus();
-          }}
-        />
-      )}
     </>
   );
+
+  const composer = (
+    <Composer
+      ref={composerRef}
+      value={input}
+      onChange={setInput}
+      onSend={() => sendMessage()}
+      disabled={composerDisabled}
+      busy={busy}
+      placeholder={placeholder}
+    />
+  );
+
+  // Codex-style centered empty state: heading + composer mid-canvas, chips beneath.
+  if (isEmpty) {
+    return (
+      <div className="chat-hero">
+        {banners}
+        <div className="hero-inner">
+          <h1 className="hero-title">What are you working on?</h1>
+          {composer}
+          <div className="hero-controls">
+            <ModelPicker />
+          </div>
+          <EmptyState
+            canStart={canStartMessage}
+            onPick={(prompt) => sendMessage(prompt)}
+            onDraftFromLink={() => {
+              setInput("Draft my profile from this link: ");
+              composerRef.current?.focus();
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -71,7 +98,7 @@ export function ChatView() {
         <ModelPicker />
       </div>
       <MessageList
-        header={header}
+        header={banners}
         messages={messages}
         permissions={permissions}
         onUndoMemory={undoMemory}
@@ -79,15 +106,7 @@ export function ChatView() {
         onRespondOption={respondPermissionOption}
       />
       <ContextMeter />
-      <Composer
-        ref={composerRef}
-        value={input}
-        onChange={setInput}
-        onSend={() => sendMessage()}
-        disabled={composerDisabled}
-        busy={busy}
-        placeholder={placeholder}
-      />
+      {composer}
     </>
   );
 }

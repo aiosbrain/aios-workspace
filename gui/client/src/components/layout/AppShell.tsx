@@ -1,16 +1,13 @@
 import { useSession } from "../../state/cockpit";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "../chat/ChatView";
-// Legacy panels (strangler bridge) — rewritten in TypeScript in Phase 3.
-import {
-  SettingsPanel,
-  SkillsPanel,
-  ReviewPanel,
-  IntegrationsPanel,
-} from "../../legacy/panels.jsx";
+import { SkillsPanel } from "../skills/SkillsPanel";
+import { IntegrationsPanel } from "../integrations/IntegrationsPanel";
+import { ReviewPanel } from "../review/ReviewPanel";
+import { SettingsPanel } from "../settings/SettingsPanel";
 
 function ViewRouter() {
-  const { view, model, changeModel, newChat, setView, setInput } = useSession();
+  const { view, setView, setInput } = useSession();
   switch (view) {
     case "chat":
       return <ChatView />;
@@ -28,9 +25,7 @@ function ViewRouter() {
     case "review":
       return <ReviewPanel />;
     case "settings":
-      return (
-        <SettingsPanel model={model} onModelChange={changeModel} onPersonalityApplied={newChat} />
-      );
+      return <SettingsPanel />;
   }
 }
 

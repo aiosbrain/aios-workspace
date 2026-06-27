@@ -178,3 +178,189 @@ export interface SessionTranscriptResponse {
   id: string;
   events: TranscriptEvent[];
 }
+
+/* ---- personalities (Settings) ---- */
+
+export interface Personality {
+  id: string;
+  name: string;
+  description: string;
+}
+export interface PersonalitiesResponse {
+  personalities: Personality[];
+  current: string | null;
+}
+
+/* ---- skills library (Skills) ---- */
+
+export type SkillTrust = "official" | "marketplace" | "community";
+
+export interface SkillCapabilities {
+  bundles_code?: boolean;
+  code_files?: string[];
+}
+
+export interface SkillEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  trust: SkillTrust | string;
+  capabilities?: SkillCapabilities;
+  installed: boolean;
+  license?: string;
+  bundled?: boolean;
+}
+
+export interface ReferencedSkill {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface SkillsResponse {
+  skills: SkillEntry[];
+  marketplace?: SkillEntry[];
+  community?: SkillEntry[];
+  referenced?: ReferencedSkill[];
+  referenced_docs_url?: string;
+  upstream_commit?: string;
+  marketplace_upstream_commit?: string;
+}
+
+export type RiskClass = "low" | "elevated" | "high";
+
+export interface ScanFinding {
+  file: string;
+  line: number;
+  rule: string;
+  snippet: string;
+  severity: string;
+}
+export interface ScanCounts {
+  total: number;
+  high: number;
+  code_files: number;
+}
+export interface SkillScanResponse {
+  id: string;
+  tier: string;
+  name: string;
+  riskClass: RiskClass | string;
+  findings: ScanFinding[];
+  counts: ScanCounts;
+  bundlesCode?: boolean;
+  requiresTypedConfirm: boolean;
+}
+
+/** Consent payload sent on a non-official skill install. */
+export interface SkillConsent {
+  accepted: boolean;
+  typed?: string;
+}
+export interface SkillActionResponse {
+  ok: boolean;
+  error?: string;
+  id?: string;
+  installed?: boolean;
+  tier?: string;
+}
+
+/* ---- connectors / integrations (Integrations) ---- */
+
+export interface ConnectorSecret {
+  env: string;
+  label: string;
+  required: boolean;
+  placeholder: string;
+}
+export interface ConnectorInstanceField {
+  env: string;
+  label: string;
+  placeholder?: string;
+}
+export interface ConnectorDocs {
+  token_create_url?: string;
+  instructions?: string;
+}
+export interface Connector {
+  id: string;
+  name: string;
+  category?: string;
+  transport: string;
+  summary: string;
+  scopes?: string[];
+  secrets?: ConnectorSecret[];
+  docs?: ConnectorDocs;
+  team_instance?: ConnectorInstanceField[];
+  instance?: Record<string, string>;
+  status: string;
+  team_enabled: boolean;
+}
+export interface ConnectorsResponse {
+  connectors: Connector[];
+}
+export interface BlueprintResponse {
+  ok: boolean;
+  connectors?: Connector[];
+  note?: string | null;
+}
+
+export interface ConnectorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+export interface ConnectorIdentity {
+  label: string;
+  value: string | null;
+}
+export interface ConnectorValidation {
+  ok: boolean;
+  checks: ConnectorCheck[];
+  identity: ConnectorIdentity | null;
+  instance: ConnectorIdentity | null;
+  error?: string | null;
+}
+/** Response of POST /api/connectors/:id/store (200 ok, or 422/500 carrying `validation`/`error`). */
+export interface ConnectorStoreResponse {
+  ok: boolean;
+  id?: string;
+  status?: string;
+  transport?: string;
+  checks?: ConnectorCheck[];
+  identity?: ConnectorIdentity | null;
+  instance?: ConnectorIdentity | null;
+  validation?: ConnectorValidation;
+  error?: string | null;
+}
+
+/* ---- review & push (Review) ---- */
+
+export interface ReviewItem {
+  rel: string;
+  kind: string | null;
+  tier: string | null;
+  isNew: boolean;
+}
+export interface ReviewBlockedItem {
+  rel: string;
+  reason: string;
+}
+export interface ReviewResponse {
+  project: string;
+  brain_url: string | null;
+  items: {
+    new?: ReviewItem[];
+    modified?: ReviewItem[];
+    blocked?: ReviewBlockedItem[];
+    clean?: { rel: string }[];
+  };
+  error?: string;
+}
+export interface PushResponse {
+  ok: boolean;
+  dryRun: boolean;
+  output: string;
+  error: string | null;
+}

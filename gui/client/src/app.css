@@ -1328,3 +1328,187 @@ footer button:disabled {
   width: 15px;
   height: 15px;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Phase 3 — Codex-style information architecture (sidebar IA + centered hero).
+   Layout/hierarchy only; colors + type come from the design tokens.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* top action group: New chat + inline search */
+.side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.side-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--aios-radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.side-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.side-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.side-kbd {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.side-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--aios-radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.side-search svg {
+  flex-shrink: 0;
+}
+.side-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.side-search input::placeholder {
+  color: var(--text-dim);
+}
+
+/* workspace-as-project header + recency-grouped chats */
+.side-chats {
+  overflow-y: auto;
+}
+.side-project {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: var(--aios-tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.side-project svg {
+  flex-shrink: 0;
+}
+.side-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-project .runtime-badge {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 6px;
+}
+.chat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 10px;
+}
+.chat-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: var(--aios-tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 6px 10px 3px;
+}
+.side-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 8px 10px;
+}
+
+/* secondary tools cluster (utilities; chats are primary) */
+.side-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.side-tools .side-link {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+/* centered empty hero (Codex): heading + composer mid-canvas, chips beneath */
+.chat-hero {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 24px;
+}
+.hero-inner {
+  margin: auto;
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+.hero-title {
+  margin: 0 0 4px;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: var(--aios-text-h2);
+  letter-spacing: var(--aios-tracking-tight);
+  text-align: center;
+  color: var(--text);
+}
+.chat-hero footer {
+  border-top: none;
+  border: 1px solid var(--border);
+  border-radius: var(--aios-radius-2xl);
+  background: var(--surface);
+  padding: 14px;
+}
+.chat-hero footer textarea {
+  border: none;
+  background: transparent;
+}
+.chat-hero footer textarea:focus {
+  box-shadow: none;
+}
+.hero-controls {
+  display: flex;
+  justify-content: center;
+}
+.chat-hero .empty-chips {
+  justify-content: center;
+}
