@@ -110,3 +110,34 @@ git, and legible to an agent without any database. On top of that substrate, the
 **dynamic-workflow harnesses** in `scaffold/.claude/skills/` do the operational heavy
 lifting, spawning focused sub-agents with adversarial verification rather than asking
 one context to do everything. See `docs/workflows.md`.
+
+## Toolkit internals — module boundaries
+
+How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep them.
+
+- **One brain HTTP front door.** All traffic to the Team Brain v1 API goes through
+  `scripts/brain-client.mjs` (`createBrainClient` → `fetchJson`/`query`/`streamQuery`). Both the
+  CLI (`scripts/aios.mjs`) and the MCP bridge (`scripts/brain-mcp.mjs`) use it; config resolution
+  intentionally stays in each caller (the CLI walks the workspace, the bridge is env-first). Don't
+  add ad-hoc `fetch()` to the brain elsewhere.
+- **The sync gate is the safety boundary.** `buildPlan` in `scripts/aios.mjs` classifies every
+  candidate file into push / blocked / clean and is the single place the tier rules
+  (default-deny, admin-never-syncs, `sync_tiers`) are enforced before any network call. It is
+  guarded by `test/sync-plan.test.mjs` (drives the real `aios status --json` and asserts the
+  blocked outcomes). Tier normalization is single-sourced (`normalizeTier`).
+- **The GUI server is a thin local gateway.** `gui/server/` binds `127.0.0.1` only, gates on a
+  per-session token, and imports just catalog/connector/skill helpers from `scripts/`
+  (`runtimes.mjs`, `gen-catalog.mjs`, `connector.mjs`, the `lock-*` helpers). It holds no sync
+  logic and never calls `brain-client` — it stays a presentation/orchestration shell.
+- **Validators + hooks are fail-closed.** `validation/validate-all.sh` (`set -euo pipefail`) and
+  the PreToolUse `hooks/` exit non-zero on any violation; never weaken them to make a change pass.
+
+### Known debt (deferred, post-release)
+
+Recorded so it isn't mistaken for intent:
+
+- `scripts/aios.mjs` is a ~2.3k-line monolith (CLI routing + push/pull domain logic + state). A
+  later pass can extract `scripts/sync/` command modules without changing behavior.
+- Small helpers (`sha256`, `die`, color output, git wrappers) are duplicated across several
+  scripts; there is no shared `scripts/lib/` kernel yet (`relay-core.mjs` is the only current
+  consolidation point). Extracting a thin kernel is deferred to avoid pre-release churn.
