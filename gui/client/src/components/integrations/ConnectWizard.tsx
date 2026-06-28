@@ -262,7 +262,10 @@ export function ConnectWizard({
             {checks.length > 0 && (
               <ul className={WIZ_CHECKS}>
                 {checks.map((ch, i) => (
-                  <li key={i} className={cn("text-[13px]", ch.ok ? "text-emerald" : "text-destructive")}>
+                  <li
+                    key={i}
+                    className={cn("text-[13px]", ch.ok ? "text-emerald" : "text-destructive")}
+                  >
                     {ch.ok ? "✓" : "✗"} {ch.name}{" "}
                     <span className="text-muted-foreground">— {ch.detail}</span>
                   </li>

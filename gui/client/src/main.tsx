@@ -1,7 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles/index.css";
-import "./app.css";
 import { applySavedTheme } from "./theme.js";
 
 applySavedTheme();

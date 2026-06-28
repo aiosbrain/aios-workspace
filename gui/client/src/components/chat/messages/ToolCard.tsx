@@ -22,7 +22,9 @@ export function ToolCard({ tool }: { tool: ToolMessage }) {
         </span>
         <span className="font-semibold text-primary">{tool.name}</span>
         <span className="flex-1 truncate text-muted-foreground">{summary}</span>
-        <span className={cn("text-[11px]", tool.isError ? "text-destructive" : "text-muted-foreground")}>
+        <span
+          className={cn("text-[11px]", tool.isError ? "text-destructive" : "text-muted-foreground")}
+        >
           {state}
         </span>
       </button>
@@ -31,7 +33,9 @@ export function ToolCard({ tool }: { tool: ToolMessage }) {
           <pre className={cn(PRE_BASE, "text-muted-foreground")}>
             {JSON.stringify(tool.input, null, 2).slice(0, 2000)}
           </pre>
-          {tool.result != null && <pre className={cn(PRE_BASE, "mt-2 text-foreground")}>{tool.result}</pre>}
+          {tool.result != null && (
+            <pre className={cn(PRE_BASE, "mt-2 text-foreground")}>{tool.result}</pre>
+          )}
         </div>
       )}
     </div>

@@ -14,7 +14,8 @@ export const SET_SECTION = "mb-7";
 export const SET_SECTION_TITLE = "mb-2 font-display text-base font-normal";
 export const SET_SECTION_HINT =
   "mt-1.5 mb-3 text-[length:var(--aios-text-small)] leading-[1.55] text-muted-foreground";
-const KV_ROW = "flex justify-between gap-4 border-b border-border-visible px-3.5 py-[11px] last:border-b-0";
+const KV_ROW =
+  "flex justify-between gap-4 border-b border-border-visible px-3.5 py-[11px] last:border-b-0";
 const KV_DT = "text-[13px] text-muted-foreground";
 const KV_DD = "m-0 max-w-[60%] truncate text-[13px]";
 const KV_DD_MONO = cn(KV_DD, "font-mono text-xs");
@@ -119,7 +120,7 @@ export function SettingsView() {
             key={key}
             className={cn(
               "flex cursor-pointer items-center gap-2.5 rounded-md bg-transparent px-2.5 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground",
-              section === key && "bg-[var(--accent-soft)] text-foreground",
+              section === key && "bg-[var(--accent-soft)] text-foreground"
             )}
             onClick={() => setSection(key)}
           >

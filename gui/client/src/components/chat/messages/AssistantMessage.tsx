@@ -14,7 +14,7 @@ export function AssistantMessage({ message }: { message: AssistantMessageModel }
     <div
       className={cn(
         "assistant-prose max-w-[92%] self-start break-words rounded-xl border border-border-visible bg-card px-3.5 py-2.5 shadow-card",
-        message.streaming && "streaming-cursor",
+        message.streaming && "streaming-cursor"
       )}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>

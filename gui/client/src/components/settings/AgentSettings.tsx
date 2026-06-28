@@ -116,7 +116,7 @@ export function AgentSettings() {
                   <span
                     className={cn(
                       "text-[11px]",
-                      p.id === current ? "text-lime" : "text-muted-foreground",
+                      p.id === current ? "text-lime" : "text-muted-foreground"
                     )}
                   >
                     {p.id === current ? "● active" : "○"}

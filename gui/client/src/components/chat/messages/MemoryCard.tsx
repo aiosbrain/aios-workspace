@@ -10,7 +10,9 @@ export function MemoryCard({
   return (
     <div className="flex max-w-[92%] flex-wrap items-center gap-1.5 self-center rounded-md border border-[var(--accent-line)] bg-[var(--accent-soft)] px-[11px] py-1.5 text-xs text-muted-foreground">
       💾 Memory updated ·{" "}
-      <code className="rounded-[5px] bg-secondary px-[5px] py-px text-[11.5px]">{message.file}</code>{" "}
+      <code className="rounded-[5px] bg-secondary px-[5px] py-px text-[11.5px]">
+        {message.file}
+      </code>{" "}
       — {message.summary}
       <span className="opacity-70"> (takes effect next session)</span>
       {message.undone ? (
