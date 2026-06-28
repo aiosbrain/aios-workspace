@@ -37,6 +37,7 @@ export function useSession() {
     view,
     setView,
     connected,
+    connectionStatus,
     messages,
     input,
     setInput,
@@ -54,11 +55,13 @@ export function useSession() {
     respondPermissionOption,
     undoMemory,
     loadChats,
+    retryConnection,
   } = useCockpitContext();
   return {
     view,
     setView,
     connected,
+    connectionStatus,
     messages,
     input,
     setInput,
@@ -76,5 +79,6 @@ export function useSession() {
     respondPermissionOption,
     undoMemory,
     loadChats,
+    retryConnection,
   };
 }

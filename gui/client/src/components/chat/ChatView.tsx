@@ -11,6 +11,7 @@ export function ChatView() {
   const { safetyNote } = useRuntime();
   const {
     connected,
+    connectionStatus,
     messages,
     input,
     setInput,
@@ -33,7 +34,11 @@ export function ChatView() {
 
   const placeholder =
     !connected && !isDraft
-      ? "connecting…"
+      ? connectionStatus === "offline"
+        ? "offline — retrying… (Retry in the sidebar)"
+        : connectionStatus === "reconnecting"
+          ? "reconnecting…"
+          : "connecting…"
       : isEmpty
         ? "Describe a task — Enter to send, Shift+Enter for a newline"
         : "Message your workspace… (Enter to send, Shift+Enter for newline)";

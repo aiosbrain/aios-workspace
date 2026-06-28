@@ -123,6 +123,54 @@ body {
   background: var(--live);
   box-shadow: 0 0 8px color-mix(in srgb, var(--live) 60%, transparent);
 }
+.brand-status[data-status="reconnecting"] {
+  background: var(--accent);
+  animation: conn-pulse 1s ease-in-out infinite;
+}
+.brand-status[data-status="offline"] {
+  background: var(--red);
+}
+@keyframes conn-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Reconnect / offline banner under the brand. Token-only; lime stays rationed. */
+.conn-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--aios-radius-md);
+}
+.conn-banner[data-status="offline"] {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+}
+.conn-retry {
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--aios-radius-sm);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.conn-retry:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
 .side-nav {
   display: flex;
   flex-direction: column;

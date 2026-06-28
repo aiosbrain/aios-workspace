@@ -10,6 +10,7 @@ export function Sidebar() {
     view,
     setView,
     connected,
+    connectionStatus,
     chats,
     currentSession,
     openChat,
@@ -17,8 +18,17 @@ export function Sidebar() {
     input,
     busy,
     messages,
+    retryConnection,
   } = useSession();
   const [query, setQuery] = useState("");
+
+  const statusTitle: Record<string, string> = {
+    draft: "Draft",
+    connecting: "Connecting…",
+    connected: "Connected",
+    reconnecting: "Reconnecting…",
+    offline: "Offline",
+  };
 
   const isDraft = currentSession === null;
   const isEmptyDraft = isDraft && messages.length === 0 && !input.trim() && !connected && !busy;
@@ -48,9 +58,21 @@ export function Sidebar() {
         <span
           className="brand-status"
           data-on={connected}
-          title={connected ? "Connected" : isDraft ? "Draft" : "Connecting…"}
+          data-status={connectionStatus}
+          title={statusTitle[connectionStatus] ?? (isDraft ? "Draft" : "Connecting…")}
         />
       </div>
+
+      {(connectionStatus === "reconnecting" || connectionStatus === "offline") && (
+        <div className="conn-banner" data-status={connectionStatus} role="status">
+          <span>{connectionStatus === "offline" ? "Connection lost" : "Reconnecting…"}</span>
+          {connectionStatus === "offline" && (
+            <button className="conn-retry" onClick={retryConnection}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="side-actions">
         <button className="side-action" onClick={newChat} disabled={isEmptyDraft}>
