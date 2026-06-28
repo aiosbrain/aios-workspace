@@ -60,6 +60,7 @@ export function useCockpit() {
   const [busy, setBusy] = useState(false);
   const [permissions, setPermissions] = useState<PendingPermission[]>([]);
   const [model, setModel] = useState(DEFAULT_CAPS.models[0]?.id ?? "");
+  const [approvalMode, setApprovalMode] = useState("default"); // session-scoped; default = ask
   const [usage, setUsage] = useState<Usage | null>(null);
   const [chats, setChats] = useState<SessionListResponse["sessions"]>([]);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
@@ -220,6 +221,10 @@ export function useCockpit() {
           case "model": // server confirms an in-session switch — keep the picker in sync
             if (capsRef.current.models.some((m) => m.id === msg.model)) setModel(msg.model);
             break;
+          case "approval_mode": // server confirms an approval-mode switch — sync the selector
+            if (capsRef.current.approvalModes.some((a) => a.id === msg.mode))
+              setApprovalMode(msg.mode);
+            break;
           case "warning":
             // Live → toast (replay reconstructs it inline; see lib/transcript.ts).
             toast.warning(msg.message);
@@ -328,6 +333,7 @@ export function useCockpit() {
     resetChatState();
     setMessages([]);
     setInput("");
+    setApprovalMode("default"); // never carry an elevated mode into a fresh chat
     setCurrentSession(null);
     setView("chat");
   }, [resetChatState, applyConn, clearReconnect]);
@@ -378,7 +384,7 @@ export function useCockpit() {
       setBusy(true);
       try {
         const ws = openSocket || (await connect());
-        ws.send(JSON.stringify({ type: "user_message", text, model }));
+        ws.send(JSON.stringify({ type: "user_message", text, model, approvalMode }));
       } catch (e) {
         setBusy(false);
         // The message never left the client. Roll back the optimistic user bubble
@@ -393,7 +399,7 @@ export function useCockpit() {
         append({ kind: "meta", text: `error: ${(e as Error).message}` });
       }
     },
-    [append, connect, currentSession, input, model]
+    [append, connect, currentSession, input, model, approvalMode]
   );
 
   const respondPermission = useCallback((id: number, allow: boolean) => {
@@ -485,6 +491,8 @@ export function useCockpit() {
     busy,
     permissions,
     model,
+    approvalMode,
+    setApprovalMode,
     usage,
     chats,
     currentSession,

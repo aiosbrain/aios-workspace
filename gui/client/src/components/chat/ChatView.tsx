@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useConnection, useRuntime, useSession } from "../../state/cockpit";
 import { ModelPicker } from "./ModelPicker";
+import { ApprovalModePicker } from "./ApprovalModePicker";
 import { ContextMeter } from "./ContextMeter";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -84,6 +85,7 @@ export function ChatView() {
           {composer}
           <div className="hero-controls">
             <ModelPicker />
+            <ApprovalModePicker />
           </div>
           <EmptyState
             canStart={canStartMessage}
@@ -102,6 +104,7 @@ export function ChatView() {
     <>
       <div className="chat-head">
         <ModelPicker />
+        <ApprovalModePicker />
       </div>
       <MessageList
         header={banners}
