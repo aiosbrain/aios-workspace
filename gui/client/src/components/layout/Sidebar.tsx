@@ -77,6 +77,7 @@ export function Sidebar() {
       <div className="side-actions">
         <button className="side-action" onClick={newChat} disabled={isEmptyDraft}>
           <Plus size={16} /> New chat
+          <span className="side-kbd">⌘N</span>
         </button>
         <div className="side-search">
           <Search size={15} />
@@ -86,6 +87,9 @@ export function Sidebar() {
             placeholder="Search chats"
             aria-label="Search chats"
           />
+          <span className="side-kbd" title="Open command palette">
+            ⌘K
+          </span>
         </div>
       </div>
 
