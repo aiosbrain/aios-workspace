@@ -19,7 +19,9 @@ if (actual !== expected) {
   console.error("slack-cli-sync: slack.py SHA256 mismatch");
   console.error(`  pin:    ${expected}`);
   console.error(`  actual: ${actual}`);
-  console.error("  canonical source: hermes-aluna/bin/slack.py — update both copies + pin together");
+  console.error(
+    "  canonical source: hermes-aluna/bin/slack.py — update both copies + pin together"
+  );
   process.exit(1);
 }
 
