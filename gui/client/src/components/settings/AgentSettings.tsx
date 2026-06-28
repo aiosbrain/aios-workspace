@@ -62,6 +62,14 @@ export function AgentSettings() {
 
   return (
     <>
+      <section className="set-section">
+        <h3 className="set-section-title">Runtime</h3>
+        <p className="set-section-hint">
+          Agent runtime: <code>{runtime || "—"}</code>. Set <code>agent_runtime</code> in{" "}
+          <code>aios.yaml</code> — it applies on the next chat.
+        </p>
+      </section>
+
       {capabilities.modelSwitching && models.length > 0 && (
         <section className="set-section">
           <h3 className="set-section-title">Default model</h3>
