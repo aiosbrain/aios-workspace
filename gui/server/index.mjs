@@ -55,6 +55,7 @@ import {
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
+import { searchSessions } from "./sessions-search.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -345,6 +346,19 @@ const server = http.createServer((req, res) => {
     const idx = visibleSessionIndex(SESSIONS_DIR, readSessionIndex(SESSIONS_INDEX));
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(idx));
+  }
+  // Full-content chat search. MUST precede the /api/sessions/:id route below, or "search"
+  // would be parsed as a (non-UUID) session id and 400. Token-gated + bounded (see
+  // sessions-search.mjs); a trimmed/empty q returns no results.
+  if (url.pathname === "/api/sessions/search" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const { sessions } = visibleSessionIndex(SESSIONS_DIR, readSessionIndex(SESSIONS_INDEX));
+    const out = searchSessions(SESSIONS_DIR, sessions, url.searchParams.get("q") || "");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(out));
   }
   const sessMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
   if (sessMatch && req.method === "GET") {
@@ -777,8 +791,8 @@ wss.on("connection", (ws, req) => {
   const queue = [];
   let wake = null;
   const ac = new AbortController(); // fired on ws close → wakes the iterator + signals the adapter
-  const pushUser = (text, model) => {
-    queue.push({ type: "user", text, model });
+  const pushUser = (text, model, approvalMode) => {
+    queue.push({ type: "user", text, model, approvalMode });
     if (wake) {
       wake();
       wake = null;
@@ -817,7 +831,13 @@ wss.on("connection", (ws, req) => {
         titleSet = true;
       }
       curTurn = { user: userText, assistant: "" }; // start a fresh turn for the reviewer
-      pushUser(userText, typeof msg.model === "string" ? msg.model : undefined);
+      // Session-scoped, never persisted. The adapter authoritatively validates the mode
+      // against the driver's advertised (env-gated) approvalModes and ignores anything else.
+      pushUser(
+        userText,
+        typeof msg.model === "string" ? msg.model : undefined,
+        typeof msg.approvalMode === "string" ? msg.approvalMode : undefined
+      );
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
       const resolve = pending.get(msg.id);
       pending.delete(msg.id);
