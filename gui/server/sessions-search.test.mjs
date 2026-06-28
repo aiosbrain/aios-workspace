@@ -163,9 +163,7 @@ test("GET /api/sessions/search: route ordering + token gating (live server)", as
       lastSelected: ID_A,
     })
   );
-  writeTranscript(sessionsDir, ID_A, [
-    { type: "echo_user", text: "draft the quarterly budget" },
-  ]);
+  writeTranscript(sessionsDir, ID_A, [{ type: "echo_user", text: "draft the quarterly budget" }]);
   writeTranscript(sessionsDir, ID_B, [{ type: "echo_user", text: "hello there" }]);
 
   const port = await freePort();

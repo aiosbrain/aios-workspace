@@ -51,7 +51,10 @@ for (const mode of EXPOSED_MODES) {
   });
 
   test(`[${mode}] guard BLOCKS admin-tier content in a shared dir (exit 2)`, () => {
-    const r = runGuard({ file_path: "4-shared/proposal.md", content: FRONTMATTER + SENSITIVE_PHRASE });
+    const r = runGuard({
+      file_path: "4-shared/proposal.md",
+      content: FRONTMATTER + SENSITIVE_PHRASE,
+    });
     assert.equal(r.status, 2, `expected block; stderr: ${r.stderr}`);
     assert.match(r.stderr, /Admin-only|admin-tier/i);
   });

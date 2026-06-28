@@ -51,7 +51,9 @@ export function ReviewPanel() {
       // Surface the push outcome as a toast (the terminal output keeps the detail).
       if (!dryRun) {
         if (data.ok) {
-          toast.success(`Pushed ${selected.size} item${selected.size === 1 ? "" : "s"} to the brain`);
+          toast.success(
+            `Pushed ${selected.size} item${selected.size === 1 ? "" : "s"} to the brain`
+          );
           load(); // refresh status after a real push
         } else {
           toast.error(`Push failed${data.error ? `: ${data.error}` : ""}`, { duration: 10_000 });

@@ -22,12 +22,7 @@ export type ViewKey = "chat" | "review" | "settings";
  * established session dropped and we're backing off; "offline" = retries exhausted
  * (a manual Retry is offered). No infinite silent "Connecting…".
  */
-export type ConnectionStatus =
-  | "draft"
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "offline";
+export type ConnectionStatus = "draft" | "connecting" | "connected" | "reconnecting" | "offline";
 
 const RECONNECT_MAX_ATTEMPTS = 6;
 const RECONNECT_BASE_MS = 500;
@@ -128,11 +123,10 @@ export function useCockpit() {
   // Open (or reopen) a WebSocket. With a sessionId the server resumes that chat's
   // session so prior context is intact; without one it mints a fresh chat.
   const connect = useCallback(
-    (sessionId?: string, opts?: { reconnecting?: boolean }): Promise<WebSocket> => {
+    (sessionId?: string): Promise<WebSocket> => {
       if (!token) {
         return Promise.reject(new Error(connectErrorMessage("Cannot connect", token)));
       }
-      const isReconnect = !!opts?.reconnecting;
       clearReconnect(); // any pending retry is superseded by this (re)connect
       try {
         wsRef.current?.close();
@@ -162,12 +156,12 @@ export function useCockpit() {
         ws.onclose = () => {
           if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
           setConnected(false);
-          // Reconnect on an unexpected drop of an established session, OR when a reconnect
-          // attempt itself failed to open (server still down) — so we keep retrying. A
-          // first-time deliberate connect that never opened just rejects (caller handles).
-          if ((didOpen || isReconnect) && currentSessionRef.current) {
-            scheduleReconnectRef.current();
-          }
+          // Always settle on a terminal state — never leave a stuck "Connecting…". If there
+          // is a session to resume (an established drop, a failed reconnect attempt, OR an
+          // initial open failure for an existing chat) back off and retry; otherwise it was
+          // a draft with nothing to resume, so fall back to the draft state.
+          if (currentSessionRef.current) scheduleReconnectRef.current();
+          else applyConn("draft");
           fail("WebSocket connection closed before opening"); // no-op once didOpen/superseded
         };
       });
