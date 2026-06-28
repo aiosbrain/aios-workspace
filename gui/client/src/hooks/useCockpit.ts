@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "../components/ui/sonner";
 import { createApi } from "../lib/api";
 import { resolveGuiToken, connectErrorMessage } from "../lib/token";
 import { formatResultMeta } from "../lib/format";
 import { buildMessagesFromEvents } from "../lib/transcript";
-import { DEFAULT_CAPS, type Capabilities } from "../types/runtime";
+import { DEFAULT_CAPS, normalizeCapabilities, type Capabilities } from "../types/runtime";
 import type {
   ServerEvent,
   Usage,
@@ -14,6 +15,18 @@ import type {
 import type { UiMessage, PendingPermission } from "../types/messages";
 
 export type ViewKey = "chat" | "review" | "settings";
+
+/**
+ * Visible socket lifecycle. `connected` (boolean) is kept for existing consumers and is
+ * just `status === "connected"`. "draft" = no live session yet; "reconnecting" = an
+ * established session dropped and we're backing off; "offline" = retries exhausted
+ * (a manual Retry is offered). No infinite silent "Connecting…".
+ */
+export type ConnectionStatus = "draft" | "connecting" | "connected" | "reconnecting" | "offline";
+
+const RECONNECT_MAX_ATTEMPTS = 6;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_CAP_MS = 10_000;
 
 const token = resolveGuiToken();
 const api = createApi(token);
@@ -36,11 +49,13 @@ export function useCockpit() {
   // session / chat
   const [view, setView] = useState<ViewKey>("chat");
   const [connected, setConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("draft");
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [permissions, setPermissions] = useState<PendingPermission[]>([]);
   const [model, setModel] = useState(DEFAULT_CAPS.models[0]?.id ?? "");
+  const [approvalMode, setApprovalMode] = useState("default"); // session-scoped; default = ask
   const [usage, setUsage] = useState<Usage | null>(null);
   const [chats, setChats] = useState<SessionListResponse["sessions"]>([]);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
@@ -51,6 +66,29 @@ export function useCockpit() {
   const connectSeqRef = useRef(0); // ignore callbacks from superseded sockets
   const capsRef = useRef<Capabilities>(DEFAULT_CAPS); // fresh caps inside the ws handler
   capsRef.current = capabilities;
+
+  // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const currentSessionRef = useRef<string | null>(null); // session to resume on reconnect
+  const scheduleReconnectRef = useRef<() => void>(() => {}); // set after connect() is defined
+
+  // Drive both the rich status and the legacy boolean from one place.
+  const applyConn = useCallback((status: ConnectionStatus) => {
+    setConnectionStatus(status);
+    setConnected(status === "connected");
+  }, []);
+  const clearReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  // Keep the resume target current so the close handler reconnects to the right session.
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
 
   const append = useCallback((m: UiMessage) => setMessages((prev) => [...prev, m]), []);
 
@@ -89,13 +127,14 @@ export function useCockpit() {
       if (!token) {
         return Promise.reject(new Error(connectErrorMessage("Cannot connect", token)));
       }
+      clearReconnect(); // any pending retry is superseded by this (re)connect
       try {
         wsRef.current?.close();
       } catch {
         /* already closed */
       }
       const seq = ++connectSeqRef.current;
-      setConnected(false);
+      applyConn(reconnectAttemptsRef.current > 0 ? "reconnecting" : "connecting");
       const ws = new WebSocket(api.wsUrl(sessionId));
       wsRef.current = ws;
       const opened = new Promise<WebSocket>((resolve, reject) => {
@@ -106,13 +145,24 @@ export function useCockpit() {
         };
         ws.onopen = () => {
           didOpen = true;
-          if (connectSeqRef.current === seq) setConnected(true);
+          if (connectSeqRef.current === seq) {
+            reconnectAttemptsRef.current = 0;
+            clearReconnect();
+            applyConn("connected");
+          }
           resolve(ws);
         };
         ws.onerror = () => fail("WebSocket connection failed");
         ws.onclose = () => {
-          if (connectSeqRef.current === seq) setConnected(false);
-          fail("WebSocket connection closed before opening");
+          if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
+          setConnected(false);
+          // Always settle on a terminal state — never leave a stuck "Connecting…". If there
+          // is a session to resume (an established drop, a failed reconnect attempt, OR an
+          // initial open failure for an existing chat) back off and retry; otherwise it was
+          // a draft with nothing to resume, so fall back to the draft state.
+          if (currentSessionRef.current) scheduleReconnectRef.current();
+          else applyConn("draft");
+          fail("WebSocket connection closed before opening"); // no-op once didOpen/superseded
         };
       });
       ws.onmessage = (e) => {
@@ -127,7 +177,7 @@ export function useCockpit() {
             setRepo(msg.repo);
             setRuntime(msg.runtime || "");
             setSafetyNote(msg.safetyNote || null);
-            setCapabilities(msg.capabilities ?? DEFAULT_CAPS);
+            setCapabilities(normalizeCapabilities(msg.capabilities));
             setCurrentSession(msg.sessionId);
             loadChats();
             break;
@@ -165,11 +215,17 @@ export function useCockpit() {
           case "model": // server confirms an in-session switch — keep the picker in sync
             if (capsRef.current.models.some((m) => m.id === msg.model)) setModel(msg.model);
             break;
+          case "approval_mode": // server confirms an approval-mode switch — sync the selector
+            if (capsRef.current.approvalModes.some((a) => a.id === msg.mode))
+              setApprovalMode(msg.mode);
+            break;
           case "warning":
-            append({ kind: "meta", text: `⚠ ${msg.message}` });
+            // Live → toast (replay reconstructs it inline; see lib/transcript.ts).
+            toast.warning(msg.message);
             break;
           case "result":
             setBusy(false);
+            // Keep the end-of-turn cost summary inline (it's the turn record, not clutter).
             append({
               kind: "meta",
               text: formatResultMeta(usageRef.current, msg.cost_usd, prevCostRef.current),
@@ -179,25 +235,27 @@ export function useCockpit() {
             break;
           case "error":
             setBusy(false);
-            append({ kind: "meta", text: `error: ${msg.message}` });
+            // Live → a longer-lived error toast so it isn't missed; replay keeps it inline.
+            toast.error(msg.message, { duration: 10_000 });
             break;
-          case "memory_updated":
-            append({
-              kind: "memory",
-              id: msg.id,
-              file: msg.file,
-              summary: msg.summary,
-              count: msg.count,
+          case "memory_updated": {
+            // Live → toast with Undo (replay rebuilds the MemoryCard). The Undo sends the
+            // same wire message as undoMemory(); inline wsRef.send avoids a forward ref.
+            const undoId = msg.id;
+            toast("Memory updated", {
+              description: `${msg.file} — ${msg.summary}`,
+              action: {
+                label: "Undo",
+                onClick: () =>
+                  wsRef.current?.send(JSON.stringify({ type: "memory_undo", id: undoId })),
+              },
             });
             break;
+          }
           case "memory_undone":
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.kind === "memory" && m.id === msg.id
-                  ? { ...m, undone: msg.ok, undoFailed: !msg.ok }
-                  : m
-              )
-            );
+            // No live card to mutate (it became a toast); confirm the outcome as a toast.
+            if (msg.ok) toast.success("Memory change undone");
+            else toast.error("Undo unavailable (file changed)");
             break;
           default:
             break;
@@ -205,8 +263,47 @@ export function useCockpit() {
       };
       return opened;
     },
-    [append, appendDelta, finishAssistant, loadChats]
+    [append, appendDelta, finishAssistant, loadChats, applyConn, clearReconnect]
   );
+
+  // Exponential backoff (+jitter) reconnect to the active session. Stops at OFFLINE after
+  // RECONNECT_MAX_ATTEMPTS; the UI offers a manual Retry from there.
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) return; // already scheduled
+    const attempt = reconnectAttemptsRef.current;
+    if (attempt >= RECONNECT_MAX_ATTEMPTS) {
+      applyConn("offline");
+      return;
+    }
+    reconnectAttemptsRef.current = attempt + 1;
+    applyConn("reconnecting");
+    const delay =
+      Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** attempt) +
+      Math.floor(Math.random() * 250);
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      const sid = currentSessionRef.current;
+      if (!sid) {
+        applyConn("offline");
+        return;
+      }
+      connect(sid).catch(() => {
+        /* its onclose will reschedule */
+      });
+    }, delay);
+  }, [connect, applyConn]);
+
+  useEffect(() => {
+    scheduleReconnectRef.current = scheduleReconnect;
+  }, [scheduleReconnect]);
+
+  // Manual recovery from the OFFLINE state: reset backoff and retry now.
+  const retryConnection = useCallback(() => {
+    clearReconnect();
+    reconnectAttemptsRef.current = 0;
+    const sid = currentSessionRef.current;
+    if (sid) connect(sid).catch(() => {});
+  }, [connect, clearReconnect]);
 
   const resetChatState = useCallback(() => {
     setBusy(false);
@@ -218,23 +315,30 @@ export function useCockpit() {
 
   const newChat = useCallback(() => {
     connectSeqRef.current++;
+    clearReconnect();
+    reconnectAttemptsRef.current = 0;
     try {
       wsRef.current?.close();
     } catch {
       /* already closed */
     }
     wsRef.current = null;
-    setConnected(false);
+    applyConn("draft");
     resetChatState();
     setMessages([]);
     setInput("");
+    setApprovalMode("default"); // never carry an elevated mode into a fresh chat
     setCurrentSession(null);
     setView("chat");
-  }, [resetChatState]);
+  }, [resetChatState, applyConn, clearReconnect]);
 
   // Replay a stored transcript, then resume its session for new turns.
   const openChat = useCallback(
     async (id: string) => {
+      clearReconnect();
+      reconnectAttemptsRef.current = 0;
+      currentSessionRef.current = id; // resume target before any close handler can fire
+      setApprovalMode("default"); // approval mode is session-scoped; never inherit it across chats
       resetChatState();
       setView("chat");
       try {
@@ -256,7 +360,7 @@ export function useCockpit() {
       setCurrentSession(id);
       connect(id).catch((e: Error) => append({ kind: "meta", text: `error: ${e.message}` }));
     },
-    [append, connect, resetChatState]
+    [append, connect, resetChatState, clearReconnect]
   );
 
   const changeModel = useCallback((m: string) => {
@@ -275,7 +379,16 @@ export function useCockpit() {
       setBusy(true);
       try {
         const ws = openSocket || (await connect());
-        ws.send(JSON.stringify({ type: "user_message", text, model }));
+        const payload: {
+          type: "user_message";
+          text: string;
+          model?: string;
+          approvalMode?: string;
+        } = { type: "user_message", text, model };
+        if (capsRef.current.approvalModes.some((a) => a.id === approvalMode)) {
+          payload.approvalMode = approvalMode;
+        }
+        ws.send(JSON.stringify(payload));
       } catch (e) {
         setBusy(false);
         // The message never left the client. Roll back the optimistic user bubble
@@ -290,7 +403,7 @@ export function useCockpit() {
         append({ kind: "meta", text: `error: ${(e as Error).message}` });
       }
     },
-    [append, connect, currentSession, input, model]
+    [append, connect, currentSession, input, model, approvalMode]
   );
 
   const respondPermission = useCallback((id: number, allow: boolean) => {
@@ -324,7 +437,7 @@ export function useCockpit() {
         // Seed capabilities from config so capability-gated chrome (model picker,
         // context meter, memory controls) is correct on first paint — before the
         // first WebSocket hello. Older servers omit this → keep DEFAULT_CAPS.
-        const caps = d.capabilities ?? DEFAULT_CAPS;
+        const caps = normalizeCapabilities(d.capabilities);
         setCapabilities(caps);
         if (caps.models.some((m) => m.id === d.model)) setModel(d.model);
         setRuntime(d.runtime || "");
@@ -345,8 +458,13 @@ export function useCockpit() {
     });
     const seqRef = connectSeqRef;
     const ws = wsRef;
+    const timer = reconnectTimerRef;
     return () => {
       seqRef.current++;
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
       try {
         ws.current?.close();
       } catch {
@@ -370,12 +488,15 @@ export function useCockpit() {
     view,
     setView,
     connected,
+    connectionStatus,
     messages,
     input,
     setInput,
     busy,
     permissions,
     model,
+    approvalMode,
+    setApprovalMode,
     usage,
     chats,
     currentSession,
@@ -388,6 +509,7 @@ export function useCockpit() {
     respondPermissionOption,
     undoMemory,
     loadChats,
+    retryConnection,
   };
 }
 

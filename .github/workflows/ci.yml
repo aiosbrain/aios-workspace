@@ -113,5 +113,11 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Install optional ACP peer (server boot in the GUI search test)
+        # The cockpit search route test (gui/server/sessions-search.test.mjs) boots the
+        # real GUI server, which statically loads every runtime adapter — incl. the ACP
+        # adapter (peer: zod). npm ci doesn't carry these (kept --no-save like the guard
+        # job), so install them here. claude-agent-sdk arrives via npm ci (devDependency).
+        run: npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
       - name: npm test
         run: npm test

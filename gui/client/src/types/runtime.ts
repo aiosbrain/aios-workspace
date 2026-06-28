@@ -14,6 +14,19 @@ export interface ModelOption {
   label: string;
 }
 
+/** A composer approval-mode choice (e.g. claude-sdk SDK permission modes). */
+export interface ApprovalModeOption {
+  /** Wire id sent back on `user_message.approvalMode` (e.g. "default", "acceptEdits"). */
+  id: string;
+  label: string;
+}
+
+/** A composer reasoning-effort choice. Scaffold only — no backend wiring yet. */
+export interface ReasoningLevel {
+  id: string;
+  label: string;
+}
+
 export interface Capabilities {
   /** "boolean" → allow/deny (Claude); "options" → runtime-supplied choices (ACP/OpenCode). */
   permissionStyle: "boolean" | "options";
@@ -29,6 +42,17 @@ export interface Capabilities {
   costTracking: boolean;
   /** Whether the background memory reviewer is available (toast + Settings toggle). */
   memoryReviewer: boolean;
+  /**
+   * Runtime-supplied approval modes for the composer selector. Empty → no selector.
+   * Only an upgraded server advertises these; the client NEVER infers them from the
+   * runtime name, and DEFAULT_CAPS leaves this empty (an old server that omits
+   * `hello.capabilities` cannot honor a mid-session `approvalMode`).
+   */
+  approvalModes: ApprovalModeOption[];
+  /** Scaffold: reasoning-effort choices. Empty → no control. No backend wiring yet. */
+  reasoningLevels: ReasoningLevel[];
+  /** Scaffold: whether file attachment is offered. No backend wiring yet. */
+  fileAttach: boolean;
 }
 
 /**
@@ -47,4 +71,21 @@ export const DEFAULT_CAPS: Capabilities = {
   contextWindow: 200_000,
   costTracking: true,
   memoryReviewer: true,
+  // Interactive capabilities an old server can't honor stay OFF in the fallback:
+  // a server that omits `hello.capabilities` ignores `approvalMode`, so showing a
+  // selector here would be a dead control. Only upgraded runtimeCapabilities() lights it.
+  approvalModes: [],
+  reasoningLevels: [],
+  fileAttach: false,
 };
+
+/**
+ * Merge a (possibly partial / older-server) wire `capabilities` object onto
+ * DEFAULT_CAPS so every required field is always defined. Defaulting only when the
+ * whole object is absent would leave newer fields (approvalModes, reasoningLevels,
+ * fileAttach) `undefined` when an un-upgraded server sends a pre-change shape, and
+ * later reads (`capabilities.approvalModes.length`, …) would throw.
+ */
+export function normalizeCapabilities(wire?: Partial<Capabilities> | null): Capabilities {
+  return { ...DEFAULT_CAPS, ...(wire ?? {}) };
+}

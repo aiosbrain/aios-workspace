@@ -46,13 +46,39 @@ export function buildMessagesFromEvents(events: TranscriptEvent[]): UiMessage[] 
       case "warning":
         msgs.push({ kind: "meta", text: `⚠ ${ev.message}` });
         break;
+      case "error":
+        // Live sessions surface errors as toasts; replay reconstructs them inline so a
+        // reopened chat is the full record (no information loss).
+        msgs.push({ kind: "meta", text: `error: ${ev.message}` });
+        break;
       case "result":
         msgs.push({ kind: "meta", text: formatResultMeta(lastUsage, ev.cost_usd, prevCost) });
         if (typeof ev.cost_usd === "number") prevCost = ev.cost_usd;
         lastUsage = null;
         break;
+      case "memory_updated":
+        // Live updates become toasts; the stored transcript replays the MemoryCard so the
+        // record survives. count is optional on the card model.
+        msgs.push({
+          kind: "memory",
+          id: ev.id,
+          file: ev.file,
+          summary: ev.summary,
+          count: ev.count,
+        });
+        break;
+      case "memory_undone": {
+        // Apply the final undo verdict to the matching card (ok → undone, !ok → undoFailed).
+        const mem = [...msgs].reverse().find((m) => m.kind === "memory" && m.id === ev.id);
+        if (mem && mem.kind === "memory") {
+          mem.undone = ev.ok;
+          mem.undoFailed = !ev.ok;
+        }
+        break;
+      }
       default:
-        // hello, model, session, permission_request, memory_* → not replayed
+        // hello, model, session, permission_request, approval_mode, echo_user (handled
+        // above), tool_policy → not replayed as messages
         break;
     }
   }
