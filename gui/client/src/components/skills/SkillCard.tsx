@@ -1,6 +1,8 @@
 import type { SkillEntry } from "../../types/protocol";
 import type { SkillUnderReview } from "./SkillReviewModal";
 import { skillSourceUrl } from "./skillSource";
+import { INT_CONNECT } from "../integrations/intCard";
+import { WIZ_SECONDARY } from "../integrations/wizard";
 
 const TRUST_LABEL: Record<string, string> = {
   official: "Official",
@@ -110,19 +112,19 @@ export function SkillCard({
           <span className="font-mono text-[11px] text-muted-foreground/60">No public source</span>
         )}
         {skill.installed ? (
-          <button className="wiz-secondary" disabled={acting} onClick={onUninstall}>
+          <button className={WIZ_SECONDARY} disabled={acting} onClick={onUninstall}>
             {acting ? "…" : "Remove"}
           </button>
         ) : reviewed ? (
           <button
-            className="int-connect"
+            className={INT_CONNECT}
             disabled={acting}
             onClick={() => onReview({ id: skill.id, name: skill.name, trust: skill.trust, source })}
           >
             Review &amp; install
           </button>
         ) : (
-          <button className="int-connect" disabled={acting} onClick={onInstall}>
+          <button className={INT_CONNECT} disabled={acting} onClick={onInstall}>
             {acting ? "Installing…" : "Install"}
           </button>
         )}

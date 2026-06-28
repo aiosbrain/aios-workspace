@@ -12,3 +12,16 @@ export const INT_CONNECT =
 export const SKELETON_CARD = "h-[120px] rounded-xl bg-muted opacity-60";
 
 export const intCard = (wired: boolean) => cn(INT_CARD, wired && INT_CARD_WIRED);
+
+// Integrations / Skills panel shell (also used inside the Settings scroll area).
+export const INTEGRATIONS_ROOT =
+  "flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-[22px] py-[18px]";
+export const INT_HEAD = "flex items-start justify-between gap-4";
+export const INT_HEAD_H2 =
+  "m-0 font-display text-[length:var(--aios-text-h3)] font-normal tracking-[var(--aios-tracking-snug)]";
+export const INT_SUB = "mt-1 max-w-[60ch] text-[13px] text-muted-foreground";
+export const INT_PROGRESS = "whitespace-nowrap font-mono text-xs text-muted-foreground";
+export const INT_FOOT = "text-xs text-muted-foreground";
+export const INT_SECTION = "mt-1.5 mb-[-2px] text-[13px] font-semibold text-foreground";
+export const INT_SECTION_MUTED = "mt-3.5 mb-[-2px] text-[13px] font-medium text-muted-foreground";
+export const META_ERROR = "self-center bg-transparent p-0.5 text-xs text-destructive";

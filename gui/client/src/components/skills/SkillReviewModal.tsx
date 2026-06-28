@@ -1,11 +1,40 @@
 import { useEffect, useState } from "react";
 import { useConnection } from "../../state/cockpit";
+import { cn } from "../../lib/cn";
+import {
+  WIZ_OVERLAY,
+  WIZ,
+  WIZ_HEAD,
+  WIZ_X,
+  WIZ_NOTE,
+  WIZ_VALIDATING,
+  WIZ_ERROR,
+  WIZ_TEXT,
+  WIZ_GO,
+  WIZ_SECONDARY,
+  WIZ_DONE_ACTIONS,
+} from "../integrations/wizard";
 import type { SkillConsent, SkillScanResponse } from "../../types/protocol";
 
 const RISK_LABEL: Record<string, string> = {
   low: "low risk",
   elevated: "review",
   high: "high risk",
+};
+
+const RISK_BADGE_BASE =
+  "rounded-md px-[9px] py-0.5 font-mono text-[11px] font-semibold uppercase tracking-[0.04em] border";
+const RISK_TONE: Record<string, string> = {
+  low: "text-emerald border-emerald/40 bg-emerald/10",
+  elevated: "text-amber border-amber/40 bg-amber/10",
+  high: "text-destructive border-destructive/45 bg-destructive/10",
+};
+const FINDING_BASE =
+  "grid grid-cols-[minmax(120px,auto)_auto_1fr] items-baseline gap-2 border-l-2 px-1 py-[3px] text-xs";
+const FINDING_TONE: Record<string, string> = {
+  high: "border-l-destructive",
+  info: "border-l-[var(--text-dim)]",
+  ok: "border-l-emerald text-muted-foreground",
 };
 
 export interface SkillUnderReview {
@@ -54,11 +83,11 @@ export function SkillReviewModal({
   const consent: SkillConsent = { accepted: true, ...(needsTyped ? { typed } : {}) };
 
   return (
-    <div className="wiz-overlay" onClick={onClose}>
-      <div className="wiz skill-review" onClick={(e) => e.stopPropagation()}>
-        <div className="wiz-head">
+    <div className={WIZ_OVERLAY} onClick={onClose}>
+      <div className={cn(WIZ, "w-[min(640px,100%)]")} onClick={(e) => e.stopPropagation()}>
+        <div className={WIZ_HEAD}>
           <h3>Review &amp; install — {skill.name}</h3>
-          <button className="wiz-x" onClick={onClose}>
+          <button className={WIZ_X} onClick={onClose}>
             ✕
           </button>
         </div>
@@ -75,61 +104,66 @@ export function SkillReviewModal({
         )}
 
         {scanErr && (
-          <div className="wiz-error">
+          <div className={WIZ_ERROR}>
             {isMarketplace ? "fetch / verify" : "scan"} failed: {scanErr}
           </div>
         )}
         {!scan && !scanErr && (
-          <div className="wiz-validating">
+          <div className={WIZ_VALIDATING}>
             {isMarketplace ? "Fetching + verifying skill…" : "Scanning skill…"}
           </div>
         )}
 
         {scan && (
           <>
-            <div className="skill-review-head">
-              <span className={`risk-badge ${scan.riskClass}`}>
+            <div className="flex items-center gap-2.5">
+              <span className={cn(RISK_BADGE_BASE, RISK_TONE[scan.riskClass])}>
                 {RISK_LABEL[scan.riskClass] || scan.riskClass}
               </span>
-              <span className="skill-review-meta">
+              <span className="font-mono text-[11px] text-muted-foreground">
                 {scan.counts.high} high-severity of {scan.counts.total} findings ·{" "}
                 {scan.counts.code_files} code file{scan.counts.code_files === 1 ? "" : "s"}
               </span>
             </div>
             {isMarketplace ? (
-              <p className="wiz-note">
+              <p className={WIZ_NOTE}>
                 This skill is <strong>marketplace · official</strong> (Anthropic's
                 <code>claude-plugins-official</code> directory). It was fetched at a pinned commit
                 and byte-verified against the catalog. The scan below is <strong>advisory</strong> —
                 review it, then install.
               </p>
             ) : (
-              <p className="wiz-note">
+              <p className={WIZ_NOTE}>
                 This skill is <strong>community · unverified</strong> with no first-party
                 provenance. The scan below is <strong>advisory</strong> — it can miss obfuscated
                 behavior. Install only if you trust the source.
               </p>
             )}
 
-            <div className="skill-findings">
+            <div className="flex max-h-[240px] flex-col gap-1 overflow-y-auto rounded-[8px] border border-border-visible p-2">
               {scan.findings.length === 0 ? (
-                <p className="skill-finding ok">No findings — instructions only, no code.</p>
+                <p className={cn(FINDING_BASE, FINDING_TONE.ok)}>
+                  No findings — instructions only, no code.
+                </p>
               ) : (
                 scan.findings.map((f, i) => (
-                  <div key={i} className={`skill-finding ${f.severity}`}>
-                    <span className="skill-finding-loc">
+                  <div key={i} className={cn(FINDING_BASE, FINDING_TONE[f.severity])}>
+                    <span className="font-mono text-[11px] text-muted-foreground">
                       {f.file}:{f.line}
                     </span>
-                    <span className="skill-finding-rule">{f.rule}</span>
-                    <code className="skill-finding-snip">{f.snippet}</code>
+                    <span className="font-mono text-[11px] text-primary">{f.rule}</span>
+                    <code className="truncate font-mono text-[11px] text-foreground">
+                      {f.snippet}
+                    </code>
                   </div>
                 ))
               )}
             </div>
 
-            <label className="skill-consent">
+            <label className="flex cursor-pointer items-start gap-2 text-[13px]">
               <input
                 type="checkbox"
+                className="mt-0.5"
                 checked={accepted}
                 onChange={(e) => setAccepted(e.target.checked)}
               />
@@ -140,13 +174,13 @@ export function SkillReviewModal({
               </span>
             </label>
             {needsTyped && (
-              <div className="skill-typed">
-                <p className="wiz-note skill-typed-warn">
+              <div>
+                <p className={WIZ_NOTE}>
                   ⚠ This skill scanned <strong>HIGH risk</strong>. Type
-                  <code>{skill.id}</code> to confirm.
+                  <code className="font-mono text-xs text-destructive">{skill.id}</code> to confirm.
                 </p>
                 <input
-                  className="wiz-text"
+                  className={WIZ_TEXT}
                   placeholder={skill.id}
                   value={typed}
                   onChange={(e) => setTyped(e.target.value)}
@@ -154,12 +188,12 @@ export function SkillReviewModal({
               </div>
             )}
 
-            {rowErr && <div className="wiz-error">{rowErr}</div>}
-            <div className="wiz-done-actions">
-              <button className="wiz-go" disabled={!canInstall} onClick={() => onInstall(consent)}>
+            {rowErr && <div className={WIZ_ERROR}>{rowErr}</div>}
+            <div className={WIZ_DONE_ACTIONS}>
+              <button className={WIZ_GO} disabled={!canInstall} onClick={() => onInstall(consent)}>
                 {acting ? "Installing…" : isMarketplace ? "Install" : "Install anyway"}
               </button>
-              <button className="wiz-secondary" onClick={onClose}>
+              <button className={WIZ_SECONDARY} onClick={onClose}>
                 Cancel
               </button>
             </div>
