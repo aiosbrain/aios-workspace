@@ -1,0 +1,94 @@
+/* Rendered-markdown styles for assistant messages.
+   The assistant bubble renders markdown via react-markdown (not preformatted),
+   so these element styles can't be expressed as per-element Tailwind utilities —
+   they're scoped to the `.assistant-prose` container the bubble applies.
+   Colors/type come from the design tokens via the GUI var bridge (see index.css). */
+.assistant-prose {
+  white-space: normal;
+}
+.assistant-prose > :first-child {
+  margin-top: 0;
+}
+.assistant-prose > :last-child {
+  margin-bottom: 0;
+}
+.assistant-prose p {
+  margin: 0 0 8px;
+}
+.assistant-prose h1,
+.assistant-prose h2,
+.assistant-prose h3,
+.assistant-prose h4 {
+  margin: 14px 0 6px;
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: var(--aios-tracking-snug);
+  line-height: var(--aios-leading-snug);
+}
+.assistant-prose h1 {
+  font-size: 1.3em;
+}
+.assistant-prose h2 {
+  font-size: 1.18em;
+}
+.assistant-prose h3 {
+  font-size: 1.06em;
+}
+.assistant-prose ul,
+.assistant-prose ol {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+.assistant-prose li {
+  margin: 2px 0;
+}
+.assistant-prose a {
+  color: var(--link);
+  text-decoration: underline;
+}
+.assistant-prose code {
+  font: 12.5px var(--mono);
+  background: var(--aios-code-bg);
+  border: 1px solid var(--border-soft);
+  padding: 1px 5px;
+  border-radius: var(--aios-radius-sm);
+}
+.assistant-prose pre {
+  background: var(--aios-code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--aios-radius-lg);
+  padding: 11px 13px;
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+.assistant-prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.assistant-prose blockquote {
+  margin: 0 0 8px;
+  padding: 2px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+.assistant-prose table {
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.assistant-prose th,
+.assistant-prose td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+}
+.assistant-prose th {
+  background: var(--surface-2);
+}
+.assistant-prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
