@@ -287,7 +287,7 @@ export function useCockpit() {
         applyConn("offline");
         return;
       }
-      connect(sid, { reconnecting: true }).catch(() => {
+      connect(sid).catch(() => {
         /* its onclose will reschedule */
       });
     }, delay);
@@ -302,7 +302,7 @@ export function useCockpit() {
     clearReconnect();
     reconnectAttemptsRef.current = 0;
     const sid = currentSessionRef.current;
-    if (sid) connect(sid, { reconnecting: true }).catch(() => {});
+    if (sid) connect(sid).catch(() => {});
   }, [connect, clearReconnect]);
 
   const resetChatState = useCallback(() => {
