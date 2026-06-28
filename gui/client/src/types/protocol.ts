@@ -98,6 +98,16 @@ export interface MemoryUndoneEvent {
   id: string;
   ok: boolean;
 }
+/**
+ * Additive: server confirms an in-session approval-mode switch (mirrors `ModelEvent`),
+ * so the composer selector stays in sync and a stored transcript can replay the change.
+ * Emitted only by upgraded servers for runtimes that advertise `capabilities.approvalModes`.
+ * Never emitted under AIOS_GUI_TEST_POLICY. Older clients ignore the unknown type.
+ */
+export interface ApprovalModeEvent {
+  type: "approval_mode";
+  mode: string;
+}
 export interface SessionEvent {
   type: "session";
   session_id: string;
@@ -135,6 +145,7 @@ export type ServerEvent =
   | ErrorEvent
   | MemoryUpdatedEvent
   | MemoryUndoneEvent
+  | ApprovalModeEvent
   | SessionEvent
   | EchoUserEvent
   | ToolPolicyEvent;
@@ -150,6 +161,12 @@ export interface UserMessageMsg {
   type: "user_message";
   text: string;
   model?: string;
+  /**
+   * Additive: session-scoped approval mode (one of the runtime's advertised
+   * `capabilities.approvalModes` ids). The server validates it against that list and
+   * applies it on the NEXT send via the adapter; never persisted. Absent → unchanged.
+   */
+  approvalMode?: string;
 }
 export interface PermissionResponseMsg {
   type: "permission_response";
@@ -195,6 +212,17 @@ export interface SessionListResponse {
 export interface SessionTranscriptResponse {
   id: string;
   events: TranscriptEvent[];
+}
+
+/** One full-content chat-search hit (GET /api/sessions/search?q=). */
+export interface SessionSearchResult {
+  id: string;
+  title: string;
+  /** Plain-text, HTML-stripped, length-capped excerpt around the match. */
+  snippet: string;
+}
+export interface SessionSearchResponse {
+  results: SessionSearchResult[];
 }
 
 /* ---- personalities (Settings) ---- */

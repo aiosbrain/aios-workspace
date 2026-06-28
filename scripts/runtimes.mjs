@@ -46,6 +46,11 @@ export const RUNTIME_NAMES = Object.keys(RUNTIMES);
 //   contextWindow:   meter denominator; null hides the bar
 //   costTracking:    reports end-of-turn cost
 //   memoryReviewer:  background memory reviewer available (toast + Settings toggle)
+//   approvalModes:   composer approval-mode choices [{id,label}]; [] hides the selector.
+//                    The claude-sdk list is filled per-call in runtimeCapabilities() (it is
+//                    env-gated — see claudeApprovalModes); other drivers stay [].
+//   reasoningLevels: scaffold [{id,label}]; [] hides the control (no backend wiring yet).
+//   fileAttach:      scaffold; whether file attachment is offered (no backend wiring yet).
 export const DRIVER_CAPS = {
   "claude-sdk": {
     permissionStyle: "boolean",
@@ -54,6 +59,9 @@ export const DRIVER_CAPS = {
     contextWindow: 200000,
     costTracking: true,
     memoryReviewer: true,
+    approvalModes: [],
+    reasoningLevels: [],
+    fileAttach: false,
   },
   acp: {
     permissionStyle: "options",
@@ -62,6 +70,9 @@ export const DRIVER_CAPS = {
     contextWindow: null,
     costTracking: false,
     memoryReviewer: false,
+    approvalModes: [],
+    reasoningLevels: [],
+    fileAttach: false,
   },
   codex: {
     permissionStyle: "boolean",
@@ -70,6 +81,9 @@ export const DRIVER_CAPS = {
     contextWindow: null,
     costTracking: false,
     memoryReviewer: false,
+    approvalModes: [],
+    reasoningLevels: [],
+    fileAttach: false,
   },
   opencode: {
     permissionStyle: "options",
@@ -78,8 +92,38 @@ export const DRIVER_CAPS = {
     contextWindow: null,
     costTracking: false,
     memoryReviewer: false,
+    approvalModes: [],
+    reasoningLevels: [],
+    fileAttach: false,
   },
 };
+
+/**
+ * Approval modes the claude-sdk driver advertises, mapped to SDK PermissionModes.
+ * "Ask for approval" (default) keeps the per-tool host prompt; "Approve edits"
+ * (acceptEdits) auto-accepts file edits but still prompts for other dangerous tools.
+ *
+ * "Full access" (bypassPermissions) is GATED OFF by default: it skips the SDK permission
+ * prompt entirely (and needs allowDangerouslySkipPermissions server-side), so it is only
+ * advertised when AIOS_GUI_ALLOW_FULL_ACCESS is set — which must stay unset until the
+ * governance regression proves PreToolUse hooks still block secret/tier violations under it.
+ * Read live (not cached) so a test can toggle the env var per case.
+ */
+export function claudeApprovalModes() {
+  const modes = [
+    { id: "default", label: "Ask for approval" },
+    { id: "acceptEdits", label: "Approve edits" },
+  ];
+  if ((process.env.AIOS_GUI_ALLOW_FULL_ACCESS || "").trim()) {
+    modes.push({ id: "bypassPermissions", label: "Full access" });
+  }
+  return modes;
+}
+
+/** The set of approval-mode ids the claude-sdk driver will honor right now (env-gated). */
+export function allowedApprovalModeIds() {
+  return new Set(claudeApprovalModes().map((m) => m.id));
+}
 
 /**
  * Build the `capabilities` object for a runtime. `modelOptions` is the server's
@@ -88,8 +132,14 @@ export const DRIVER_CAPS = {
  */
 export function runtimeCapabilities(runtime, modelOptions = []) {
   const gui = GUI_RUNTIMES[runtime];
-  const base = (gui && DRIVER_CAPS[gui.driver]) || DRIVER_CAPS["claude-sdk"];
-  return { ...base, models: base.modelSwitching ? modelOptions : [] };
+  const driver = (gui && gui.driver) || "claude-sdk";
+  const base = DRIVER_CAPS[driver] || DRIVER_CAPS["claude-sdk"];
+  return {
+    ...base,
+    models: base.modelSwitching ? modelOptions : [],
+    // Only the claude-sdk driver has a wired, env-gated approval-mode list.
+    approvalModes: driver === "claude-sdk" ? claudeApprovalModes() : [],
+  };
 }
 
 // View consumed by `aios skills export` (Phase 2): { runtime: {layout, harness} }
