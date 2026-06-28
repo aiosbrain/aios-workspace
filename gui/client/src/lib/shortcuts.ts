@@ -34,6 +34,24 @@ export function resolveShortcut(e: ShortcutKeyEvent): ShortcutAction {
   }
 }
 
+/** True on macOS-family platforms — picks the modifier glyph shown in shortcut hints. */
+export const IS_MAC =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
+
+/** The platform modifier label: "⌘" on macOS, "Ctrl" elsewhere. */
+export const MOD_LABEL = IS_MAC ? "⌘" : "Ctrl";
+
+/**
+ * Display label for a global shortcut, derived from the same key letters
+ * resolveShortcut() matches — so the UI hint can't drift from the actual binding
+ * across macOS/Windows/Linux.
+ */
+export function shortcutLabel(action: Exclude<ShortcutAction, null>): string {
+  const key = action === "palette" ? "K" : "N";
+  return IS_MAC ? `${MOD_LABEL}${key}` : `${MOD_LABEL}+${key}`;
+}
+
 /** Whether an event target is a text-entry surface (input/textarea/select/contenteditable). */
 export function isEditableTarget(
   target: { tagName?: string; isContentEditable?: boolean } | null | undefined

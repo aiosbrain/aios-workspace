@@ -78,3 +78,14 @@ export const DEFAULT_CAPS: Capabilities = {
   reasoningLevels: [],
   fileAttach: false,
 };
+
+/**
+ * Merge a (possibly partial / older-server) wire `capabilities` object onto
+ * DEFAULT_CAPS so every required field is always defined. Defaulting only when the
+ * whole object is absent would leave newer fields (approvalModes, reasoningLevels,
+ * fileAttach) `undefined` when an un-upgraded server sends a pre-change shape, and
+ * later reads (`capabilities.approvalModes.length`, …) would throw.
+ */
+export function normalizeCapabilities(wire?: Partial<Capabilities> | null): Capabilities {
+  return { ...DEFAULT_CAPS, ...(wire ?? {}) };
+}

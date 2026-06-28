@@ -109,12 +109,24 @@ export const DRIVER_CAPS = {
  * governance regression proves PreToolUse hooks still block secret/tier violations under it.
  * Read live (not cached) so a test can toggle the env var per case.
  */
+/**
+ * Parse AIOS_GUI_ALLOW_FULL_ACCESS as an explicit affirmative opt-in. ONLY 1/true/yes/on
+ * (case-insensitive) enable it; 0/false/""/unset stay OFF — so a false-like value can never
+ * light up "Full access" (bypassPermissions). Shared by the claude-code adapter so the
+ * advertised mode list and the SDK bypass gate stay aligned. Read live (not cached) so a
+ * test can toggle the env var per case.
+ */
+export function fullAccessEnabled() {
+  const v = (process.env.AIOS_GUI_ALLOW_FULL_ACCESS || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export function claudeApprovalModes() {
   const modes = [
     { id: "default", label: "Ask for approval" },
     { id: "acceptEdits", label: "Approve edits" },
   ];
-  if ((process.env.AIOS_GUI_ALLOW_FULL_ACCESS || "").trim()) {
+  if (fullAccessEnabled()) {
     modes.push({ id: "bypassPermissions", label: "Full access" });
   }
   return modes;

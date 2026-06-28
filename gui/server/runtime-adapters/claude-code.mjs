@@ -11,13 +11,13 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { MEMORY_FILES } from "../memory-files.mjs";
-import { allowedApprovalModeIds } from "../../../scripts/runtimes.mjs";
+import { allowedApprovalModeIds, fullAccessEnabled } from "../../../scripts/runtimes.mjs";
 
 // Whether "Full access" (bypassPermissions) is enabled. Gated OFF by default: the mode
 // is only advertised when this env flag is set (see runtimes.claudeApprovalModes), and
 // the SDK requires allowDangerouslySkipPermissions to honor it — so we only pass that
 // option when the flag is on. Keeps the default build incapable of bypassing prompts.
-const FULL_ACCESS_ENABLED = !!(process.env.AIOS_GUI_ALLOW_FULL_ACCESS || "").trim();
+const FULL_ACCESS_ENABLED = fullAccessEnabled();
 
 export const meta = { runtime: "claude-code", driver: "claude-sdk" };
 

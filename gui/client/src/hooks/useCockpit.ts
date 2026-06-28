@@ -4,7 +4,7 @@ import { createApi } from "../lib/api";
 import { resolveGuiToken, connectErrorMessage } from "../lib/token";
 import { formatResultMeta } from "../lib/format";
 import { buildMessagesFromEvents } from "../lib/transcript";
-import { DEFAULT_CAPS, type Capabilities } from "../types/runtime";
+import { DEFAULT_CAPS, normalizeCapabilities, type Capabilities } from "../types/runtime";
 import type {
   ServerEvent,
   Usage,
@@ -177,7 +177,7 @@ export function useCockpit() {
             setRepo(msg.repo);
             setRuntime(msg.runtime || "");
             setSafetyNote(msg.safetyNote || null);
-            setCapabilities(msg.capabilities ?? DEFAULT_CAPS);
+            setCapabilities(normalizeCapabilities(msg.capabilities));
             setCurrentSession(msg.sessionId);
             loadChats();
             break;
@@ -427,7 +427,7 @@ export function useCockpit() {
         // Seed capabilities from config so capability-gated chrome (model picker,
         // context meter, memory controls) is correct on first paint — before the
         // first WebSocket hello. Older servers omit this → keep DEFAULT_CAPS.
-        const caps = d.capabilities ?? DEFAULT_CAPS;
+        const caps = normalizeCapabilities(d.capabilities);
         setCapabilities(caps);
         if (caps.models.some((m) => m.id === d.model)) setModel(d.model);
         setRuntime(d.runtime || "");

@@ -36,8 +36,18 @@ const SENSITIVE_PHRASE = "our " + "day" + " rate is high";
 const EXPOSED_MODES = [...allowedApprovalModeIds()];
 
 test("only default + acceptEdits are exposed by default; bypassPermissions is withheld", () => {
-  assert.ok(!allowedApprovalModeIds().has("bypassPermissions"), "Full access must be gated off");
-  assert.deepEqual([...EXPOSED_MODES].sort(), ["acceptEdits", "default"]);
+  // Compute under a controlled env: a dev shell with AIOS_GUI_ALLOW_FULL_ACCESS set
+  // must not make this default-gate assertion fail (EXPOSED_MODES captures ambient env
+  // at module load, which is fine for the guard matrix below but not for this gate).
+  const prev = process.env.AIOS_GUI_ALLOW_FULL_ACCESS;
+  delete process.env.AIOS_GUI_ALLOW_FULL_ACCESS;
+  try {
+    assert.ok(!allowedApprovalModeIds().has("bypassPermissions"), "Full access must be gated off");
+    assert.deepEqual([...allowedApprovalModeIds()].sort(), ["acceptEdits", "default"]);
+  } finally {
+    if (prev === undefined) delete process.env.AIOS_GUI_ALLOW_FULL_ACCESS;
+    else process.env.AIOS_GUI_ALLOW_FULL_ACCESS = prev;
+  }
 });
 
 // The guard runs as a separate PreToolUse process, so its verdict does not depend on the

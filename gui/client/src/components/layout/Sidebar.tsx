@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, Search, UploadCloud, FolderGit2 } from "lucide-react";
 import { useConnection, useSession } from "../../state/cockpit";
 import { groupChatsByRecency } from "../../lib/recency";
+import { shortcutLabel } from "../../lib/shortcuts";
 import type { SessionSummary } from "../../types/protocol";
 
 export function Sidebar() {
@@ -77,7 +78,7 @@ export function Sidebar() {
       <div className="side-actions">
         <button className="side-action" onClick={newChat} disabled={isEmptyDraft}>
           <Plus size={16} /> New chat
-          <span className="side-kbd">⌘N</span>
+          <span className="side-kbd">{shortcutLabel("newChat")}</span>
         </button>
         <div className="side-search">
           <Search size={15} />
@@ -88,7 +89,7 @@ export function Sidebar() {
             aria-label="Search chats"
           />
           <span className="side-kbd" title="Open command palette">
-            ⌘K
+            {shortcutLabel("palette")}
           </span>
         </div>
       </div>

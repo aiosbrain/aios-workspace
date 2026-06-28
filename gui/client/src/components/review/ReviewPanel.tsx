@@ -18,7 +18,9 @@ export function ReviewPanel() {
 
   const load = useCallback(async () => {
     setError(null);
-    setOutput("");
+    // Don't clear `output` here: load() also runs as the post-push status refresh,
+    // and wiping it would hide the push transcript the user just produced. The next
+    // user action (a dry-run/push) clears it via push()'s own setOutput("").
     try {
       const data = await api.get<ReviewResponse>("/api/review");
       setPlan(data);

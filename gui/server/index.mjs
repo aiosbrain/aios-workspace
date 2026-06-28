@@ -355,8 +355,16 @@ const server = http.createServer((req, res) => {
       res.writeHead(401);
       return res.end("unauthorized");
     }
+    // Bail before the O(all sessions) visibility walk when there's nothing to search.
+    // The palette debounces a request per keystroke, so blank/whitespace queries are the
+    // common case; searchSessions would return [] for them anyway.
+    const q = (url.searchParams.get("q") || "").trim();
+    if (!q) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ results: [] }));
+    }
     const { sessions } = visibleSessionIndex(SESSIONS_DIR, readSessionIndex(SESSIONS_INDEX));
-    const out = searchSessions(SESSIONS_DIR, sessions, url.searchParams.get("q") || "");
+    const out = searchSessions(SESSIONS_DIR, sessions, q);
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(out));
   }
