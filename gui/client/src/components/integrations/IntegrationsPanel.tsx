@@ -4,11 +4,7 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { ConnectorRow } from "./ConnectorRow";
 import { ConnectWizard } from "./ConnectWizard";
-import type {
-  BlueprintResponse,
-  Connector,
-  ConnectorsResponse,
-} from "../../types/protocol";
+import type { BlueprintResponse, Connector, ConnectorsResponse } from "../../types/protocol";
 
 // Two compact rows per row on wide widths; one when narrow.
 const GRID = "grid gap-2 sm:grid-cols-2";
@@ -63,7 +59,7 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
 
   const filtered = useMemo(
     () => (connectors || []).filter((c) => matches(c, query)),
-    [connectors, query],
+    [connectors, query]
   );
 
   if (error)

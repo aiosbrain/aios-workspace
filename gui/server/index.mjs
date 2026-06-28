@@ -157,6 +157,10 @@ const server = http.createServer((req, res) => {
         runtime: cfg.runtime,
         memoryReview: cfg.memoryReview,
         models: [...ALLOWED_MODELS],
+        // Additive: same capability descriptor the `hello` event carries, so the
+        // cockpit can drive capability-gated chrome from config BEFORE the first
+        // WebSocket hello — closing the pre-connect flash on non-Claude runtimes.
+        capabilities: runtimeCapabilities(cfg.runtime, MODEL_OPTIONS),
       })
     );
   }

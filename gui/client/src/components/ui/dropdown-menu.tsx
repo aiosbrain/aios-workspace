@@ -19,7 +19,7 @@ const DropdownMenuContent = React.forwardRef<
       className={cn(
         "z-50 min-w-[10rem] overflow-hidden rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-overlay",
         "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
-        className,
+        className
       )}
       {...props}
     />
@@ -42,7 +42,11 @@ const DropdownMenuRadioItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.RadioItem>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.RadioItem>
 >(({ className, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.RadioItem ref={ref} className={cn(itemClasses, "pr-8", className)} {...props}>
+  <DropdownMenuPrimitive.RadioItem
+    ref={ref}
+    className={cn(itemClasses, "pr-8", className)}
+    {...props}
+  >
     <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
         <Check className="h-4 w-4 text-lime" />
@@ -59,7 +63,10 @@ const DropdownMenuLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Label
     ref={ref}
-    className={cn("px-2.5 py-1.5 font-mono text-xs uppercase tracking-wide text-muted-foreground", className)}
+    className={cn(
+      "px-2.5 py-1.5 font-mono text-xs uppercase tracking-wide text-muted-foreground",
+      className
+    )}
     {...props}
   />
 ));
@@ -69,7 +76,11 @@ const DropdownMenuSeparator = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Separator>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
 >(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />
+  <DropdownMenuPrimitive.Separator
+    ref={ref}
+    className={cn("-mx-1 my-1 h-px bg-border", className)}
+    {...props}
+  />
 ));
 DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName;
 

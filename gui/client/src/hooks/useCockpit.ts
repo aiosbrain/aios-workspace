@@ -67,8 +67,8 @@ export function useCockpit() {
   const finishAssistant = useCallback(() => {
     setMessages((prev) =>
       prev.map((m, i) =>
-        i === prev.length - 1 && m.kind === "assistant" ? { ...m, streaming: false } : m,
-      ),
+        i === prev.length - 1 && m.kind === "assistant" ? { ...m, streaming: false } : m
+      )
     );
   }, []);
 
@@ -148,12 +148,15 @@ export function useCockpit() {
               prev.map((m) =>
                 m.kind === "tool" && m.id === msg.id
                   ? { ...m, result: msg.text, isError: msg.is_error }
-                  : m,
-              ),
+                  : m
+              )
             );
             break;
           case "permission_request":
-            setPermissions((prev) => [...prev, { id: msg.id, tool: msg.tool, input: msg.input, options: msg.options }]);
+            setPermissions((prev) => [
+              ...prev,
+              { id: msg.id, tool: msg.tool, input: msg.input, options: msg.options },
+            ]);
             break;
           case "usage":
             usageRef.current = msg.usage;
@@ -179,15 +182,21 @@ export function useCockpit() {
             append({ kind: "meta", text: `error: ${msg.message}` });
             break;
           case "memory_updated":
-            append({ kind: "memory", id: msg.id, file: msg.file, summary: msg.summary, count: msg.count });
+            append({
+              kind: "memory",
+              id: msg.id,
+              file: msg.file,
+              summary: msg.summary,
+              count: msg.count,
+            });
             break;
           case "memory_undone":
             setMessages((prev) =>
               prev.map((m) =>
                 m.kind === "memory" && m.id === msg.id
                   ? { ...m, undone: msg.ok, undoFailed: !msg.ok }
-                  : m,
-              ),
+                  : m
+              )
             );
             break;
           default:
@@ -196,7 +205,7 @@ export function useCockpit() {
       };
       return opened;
     },
-    [append, appendDelta, finishAssistant, loadChats],
+    [append, appendDelta, finishAssistant, loadChats]
   );
 
   const resetChatState = useCallback(() => {
@@ -247,7 +256,7 @@ export function useCockpit() {
       setCurrentSession(id);
       connect(id).catch((e: Error) => append({ kind: "meta", text: `error: ${e.message}` }));
     },
-    [append, connect, resetChatState],
+    [append, connect, resetChatState]
   );
 
   const changeModel = useCallback((m: string) => {
@@ -259,8 +268,7 @@ export function useCockpit() {
     async (override?: string) => {
       const text = (typeof override === "string" ? override : input).trim();
       if (!text) return;
-      const openSocket =
-        wsRef.current?.readyState === WebSocket.OPEN ? wsRef.current : null;
+      const openSocket = wsRef.current?.readyState === WebSocket.OPEN ? wsRef.current : null;
       if (!openSocket && currentSession !== null) return;
       append({ kind: "user", text });
       setInput("");
@@ -276,13 +284,13 @@ export function useCockpit() {
           prev[prev.length - 1]?.kind === "user" &&
           (prev[prev.length - 1] as { text?: string }).text === text
             ? prev.slice(0, -1)
-            : prev,
+            : prev
         );
         setInput((cur) => cur || text);
         append({ kind: "meta", text: `error: ${(e as Error).message}` });
       }
     },
-    [append, connect, currentSession, input, model],
+    [append, connect, currentSession, input, model]
   );
 
   const respondPermission = useCallback((id: number, allow: boolean) => {
@@ -302,12 +310,23 @@ export function useCockpit() {
   /* ---- boot effects (identity + config + restore last chat) ---- */
 
   useEffect(() => {
-    api.get<{ me?: { role?: string } }>("/api/me").then((d) => setRole(d.me?.role || null)).catch(() => {});
-    api.get<{ repo?: string }>("/api/info").then((d) => setRepo(d.repo || "")).catch(() => {});
+    api
+      .get<{ me?: { role?: string } }>("/api/me")
+      .then((d) => setRole(d.me?.role || null))
+      .catch(() => {});
+    api
+      .get<{ repo?: string }>("/api/info")
+      .then((d) => setRepo(d.repo || ""))
+      .catch(() => {});
     api
       .get<ConfigResponse>("/api/config")
       .then((d) => {
-        if (DEFAULT_CAPS.models.some((m) => m.id === d.model)) setModel(d.model);
+        // Seed capabilities from config so capability-gated chrome (model picker,
+        // context meter, memory controls) is correct on first paint — before the
+        // first WebSocket hello. Older servers omit this → keep DEFAULT_CAPS.
+        const caps = d.capabilities ?? DEFAULT_CAPS;
+        setCapabilities(caps);
+        if (caps.models.some((m) => m.id === d.model)) setModel(d.model);
         setRuntime(d.runtime || "");
       })
       .catch(() => {});

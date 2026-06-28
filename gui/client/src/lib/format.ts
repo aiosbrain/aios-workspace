@@ -22,7 +22,7 @@ export function fmtUsd(n: number): string {
 export function formatResultMeta(
   usage: Usage | null | undefined,
   cost_usd: number | null | undefined,
-  prevCost: number,
+  prevCost: number
 ): string {
   const parts: string[] = [];
   if (usage) {
@@ -33,7 +33,7 @@ export function formatResultMeta(
     parts.push(
       prevCost > 0 && delta >= 0
         ? `+${fmtUsd(delta)} (session ${fmtUsd(cost_usd)})`
-        : fmtUsd(cost_usd),
+        : fmtUsd(cost_usd)
     );
   }
   return `turn done${parts.length ? ` · ${parts.join(" · ")}` : ""}`;

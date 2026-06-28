@@ -62,7 +62,7 @@ export function SkillsPanel() {
       community: (data?.community || []).filter((s) => matches(s, query)),
       installedCount: (data?.skills || []).filter((s) => s.installed).length,
     }),
-    [data, query],
+    [data, query]
   );
 
   const cardProps = (s: SkillEntry) => ({
@@ -154,8 +154,8 @@ export function SkillsPanel() {
         <>
           <h3 className="int-section int-section-muted">Community</h3>
           <p className="int-sub">
-            ⚠ Unverified, no first-party provenance. Installing runs its bundled
-            instructions/code — review the source and scan, then confirm.
+            ⚠ Unverified, no first-party provenance. Installing runs its bundled instructions/code —
+            review the source and scan, then confirm.
           </p>
           <div className={GRID}>
             {community.map((s) => (

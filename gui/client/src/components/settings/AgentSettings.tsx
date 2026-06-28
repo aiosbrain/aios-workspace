@@ -89,8 +89,8 @@ export function AgentSettings() {
       <section className="set-section">
         <h3 className="set-section-title">Personality</h3>
         <p className="set-section-hint">
-          A style layer appended to the system prompt — it never overrides your rules,
-          CLAUDE.md, or skills. Changing it starts a new chat so the voice takes effect.
+          A style layer appended to the system prompt — it never overrides your rules, CLAUDE.md, or
+          skills. Changing it starts a new chat so the voice takes effect.
         </p>
         {!personalities ? (
           <div className="int-grid">
@@ -137,8 +137,8 @@ export function AgentSettings() {
         </label>
         <p className="set-section-hint">
           A fast model (Haiku) conservatively saves durable facts to{" "}
-          <code>.claude/memory/USER.md</code> / <code>WORKSPACE.md</code> — you get a 💾 notice
-          with an undo, and changes take effect next session. Secrets are never sent or saved.
+          <code>.claude/memory/USER.md</code> / <code>WORKSPACE.md</code> — you get a 💾 notice with
+          an undo, and changes take effect next session. Secrets are never sent or saved.
           {memUnavailable ? (
             <>
               {" "}

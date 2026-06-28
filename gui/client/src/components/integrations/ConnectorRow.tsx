@@ -29,7 +29,7 @@ export function ConnectorRow({
         <div className="flex items-center gap-2">
           <span
             className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-              wired ? "bg-accent" : "bg-muted-foreground/40"
+              wired ? "bg-lime" : "bg-muted-foreground/40"
             }`}
             title={wired ? "Connected" : "Available"}
           />

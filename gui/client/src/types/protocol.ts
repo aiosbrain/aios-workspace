@@ -3,8 +3,9 @@
  *
  * This is the single typed source of truth for the WebSocket event stream and
  * the token-gated REST surface. It MUST stay byte-compatible with
- * `gui/server/index.mjs`; the only in-scope additive change is `hello.capabilities`
- * (see ./runtime.ts), which older servers may omit.
+ * `gui/server/index.mjs`. Capability descriptors (`hello.capabilities` and the
+ * mirrored `ConfigResponse.capabilities`, see ./runtime.ts) are additive and may
+ * be omitted by older servers.
  */
 
 import type { Capabilities } from "./runtime";
@@ -106,6 +107,19 @@ export interface EchoUserEvent {
   type: "echo_user";
   text: string;
 }
+/**
+ * Emitted only when AIOS_GUI_TEST_POLICY is set (deterministic test policy) so the
+ * UX harness can re-derive each tool verdict from the transcript. Inert in
+ * production; the client ignores it (no default-branch handler).
+ */
+export interface ToolPolicyEvent {
+  type: "tool_policy";
+  tool: string;
+  command: string;
+  input: unknown;
+  allowed: boolean;
+  reason: string;
+}
 
 export type ServerEvent =
   | HelloEvent
@@ -122,7 +136,8 @@ export type ServerEvent =
   | MemoryUpdatedEvent
   | MemoryUndoneEvent
   | SessionEvent
-  | EchoUserEvent;
+  | EchoUserEvent
+  | ToolPolicyEvent;
 
 /** Any stored transcript line — same shape as a live ServerEvent. */
 export type TranscriptEvent = ServerEvent;
@@ -158,7 +173,10 @@ export interface ConfigResponse {
   personality: string | null;
   runtime: string;
   memoryReview: boolean | null;
-  models: { id: string; label: string }[];
+  /** Raw allowed-model ids (the server emits `[...ALLOWED_MODELS]`, a string[]). */
+  models: string[];
+  /** Additive: same descriptor as `hello.capabilities`. Absent on older servers. */
+  capabilities?: Capabilities;
 }
 
 export interface SessionSummary {
@@ -318,6 +336,8 @@ export interface ConnectorsResponse {
 }
 export interface BlueprintResponse {
   ok: boolean;
+  /** Raw pulled team blueprint (`.aios/blueprint.json`), or null if none. */
+  blueprint?: Record<string, unknown> | null;
   connectors?: Connector[];
   note?: string | null;
 }

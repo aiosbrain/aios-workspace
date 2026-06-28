@@ -22,7 +22,8 @@ export function ContextMeter() {
     : null;
   const pct = ctx == null ? 0 : Math.min(100, Math.round((ctx / window) * 100));
   // Violet through the comfortable range; warm to amber as the window fills.
-  const fill = pct >= 90 ? "var(--aios-amber)" : pct >= 75 ? "var(--aios-fuchsia)" : "var(--aios-violet)";
+  const fill =
+    pct >= 90 ? "var(--aios-amber)" : pct >= 75 ? "var(--aios-fuchsia)" : "var(--aios-violet)";
 
   return (
     <TooltipProvider delayDuration={200}>

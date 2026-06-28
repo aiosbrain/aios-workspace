@@ -17,7 +17,7 @@ const SheetOverlay = React.forwardRef<
     className={cn(
       "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
       "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
-      className,
+      className
     )}
     {...props}
   />
@@ -34,8 +34,7 @@ const sideClasses: Record<Side, string> = {
     "inset-y-0 right-0 h-full w-3/4 max-w-sm border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
 };
 
-interface SheetContentProps
-  extends React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> {
+interface SheetContentProps extends React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> {
   side?: Side;
 }
 
@@ -51,7 +50,7 @@ const SheetContent = React.forwardRef<
         "fixed z-50 flex flex-col gap-4 bg-card p-6 shadow-overlay transition ease-in-out",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         sideClasses[side],
-        className,
+        className
       )}
       {...props}
     >
@@ -68,22 +67,27 @@ SheetContent.displayName = SheetPrimitive.Content.displayName;
 function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex flex-col gap-1.5", className)} {...props} />;
 }
-function SheetTitle({ className, ...props }: React.ComponentPropsWithoutRef<typeof SheetPrimitive.Title>) {
-  return <SheetPrimitive.Title className={cn("font-display text-lg text-foreground", className)} {...props} />;
+function SheetTitle({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof SheetPrimitive.Title>) {
+  return (
+    <SheetPrimitive.Title
+      className={cn("font-display text-lg text-foreground", className)}
+      {...props}
+    />
+  );
 }
 function SheetDescription({
   className,
   ...props
 }: React.ComponentPropsWithoutRef<typeof SheetPrimitive.Description>) {
-  return <SheetPrimitive.Description className={cn("text-sm text-muted-foreground", className)} {...props} />;
+  return (
+    <SheetPrimitive.Description
+      className={cn("text-sm text-muted-foreground", className)}
+      {...props}
+    />
+  );
 }
 
-export {
-  Sheet,
-  SheetTrigger,
-  SheetClose,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-};
+export { Sheet, SheetTrigger, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetDescription };

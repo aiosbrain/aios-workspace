@@ -31,7 +31,10 @@ function AccountSection() {
   const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
-    api.get<{ ok: boolean; me: Me | null }>("/api/me").then((d) => setMe(d.me)).catch(() => {});
+    api
+      .get<{ ok: boolean; me: Me | null }>("/api/me")
+      .then((d) => setMe(d.me))
+      .catch(() => {});
   }, [api]);
 
   const repoName = repo ? repo.split("/").filter(Boolean).pop() : "workspace";
@@ -55,7 +58,9 @@ function AccountSection() {
         </div>
         <div>
           <dt>Path</dt>
-          <dd className="set-kv-mono" title={repo}>{repo || "—"}</dd>
+          <dd className="set-kv-mono" title={repo}>
+            {repo || "—"}
+          </dd>
         </div>
         <div>
           <dt>Runtime</dt>
