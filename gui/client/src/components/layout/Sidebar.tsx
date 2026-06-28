@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { Plus, Search, UploadCloud, FolderGit2 } from "lucide-react";
-import { useConnection, useRuntime, useSession } from "../../state/cockpit";
+import { useConnection, useSession } from "../../state/cockpit";
 import { groupChatsByRecency } from "../../lib/recency";
 import type { SessionSummary } from "../../types/protocol";
 
 export function Sidebar() {
   const { repo } = useConnection();
-  const { runtime } = useRuntime();
   const { view, setView, connected, chats, currentSession, openChat, newChat, input, busy, messages } =
     useSession();
   const [query, setQuery] = useState("");
@@ -46,7 +45,6 @@ export function Sidebar() {
       <div className="side-actions">
         <button className="side-action" onClick={newChat} disabled={isEmptyDraft}>
           <Plus size={16} /> New chat
-          <kbd className="side-kbd">⌘N</kbd>
         </button>
         <div className="side-search">
           <Search size={15} />
@@ -63,12 +61,6 @@ export function Sidebar() {
         <div className="side-project" title={repo}>
           <FolderGit2 size={14} />
           <span className="side-project-name">{repoName}</span>
-          {runtime && (
-            <span className="runtime-badge" title={`Agent runtime: ${runtime}`}>
-              <span className="runtime-dot" />
-              {runtime}
-            </span>
-          )}
         </div>
 
         {filtered ? (
