@@ -6,8 +6,18 @@ import type { SessionSummary } from "../../types/protocol";
 
 export function Sidebar() {
   const { repo } = useConnection();
-  const { view, setView, connected, chats, currentSession, openChat, newChat, input, busy, messages } =
-    useSession();
+  const {
+    view,
+    setView,
+    connected,
+    chats,
+    currentSession,
+    openChat,
+    newChat,
+    input,
+    busy,
+    messages,
+  } = useSession();
   const [query, setQuery] = useState("");
 
   const isDraft = currentSession === null;

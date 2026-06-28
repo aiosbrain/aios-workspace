@@ -32,12 +32,7 @@ export interface MetaMessage {
   text: string;
 }
 
-export type UiMessage =
-  | UserMessage
-  | AssistantMessage
-  | ToolMessage
-  | MemoryMessage
-  | MetaMessage;
+export type UiMessage = UserMessage | AssistantMessage | ToolMessage | MemoryMessage | MetaMessage;
 
 /** A pending interactive permission request awaiting the user's response. */
 export interface PendingPermission {

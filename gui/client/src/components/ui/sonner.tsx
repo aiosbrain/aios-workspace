@@ -17,7 +17,8 @@ function Toaster(props: ToasterProps) {
       }
       toastOptions={{
         classNames: {
-          toast: "rounded-xl border border-border bg-popover text-popover-foreground shadow-overlay",
+          toast:
+            "rounded-xl border border-border bg-popover text-popover-foreground shadow-overlay",
           description: "text-muted-foreground",
           actionButton: "rounded-md bg-primary text-primary-foreground",
           cancelButton: "rounded-md bg-muted text-muted-foreground",

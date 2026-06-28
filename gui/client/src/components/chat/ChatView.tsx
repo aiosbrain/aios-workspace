@@ -31,11 +31,12 @@ export function ChatView() {
   const canStartMessage = !composerDisabled;
   const isEmpty = messages.length === 0;
 
-  const placeholder = !connected && !isDraft
-    ? "connecting…"
-    : isEmpty
-      ? "Describe a task — Enter to send, Shift+Enter for a newline"
-      : "Message your workspace… (Enter to send, Shift+Enter for newline)";
+  const placeholder =
+    !connected && !isDraft
+      ? "connecting…"
+      : isEmpty
+        ? "Describe a task — Enter to send, Shift+Enter for a newline"
+        : "Message your workspace… (Enter to send, Shift+Enter for newline)";
 
   const banners = (
     <>

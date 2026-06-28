@@ -32,5 +32,7 @@ export function groupChatsByRecency(chats: SessionSummary[]): ChatGroup[] {
     else if (t >= startWeek) buckets["This week"].push(c);
     else buckets.Older.push(c);
   }
-  return order.filter((label) => buckets[label].length).map((label) => ({ label, chats: buckets[label] }));
+  return order
+    .filter((label) => buckets[label].length)
+    .map((label) => ({ label, chats: buckets[label] }));
 }

@@ -61,7 +61,7 @@ export function SkillCard({
         >
           <span
             className={`inline-block h-1.5 w-1.5 rounded-full ${
-              skill.installed ? "bg-accent" : "bg-muted-foreground/50"
+              skill.installed ? "bg-lime" : "bg-muted-foreground/50"
             }`}
           />
           {skill.installed ? "Installed" : "Available"}
@@ -76,7 +76,9 @@ export function SkillCard({
       </p>
 
       <div className="flex flex-wrap gap-1.5">
-        <span className={`${PILL} ${TRUST_TONE[skill.trust] || "border-border text-muted-foreground"}`}>
+        <span
+          className={`${PILL} ${TRUST_TONE[skill.trust] || "border-border text-muted-foreground"}`}
+        >
           {TRUST_LABEL[skill.trust] || skill.trust}
         </span>
         {runsCode ? (
@@ -87,7 +89,9 @@ export function SkillCard({
             Runs code{codeCount ? ` · ${codeCount}` : ""}
           </span>
         ) : (
-          !reviewed && <span className={`${PILL} border-border text-muted-foreground`}>Text only</span>
+          !reviewed && (
+            <span className={`${PILL} border-border text-muted-foreground`}>Text only</span>
+          )
         )}
       </div>
 
@@ -113,9 +117,7 @@ export function SkillCard({
           <button
             className="int-connect"
             disabled={acting}
-            onClick={() =>
-              onReview({ id: skill.id, name: skill.name, trust: skill.trust, source })
-            }
+            onClick={() => onReview({ id: skill.id, name: skill.name, trust: skill.trust, source })}
           >
             Review &amp; install
           </button>

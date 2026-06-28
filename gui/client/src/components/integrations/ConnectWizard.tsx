@@ -1,11 +1,7 @@
 import { useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { ApiError } from "../../lib/api";
-import type {
-  Connector,
-  ConnectorStoreResponse,
-  ConnectorValidation,
-} from "../../types/protocol";
+import type { Connector, ConnectorStoreResponse, ConnectorValidation } from "../../types/protocol";
 
 const SUGGESTED: Record<string, string> = {
   notion: "Summarize my most recent Notion page.",
@@ -52,10 +48,9 @@ export function ConnectWizard({
     setPhase("validating");
     setResult(null);
     try {
-      const data = await api.post<ConnectorStoreResponse>(
-        `/api/connectors/${connector.id}/store`,
-        { secrets },
-      );
+      const data = await api.post<ConnectorStoreResponse>(`/api/connectors/${connector.id}/store`, {
+        secrets,
+      });
       setResult(data);
       setPhase("done");
       onConnected();
@@ -192,7 +187,7 @@ export function ConnectWizard({
                 className="wiz-go"
                 onClick={() =>
                   onTryInChat(
-                    SUGGESTED[connector.id] || `Use ${connector.name} to help me with a task.`,
+                    SUGGESTED[connector.id] || `Use ${connector.name} to help me with a task.`
                   )
                 }
               >

@@ -13,7 +13,7 @@ interface ComposerProps {
 /** The message input — a compact rounded box with a small send button (Codex/Cursor style). */
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer(
   { value, onChange, onSend, disabled, busy, placeholder },
-  ref,
+  ref
 ) {
   return (
     <div className="composer-wrap">
