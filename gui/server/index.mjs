@@ -53,6 +53,7 @@ import {
   readBlueprint,
   startOAuth,
   checkOAuthStatus,
+  storeOAuthConnector,
 } from "../../scripts/connector.mjs";
 import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
@@ -542,6 +543,14 @@ const server = http.createServer((req, res) => {
       return res.end("unauthorized");
     }
     const [, id, action] = oauth;
+    if (action === "start" && req.method !== "POST") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    if (action === "status" && req.method !== "GET") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
     (async () => {
       try {
         const d = getDescriptor(repo, id);
@@ -588,6 +597,26 @@ const server = http.createServer((req, res) => {
           if (action === "unwire") {
             res.writeHead(200, { "Content-Type": "application/json" });
             return res.end(JSON.stringify(unwireConnector(repo, d)));
+          }
+          if (action === "store" && d.auth_mode === "oauth") {
+            const cfg = resolveBrainConfig(repo);
+            if (!cfg.brain_url || !cfg.api_key) {
+              res.writeHead(503, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+            }
+            try {
+              const stored = await storeOAuthConnector(repo, d, cfg);
+              res.writeHead(200, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: true, ...stored }));
+            } catch (e) {
+              if (e.code === "oauth_not_connected") {
+                res.writeHead(422, { "Content-Type": "application/json" });
+                return res.end(
+                  JSON.stringify({ ok: false, error: "oauth_not_connected", message: e.message })
+                );
+              }
+              throw e;
+            }
           }
           const result = await validateConnector(d, secrets);
           if (action === "validate") {

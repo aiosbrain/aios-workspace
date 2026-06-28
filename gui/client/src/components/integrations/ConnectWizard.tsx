@@ -89,6 +89,7 @@ export function ConnectWizard({
     setResult(null);
     try {
       const start = await api.post<OAuthStartResponse>(`/api/connectors/${connector.id}/start`, {});
+      if (cancelled.current) return;
       if (!start.authorize_url) throw new Error(start.error || "couldn’t start sign-in");
       window.open(start.authorize_url, "_blank", "noopener,noreferrer");
 
@@ -99,10 +100,22 @@ export function ConnectWizard({
         if (cancelled.current) return;
         const st = await api.get<OAuthStatusResponse>(`/api/connectors/${connector.id}/status`);
         if (st.connected) {
-          const data = await api.post<ConnectorStoreResponse>(
-            `/api/connectors/${connector.id}/store`,
-            { secrets: {} }
-          );
+          if (cancelled.current) return;
+          let data: ConnectorStoreResponse;
+          try {
+            data = await api.post<ConnectorStoreResponse>(`/api/connectors/${connector.id}/store`, {
+              secrets: {},
+            });
+          } catch (e) {
+            if (cancelled.current) return;
+            const body = (e instanceof ApiError ? e.body : null) as ConnectorStoreResponse | null;
+            throw new Error(
+              body?.error === "oauth_not_connected"
+                ? "Slack isn’t connected in the brain yet — finish authorization and try again."
+                : `authorized in the brain, but skill install failed: ${(e as Error).message}`
+            );
+          }
+          if (cancelled.current) return;
           setResult({
             ...data,
             identity:

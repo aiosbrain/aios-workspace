@@ -555,7 +555,9 @@ async function oauthConnectFlow(repo, d, { ask, tokenFlag } = {}) {
   console.log(c.blue(`\nConnect ${d.name}`));
   if (!cfg.brain_url || !cfg.api_key) {
     console.log(
-      c.red("  no brain connection — set AIOS_BRAIN_URL + AIOS_API_KEY (run `aios onboard`).")
+      c.red(
+        "  no brain connection — set brain_url in aios.yaml (or AIOS_BRAIN_URL) and your API key (run `aios onboard`)."
+      )
     );
     return false;
   }
@@ -621,7 +623,15 @@ async function storeOAuthToken(repo, d, cfg, token) {
 
 // Install the skill artifact + flip status, print the confident "connected as … in …".
 function finishOAuth(repo, d, status) {
-  storeConnector(repo, d, {}); // no secret to vault — the token lives in the brain
+  try {
+    storeConnector(repo, d, {}); // no secret to vault — the token lives in the brain
+  } catch (e) {
+    console.log(
+      c.yellow(`\n⚠ Authorized in the team brain, but skill install failed: ${e.message}`)
+    );
+    console.log(c.dim("  retry: aios connect slack-personal"));
+    return false;
+  }
   const who = status.slack_user_id ? ` as ${status.slack_user_id}` : "";
   const where = status.workspace ? ` in ${status.workspace}` : "";
   console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));

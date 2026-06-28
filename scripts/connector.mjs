@@ -264,10 +264,10 @@ function oauthHeaders(cfg) {
   };
 }
 
-/** POST the descriptor's oauth.start_url with the member key → { authorize_url }. */
+/** GET the descriptor's oauth.start_url with the member key → { authorize_url }. */
 export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
   const url = resolve((descriptor.oauth || {}).start_url || "", { BRAIN_URL: brainUrlOf(cfg) });
-  const res = await fetchImpl(url, { method: "POST", headers: oauthHeaders(cfg) });
+  const res = await fetchImpl(url, { method: "GET", headers: oauthHeaders(cfg) });
   const json = await res.json().catch(() => null);
   if (!res.ok || !json?.authorize_url) {
     throw new Error(
@@ -329,6 +329,22 @@ export async function postBrainToken(descriptor, cfg, token, { fetchImpl = fetch
     );
   }
   return json || {};
+}
+
+/** Install an oauth connector only after the brain reports connected (token lives there). */
+export async function storeOAuthConnector(repo, descriptor, cfg, { fetchImpl = fetch } = {}) {
+  const status = await checkOAuthStatus(descriptor, cfg, { fetchImpl });
+  if (!status.connected) {
+    const e = new Error("oauth_not_connected");
+    e.code = "oauth_not_connected";
+    throw e;
+  }
+  const stored = storeConnector(repo, descriptor, {});
+  return {
+    ...stored,
+    identity: status.slack_user_id ? { label: "You", value: status.slack_user_id } : null,
+    instance: status.workspace ? { label: "Workspace", value: status.workspace } : null,
+  };
 }
 
 // ── secret vault (dotenvx) ───────────────────────────────────────────────────

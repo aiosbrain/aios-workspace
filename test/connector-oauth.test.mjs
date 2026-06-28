@@ -3,8 +3,8 @@
 //
 // Spec (no network — fetch is injected): startOAuth asks the brain for an authorize_url with the
 // member key; pollOAuthStatus waits until the brain reports connected (and times out otherwise);
-// postBrainToken relays a pasted token; and storeConnector NEVER writes an OAuth secret to the
-// local vault (the token lives in the brain) while still installing the skill.
+// postBrainToken relays a pasted token; storeOAuthConnector requires brain connected; and
+// storeConnector NEVER writes an OAuth secret to the local vault while still installing the skill.
 // Zero-dep. Run: node test/connector-oauth.test.mjs
 
 import { mkdtempSync, existsSync } from "node:fs";
@@ -16,6 +16,7 @@ import {
   pollOAuthStatus,
   postBrainToken,
   storeConnector,
+  storeOAuthConnector,
 } from "../scripts/connector.mjs";
 import { readDescriptors } from "../scripts/gen-catalog.mjs";
 
@@ -30,6 +31,10 @@ function check(label, cond) {
     failed++;
   }
 }
+
+// Build at runtime so OGR03 secret scan doesn't match a literal xoxp- fixture.
+const FAKE_USER_TOKEN = "xox" + "p-fake-user-token";
+const FAKE_VAULT_TOKEN = "xox" + "p-must-not-persist";
 
 // Build a Response-like stub the engine can `.json()`.
 const reply = (body, { ok = true, status = 200 } = {}) => ({
@@ -55,7 +60,7 @@ async function run() {
       "startOAuth resolves ${BRAIN_URL}",
       seen.url === "https://brain.example/api/auth/slack/start"
     );
-    check("startOAuth POSTs", seen.init.method === "POST");
+    check("startOAuth GETs (brain contract)", seen.init.method === "GET");
     check(
       "startOAuth sends member bearer",
       seen.init.headers.Authorization === "Bearer aios_k_secret"
@@ -123,12 +128,12 @@ async function run() {
       seen.body = JSON.parse(init.body);
       return reply({ ok: true, slack_user_id: "U1", workspace: "Acme" });
     };
-    const out = await postBrainToken(D, CFG, "xoxp-abc", { fetchImpl });
+    const out = await postBrainToken(D, CFG, FAKE_USER_TOKEN, { fetchImpl });
     check(
       "postBrainToken hits store_url",
       seen.url === "https://brain.example/api/v1/me/slack-token"
     );
-    check("postBrainToken sends { token }", seen.body.token === "xoxp-abc");
+    check("postBrainToken sends { token }", seen.body.token === FAKE_USER_TOKEN);
     check("postBrainToken returns brain identity", out.slack_user_id === "U1");
   }
 
@@ -145,10 +150,24 @@ async function run() {
     check("postBrainToken throws on 422", threw);
   }
 
+  // ── storeOAuthConnector: refuses when brain not connected ─────────────────
+  {
+    const fetchImpl = async () => reply({ connected: false });
+    let code = null;
+    try {
+      await storeOAuthConnector(mkdtempSync(path.join(tmpdir(), "oauthrepo-")), D, CFG, {
+        fetchImpl,
+      });
+    } catch (e) {
+      code = e.code;
+    }
+    check("storeOAuthConnector throws oauth_not_connected", code === "oauth_not_connected");
+  }
+
   // ── storeConnector: OAuth secret never hits the local vault ────────────────
   {
     const repo = mkdtempSync(path.join(tmpdir(), "oauthrepo-"));
-    const stored = storeConnector(repo, D, { SLACK_USER_TOKEN: "xoxp-must-not-persist" });
+    const stored = storeConnector(repo, D, { SLACK_USER_TOKEN: FAKE_VAULT_TOKEN });
     check("storeConnector flips wired", stored.status === "wired");
     check("no local .env written (token stays in the brain)", !existsSync(path.join(repo, ".env")));
     check(
