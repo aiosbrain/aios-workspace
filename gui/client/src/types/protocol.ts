@@ -350,6 +350,8 @@ export interface Connector {
   name: string;
   category?: string;
   transport: string;
+  /** "token" (default) or "oauth" (one-click browser flow; token stored in the brain). */
+  auth_mode?: string;
   summary: string;
   scopes?: string[];
   secrets?: ConnectorSecret[];
@@ -384,6 +386,20 @@ export interface ConnectorValidation {
   checks: ConnectorCheck[];
   identity: ConnectorIdentity | null;
   instance: ConnectorIdentity | null;
+  error?: string | null;
+}
+/** Response of POST /api/connectors/:id/start — the brain's Slack authorize URL. */
+export interface OAuthStartResponse {
+  authorize_url?: string;
+  ok?: boolean;
+  error?: string | null;
+}
+/** Response of GET /api/connectors/:id/status — whether the brain now holds the token. */
+export interface OAuthStatusResponse {
+  connected: boolean;
+  slack_user_id?: string | null;
+  workspace?: string | null;
+  ok?: boolean;
   error?: string | null;
 }
 /** Response of POST /api/connectors/:id/store (200 ok, or 422/500 carrying `validation`/`error`). */

@@ -1,0 +1,41 @@
+{
+  "id": "slack-personal",
+  "name": "Slack (personal)",
+  "category": "chat",
+  "descriptor_version": "1.0.0",
+  "transport": "skill",
+  "auth_mode": "oauth",
+  "status": "available",
+  "summary": "Act as you in Slack — send/read DMs & messages and react as yourself (your own user token, stored in the brain).",
+  "secrets": [
+    { "env": "SLACK_USER_TOKEN", "label": "Slack user token", "required": false, "placeholder": "xoxp-…" }
+  ],
+  "scopes": [
+    "chat:write",
+    "im:write",
+    "users:read",
+    "users:read.email",
+    "reactions:write",
+    "channels:read"
+  ],
+  "scopes_advisory": false,
+  "oauth": {
+    "start_url": "${BRAIN_URL}/api/auth/slack/start",
+    "status_url": "${BRAIN_URL}/api/auth/slack/status",
+    "auth_header": "AIOS_API_KEY"
+  },
+  "fallback_auth_mode": "token",
+  "fallback": {
+    "store_url": "${BRAIN_URL}/api/v1/me/slack-token"
+  },
+  "docs": {
+    "token_create_url": "https://api.slack.com/apps",
+    "scopes_url": "https://docs.slack.dev/reference/scopes",
+    "instructions": "One click: authorize AIOS in your browser and your Slack user token is stored securely in the team brain (never on this machine). Manual fallback: paste an existing Slack user token (xoxp-…) and it is sent straight to the brain.",
+    "verified_against_docs": "2026-06-28"
+  },
+  "skill": {
+    "skill_name": "slack-personal",
+    "source": ".claude/descriptors/skills/slack-personal/"
+  }
+}

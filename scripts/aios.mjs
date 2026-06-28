@@ -40,8 +40,12 @@ import {
   storeConnector,
   vaultSet,
   ensureGitignore,
+  startOAuth,
+  pollOAuthStatus,
+  postBrainToken,
 } from "./connector.mjs";
-import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
+import { parseFlatYaml } from "./flat-yaml.mjs";
+import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
 import { parseTableRows, parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -183,50 +187,18 @@ function loadOfflineConfig(repo) {
   return mergeBrainSecrets(cfg, repo);
 }
 
-function loadDotEnv(repo) {
-  const envPath = path.join(repo, ".env");
-  if (!existsSync(envPath)) return {};
-  const out = {};
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (!m) continue;
-    const val = stripQuotes(m[2].trim());
-    // Skip dotenvx ciphertext + its public key — these are decrypted into
-    // process.env at runtime by `dotenvx run` (see package.json scripts), which
-    // every caller checks first. Returning ciphertext here would be wrong.
-    if (m[1] === "DOTENV_PUBLIC_KEY" || val.startsWith("encrypted:")) continue;
-    out[m[1]] = val;
-  }
-  return out;
-}
-
-/** First non-empty env value (process.env wins, then .env files). Empty string ≠ set. */
-function envGet(name, ...dotenvs) {
-  const fromProcess = process.env[name];
-  if (fromProcess != null && String(fromProcess).trim()) return String(fromProcess).trim();
-  for (const dotenv of dotenvs) {
-    const v = dotenv?.[name];
-    if (v != null && String(v).trim()) return String(v).trim();
-  }
-  return "";
-}
-
 /**
  * Resolve brain URL + API key from process.env and .env files on the target
- * workspace AND the aios-workspace toolkit root. Supports `npm run aios --
- * analyze --repo ~/other-workspace` when secrets live in the toolkit .env
- * (dotenvx-decrypted into process.env) rather than the stamped workspace.
+ * workspace AND the aios-workspace toolkit root. Delegates to the shared
+ * resolveBrainConfig (./brain-config.mjs) so the CLI and the GUI server reach the
+ * brain the same way; the only CLI-specific bit is the cfg.brain_url fallback +
+ * cfg.api_key_env override.
  */
 function mergeBrainSecrets(cfg, repo) {
-  const toolkit = path.join(SCRIPT_DIR, "..");
-  const repoRoot = path.resolve(repo);
-  const dotenvs = [loadDotEnv(repo)];
-  if (path.resolve(toolkit) !== repoRoot) dotenvs.push(loadDotEnv(toolkit));
-  const keyEnv = cfg.api_key_env || "AIOS_API_KEY";
-  cfg.brain_url = envGet("AIOS_BRAIN_URL", ...dotenvs) || (cfg.brain_url || "").trim();
-  cfg.api_key = envGet(keyEnv, ...dotenvs);
-  const team = envGet("AIOS_TEAM", ...dotenvs);
-  if (team) cfg.team_id = team;
+  const resolved = resolveBrainConfig(repo, { apiKeyEnv: cfg.api_key_env || "AIOS_API_KEY" });
+  cfg.brain_url = resolved.brain_url || (cfg.brain_url || "").trim();
+  cfg.api_key = resolved.api_key;
+  if (resolved.team_id) cfg.team_id = resolved.team_id;
   return cfg;
 }
 
@@ -562,11 +534,123 @@ function cmdStatus(repo, cfg, patterns, args = []) {
   }
 }
 
+// Best-effort: open a URL in the user's default browser. Returns false (caller prints the
+// URL) if the platform opener isn't available.
+function openUrl(u) {
+  const cmd =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    execFileSync(cmd, [u], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// One-click OAuth connect: ask the brain for an authorize_url, open the browser, poll until
+// the brain has the token, then install the skill. The token never touches this machine.
+// On timeout/denial (or `--token`), falls back to a manual paste POSTed straight to the brain.
+async function oauthConnectFlow(repo, d, { ask, tokenFlag } = {}) {
+  const cfg = resolveBrainConfig(repo);
+  console.log(c.blue(`\nConnect ${d.name}`));
+  if (!cfg.brain_url || !cfg.api_key) {
+    console.log(
+      c.red(
+        "  no brain connection — set brain_url in aios.yaml (or AIOS_BRAIN_URL) and your API key (run `aios onboard`)."
+      )
+    );
+    return false;
+  }
+  if (d.scopes?.length) console.log(c.dim(`  scopes: ${d.scopes.join(" · ")}`));
+
+  // Manual token provided up front (--token xoxp-…) → skip the browser dance.
+  if (tokenFlag) return storeOAuthToken(repo, d, cfg, tokenFlag);
+
+  let authorizeUrl;
+  try {
+    ({ authorize_url: authorizeUrl } = await startOAuth(d, cfg));
+  } catch (e) {
+    console.log(c.red(`  couldn't start sign-in: ${e.message}`));
+    return false;
+  }
+  console.log("  opening your browser to authorize…");
+  if (!openUrl(authorizeUrl))
+    console.log(c.dim(`  open this URL to authorize:\n  ${authorizeUrl}`));
+
+  process.stdout.write(c.dim("  waiting for you to finish in the browser… "));
+  let status;
+  try {
+    status = await pollOAuthStatus(d, cfg, { onTick: () => process.stdout.write(c.dim(".")) });
+  } catch (e) {
+    console.log("");
+    if (e.code !== "oauth_timeout") {
+      console.log(c.red(`  sign-in failed: ${e.message}`));
+      return false;
+    }
+    console.log(c.yellow("  timed out waiting for authorization."));
+    const ownRl = ask
+      ? null
+      : readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask_ = ask || ((q) => new Promise((res) => ownRl.question(q, res)));
+    const token = (
+      await ask_("  paste a Slack user token (xoxp-…), or press Enter to skip: ")
+    ).trim();
+    if (ownRl) ownRl.close();
+    if (!token) {
+      console.log(c.red(`  ${d.name} not connected.`));
+      return false;
+    }
+    return storeOAuthToken(repo, d, cfg, token);
+  }
+  console.log("");
+  return finishOAuth(repo, d, status);
+}
+
+// Manual fallback: send a pasted token straight to the brain, then install the skill.
+async function storeOAuthToken(repo, d, cfg, token) {
+  let res;
+  try {
+    res = await postBrainToken(d, cfg, token);
+  } catch (e) {
+    console.log(c.red(`  ${d.name} not connected: ${e.message}`));
+    return false;
+  }
+  return finishOAuth(repo, d, {
+    slack_user_id: res.slack_user_id,
+    workspace: res.workspace,
+  });
+}
+
+// Install the skill artifact + flip status, print the confident "connected as … in …".
+function finishOAuth(repo, d, status) {
+  try {
+    storeConnector(repo, d, {}); // no secret to vault — the token lives in the brain
+  } catch (e) {
+    console.log(
+      c.yellow(`\n⚠ Authorized in the team brain, but skill install failed: ${e.message}`)
+    );
+    console.log(c.dim("  retry: aios connect slack-personal"));
+    return false;
+  }
+  const who = status.slack_user_id ? ` as ${status.slack_user_id}` : "";
+  const where = status.workspace ? ` in ${status.workspace}` : "";
+  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
+  console.log(
+    c.dim(
+      `  token stored in the team brain (not on this machine) · skill installed → .claude/skills/${d.skill.skill_name}/`
+    )
+  );
+  return true;
+}
+
 // Connect one already-resolved descriptor: print guidance → collect secrets → validate
 // live → store. Returns true on success, false on a skipped/failed attempt (callers decide
 // how to signal that). Pass `ask` to share one readline across several connects (onboard);
 // omit it and connectFlow opens+closes its own for a single standalone connect.
 async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
+  // OAuth connectors take a separate one-click path (browser → brain), not local secrets.
+  if (d.auth_mode === "oauth") return oauthConnectFlow(repo, d, { ask, tokenFlag });
+
   const required = (d.secrets || []).filter((s) => s.required !== false);
 
   // print connect guidance (the "exact URL + scopes" moment)

@@ -51,7 +51,11 @@ import {
   storeConnector,
   unwireConnector,
   readBlueprint,
+  startOAuth,
+  checkOAuthStatus,
+  storeOAuthConnector,
 } from "../../scripts/connector.mjs";
+import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
@@ -529,6 +533,43 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // OAuth one-click proxies: the GUI server relays start/status to the brain using the
+  // workspace's member key. The token itself flows browser → brain directly and never
+  // transits the GUI (no secret is read from or written to this request).
+  const oauth = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(start|status)$/);
+  if (oauth) {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const [, id, action] = oauth;
+    if (action === "start" && req.method !== "POST") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    if (action === "status" && req.method !== "GET") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    (async () => {
+      try {
+        const d = getDescriptor(repo, id);
+        const cfg = resolveBrainConfig(repo);
+        if (!cfg.brain_url || !cfg.api_key) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+        }
+        const result =
+          action === "start" ? await startOAuth(d, cfg) : await checkOAuthStatus(d, cfg);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    })();
+    return;
+  }
   const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
   if (conn && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) {
@@ -556,6 +597,26 @@ const server = http.createServer((req, res) => {
           if (action === "unwire") {
             res.writeHead(200, { "Content-Type": "application/json" });
             return res.end(JSON.stringify(unwireConnector(repo, d)));
+          }
+          if (action === "store" && d.auth_mode === "oauth") {
+            const cfg = resolveBrainConfig(repo);
+            if (!cfg.brain_url || !cfg.api_key) {
+              res.writeHead(503, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+            }
+            try {
+              const stored = await storeOAuthConnector(repo, d, cfg);
+              res.writeHead(200, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: true, ...stored }));
+            } catch (e) {
+              if (e.code === "oauth_not_connected") {
+                res.writeHead(422, { "Content-Type": "application/json" });
+                return res.end(
+                  JSON.stringify({ ok: false, error: "oauth_not_connected", message: e.message })
+                );
+              }
+              throw e;
+            }
           }
           const result = await validateConnector(d, secrets);
           if (action === "validate") {
