@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TerminalFrame } from "@aios-alpha/ui";
 import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
+import { toast } from "../ui/sonner";
 import type { PushResponse, ReviewItem, ReviewResponse } from "../../types/protocol";
 
 type PushableItem = ReviewItem & { state: "new" | "modified" };
@@ -47,9 +48,18 @@ export function ReviewPanel() {
     try {
       const data = await api.post<PushResponse>("/api/push", { paths: [...selected], dryRun });
       setOutput(data.output || data.error || "(no output)");
-      if (!dryRun && data.ok) load(); // refresh status after a real push
+      // Surface the push outcome as a toast (the terminal output keeps the detail).
+      if (!dryRun) {
+        if (data.ok) {
+          toast.success(`Pushed ${selected.size} item${selected.size === 1 ? "" : "s"} to the brain`);
+          load(); // refresh status after a real push
+        } else {
+          toast.error(`Push failed${data.error ? `: ${data.error}` : ""}`, { duration: 10_000 });
+        }
+      }
     } catch (e) {
       setOutput(`error: ${(e as Error).message}`);
+      if (!dryRun) toast.error(`Push failed: ${(e as Error).message}`, { duration: 10_000 });
     }
     setBusy(false);
   };

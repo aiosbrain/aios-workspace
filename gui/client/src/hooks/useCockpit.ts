@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "../components/ui/sonner";
 import { createApi } from "../lib/api";
 import { resolveGuiToken, connectErrorMessage } from "../lib/token";
 import { formatResultMeta } from "../lib/format";
@@ -220,10 +221,12 @@ export function useCockpit() {
             if (capsRef.current.models.some((m) => m.id === msg.model)) setModel(msg.model);
             break;
           case "warning":
-            append({ kind: "meta", text: `⚠ ${msg.message}` });
+            // Live → toast (replay reconstructs it inline; see lib/transcript.ts).
+            toast.warning(msg.message);
             break;
           case "result":
             setBusy(false);
+            // Keep the end-of-turn cost summary inline (it's the turn record, not clutter).
             append({
               kind: "meta",
               text: formatResultMeta(usageRef.current, msg.cost_usd, prevCostRef.current),
@@ -233,25 +236,27 @@ export function useCockpit() {
             break;
           case "error":
             setBusy(false);
-            append({ kind: "meta", text: `error: ${msg.message}` });
+            // Live → a longer-lived error toast so it isn't missed; replay keeps it inline.
+            toast.error(msg.message, { duration: 10_000 });
             break;
-          case "memory_updated":
-            append({
-              kind: "memory",
-              id: msg.id,
-              file: msg.file,
-              summary: msg.summary,
-              count: msg.count,
+          case "memory_updated": {
+            // Live → toast with Undo (replay rebuilds the MemoryCard). The Undo sends the
+            // same wire message as undoMemory(); inline wsRef.send avoids a forward ref.
+            const undoId = msg.id;
+            toast("Memory updated", {
+              description: `${msg.file} — ${msg.summary}`,
+              action: {
+                label: "Undo",
+                onClick: () =>
+                  wsRef.current?.send(JSON.stringify({ type: "memory_undo", id: undoId })),
+              },
             });
             break;
+          }
           case "memory_undone":
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.kind === "memory" && m.id === msg.id
-                  ? { ...m, undone: msg.ok, undoFailed: !msg.ok }
-                  : m
-              )
-            );
+            // No live card to mutate (it became a toast); confirm the outcome as a toast.
+            if (msg.ok) toast.success("Memory change undone");
+            else toast.error("Undo unavailable (file changed)");
             break;
           default:
             break;

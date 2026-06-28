@@ -1,20 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
-import { THEME_KEY } from "../../theme.js";
+import { isDark, toggleTheme, THEME_EVENT } from "../../theme.js";
 
 /** Dark is the workspace GUI's terminal-native default; light is opt-in. */
 export function ThemeToggle() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem(THEME_KEY, next ? "dark" : "light");
-    } catch {
-      /* storage blocked */
-    }
-  };
+  const [dark, setDark] = useState(() => isDark());
+  const toggle = () => setDark(toggleTheme());
+  // Stay in sync when another surface (the ⌘K palette) flips the theme.
+  useEffect(() => {
+    const onChange = () => setDark(isDark());
+    window.addEventListener(THEME_EVENT, onChange);
+    return () => window.removeEventListener(THEME_EVENT, onChange);
+  }, []);
   return (
     <button
       className="theme-toggle"
