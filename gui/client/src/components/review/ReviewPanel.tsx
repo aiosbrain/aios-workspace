@@ -12,7 +12,7 @@ const REV_BTN =
   "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
 const REV_BTN_PRIMARY = cn(
   REV_BTN,
-  "border-transparent bg-primary font-semibold text-primary-foreground hover:bg-[var(--accent-hover)] hover:shadow-[var(--glow-violet)]",
+  "border-transparent bg-primary font-semibold text-primary-foreground hover:bg-[var(--accent-hover)] hover:shadow-[var(--glow-violet)]"
 );
 const REVIEW = "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
 

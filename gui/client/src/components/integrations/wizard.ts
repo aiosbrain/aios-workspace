@@ -7,8 +7,7 @@ export const WIZ =
 export const WIZ_HEAD = "flex items-center justify-between text-[15px] font-semibold";
 export const WIZ_X = "cursor-pointer bg-transparent text-base text-muted-foreground";
 export const WIZ_STEP = "flex flex-col gap-1.5";
-export const WIZ_STEP_N =
-  "font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground";
+export const WIZ_STEP_N = "font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground";
 export const WIZ_LINK =
   "inline-block rounded-[9px] border border-border-visible bg-secondary px-3.5 py-[9px] text-[13px] font-semibold text-primary no-underline";
 export const WIZ_INAPP = "text-[13px] text-muted-foreground";

@@ -52,7 +52,7 @@ export function Sidebar() {
         ? "bg-destructive"
         : connected
           ? "bg-lime shadow-[0_0_8px_color-mix(in_srgb,var(--aios-accent)_60%,transparent)]"
-          : "bg-muted-foreground",
+          : "bg-muted-foreground"
   );
 
   const ChatItem = (c: SessionSummary) => (
@@ -62,7 +62,7 @@ export function Sidebar() {
         "block w-full truncate rounded-[8px] border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
         c.id === currentSession &&
           view === "chat" &&
-          "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground",
+          "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
       )}
       onClick={() => openChat(c.id)}
       title={c.title || "(untitled)"}
@@ -87,7 +87,7 @@ export function Sidebar() {
           className={cn(
             "mx-3 mb-2 flex items-center gap-2 rounded-md border border-border-visible bg-secondary px-2.5 py-1.5 text-xs text-muted-foreground",
             connectionStatus === "offline" &&
-              "border-[color-mix(in_srgb,var(--aios-destructive)_45%,var(--aios-border-visible))] text-destructive",
+              "border-[color-mix(in_srgb,var(--aios-destructive)_45%,var(--aios-border-visible))] text-destructive"
           )}
           role="status"
         >
@@ -164,7 +164,8 @@ export function Sidebar() {
         <button
           className={cn(
             "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            view === "review" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground",
+            view === "review" &&
+              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
           )}
           onClick={() => setView("review")}
         >
@@ -175,7 +176,7 @@ export function Sidebar() {
       <button
         className={cn(
           "mt-2 flex w-full cursor-pointer items-center gap-2.5 border-t border-border-visible bg-transparent px-2 py-2.5 text-left text-foreground hover:bg-muted",
-          view === "settings" && "bg-[var(--accent-soft)]",
+          view === "settings" && "bg-[var(--accent-soft)]"
         )}
         onClick={() => setView("settings")}
       >

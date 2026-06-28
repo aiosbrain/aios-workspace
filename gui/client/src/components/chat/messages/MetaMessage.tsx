@@ -7,7 +7,7 @@ export function MetaMessage({ message }: { message: MetaMessageModel }) {
     <div
       className={cn(
         "self-center bg-transparent p-0.5 text-xs",
-        isError ? "text-destructive" : "text-muted-foreground",
+        isError ? "text-destructive" : "text-muted-foreground"
       )}
     >
       {message.text}
