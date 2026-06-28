@@ -1,22 +1,34 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { ApiError } from "../../lib/api";
-import type { Connector, ConnectorStoreResponse, ConnectorValidation } from "../../types/protocol";
+import type {
+  Connector,
+  ConnectorStoreResponse,
+  ConnectorValidation,
+  OAuthStartResponse,
+  OAuthStatusResponse,
+} from "../../types/protocol";
 
 const SUGGESTED: Record<string, string> = {
   notion: "Summarize my most recent Notion page.",
   granola: "Pull my recent Granola meeting notes into the inbox.",
   slack: "Catch me up on my unread Slack messages.",
+  "slack-personal": "DM a teammate on Slack for me.",
   jira: "Show me the Jira issues assigned to me.",
   linear: "List my open Linear issues for this cycle.",
   firecrawl: "Read this page and pull out the key facts: <url>",
 };
 
-type Phase = "collect" | "validating" | "done" | "error";
+type Phase = "collect" | "validating" | "waiting" | "done" | "error";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Guided connect flow: link to the key page → paste secrets → validate live → store
- * (encrypted on this machine). On success it offers a "Try it in chat" handoff.
+ * Guided connect flow. Two shapes:
+ *  - token: link to the key page → paste secrets → validate live → store (encrypted locally).
+ *  - oauth (one-click): "Connect with Slack" → authorize in a new tab → poll the brain until the
+ *    token lands (it is stored in the brain, never transits the GUI) → install the skill.
+ * On success it offers a "Try it in chat" handoff.
  */
 export function ConnectWizard({
   connector,
@@ -30,6 +42,7 @@ export function ConnectWizard({
   onTryInChat: (prompt: string) => void;
 }) {
   const { api } = useConnection();
+  const oauth = connector.auth_mode === "oauth";
   // Pre-fill any field the team blueprint already set (e.g. the Jira site URL).
   const [secrets, setSecrets] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -43,6 +56,15 @@ export function ConnectWizard({
   const [result, setResult] = useState<ConnectorStoreResponse | ConnectorValidation | null>(null);
   const required = (connector.secrets || []).filter((s) => s.required);
   const filled = required.every((s) => (secrets[s.env] || "").trim());
+
+  // Stop polling if the wizard is closed mid-flow.
+  const cancelled = useRef(false);
+  useEffect(() => {
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
   const connect = async () => {
     setPhase("validating");
@@ -61,6 +83,47 @@ export function ConnectWizard({
     }
   };
 
+  // One-click OAuth: ask the brain for an authorize URL, open it, poll until connected, then store.
+  const connectOAuth = async () => {
+    setPhase("waiting");
+    setResult(null);
+    try {
+      const start = await api.post<OAuthStartResponse>(`/api/connectors/${connector.id}/start`, {});
+      if (!start.authorize_url) throw new Error(start.error || "couldn’t start sign-in");
+      window.open(start.authorize_url, "_blank", "noopener,noreferrer");
+
+      const deadline = Date.now() + 120000;
+      for (;;) {
+        if (cancelled.current) return;
+        await sleep(2000);
+        if (cancelled.current) return;
+        const st = await api.get<OAuthStatusResponse>(`/api/connectors/${connector.id}/status`);
+        if (st.connected) {
+          const data = await api.post<ConnectorStoreResponse>(
+            `/api/connectors/${connector.id}/store`,
+            { secrets: {} }
+          );
+          setResult({
+            ...data,
+            identity:
+              data.identity ??
+              (st.slack_user_id ? { label: "You", value: st.slack_user_id } : null),
+            instance:
+              data.instance ?? (st.workspace ? { label: "Workspace", value: st.workspace } : null),
+          });
+          setPhase("done");
+          onConnected();
+          return;
+        }
+        if (Date.now() >= deadline) throw new Error("timed out waiting for authorization");
+      }
+    } catch (e) {
+      if (cancelled.current) return;
+      setResult({ ok: false, error: (e as Error).message, checks: [] });
+      setPhase("error");
+    }
+  };
+
   const res = result as (ConnectorStoreResponse & ConnectorValidation) | null;
   const checks = res?.checks || res?.validation?.checks || [];
 
@@ -74,7 +137,37 @@ export function ConnectWizard({
           </button>
         </div>
 
-        {phase !== "done" && (
+        {phase !== "done" && oauth && (
+          <>
+            <div className="wiz-step">
+              <div className="wiz-step-n">Authorize in your browser</div>
+              <p className="wiz-note">
+                Authorize AIOS in {connector.name}. Your token is stored securely in the team brain
+                — it never touches this machine.
+              </p>
+              {(connector.scopes?.length ?? 0) > 0 && (
+                <p className="wiz-scopes">
+                  Permissions: <strong>{connector.scopes!.join(" · ")}</strong>
+                </p>
+              )}
+            </div>
+
+            {phase === "waiting" && (
+              <div className="wiz-validating">Waiting for you to authorize in the new tab…</div>
+            )}
+            {phase === "error" && (
+              <div className="wiz-error">
+                Couldn’t connect{res?.error ? ` (${res.error})` : ""}.
+              </div>
+            )}
+
+            <button className="wiz-go" disabled={phase === "waiting"} onClick={connectOAuth}>
+              {phase === "waiting" ? "Waiting…" : `Connect with ${connector.name}`}
+            </button>
+          </>
+        )}
+
+        {phase !== "done" && !oauth && (
           <>
             <div className="wiz-step">
               <div className="wiz-step-n">1 · Get your key</div>
@@ -177,7 +270,9 @@ export function ConnectWizard({
               .
             </p>
             <p className="wiz-note">
-              Your key is encrypted on this machine.{" "}
+              {oauth
+                ? "Your token is stored in the team brain, not on this machine. "
+                : "Your key is encrypted on this machine. "}
               {connector.transport === "skill"
                 ? "A skill was installed to use it."
                 : "An MCP server was wired up."}

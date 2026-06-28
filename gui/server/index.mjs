@@ -51,7 +51,10 @@ import {
   storeConnector,
   unwireConnector,
   readBlueprint,
+  startOAuth,
+  checkOAuthStatus,
 } from "../../scripts/connector.mjs";
+import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
@@ -527,6 +530,35 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: !err, output: stripAnsi((out || "") + (stderr || "")) }));
       });
     });
+    return;
+  }
+  // OAuth one-click proxies: the GUI server relays start/status to the brain using the
+  // workspace's member key. The token itself flows browser → brain directly and never
+  // transits the GUI (no secret is read from or written to this request).
+  const oauth = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(start|status)$/);
+  if (oauth) {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const [, id, action] = oauth;
+    (async () => {
+      try {
+        const d = getDescriptor(repo, id);
+        const cfg = resolveBrainConfig(repo);
+        if (!cfg.brain_url || !cfg.api_key) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+        }
+        const result =
+          action === "start" ? await startOAuth(d, cfg) : await checkOAuthStatus(d, cfg);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    })();
     return;
   }
   const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
