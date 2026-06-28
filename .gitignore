@@ -13,3 +13,7 @@ test/ux/evidence/
 .aios/
 
 .env.keys
+# Confidential leak-gate term set — local only, never commit (see scripts/leak-gate-terms.example.sh)
+leak-gate-terms.sh
+**/leak-gate-terms.sh
+.aios-nda/
