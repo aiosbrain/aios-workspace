@@ -338,6 +338,7 @@ export function useCockpit() {
       clearReconnect();
       reconnectAttemptsRef.current = 0;
       currentSessionRef.current = id; // resume target before any close handler can fire
+      setApprovalMode("default"); // approval mode is session-scoped; never inherit it across chats
       resetChatState();
       setView("chat");
       try {
@@ -378,7 +379,16 @@ export function useCockpit() {
       setBusy(true);
       try {
         const ws = openSocket || (await connect());
-        ws.send(JSON.stringify({ type: "user_message", text, model, approvalMode }));
+        const payload: {
+          type: "user_message";
+          text: string;
+          model?: string;
+          approvalMode?: string;
+        } = { type: "user_message", text, model };
+        if (capsRef.current.approvalModes.some((a) => a.id === approvalMode)) {
+          payload.approvalMode = approvalMode;
+        }
+        ws.send(JSON.stringify(payload));
       } catch (e) {
         setBusy(false);
         // The message never left the client. Roll back the optimistic user bubble
