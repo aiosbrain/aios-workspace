@@ -12,9 +12,14 @@ export function ModelPicker() {
   if (!capabilities.modelSwitching || capabilities.models.length === 0) return null;
 
   return (
-    <label className="model-pick">
+    <label className="flex items-center gap-2 text-xs text-muted-foreground">
       <span>Model</span>
-      <select value={model} disabled={busy} onChange={(e) => changeModel(e.target.value)}>
+      <select
+        className="cursor-pointer rounded-md border border-border-visible bg-secondary px-[9px] py-[5px] text-[13px] text-foreground outline-none focus:border-primary disabled:cursor-default disabled:opacity-50"
+        value={model}
+        disabled={busy}
+        onChange={(e) => changeModel(e.target.value)}
+      >
         {capabilities.models.map((m) => (
           <option key={m.id} value={m.id}>
             {m.label}

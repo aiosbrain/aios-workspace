@@ -14,9 +14,10 @@ export function ApprovalModePicker() {
   if (capabilities.approvalModes.length === 0) return null;
 
   return (
-    <label className="model-pick">
+    <label className="flex items-center gap-2 text-xs text-muted-foreground">
       <span>Approval</span>
       <select
+        className="cursor-pointer rounded-md border border-border-visible bg-secondary px-[9px] py-[5px] text-[13px] text-foreground outline-none focus:border-primary disabled:cursor-default disabled:opacity-50"
         value={approvalMode}
         disabled={busy}
         onChange={(e) => setApprovalMode(e.target.value)}
