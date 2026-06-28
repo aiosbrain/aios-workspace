@@ -4,8 +4,11 @@
 
 ## Work item
 
-<!-- Link this PR to a Plane item so aios-work-sync closes it on merge. -->
-AIOS-Work: <!-- e.g. AIOS-123 -->
+<!-- Reference the brain task so aios-work-sync advances it to Done on merge (brain → Linear).
+     No task yet, and this work should be tracked? Create one FIRST in the Team Brain dashboard
+     (→ Tasks; it projects to Linear), then put its key here. Don't hand-edit the Linear issue —
+     the brain is the source of truth, Linear is a one-way projection. -->
+AIOS-Work: <!-- e.g. AIO-72 -->
 
 ## Checklist
 
