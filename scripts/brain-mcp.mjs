@@ -33,9 +33,11 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
 import { createBrainClient } from "./brain-client.mjs";
+
+const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // Re-exported so existing importers (and tests) can keep pulling the brain client
 // from this module; the implementation now lives in the shared brain-client.mjs.
@@ -83,6 +85,59 @@ function findWorkspaceConfig(dir) {
     cur = parent;
   }
   return {};
+}
+
+/** Walk up from `dir` for a workspace root (aios.yaml | project.yaml | engagement.yaml). */
+function findWorkspaceRoot(dir) {
+  let cur = path.resolve(dir);
+  for (let i = 0; i < 40; i++) {
+    if (
+      existsSync(path.join(cur, "aios.yaml")) ||
+      existsSync(path.join(cur, "project.yaml")) ||
+      existsSync(path.join(cur, "engagement.yaml"))
+    )
+      return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return null;
+}
+
+/** Dynamic-import the compiled operator-loop core (shared with the CLI). */
+async function loadOperatorLoop() {
+  const distPath = path.join(MCP_DIR, "..", "dist", "operator-loop", "index.js");
+  if (!existsSync(distPath)) {
+    throw new Error("operator-loop is not built — run: npm run build:loop");
+  }
+  return import(pathToFileURL(distPath).href);
+}
+
+/**
+ * A stand-in brain client used when the server starts WITHOUT brain config (local-only
+ * mode). brain_* tools that call it get a clear "not configured" error in-band; local
+ * aios_* tools never touch it. `meta` is a safe empty object so brain_status can render
+ * connected:false without throwing.
+ */
+function makeUnconfiguredBrainClient(missing) {
+  const fail = () => {
+    throw new Error(
+      `brain not configured: missing ${missing.join(", ")}. ` +
+        `Set them in the MCP client's env block, a local .env, or aios.yaml.`
+    );
+  };
+  return {
+    meta: { brain_url: "", team: "", member: "" },
+    async fetchJson() {
+      fail();
+    },
+    async query() {
+      fail();
+    },
+    async streamQuery() {
+      fail();
+    },
+  };
 }
 
 /**
@@ -324,6 +379,55 @@ export const TOOLS = [
       return asContent(await client.fetchJson("GET", `/items/${encodeURIComponent(args.id)}`));
     },
   },
+  {
+    // Local-tool namespace (`aios_*`) — reads the workspace, not the brain. Lets GUI-only
+    // agents drive the Operator Loop through the SAME core the CLI uses (`aios loop collect`).
+    name: "aios_loop_collect",
+    description:
+      "Collect local workspace work signals (decisions, tasks, hours, deliverables, inbox) for a " +
+      "time window into a tier-tagged run manifest — the Operator Loop C1 collector. Local and " +
+      "read-only: reads the workspace at the server's working directory; NO brain connection " +
+      "required. Returns the same manifest as `aios loop collect` on the CLI. Arg: cadence " +
+      "('daily' = 1-day/minimal, 'weekly' = 7-day/full; default weekly).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cadence: {
+          type: "string",
+          enum: ["daily", "weekly"],
+          description: "Window: daily (1-day, minimal kinds) or weekly (7-day, full set). Default weekly.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async handler(args, _client, ctx) {
+      const cwd = (ctx && ctx.cwd) || process.cwd();
+      const repo = findWorkspaceRoot(cwd);
+      if (!repo) {
+        throw new Error(
+          "no AIOS workspace found at the server's working directory (need aios.yaml/project.yaml/" +
+            "engagement.yaml). Start the MCP server with its cwd set to a workspace."
+        );
+      }
+      // Same identity resolution as the CLI so manifests are byte-identical across entry points.
+      const { resolveLoopIdentity } = await import("./loop-config.mjs");
+      const { member, project } = resolveLoopIdentity(repo);
+      const loop = await loadOperatorLoop();
+      const manifest = loop.collect({
+        root: repo,
+        cadence: args.cadence === "daily" ? "daily" : "weekly",
+        member,
+        project,
+      });
+      return asContent(manifest);
+    },
+  },
 ];
 
 // ── JSON-RPC dispatcher ──────────────────────────────────────────────────────
@@ -385,6 +489,7 @@ function validateArgs(schema, args) {
  */
 export function createDispatcher({
   client,
+  ctx = {},
   serverInfo = { name: SERVER_NAME, version: SERVER_VERSION },
   tools = TOOLS,
 } = {}) {
@@ -437,7 +542,8 @@ export function createDispatcher({
           });
         }
         try {
-          const out = await tool.handler(args, client);
+          // ctx carries non-brain context (cwd) for local aios_* tools; brain tools ignore it.
+          const out = await tool.handler(args, client, ctx);
           return rpcResult(id, out);
         } catch (e) {
           // Tool-level failures are reported in-band (isError) so the model can react,
@@ -462,14 +568,22 @@ export function createDispatcher({
  * Diagnostics go to stderr only — stdout is reserved for protocol frames.
  */
 export function runStdio(config, deps = {}) {
-  const client = createBrainClient(config, deps);
-  const dispatch = createDispatcher({ client });
+  // Local-capable: when brain config is missing, start anyway with a stub brain client so
+  // local aios_* tools work; brain_* tools then return a clear "not configured" error.
+  const brainOk = !(config.missing && config.missing.length);
+  const client = brainOk
+    ? createBrainClient(config, deps)
+    : makeUnconfiguredBrainClient(config.missing || []);
+  const ctx = { cwd: deps.cwd || config.cwd || process.cwd() };
+  const dispatch = createDispatcher({ client, ctx });
   const out = deps.stdout || process.stdout;
   const input = deps.stdin || process.stdin;
   const log = (m) => (deps.stderr || process.stderr).write(`${m}\n`);
 
   log(
-    `${SERVER_NAME} v${SERVER_VERSION} → ${config.brain_url} (team ${config.team_id}) · ${TOOLS.length} tools · read-only`
+    `${SERVER_NAME} v${SERVER_VERSION} → ${
+      brainOk ? `${config.brain_url} (team ${config.team_id})` : "<brain not configured — local aios_* tools only>"
+    } · ${TOOLS.length} tools · read-only`
   );
 
   let buf = "";

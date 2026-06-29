@@ -32,7 +32,7 @@ import {
 import { execFileSync } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   listConnectors,
   getDescriptor,
@@ -47,6 +47,13 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
 import { parseTableRows, parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import {
+  parseFrontmatter,
+  normalizeTier,
+  classifyKind,
+  parseDecisionRows,
+} from "./workspace-parse.mjs";
+import { resolveLoopIdentity } from "./loop-config.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
@@ -75,6 +82,7 @@ const c = {
   yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
   blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
 };
 
 function die(msg) {
@@ -111,24 +119,9 @@ function gitConfig(repo, key) {
 // parseFlatYaml + stripQuotes now live in ./flat-yaml.mjs (shared with the GUI
 // runtime-adapter config reader). Imported at the top of this file.
 
-// ── frontmatter ─────────────────────────────────────────────────────────────
-
-function parseFrontmatter(content) {
-  if (!content.startsWith("---")) return { frontmatter: null, body: content };
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return { frontmatter: null, body: content };
-  const fmText = content.slice(content.indexOf("\n") + 1, end);
-  const body = content.slice(content.indexOf("\n", end + 1) + 1);
-  return { frontmatter: parseFlatYaml(fmText), body };
-}
-
-function normalizeTier(tier) {
-  // Friendly labels → canonical engine values. `private` never syncs (= admin);
-  // outward tiers `client` (consultant) and `company` (employee) → external.
-  if (tier === "private") return "admin";
-  if (tier === "client" || tier === "company") return "external";
-  return tier;
-}
+// ── frontmatter / tiers ──────────────────────────────────────────────────────
+// parseFrontmatter + normalizeTier now live in ./workspace-parse.mjs (shared with the
+// operator-loop collector so tier normalization stays single-sourced). Imported above.
 
 // ── config + identity ───────────────────────────────────────────────────────
 
@@ -308,40 +301,9 @@ function walkFiles(repo, cfg) {
   return [...new Set(files)].sort();
 }
 
-function classifyKind(rel, frontmatter) {
-  // Spine-agnostic: match by filename/role so new (3-log, 2-work) and legacy
-  // (03-status, 02-deliverables) spines both classify correctly.
-  const base = rel.split("/").pop();
-  if (base === "decision-log.md") return "decision";
-  if (base === "tasks.md") return "task";
-  if (frontmatter?.type === "transcript" || rel.includes("/transcripts/")) return "transcript";
-  if (/^(2-work|02-deliverables)[/\\]/.test(rel)) return "deliverable";
-  return "artifact";
-}
-
-// ── markdown table row parsers ──────────────────────────────────────────────
-
-function parseDecisionRows(body) {
-  // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("decision")) return [];
-  const idx = (name) => header.findIndex((h) => h.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) => ({
-      row_key: cells[idx("#")] ?? cells[0] ?? "",
-      decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
-      title: cells[idx("decision")] || "",
-      rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-      decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-      impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-      tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
-      audience: idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
-    }))
-    .filter((r) => r.row_key);
-}
+// classifyKind + parseDecisionRows now live in ./workspace-parse.mjs (shared with the
+// operator-loop collector). Imported above. parseTableRows/parseTaskRows stay in
+// ./tasks-table.mjs.
 
 // ── state ───────────────────────────────────────────────────────────────────
 
@@ -2304,6 +2266,84 @@ async function cmdWork(repo, cfg, patterns, args) {
   await postWorkEvent(repo, cfg, key, member);
 }
 
+// ── operator loop (C1 collector + manifest, C2 evidence ledger) ──────────────
+// The collector is TypeScript (workflow layer, per the Engineering Constitution), compiled
+// to dist/operator-loop. Imported dynamically ONLY here so no other command depends on the
+// build; if it's not built, fail with a clear hint instead of a module-not-found stack.
+
+async function loadOperatorLoop() {
+  const distPath = path.join(SCRIPT_DIR, "..", "dist", "operator-loop", "index.js");
+  if (!existsSync(distPath)) {
+    die("operator-loop is not built — run: npm run build:loop");
+  }
+  return import(pathToFileURL(distPath).href);
+}
+
+async function cmdLoop(repo, cfg, args) {
+  const sub = args[0];
+  const flags = new Set(args.slice(1));
+  const loop = await loadOperatorLoop();
+  // Identity resolved via the shared helper so CLI + MCP stamp identical member/project.
+  const { member, project } = resolveLoopIdentity(repo);
+
+  if (sub === "collect") {
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const manifest = loop.collect({ root: repo, cadence, member, project });
+
+    // Manifests carry admin-tier signals → write to .aios/loop (outside sync_include; never pushed).
+    const dir = path.join(repo, ".aios", "loop", "manifests");
+    mkdirSync(dir, { recursive: true });
+    const stamp = manifest.generatedAt.replace(/[:.]/g, "-");
+    const out = path.join(dir, `${cadence}-${stamp}.json`);
+    writeFileSync(out, JSON.stringify(manifest, null, 2));
+
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(manifest, null, 2));
+      return;
+    }
+    const byKind = {};
+    for (const s of manifest.signals) byKind[s.kind] = (byKind[s.kind] || 0) + 1;
+    const kinds = Object.entries(byKind)
+      .map(([k, n]) => `${k}:${n}`)
+      .join("  ") || "(none)";
+    console.log(
+      c.blue(`aios loop ${cadence}`) +
+        c.dim(`  window ${manifest.window.from.slice(0, 10)} → ${manifest.window.to.slice(0, 10)}`)
+    );
+    console.log(`  signals: ${manifest.signals.length}   ${kinds}`);
+    if (manifest.excluded.length) {
+      console.log(c.yellow(`  excluded (default-deny): ${manifest.excluded.length}`));
+      for (const e of manifest.excluded.slice(0, 10)) console.log(c.dim(`    - ${e.ref} — ${e.reason}`));
+    }
+    console.log(c.dim(`  manifest → ${path.relative(repo, out)}`));
+    return;
+  }
+
+  if (sub === "manifest") {
+    if (!flags.has("--explain")) die("usage: aios loop manifest --explain [--as team|external] [--daily]");
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const asIdx = args.indexOf("--as");
+    const audience = asIdx >= 0 ? args[asIdx + 1] : "owner";
+    if (!["owner", "team", "external"].includes(audience)) die(`--as must be owner|team|external`);
+    const manifest = loop.collect({ root: repo, cadence, member, project });
+    const view = loop.explainManifest(manifest, audience);
+    console.log(
+      c.blue(`evidence — ${cadence}, audience: ${audience}`) +
+        c.dim(`  (${view.lines.length} signals)`)
+    );
+    for (const line of view.lines) {
+      const mark = line.visibleToAudience ? c.green("shown") : c.yellow("withheld");
+      const wh = line.withheldFrom.length ? c.dim(` · withheld from: ${line.withheldFrom.join(",")}`) : "";
+      console.log(`  [${mark}] ${c.bold(line.kind)} (${line.tier}) ${line.ref}${wh}`);
+      console.log(c.dim(`        ${line.summary}`));
+    }
+    if (view.excluded.length) console.log(c.yellow(`  excluded (default-deny): ${view.excluded.length}`));
+    return;
+  }
+
+  die("usage: aios loop collect [--daily|--weekly] [--json]\n       aios loop manifest --explain [--as team|external] [--daily]");
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -2335,6 +2375,10 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
+    [--json]                            (.aios/loop/manifests/; offline, never synced)
+  aios loop manifest --explain          inspect a manifest's evidence + tiers
+    [--as team|external] [--daily]      simulate what a digest audience would see
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed
@@ -2380,9 +2424,19 @@ if (cmd === "mcp") {
   const { resolveBrainConfig, runStdio } = await import("./brain-mcp.mjs");
   const mcpCfg = resolveBrainConfig();
   if (mcpCfg.missing.length) {
-    die(
-      `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")}. ` +
-        `Set them in the MCP client's env block, a local .env, or aios.yaml.`
+    // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
+    // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
+    // error when called. With neither brain config nor a workspace, there's nothing to do.
+    const ws = findRepoRoot(process.cwd());
+    if (!ws) {
+      die(
+        `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
+          `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
+      );
+    }
+    process.stderr.write(
+      `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
+        `starting in local-only mode — aios_* tools available.\n`
     );
   }
   await runStdio(mcpCfg);
@@ -2405,6 +2459,7 @@ const OFFLINE_CMDS = new Set([
   "relay",
   "build",
   "review-bugbot",
+  "loop",
 ]);
 
 let repo, cfg;
@@ -2440,6 +2495,7 @@ try {
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
+  else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);
