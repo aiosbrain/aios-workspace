@@ -23,6 +23,10 @@ These are not separate products. Each milestone should leave behind artifacts, s
 
 ## Milestone 1 — Solo loop magical
 
+> **Buildable decomposition:** [`docs/v1-operator-loop/`](./v1-operator-loop/README.md)
+> (components C1–C8 + the five workflow [domain specs](./v1-operator-loop/domains/README.md)).
+> Tracked as Linear epic **AIO-122**. Engineering approach: [`ENGINEERING-CONSTITUTION.md`](./ENGINEERING-CONSTITUTION.md).
+
 ### Promise
 
 "AIOS helps me run my work every week. It knows what changed, what I decided, what is blocked, what I owe next, and what is safe to share — and it proves its work."
