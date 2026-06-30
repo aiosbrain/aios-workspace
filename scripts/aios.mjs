@@ -2309,6 +2309,10 @@ function validateManifestShape(m) {
   // becomes a clear CLI error, not a TypeError deep in the verifier's manifest indexing.
   m.signals.forEach((s, i) => {
     if (!s || typeof s !== "object") die(`manifest.signals[${i}]: expected an object`);
+    // The top-level `tier` is the field C5's projection trusts as the egress gate — validate it
+    // (not just ref.tier) so a hand-edited --manifest with a bogus signal tier is a clear error.
+    if (!LOOP_TIERS.includes(s.tier))
+      die(`manifest.signals[${i}].tier must be admin|team|external`);
     const ref = s.ref;
     if (!ref || typeof ref.path !== "string")
       die(`manifest.signals[${i}].ref: path must be a string`);
@@ -2500,11 +2504,162 @@ async function cmdLoop(repo, cfg, args) {
     return;
   }
 
+  if (sub === "weekly") {
+    // ── Audience selection: default brief(owner)+team; --as external; --all = both shareable. ──
+    const asIdx = args.indexOf("--as");
+    const asArg = asIdx >= 0 ? args[asIdx + 1] : null;
+    let shareableAudiences;
+    if (flags.has("--all")) shareableAudiences = ["team", "external"];
+    else if (asArg) {
+      if (!["team", "external"].includes(asArg)) die("weekly --as must be team|external");
+      shareableAudiences = [asArg];
+    } else shareableAudiences = ["team"];
+
+    // --smoke forces the offline path even alongside --remote (used by tests/demos).
+    const remote = flags.has("--remote") && !flags.has("--smoke");
+    const asJson = flags.has("--json");
+    const dryRun = flags.has("--dry-run");
+
+    const manIdx = args.indexOf("--manifest");
+    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+    const manifest = manifestPath
+      ? validateManifestShape(parseJsonFile(manifestPath))
+      : loop.collect({ root: repo, cadence: "weekly", member, project });
+
+    // Egress consent: the remote drafter runs ONLY under --remote AND with the key present.
+    let complete;
+    if (remote) {
+      if (!loop.hasAnthropicKey()) {
+        die(
+          "--remote requires ANTHROPIC_API_KEY (the egress-consent key). Run offline (omit --remote) or set the key."
+        );
+      }
+      complete = loop.anthropicCompletion;
+      if (!asJson)
+        console.log(
+          c.dim(
+            `# remote drafting ENABLED — sends only the ≤-audience projection (admin never leaves the machine)`
+          )
+        );
+    } else if (!asJson) {
+      console.log(
+        c.dim(
+          "# offline: LLM synthesis skipped — pass --remote to send the ≤-audience projection to Anthropic"
+        )
+      );
+    }
+
+    const closeout = await loop.runCloseout({
+      fullManifest: manifest,
+      shareableAudiences,
+      complete,
+    });
+
+    // ── Verifier status BEFORE any approval/write. ──
+    if (!asJson) {
+      for (const s of closeout.shareables) {
+        const badge =
+          s.status === "pass"
+            ? c.green("PASS")
+            : s.status === "corrected"
+              ? c.yellow("CORRECTED")
+              : c.red("FAILED");
+        console.log(
+          c.blue(`weekly digest — ${s.audience}`) +
+            `  ${badge}` +
+            (s.shippable ? "" : c.red(" · NOT SHIPPABLE"))
+        );
+        console.log(
+          c.dim(
+            `  claims: ${s.result.checkedClaims}  loops: ${s.result.loopsUsed}/${s.result.budget}  leak-withheld: ${s.leakWithheld}`
+          )
+        );
+        for (const f of s.result.findings)
+          console.log(c.red(`  ✗ [${f.ruleId} ${f.check}] #${f.entryIndex}: ${f.claimPreview}`));
+      }
+    }
+
+    // ── Write artifacts under .aios/loop/closeouts/<stamp>/ (outside sync_include; C6 owns
+    //    approval→writeback into the spine). admin-tier brief never enters the synced spine. ──
+    const stamp = manifest.generatedAt.replace(/[:.]/g, "-");
+    const outDir = path.join(repo, ".aios", "loop", "closeouts", stamp);
+    if (!dryRun) mkdirSync(outDir, { recursive: true });
+
+    let briefPath = null;
+    if (!dryRun) {
+      briefPath = path.join(outDir, "brief.md"); // owner-only
+      writeFileSync(briefPath, closeout.briefMarkdown);
+      writeFileSync(
+        path.join(outDir, "next-week-actions.json"),
+        JSON.stringify(closeout.ownerNextWeekActions, null, 2)
+      );
+    }
+
+    let anyFailed = false;
+    const audienceBlocks = [];
+    for (const s of closeout.shareables) {
+      if (!s.shippable) anyFailed = true;
+      let digestPath = null;
+      let unshippablePath = null;
+      if (!dryRun) {
+        if (s.shippable) {
+          digestPath = path.join(outDir, `digest-${s.audience}.md`);
+          writeFileSync(digestPath, s.digestMarkdown);
+        } else {
+          // Clearly-marked, inspection-only — NEVER referenced as an approved artifact.
+          unshippablePath = path.join(outDir, `digest-${s.audience}.FAILED.md`);
+          writeFileSync(unshippablePath, s.digestMarkdown);
+        }
+        writeFileSync(
+          path.join(outDir, `verifier-${s.audience}.json`),
+          JSON.stringify(s.result, null, 2)
+        );
+      }
+      audienceBlocks.push({
+        audience: s.audience,
+        status: s.status,
+        shippable: s.shippable,
+        digestPath: digestPath ? path.relative(repo, digestPath) : null,
+        unshippablePath: unshippablePath ? path.relative(repo, unshippablePath) : null,
+        verifier: s.result, // audience-safe by the C3 contract
+        nextWeekActions: s.nextWeekActions, // already tier <= this audience
+      });
+    }
+
+    if (asJson) {
+      // Audience-safe payload: brief by PATH only (never its content); no raw ledger; no admin
+      // actions; per-audience action filtering already applied by each pipeline.
+      console.log(
+        JSON.stringify(
+          {
+            runStamp: stamp,
+            cadence: "weekly",
+            briefPath: briefPath ? path.relative(repo, briefPath) : null,
+            audiences: audienceBlocks,
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      if (briefPath) console.log(c.dim(`  brief (owner-only) → ${path.relative(repo, briefPath)}`));
+      for (const b of audienceBlocks) {
+        const p = b.digestPath || b.unshippablePath;
+        if (p) console.log(c.dim(`  digest (${b.audience}) → ${p}`));
+      }
+      if (dryRun) console.log(c.dim("  (--dry-run: no files written)"));
+    }
+    // A non-shippable audience must gate (non-zero) for scripts/CI.
+    if (anyFailed) process.exitCode = 1;
+    return;
+  }
+
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
       "       aios loop manifest --explain [--as team|external] [--daily]\n" +
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
-      "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]"
+      "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
+      "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]"
   );
 }
 
@@ -2546,6 +2701,9 @@ usage:
   aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →
     --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed
     [--smoke]                           --smoke derives a debug ledger from a fresh manifest
+  aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),
+    [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;
+    [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed

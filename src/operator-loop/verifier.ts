@@ -315,6 +315,20 @@ export interface RunVerificationInput {
  * contributes advisory notes only and never changes status.
  */
 export async function runVerification(input: RunVerificationInput): Promise<VerifierResult> {
+  return (await runVerificationWithLedger(input)).result;
+}
+
+/**
+ * Same bounded loop as `runVerification`, but ALSO returns the final (corrected) ledger for
+ * TRUSTED in-process callers (C5's closeout, which must render the digest from the post-
+ * correction ledger). The returned `ledger` is NOT audience-safe — it carries the full claim
+ * text and refs — so it must never be serialized to stdout/JSON or written to a shareable file.
+ * `result` keeps the C3 contract: audience-safe by construction. Deliberately NOT re-exported
+ * from index.ts; closeout.ts imports it directly so the unsafe ledger can't be reached by the CLI.
+ */
+export async function runVerificationWithLedger(
+  input: RunVerificationInput
+): Promise<{ result: VerifierResult; ledger: EvidenceLedger }> {
   const { manifest, audience, cadence, correct, supportCheck, semanticCheck } = input;
   const budget = budgetFor(cadence);
   let ledger = input.ledger;
@@ -343,13 +357,16 @@ export async function runVerification(input: RunVerificationInput): Promise<Veri
   }
 
   return {
-    status,
-    audience,
-    cadence,
-    findings,
-    advisory,
-    checkedClaims: ledger.entries?.length ?? 0,
-    loopsUsed,
-    budget,
+    result: {
+      status,
+      audience,
+      cadence,
+      findings,
+      advisory,
+      checkedClaims: ledger.entries?.length ?? 0,
+      loopsUsed,
+      budget,
+    },
+    ledger,
   };
 }
