@@ -2279,6 +2279,78 @@ async function loadOperatorLoop() {
   return import(pathToFileURL(distPath).href);
 }
 
+const LOOP_TIERS = ["admin", "team", "external"];
+
+// Read + parse a JSON file for `aios loop verify`, failing loud with a precise message rather
+// than a module-not-found / SyntaxError stack. CLI inputs are a user-visible contract.
+function parseJsonFile(p) {
+  if (!existsSync(p)) die(`file not found: ${p}`);
+  let raw;
+  try {
+    raw = readFileSync(p, "utf8");
+  } catch (e) {
+    die(`cannot read ${p}: ${e.message}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    die(`invalid JSON in ${p}: ${e.message}`);
+  }
+}
+
+// Lightweight runtime shape checks before handing JSON to the typed verifier. An empty
+// evidence array is intentionally allowed through — the verifier reports it as an ungrounded
+// must-fail (V1), which is the behavior under test, not a CLI usage error.
+function validateManifestShape(m) {
+  if (!m || typeof m !== "object" || Array.isArray(m)) die("manifest: expected a JSON object");
+  if (!Array.isArray(m.signals)) die("manifest: missing signals[] array");
+  if (!m.window || typeof m.window !== "object") die("manifest: missing window object");
+  // Each signal carries the evidence ref the verifier indexes — validate it so a malformed ref
+  // becomes a clear CLI error, not a TypeError deep in the verifier's manifest indexing.
+  m.signals.forEach((s, i) => {
+    if (!s || typeof s !== "object") die(`manifest.signals[${i}]: expected an object`);
+    const ref = s.ref;
+    if (!ref || typeof ref.path !== "string")
+      die(`manifest.signals[${i}].ref: path must be a string`);
+    if (!LOOP_TIERS.includes(ref.tier))
+      die(`manifest.signals[${i}].ref: tier must be admin|team|external`);
+    if (ref.row !== undefined && typeof ref.row !== "string")
+      die(`manifest.signals[${i}].ref: row must be a string when present`);
+  });
+  return m;
+}
+
+function validateLedgerShape(l) {
+  if (!l || typeof l !== "object" || Array.isArray(l)) die("ledger: expected a JSON object");
+  if (!Array.isArray(l.entries)) die("ledger: missing entries[] array");
+  l.entries.forEach((e, i) => {
+    if (!e || typeof e !== "object") die(`ledger.entries[${i}]: expected an object`);
+    if (typeof e.claim !== "string") die(`ledger.entries[${i}]: claim must be a string`);
+    if (!Array.isArray(e.evidence)) die(`ledger.entries[${i}]: evidence must be an array`);
+    e.evidence.forEach((r, j) => {
+      if (!r || typeof r.path !== "string")
+        die(`ledger.entries[${i}].evidence[${j}]: path must be a string`);
+      if (!LOOP_TIERS.includes(r.tier))
+        die(`ledger.entries[${i}].evidence[${j}]: tier must be admin|team|external`);
+      if (r.row !== undefined && typeof r.row !== "string")
+        die(`ledger.entries[${i}].evidence[${j}]: row must be a string when present`);
+    });
+  });
+  return l;
+}
+
+// A clearly-labeled DEBUG ledger: one grounded claim per manifest signal (each claim's evidence
+// is exactly that signal's ref). This is NOT a digest drafter — it exists only to demonstrate the
+// verifier contract end-to-end before C5 exists. Output still flows through the tier-safe path.
+function smokeLedgerFrom(manifest) {
+  return {
+    entries: manifest.signals.map((s) => ({
+      claim: s.summary || `${s.kind} signal`,
+      evidence: [{ path: s.ref.path, row: s.ref.row, tier: s.ref.tier }],
+    })),
+  };
+}
+
 async function cmdLoop(repo, cfg, args) {
   const sub = args[0];
   const flags = new Set(args.slice(1));
@@ -2355,8 +2427,84 @@ async function cmdLoop(repo, cfg, args) {
     return;
   }
 
+  if (sub === "verify") {
+    // Cadence drives the correction budget + status semantics, so reject a conflicting pair
+    // rather than silently picking one.
+    if (flags.has("--daily") && flags.has("--weekly"))
+      die("--daily and --weekly are mutually exclusive");
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const asIdx = args.indexOf("--as");
+    const audience = asIdx >= 0 ? args[asIdx + 1] : "team";
+    if (!["owner", "team", "external"].includes(audience)) die("--as must be owner|team|external");
+    const asJson = flags.has("--json");
+
+    const manIdx = args.indexOf("--manifest");
+    const ledIdx = args.indexOf("--ledger");
+    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+    const ledgerPath = ledIdx >= 0 ? args[ledIdx + 1] : null;
+
+    let manifest;
+    let ledger;
+    if (flags.has("--smoke")) {
+      manifest = manifestPath
+        ? validateManifestShape(parseJsonFile(manifestPath))
+        : loop.collect({ root: repo, cadence, member, project });
+      ledger = smokeLedgerFrom(manifest);
+      if (!asJson)
+        console.log(c.dim("# smoke ledger (debug, not a drafter) — one grounded claim per signal"));
+    } else {
+      if (!ledgerPath)
+        die(
+          "usage: aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--daily|--weekly] [--json]\n" +
+            "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]"
+        );
+      // A ledger's refs only resolve against the run it was drafted from — require the pair.
+      if (!manifestPath)
+        die(
+          "--ledger requires a matching --manifest so evidence refs resolve against the right run"
+        );
+      manifest = validateManifestShape(parseJsonFile(manifestPath));
+      ledger = validateLedgerShape(parseJsonFile(ledgerPath));
+    }
+
+    const result = await loop.runVerification({ manifest, ledger, audience, cadence });
+
+    if (asJson) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      const badge =
+        result.status === "pass"
+          ? c.green("PASS")
+          : result.status === "corrected"
+            ? c.yellow("CORRECTED")
+            : c.red("FAILED");
+      console.log(c.blue(`verify — ${cadence}, audience: ${audience}`) + `  ${badge}`);
+      console.log(
+        c.dim(`  claims: ${result.checkedClaims}   loops: ${result.loopsUsed}/${result.budget}`)
+      );
+      for (const f of result.findings) {
+        console.log(
+          c.red(`  ✗ [${f.ruleId} ${f.check}] entry #${f.entryIndex}: ${f.claimPreview}`)
+        );
+        console.log(c.dim(`      ${f.detail}`));
+      }
+      for (const a of result.advisory)
+        console.log(
+          c.yellow(`  · [advisory ${a.ruleId}] entry #${a.entryIndex}: ${a.claimPreview}`)
+        );
+      if (!result.findings.length) console.log(c.green("  no must-fails"));
+    }
+    // Fail loud: a failed verification must gate (non-zero) for scripts/CI. Not a usage error,
+    // so set the exit code rather than die().
+    if (result.status === "failed") process.exitCode = 1;
+    return;
+  }
+
   die(
-    "usage: aios loop collect [--daily|--weekly] [--json]\n       aios loop manifest --explain [--as team|external] [--daily]"
+    "usage: aios loop collect [--daily|--weekly] [--json]\n" +
+      "       aios loop manifest --explain [--as team|external] [--daily]\n" +
+      "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
+      "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]"
   );
 }
 
@@ -2395,6 +2543,9 @@ usage:
     [--json]                            (.aios/loop/manifests/; offline, never synced)
   aios loop manifest --explain          inspect a manifest's evidence + tiers
     [--as team|external] [--daily]      simulate what a digest audience would see
+  aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →
+    --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed
+    [--smoke]                           --smoke derives a debug ledger from a fresh manifest
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed

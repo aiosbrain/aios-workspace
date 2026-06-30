@@ -21,5 +21,21 @@ export {
   type WithheldSummary,
 } from "./ledger.js";
 
+// C3 — verifier (rubric-gated, bounded correction)
+export {
+  verifyLedger,
+  runVerification,
+  budgetFor,
+  type VerifierStatus,
+  type VerifierCheck,
+  type VerifierFinding,
+  type VerifierResult,
+  type VerifyLedgerInput,
+  type RunVerificationInput,
+  type CorrectFn,
+  type SupportCheckFn,
+  type SemanticCheckFn,
+} from "./verifier.js";
+
 // Inspection
 export { explainManifest, type ExplainView, type ExplainLine } from "./explain.js";

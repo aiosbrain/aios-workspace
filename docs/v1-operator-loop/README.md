@@ -7,16 +7,16 @@
 
 ## Component index
 
-| # | Component | Spec |
-|---|-----------|------|
-| C1 | Source collector + run manifest | [c1-collector.md](./c1-collector.md) |
-| C2 | Evidence ledger | [c2-evidence-ledger.md](./c2-evidence-ledger.md) |
-| C3 | Verifier + rubric-gated correction | [c3-verifier.md](./c3-verifier.md) |
-| C4 | Daily light loop | [c4-daily.md](./c4-daily.md) |
-| C5 | Weekly closeout | [c5-weekly.md](./c5-weekly.md) |
-| C6 | Approval-gated writeback | [c6-writeback.md](./c6-writeback.md) |
-| C7 | Habit + continuity layer | [c7-habit.md](./c7-habit.md) |
-| C8 | Loop telemetry + dogfood instrumentation | [c8-telemetry.md](./c8-telemetry.md) |
+| # | Component | Spec | Status |
+|---|-----------|------|--------|
+| C1 | Source collector + run manifest | [c1-collector.md](./c1-collector.md) | ✅ merged |
+| C2 | Evidence ledger | [c2-evidence-ledger.md](./c2-evidence-ledger.md) | ✅ merged |
+| C3 | Verifier + rubric-gated correction | [c3-verifier.md](./c3-verifier.md) | ✅ merged (`aios loop verify`) |
+| C4 | Daily light loop | [c4-daily.md](./c4-daily.md) | planned |
+| C5 | Weekly closeout | [c5-weekly.md](./c5-weekly.md) | planned |
+| C6 | Approval-gated writeback | [c6-writeback.md](./c6-writeback.md) | planned |
+| C7 | Habit + continuity layer | [c7-habit.md](./c7-habit.md) | planned |
+| C8 | Loop telemetry + dogfood instrumentation | [c8-telemetry.md](./c8-telemetry.md) | planned |
 
 The five workflow domains that feed the loop have their own specs under
 [`domains/`](./domains/).
