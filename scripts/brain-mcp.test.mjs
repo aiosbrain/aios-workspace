@@ -93,12 +93,13 @@ test("aios_loop_collect (local tool) reads the workspace at ctx.cwd and matches 
     // project.yaml is the workspace marker findWorkspaceRoot walks up to; 3-log is current spine.
     writeFileSync(path.join(dir, "project.yaml"), "slug: testproj\nmember: testuser\n");
     mkdirSync(path.join(dir, "3-log"), { recursive: true });
+    const today = new Date().toISOString().slice(0, 10); // in-window date (collector window is [now-7d, now])
     writeFileSync(
       path.join(dir, "3-log", "decision-log.md"),
       "---\naccess: team\n---\n\n" +
         "| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n" +
         "|---|------|----------|-----------|------------|--------|------|----------|\n" +
-        "| 1 | 2999-01-01 | Test decision | because | alex | impact | 1 | team |\n"
+        `| 1 | ${today} | Test decision | because | alex | impact | 1 | team |\n`
     );
     // Local tool ignores the brain client; ctx.cwd points it at the workspace.
     const dispatch = createDispatcher({ client: stubClient(), ctx: { cwd: dir } });

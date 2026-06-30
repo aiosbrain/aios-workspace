@@ -17,6 +17,7 @@ export {
   type LedgerEntry,
   type EvidenceLedger,
   type RedactionResult,
+  type RedactedEntry,
   type WithheldSummary,
 } from "./ledger.js";
 

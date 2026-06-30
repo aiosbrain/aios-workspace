@@ -6,7 +6,7 @@
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { parseFrontmatter } from "../parsers.js";
+import { parseFrontmatter, classifyKind } from "../parsers.js";
 import { resolveTier } from "../signal.js";
 import type { Source, SourceResult } from "./types.js";
 
@@ -27,13 +27,19 @@ export const inboxSource: Source = (ctx): SourceResult => {
   if (!ctx.spine.inbox) return out;
 
   for (const rel of walkMarkdown(ctx.root, ctx.spine.inbox)) {
-    if (rel.includes("/transcripts/")) continue;
     const abs = path.join(ctx.root, rel);
     const raw = readFileSync(abs, "utf8");
     const { frontmatter, body } = parseFrontmatter(raw);
+    // Transcripts feed decisions via a harness, not the loop directly. Skip by KIND (frontmatter
+    // type === "transcript" OR a /transcripts/ path), not a path substring alone — a transcript
+    // pulled from the brain may land elsewhere in 1-inbox.
+    if (classifyKind(rel, frontmatter) === "transcript") continue;
     const tier = resolveTier(frontmatter?.access ?? null);
     if (!tier) {
-      out.excluded.push({ ref: rel, reason: "inbox item has no resolvable access tier (default-deny)" });
+      out.excluded.push({
+        ref: rel,
+        reason: "inbox item has no resolvable access tier (default-deny)",
+      });
       continue;
     }
     const base = rel.split("/").pop() ?? rel;

@@ -4,7 +4,10 @@
 /** Parse a markdown table body into raw trimmed cell arrays (row 0 is the header). */
 export function parseTableRows(body: string): string[][];
 
-export function parsePmCell(raw: string, rowKey: string): {
+export function parsePmCell(
+  raw: string,
+  rowKey: string
+): {
   pm_provider?: string;
   pm_external_id?: string;
 };

@@ -20,11 +20,15 @@ function makeWorkspace() {
   // walked .aios) would show up in the plan.
   writeFileSync(
     path.join(dir, "aios.yaml"),
-    ["version: 1", 'brain_url: ""', "sync_tiers:", "  - team", "sync_include:", "  - 3-log"].join("\n") + "\n"
+    ["version: 1", 'brain_url: ""', "sync_tiers:", "  - team", "sync_include:", "  - 3-log"].join(
+      "\n"
+    ) + "\n"
   );
+  const today = new Date().toISOString().slice(0, 10); // in-window date for the collector
   writeFileSync(
     path.join(dir, "3-log", "decision-log.md"),
-    "---\naccess: team\n---\n\n| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n|---|---|---|---|---|---|---|---|\n| 1 | 2999-01-01 | A decision | r | alex | i | 1 | team |\n"
+    "---\naccess: team\n---\n\n| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n|---|---|---|---|---|---|---|---|\n" +
+      `| 1 | ${today} | A decision | r | alex | i | 1 | team |\n`
   );
   return dir;
 }
@@ -32,7 +36,10 @@ function makeWorkspace() {
 test("collected manifests under .aios/loop are never picked up by the sync gate", () => {
   const dir = makeWorkspace();
 
-  execFileSync("node", [AIOS, "loop", "collect", "--weekly", "--repo", dir], { cwd: REPO, encoding: "utf8" });
+  execFileSync("node", [AIOS, "loop", "collect", "--weekly", "--repo", dir], {
+    cwd: REPO,
+    encoding: "utf8",
+  });
   const manifestDir = path.join(dir, ".aios", "loop", "manifests");
   assert.ok(existsSync(manifestDir), "manifest dir created");
   assert.ok(
@@ -40,8 +47,15 @@ test("collected manifests under .aios/loop are never picked up by the sync gate"
     "a .json manifest was written"
   );
 
-  const out = execFileSync("node", [AIOS, "status", "--json", "--repo", dir], { cwd: REPO, encoding: "utf8" });
-  const jsonLine = out.trim().split("\n").reverse().find((l) => l.trim().startsWith("{"));
+  const out = execFileSync("node", [AIOS, "status", "--json", "--repo", dir], {
+    cwd: REPO,
+    encoding: "utf8",
+  });
+  const jsonLine = out
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((l) => l.trim().startsWith("{"));
   assert.ok(jsonLine, `no JSON line in status output:\n${out}`);
   const items = JSON.parse(jsonLine).items;
   const all = [
@@ -51,7 +65,13 @@ test("collected manifests under .aios/loop are never picked up by the sync gate"
     ...(items.clean || []),
   ];
 
-  assert.ok(!all.some((i) => (i.rel || "").includes(".aios")), "no .aios path appears in the sync plan");
+  assert.ok(
+    !all.some((i) => (i.rel || "").includes(".aios")),
+    "no .aios path appears in the sync plan"
+  );
   // positive control: the real team-tier file IS seen, proving the gate is active
-  assert.ok(all.some((i) => (i.rel || "").endsWith("decision-log.md")), "decision-log.md is in the plan");
+  assert.ok(
+    all.some((i) => (i.rel || "").endsWith("decision-log.md")),
+    "decision-log.md is in the plan"
+  );
 });

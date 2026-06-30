@@ -3,7 +3,20 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { visibleTiers, assertGrounded, redactForTier } from "../../dist/operator-loop/index.js";
+import {
+  visibleTiers,
+  assertGrounded,
+  redactForTier,
+  resolveTier,
+} from "../../dist/operator-loop/index.js";
+
+test("resolveTier default-denies a multi-valued (malformed) access/audience", () => {
+  assert.equal(resolveTier(["team", "admin"]), null); // must NOT resolve to "team"
+  assert.equal(resolveTier(["team"]), "team"); // a single-element array is fine
+  assert.equal(resolveTier("team"), "team");
+  assert.equal(resolveTier("nonsense"), null);
+  assert.equal(resolveTier("private"), "admin"); // alias still normalizes
+});
 
 const ref = (tier, row) => ({ path: "3-log/x.md", row, tier });
 
@@ -19,7 +32,10 @@ test("assertGrounded: zero-evidence claim is a hard fail", () => {
 });
 
 test("admin-only evidence → no claim text emitted to an external digest", () => {
-  const r = redactForTier({ claim: "the secret margin is 40%", evidence: [ref("admin", "1")] }, "external");
+  const r = redactForTier(
+    { claim: "the secret margin is 40%", evidence: [ref("admin", "1")] },
+    "external"
+  );
   assert.equal(r.emit, false);
   assert.ok(!JSON.stringify(r.entry).includes("secret margin"), "claim text must not leak");
   assert.match(r.entry.claim, /withheld/);
@@ -27,7 +43,10 @@ test("admin-only evidence → no claim text emitted to an external digest", () =
 });
 
 test("team-tier source is withheld from an external digest too (not just admin)", () => {
-  const r = redactForTier({ claim: "internal team note", evidence: [ref("team", "1")] }, "external");
+  const r = redactForTier(
+    { claim: "internal team note", evidence: [ref("team", "1")] },
+    "external"
+  );
   assert.equal(r.emit, false);
   assert.match(r.entry.claim, /withheld/);
   assert.match(r.placeholder, /team/);

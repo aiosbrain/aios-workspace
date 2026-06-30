@@ -36,8 +36,16 @@ const TIERS: ReadonlySet<string> = new Set<Tier>(["admin", "team", "external"]);
  */
 export function resolveTier(raw: string | string[] | null | undefined): Tier | null {
   if (raw == null) return null;
-  const first = Array.isArray(raw) ? raw[0] : raw;
-  const v = (first ?? "").toString().trim().toLowerCase();
+  // A multi-valued access/audience is malformed — default-deny rather than silently taking the
+  // first element (e.g. ["team","admin"] must NOT resolve to "team" and up-scope private content).
+  let scalar: string | undefined;
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1) return null;
+    scalar = raw[0];
+  } else {
+    scalar = raw;
+  }
+  const v = (scalar ?? "").toString().trim().toLowerCase();
   if (!v) return null;
   const n = normalizeTier(v);
   return TIERS.has(n) ? (n as Tier) : null;

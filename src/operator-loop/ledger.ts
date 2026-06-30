@@ -51,11 +51,24 @@ export function assertGrounded(entry: LedgerEntry): void {
   }
 }
 
+/**
+ * A digest-facing, redacted projection of a ledger entry. Unlike `LedgerEntry`, its `evidence`
+ * MAY be empty — a fully-withheld claim emits no evidence, only a placeholder. This is a separate
+ * type precisely so it does NOT masquerade as a groundable `LedgerEntry` (assertGrounded guards
+ * the source-of-truth entry, not this projection).
+ */
+export interface RedactedEntry {
+  claim: string;
+  evidence: EvidenceRef[];
+  withheld?: WithheldSummary[];
+  requiresIndependentSupport?: boolean;
+}
+
 export interface RedactionResult {
   /** Whether the claim's factual text may appear in a digest for this audience. */
   emit: boolean;
   /** The entry as it should appear: when emit=false, `claim` is replaced by a placeholder. */
-  entry: LedgerEntry;
+  entry: RedactedEntry;
   /** A content-free notice when something was withheld (count + tier), never claim text. */
   placeholder?: string;
 }
@@ -69,7 +82,9 @@ function summarizeWithheld(refs: EvidenceRef[]): WithheldSummary[] {
 
 function withheldNotice(summary: WithheldSummary[]): string {
   // Count + tier only — no content, no paths, no claim text.
-  const parts = summary.map(({ tier, count }) => `${count} ${tier}-tier source${count === 1 ? "" : "s"}`);
+  const parts = summary.map(
+    ({ tier, count }) => `${count} ${tier}-tier source${count === 1 ? "" : "s"}`
+  );
   return `[withheld — ${parts.join(", ")}]`;
 }
 

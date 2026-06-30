@@ -21,7 +21,9 @@ export const DAILY: WindowConfig = {
 export const WEEKLY: WindowConfig = {
   cadence: "weekly",
   days: 7,
-  kinds: ["decision", "task", "hours", "deliverable", "inbox", "carryover"],
+  // github is listed (full set) but its source is an inert deferred stub — it emits nothing
+  // until a local GitHub-activity source exists (AIO-32 is brain-side). See sources/github.ts.
+  kinds: ["decision", "task", "hours", "deliverable", "inbox", "carryover", "github"],
 };
 
 export function windowFor(cadence: Cadence): WindowConfig {

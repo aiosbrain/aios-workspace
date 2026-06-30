@@ -51,14 +51,20 @@ function seed(spine) {
   write(
     dir,
     `${names.log}/tasks.md`,
-    "---\naccess: admin\n---\n\n| ID | Task | Assignee | Status | Sprint | Due |\n|---|---|---|---|---|---|\n| T1 | Build | alex | in_progress | W1 | 2026-03-30 |\n"
+    "---\naccess: admin\n---\n\n| ID | Task | Assignee | Status | Sprint | Due |\n|---|---|---|---|---|---|\n| T1 | Build | alex | in_progress | W1 | 2026-03-30 |\n",
+    NOW // tasks use file mtime as the activity axis — keep it inside the injected window
   );
   write(
     dir,
     `${names.log}/hours-log.md`,
     "---\naccess: team\n---\n\n| Member | Date | Activity | Hours | Tag |\n|---|---|---|---|---|\n| alex | 2026-03-29 | coding | 3.0 | engineering |\n"
   );
-  write(dir, `${names.work}/d1.md`, "---\naccess: team\nstatus: review\nowner: alex\n---\n# Deliverable One\n", NOW);
+  write(
+    dir,
+    `${names.work}/d1.md`,
+    "---\naccess: team\nstatus: review\nowner: alex\n---\n# Deliverable One\n",
+    NOW
+  );
   return { dir, names };
 }
 
@@ -144,7 +150,50 @@ test("blank/invalid row date falls back to file mtime (no NaN window bypass)", (
     old
   );
   const m2 = collect({ root: dir, cadence: "weekly", now: NOW });
-  assert.ok(!m2.signals.some((s) => s.kind === "hours"), "blank-date row outside window is filtered out");
+  assert.ok(
+    !m2.signals.some((s) => s.kind === "hours"),
+    "blank-date row outside window is filtered out"
+  );
+});
+
+test("a decision row with an unrecognized audience is excluded (default-deny), not up-scoped", () => {
+  const { dir } = ws("current");
+  write(
+    dir,
+    "3-log/decision-log.md",
+    dlog([
+      "1 | 2026-03-29 | Good | r | alex | i | 1 | team",
+      "2 | 2026-03-29 | Bad audience | r | sam | i | 1 | bogustier",
+    ])
+  );
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.ok(
+    m.signals.some((s) => s.ref.row === "1"),
+    "valid-audience row kept"
+  );
+  assert.ok(!m.signals.some((s) => s.ref.row === "2"), "unrecognized-audience row dropped");
+  assert.ok(
+    m.excluded.some((e) => e.ref.endsWith("#2") && /default-deny/.test(e.reason)),
+    "dropped row is logged in excluded[]"
+  );
+});
+
+test("future-dated signals (occurredAt > now) are out of window", () => {
+  const { dir } = ws("current");
+  write(
+    dir,
+    "3-log/decision-log.md",
+    dlog([
+      "1 | 2026-03-30 | In window | r | alex | i | 1 | team",
+      "2 | 2027-06-01 | Future | r | sam | i | 1 | team",
+    ])
+  );
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.ok(m.signals.some((s) => s.ref.row === "1"));
+  assert.ok(
+    !m.signals.some((s) => s.ref.row === "2"),
+    "future-dated row excluded by window.to = now"
+  );
 });
 
 test("hours source supports BOTH header shapes", () => {
@@ -153,10 +202,9 @@ test("hours source supports BOTH header shapes", () => {
     "| Member | Date | Activity | Hours | Tag |",
   ]) {
     const { dir } = ws("current");
-    const row =
-      header.startsWith("| Date")
-        ? "| 2026-03-29 | coding | 3.0 | engineering | T1 |"
-        : "| alex | 2026-03-29 | coding | 3.0 | engineering |";
+    const row = header.startsWith("| Date")
+      ? "| 2026-03-29 | coding | 3.0 | engineering | T1 |"
+      : "| alex | 2026-03-29 | coding | 3.0 | engineering |";
     write(
       dir,
       "3-log/hours-log.md",

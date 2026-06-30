@@ -46,7 +46,7 @@ import {
 } from "./connector.mjs";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
-import { parseTableRows, parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
 import {
   parseFrontmatter,
   normalizeTier,
@@ -2303,9 +2303,10 @@ async function cmdLoop(repo, cfg, args) {
     }
     const byKind = {};
     for (const s of manifest.signals) byKind[s.kind] = (byKind[s.kind] || 0) + 1;
-    const kinds = Object.entries(byKind)
-      .map(([k, n]) => `${k}:${n}`)
-      .join("  ") || "(none)";
+    const kinds =
+      Object.entries(byKind)
+        .map(([k, n]) => `${k}:${n}`)
+        .join("  ") || "(none)";
     console.log(
       c.blue(`aios loop ${cadence}`) +
         c.dim(`  window ${manifest.window.from.slice(0, 10)} → ${manifest.window.to.slice(0, 10)}`)
@@ -2313,14 +2314,16 @@ async function cmdLoop(repo, cfg, args) {
     console.log(`  signals: ${manifest.signals.length}   ${kinds}`);
     if (manifest.excluded.length) {
       console.log(c.yellow(`  excluded (default-deny): ${manifest.excluded.length}`));
-      for (const e of manifest.excluded.slice(0, 10)) console.log(c.dim(`    - ${e.ref} — ${e.reason}`));
+      for (const e of manifest.excluded.slice(0, 10))
+        console.log(c.dim(`    - ${e.ref} — ${e.reason}`));
     }
     console.log(c.dim(`  manifest → ${path.relative(repo, out)}`));
     return;
   }
 
   if (sub === "manifest") {
-    if (!flags.has("--explain")) die("usage: aios loop manifest --explain [--as team|external] [--daily]");
+    if (!flags.has("--explain"))
+      die("usage: aios loop manifest --explain [--as team|external] [--daily]");
     const cadence = flags.has("--daily") ? "daily" : "weekly";
     const asIdx = args.indexOf("--as");
     const audience = asIdx >= 0 ? args[asIdx + 1] : "owner";
@@ -2331,17 +2334,30 @@ async function cmdLoop(repo, cfg, args) {
       c.blue(`evidence — ${cadence}, audience: ${audience}`) +
         c.dim(`  (${view.lines.length} signals)`)
     );
+    // Owner view (default) shows every line in full. When simulating a digest audience
+    // (--as team|external), a line the audience may NOT see is redacted to kind + tier only —
+    // its ref (path/row) and summary are suppressed so the simulation itself doesn't leak.
+    const ownerView = audience === "owner";
     for (const line of view.lines) {
+      if (!ownerView && !line.visibleToAudience) {
+        console.log(`  [${c.yellow("withheld")}] ${c.bold(line.kind)} (${line.tier})`);
+        continue;
+      }
       const mark = line.visibleToAudience ? c.green("shown") : c.yellow("withheld");
-      const wh = line.withheldFrom.length ? c.dim(` · withheld from: ${line.withheldFrom.join(",")}`) : "";
+      const wh = line.withheldFrom.length
+        ? c.dim(` · withheld from: ${line.withheldFrom.join(",")}`)
+        : "";
       console.log(`  [${mark}] ${c.bold(line.kind)} (${line.tier}) ${line.ref}${wh}`);
       console.log(c.dim(`        ${line.summary}`));
     }
-    if (view.excluded.length) console.log(c.yellow(`  excluded (default-deny): ${view.excluded.length}`));
+    if (view.excluded.length)
+      console.log(c.yellow(`  excluded (default-deny): ${view.excluded.length}`));
     return;
   }
 
-  die("usage: aios loop collect [--daily|--weekly] [--json]\n       aios loop manifest --explain [--as team|external] [--daily]");
+  die(
+    "usage: aios loop collect [--daily|--weekly] [--json]\n       aios loop manifest --explain [--as team|external] [--daily]"
+  );
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -2427,7 +2443,9 @@ if (cmd === "mcp") {
     // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
     // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
     // error when called. With neither brain config nor a workspace, there's nothing to do.
-    const ws = findRepoRoot(process.cwd());
+    // Use the offline resolver so project.yaml / engagement.yaml workspaces are recognized too
+    // (matches `aios loop` + the MCP tool's findWorkspaceRoot, not just aios.yaml).
+    const ws = findRepoRootOffline(process.cwd());
     if (!ws) {
       die(
         `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +

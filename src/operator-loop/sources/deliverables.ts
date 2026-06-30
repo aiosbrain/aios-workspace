@@ -39,7 +39,10 @@ export const deliverablesSource: Source = (ctx): SourceResult => {
     const { frontmatter, body } = parseFrontmatter(raw);
     const tier = resolveTier(frontmatter?.access ?? null);
     if (!tier) {
-      out.excluded.push({ ref: rel, reason: "deliverable has no resolvable access tier (default-deny)" });
+      out.excluded.push({
+        ref: rel,
+        reason: "deliverable has no resolvable access tier (default-deny)",
+      });
       continue;
     }
     const base = rel.split("/").pop() ?? rel;

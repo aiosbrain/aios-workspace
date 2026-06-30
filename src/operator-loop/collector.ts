@@ -17,8 +17,11 @@ import { hoursSource } from "./sources/hours.js";
 import { deliverablesSource } from "./sources/deliverables.js";
 import { inboxSource } from "./sources/inbox.js";
 import { carryoverSource } from "./sources/carryover.js";
+import { githubSource } from "./sources/github.js";
 
-// Active source set, keyed by signal kind. github is intentionally absent (deferred stub).
+// Source registry, keyed by signal kind. carryover (C7) and github (AIO-32, no local source
+// yet) are wired but inert stubs — they emit nothing until implemented, so registering them is
+// behavior-neutral and keeps the registry honest (a cadence may list them without breaking).
 const SOURCES: Record<string, Source> = {
   decision: decisionsSource,
   task: tasksSource,
@@ -26,6 +29,7 @@ const SOURCES: Record<string, Source> = {
   deliverable: deliverablesSource,
   inbox: inboxSource,
   carryover: carryoverSource,
+  github: githubSource,
 };
 
 export interface CollectOptions {
@@ -55,8 +59,11 @@ export function collect(opts: CollectOptions): RunManifest {
     excluded.push(...res.excluded);
     for (const sig of res.signals) {
       const t = Date.parse(sig.occurredAt);
-      // Outside the window → not in scope (not an exclusion; exclusions are tier failures).
-      if (Number.isFinite(t) && t < from.getTime()) continue;
+      // In-window means [from, now]. Sources guarantee a valid ISO occurredAt (toOccurredAt
+      // falls back to mtime), so a non-finite value shouldn't occur — exclude it if it does.
+      // Future-dated rows (t > now) are out of scope: the manifest advertises window.to = now.
+      // (Not exclusions — those are tier failures; this is just out-of-window.)
+      if (!Number.isFinite(t) || t < from.getTime() || t > now.getTime()) continue;
       signals.push(sig);
     }
   }

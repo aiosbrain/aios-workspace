@@ -12,7 +12,10 @@ export function parseFrontmatter(content) {
   const end = content.indexOf("\n---", 3);
   if (end === -1) return { frontmatter: null, body: content };
   const fmText = content.slice(content.indexOf("\n") + 1, end);
-  const body = content.slice(content.indexOf("\n", end + 1) + 1);
+  // When the closing `---` is the last line, there is no newline after it — body is empty.
+  // (indexOf returns -1; `-1 + 1` would slice from 0 and leak the whole doc back as body.)
+  const bodyStart = content.indexOf("\n", end + 1);
+  const body = bodyStart === -1 ? "" : content.slice(bodyStart + 1);
   return { frontmatter: parseFlatYaml(fmText), body };
 }
 

@@ -395,7 +395,8 @@ export const TOOLS = [
         cadence: {
           type: "string",
           enum: ["daily", "weekly"],
-          description: "Window: daily (1-day, minimal kinds) or weekly (7-day, full set). Default weekly.",
+          description:
+            "Window: daily (1-day, minimal kinds) or weekly (7-day, full set). Default weekly.",
         },
       },
       additionalProperties: false,
@@ -425,7 +426,9 @@ export const TOOLS = [
         member,
         project,
       });
-      return asContent(manifest);
+      // Return the FULL manifest JSON — do NOT pass through asContent's 25k char cap, which would
+      // truncate mid-JSON and break the consumer's JSON.parse (and parity with `aios loop --json`).
+      return { content: [{ type: "text", text: JSON.stringify(manifest, null, 2) }] };
     },
   },
 ];
@@ -479,6 +482,9 @@ function validateArgs(schema, args) {
       (t === "object" && typeof v === "object" && !Array.isArray(v)) ||
       t === undefined;
     if (!ok) errors.push(`argument ${key} must be a ${t}`);
+    if (Array.isArray(spec?.enum) && !spec.enum.includes(v)) {
+      errors.push(`argument ${key} must be one of: ${spec.enum.join(", ")}`);
+    }
   }
   return errors;
 }
@@ -582,7 +588,9 @@ export function runStdio(config, deps = {}) {
 
   log(
     `${SERVER_NAME} v${SERVER_VERSION} → ${
-      brainOk ? `${config.brain_url} (team ${config.team_id})` : "<brain not configured — local aios_* tools only>"
+      brainOk
+        ? `${config.brain_url} (team ${config.team_id})`
+        : "<brain not configured — local aios_* tools only>"
     } · ${TOOLS.length} tools · read-only`
   );
 

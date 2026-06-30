@@ -22,11 +22,12 @@ export const decisionsSource: Source = (ctx): SourceResult => {
 
   for (const row of parseDecisionRows(body)) {
     const ref = `${rel}#${row.row_key}`;
-    // NOTE: parseDecisionRows defaults a missing/blank audience to "team", so a decision row
-    // almost always resolves a tier; the fileTier fallback only matters for an unrecognized
-    // audience value. Default-deny is therefore weaker for decisions than other sources by
-    // design (inherited from the sync parser) — acceptable since decisions are governance rows.
-    const tier = resolveTier(row.audience) ?? fileTier;
+    // The row audience is authoritative for a decision's tier (parseDecisionRows normalizes a
+    // blank audience to "team"). A PRESENT-but-unrecognized audience is unresolvable → exclude
+    // (default-deny) rather than silently inheriting the file's access tier and up-scoping the
+    // row. fileTier is only consulted when the table itself has no audience column at all.
+    const hasAudienceColumn = row.audience != null && row.audience !== "";
+    const tier = hasAudienceColumn ? resolveTier(row.audience) : fileTier;
     if (!tier) {
       out.excluded.push({ ref, reason: "decision row has no resolvable tier (default-deny)" });
       continue;

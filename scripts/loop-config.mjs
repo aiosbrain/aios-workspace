@@ -40,14 +40,21 @@ export function resolveLoopIdentity(repo, env = process.env) {
       break;
     }
   }
-  let gitName = "";
-  try {
-    gitName = execFileSync("git", ["-C", repo, "config", "user.name"], { encoding: "utf8" }).trim();
-  } catch {
-    gitName = "";
-  }
+  const git = (key) => {
+    try {
+      return execFileSync("git", ["-C", repo, "config", key], { encoding: "utf8" }).trim();
+    } catch {
+      return "";
+    }
+  };
+  // Mirror the sync client's resolveMember precedence: $AIOS_MEMBER → aios.yaml member →
+  // git config aios.member → slugified git user.name → "owner".
   const member =
-    (env.AIOS_MEMBER && String(env.AIOS_MEMBER).trim()) || aios.member || slugify(gitName) || "owner";
+    (env.AIOS_MEMBER && String(env.AIOS_MEMBER).trim()) ||
+    aios.member ||
+    git("aios.member") ||
+    slugify(git("user.name")) ||
+    "owner";
   const project = proj.slug || slugify(path.basename(repo));
   return { member, project };
 }

@@ -36,15 +36,18 @@ export const hoursSource: Source = (ctx): SourceResult => {
     const rowKey = `r${i + 1}`;
     const ref = `${rel}#${rowKey}`;
     if (!tier) {
-      out.excluded.push({ ref, reason: "hours-log.md has no resolvable access tier (default-deny)" });
+      out.excluded.push({
+        ref,
+        reason: "hours-log.md has no resolvable access tier (default-deny)",
+      });
       return;
     }
-    const date = di >= 0 ? cells[di] ?? null : null;
-    const activity = ai >= 0 ? cells[ai] ?? "" : "";
-    const hours = hi >= 0 ? cells[hi] ?? "" : "";
-    const tag = ti >= 0 ? cells[ti] ?? "" : "";
-    const member = mi >= 0 ? cells[mi] ?? "" : "";
-    const taskRef = ri >= 0 ? cells[ri] ?? "" : "";
+    const date = di >= 0 ? (cells[di] ?? null) : null;
+    const activity = ai >= 0 ? (cells[ai] ?? "") : "";
+    const hours = hi >= 0 ? (cells[hi] ?? "") : "";
+    const tag = ti >= 0 ? (cells[ti] ?? "") : "";
+    const member = mi >= 0 ? (cells[mi] ?? "") : "";
+    const taskRef = ri >= 0 ? (cells[ri] ?? "") : "";
     out.signals.push({
       kind: "hours",
       source: "hours-log",
