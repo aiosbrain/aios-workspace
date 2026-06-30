@@ -27,17 +27,20 @@ export interface ContinuityAction {
   source?: ContinuityActionSource;
 }
 
-export interface ContinuityStore {
-  version: 1;
-  actions: ContinuityAction[];
-}
-
 export interface ContinuityReadResult {
   actions: ContinuityAction[];
   excluded: Exclusion[];
 }
 
-const CLOSED_STATUSES = new Set(["done", "closed", "cancelled", "canceled", "resolved"]);
+const CLOSED_STATUSES = new Set([
+  "done",
+  "closed",
+  "complete",
+  "completed",
+  "cancelled",
+  "canceled",
+  "resolved",
+]);
 
 export function isOpenContinuityAction(action: ContinuityAction): boolean {
   const status = (action.status ?? "open").trim().toLowerCase();
@@ -119,7 +122,7 @@ export function readContinuityActions(root: string): ContinuityReadResult {
   parsed.actions.forEach((item, index) => {
     const action = normalizeAction(item);
     if (!action) {
-      out.excluded.push({ ref: `${rel}#${index + 1}`, reason: "continuity action is missing id/title" });
+      out.excluded.push({ ref: `${rel}#actions[${index}]`, reason: "continuity action is missing id/title" });
       return;
     }
     if (isOpenContinuityAction(action)) out.actions.push(action);

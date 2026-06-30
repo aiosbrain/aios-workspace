@@ -35,5 +35,5 @@ C7's first local contract is `.aios/loop/continuity/actions.json`. It is intenti
 ```
 
 Open actions become `carryover` signals in both daily and weekly manifests. Closed statuses
-(`done`, `closed`, `cancelled`, `canceled`, `resolved`) are skipped. Missing or unresolvable
-tiers are default-denied and recorded in `manifest.excluded[]`.
+(`done`, `closed`, `complete`, `completed`, `cancelled`, `canceled`, `resolved`) are skipped.
+Missing or unresolvable tiers are default-denied and recorded in `manifest.excluded[]`.

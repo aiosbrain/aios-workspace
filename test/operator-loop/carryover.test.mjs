@@ -37,6 +37,18 @@ test("unresolved continuity actions surface as carry-over signals in daily and w
       tier: "team",
     },
     {
+      id: "completed-1",
+      title: "Already completed",
+      status: "completed",
+      tier: "team",
+    },
+    {
+      id: "complete-1",
+      title: "Already complete",
+      status: "complete",
+      tier: "team",
+    },
+    {
       id: "missing-tier",
       title: "Do not guess my tier",
       status: "open",
@@ -55,8 +67,48 @@ test("unresolved continuity actions surface as carry-over signals in daily and w
     assert.equal(carry[0].payload.source.path, "3-log/decision-log.md");
     assert.ok(!manifest.signals.some((s) => s.ref.row === "done-1"), "closed action is not carried");
     assert.ok(
+      !manifest.signals.some((s) => s.ref.row === "completed-1"),
+      "completed action is not carried"
+    );
+    assert.ok(
+      !manifest.signals.some((s) => s.ref.row === "complete-1"),
+      "complete action is not carried"
+    );
+    assert.ok(
       manifest.excluded.some((e) => e.ref.endsWith("#missing-tier") && /default-deny/.test(e.reason)),
       "missing-tier action is default-denied"
     );
   }
+});
+
+test("malformed continuity action refs cannot collide with id-based carry-over refs", () => {
+  const dir = makeWorkspace([
+    {
+      id: "1",
+      title: "Numeric id should keep id-based ref",
+      status: "open",
+      tier: "team",
+    },
+    {
+      id: "missing-title",
+      status: "open",
+      tier: "team",
+    },
+  ]);
+
+  const manifest = collect({ root: dir, cadence: "daily", now: NOW });
+  assert.ok(
+    manifest.signals.some(
+      (s) => s.kind === "carryover" && s.ref.path === ".aios/loop/continuity/actions.json" && s.ref.row === "1"
+    ),
+    "valid numeric id keeps the carry-over signal ref"
+  );
+  assert.ok(
+    manifest.excluded.some(
+      (e) =>
+        e.ref === ".aios/loop/continuity/actions.json#actions[1]" &&
+        /missing id\/title/.test(e.reason)
+    ),
+    "malformed action uses an array-slot ref, not an id-like ref"
+  );
 });

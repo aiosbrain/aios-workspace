@@ -70,5 +70,4 @@ export {
   type ContinuityAction,
   type ContinuityActionSource,
   type ContinuityReadResult,
-  type ContinuityStore,
 } from "./continuity.js";
