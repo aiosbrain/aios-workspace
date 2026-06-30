@@ -43,8 +43,8 @@ export interface CollectOptions {
 export function collect(opts: CollectOptions): RunManifest {
   const win = windowFor(opts.cadence);
   const spine = resolveSpine(opts.root);
-  const ctx: SourceContext = { root: opts.root, spine, member: opts.member ?? "owner" };
   const now = opts.now ?? new Date();
+  const ctx: SourceContext = { root: opts.root, spine, member: opts.member ?? "owner", now };
   const from = new Date(now.getTime() - win.days * 86_400_000);
 
   const signals: Signal[] = [];

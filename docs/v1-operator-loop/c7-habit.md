@@ -11,3 +11,29 @@ The behavior-design spine that makes the loop a habit, not a feature people forg
 - Some continuity signal exists across runs (don't over-gamify — this is an operator tool, not a game).
 
 Threads through C4 (daily) and C5 (weekly) rather than being a standalone surface.
+
+## Continuity Store
+
+C7's first local contract is `.aios/loop/continuity/actions.json`. It is intentionally under
+`.aios/loop/` like run manifests, so it is local-only and never part of the sync plan.
+
+```json
+{
+  "version": 1,
+  "actions": [
+    {
+      "id": "next-1",
+      "title": "Follow up on the API decision",
+      "status": "open",
+      "tier": "team",
+      "createdAt": "2026-03-31T12:00:00Z",
+      "due": "2026-04-01",
+      "source": { "path": "3-log/decision-log.md", "row": "7", "tier": "team" }
+    }
+  ]
+}
+```
+
+Open actions become `carryover` signals in both daily and weekly manifests. Closed statuses
+(`done`, `closed`, `cancelled`, `canceled`, `resolved`) are skipped. Missing or unresolvable
+tiers are default-denied and recorded in `manifest.excluded[]`.

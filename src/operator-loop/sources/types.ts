@@ -8,6 +8,7 @@ export interface SourceContext {
   root: string;
   spine: Spine;
   member: string;
+  now: Date;
 }
 
 export interface Exclusion {
