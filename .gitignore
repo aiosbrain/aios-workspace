@@ -9,6 +9,7 @@ __pycache__/
 .env.local
 gui/.sessions/
 gui/client/dist/
+dist/
 test/ux/evidence/
 .aios/
 

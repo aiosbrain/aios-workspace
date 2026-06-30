@@ -17,12 +17,13 @@
     "gui:build": "npm run build --workspace gui/client",
     "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
+    "build:loop": "tsc -p tsconfig.json",
     "lint": "eslint scripts validation gui/server gui/client/src test",
     "lint:fix": "eslint scripts validation gui/server gui/client/src test --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "setup": "npm ci && npm run gui:build",
-    "test": "node test/agent-readiness-glob.test.mjs && node test/skill-scan.test.mjs && node test/skill-install.test.mjs && node test/suggest-connectors.test.mjs && node test/brain-config.test.mjs && node test/slack-personal-descriptor.test.mjs && node test/connector-oauth.test.mjs && node test/skill-install-marketplace.test.mjs && node scripts/brain-mcp.test.mjs && node test/ux/judge.test.mjs && node test/ux/driver.test.mjs && node test/ux/tool-policy.test.mjs && node test/ux/proc.test.mjs && node test/ux/json-extract.test.mjs && node test/ux/run-ux-skip.test.mjs && node --test gui/server/session-index.test.mjs gui/server/sessions-search.test.mjs gui/server/approval-mode-governance.test.mjs && npm run test --workspace gui/client && node test/build.test.mjs && node test/review-bugbot.test.mjs && node test/build-loop.test.mjs && node test/tasks-table.test.mjs && node test/costs.test.mjs && node test/slack-cli-sync.test.mjs && node test/sync-plan.test.mjs",
+    "test": "npm run build:loop && node test/agent-readiness-glob.test.mjs && node test/skill-scan.test.mjs && node test/skill-install.test.mjs && node test/suggest-connectors.test.mjs && node test/brain-config.test.mjs && node test/slack-personal-descriptor.test.mjs && node test/connector-oauth.test.mjs && node test/skill-install-marketplace.test.mjs && node scripts/brain-mcp.test.mjs && node test/ux/judge.test.mjs && node test/ux/driver.test.mjs && node test/ux/tool-policy.test.mjs && node test/ux/proc.test.mjs && node test/ux/json-extract.test.mjs && node test/ux/run-ux-skip.test.mjs && node --test gui/server/session-index.test.mjs gui/server/sessions-search.test.mjs gui/server/approval-mode-governance.test.mjs && npm run test --workspace gui/client && node test/build.test.mjs && node test/review-bugbot.test.mjs && node test/build-loop.test.mjs && node test/tasks-table.test.mjs && node test/costs.test.mjs && node test/slack-cli-sync.test.mjs && node test/sync-plan.test.mjs && node --test test/operator-loop/*.test.mjs",
     "test:ux": "node test/ux/run-ux.mjs",
     "app:dev": "npm run gui:build && dotenvx run -- tauri dev",
     "app:build": "npm run gui:build && tauri build",
@@ -41,6 +42,8 @@
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^5.1.0",
     "globals": "^15.13.0",
-    "prettier": "^3.4.2"
+    "prettier": "^3.4.2",
+    "typescript": "^5.9.3",
+    "@types/node": "^22.10.0"
   }
 }
