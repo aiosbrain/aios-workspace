@@ -39,3 +39,25 @@ export {
 
 // Inspection
 export { explainManifest, type ExplainView, type ExplainLine } from "./explain.js";
+
+// C5 — weekly closeout (drafter + two-artifact orchestrator). Public surface only:
+// `runVerificationWithLedger` is intentionally NOT exported (trusted-internal; closeout.ts
+// imports it directly so the non-audience-safe corrected ledger can't be reached via the barrel).
+export {
+  runCloseout,
+  runShareable,
+  type CloseoutResult,
+  type ShareableResult,
+  type ShareableAudience,
+} from "./closeout.js";
+export {
+  draftShareable,
+  stubDraftShareable,
+  makeCorrectFn,
+  deriveAdminActions,
+  type NextWeekAction,
+  type DraftResult,
+} from "./drafter.js";
+export { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
+export { sweepForLeaks, hasLeak } from "./leak-sweep.js";
+export { anthropicCompletion, hasAnthropicKey, DRAFTER_MODEL, type CompletionFn } from "./llm.js";
