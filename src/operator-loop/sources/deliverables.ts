@@ -4,6 +4,7 @@
 // basename.
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { parseFrontmatter } from "../parsers.js";
 import { resolveTier } from "../signal.js";
@@ -56,6 +57,9 @@ export const deliverablesSource: Source = (ctx): SourceResult => {
       payload: {
         status: frontmatter?.status ?? null,
         owner: frontmatter?.owner ?? null,
+        // Body content hash so the C4 change-tracker detects body-only edits (not just H1/
+        // status/owner changes). Granularity is source-controlled by design (see changes.ts).
+        contentHash: createHash("sha256").update(body).digest("hex"),
       },
     });
   }

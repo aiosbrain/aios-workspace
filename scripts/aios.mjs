@@ -2391,6 +2391,62 @@ function jsonWriteback(plan, targets, manifest, loop) {
   return json;
 }
 
+// Human render of a C4 DailyOrientation — three sections, one screen, seconds to read. The
+// machine surface is `--json` (the full orientation); this is the terse owner-local view.
+function renderDaily(o) {
+  const today = o.generatedAt.slice(0, 10);
+  const marker = o.audience === "owner" ? "owner-private · local only" : `view: ${o.audience}`;
+  console.log(
+    c.blue("aios loop daily") +
+      c.dim(`  window ${o.window.from.slice(0, 10)} → ${o.window.to.slice(0, 10)}`) +
+      c.dim(`     ${marker}`)
+  );
+
+  if (o.counts.changed === 0 && o.counts.blocked === 0 && o.counts.owedToday === 0) {
+    console.log("");
+    console.log(
+      `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
+    );
+    console.log(c.green("Nothing carried over. You're clear. ✓"));
+    return;
+  }
+
+  const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  const refLabel = (it) => (it.ref.row ? `${it.ref.path}#${it.ref.row}` : it.ref.path);
+  const annot = (it) => {
+    if (it.stale != null) return c.dim(`  (stale ${it.stale}d)`);
+    if (it.due) {
+      const dd = String(it.due).slice(0, 10);
+      return c.dim(`  (due ${dd === today ? "today" : it.due})`);
+    }
+    return "";
+  };
+  const section = (title, items, total) => {
+    console.log("");
+    console.log(c.bold(`${title} (${total})`));
+    for (const it of items) {
+      console.log(
+        `  • ${c.dim(String(it.kind).padEnd(11))} ${truncate(it.summary, 60)}${annot(it)}   ${c.dim(
+          refLabel(it)
+        )}`
+      );
+    }
+    if (total > items.length) console.log(c.dim(`  +${total - items.length} more`));
+  };
+
+  section("Changed", o.changed, o.counts.changed);
+  section("Blocked", o.blocked, o.counts.blocked);
+  section("Owed today", o.owedToday, o.counts.owedToday);
+  if (o.counts.excluded) {
+    console.log("");
+    console.log(
+      c.dim(
+        `  ${o.counts.excluded} excluded (default-deny) — run \`aios loop manifest --explain --daily\` to inspect`
+      )
+    );
+  }
+}
+
 async function cmdLoop(repo, cfg, args) {
   const sub = args[0];
   const flags = new Set(args.slice(1));
@@ -2940,8 +2996,49 @@ async function cmdLoop(repo, cfg, args) {
     return;
   }
 
+  if (sub === "daily") {
+    // Read-only daily orientation: changed / blocked / owed today. No verifier, no LLM, no sync,
+    // no approval gate. The ONLY write is the local change-snapshot under .aios/loop/state/ and
+    // ONLY on an owner run; --as / --manifest / --no-record are fully side-effect-free.
+    const asIdx = args.indexOf("--as");
+    const asArg = asIdx >= 0 ? args[asIdx + 1] : null;
+    let audience = "owner";
+    if (asArg) {
+      if (!["team", "external"].includes(asArg)) die("daily --as must be team|external");
+      audience = asArg;
+    }
+    const asJson = flags.has("--json");
+    const manIdx = args.indexOf("--manifest");
+    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+
+    let orientation;
+    if (manifestPath) {
+      // Inspection path (deterministic; also how the CLI tests drive it). The saved manifest is
+      // the current state; the prior baseline is read from the workspace (absent in a temp fixture
+      // → first-run bootstrap). This path never records a snapshot.
+      const manifest = validateManifestShape(parseJsonFile(manifestPath));
+      const prior = loop.readSnapshot(repo, loop.DAILY_SCOPE);
+      orientation = loop.buildDailyOrientation({ manifest, prior, audience }).orientation;
+    } else {
+      orientation = loop.runDaily({
+        root: repo,
+        member,
+        audience,
+        record: !flags.has("--no-record"),
+      });
+    }
+
+    if (asJson) {
+      console.log(JSON.stringify(orientation, null, 2));
+      return;
+    }
+    renderDaily(orientation);
+    return;
+  }
+
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
+      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]\n" +
       "       aios loop manifest --explain [--as team|external] [--daily]\n" +
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +

@@ -66,6 +66,7 @@ export { anthropicCompletion, hasAnthropicKey, DRAFTER_MODEL, type CompletionFn 
 export {
   CONTINUITY_ACTIONS_REL,
   isOpenContinuityAction,
+  isOpenStatus,
   readContinuityActions,
   type ContinuityAction,
   type ContinuityActionSource,
@@ -92,3 +93,30 @@ export {
   type ShareableOnDisk,
   type PlanWritebackInput,
 } from "./writeback.js";
+
+// Artifact change-tracking primitive (reusable across cadences; C4 is the first consumer)
+export {
+  artifactKey,
+  fingerprint,
+  canonicalJson,
+  diffSignals,
+  readSnapshot,
+  writeSnapshot,
+  snapshotRel,
+  type ChangeType,
+  type SnapshotEntry,
+  type SnapshotStore,
+  type SignalChange,
+} from "./changes.js";
+
+// C4 — daily light loop (changed / blocked / owed today)
+export {
+  buildDailyOrientation,
+  runDaily,
+  DAILY_SCOPE,
+  STALE_CARRYOVER_DAYS,
+  type DailyItem,
+  type DailyOrientation,
+  type BuildDailyOptions,
+  type RunDailyOptions,
+} from "./daily.js";
