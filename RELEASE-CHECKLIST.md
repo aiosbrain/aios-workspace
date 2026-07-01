@@ -24,8 +24,19 @@ made public later. Before flipping it public, complete every item below.
 - [ ] **Lock repo names + topology** (see the strategy brief §6): final names and
       whether pillars are federated repos + a thin meta-repo.
 - [ ] **Secret scan** clean: `validation/check-secrets.sh .`
+- [ ] **Docs drift guard** clean: `npm run check:docs` confirms the V1 hub's
+      machine inventories match code/specs.
+- [ ] **V1 Linear reconciliation** clean when credentials are available:
+      `npm run check:v1-linear` confirms the C1-C8 status tokens in
+      `docs/v1-operator-loop/README.md` match Linear. If credentials are not
+      available, record the intentional skip in `docs/release-readiness.md`.
+- [ ] **V1 dogfood evidence captured**: the E2E path in
+      `docs/v1-operator-loop/README.md` has at least one recorded synthetic run
+      and the release-readiness doc maps remaining gaps against AIO-122 exit criteria.
+- [ ] **Website docs are not ahead of release**: public website copy must not present
+      V1 as shipped until the V1 hub is release-ready and cross-repo docs sync is clean.
 - [ ] **CI green** on the public ruleset (leak gate + secrets + validators + harness syntax).
 - [ ] Decide the **open/closed boundary** per component (strategy brief §7).
 
 ## Ongoing (already enforced in CI)
-- Leak gate, secret scan, validator suite, and harness syntax checks run on every PR.
+- Leak gate, secret scan, validator suite, harness syntax checks, and the docs drift guard run on every PR.

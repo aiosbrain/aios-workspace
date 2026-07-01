@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Docs drift guard"
+node scripts/check-docs-drift.mjs

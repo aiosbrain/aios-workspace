@@ -1,85 +1,52 @@
-# Release readiness — cockpit overhaul (#16 / #17 / #20)
+# Release Readiness - V1 Operator Loop
 
-The exact, ordered steps to ship the cockpit overhaul. This is **release
-hygiene**: docs + changelog + tag move together, because the website must not
-document features ahead of a tagged release (root `CLAUDE.md` invariant).
+This is the current release-readiness tracker for `aios-workspace`. The canonical
+V1 build and dogfood hub is [`docs/v1-operator-loop/README.md`](./v1-operator-loop/README.md).
+This page records what must be true before V1 is presented publicly or included in
+an OSS release.
 
-> **Scope of this branch (`docs/cockpit-release-prep`).** This branch does the
-> *safe prep only*: workspace docs, changelog, release notes, and **staged**
-> website drafts. It does **not** tag, bump versions, run `/oss-release`, or touch
-> any sibling repo. The steps marked **HUMAN-APPROVAL-REQUIRED** below are
-> deliberately left for a human (or a future approved session).
+## Current Gate Status
 
-## Preconditions
-
-| # | Precondition | Status |
+| Gate | Command / Evidence | Status |
 |---|---|---|
-| 1 | **`docs/brain-api.md` unchanged** — no sync-protocol change in #16/#17/#20; contract stays **v1**, no version bump, no workspace↔brain drift | ✅ confirmed (none of the three merges touched the file) |
-| 2 | Workspace docs reference the new cockpit surfaces (README, `feature-set.md` §11) | ✅ done on this branch |
-| 3 | `docs/byoa.md` GUI note current (Sonnet 4.6 default / Opus 4.8 live switch, persisted to `agent_model`) | ✅ verified accurate, no change needed |
-| 4 | `CHANGELOG.md` + `docs/release-notes/cockpit-overhaul.md` cover #16/#17/#20 | ✅ done on this branch |
-| 5 | Website drafts staged under `docs/website-staging/` (cockpit guide + changelog) | ✅ done on this branch |
-| 6 | CI green on this PR | ⏳ verify before merge |
-| 7 | Website content **ported** into `aios-website` and the site builds | ☐ HUMAN — at release time |
+| Docs drift guard | `npm run check:docs` | Required on every PR and release |
+| Linear reconciliation | `npm run check:v1-linear` | Optional in public CI; required locally when credentials are available |
+| Operator-loop tests | `npm run build:loop` + `node --test test/operator-loop/*.test.mjs` | Required before V1 release |
+| Full repo tests | `npm test` | Required before merge/release |
+| Scaffold validators | `validation/validate-all.sh <workspace>` | Required when scaffold or stamped workspace behavior changes |
+| Secret/leak gates | `validation/check-secrets.sh .` and `scripts/leak-gate.sh .` | Required before public release |
+| Website alignment | Cross-repo docs sync/review | Required before website says V1 is shipped |
 
-## `/docs-sync` audit (read-only, run at monorepo root)
+## AIO-122 Exit Criteria Evidence
 
-`/docs-sync` flags cross-repo divergence; it does **not** auto-fix. Findings from
-running its audits against the current repos:
+| Exit criterion | Evidence source | Release state |
+|---|---|---|
+| Three consecutive weekly dogfood runs per active user with zero admin/private-tier leaks | `.aios/loop/closeouts/<stamp>/verifier-*.json`, leak-withheld counts, dogfood notes | Not yet fully recorded |
+| Daily loop run on majority of working days | C8 telemetry or local dogfood log | Blocked on C8 |
+| Median weekly closeout under 20 minutes after setup | Dogfood timing log | Not yet fully recorded |
+| Shareable digest passes must-pass verifier criteria in at least 90% of accepted runs | `verifier-*.json` statuses across accepted runs | Not yet fully recorded |
+| At least 70% of accepted weekly runs produce approved next-week actions | `next-week-actions.json`, `aios loop writeback` approval notes | Not yet fully recorded |
+| CLI and cockpit parity against same plan/review/approve model | CLI commands are present; MCP currently exposes `aios_loop_collect` only | Cockpit parity remains a release-scoping decision |
 
-| Audit | Result |
-|---|---|
-| 1 — brain-api version | **PASS** — `v1` consistent: workspace contract (`/api/v1`), brain routes (`app/api/v1`), website docs (`/api/v1/items`). No drift. |
-| 2 — access-tier terminology | **PASS** — canonical `admin/team/external` + friendly aliases used consistently. |
-| 3 — feature completeness (workspace vs website) | **WARN (expected)** — the new cockpit surfaces (chat/model picker, Skills library, onboarding-from-a-link) are **not yet on the website**. → Resolved by porting `docs/website-staging/cockpit.mdx` + `changelog.mdx` at release time. |
-| 4 — CLI command surface | No new CLI commands in #16/#17/#20 (cockpit is GUI/API); no new divergence introduced. |
-| 5 — spine folder names | **PASS** — unchanged. |
+## Ordered V1 Release Prep
 
-The only WARN is the deliberate, expected one that this release resolves: the
-website doesn't yet document the cockpit. The staged drafts close it.
+1. Keep [`docs/v1-operator-loop/README.md`](./v1-operator-loop/README.md) current with code and Linear.
+   - `npm run check:docs`
+   - `npm run check:v1-linear` when `LINEAR_API_KEY` is available.
+2. Run the synthetic E2E dogfood path from the V1 hub and record evidence for each exit criterion.
+3. Run the operator-loop and full repo verification suite.
+   - `npm run build:loop`
+   - `node --test test/operator-loop/*.test.mjs`
+   - `npm test`
+4. Complete the public-release checklist in [`RELEASE-CHECKLIST.md`](../RELEASE-CHECKLIST.md).
+5. Reconcile website/public docs. The website must not claim V1 is shipped until this page and
+   the V1 hub show the release gates as complete.
+6. Run the monorepo release process only after workspace, Team Brain, and website docs are aligned.
 
-## Ordered release steps
+## Not Done By This Tracker
 
-> Run these **in order**. Steps marked **HUMAN-APPROVAL-REQUIRED** must not be
-> automated.
-
-1. **Merge this PR** (`docs/cockpit-release-prep`) once CI is green. — *Adds the
-   workspace docs, changelog, release notes, and staged website drafts. No tag,
-   no sibling-repo change.*
-
-2. **Re-run `/docs-sync`** at the monorepo root. Confirm the only outstanding WARN
-   is Audit 3 (website missing the cockpit) — i.e. nothing unexpected drifted.
-
-3. **Port the staged website content** into `aios-website` (per
-   `docs/website-staging/README.md`): **HUMAN-APPROVAL-REQUIRED**
-   - Copy `cockpit.mdx` → `aios-website/src/content/docs/guides/cockpit.mdx`.
-   - Copy `changelog.mdx` → `aios-website/src/content/docs/changelog.mdx`.
-   - Register both in `aios-website/astro.config.mjs` `sidebar`.
-   - **Replace the screenshot placeholders** with real captures from a verified
-     `npm run gui` run.
-   - `astro build` and confirm the pages render and screenshots resolve.
-   - Commit in **`aios-website`** (separate repo, separate PR).
-
-4. **Re-run `/docs-sync`** — confirm **no divergence remains** (Audit 3 now PASS).
-
-5. **Run `/oss-release`** at the monorepo root: **HUMAN-APPROVAL-REQUIRED**
-   - Bumps versions, checks API-contract drift (must report **no** brain-api
-     change → no bump needed), tags each repo, flags the website changelog.
-   - This is the actual tag/publish step. **Do not run it until steps 1–4 are
-     done and the website builds.**
-
-6. **Post-release verification**:
-   - The tag's changelog matches what actually merged for this release — verify
-     against the `[Unreleased]` section (#16 + #17 + #20, **plus #22 community-skill
-     scanner if it landed before the tag**), nothing more. If #22 merges first, the
-     cockpit guide + website changelog must mention the community trust tier too.
-   - Website is live with the cockpit guide + changelog and correct screenshots.
-   - `/docs-sync` reports clean.
-
-## Explicitly NOT done by this branch
-
-- ❌ No tag created.
-- ❌ No version bump.
-- ❌ No `/oss-release` run.
-- ❌ No commit into `aios-website`, `aios-team-brain`, or any sibling repo.
-- ❌ No merge of this PR (left for a human).
+- No version bump.
+- No tag.
+- No website copy changes.
+- No Team Brain contract changes.
+- No sync protocol version bump unless [`docs/brain-api.md`](./brain-api.md) changes first.

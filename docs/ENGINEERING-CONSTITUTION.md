@@ -30,7 +30,11 @@ The spec is the durable artifact. Code that drifts from its spec is a bug in one
 AIOS already has the constitution layer; this document formalizes it:
 
 - **`scaffold/.claude/rules/`** — conventions, decision-log format, tier model, frontmatter.
-- **`scaffold/.claude/rubrics/`** — machine-checkable success criteria for harnesses.
+- **`scaffold/.claude/rubrics/`** — machine-checkable success criteria for scaffolded
+  workspace harnesses.
+- **`.claude/rubrics/operator-loop-*.md`** — product-repo rubrics for the typed V1 Operator
+  Loop components. These are not stamped into every workspace; they grade the toolkit's own
+  workflow-layer implementation.
 
 Treat these as the source of truth. A new workflow feature either reuses an existing
 rule/rubric or adds one — it never invents ad-hoc success criteria inline.
@@ -85,5 +89,6 @@ rubric is what makes the output trustworthy.
 | Design system | `aios-design/DESIGN.md` |
 | Engineering / workflow layer | **this file** |
 | Conventions & tiers | `scaffold/.claude/rules/` |
-| Success criteria | `scaffold/.claude/rubrics/` |
+| Scaffold harness success criteria | `scaffold/.claude/rubrics/` |
+| V1 Operator Loop success criteria | `.claude/rubrics/operator-loop-*.md` |
 | V1 product decomposition | [`docs/v1-operator-loop/`](./v1-operator-loop/README.md) |

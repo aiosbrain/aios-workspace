@@ -16,6 +16,7 @@ AIOS-Work: <!-- e.g. AIO-72 -->
 - [ ] Scaffold smoke test passes: `scripts/scaffold-project.sh --context consultant ...` + `validate-all.sh`
 - [ ] Both `--context consultant` and `--context employee` still work if scaffold changed
 - [ ] `docs/brain-api.md` version bumped if sync protocol changed
+- [ ] Docs drift guard passes: `npm run check:docs`
 - [ ] Secrets validator passes: `validation/check-secrets.sh .`
 - [ ] Leak gate passes: `scripts/leak-gate.sh`
 - [ ] No secrets or admin-tier content in diff

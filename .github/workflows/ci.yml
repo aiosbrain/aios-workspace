@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  docs-drift:
+    name: Docs drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm run check:docs
+
   guard:
     name: leak-gate + secrets + harness checks
     runs-on: ubuntu-latest
