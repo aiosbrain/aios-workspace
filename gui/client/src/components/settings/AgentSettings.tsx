@@ -6,7 +6,7 @@ import { INT_GRID, INT_CONNECT, SKELETON_CARD, intCard } from "../integrations/i
 import type { ConfigResponse, PersonalitiesResponse, Personality } from "../../types/protocol";
 
 const MODEL_PICK_SELECT =
-  "cursor-pointer rounded-md border border-border-visible bg-secondary px-[9px] py-[5px] text-[13px] text-foreground outline-none focus:border-primary disabled:cursor-default disabled:opacity-50";
+  "cursor-pointer rounded-md border border-border-visible bg-secondary px-[9px] py-[5px] text-[13px] text-foreground outline-none focus:border-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:cursor-default disabled:opacity-50";
 
 /**
  * The "Agent" settings section: default model, agent personality (a style layer over the

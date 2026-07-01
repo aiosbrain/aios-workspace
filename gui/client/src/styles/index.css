@@ -78,7 +78,7 @@ body {
   color: var(--text);
   font: var(--aios-text-body) / var(--aios-leading-normal) var(--body);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizelegibility;
   font-synthesis: none;
 }
 

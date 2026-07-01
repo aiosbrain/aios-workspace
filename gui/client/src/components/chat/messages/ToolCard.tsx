@@ -10,7 +10,7 @@ const PRE_BASE =
 export function ToolCard({ tool }: { tool: ToolMessage }) {
   const [open, setOpen] = useState(false);
   const summary = summarizeInput(tool.name, tool.input);
-  const state = tool.result === null ? "running" : tool.isError ? "error" : "done";
+  const state = tool.isError ? "error" : tool.result === null ? "running" : "done";
   return (
     <div className="self-stretch rounded-lg border border-border-visible bg-secondary">
       <button
