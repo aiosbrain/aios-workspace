@@ -8,6 +8,7 @@ export interface RunManifest {
   member: string;
   project: string;
   window: { cadence: Cadence; from: string; to: string };
+  windowed: boolean; // false means signals contain the full current state for the cadence's kinds
   generatedAt: string;
   signals: Signal[]; // includes admin-tier signals (they feed the private operator brief)
   excluded: Exclusion[]; // default-deny log: signals dropped for an unresolvable tier
@@ -19,6 +20,7 @@ export interface BuildManifestInput {
   cadence: Cadence;
   from: string;
   to: string;
+  windowed?: boolean;
   generatedAt: string;
   signals: Signal[];
   excluded: Exclusion[];
@@ -29,6 +31,7 @@ export function buildManifest(i: BuildManifestInput): RunManifest {
     member: i.member,
     project: i.project,
     window: { cadence: i.cadence, from: i.from, to: i.to },
+    windowed: i.windowed ?? true,
     generatedAt: i.generatedAt,
     signals: i.signals,
     excluded: i.excluded,

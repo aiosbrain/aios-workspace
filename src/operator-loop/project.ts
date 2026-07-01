@@ -45,6 +45,7 @@ export function projectManifest(manifest: RunManifest, audience: Audience): RunM
     member: manifest.member,
     project: manifest.project,
     window: manifest.window,
+    windowed: manifest.windowed,
     generatedAt: manifest.generatedAt,
     signals: (manifest.signals ?? []).filter((s) => signalVisible(s, visible)),
     // Strip the default-deny log entirely: its `ref`/`reason` strings can name dropped admin
