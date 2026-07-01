@@ -61,3 +61,13 @@ export {
 export { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
 export { sweepForLeaks, hasLeak } from "./leak-sweep.js";
 export { anthropicCompletion, hasAnthropicKey, DRAFTER_MODEL, type CompletionFn } from "./llm.js";
+
+// C7 — habit + continuity
+export {
+  CONTINUITY_ACTIONS_REL,
+  isOpenContinuityAction,
+  readContinuityActions,
+  type ContinuityAction,
+  type ContinuityActionSource,
+  type ContinuityReadResult,
+} from "./continuity.js";
