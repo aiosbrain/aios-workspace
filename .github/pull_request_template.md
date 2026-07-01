@@ -7,7 +7,11 @@
 <!-- Reference the brain task so aios-work-sync advances it to Done on merge (brain → Linear).
      No task yet, and this work should be tracked? Create one FIRST in the Team Brain dashboard
      (→ Tasks; it projects to Linear), then put its key here. Don't hand-edit the Linear issue —
-     the brain is the source of truth, Linear is a one-way projection. -->
+     the brain is the source of truth, Linear is a one-way projection.
+
+     Include the Linear identifier (e.g. AIO-130) in this PR's TITLE or body: on open, the
+     `PR → Linear In Review` workflow auto-moves that issue to In Review — you never do it by hand.
+     Merge then advances it to Done via aios-work-sync. -->
 AIOS-Work: <!-- e.g. AIO-72 -->
 
 ## Checklist
