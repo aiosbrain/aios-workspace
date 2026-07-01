@@ -51,6 +51,9 @@ aios-workspace/
 
 ## Quickstart
 
+> **New contributor?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
+> step-by-step path from a fresh clone to your first `aios push` live on the Team Brain.
+
 Scaffold your workspace — pick the context that matches how you work:
 
 ```bash

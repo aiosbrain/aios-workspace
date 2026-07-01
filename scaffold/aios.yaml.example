@@ -1,0 +1,54 @@
+# aios.yaml — FILLED reference (what a connected employee workspace looks like).
+#
+# This is a worked example, not a template. The scaffolder generates a real
+# aios.yaml from aios.yaml.tmpl; copy values from here if you're filling one by hand.
+# Restricted YAML subset (flat scalars + string lists only) parsed by scripts/aios.mjs.
+#
+# SECRETS NEVER LIVE HERE. api_key_env names the ENV VAR holding the key; the key
+# itself goes in .env (gitignored). See docs/GETTING-STARTED.md.
+version: 1
+brain_url: "https://brain.aios.example.com"   # your hosted Team Brain
+team_id: "aios"                                # our team slug
+
+# NAME of the environment variable holding your API key — never the key itself.
+# The real value (aios_<key_id>_<secret>) lives in .env as AIOS_API_KEY.
+api_key_env: AIOS_API_KEY
+
+# Agent runtime (Bring Your Own Agent — see docs/byoa.md).
+#   claude-code (default) | hermes | openclaw | codex | opencode | claude-api
+agent_runtime: claude-code
+agent_model: ""
+agent_base_url: ""
+
+# Cockpit personality — style-only voice (aios | operator | coach | analyst).
+agent_personality: "aios"
+
+# Background memory reviewer (cockpit, claude-code only). on | off.
+memory_review: on
+
+# Which access tiers may leave this machine.
+#   private → never syncs (canonical: admin)
+#   team    → shared with your team via the brain
+#   company → employee outward tier (canonical: external)
+sync_tiers:
+  - team
+  - company
+
+# Paths considered for sync. Files still need an `access:` frontmatter tier within
+# sync_tiers to actually push — untagged files are blocked by default (default-deny).
+sync_include:
+  - 0-context
+  - 2-work
+  - 3-log/decision-log.md
+  - 3-log/tasks.md
+  - 4-shared
+  - .claude/memory
+sync_exclude:
+  - 5-personal
+
+# Identity override (optional). Resolution order:
+#   $AIOS_MEMBER → this field → `git config aios.member` → git user.name
+member: "abe"
+
+# How you work: consultant | employee
+context: employee
