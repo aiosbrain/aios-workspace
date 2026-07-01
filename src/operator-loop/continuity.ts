@@ -42,9 +42,18 @@ const CLOSED_STATUSES = new Set([
   "resolved",
 ]);
 
+/**
+ * Whether a raw status string is "open" (i.e. not a recognized closed status). A blank or
+ * undefined status defaults to open. Single-sourced here so the daily loop (C4) and the
+ * continuity store agree exactly on what "open" means.
+ */
+export function isOpenStatus(status?: string): boolean {
+  const s = (status ?? "open").trim().toLowerCase();
+  return !CLOSED_STATUSES.has(s);
+}
+
 export function isOpenContinuityAction(action: ContinuityAction): boolean {
-  const status = (action.status ?? "open").trim().toLowerCase();
-  return !CLOSED_STATUSES.has(status);
+  return isOpenStatus(action.status);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -38,6 +38,13 @@ export interface CollectOptions {
   member?: string;
   project?: string;
   now?: Date; // injectable for deterministic tests
+  /**
+   * When false, skip the [from, now] window filter and return ALL current signals for the
+   * cadence's kinds. The daily loop (C4) uses this for run-to-run change detection and for a
+   * complete owed/blocked view (an overdue/blocked item in a file not touched today must not be
+   * filtered out). Default true — every existing caller is byte-for-byte unchanged.
+   */
+  window?: boolean;
 }
 
 export function collect(opts: CollectOptions): RunManifest {
@@ -46,6 +53,7 @@ export function collect(opts: CollectOptions): RunManifest {
   const now = opts.now ?? new Date();
   const ctx: SourceContext = { root: opts.root, spine, member: opts.member ?? "owner", now };
   const from = new Date(now.getTime() - win.days * 86_400_000);
+  const applyWindow = opts.window !== false;
 
   const signals: Signal[] = [];
   const excluded: Exclusion[] = [];
@@ -58,12 +66,14 @@ export function collect(opts: CollectOptions): RunManifest {
     const res = source(ctx);
     excluded.push(...res.excluded);
     for (const sig of res.signals) {
-      const t = Date.parse(sig.occurredAt);
-      // In-window means [from, now]. Sources guarantee a valid ISO occurredAt (toOccurredAt
-      // falls back to mtime), so a non-finite value shouldn't occur — exclude it if it does.
-      // Future-dated rows (t > now) are out of scope: the manifest advertises window.to = now.
-      // (Not exclusions — those are tier failures; this is just out-of-window.)
-      if (!Number.isFinite(t) || t < from.getTime() || t > now.getTime()) continue;
+      if (applyWindow) {
+        const t = Date.parse(sig.occurredAt);
+        // In-window means [from, now]. Sources guarantee a valid ISO occurredAt (toOccurredAt
+        // falls back to mtime), so a non-finite value shouldn't occur — exclude it if it does.
+        // Future-dated rows (t > now) are out of scope: the manifest advertises window.to = now.
+        // (Not exclusions — those are tier failures; this is just out-of-window.)
+        if (!Number.isFinite(t) || t < from.getTime() || t > now.getTime()) continue;
+      }
       signals.push(sig);
     }
   }
@@ -74,6 +84,7 @@ export function collect(opts: CollectOptions): RunManifest {
     cadence: opts.cadence,
     from: from.toISOString(),
     to: now.toISOString(),
+    windowed: applyWindow,
     generatedAt: now.toISOString(),
     signals,
     excluded,
