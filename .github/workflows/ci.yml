@@ -5,14 +5,33 @@ on:
   push:
     branches: [main]
 
+# Cancel superseded runs on the same ref (saves CI time on rapid pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  docs-drift:
+    name: Docs drift guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - run: npm run check:docs
+
   guard:
     name: leak-gate + secrets + harness checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Confidentiality leak gate
+        # Terms come from the AIOS_LEAK_TERMS_B64 secret (the public repo never stores them).
+        # Without the secret the gate no-ops; with it, NDA identifiers fail the build.
+        env:
+          AIOS_LEAK_TERMS_B64: ${{ secrets.AIOS_LEAK_TERMS_B64 }}
         run: bash scripts/leak-gate.sh .
 
       - name: Secret scan
@@ -35,6 +54,7 @@ jobs:
           node test/skill-install.test.mjs
           node test/suggest-connectors.test.mjs
           node test/skill-install-marketplace.test.mjs
+          node test/slack-cli-sync.test.mjs
           node test/ux/judge.test.mjs
           node test/ux/driver.test.mjs
           node test/ux/tool-policy.test.mjs
@@ -84,8 +104,8 @@ jobs:
     name: lint + format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - run: npm ci
@@ -93,3 +113,21 @@ jobs:
         run: npm run lint
       - name: Prettier (format check)
         run: npm run format:check
+
+  tests:
+    name: unit tests (npm test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Install optional ACP peer (server boot in the GUI search test)
+        # The cockpit search route test (gui/server/sessions-search.test.mjs) boots the
+        # real GUI server, which statically loads every runtime adapter — incl. the ACP
+        # adapter (peer: zod). npm ci doesn't carry these (kept --no-save like the guard
+        # job), so install them here. claude-agent-sdk arrives via npm ci (devDependency).
+        run: npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
+      - name: npm test
+        run: npm test

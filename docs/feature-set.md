@@ -47,7 +47,8 @@ workspace. (`scaffold-engagement.sh` remains as a back-compat shim → consultan
 
 The template (`scaffold/.claude/`) ships:
 - **Conventions** (`rules/`): decision-log format + type/audience taxonomy, frontmatter
-  schema by directory, the promotion/publishing flow, and hours logging.
+  schema by directory, the promotion/publishing flow, hours logging, and **design-system**
+  rules (when you add UI — pin `@aios-alpha/design` + `@aios-alpha/ui`; see `docs/design-system.md`).
 - **Harnesses** (`skills/`): the dynamic-workflow skills below.
 
 ---
@@ -114,7 +115,7 @@ outputs from one run live in `examples/sample-output/`.
 - `scripts/leak-gate.sh` — a confidentiality gate (built from a client's confidential-
   information definition) that blocks client/firm/person identifiers and business-data
   patterns. CI runs it on every PR, so the repo stays clean as it grows.
-- Apache-2.0 licensed; contributions gated on the leak gate + secret scan + validators.
+- MIT licensed; contributions gated on the leak gate + secret scan + validators.
 
 ---
 
@@ -230,6 +231,11 @@ clobbered, and nothing is committed to git.
 The clean core + catalogs + share/pull + review panel ship today. Deliberately
 deferred — and ideal contribution targets:
 
+- **Verified Operator Loop (V1, in progress)** — the daily/weekly loop over tier-tagged
+  local signals, incl. **native agent-session time tracking**: `aios time capture` derives
+  agent-runtime work blocks from `~/.claude` session logs into an admin-tier
+  `3-log/time-log.md` (realpath-scoped, never synced) and the closeout surfaces a
+  runtime-by-tag roll-up. See `docs/v1-operator-loop/domains/time-tracking.md`.
 - **Live integration wiring** — wire a starter set (Gmail via gog-cli + Granola + one
   MCP server) end-to-end, beyond the catalog + `.mcp.json` scaffold that ships now.
 - **Sync pipeline** — fetch → triage → promote across email/chat/time-tracking, as

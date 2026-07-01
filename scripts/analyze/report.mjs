@@ -124,8 +124,8 @@ export function renderReport(result, color) {
 }
 
 /** Machine-readable shape (no raw events, no message text). */
-export function toJson(result) {
-  return {
+export function toJson(result, costData) {
+  const out = {
     window: result.window,
     tools: result.tools,
     totals: result.totals,
@@ -133,6 +133,20 @@ export function toJson(result) {
     placement: result.placement,
     days: result.days.map((d) => ({ date: d.date, signals: d.signals, placement: d.placement })),
   };
+  if (costData) {
+    out.costs = {
+      cursor: costData.cursor
+        ? {
+            totals: costData.cursor.totals,
+            days: costData.cursor.days,
+            truncated: !!costData.cursor.truncated,
+          }
+        : null,
+      claude: costData.claude,
+      cursor_error: costData.cursor_error || null,
+    };
+  }
+  return out;
 }
 
 /**
@@ -153,6 +167,10 @@ export function buildPushPayload(day, member) {
       error_rate: day.signals.error_rate,
       cost_per_task: day.signals.cost_per_task,
       tokens_per_task: day.signals.tokens_per_task,
+      total_cost_usd: day.signals.total_cost_usd,
+      input_tokens: day.signals.input_tokens,
+      output_tokens: day.signals.output_tokens,
+      cache_read_tokens: day.signals.cache_read_tokens,
       cache_hit_rate: day.signals.cache_hit_rate,
       tool_diversity: day.signals.tool_diversity,
       verify_tool_rate: day.signals.verify_tool_rate,

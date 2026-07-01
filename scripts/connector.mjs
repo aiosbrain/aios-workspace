@@ -244,6 +244,109 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
   return { ok, checks, identity, instance, captured, error: ok ? null : "incomplete" };
 }
 
+// ── OAuth (one-click, token lives in the brain) ──────────────────────────────
+//
+// For auth_mode:"oauth" descriptors the secret NEVER touches this machine — the
+// browser authorizes the brain, which stores the per-member token. startOAuth asks
+// the brain for an authorize_url; pollOAuthStatus waits for the browser leg to land;
+// postBrainToken is the manual fallback (paste a token → straight to the brain).
+// All take an injectable fetchImpl so they unit-test without a network.
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function brainUrlOf(cfg) {
+  return cfg.brainUrl || cfg.brain_url || "";
+}
+function oauthHeaders(cfg) {
+  return {
+    Authorization: `Bearer ${cfg.apiKey || cfg.api_key || ""}`,
+    "X-AIOS-Team": cfg.teamId || cfg.team_id || "",
+  };
+}
+
+/** GET the descriptor's oauth.start_url with the member key → { authorize_url }. */
+export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
+  const url = resolve((descriptor.oauth || {}).start_url || "", { BRAIN_URL: brainUrlOf(cfg) });
+  const res = await fetchImpl(url, { method: "GET", headers: oauthHeaders(cfg) });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.authorize_url) {
+    throw new Error(
+      `oauth start failed: ${(json && (json.message || json.error)) || `HTTP ${res.status}`}`
+    );
+  }
+  return { authorize_url: json.authorize_url };
+}
+
+/** GET the descriptor's oauth.status_url once → { connected, slack_user_id, workspace }. */
+export async function checkOAuthStatus(descriptor, cfg, { fetchImpl = fetch } = {}) {
+  const url = resolve((descriptor.oauth || {}).status_url || "", { BRAIN_URL: brainUrlOf(cfg) });
+  const res = await fetchImpl(url, { method: "GET", headers: oauthHeaders(cfg) });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(
+      `oauth status failed: ${(json && (json.message || json.error)) || `HTTP ${res.status}`}`
+    );
+  }
+  return {
+    connected: !!json?.connected,
+    slack_user_id: json?.slack_user_id ?? null,
+    workspace: json?.workspace ?? null,
+  };
+}
+
+/** Poll oauth.status_url until connected:true or the deadline (throws Error 'oauth_timeout'). */
+export async function pollOAuthStatus(
+  descriptor,
+  cfg,
+  { fetchImpl = fetch, timeoutMs = 120000, intervalMs = 2000, onTick } = {}
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await checkOAuthStatus(descriptor, cfg, { fetchImpl });
+    if (status.connected) return status;
+    if (Date.now() + intervalMs >= deadline) {
+      const e = new Error("oauth_timeout");
+      e.code = "oauth_timeout";
+      throw e;
+    }
+    onTick?.();
+    await sleep(intervalMs);
+  }
+}
+
+/** Manual fallback: POST a pasted user token to the descriptor's fallback.store_url. */
+export async function postBrainToken(descriptor, cfg, token, { fetchImpl = fetch } = {}) {
+  const url = resolve((descriptor.fallback || {}).store_url || "", { BRAIN_URL: brainUrlOf(cfg) });
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: { ...oauthHeaders(cfg), "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.ok === false) {
+    throw new Error(
+      `store token failed: ${(json && (json.message || json.error)) || `HTTP ${res.status}`}`
+    );
+  }
+  return json || {};
+}
+
+/** Install an oauth connector only after the brain reports connected (token lives there). */
+export async function storeOAuthConnector(repo, descriptor, cfg, { fetchImpl = fetch } = {}) {
+  const status = await checkOAuthStatus(descriptor, cfg, { fetchImpl });
+  if (!status.connected) {
+    const e = new Error("oauth_not_connected");
+    e.code = "oauth_not_connected";
+    throw e;
+  }
+  const stored = storeConnector(repo, descriptor, {});
+  return {
+    ...stored,
+    identity: status.slack_user_id ? { label: "You", value: status.slack_user_id } : null,
+    instance: status.workspace ? { label: "Workspace", value: status.workspace } : null,
+  };
+}
+
 // ── secret vault (dotenvx) ───────────────────────────────────────────────────
 
 function envPath(repo) {
@@ -335,8 +438,11 @@ function flipStatus(repo, id, status) {
 /** Persist a validated connector. Encrypts secrets, writes the transport artifact, flips status. */
 export function storeConnector(repo, descriptor, secretValues) {
   ensureGitignore(repo);
-  for (const [env, value] of Object.entries(secretValues)) {
-    if (value) vaultSet(repo, env, value);
+  // OAuth connectors keep their secret in the brain, never on this machine — never vault it.
+  if (descriptor.auth_mode !== "oauth") {
+    for (const [env, value] of Object.entries(secretValues)) {
+      if (value) vaultSet(repo, env, value);
+    }
   }
 
   if (descriptor.transport === "mcp") {

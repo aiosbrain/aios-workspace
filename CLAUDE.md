@@ -86,6 +86,11 @@ they don't recognize.
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
+- **Workflow-layer code follows the constitution.** The 5 workflow domains + the Operator Loop are
+  governed by **`docs/ENGINEERING-CONSTITUTION.md`** — all-TypeScript, well-bounded modules that emit
+  typed tier-tagged signals into the loop, spec-before-code (`spec → plan → tasks → implement`). Don't
+  port prior-build code verbatim; rebuild clean and typed. The V1 decomposition lives in
+  `docs/v1-operator-loop/`.
 
 ---
 

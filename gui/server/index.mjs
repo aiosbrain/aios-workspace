@@ -35,9 +35,9 @@ import {
   containsSecret,
   redactSecrets,
 } from "./memory-reviewer.mjs";
-import { ALLOWED_MODELS } from "./runtime-adapters/claude-code.mjs";
+import { ALLOWED_MODELS, MODEL_OPTIONS } from "./runtime-adapters/claude-code.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
-import { GUI_RUNTIMES } from "../../scripts/runtimes.mjs";
+import { GUI_RUNTIMES, runtimeCapabilities } from "../../scripts/runtimes.mjs";
 import {
   readSkills,
   readIntegrations,
@@ -51,10 +51,15 @@ import {
   storeConnector,
   unwireConnector,
   readBlueprint,
+  startOAuth,
+  checkOAuthStatus,
+  storeOAuthConnector,
 } from "../../scripts/connector.mjs";
+import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
+import { searchSessions } from "./sessions-search.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -157,6 +162,10 @@ const server = http.createServer((req, res) => {
         runtime: cfg.runtime,
         memoryReview: cfg.memoryReview,
         models: [...ALLOWED_MODELS],
+        // Additive: same capability descriptor the `hello` event carries, so the
+        // cockpit can drive capability-gated chrome from config BEFORE the first
+        // WebSocket hello — closing the pre-connect flash on non-Claude runtimes.
+        capabilities: runtimeCapabilities(cfg.runtime, MODEL_OPTIONS),
       })
     );
   }
@@ -342,6 +351,27 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(idx));
   }
+  // Full-content chat search. MUST precede the /api/sessions/:id route below, or "search"
+  // would be parsed as a (non-UUID) session id and 400. Token-gated + bounded (see
+  // sessions-search.mjs); a trimmed/empty q returns no results.
+  if (url.pathname === "/api/sessions/search" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    // Bail before the O(all sessions) visibility walk when there's nothing to search.
+    // The palette debounces a request per keystroke, so blank/whitespace queries are the
+    // common case; searchSessions would return [] for them anyway.
+    const q = (url.searchParams.get("q") || "").trim();
+    if (!q) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ results: [] }));
+    }
+    const { sessions } = visibleSessionIndex(SESSIONS_DIR, readSessionIndex(SESSIONS_INDEX));
+    const out = searchSessions(SESSIONS_DIR, sessions, q);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(out));
+  }
   const sessMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
   if (sessMatch && req.method === "GET") {
     if (url.searchParams.get("token") !== TOKEN) {
@@ -503,6 +533,43 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // OAuth one-click proxies: the GUI server relays start/status to the brain using the
+  // workspace's member key. The token itself flows browser → brain directly and never
+  // transits the GUI (no secret is read from or written to this request).
+  const oauth = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(start|status)$/);
+  if (oauth) {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const [, id, action] = oauth;
+    if (action === "start" && req.method !== "POST") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    if (action === "status" && req.method !== "GET") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    (async () => {
+      try {
+        const d = getDescriptor(repo, id);
+        const cfg = resolveBrainConfig(repo);
+        if (!cfg.brain_url || !cfg.api_key) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+        }
+        const result =
+          action === "start" ? await startOAuth(d, cfg) : await checkOAuthStatus(d, cfg);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    })();
+    return;
+  }
   const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
   if (conn && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) {
@@ -530,6 +597,26 @@ const server = http.createServer((req, res) => {
           if (action === "unwire") {
             res.writeHead(200, { "Content-Type": "application/json" });
             return res.end(JSON.stringify(unwireConnector(repo, d)));
+          }
+          if (action === "store" && d.auth_mode === "oauth") {
+            const cfg = resolveBrainConfig(repo);
+            if (!cfg.brain_url || !cfg.api_key) {
+              res.writeHead(503, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
+            }
+            try {
+              const stored = await storeOAuthConnector(repo, d, cfg);
+              res.writeHead(200, { "Content-Type": "application/json" });
+              return res.end(JSON.stringify({ ok: true, ...stored }));
+            } catch (e) {
+              if (e.code === "oauth_not_connected") {
+                res.writeHead(422, { "Content-Type": "application/json" });
+                return res.end(
+                  JSON.stringify({ ok: false, error: "oauth_not_connected", message: e.message })
+                );
+              }
+              throw e;
+            }
           }
           const result = await validateConnector(d, secrets);
           if (action === "validate") {
@@ -773,8 +860,8 @@ wss.on("connection", (ws, req) => {
   const queue = [];
   let wake = null;
   const ac = new AbortController(); // fired on ws close → wakes the iterator + signals the adapter
-  const pushUser = (text, model) => {
-    queue.push({ type: "user", text, model });
+  const pushUser = (text, model, approvalMode) => {
+    queue.push({ type: "user", text, model, approvalMode });
     if (wake) {
       wake();
       wake = null;
@@ -813,7 +900,13 @@ wss.on("connection", (ws, req) => {
         titleSet = true;
       }
       curTurn = { user: userText, assistant: "" }; // start a fresh turn for the reviewer
-      pushUser(userText, typeof msg.model === "string" ? msg.model : undefined);
+      // Session-scoped, never persisted. The adapter authoritatively validates the mode
+      // against the driver's advertised (env-gated) approvalModes and ignores anything else.
+      pushUser(
+        userText,
+        typeof msg.model === "string" ? msg.model : undefined,
+        typeof msg.approvalMode === "string" ? msg.approvalMode : undefined
+      );
     } else if (msg.type === "permission_response" && pending.has(msg.id)) {
       const resolve = pending.get(msg.id);
       pending.delete(msg.id);
@@ -928,7 +1021,10 @@ wss.on("connection", (ws, req) => {
     driver && driver !== "claude-sdk"
       ? "Shell-driven file changes are validated after each turn, not pre-gated."
       : null;
-  send({ type: "hello", repo, sessionId, runtime, safetyNote, resumed: !!resumeId });
+  // BYOA: additive capability descriptor so the cockpit UI adapts to the active
+  // runtime without branching on its name. Older clients ignore the extra field.
+  const capabilities = runtimeCapabilities(runtime, MODEL_OPTIONS);
+  send({ type: "hello", repo, sessionId, runtime, safetyNote, capabilities, resumed: !!resumeId });
 
   (async () => {
     try {
