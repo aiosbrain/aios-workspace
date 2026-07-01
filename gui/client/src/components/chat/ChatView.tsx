@@ -7,9 +7,12 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EmptyState } from "./EmptyState";
 
+const SAFETY_BANNER =
+  "self-stretch mb-1 rounded-md border px-[11px] py-[7px] text-[length:var(--aios-text-small)] text-amber border-[color-mix(in_srgb,var(--aios-amber)_30%,transparent)] bg-[color-mix(in_srgb,var(--aios-amber)_10%,transparent)]";
+
 export function ChatView() {
   const { token } = useConnection();
-  const { safetyNote } = useRuntime();
+  const { safetyNote, capabilities } = useRuntime();
   const {
     connected,
     connectionStatus,
@@ -32,6 +35,9 @@ export function ChatView() {
   const composerDisabled = draftConnecting || (!connected && !isDraft);
   const canStartMessage = !composerDisabled;
   const isEmpty = messages.length === 0;
+  const showToolbar =
+    (capabilities.modelSwitching && capabilities.models.length > 0) ||
+    capabilities.approvalModes.length > 0;
 
   const placeholder =
     !connected && !isDraft
@@ -47,14 +53,14 @@ export function ChatView() {
   const banners = (
     <>
       {!token && (
-        <div className="safety-banner">
+        <div className={SAFETY_BANNER}>
           Missing session token. Open the full link printed by <code>npm run gui</code> once — after
           that, refreshing this page will keep working in this tab.
         </div>
       )}
       {safetyNote && (
         <div
-          className="safety-banner"
+          className={SAFETY_BANNER}
           title="Writes the agent makes through its own shell run after the turn ends are scanned, not blocked beforehand."
         >
           ⚠ {safetyNote}
@@ -72,21 +78,26 @@ export function ChatView() {
       disabled={composerDisabled}
       busy={busy}
       placeholder={placeholder}
+      bare={isEmpty}
     />
   );
 
   // Codex-style centered empty state: heading + composer mid-canvas, chips beneath.
   if (isEmpty) {
     return (
-      <div className="chat-hero">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
         {banners}
-        <div className="hero-inner">
-          <h1 className="hero-title">What are you working on?</h1>
+        <div className="m-auto flex w-full max-w-[640px] flex-col items-stretch gap-4">
+          <h1 className="mb-1 text-center font-display text-[clamp(1.4rem,1.1rem+1.2vw,1.9rem)] font-normal tracking-[var(--aios-tracking-tight)] text-foreground">
+            What are you working on?
+          </h1>
           {composer}
-          <div className="hero-controls">
-            <ModelPicker />
-            <ApprovalModePicker />
-          </div>
+          {showToolbar ? (
+            <div className="flex justify-center">
+              <ModelPicker />
+              <ApprovalModePicker />
+            </div>
+          ) : null}
           <EmptyState
             canStart={canStartMessage}
             onPick={(prompt) => sendMessage(prompt)}
@@ -102,10 +113,12 @@ export function ChatView() {
 
   return (
     <>
-      <div className="chat-head">
-        <ModelPicker />
-        <ApprovalModePicker />
-      </div>
+      {showToolbar ? (
+        <div className="flex items-center justify-end gap-2.5 border-b border-border-visible px-5 py-2.5">
+          <ModelPicker />
+          <ApprovalModePicker />
+        </div>
+      ) : null}
       <MessageList
         header={banners}
         messages={messages}

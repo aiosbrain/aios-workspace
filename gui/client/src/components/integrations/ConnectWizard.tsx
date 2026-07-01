@@ -1,6 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { ApiError } from "../../lib/api";
+import { cn } from "../../lib/cn";
+import {
+  WIZ_OVERLAY,
+  WIZ,
+  WIZ_HEAD,
+  WIZ_X,
+  WIZ_STEP,
+  WIZ_STEP_N,
+  WIZ_LINK,
+  WIZ_INAPP,
+  WIZ_NOTE,
+  WIZ_SCOPES,
+  WIZ_FIELD,
+  WIZ_FIELD_LABEL,
+  WIZ_INPUT_ROW,
+  WIZ_INPUT,
+  WIZ_EYE,
+  WIZ_VALIDATING,
+  WIZ_CHECKS,
+  WIZ_ERROR,
+  WIZ_GO,
+  WIZ_SECONDARY,
+  WIZ_DONE,
+  WIZ_DONE_BADGE,
+  WIZ_DONE_ACTIONS,
+} from "./wizard";
 import type {
   Connector,
   ConnectorStoreResponse,
@@ -141,40 +167,40 @@ export function ConnectWizard({
   const checks = res?.checks || res?.validation?.checks || [];
 
   return (
-    <div className="wiz-overlay" onClick={onClose}>
-      <div className="wiz" onClick={(e) => e.stopPropagation()}>
-        <div className="wiz-head">
+    <div className={WIZ_OVERLAY} onClick={onClose}>
+      <div className={WIZ} onClick={(e) => e.stopPropagation()}>
+        <div className={WIZ_HEAD}>
           <span>Connect {connector.name}</span>
-          <button className="wiz-x" onClick={onClose}>
+          <button className={WIZ_X} onClick={onClose}>
             ✕
           </button>
         </div>
 
         {phase !== "done" && oauth && (
           <>
-            <div className="wiz-step">
-              <div className="wiz-step-n">Authorize in your browser</div>
-              <p className="wiz-note">
+            <div className={WIZ_STEP}>
+              <div className={WIZ_STEP_N}>Authorize in your browser</div>
+              <p className={WIZ_NOTE}>
                 Authorize AIOS in {connector.name}. Your token is stored securely in the team brain
                 — it never touches this machine.
               </p>
               {(connector.scopes?.length ?? 0) > 0 && (
-                <p className="wiz-scopes">
+                <p className={WIZ_SCOPES}>
                   Permissions: <strong>{connector.scopes!.join(" · ")}</strong>
                 </p>
               )}
             </div>
 
             {phase === "waiting" && (
-              <div className="wiz-validating">Waiting for you to authorize in the new tab…</div>
+              <div className={WIZ_VALIDATING}>Waiting for you to authorize in the new tab…</div>
             )}
             {phase === "error" && (
-              <div className="wiz-error">
+              <div className={WIZ_ERROR}>
                 Couldn’t connect{res?.error ? ` (${res.error})` : ""}.
               </div>
             )}
 
-            <button className="wiz-go" disabled={phase === "waiting"} onClick={connectOAuth}>
+            <button className={WIZ_GO} disabled={phase === "waiting"} onClick={connectOAuth}>
               {phase === "waiting" ? "Waiting…" : `Connect with ${connector.name}`}
             </button>
           </>
@@ -182,11 +208,11 @@ export function ConnectWizard({
 
         {phase !== "done" && !oauth && (
           <>
-            <div className="wiz-step">
-              <div className="wiz-step-n">1 · Get your key</div>
+            <div className={WIZ_STEP}>
+              <div className={WIZ_STEP_N}>1 · Get your key</div>
               {connector.docs?.token_create_url ? (
                 <a
-                  className="wiz-link"
+                  className={WIZ_LINK}
                   href={connector.docs.token_create_url}
                   target="_blank"
                   rel="noreferrer"
@@ -194,25 +220,26 @@ export function ConnectWizard({
                   Open {connector.name} to create a key →
                 </a>
               ) : (
-                <div className="wiz-inapp">Created in the {connector.name} app (no web page).</div>
+                <div className={WIZ_INAPP}>Created in the {connector.name} app (no web page).</div>
               )}
               {connector.docs?.instructions && (
-                <p className="wiz-note">{connector.docs.instructions}</p>
+                <p className={WIZ_NOTE}>{connector.docs.instructions}</p>
               )}
               {(connector.scopes?.length ?? 0) > 0 && (
-                <p className="wiz-scopes">
+                <p className={WIZ_SCOPES}>
                   Give it these scopes: <strong>{connector.scopes!.join(" · ")}</strong>
                 </p>
               )}
             </div>
 
-            <div className="wiz-step">
-              <div className="wiz-step-n">2 · Paste &amp; check</div>
+            <div className={WIZ_STEP}>
+              <div className={WIZ_STEP_N}>2 · Paste &amp; check</div>
               {required.map((s) => (
-                <div key={s.env} className="wiz-field">
-                  <label>{s.label}</label>
-                  <div className="wiz-input">
+                <div key={s.env} className={WIZ_FIELD}>
+                  <label className={WIZ_FIELD_LABEL}>{s.label}</label>
+                  <div className={WIZ_INPUT_ROW}>
                     <input
+                      className={WIZ_INPUT}
                       type={reveal[s.env] ? "text" : "password"}
                       placeholder={s.placeholder || s.env}
                       value={secrets[s.env] || ""}
@@ -221,7 +248,7 @@ export function ConnectWizard({
                       spellCheck="false"
                     />
                     <button
-                      className="wiz-eye"
+                      className={WIZ_EYE}
                       onClick={() => setReveal({ ...reveal, [s.env]: !reveal[s.env] })}
                     >
                       👁
@@ -231,18 +258,22 @@ export function ConnectWizard({
               ))}
             </div>
 
-            {phase === "validating" && <div className="wiz-validating">Checking it live…</div>}
+            {phase === "validating" && <div className={WIZ_VALIDATING}>Checking it live…</div>}
             {checks.length > 0 && (
-              <ul className="wiz-checks">
+              <ul className={WIZ_CHECKS}>
                 {checks.map((ch, i) => (
-                  <li key={i} className={ch.ok ? "ok" : "bad"}>
-                    {ch.ok ? "✓" : "✗"} {ch.name} <span>— {ch.detail}</span>
+                  <li
+                    key={i}
+                    className={cn("text-[13px]", ch.ok ? "text-emerald" : "text-destructive")}
+                  >
+                    {ch.ok ? "✓" : "✗"} {ch.name}{" "}
+                    <span className="text-muted-foreground">— {ch.detail}</span>
                   </li>
                 ))}
               </ul>
             )}
             {phase === "error" && (
-              <div className="wiz-error">
+              <div className={WIZ_ERROR}>
                 Couldn’t connect{res?.error ? ` (${res.error})` : ""}.
                 {connector.docs?.token_create_url && (
                   <a href={connector.docs.token_create_url} target="_blank" rel="noreferrer">
@@ -254,7 +285,7 @@ export function ConnectWizard({
             )}
 
             <button
-              className="wiz-go"
+              className={WIZ_GO}
               disabled={!filled || phase === "validating"}
               onClick={connect}
             >
@@ -264,8 +295,8 @@ export function ConnectWizard({
         )}
 
         {phase === "done" && (
-          <div className="wiz-done">
-            <div className="wiz-done-badge">✓ Connected</div>
+          <div className={WIZ_DONE}>
+            <div className={WIZ_DONE_BADGE}>✓ Connected</div>
             <p>
               Connected to <strong>{connector.name}</strong>
               {res?.identity?.value ? (
@@ -282,7 +313,7 @@ export function ConnectWizard({
               ) : null}
               .
             </p>
-            <p className="wiz-note">
+            <p className={WIZ_NOTE}>
               {oauth
                 ? "Your token is stored in the team brain, not on this machine. "
                 : "Your key is encrypted on this machine. "}
@@ -290,9 +321,9 @@ export function ConnectWizard({
                 ? "A skill was installed to use it."
                 : "An MCP server was wired up."}
             </p>
-            <div className="wiz-done-actions">
+            <div className={WIZ_DONE_ACTIONS}>
               <button
-                className="wiz-go"
+                className={WIZ_GO}
                 onClick={() =>
                   onTryInChat(
                     SUGGESTED[connector.id] || `Use ${connector.name} to help me with a task.`
@@ -301,7 +332,7 @@ export function ConnectWizard({
               >
                 Try it in chat →
               </button>
-              <button className="wiz-secondary" onClick={onClose}>
+              <button className={WIZ_SECONDARY} onClick={onClose}>
                 Done
               </button>
             </div>

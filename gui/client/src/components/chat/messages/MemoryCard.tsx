@@ -8,15 +8,22 @@ export function MemoryCard({
   onUndo: (id: string) => void;
 }) {
   return (
-    <div className="msg memory">
-      💾 Memory updated · <code>{message.file}</code> — {message.summary}
-      <span className="memory-sub"> (takes effect next session)</span>
+    <div className="flex max-w-[92%] flex-wrap items-center gap-1.5 self-center rounded-md border border-[var(--accent-line)] bg-[var(--accent-soft)] px-[11px] py-1.5 text-xs text-muted-foreground">
+      💾 Memory updated ·{" "}
+      <code className="rounded-[5px] bg-secondary px-[5px] py-px text-[11.5px]">
+        {message.file}
+      </code>{" "}
+      — {message.summary}
+      <span className="opacity-70"> (takes effect next session)</span>
       {message.undone ? (
-        <span className="memory-done"> · undone</span>
+        <span className="text-emerald"> · undone</span>
       ) : message.undoFailed ? (
-        <span className="memory-done"> · undo unavailable (file changed)</span>
+        <span className="text-destructive"> · undo unavailable (file changed)</span>
       ) : (
-        <button className="memory-undo" onClick={() => onUndo(message.id)}>
+        <button
+          className="ml-1 cursor-pointer rounded-[7px] border border-border-visible bg-secondary px-2.5 py-0.5 text-[11.5px] font-semibold text-foreground hover:border-primary"
+          onClick={() => onUndo(message.id)}
+        >
           undo
         </button>
       )}

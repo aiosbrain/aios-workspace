@@ -4,6 +4,16 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { SkillCard } from "./SkillCard";
 import { SkillReviewModal, type SkillUnderReview } from "./SkillReviewModal";
+import {
+  INTEGRATIONS_ROOT,
+  INT_HEAD,
+  INT_HEAD_H2,
+  INT_SUB,
+  INT_PROGRESS,
+  INT_SECTION,
+  INT_SECTION_MUTED,
+  META_ERROR,
+} from "../integrations/intCard";
 import type { SkillConsent, SkillEntry, SkillsResponse } from "../../types/protocol";
 
 const GRID = "grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]";
@@ -76,17 +86,17 @@ export function SkillsPanel() {
 
   if (error)
     return (
-      <div className="integrations">
-        <div className="msg meta error">error: {error}</div>
+      <div className={INTEGRATIONS_ROOT}>
+        <div className={META_ERROR}>error: {error}</div>
       </div>
     );
   if (!data)
     return (
-      <div className="integrations">
-        <div className="int-head">
+      <div className={INTEGRATIONS_ROOT}>
+        <div className={INT_HEAD}>
           <div>
-            <h2>Skills</h2>
-            <p className="int-sub">Loading the skill library…</p>
+            <h2 className={INT_HEAD_H2}>Skills</h2>
+            <p className={INT_SUB}>Loading the skill library…</p>
           </div>
         </div>
         <div className={GRID}>
@@ -98,16 +108,16 @@ export function SkillsPanel() {
     );
 
   return (
-    <div className="integrations">
-      <div className="int-head">
+    <div className={INTEGRATIONS_ROOT}>
+      <div className={INT_HEAD}>
         <div>
-          <h2>Skills</h2>
-          <p className="int-sub">
+          <h2 className={INT_HEAD_H2}>Skills</h2>
+          <p className={INT_SUB}>
             One-click install into <code>.claude/skills/</code>. Provenance and your own review are
             the real safeguard — the scan is advisory.
           </p>
         </div>
-        <div className="int-progress">
+        <div className={INT_PROGRESS}>
           {installedCount} of {data.skills.length} installed
         </div>
       </div>
@@ -122,8 +132,8 @@ export function SkillsPanel() {
 
       {official.length > 0 && (
         <>
-          <h3 className="int-section">Official</h3>
-          <p className="int-sub">
+          <h3 className={INT_SECTION}>Official</h3>
+          <p className={INT_SUB}>
             Vendored from <code>anthropics/skills</code> and hash-locked.
           </p>
           <div className={GRID}>
@@ -136,8 +146,8 @@ export function SkillsPanel() {
 
       {marketplace.length > 0 && (
         <>
-          <h3 className="int-section">Marketplace</h3>
-          <p className="int-sub">
+          <h3 className={INT_SECTION}>Marketplace</h3>
+          <p className={INT_SUB}>
             First-party (Anthropic) plugins, fetched on install at a pinned commit and byte-verified
             against the catalog before anything lands in <code>.claude/skills/</code>. Installing
             needs network access.
@@ -152,8 +162,8 @@ export function SkillsPanel() {
 
       {community.length > 0 && (
         <>
-          <h3 className="int-section int-section-muted">Community</h3>
-          <p className="int-sub">
+          <h3 className={INT_SECTION_MUTED}>Community</h3>
+          <p className={INT_SUB}>
             ⚠ Unverified, no first-party provenance. Installing runs its bundled instructions/code —
             review the source and scan, then confirm.
           </p>

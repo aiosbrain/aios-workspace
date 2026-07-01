@@ -55,7 +55,11 @@ export function MessageList({
   }, [messages, permissions]);
 
   return (
-    <main ref={mainRef} onScroll={handleScroll}>
+    <main
+      ref={mainRef}
+      onScroll={handleScroll}
+      className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-2.5 overflow-y-auto p-5"
+    >
       {header}
       {messages.map((m, i) => {
         switch (m.kind) {
@@ -81,7 +85,11 @@ export function MessageList({
       ))}
       <div ref={bottomRef} />
       {showJump && (
-        <button className="jump-to-latest" onClick={jumpToLatest} aria-label="Jump to latest">
+        <button
+          className="sticky bottom-4 mt-1 inline-flex animate-[jump-in_0.18s_ease-out] cursor-pointer items-center gap-1.5 self-center rounded-full bg-primary px-3.5 py-1.5 text-[13px] text-primary-foreground shadow-overlay transition-colors hover:bg-[var(--accent-hover)]"
+          onClick={jumpToLatest}
+          aria-label="Jump to latest"
+        >
           <ArrowDown size={14} strokeWidth={2.5} /> Jump to latest
         </button>
       )}

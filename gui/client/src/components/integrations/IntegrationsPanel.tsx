@@ -4,6 +4,15 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { ConnectorRow } from "./ConnectorRow";
 import { ConnectWizard } from "./ConnectWizard";
+import {
+  INTEGRATIONS_ROOT,
+  INT_HEAD,
+  INT_HEAD_H2,
+  INT_SUB,
+  INT_PROGRESS,
+  INT_FOOT,
+  META_ERROR,
+} from "./intCard";
 import type { BlueprintResponse, Connector, ConnectorsResponse } from "../../types/protocol";
 
 // Two compact rows per row on wide widths; one when narrow.
@@ -64,8 +73,8 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
 
   if (error)
     return (
-      <div className="integrations">
-        <div className="msg meta error">error: {error}</div>
+      <div className={INTEGRATIONS_ROOT}>
+        <div className={META_ERROR}>error: {error}</div>
       </div>
     );
 
@@ -97,11 +106,11 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
 
   if (!connectors)
     return (
-      <div className="integrations">
-        <div className="int-head">
+      <div className={INTEGRATIONS_ROOT}>
+        <div className={INT_HEAD}>
           <div>
-            <h2>Integrations</h2>
-            <p className="int-sub">Loading your tools…</p>
+            <h2 className={INT_HEAD_H2}>Integrations</h2>
+            <p className={INT_SUB}>Loading your tools…</p>
           </div>
         </div>
         {search}
@@ -119,16 +128,16 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
   const noResults = filtered.length === 0;
 
   return (
-    <div className="integrations">
-      <div className="int-head">
+    <div className={INTEGRATIONS_ROOT}>
+      <div className={INT_HEAD}>
         <div>
-          <h2>Integrations</h2>
-          <p className="int-sub">
+          <h2 className={INT_HEAD_H2}>Integrations</h2>
+          <p className={INT_SUB}>
             Connect your tools. We hand you the exact key page, check the key live, and lock it on
             this machine.
           </p>
         </div>
-        <div className="int-progress">
+        <div className={INT_PROGRESS}>
           {wiredTotal} of {connectors.length} connected
         </div>
       </div>
@@ -163,7 +172,7 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
         </section>
       )}
 
-      <p className="int-foot">
+      <p className={INT_FOOT}>
         🔒 Every key is encrypted on this machine (dotenvx) and never sent to the team brain.
       </p>
 

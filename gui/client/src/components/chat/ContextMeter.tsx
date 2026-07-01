@@ -29,9 +29,12 @@ export function ContextMeter() {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="ctx-meter">
-            <div className="ctx-bar">
-              <div className="ctx-fill" style={{ width: `${pct}%`, background: fill }} />
+          <div className="flex items-center justify-end gap-2 px-5 pt-1 font-mono text-[11px] text-muted-foreground">
+            <div className="h-[5px] w-[90px] overflow-hidden rounded-[3px] bg-secondary">
+              <div
+                className="h-full rounded-[3px] transition-[width] duration-300 ease-[ease]"
+                style={{ width: `${pct}%`, background: fill }}
+              />
             </div>
             <span>context (est.) {ctx == null ? "—" : `~${fmtK(ctx)} / ${fmtK(window)}`}</span>
           </div>

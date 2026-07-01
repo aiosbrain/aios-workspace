@@ -18,9 +18,9 @@ function ViewRouter() {
 
 export function AppShell() {
   return (
-    <div className="app">
+    <div className="flex h-full flex-row">
       <Sidebar />
-      <div className="app-main">
+      <div className="flex min-w-0 flex-1 flex-col">
         <ViewRouter />
       </div>
     </div>
