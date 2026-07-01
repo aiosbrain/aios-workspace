@@ -59,6 +59,7 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 
 <!-- drift:loop-commands -->
 - `aios loop collect`
+- `aios loop daily`
 - `aios loop manifest --explain`
 - `aios loop verify`
 - `aios loop weekly`
