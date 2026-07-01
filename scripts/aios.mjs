@@ -28,6 +28,7 @@ import {
   readdirSync,
   statSync,
   cpSync,
+  renameSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline";
@@ -2456,6 +2457,73 @@ function renderDaily(o) {
   printExcludedHint();
 }
 
+// C8 — the local dogfood dashboard. Owner-only (admin-tier operational data). Tier-leak first
+// (the product-ending metric), then a data-quality banner if the ledger has unreadable lines.
+function renderTelemetry(m) {
+  const badge = (met) =>
+    met === true ? c.green("MET") : met === false ? c.red("NOT MET") : c.yellow("N/A ");
+  const showVal = (mr) =>
+    mr.value === null
+      ? "—"
+      : mr.unit === "rate"
+        ? `${Math.round(mr.value * 100)}%`
+        : `${mr.value} ${mr.unit}`;
+  const line = (mr) =>
+    console.log(
+      `  ${badge(mr.met)}  ${mr.label}: ${showVal(mr)} ` +
+        c.dim(`(target ${mr.threshold}, n=${mr.sampleSize}${mr.note ? "; " + mr.note : ""})`)
+    );
+
+  const w = m.window;
+  console.log(
+    c.blue("aios loop telemetry") +
+      c.dim(
+        `  window ${w.days === null ? "all" : w.days + "d"} · ${w.from.slice(0, 10)} → ${w.to.slice(0, 10)}`
+      )
+  );
+
+  // Tier-leak FIRST — the one that's product-ending.
+  const leak = m.tierLeakCount;
+  const leakBadge =
+    leak.met === true ? c.green("CLEAN") : leak.met === false ? c.red("LEAK ") : c.yellow("?????");
+  console.log(
+    `  ${leakBadge}  ${leak.label}: ${leak.value === null ? "—" : leak.value} ` +
+      c.dim(`(target == 0, n=${leak.sampleSize}${leak.note ? "; " + leak.note : ""})`)
+  );
+
+  const dq = m.breakdown.dataQuality;
+  const badLines = dq.corruptLines + dq.unknownVersionLines + dq.missingFieldLines;
+  if (badLines > 0)
+    console.log(
+      c.yellow(
+        `  ⚠ data quality: ${badLines} unreadable line(s) — ${dq.corruptLines} corrupt, ` +
+          `${dq.unknownVersionLines} unknown-version, ${dq.missingFieldLines} missing-fields; ` +
+          `${dq.unattributableGaps} unattributable, ${dq.degradedRunIds.length} degraded run(s)`
+      )
+    );
+
+  line(m.weeklyWallClock);
+  line(m.verifierShippableRate);
+  line(m.nextWeekActionAcceptance);
+  line(m.dailyRunFrequency);
+  line(m.consecutiveCleanWeeklies);
+
+  const b = m.breakdown;
+  console.log(
+    c.dim(
+      `  runs: ${b.weeklyRuns} weekly, ${b.dailyRuns} daily · verifier ` +
+        `${b.verifier.pass}✓/${b.verifier.corrected}~/${b.verifier.failed}✗ · leak-withheld ${b.leakWithheldTotal}`
+    )
+  );
+  for (const wn of m.warnings)
+    if (wn.phase === "semantic")
+      console.log(
+        c.yellow(
+          `  ⚠ ${wn.reason}${wn.runId ? " " + wn.runId : ""}${wn.detail ? ": " + wn.detail : ""}`
+        )
+      );
+}
+
 async function cmdLoop(repo, cfg, args) {
   const sub = args[0];
   const flags = new Set(args.slice(1));
@@ -2621,6 +2689,11 @@ async function cmdLoop(repo, cfg, args) {
     const asJson = flags.has("--json");
     const dryRun = flags.has("--dry-run");
 
+    // C8 telemetry: wall-clock spans the whole closeout command (CLI-duration fallback for the
+    // ritual span, which is completed later by the C6 writeback approval event).
+    const startedAt = new Date().toISOString();
+    const startedMs = Date.now();
+
     const manIdx = args.indexOf("--manifest");
     const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
     const manifest = manifestPath
@@ -2756,6 +2829,79 @@ async function cmdLoop(repo, cfg, args) {
     }
     // A non-shippable audience must gate (non-zero) for scripts/CI.
     if (anyFailed) process.exitCode = 1;
+
+    // ── C8 telemetry + independent post-ship leak re-check (safety runs even if telemetry is off) ──
+    if (!dryRun) {
+      const telem = loop.telemetryEnabled();
+      const endedAt = new Date().toISOString();
+      const durationMs = Date.now() - startedMs;
+      if (telem) {
+        loop.recordEvent(repo, {
+          kind: "weekly.run",
+          runId: stamp,
+          cadence: "weekly",
+          member,
+          project,
+          at: endedAt,
+          payload: { startedAt, endedAt, durationMs, audiences: shareableAudiences, anyFailed },
+        });
+        for (const s of closeout.shareables)
+          loop.recordEvent(repo, {
+            kind: "weekly.verify",
+            runId: stamp,
+            cadence: "weekly",
+            member,
+            project,
+            at: endedAt,
+            payload: {
+              audience: s.audience,
+              status: s.status,
+              shippable: s.shippable,
+              leakWithheld: s.leakWithheld,
+              checkedClaims: s.result.checkedClaims,
+              loopsUsed: s.result.loopsUsed,
+              budget: s.result.budget,
+            },
+          });
+      }
+      // Re-derive leak truth from the bytes actually written — defense in depth over C5's sweep.
+      // If a shipped digest still carries admin content, quarantine it (rename → .LEAKED.md, which
+      // C6 can never promote), alarm, and fail. The one case C8 mutates a pipeline artifact.
+      for (const s of closeout.shareables) {
+        if (!s.shippable) continue;
+        const tierLeak = loop.hasLeak(
+          s.digestMarkdown,
+          loop.aboveAudienceStrings(manifest, s.audience)
+        );
+        if (telem)
+          loop.recordEvent(repo, {
+            kind: "weekly.shipped",
+            runId: stamp,
+            cadence: "weekly",
+            member,
+            project,
+            at: endedAt,
+            payload: { audience: s.audience, tierLeak },
+          });
+        if (tierLeak) {
+          try {
+            renameSync(
+              path.join(outDir, `digest-${s.audience}.md`),
+              path.join(outDir, `digest-${s.audience}.LEAKED.md`)
+            );
+          } catch {
+            // best-effort quarantine; the alarm + non-zero exit still fire
+          }
+          console.error(
+            c.red(
+              `  ✗ TIER LEAK in shipped ${s.audience} digest — quarantined to digest-${s.audience}.LEAKED.md ` +
+                `(unpromotable by writeback). This is a C5-sweep escape; investigate before shipping.`
+            )
+          );
+          process.exitCode = 2;
+        }
+      }
+    }
     return;
   }
 
@@ -3002,6 +3148,31 @@ async function cmdLoop(repo, cfg, args) {
         console.error(c.yellow("  nothing promotable for the approved target(s) — exit 1"));
       process.exitCode = 1;
     }
+
+    // ── C8 telemetry: a non-preview writeback is the approval event — it ends the wall-clock ritual
+    //    and, if it wrote task rows (only under --sync/--pm), records accepted next-week actions.
+    //    Preview (no target) already returned; --dry-run records nothing. ──
+    if (!dryRun && approved.size > 0 && loop.telemetryEnabled()) {
+      const taskRowsWritten =
+        plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t))
+          ? plan.taskWrite.rows.map((r) => r.row_key)
+          : [];
+      loop.recordEvent(repo, {
+        kind: "weekly.approve",
+        runId: stamp,
+        cadence: "weekly",
+        member,
+        project,
+        payload: {
+          targets: [...approved],
+          wroteCount,
+          taskRowsWritten,
+          tierSafetyWithheld: relevantTierSafety,
+          exitCode: process.exitCode ?? 0,
+          nextWeekActionsProposed: ownerNextWeekActions.length,
+        },
+      });
+    }
     return;
   }
 
@@ -3035,12 +3206,33 @@ async function cmdLoop(repo, cfg, args) {
       const prior = loop.readSnapshot(repo, loop.DAILY_SCOPE);
       orientation = loop.buildDailyOrientation({ manifest, prior, audience }).orientation;
     } else {
+      const dStart = Date.now();
       orientation = loop.runDaily({
         root: repo,
         member,
         audience,
         record: !flags.has("--no-record"),
       });
+      // C8 telemetry: the daily-run habit signal. Only a real recording OWNER run counts — an `--as`
+      // projection or `--no-record` run is side-effect-free by C4's contract, so it records nothing
+      // (and the `--manifest` inspection path never reaches this branch).
+      if (audience === "owner" && !flags.has("--no-record") && loop.telemetryEnabled()) {
+        loop.recordEvent(repo, {
+          kind: "daily.run",
+          runId: orientation.generatedAt.replace(/[:.]/g, "-"),
+          cadence: "daily",
+          member,
+          project,
+          at: orientation.generatedAt,
+          payload: {
+            durationMs: Date.now() - dStart,
+            signalCount:
+              orientation.counts.changed +
+              orientation.counts.blocked +
+              orientation.counts.owedToday,
+          },
+        });
+      }
     }
 
     if (asJson) {
@@ -3051,6 +3243,31 @@ async function cmdLoop(repo, cfg, args) {
     return;
   }
 
+  if (sub === "telemetry") {
+    // Local dogfood dashboard for the six V1 exit criteria. Owner-only: reads admin-tier
+    // operational data from .aios/loop/telemetry/ and has NO audience-safe projection.
+    const asJson = flags.has("--json");
+    const all = flags.has("--all");
+    const winIdx = args.indexOf("--window");
+    let windowDays = 14;
+    if (winIdx >= 0) {
+      if (all) die("choose one of --window / --all, not both");
+      const raw = args[winIdx + 1];
+      const n = Number(raw);
+      if (!raw || !Number.isInteger(n) || n < 1) die("--window must be a positive integer (days)");
+      windowDays = n;
+    }
+    const metrics = loop.computeMetrics(loop.readEvents(repo), {
+      windowDays: all ? null : windowDays,
+      dailySourceWired: true, // this CLI wires `aios loop daily` → daily.run
+    });
+    if (asJson) console.log(JSON.stringify(metrics, null, 2));
+    else renderTelemetry(metrics);
+    // A real shipped tier-leak on record is a CI-catchable alarm.
+    if ((metrics.tierLeakCount.value ?? 0) > 0) process.exitCode = 2;
+    return;
+  }
+
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
       "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]\n" +
@@ -3058,7 +3275,8 @@ async function cmdLoop(repo, cfg, args) {
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
       "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]\n" +
-      "       aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]"
+      "       aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]\n" +
+      "       aios loop telemetry [--window <days>] [--all] [--json]"
   );
 }
 
@@ -3103,6 +3321,12 @@ usage:
   aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),
     [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;
     [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)
+  aios loop daily [--as team|external]  fast daily orientation: changed / blocked / owed today
+    [--no-record] [--json]              (read-only; owner run records a local change-snapshot)
+  aios loop writeback <stamp>           approval-gated promotion of a saved closeout (default: preview)
+    [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
+  aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
+    [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed

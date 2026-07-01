@@ -120,3 +120,25 @@ export {
   type BuildDailyOptions,
   type RunDailyOptions,
 } from "./daily.js";
+
+// C8 — loop telemetry + dogfood instrumentation (local-only, admin-tier)
+export {
+  TELEMETRY_EVENTS_REL,
+  TELEMETRY_ENV,
+  TELEMETRY_VERSION,
+  THRESHOLDS,
+  telemetryEnabled,
+  recordEvent,
+  readEvents,
+  computeMetrics,
+  type TelemetryKind,
+  type TelemetryEvent,
+  type TelemetryEventInput,
+  type ParseReason,
+  type ParseWarning,
+  type ReadResult,
+  type Warning,
+  type MetricResult,
+  type LoopMetrics,
+  type ComputeOptions,
+} from "./telemetry.js";
