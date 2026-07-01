@@ -42,6 +42,10 @@ jobs:
 
           const ev = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
           const pr = ev.pull_request || {};
+          if (pr.draft) {
+            console.log("::notice title=Draft PR skipped::Draft PRs are not moved to In Review until ready_for_review fires.");
+            process.exit(0);
+          }
           // Strip HTML comments so PR-template placeholders (`<!-- e.g. AIO-72 -->`) don't count.
           const text = [
             pr.title || "",
@@ -85,10 +89,10 @@ jobs:
             );
             const nodes = d.workflowStates.nodes;
             const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
+            const started = nodes.filter((s) => s.type === "started");
             const st =
-              nodes.find((s) => norm(s.name) === "in review") ||
-              nodes.find((s) => s.type === "started" && norm(s.name).includes("review")) ||
-              nodes.find((s) => norm(s.name).includes("review"));
+              started.find((s) => norm(s.name) === "in review") ||
+              started.find((s) => norm(s.name).includes("review"));
             stateCache.set(teamKey, st || null);
             return st || null;
           }
