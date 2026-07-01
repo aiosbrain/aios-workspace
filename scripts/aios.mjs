@@ -2869,8 +2869,11 @@ async function cmdLoop(repo, cfg, args) {
       // C6 can never promote), alarm, and fail. The one case C8 mutates a pipeline artifact.
       for (const s of closeout.shareables) {
         if (!s.shippable) continue;
+        // Re-scan the bytes ACTUALLY WRITTEN to disk (not the in-memory string) — that is the
+        // artifact C6 would promote/quarantine, so the defense-in-depth check must verify it.
+        const shippedDigestPath = path.join(outDir, `digest-${s.audience}.md`);
         const tierLeak = loop.hasLeak(
-          s.digestMarkdown,
+          readFileSync(shippedDigestPath, "utf8"),
           loop.aboveAudienceStrings(manifest, s.audience)
         );
         if (telem)
@@ -2885,10 +2888,7 @@ async function cmdLoop(repo, cfg, args) {
           });
         if (tierLeak) {
           try {
-            renameSync(
-              path.join(outDir, `digest-${s.audience}.md`),
-              path.join(outDir, `digest-${s.audience}.LEAKED.md`)
-            );
+            renameSync(shippedDigestPath, path.join(outDir, `digest-${s.audience}.LEAKED.md`));
           } catch {
             // best-effort quarantine; the alarm + non-zero exit still fire
           }

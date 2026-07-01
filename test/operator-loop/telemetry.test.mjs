@@ -477,3 +477,74 @@ test("hasLeak + aboveAudienceStrings detect an admin phrase leaking into a team 
     "an admin phrase in the shipped bytes is caught"
   );
 });
+
+// ── review fixes: fail-closed reads + tail streak ────────────────────────────────────────────────
+
+test("an unreadable ledger (exists but can't be read) → warning, nulls tier-leak + streak", () => {
+  const dir = ws();
+  try {
+    // events.jsonl as a DIRECTORY: existsSync is true, readFileSync throws EISDIR → "unreadable".
+    mkdirSync(eventsPath(dir), { recursive: true });
+    const read = readEvents(dir);
+    assert.equal(read.events.length, 0);
+    assert.equal(read.warnings.length, 1);
+    assert.equal(read.warnings[0].reason, "unreadable");
+    assert.equal(read.warnings[0].runId, undefined, "unattributable");
+    const m = computeMetrics(read, { now: NOW, windowDays: 14, dailySourceWired: true });
+    assert.equal(m.tierLeakCount.met, null, "cannot certify zero leaks from an unreadable ledger");
+    assert.equal(m.consecutiveCleanWeeklies.met, null);
+    assert.equal(m.breakdown.dataQuality.unattributableGaps, 1);
+    assert.equal(m.breakdown.dataQuality.corruptLines, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an event with a non-parseable `at` is rejected with a warning (not silently dropped)", () => {
+  const dir = ws();
+  try {
+    mkdirSync(path.dirname(eventsPath(dir)), { recursive: true });
+    const bad = JSON.stringify({
+      ...ev("weekly.run", "bad", "not-a-date", { audiences: ["team"] }),
+    });
+    const good = JSON.stringify(ev("weekly.run", "good", iso(NOW), { audiences: ["team"] }));
+    writeFileSync(eventsPath(dir), bad + "\n" + good + "\n");
+    const { events, warnings } = readEvents(dir);
+    assert.equal(events.length, 1, "only the good event is accepted");
+    assert.equal(events[0].runId, "good");
+    const w = warnings.find((x) => x.reason === "missing-fields" && x.runId === "bad");
+    assert.ok(w, "the bad-timestamp line warns (attributable), never silently vanishes");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("consecutiveCleanWeeklies is the TAIL streak: 3 clean then a leaked most-recent → 0", () => {
+  const events = [
+    ...cleanWeekly("w1", iso("2026-06-20T00:00:00Z")),
+    ...cleanWeekly("w2", iso("2026-06-24T00:00:00Z")),
+    ...cleanWeekly("w3", iso("2026-06-27T00:00:00Z")),
+    // most recent run ships a leak → tail streak resets to 0 even though 3 earlier runs were clean
+    ev("weekly.run", "w4", iso("2026-06-29T00:00:00Z"), {
+      startedAt: iso("2026-06-29T00:00:00Z"),
+      endedAt: iso("2026-06-29T00:00:00Z"),
+      durationMs: 1000,
+      audiences: ["team"],
+      anyFailed: false,
+    }),
+    ev("weekly.verify", "w4", iso("2026-06-29T00:00:00Z"), {
+      audience: "team",
+      status: "pass",
+      shippable: true,
+      leakWithheld: 0,
+    }),
+    ev("weekly.shipped", "w4", iso("2026-06-29T00:00:00Z"), { audience: "team", tierLeak: true }),
+  ];
+  const m = computeMetrics(
+    { events, warnings: [] },
+    { now: NOW, windowDays: 30, dailySourceWired: true }
+  );
+  assert.equal(m.consecutiveCleanWeeklies.value, 0, "trailing streak is 0, not the best-of-3");
+  assert.equal(m.consecutiveCleanWeeklies.met, false);
+  assert.equal(m.tierLeakCount.value, 1);
+});

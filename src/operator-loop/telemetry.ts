@@ -111,7 +111,7 @@ export function recordEvent(
 
 // ── read side (fails closed) ─────────────────────────────────────────────────────────────────────
 
-export type ParseReason = "malformed-json" | "unknown-version" | "missing-fields";
+export type ParseReason = "malformed-json" | "unknown-version" | "missing-fields" | "unreadable";
 export interface ParseWarning {
   phase: "parse";
   line: number;
@@ -153,7 +153,11 @@ export function readEvents(root: string): ReadResult {
   try {
     raw = readFileSync(abs, "utf8");
   } catch {
-    return out; // unreadable file → empty (the dashboard will simply show no samples)
+    // The ledger EXISTS but can't be read — that is NOT "no data". Emit an unattributable
+    // data-quality warning (no runId) so computeMetrics degrades the product-ending metrics to
+    // met:null instead of falsely reporting zero leaks / a passing streak (fail closed).
+    out.warnings.push({ phase: "parse", line: 0, reason: "unreadable" });
+    return out;
   }
 
   const lines = raw.split(/\r?\n/);
@@ -189,7 +193,11 @@ export function readEvents(root: string): ReadResult {
     const member = asStr(parsed.member);
     const project = asStr(parsed.project);
     const okCadence = cadence === "daily" || cadence === "weekly";
-    if (!kind || !rid || !okCadence || !at || !member || !project || !isRecord(parsed.payload)) {
+    // `at` must be a PARSEABLE timestamp — a non-parseable one would otherwise pass here and then
+    // silently drop out of the window filter in computeMetrics with no warning, falsely improving
+    // the metrics. Reject it as a (attributable) missing-fields warning instead.
+    const okAt = !!at && Number.isFinite(Date.parse(at));
+    if (!kind || !rid || !okCadence || !okAt || !member || !project || !isRecord(parsed.payload)) {
       out.warnings.push({ phase: "parse", line, reason: "missing-fields", runId });
       return;
     }
@@ -375,9 +383,9 @@ export function computeMetrics(read: ReadResult, opts: ComputeOptions = {}): Loo
   let unknownVersionLines = 0;
   let missingFieldLines = 0;
   for (const w of read.warnings) {
-    if (w.reason === "malformed-json") corruptLines++;
-    else if (w.reason === "unknown-version") unknownVersionLines++;
-    else missingFieldLines++;
+    if (w.reason === "unknown-version") unknownVersionLines++;
+    else if (w.reason === "missing-fields") missingFieldLines++;
+    else corruptLines++; // malformed-json OR an unreadable ledger
     if (w.runId && groups.has(w.runId)) degradedRunIds.add(w.runId);
     else unattributableGaps++;
   }
@@ -461,20 +469,22 @@ export function computeMetrics(read: ReadResult, opts: ComputeOptions = {}): Loo
     if (g.shippeds.some((s) => asBool(s.payload.tierLeak) === true)) return false;
     return true;
   };
-  let maxStreak = 0;
-  let cur = 0;
-  for (const g of completed) {
-    if (isClean(g)) {
-      cur++;
-      if (cur > maxStreak) maxStreak = cur;
-    } else cur = 0;
+  // The TAIL streak — consecutive clean runs ending at the MOST RECENT completed run — not the
+  // best streak anywhere. `clean, clean, clean, leaked` must report 0, not 3: the exit criterion
+  // is "are we currently on a clean run", so a later non-clean weekly resets it. (`completed` is
+  // sorted ascending by endedAt, so we walk backward from the end.)
+  let tailStreak = 0;
+  for (let i = completed.length - 1; i >= 0; i--) {
+    const g = completed[i];
+    if (g && isClean(g)) tailStreak++;
+    else break;
   }
   const consecutiveCleanWeeklies: MetricResult = {
     label: "Consecutive clean weeklies",
-    value: maxStreak,
+    value: tailStreak,
     unit: "runs",
     threshold: ">= 3",
-    met: leakGlobalBlind ? null : maxStreak >= THRESHOLDS.consecutiveCleanWeeklies,
+    met: leakGlobalBlind ? null : tailStreak >= THRESHOLDS.consecutiveCleanWeeklies,
     sampleSize: completed.length,
     note: leakGlobalBlind ? "data quality: unreadable line(s) — streak unverifiable" : undefined,
   };

@@ -56,7 +56,7 @@ natural points (all skipped under `--dry-run`, gated by the opt-out):
 | `weekly.run` | `aios loop weekly` (CLI span + requested audiences) | wall-clock (CLI fallback) |
 | `weekly.verify` | `aios loop weekly`, per shareable | verifier pass/corrected/fail rate |
 | `weekly.shipped` | `aios loop weekly`, per shippable digest (independent post-ship leak re-check) | tier-leak count |
-| `weekly.approve` | `aios loop writeback` (successful, ≥1 target; carries `taskRowsWritten` row-keys, `wroteCount`, `tierSafetyWithheld`, `exitCode`) | wall-clock (ritual span), next-week-action acceptance |
+| `weekly.approve` | `aios loop writeback` (non-preview, non-`--dry-run`, ≥1 target — incl. exit-1/2 outcomes, which stay in the acceptance denominator; carries `taskRowsWritten` row-keys, `wroteCount`, `tierSafetyWithheld`, `exitCode`) | wall-clock (ritual span), next-week-action acceptance |
 
 ### Measurement definitions (how each exit criterion is computed)
 
