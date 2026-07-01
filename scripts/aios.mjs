@@ -2406,6 +2406,17 @@ function renderDaily(o) {
       )
     );
   };
+  // "Ran (agent runtime)" — aggregate { tag, durationMin } only; safe at any audience (AIO-139).
+  const renderRan = () => {
+    if (!o.ranByTag?.length) return;
+    const h = (m) => `${(m / 60).toFixed(1)}h`;
+    const total = o.ranByTag.reduce((a, t) => a + t.durationMin, 0);
+    console.log("");
+    console.log(c.bold(`Ran (agent runtime · ${h(total)})`));
+    for (const t of o.ranByTag)
+      console.log(`  • ${c.dim(String(t.tag).padEnd(14))} ${h(t.durationMin)}`);
+  };
+
   console.log(
     c.blue("aios loop daily") +
       c.dim(`  window ${o.window.from.slice(0, 10)} → ${o.window.to.slice(0, 10)}`) +
@@ -2424,6 +2435,7 @@ function renderDaily(o) {
           : "Nothing carried over. You're clear. ✓"
       )
     );
+    renderRan();
     printExcludedHint();
     return;
   }
@@ -2454,6 +2466,7 @@ function renderDaily(o) {
   section("Changed", o.changed, o.counts.changed);
   section("Blocked", o.blocked, o.counts.blocked);
   section("Owed today", o.owedToday, o.counts.owedToday);
+  renderRan();
   printExcludedHint();
 }
 
@@ -3280,6 +3293,117 @@ async function cmdLoop(repo, cfg, args) {
   );
 }
 
+// ── aios time (AIO-139): native agent-session runtime capture ────────────────
+// Offline + local-first. Reads ~/.claude session logs, scopes strictly by realpath allowlist
+// (unknown repos never up-scoped), and writes an admin-tier `<spine.log>/time-log.md` that never
+// syncs. `report` is read-only; `reconcile` targets rows by opaque id.
+async function cmdTime(repo, cfg, args) {
+  const sub = args[0];
+  const flags = new Set(args.slice(1));
+  const loop = await loadOperatorLoop();
+  const argVal = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+
+  if (sub === "capture") {
+    const configPath = argVal("--config");
+    const reposArg = argVal("--repos");
+    const extraTeamRepos = reposArg
+      ? reposArg
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    const dryRun = flags.has("--dry-run");
+    const projectsDir = argVal("--projects-dir"); // testing/override hook for ~/.claude/projects
+    const nowArg = argVal("--now"); // testing/override hook for "now"
+    const summary = loop.capture({
+      root: repo,
+      configPath,
+      extraTeamRepos,
+      dryRun,
+      ...(projectsDir ? { projectsDir } : {}),
+      ...(nowArg ? { now: new Date(nowArg) } : {}),
+    });
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(summary, null, 2));
+      return;
+    }
+    console.log(c.blue("aios time capture") + c.dim(dryRun ? "  (dry-run — no write)" : ""));
+    console.log(
+      `  blocks: ${summary.totalBlocks}   captured: ${summary.captured}   excluded (unlisted): ${summary.excludedUnlisted}`
+    );
+    console.log(
+      `  rows ${dryRun ? "would change" : "changed"}: ${summary.written}   store → ${summary.rel}`
+    );
+    if (summary.excludedUnlisted > 0)
+      console.log(c.dim("  tip: allowlist repos in .aios/time-config.json to capture them"));
+    return;
+  }
+
+  if (sub === "report") {
+    const window = argVal("--window") === "daily" ? "daily" : "weekly";
+    const days = window === "daily" ? 1 : 7;
+    const asJson = flags.has("--json");
+    const read = loop.readStore(repo);
+    const nowArg = argVal("--now"); // testing/override hook
+    const now = nowArg ? new Date(nowArg).getTime() : Date.now();
+    const fromMs = now - days * 86_400_000;
+    const inWin = read.rows.filter((r) => {
+      const t = Date.parse(r.startIso);
+      return Number.isFinite(t) && t >= fromMs && t <= now;
+    });
+    const totals = loop.runtimeByTag(inWin.map((r) => ({ tag: r.tag, durationMin: r.runtimeMin })));
+    const totalMin = totals.reduce((a, t) => a + t.durationMin, 0);
+    if (asJson) {
+      console.log(JSON.stringify({ window, byTag: totals, totalMin, rows: inWin }, null, 2));
+      return;
+    }
+    console.log(
+      c.blue("aios time report") + c.dim(`  ${window} · ${loop.formatHours(totalMin)} total`)
+    );
+    for (const t of totals) console.log(`  ${t.tag.padEnd(14)} ${loop.formatHours(t.durationMin)}`);
+    if (!totals.length)
+      console.log(c.dim("  no runtime in window — run `aios time capture` first"));
+    return;
+  }
+
+  if (sub === "reconcile") {
+    const idArg = argVal("--id");
+    const ids = idArg
+      ? idArg
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    if (!ids.length) die("aios time reconcile requires --id <id,...>");
+    const result = loop.reconcile({
+      root: repo,
+      ids,
+      setTag: argVal("--set-tag") ?? undefined,
+      setTier: argVal("--set-tier") ?? undefined,
+      confirm: flags.has("--confirm"),
+      dryRun: flags.has("--dry-run"),
+    });
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      c.blue("aios time reconcile") + c.dim(flags.has("--dry-run") ? "  (dry-run — no write)" : "")
+    );
+    console.log(`  updated: ${result.updated.join(", ") || "(none)"}`);
+    return;
+  }
+
+  die(
+    "usage: aios time capture [--config <path>] [--repos <realpath,...>] [--dry-run] [--json]\n" +
+      "       aios time report [--window daily|weekly] [--json]\n" +
+      "       aios time reconcile --id <id,...> [--set-tag <tag>] [--set-tier <tier>] [--confirm] [--dry-run] [--json]"
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -3333,6 +3457,11 @@ usage:
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+  aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
+    [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
+  aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
+  aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
+    [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -3394,8 +3523,8 @@ if (cmd === "mcp") {
 }
 
 // export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
-// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs;
-// --push uses env/.env or aios.yaml brain config).
+// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs; time reads
+// ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
 const OFFLINE_CMDS = new Set([
   "export-okf",
   "graph",
@@ -3410,6 +3539,7 @@ const OFFLINE_CMDS = new Set([
   "build",
   "review-bugbot",
   "loop",
+  "time",
 ]);
 
 let repo, cfg;
@@ -3446,6 +3576,7 @@ try {
   else if (cmd === "build") await cmdBuild(repo, rest);
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
+  else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

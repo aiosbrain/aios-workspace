@@ -29,6 +29,8 @@ import {
 } from "./drafter.js";
 import { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
 import { sweepForLeaks } from "./leak-sweep.js";
+import { runtimeByTag, formatHours, type TagTotal } from "./time/runtime.js";
+import type { Signal } from "./signal.js";
 
 export type ShareableAudience = "team" | "external";
 
@@ -96,6 +98,30 @@ function renderActions(actions: NextWeekAction[]): string {
   );
 }
 
+/** Extract { tag, durationMin } from time signals — the ONLY shape that reaches a shareable digest
+ *  (no repo/alias, id, path, or session). AIO-139. */
+function timeTotals(signals: Signal[]): TagTotal[] {
+  return runtimeByTag(
+    signals
+      .filter((s) => s.kind === "time")
+      .map((s) => ({
+        tag: typeof s.payload?.tag === "string" ? s.payload.tag : "engineering",
+        durationMin: typeof s.payload?.durationMin === "number" ? s.payload.durationMin : 0,
+      }))
+  );
+}
+
+/** Deterministic runtime-by-tag section (aggregate only). "" when there is no time to report. */
+function renderRuntimeByTag(ran: TagTotal[]): string {
+  if (!ran.length) return "";
+  const total = ran.reduce((a, t) => a + t.durationMin, 0);
+  return (
+    `## Agent runtime (by tag)\n_Total ${formatHours(total)} · native session capture_\n` +
+    ran.map((t) => `- ${t.tag}: ${formatHours(t.durationMin)}`).join("\n") +
+    "\n"
+  );
+}
+
 /**
  * Run one shareable-audience pipeline. `complete` undefined → deterministic offline stub drafter.
  */
@@ -105,7 +131,16 @@ export async function runShareable(opts: {
   complete?: CompletionFn;
 }): Promise<ShareableResult> {
   const { fullManifest, audience, complete } = opts;
-  const projection = projectManifest(fullManifest, audience);
+  const fullProjection = projectManifest(fullManifest, audience);
+  // Partition kind:"time" out of EVERY drafter / verifier / catalogue path (AIO-139): a time row's
+  // ref, id, alias, or payload must never become a claim or reach the LLM. It is rendered ONLY as a
+  // deterministic { tag, durationMin } aggregate below. projectManifest already stripped
+  // admin/above-audience rows, so this sums only ≤-audience blocks.
+  const ran = timeTotals(fullProjection.signals);
+  const projection: RunManifest = {
+    ...fullProjection,
+    signals: fullProjection.signals.filter((s) => s.kind !== "time"),
+  };
   const aboveStrings = aboveAudienceStrings(fullManifest, audience);
   const withheld = withheldByTier(fullManifest, audience);
 
@@ -162,6 +197,7 @@ export async function runShareable(opts: {
     "## What happened",
     claimLines.length ? claimLines.join("\n") : "_No shareable claims._",
     renderWithheld(withheld),
+    renderRuntimeByTag(ran),
     "## Next week",
     renderActions(safeActions),
   ].join("\n");
@@ -209,7 +245,13 @@ export async function runCloseout(opts: {
 
   // ── Owner brief: verify a full-manifest owner ledger (grounded by construction), then render
   //    the honest internal picture locally. No LLM on admin content; owner sees every tier. ──
-  const ownerProjection = projectManifest(fullManifest, "owner"); // owner = all signals, excluded stripped
+  const ownerProjectionFull = projectManifest(fullManifest, "owner"); // owner = all signals, excluded stripped
+  // Same partition as the shareables: time is rendered as an aggregate, never a claim (AIO-139).
+  const ownerRan = timeTotals(ownerProjectionFull.signals);
+  const ownerProjection: RunManifest = {
+    ...ownerProjectionFull,
+    signals: ownerProjectionFull.signals.filter((s) => s.kind !== "time"),
+  };
   const ownerDraft = stubDraftShareable(ownerProjection, "owner");
   const { result: ownerResult } = await runVerificationWithLedger({
     manifest: ownerProjection,
@@ -229,7 +271,8 @@ export async function runCloseout(opts: {
     fullManifest,
     ownerDraft.ledger,
     ownerNextWeekActions,
-    ownerResult.status
+    ownerResult.status,
+    ownerRan
   );
 
   return {
@@ -245,7 +288,8 @@ function renderBrief(
   fullManifest: RunManifest,
   ledger: EvidenceLedger,
   actions: NextWeekAction[],
-  status: VerifierStatus
+  status: VerifierStatus,
+  ran: TagTotal[]
 ): string {
   const byTier = new Map<Tier, number>();
   for (const s of fullManifest.signals ?? []) byTier.set(s.tier, (byTier.get(s.tier) ?? 0) + 1);
@@ -269,6 +313,7 @@ function renderBrief(
     "## The honest picture",
     claimLines.length ? claimLines.join("\n") : "_No signals this week._",
     "",
+    renderRuntimeByTag(ran),
     "## Next week",
     renderActions(actions),
   ].join("\n");

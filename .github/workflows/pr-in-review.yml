@@ -1,0 +1,150 @@
+name: PR → Linear In Review
+
+# Deterministic PM hygiene: when a PR opens (or is reopened / marked ready), move the Linear
+# issue(s) it references to "In Review" — so an agent or human never has to remember to do it by
+# hand, and the board reflects reality every single time.
+#
+# Why direct-to-Linear and not the brain rail: the brain's task-status model is
+# backlog|ready|in_progress|blocked|done — it does NOT model "in review", and the work-events
+# endpoint forces status=done. "In Review" is a transient PR-lifecycle state the brain doesn't own,
+# so projecting it straight to Linear doesn't fight the brain; the merge → work-event → done
+# projection (aios-work-sync.yml) cleanly supersedes it. If the brain later models an in-review
+# status, move this onto the work-events rail (see the follow-up note in the PR that added this).
+#
+# Advisory by construction: soft-skips when LINEAR_API_KEY is unset and never fails the PR on a
+# Linear hiccup — it must never block a merge.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  in-review:
+    name: Move referenced Linear issue(s) to In Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+    steps:
+      - name: Transition referenced issues
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const key = process.env.LINEAR_API_KEY;
+          if (!key) {
+            console.log("::notice title=Linear In Review skipped::LINEAR_API_KEY is not configured — set it (repo secret) to auto-move PR'd issues to In Review.");
+            process.exit(0);
+          }
+
+          const ev = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+          const pr = ev.pull_request || {};
+          if (pr.draft) {
+            console.log("::notice title=Draft PR skipped::Draft PRs are not moved to In Review until ready_for_review fires.");
+            process.exit(0);
+          }
+          // Strip HTML comments so PR-template placeholders (`<!-- e.g. AIO-72 -->`) don't count.
+          const text = [
+            pr.title || "",
+            (pr.body || "").replace(/<!--[\s\S]*?-->/g, " "),
+            pr.head?.ref || "",
+          ].join("\n");
+
+          // Same matcher the other workflows use, then keep only this repo's Linear identifiers
+          // (AIO-130). Bare brain row_keys (W2.5.8) and other Linear teams aren't owned by this
+          // workflow; log and skip here.
+          const re = /\b(?:AIOS-Work:\s*)?([A-Z][A-Z0-9]+-\d+|[A-Z]\d+(?:\.\d+)*)\b/g;
+          const all = [...new Set([...text.matchAll(re)].map((m) => m[1]))];
+          const idents = all.filter((k) => /^AIO-\d+$/.test(k));
+          const skipped = all.filter((k) => !idents.includes(k));
+          if (skipped.length) console.log(`Not Linear identifiers (skipped here; merge-sync handles them): ${skipped.join(", ")}`);
+          if (!idents.length) {
+            console.log("::notice title=No Linear issue referenced::PR references no AIO-<n> identifier in its title/body/branch — nothing to move. Add e.g. `(AIO-130)` to the title.");
+            process.exit(0);
+          }
+
+          // `node <<NODE` runs as CommonJS — no top-level await — so the awaited work lives in an
+          // async IIFE (matching the .then()-style the other inline workflow scripts use).
+          const API = "https://api.linear.app/graphql";
+          const gql = async (query, variables) => {
+            const r = await fetch(API, {
+              method: "POST",
+              headers: { Authorization: key, "Content-Type": "application/json" },
+              body: JSON.stringify({ query, variables }),
+            });
+            const j = await r.json().catch(() => null);
+            if (!j || j.errors) throw new Error(j?.errors?.map((e) => e.message).join("; ") || `HTTP ${r.status}`);
+            return j.data;
+          };
+
+          const stateCache = new Map();
+          async function inReviewState(teamKey) {
+            if (stateCache.has(teamKey)) return stateCache.get(teamKey);
+            const d = await gql(
+              `query($k:String!){ workflowStates(filter:{ team:{ key:{ eq:$k } } }){ nodes{ id name type } } }`,
+              { k: teamKey }
+            );
+            const nodes = d.workflowStates.nodes;
+            const norm = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
+            const started = nodes.filter((s) => s.type === "started");
+            const st =
+              started.find((s) => norm(s.name) === "in review") ||
+              started.find((s) => norm(s.name).includes("review"));
+            stateCache.set(teamKey, st || null);
+            return st || null;
+          }
+
+          async function findIssue(ident) {
+            const d = await gql(
+              `query($ident:String!){ issues(first:1, filter:{ identifier:{ eq:$ident } }){ nodes{ id identifier state{ id name } } } }`,
+              { ident }
+            );
+            return d.issues.nodes[0] || null;
+          }
+
+          async function ensurePrComment(issueId, targetName) {
+            const body = `PR opened → tracking in **${targetName}**: ${pr.html_url}`;
+            const d = await gql(
+              `query($id:String!){ issue(id:$id){ comments(first:50){ nodes{ body } } } }`,
+              { id: issueId }
+            );
+            const comments = d.issue?.comments?.nodes || [];
+            if (comments.some((comment) => comment.body?.includes(pr.html_url))) return false;
+            await gql(
+              `mutation($id:String!,$b:String!){ commentCreate(input:{ issueId:$id, body:$b }){ success } }`,
+              { id: issueId, b: body }
+            );
+            return true;
+          }
+
+          (async () => {
+            let failures = 0;
+            for (const ident of idents) {
+              try {
+                const teamKey = ident.split("-")[0];
+                const issue = await findIssue(ident);
+                if (!issue) { console.log(`${ident}: not found in team ${teamKey} — skipping`); continue; }
+                const target = await inReviewState(teamKey);
+                if (!target) { console.log(`${ident}: no "In Review" state on the team — skipping`); continue; }
+                const alreadyInReview = issue.state?.id === target.id;
+                if (!alreadyInReview) {
+                  await gql(
+                    `mutation($id:String!,$s:String!){ issueUpdate(id:$id, input:{ stateId:$s }){ success } }`,
+                    { id: issue.id, s: target.id }
+                  );
+                }
+                const commented = await ensurePrComment(issue.id, target.name);
+                const transition = alreadyInReview ? `already ${target.name}` : `${issue.state?.name ?? "?"} → ${target.name}`;
+                console.log(`${ident}: ${transition}${commented ? "; PR backlink added" : "; PR backlink already present"}`);
+              } catch (e) {
+                failures++;
+                console.log(`::warning title=${ident} not moved::${e.message}`);
+              }
+            }
+            // Advisory: log failures but never fail the PR check.
+            if (failures) console.log(`${failures} issue(s) could not be moved (see warnings) — not blocking.`);
+          })().catch((e) => console.log(`::warning title=Linear In Review error::${e.message}`));
+          NODE

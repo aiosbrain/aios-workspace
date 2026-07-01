@@ -90,6 +90,7 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 - `inbox`
 - `carryover`
 - `github`
+- `time`
 <!-- /drift:loop-sources -->
 
 `github` is registered as a deferred local source and emits nothing until a local GitHub
