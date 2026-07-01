@@ -74,7 +74,10 @@ function normalizeDocumentedComponents(tokens) {
 
 function deriveLoopCommands() {
   const src = read("scripts/aios.mjs");
-  const cmdLoop = src.match(/async function cmdLoop[\s\S]*?\n}\n\n\/\/ ── main/);
+  // Bound cmdLoop to its OWN body: stop at the first section comment after its closing brace,
+  // so an unrelated function inserted between cmdLoop and `// ── main` (e.g. cmdTime) is not
+  // swallowed into the match and mis-attributed as an `aios loop` subcommand.
+  const cmdLoop = src.match(/async function cmdLoop[\s\S]*?\n}\n\n\/\/ ──/);
   const items = new Set();
   if (!cmdLoop) return items;
   for (const match of cmdLoop[0].matchAll(/if\s*\(\s*sub\s*===\s*"([a-z]+)"\s*\)/g)) {

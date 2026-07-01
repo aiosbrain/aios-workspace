@@ -10,11 +10,12 @@ export interface WindowConfig {
   kinds: readonly string[]; // signal kinds collected for this cadence
 }
 
-/** Daily: 1-day window, minimal kind filter — fast, low-friction orientation. */
+/** Daily: 1-day window, minimal kind filter — fast, low-friction orientation.
+ *  `time` feeds C4's "what agents ran yesterday" section (daily.ts renders it explicitly). */
 export const DAILY: WindowConfig = {
   cadence: "daily",
   days: 1,
-  kinds: ["decision", "task", "deliverable", "carryover"],
+  kinds: ["decision", "task", "deliverable", "carryover", "time"],
 };
 
 /** Weekly: 7-day window, full source set — the heavy verified pull. */
@@ -23,7 +24,8 @@ export const WEEKLY: WindowConfig = {
   days: 7,
   // github is listed (full set) but its source is an inert deferred stub — it emits nothing
   // until a local GitHub-activity source exists (AIO-32 is brain-side). See sources/github.ts.
-  kinds: ["decision", "task", "hours", "deliverable", "inbox", "carryover", "github"],
+  // time (AIO-139) feeds the C5 runtime-by-tag roll-up; closeout partitions it out of claims.
+  kinds: ["decision", "task", "hours", "deliverable", "inbox", "carryover", "github", "time"],
 };
 
 export function windowFor(cadence: Cadence): WindowConfig {

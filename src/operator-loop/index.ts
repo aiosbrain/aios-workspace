@@ -142,3 +142,52 @@ export {
   type LoopMetrics,
   type ComputeOptions,
 } from "./telemetry.js";
+
+// Time tracking — native agent-session runtime (AIO-139)
+export {
+  TIME_CONFIG_REL,
+  DEFAULT_IDLE_GAP_MIN,
+  defaultTimeConfig,
+  loadTimeConfig,
+  parseTimeConfig,
+  scopeRepo,
+  type TimeConfig,
+  type RepoRule,
+  type RepoTier,
+  type UnknownRepoDefault,
+  type ScopeResult,
+} from "./time/config.js";
+export {
+  parseJsonl,
+  eventsFromRecords,
+  readSessionEvents,
+  defaultProjectsDir,
+  type SessionEvent,
+  type Actor,
+  type ReadOptions,
+} from "./time/session-log.js";
+export {
+  deriveBlocks,
+  tagBlock,
+  runtimeByTag,
+  formatHours,
+  TAGS,
+  type WorkBlock,
+  type Tag,
+  type DeriveOptions,
+  type TagTotal,
+} from "./time/runtime.js";
+export {
+  requireSpineLog,
+  storeRel,
+  readStore,
+  upsertRows,
+  writeStore,
+  renderStore,
+  rowsEqual,
+  TIME_LOG_BASENAME,
+  type StoreRow,
+  type StoreReadResult,
+} from "./time/store.js";
+export { capture, type CaptureOptions, type CaptureSummary } from "./time/capture.js";
+export { reconcile, type ReconcileOptions, type ReconcileResult } from "./time/reconcile.js";

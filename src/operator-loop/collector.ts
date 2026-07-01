@@ -18,6 +18,7 @@ import { deliverablesSource } from "./sources/deliverables.js";
 import { inboxSource } from "./sources/inbox.js";
 import { carryoverSource } from "./sources/carryover.js";
 import { githubSource } from "./sources/github.js";
+import { timeSource } from "./sources/time.js";
 
 // Source registry, keyed by signal kind. carryover (C7) and github (AIO-32, no local source
 // yet) are wired but inert stubs — they emit nothing until implemented, so registering them is
@@ -30,6 +31,7 @@ const SOURCES: Record<string, Source> = {
   inbox: inboxSource,
   carryover: carryoverSource,
   github: githubSource,
+  time: timeSource,
 };
 
 export interface CollectOptions {

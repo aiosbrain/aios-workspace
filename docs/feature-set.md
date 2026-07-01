@@ -231,6 +231,11 @@ clobbered, and nothing is committed to git.
 The clean core + catalogs + share/pull + review panel ship today. Deliberately
 deferred — and ideal contribution targets:
 
+- **Verified Operator Loop (V1, in progress)** — the daily/weekly loop over tier-tagged
+  local signals, incl. **native agent-session time tracking**: `aios time capture` derives
+  agent-runtime work blocks from `~/.claude` session logs into an admin-tier
+  `3-log/time-log.md` (realpath-scoped, never synced) and the closeout surfaces a
+  runtime-by-tag roll-up. See `docs/v1-operator-loop/domains/time-tracking.md`.
 - **Live integration wiring** — wire a starter set (Gmail via gog-cli + Granola + one
   MCP server) end-to-end, beyond the catalog + `.mcp.json` scaffold that ships now.
 - **Sync pipeline** — fetch → triage → promote across email/chat/time-tracking, as
