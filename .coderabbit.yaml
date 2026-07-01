@@ -46,7 +46,8 @@ reviews:
         Both --context consultant and --context employee must keep working after any change.
 
   finishing_touches:
-    docstrings: false
+    docstrings:
+      enabled: false
 
 chat:
   auto_reply: true
