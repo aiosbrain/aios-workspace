@@ -110,19 +110,30 @@ export function readContinuityActions(root: string): ContinuityReadResult {
   try {
     parsed = JSON.parse(readFileSync(abs, "utf8"));
   } catch (e) {
-    out.excluded.push({ ref: rel, reason: `continuity actions store is invalid JSON: ${(e as Error).message}` });
+    out.excluded.push({
+      ref: rel,
+      reason: `continuity actions store is invalid JSON: ${(e as Error).message}`,
+    });
     return out;
   }
 
-  if (!isRecord(parsed) || !Array.isArray(parsed.actions)) {
-    out.excluded.push({ ref: rel, reason: "continuity actions store must contain actions[]" });
+  // Fail closed on an unrecognized store version: this is a versioned local contract, so a
+  // future v2 with a different actions[] shape must NOT be silently reinterpreted as v1.
+  if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.actions)) {
+    out.excluded.push({
+      ref: rel,
+      reason: "continuity actions store must be version 1 and contain actions[]",
+    });
     return out;
   }
 
   parsed.actions.forEach((item, index) => {
     const action = normalizeAction(item);
     if (!action) {
-      out.excluded.push({ ref: `${rel}#actions[${index}]`, reason: "continuity action is missing id/title" });
+      out.excluded.push({
+        ref: `${rel}#actions[${index}]`,
+        reason: "continuity action is missing id/title",
+      });
       return;
     }
     if (isOpenContinuityAction(action)) out.actions.push(action);

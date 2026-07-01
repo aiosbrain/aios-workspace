@@ -65,7 +65,10 @@ test("unresolved continuity actions surface as carry-over signals in daily and w
     assert.equal(carry[0].ref.path, ".aios/loop/continuity/actions.json");
     assert.equal(carry[0].ref.row, "next-1");
     assert.equal(carry[0].payload.source.path, "3-log/decision-log.md");
-    assert.ok(!manifest.signals.some((s) => s.ref.row === "done-1"), "closed action is not carried");
+    assert.ok(
+      !manifest.signals.some((s) => s.ref.row === "done-1"),
+      "closed action is not carried"
+    );
     assert.ok(
       !manifest.signals.some((s) => s.ref.row === "completed-1"),
       "completed action is not carried"
@@ -75,10 +78,40 @@ test("unresolved continuity actions surface as carry-over signals in daily and w
       "complete action is not carried"
     );
     assert.ok(
-      manifest.excluded.some((e) => e.ref.endsWith("#missing-tier") && /default-deny/.test(e.reason)),
+      manifest.excluded.some(
+        (e) => e.ref.endsWith("#missing-tier") && /default-deny/.test(e.reason)
+      ),
       "missing-tier action is default-denied"
     );
   }
+});
+
+test("an unrecognized continuity-store version is rejected (fail closed, no carry-over)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-loop-carry-"));
+  mkdirSync(path.join(dir, ".aios", "loop", "continuity"), { recursive: true });
+  writeFileSync(
+    path.join(dir, ".aios", "loop", "continuity", "actions.json"),
+    JSON.stringify(
+      {
+        version: 2,
+        actions: [{ id: "next-1", title: "From a v2 store", status: "open", tier: "team" }],
+      },
+      null,
+      2
+    )
+  );
+
+  const manifest = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.ok(
+    !manifest.signals.some((s) => s.kind === "carryover"),
+    "no carry-over signals are emitted from an unsupported store version"
+  );
+  assert.ok(
+    manifest.excluded.some(
+      (e) => e.ref === ".aios/loop/continuity/actions.json" && /version 1/.test(e.reason)
+    ),
+    "the version mismatch is recorded in excluded[]"
+  );
 });
 
 test("malformed continuity action refs cannot collide with id-based carry-over refs", () => {
@@ -99,7 +132,10 @@ test("malformed continuity action refs cannot collide with id-based carry-over r
   const manifest = collect({ root: dir, cadence: "daily", now: NOW });
   assert.ok(
     manifest.signals.some(
-      (s) => s.kind === "carryover" && s.ref.path === ".aios/loop/continuity/actions.json" && s.ref.row === "1"
+      (s) =>
+        s.kind === "carryover" &&
+        s.ref.path === ".aios/loop/continuity/actions.json" &&
+        s.ref.row === "1"
     ),
     "valid numeric id keeps the carry-over signal ref"
   );
