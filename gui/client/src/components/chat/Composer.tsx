@@ -36,7 +36,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           }}
         />
         <button
-          className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-[background,opacity] hover:bg-[var(--accent-hover)] disabled:cursor-default disabled:opacity-40"
+          className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-[background,opacity] enabled:hover:bg-[var(--accent-hover)] disabled:cursor-default disabled:opacity-40"
           onClick={onSend}
           disabled={disabled || !value.trim()}
           aria-label="Send message"

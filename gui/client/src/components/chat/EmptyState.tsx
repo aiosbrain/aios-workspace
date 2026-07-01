@@ -1,7 +1,7 @@
 import { Button } from "@aios-alpha/ui";
 
 const CHIP =
-  "rounded-full border border-border-visible bg-transparent px-3.5 py-[7px] text-[13px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-40";
+  "rounded-full border border-border-visible bg-transparent px-3.5 py-[7px] text-[13px] text-muted-foreground transition-colors enabled:hover:border-primary enabled:hover:text-foreground disabled:cursor-default disabled:opacity-40";
 
 /** First-run prompt suggestions, shown beneath the centered composer hero. */
 export function EmptyState({
