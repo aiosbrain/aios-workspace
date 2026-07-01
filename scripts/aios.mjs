@@ -3029,6 +3029,9 @@ async function cmdLoop(repo, cfg, args) {
       // the current state; the prior baseline is read from the workspace (absent in a temp fixture
       // → first-run bootstrap). This path never records a snapshot.
       const manifest = validateManifestShape(parseJsonFile(manifestPath));
+      if (manifest.window?.cadence !== "daily") die("daily --manifest requires a daily manifest");
+      if (manifest.windowed !== false)
+        die("daily --manifest requires an unwindowed full-state manifest (windowed:false)");
       const prior = loop.readSnapshot(repo, loop.DAILY_SCOPE);
       orientation = loop.buildDailyOrientation({ manifest, prior, audience }).orientation;
     } else {

@@ -25,7 +25,7 @@ Ships first of the two cadences: cheapest, exercises C1, and builds the ritual b
 - `buildDailyOrientation({ manifest, prior, audience?, staleDays? }) → { orientation, nextSnapshot }` — a **pure** classifier over a manifest + the prior change-snapshot. "Today" is derived from `manifest.generatedAt` (the manifest is the contract), so a saved manifest is fully deterministic.
 - `runDaily({ root, now?, member?, audience?, record? }) → DailyOrientation` — the thin filesystem wrapper the CLI **and** the cockpit both call: read prior snapshot → `collect({ cadence:"daily", window:false })` → classify → (owner only) persist the advanced baseline.
 
-**CLI** — `aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]`. Default is the owner-private local view; `--as team|external` is a tier-filtered shareable-safe view (implies `--no-record`); `--manifest` drives a deterministic saved-manifest run (implies `--no-record`); `--json` prints the full `DailyOrientation`.
+**CLI** — `aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]`. Default is the owner-private local view; `--as team|external` is a tier-filtered shareable-safe view (implies `--no-record`); `--manifest` drives a deterministic saved-manifest run from an unwindowed full-state daily manifest (`windowed:false`, implies `--no-record`); `--json` prints the full `DailyOrientation`.
 
 ### Classification (each signal → at most one section; precedence **Blocked > Owed > Changed**)
 - **carryover**: stale (`createdAt` older than `staleDays`, default 7) **or** blocked/waiting keyword → **Blocked**; else → **Owed today**.

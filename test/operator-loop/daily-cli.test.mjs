@@ -39,6 +39,7 @@ const MANIFEST = {
   project: "acme",
   generatedAt: GEN,
   window: { cadence: "daily", from: "2026-06-29T12:00:00.000Z", to: GEN },
+  windowed: false,
   signals: [
     sig(
       "decision",
@@ -100,9 +101,17 @@ test("daily --manifest --json emits a parseable, deterministic DailyOrientation"
 test("daily --manifest writes nothing — no snapshot, no artifacts (read-only)", () => {
   const { dir, m } = workspace();
   const before = readdirSync(dir).sort();
-  run(dir, ["--manifest", m, "--json"]);
+  const r = run(dir, ["--manifest", m, "--json"]);
+  assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(readdirSync(dir).sort(), before);
   assert.ok(!existsSync(path.join(dir, ".aios")));
+});
+
+test("daily --manifest rejects windowed daily collect manifests", () => {
+  const { dir, m } = workspace({ ...MANIFEST, windowed: true });
+  const r = run(dir, ["--manifest", m, "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /requires an unwindowed full-state manifest/);
 });
 
 test("daily --manifest without a path fails before any live collect or snapshot write", () => {
@@ -138,6 +147,7 @@ test("daily human view: owner marker + three sections; empty manifest → friend
 
   const { dir: d2, m: em } = workspace({ ...MANIFEST, signals: [], excluded: [] });
   const r2 = run(d2, ["--manifest", em]);
+  assert.equal(r2.code, 0, r2.stderr);
   assert.match(r2.stdout, /You're clear/);
 
   const { dir: d3, m: excludedOnly } = workspace({
@@ -146,6 +156,7 @@ test("daily human view: owner marker + three sections; empty manifest → friend
     excluded: [{ ref: "3-log/tasks.md#x", reason: "no tier" }],
   });
   const r3 = run(d3, ["--manifest", excludedOnly]);
+  assert.equal(r3.code, 0, r3.stderr);
   assert.match(r3.stdout, /No classifiable daily items/);
   assert.match(r3.stdout, /excluded \(default-deny\)/);
   assert.doesNotMatch(r3.stdout, /You're clear/);

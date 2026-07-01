@@ -84,6 +84,7 @@ export function collect(opts: CollectOptions): RunManifest {
     cadence: opts.cadence,
     from: from.toISOString(),
     to: now.toISOString(),
+    windowed: applyWindow,
     generatedAt: now.toISOString(),
     signals,
     excluded,
