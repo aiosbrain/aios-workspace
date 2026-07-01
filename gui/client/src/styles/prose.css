@@ -74,6 +74,9 @@
   color: var(--text-dim);
 }
 .assistant-prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 0 0 8px;
   font-size: 13px;

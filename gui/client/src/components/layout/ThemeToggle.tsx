@@ -17,6 +17,7 @@ export function ThemeToggle() {
       className="flex cursor-pointer items-center gap-2 self-start rounded-md border border-border-visible bg-secondary px-2.5 py-[5px] text-xs font-medium text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
       onClick={toggle}
       title={dark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-pressed={dark}
       aria-label="Toggle color theme"
     >
       <span className="text-[13px] leading-none" aria-hidden>

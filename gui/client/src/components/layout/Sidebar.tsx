@@ -8,6 +8,8 @@ import type { SessionSummary } from "../../types/protocol";
 
 const SIDE_KBD =
   "ml-auto font-mono text-[10px] text-muted-foreground bg-muted border border-border-visible rounded-sm px-[5px] py-px";
+const FOCUS_RING =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card";
 
 export function Sidebar() {
   const { repo } = useConnection();
@@ -54,12 +56,14 @@ export function Sidebar() {
           ? "bg-lime shadow-[0_0_8px_color-mix(in_srgb,var(--aios-accent)_60%,transparent)]"
           : "bg-muted-foreground"
   );
+  const connectionLabel = statusTitle[connectionStatus] ?? (isDraft ? "Draft" : "Connecting...");
 
   const ChatItem = (c: SessionSummary) => (
     <button
       key={c.id}
       className={cn(
         "block w-full truncate rounded-[8px] border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
+        FOCUS_RING,
         c.id === currentSession &&
           view === "chat" &&
           "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
@@ -78,7 +82,9 @@ export function Sidebar() {
         AIOS Workspace
         <span
           className={dotClass}
-          title={statusTitle[connectionStatus] ?? (isDraft ? "Draft" : "Connecting…")}
+          title={connectionLabel}
+          aria-label={`Connection status: ${connectionLabel}`}
+          role="status"
         />
       </div>
 
@@ -94,7 +100,10 @@ export function Sidebar() {
           <span>{connectionStatus === "offline" ? "Connection lost" : "Reconnecting…"}</span>
           {connectionStatus === "offline" && (
             <button
-              className="ml-auto cursor-pointer rounded-sm border border-border-visible bg-muted px-2.5 py-0.5 font-mono text-xs text-foreground transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
+              className={cn(
+                "ml-auto cursor-pointer rounded-sm border border-border-visible bg-muted px-2.5 py-0.5 font-mono text-xs text-foreground transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]",
+                FOCUS_RING
+              )}
               onClick={retryConnection}
             >
               Retry
@@ -105,14 +114,22 @@ export function Sidebar() {
 
       <div className="mb-2 flex flex-col gap-1.5">
         <button
-          className="flex w-full cursor-pointer items-center gap-2.5 rounded-md bg-transparent px-2.5 py-2 text-left text-sm font-medium text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50"
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md bg-transparent px-2.5 py-2 text-left text-sm font-medium text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50",
+            FOCUS_RING
+          )}
           onClick={newChat}
           disabled={isEmptyDraft}
         >
           <Plus size={16} /> New chat
           <span className={SIDE_KBD}>{shortcutLabel("newChat")}</span>
         </button>
-        <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-muted-foreground hover:bg-muted focus-within:bg-muted">
+        <div
+          className={cn(
+            "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-muted-foreground hover:bg-muted focus-within:bg-muted",
+            "focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-card"
+          )}
+        >
           <Search size={15} className="shrink-0" />
           <input
             className="min-w-0 flex-1 border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
@@ -164,6 +181,7 @@ export function Sidebar() {
         <button
           className={cn(
             "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
             view === "review" &&
               "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
           )}
@@ -176,6 +194,7 @@ export function Sidebar() {
       <button
         className={cn(
           "mt-2 flex w-full cursor-pointer items-center gap-2.5 border-t border-border-visible bg-transparent px-2 py-2.5 text-left text-foreground hover:bg-muted",
+          FOCUS_RING,
           view === "settings" && "bg-[var(--accent-soft)]"
         )}
         onClick={() => setView("settings")}

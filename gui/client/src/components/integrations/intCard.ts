@@ -8,7 +8,7 @@ export const INT_CARD =
 export const INT_CARD_WIRED =
   "border-[color-mix(in_srgb,var(--aios-accent)_50%,var(--aios-border-visible))]";
 export const INT_CONNECT =
-  "rounded-md bg-primary px-3 py-[5px] text-[13px] font-semibold text-primary-foreground cursor-pointer enabled:hover:bg-[var(--accent-hover)] enabled:hover:shadow-[var(--glow-violet)]";
+  "cursor-pointer rounded-md bg-primary px-3 py-[5px] text-[13px] font-semibold text-primary-foreground enabled:hover:bg-[var(--accent-hover)] enabled:hover:shadow-[var(--glow-violet)] disabled:cursor-default disabled:opacity-40";
 export const SKELETON_CARD = "h-[120px] rounded-xl bg-muted opacity-60";
 
 export const intCard = (wired: boolean) => cn(INT_CARD, wired && INT_CARD_WIRED);

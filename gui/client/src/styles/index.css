@@ -13,9 +13,6 @@
 @import "@aios-alpha/design/tokens.css";
 @import "@aios-alpha/design/tailwind-theme.css";
 @import "tailwindcss";
-@source "../../../../node_modules/@aios-alpha/ui/dist";
-@custom-variant dark (&:where(.dark, .dark *));
-
 @import "@fontsource/instrument-serif/400.css";
 @import "@fontsource/instrument-serif/400-italic.css";
 @import "@fontsource/instrument-sans/400.css";
@@ -27,6 +24,9 @@
 
 /* rendered-markdown styles for assistant messages (scoped, can't be utilities) */
 @import "./prose.css";
+
+@source "../../../../node_modules/@aios-alpha/ui/dist";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ── Bridge the GUI's hand-rolled variables onto the design tokens ──────────
    A few residual scoped rules below (prose, the prism brand mark, the streaming
@@ -84,9 +84,12 @@ body {
 
 /* ── forced-scoped rules: things a utility genuinely can't express ────────── */
 
-/* AIOS prism brand mark — violet → emerald → lime (token-sourced, no hex here) */
+/* AIOS prism brand mark — violet → emerald → lime. */
 .brand-mark {
-  background: var(--aios-gradient-prism);
+  background: var(
+    --aios-gradient-prism,
+    linear-gradient(135deg, var(--aios-violet) 0%, var(--aios-emerald) 50%, var(--aios-accent) 100%)
+  );
 }
 
 /* streaming cursor — a blinking ▋ pseudo-element on the active assistant bubble */

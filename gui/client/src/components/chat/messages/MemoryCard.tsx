@@ -18,7 +18,7 @@ export function MemoryCard({
       {message.undone ? (
         <span className="text-emerald"> · undone</span>
       ) : message.undoFailed ? (
-        <span className="text-emerald"> · undo unavailable (file changed)</span>
+        <span className="text-destructive"> · undo unavailable (file changed)</span>
       ) : (
         <button
           className="ml-1 cursor-pointer rounded-[7px] border border-border-visible bg-secondary px-2.5 py-0.5 text-[11.5px] font-semibold text-foreground hover:border-primary"

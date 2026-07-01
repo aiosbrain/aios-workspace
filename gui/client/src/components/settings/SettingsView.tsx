@@ -141,7 +141,7 @@ export function SettingsView() {
         {section === "skills" && <SkillsPanel />}
 
         {!fillsOwnLayout && (
-          <div className="max-w-[760px] px-8 py-7">
+          <div className="mx-auto w-full max-w-[760px] px-8 py-7">
             {section === "account" && <AccountSection />}
             {section === "agent" && <AgentSettings />}
             {section === "appearance" && (

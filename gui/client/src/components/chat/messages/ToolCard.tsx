@@ -21,7 +21,7 @@ export function ToolCard({ tool }: { tool: ToolMessage }) {
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
         <span className="font-semibold text-primary">{tool.name}</span>
-        <span className="flex-1 truncate text-muted-foreground">{summary}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{summary}</span>
         <span
           className={cn("text-[11px]", tool.isError ? "text-destructive" : "text-muted-foreground")}
         >

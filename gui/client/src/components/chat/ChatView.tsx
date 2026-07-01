@@ -12,7 +12,7 @@ const SAFETY_BANNER =
 
 export function ChatView() {
   const { token } = useConnection();
-  const { safetyNote } = useRuntime();
+  const { safetyNote, capabilities } = useRuntime();
   const {
     connected,
     connectionStatus,
@@ -35,6 +35,9 @@ export function ChatView() {
   const composerDisabled = draftConnecting || (!connected && !isDraft);
   const canStartMessage = !composerDisabled;
   const isEmpty = messages.length === 0;
+  const showToolbar =
+    (capabilities.modelSwitching && capabilities.models.length > 0) ||
+    capabilities.approvalModes.length > 0;
 
   const placeholder =
     !connected && !isDraft
@@ -89,10 +92,12 @@ export function ChatView() {
             What are you working on?
           </h1>
           {composer}
-          <div className="flex justify-center">
-            <ModelPicker />
-            <ApprovalModePicker />
-          </div>
+          {showToolbar ? (
+            <div className="flex justify-center">
+              <ModelPicker />
+              <ApprovalModePicker />
+            </div>
+          ) : null}
           <EmptyState
             canStart={canStartMessage}
             onPick={(prompt) => sendMessage(prompt)}
@@ -108,10 +113,12 @@ export function ChatView() {
 
   return (
     <>
-      <div className="flex items-center justify-end gap-2.5 border-b border-border-visible px-5 py-2.5">
-        <ModelPicker />
-        <ApprovalModePicker />
-      </div>
+      {showToolbar ? (
+        <div className="flex items-center justify-end gap-2.5 border-b border-border-visible px-5 py-2.5">
+          <ModelPicker />
+          <ApprovalModePicker />
+        </div>
+      ) : null}
       <MessageList
         header={banners}
         messages={messages}

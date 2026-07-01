@@ -26,7 +26,7 @@ export const WIZ_ERROR = "text-[13px] text-destructive [&_a]:text-primary";
 export const WIZ_GO =
   "cursor-pointer rounded-md bg-primary px-4 py-2.5 font-semibold text-primary-foreground enabled:hover:bg-[var(--accent-hover)] enabled:hover:shadow-[var(--glow-violet)] disabled:cursor-default disabled:opacity-40";
 export const WIZ_SECONDARY =
-  "cursor-pointer rounded-[10px] border border-border-visible bg-transparent px-4 py-2.5 text-foreground";
+  "cursor-pointer rounded-[10px] border border-border-visible bg-transparent px-4 py-2.5 text-foreground disabled:cursor-default disabled:opacity-40";
 export const WIZ_DONE = "flex flex-col items-start gap-2.5";
 export const WIZ_DONE_BADGE = "text-base font-bold text-emerald";
 export const WIZ_DONE_ACTIONS = "flex gap-2";
