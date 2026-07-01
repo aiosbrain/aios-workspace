@@ -167,6 +167,17 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
       }
       continue;
     }
+
+    if (sig.kind === "comms") {
+      // "What's blocked / waiting on someone" — a comms item is a blocker when it names who
+      // it's waiting on, or reads as blocked/waiting in its summary. Non-waiting activity is
+      // not a daily blocker (it's just chatter) → ignored. (AIO-140 acceptance.)
+      const waitingOn = strOrNull(p.waitingOn);
+      if (waitingOn || looksBlocked(sig.summary)) {
+        blockedE.push({ item: baseItem(sig, { due: strOrNull(p.dueAt) }), stale: 0 });
+      }
+      continue;
+    }
     // Any other / unknown kind → ignore (forward-compat: consumers ignore kinds they don't know).
   }
 
