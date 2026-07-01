@@ -36,7 +36,7 @@ checked by the optional `npm run check:v1-linear` release gate when credentials 
 | C5 | AIO-128 | Weekly closeout | [c5-weekly.md](./c5-weekly.md) | done | `aios loop weekly`; `test/operator-loop/closeout.test.mjs`; `test/operator-loop/weekly-cli.test.mjs`; rubric `operator-loop-c5` |
 | C6 | AIO-129 | Approval-gated writeback | [c6-writeback.md](./c6-writeback.md) | done | `aios loop writeback`; `src/operator-loop/writeback.ts`; `test/operator-loop/writeback.test.mjs`; rubric `operator-loop-c6` |
 | C7 | AIO-126 | Habit + continuity layer | [c7-habit.md](./c7-habit.md) | done | continuity action store + carry-over source; `test/operator-loop/carryover.test.mjs` |
-| C8 | AIO-130 | Loop telemetry + dogfood instrumentation | [c8-telemetry.md](./c8-telemetry.md) | in_review | `aios loop telemetry`; `src/operator-loop/telemetry.ts`; `test/operator-loop/telemetry.test.mjs`, `telemetry-cli.test.mjs`, `telemetry-nonsync.test.mjs`; rubric `operator-loop-c8` |
+| C8 | AIO-130 | Loop telemetry + dogfood instrumentation | [c8-telemetry.md](./c8-telemetry.md) | done | `aios loop telemetry`; `src/operator-loop/telemetry.ts`; `test/operator-loop/telemetry.test.mjs`, `telemetry-cli.test.mjs`, `telemetry-nonsync.test.mjs`; rubric `operator-loop-c8` |
 
 <!-- drift:operator-components -->
 - `C1|AIO-123|done|c1-collector.md`
@@ -46,7 +46,7 @@ checked by the optional `npm run check:v1-linear` release gate when credentials 
 - `C5|AIO-128|done|c5-weekly.md`
 - `C6|AIO-129|done|c6-writeback.md`
 - `C7|AIO-126|done|c7-habit.md`
-- `C8|AIO-130|in_review|c8-telemetry.md`
+- `C8|AIO-130|done|c8-telemetry.md`
 <!-- /drift:operator-components -->
 
 ## Drift-Guarded Surfaces
