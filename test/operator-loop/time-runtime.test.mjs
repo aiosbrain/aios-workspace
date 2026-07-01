@@ -66,6 +66,22 @@ test("deriveBlocks: concurrent sessions both count (runtime SUMS, no union)", ()
   ); // 20 + 20, not a ~25 union
 });
 
+test("deriveBlocks: concurrent same-repo sessions with identical start get distinct ids", () => {
+  const evs = [
+    ev("s1", "2026-07-01T09:00:00Z", "/repo"),
+    ev("s1", "2026-07-01T09:20:00Z", "/repo"),
+    ev("s2", "2026-07-01T09:00:00Z", "/repo"), // same repo AND same start ts as s1
+    ev("s2", "2026-07-01T09:20:00Z", "/repo"),
+  ];
+  const blocks = deriveBlocks(evs, { nowMs: NOW, idleGapMin: IDLE });
+  assert.equal(blocks.length, 2);
+  assert.notEqual(blocks[0].id, blocks[1].id); // no id collision → an id-keyed upsert keeps both
+  assert.equal(
+    blocks.reduce((a, b) => a + b.runtimeMin, 0),
+    40
+  );
+});
+
 test("deriveBlocks: a run with no attributable cwd is dropped", () => {
   const evs = [ev("s1", "2026-07-01T09:00:00Z", null), ev("s1", "2026-07-01T09:10:00Z", null)];
   assert.equal(deriveBlocks(evs, { nowMs: NOW, idleGapMin: IDLE }).length, 0);

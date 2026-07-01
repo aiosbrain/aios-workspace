@@ -18,7 +18,7 @@ export const TAGS: readonly Tag[] = [
 ];
 
 export interface WorkBlock {
-  id: string; // opaque: sha256(cwdRealpath + '#' + startIso).slice(0,10)
+  id: string; // opaque: sha256(sessionId + '#' + cwdRealpath + '#' + startIso).slice(0,10)
   sessionId: string;
   cwdRealpath: string; // canonical repo path (most-frequent non-null cwd among the block's events)
   gitBranch: string | null;
@@ -100,7 +100,13 @@ function finalizeRun(
 
   const startIso = new Date(startMs).toISOString();
   const endIso = new Date(endMs).toISOString();
-  const id = createHash("sha256").update(`${cwdRealpath}#${startIso}`).digest("hex").slice(0, 10);
+  // Include sessionId so two CONCURRENT sessions in the same repo with the same start timestamp
+  // get distinct ids (else upsertRows would dedupe them and under-count runtime). The hash keeps
+  // the raw sessionId out of the store — the id stays opaque.
+  const id = createHash("sha256")
+    .update(`${sessionId}#${cwdRealpath}#${startIso}`)
+    .digest("hex")
+    .slice(0, 10);
   const tag = tagBlock({ cwdRealpath, toolCounts });
 
   return {

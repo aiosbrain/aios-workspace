@@ -60,6 +60,19 @@ test("capture: derives a workspace block at team tier, idempotently", () => {
   rmSync(proj, { recursive: true, force: true });
 });
 
+test("capture: two concurrent same-repo sessions with identical start both persist (no id collision)", () => {
+  const root = workspace();
+  const proj = projects();
+  writeSession(proj, "slugA", "sessA", block(root));
+  writeSession(proj, "slugB", "sessB", block(root)); // same repo (root) + same start ts, other session
+  const s = capture({ root, projectsDir: proj, now: NOW });
+  assert.equal(s.captured, 2);
+  assert.equal(readStore(root).rows.length, 2); // would be 1 before the id fix (runtime under-count)
+
+  rmSync(root, { recursive: true, force: true });
+  rmSync(proj, { recursive: true, force: true });
+});
+
 test("capture: unknown repo (default exclude) is not captured", () => {
   const root = workspace();
   const proj = projects();
