@@ -29,12 +29,24 @@ Clean TS under `src/operator-loop/`:
   `<inbox>/comms/activity.jsonl`, or a configured `activityPath`) and emits tier-tagged `comms`
   signals. It fetches a **fixed, max-bounded lookback** (`lookbackHours`, default **168** = 7 days);
   the collector's per-cadence `occurredAt` window trims further (daily 1d / weekly 7d). No cadence
-  is threaded through the `Source` shape.
+  is threaded through the `Source` shape. Tier is **channel-authoritative**: when a `channels` map
+  is configured, a channel-backed record resolves its tier from that map — an unlisted channel, or
+  a record whose self-reported tier disagrees with its channel's tier, is default-denied (excluded,
+  never emitted). Each emitted signal carries a **collision-proof EvidenceRef** — a per-source /
+  per-tier / per-channel synthetic path (`.aios/loop/comms/<source>/<tier>/<channel>.ndjson`) with
+  the message id as `row` — so a raw id reused across channels/sources never collapses to the same
+  `path + row + tier`, and records are deduped on that key.
 - **Outbound** — `comms/detectors.ts` derives typed `NotificationEvent`s (decision Type 2/3, scope
   change, task assignment, deliverable status, stale inbox) from C1 signals; `comms/sender.ts`
-  `dispatchOnEvent` applies a **two-sided tier gate** before any format/send — resolve the
-  destination channel (`sender.channel ?? slack.defaultChannel`), resolve the destination's audience
-  tier (default-deny on an unresolvable channel), and send only when that audience is cleared to see
-  the message tier. Admin content is never emitted, whatever a channel is configured as.
+  `dispatchOnEvent` gates before any format/send. Order: (0) **trigger gate** — when `sender.on`
+  is configured, only listed event names dispatch (others are a `noop`); (1) **tier-spoof guard** —
+  the authorizing tier is derived from the trusted evidence `ref.tier`, and an event whose
+  self-reported `tier` disagrees with its evidence tier is rejected (default-deny); then the
+  **two-sided tier gate** — resolve the destination channel (`sender.channel ?? slack.defaultChannel`),
+  resolve the destination's audience tier (default-deny on an unresolvable channel), and send only
+  when that audience is cleared to see the message tier. Admin content is never emitted, whatever a
+  channel is configured as.
 - **Config** — `comms/config.ts` (`.aios/comms-config.json`); see `comms-config.example.json`. The
   `channels` map (channel → audience tier) is default-deny: an unlisted channel is unresolvable.
+  `sender.on` (string or list of event names) is the optional trigger gate; unset = fire on any
+  authorized event.

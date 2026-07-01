@@ -3,18 +3,23 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { collect, runDaily } from "../../dist/operator-loop/index.js";
+import { collect, runDaily, verifyLedger } from "../../dist/operator-loop/index.js";
 
 function workspace() {
   const root = mkdtempSync(path.join(tmpdir(), "aios-ws-comms-"));
   mkdirSync(path.join(root, "1-inbox", "comms"), { recursive: true });
   mkdirSync(path.join(root, "3-log"), { recursive: true });
+  mkdirSync(path.join(root, ".aios"), { recursive: true });
   return realpathSync(root);
 }
 
 function writeActivity(root, records) {
   const file = path.join(root, "1-inbox", "comms", "activity.jsonl");
   writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+}
+
+function writeCommsConfig(root, config) {
+  writeFileSync(path.join(root, ".aios", "comms-config.json"), JSON.stringify(config));
 }
 
 const NOW = new Date("2026-07-02T00:00:00Z");
@@ -41,7 +46,8 @@ test("comms source: emits kind:'comms' signals with tier + evidence ref + payloa
   assert.equal(s.source, "slack");
   assert.equal(s.tier, "team");
   assert.equal(s.ref.row, "msg-1");
-  assert.equal(s.ref.path, "1-inbox/comms/activity.jsonl");
+  // Collision-proof EvidenceRef: per-source/per-tier/per-channel synthetic path (M1).
+  assert.equal(s.ref.path, ".aios/loop/comms/slack/team/#eng.ndjson");
   assert.equal(s.payload.channel, "#eng");
   assert.equal(s.payload.direction, "inbound");
   assert.equal(s.payload.summary, "Waiting on design review");
@@ -120,6 +126,78 @@ test("comms source: future-dated records are dropped by the source's max-bound",
   ]);
   const m = collect({ root, cadence: "weekly", now: NOW, window: false });
   assert.equal(m.signals.filter((s) => s.kind === "comms").length, 0);
+});
+
+test("comms source (H2): a record on an unlisted/admin channel claiming team is excluded, never emitted", () => {
+  const root = workspace();
+  // With a channel→tier map configured, the channel is authoritative and default-deny.
+  writeCommsConfig(root, { channels: { "#private": "admin" } });
+  writeActivity(root, [
+    {
+      source: "slack",
+      tier: "team", // spoofed self-report on an admin channel
+      occurredAt: "2026-07-01T12:00:00Z",
+      ref: "leak-1",
+      channel: "#private",
+      summary: "should not emit as team",
+    },
+    {
+      source: "slack",
+      tier: "team",
+      occurredAt: "2026-07-01T12:00:00Z",
+      ref: "leak-2",
+      channel: "#unlisted", // not in the map at all
+      summary: "unlisted channel",
+    },
+  ]);
+
+  const m = collect({ root, cadence: "weekly", now: NOW });
+  assert.equal(m.signals.filter((s) => s.kind === "comms").length, 0);
+  assert.equal(m.excluded.filter((e) => /disagrees with channel/.test(e.reason)).length, 1);
+  assert.equal(m.excluded.filter((e) => /unlisted channel/.test(e.reason)).length, 1);
+});
+
+test("comms source (M1): emitted refs are collision-proof and resolve by exact path+row+tier under verifyLedger", async () => {
+  const root = workspace();
+  // Two channels on the same tier, both listed. Two records reuse the SAME raw id on different
+  // channels — under a naive path+row they would collide; the collision-proof ref keeps them distinct.
+  writeCommsConfig(root, { channels: { "#a": "team", "#b": "team" } });
+  writeActivity(root, [
+    {
+      source: "slack",
+      occurredAt: "2026-07-01T12:00:00Z",
+      ref: "dup",
+      channel: "#a",
+      summary: "same id, channel a",
+    },
+    {
+      source: "slack",
+      occurredAt: "2026-07-01T12:00:00Z",
+      ref: "dup",
+      channel: "#b",
+      summary: "same id, channel b",
+    },
+  ]);
+
+  const m = collect({ root, cadence: "weekly", now: NOW });
+  const comms = m.signals.filter((s) => s.kind === "comms");
+  assert.equal(comms.length, 2);
+  // Same raw row id, DISTINCT collision-proof paths.
+  assert.equal(comms[0].ref.row, "dup");
+  assert.equal(comms[1].ref.row, "dup");
+  assert.notEqual(comms[0].ref.path, comms[1].ref.path);
+
+  // Real C3 verifier: a ledger citing both emitted refs resolves by exact path + row + tier.
+  const ledger = {
+    entries: comms.map((s) => ({ claim: s.summary, evidence: [s.ref] })),
+  };
+  const findings = await verifyLedger({ manifest: m, ledger, audience: "team" });
+  assert.equal(findings.length, 0);
+
+  // A tampered ref (right path/row, wrong tier) must NOT resolve — proves exact-key resolution.
+  const spoof = { entries: [{ claim: "x", evidence: [{ ...comms[0].ref, tier: "external" }] }] };
+  const spoofFindings = await verifyLedger({ manifest: m, ledger: spoof, audience: "external" });
+  assert.ok(spoofFindings.some((f) => f.check === "evidence"));
 });
 
 test("daily loop: comms waiting-on items populate the blocked section (AIO-140 acceptance)", () => {

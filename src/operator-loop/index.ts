@@ -216,5 +216,6 @@ export {
   type DispatchDeps,
   type DispatchResult,
   type RejectReason,
+  type NoopReason,
 } from "./comms/sender.js";
 export { detectEvents, DEFAULT_STALE_INBOX_DAYS } from "./comms/detectors.js";

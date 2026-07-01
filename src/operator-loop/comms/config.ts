@@ -28,6 +28,10 @@ export const COMMS_ACTIVITY_BASENAME = "comms/activity.jsonl";
 export interface SenderConfig {
   /** Explicit destination channel; when null the sender falls back to slack.defaultChannel. */
   channel: string | null;
+  /** Trigger gate: the event name(s) the sender is configured to dispatch on. When null the
+   *  gate is inactive (any authorized event may send); when set, an event whose name/kind is
+   *  not listed is a no-op (never sent). This is the FIRST gate in `dispatchOnEvent`. */
+  on: string[] | null;
 }
 
 export interface SlackConfig {
@@ -51,7 +55,7 @@ export function defaultCommsConfig(): CommsConfig {
   return {
     lookbackHours: DEFAULT_LOOKBACK_HOURS,
     activityPath: null,
-    sender: { channel: null },
+    sender: { channel: null, on: null },
     slack: { defaultChannel: null },
     channels: new Map(),
   };
@@ -75,6 +79,21 @@ export function loadCommsConfig(root: string, overridePath?: string): CommsConfi
     throw new Error(`comms-config: invalid JSON in ${file}: ${(e as Error).message}`);
   }
   return parseCommsConfig(parsed, file);
+}
+
+/** Normalize `sender.on` to a non-empty list of event names, or null (gate inactive). Accepts a
+ *  single string or an array of strings; rejects anything else (never silently disables the gate). */
+function parseSenderOn(raw: unknown): string[] | null {
+  if (raw === null) return null;
+  const list = Array.isArray(raw) ? raw : [raw];
+  const names: string[] = [];
+  for (const v of list) {
+    if (typeof v !== "string" || !v.trim()) {
+      throw new Error(`comms-config: sender.on must be a non-empty string or array of strings`);
+    }
+    names.push(v.trim());
+  }
+  return names.length ? names : null;
 }
 
 /** Validate + normalize a parsed config object. Exposed for tests. */
@@ -113,6 +132,9 @@ export function parseCommsConfig(parsed: unknown, file = "<config>"): CommsConfi
         throw new Error(`comms-config: sender.channel must be a non-empty string or null`);
       }
       cfg.sender.channel = s.channel as string | null;
+    }
+    if (s.on !== undefined) {
+      cfg.sender.on = parseSenderOn(s.on);
     }
   }
 

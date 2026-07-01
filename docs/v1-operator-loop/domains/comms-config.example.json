@@ -1,7 +1,7 @@
 {
   "lookbackHours": 168,
   "activityPath": "1-inbox/comms/activity.jsonl",
-  "sender": { "channel": "#loop-events" },
+  "sender": { "channel": "#loop-events", "on": ["decision", "scope-change", "task-assignment"] },
   "slack": { "defaultChannel": "#team-general" },
   "channels": {
     "#loop-events": "team",

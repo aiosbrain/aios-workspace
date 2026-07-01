@@ -21,10 +21,16 @@ import { resolveChannelTier, type CommsConfig } from "./config.js";
 export interface NotificationEvent {
   /** e.g. "decision" | "task-assignment" | "deliverable-status" | "scope-change" | "stale-inbox". */
   kind: string;
-  /** The tier of the CONTENT being surfaced — what the gate authorizes against. */
+  /** The event NAME matched against the sender's trigger gate (`sender.on`). Defaults to `kind`
+   *  when unset — detectors set `kind`, so the gate matches on the detector event kind. */
+  name?: string;
+  /** The self-reported tier of the CONTENT being surfaced. NOT trusted directly: the gate derives
+   *  the authorizing tier from the triggering evidence (`ref.tier`) and REQUIRES the two agree —
+   *  a caller cannot pass admin evidence under a `team` label to slip past the admin guard. */
   tier: Tier;
   summary: string;
-  /** Pointer back to the source that triggered this event (referenced in the message). */
+  /** Pointer back to the source that triggered this event (referenced in the message). The
+   *  trusted tier anchor: `ref.tier` is what the outbound gate authorizes against. */
   ref: EvidenceRef;
   waitingOn?: string;
   dueAt?: string;
@@ -38,14 +44,17 @@ export interface DispatchDeps {
 }
 
 export type RejectReason =
+  | "tier-spoof"
   | "no-destination-channel"
   | "admin-never-outbound"
   | "unresolvable-destination-tier"
   | "audience-not-authorized";
 
+export type NoopReason = "not-triggered";
+
 export interface DispatchResult {
-  status: "sent" | "rejected";
-  reason?: RejectReason;
+  status: "sent" | "rejected" | "noop";
+  reason?: RejectReason | NoopReason;
   detail?: string;
   channel?: string;
   messageTier?: Tier;
@@ -78,7 +87,29 @@ export async function dispatchOnEvent(
   config: CommsConfig,
   deps: DispatchDeps
 ): Promise<DispatchResult> {
-  const messageTier = event.tier;
+  // 0) Trigger gate (FIRST, before any tier/channel resolution): when `sender.on` is configured,
+  // only the listed event name(s) dispatch; anything else is a silent no-op (never sent).
+  const eventName = event.name ?? event.kind;
+  if (config.sender.on && !config.sender.on.includes(eventName)) {
+    return {
+      status: "noop",
+      reason: "not-triggered",
+      detail: `event "${eventName}" is not in sender.on — not dispatched`,
+    };
+  }
+
+  // Derive the authorizing tier from the TRUSTED evidence ref, not the caller-supplied
+  // `event.tier`. A caller cannot pass admin-derived evidence while labelling the event `team`:
+  // the self-reported tier MUST equal the evidence tier or the event is rejected (default-deny).
+  const messageTier = event.ref.tier;
+  if (event.tier !== messageTier) {
+    return {
+      status: "rejected",
+      reason: "tier-spoof",
+      detail: `event tier "${event.tier}" does not match its evidence tier "${messageTier}" (default-deny)`,
+      messageTier,
+    };
+  }
 
   // Belt-and-suspenders: admin content never goes outward, whatever the channel is configured as.
   if (messageTier === "admin") {

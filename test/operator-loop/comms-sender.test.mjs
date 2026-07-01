@@ -117,6 +117,57 @@ test("sender: no destination channel configured → rejected before any send", a
   assert.equal(sends.length, 0);
 });
 
+test("sender (H1 BLOCKER): a spoofed event (tier 'team' but admin evidence) is rejected — format/send never run", async () => {
+  const { send, sends } = recorder();
+  // Caller labels the event `team` but attaches admin-tier evidence — the classic spoof.
+  const spoofed = {
+    kind: "decision",
+    tier: "team",
+    summary: "leak me",
+    ref: { path: "3-log/decision-log.md", row: "d9", tier: "admin" },
+  };
+  const res = await dispatchOnEvent(spoofed, config(), { send });
+  assert.equal(res.status, "rejected");
+  assert.equal(res.reason, "tier-spoof");
+  assert.equal(res.messageTier, "admin"); // authorizing tier derived from the trusted evidence ref
+  assert.equal(res.text, undefined); // formatEvent never ran
+  assert.equal(sends.length, 0); // transport never touched
+});
+
+test("sender (M2): an event whose name is not in sender.on is a no-op (nothing sent)", async () => {
+  const { send, sends } = recorder();
+  const cfg = config();
+  cfg.sender.on = ["scope-change"]; // only scope changes trigger a send
+  const res = await dispatchOnEvent(event("team"), cfg, { send }); // kind:"decision" ≠ trigger
+  assert.equal(res.status, "noop");
+  assert.equal(res.reason, "not-triggered");
+  assert.equal(sends.length, 0);
+
+  // A matching event still sends.
+  const ok = await dispatchOnEvent(event("team", { kind: "scope-change" }), cfg, { send });
+  assert.equal(ok.status, "sent");
+  assert.equal(sends.length, 1);
+});
+
+test("detectEvents (H3): a numeric Type 2/3 payload.type is detected; Type 1/other is not", () => {
+  const now = new Date("2026-07-01T00:00:00Z");
+  const sig = (type) => ({
+    kind: "decision",
+    source: "decision-log",
+    tier: "team",
+    occurredAt: "2026-07-01T00:00:00Z",
+    ref: { path: "3-log/decision-log.md", row: `d-${type}`, tier: "team" },
+    summary: "Adopt something", // no "scope" keyword → falls through to the Type 2/3 check
+    payload: { type }, // NUMBER, exactly as the decisions source emits it (row.tier)
+  });
+
+  const events = detectEvents([sig(2), sig(3), sig(1), sig(null)], now);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ["decision", "decision"] // only the numeric Type 2 and Type 3 fire
+  );
+});
+
 test("detectEvents: decision Type 2/3, scope change, task assignment, deliverable status, stale inbox", () => {
   const now = new Date("2026-07-01T00:00:00Z");
   const sig = (o) => ({

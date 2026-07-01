@@ -23,6 +23,14 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
+/** Coerce a decision-row `type` (the decisions source emits it as a NUMBER — `parseInt` of the
+ *  "type" column — while hand-authored signals may use a string like "Type 3") to a string the
+ *  TYPE_23_RE can match. Without this, a numeric Type 2/3 never triggers a notification. */
+function typeText(v: unknown): string {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return str(v) ?? "";
+}
+
 function base(
   sig: Signal,
   kind: string,
@@ -50,7 +58,7 @@ export function detectEvents(
       const scopeText = [sig.summary, str(p.rationale), str(p.impact)].filter(Boolean).join(" ");
       if (SCOPE_RE.test(scopeText)) {
         events.push(base(sig, "scope-change"));
-      } else if (TYPE_23_RE.test(str(p.type) ?? "")) {
+      } else if (TYPE_23_RE.test(typeText(p.type))) {
         events.push(base(sig, "decision"));
       }
       continue;
