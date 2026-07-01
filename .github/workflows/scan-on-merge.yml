@@ -31,13 +31,13 @@ jobs:
       BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
       AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history — the scanner reads the commit window
 
       - name: Fetch the ingestion scanner from aios-team-brain
         if: env.AIOS_API_KEY != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AIOS-alpha/aios-team-brain
           path: .brain-scanner
