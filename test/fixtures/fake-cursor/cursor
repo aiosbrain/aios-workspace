@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+// Fake `cursor` binary for build-loop.test.mjs — the REVIEWER (/ai-code-review).
+// Put this dir on PATH so the build loop drives it instead of the real Cursor CLI.
+// (The BUILDER is fake-claude; see ../fake-claude/claude.)
+//
+//   FAKE_AGENT_SCRIPT = approve | reject | reject-then-approve | ...
+//   FAKE_REVIEW_STATE = path to a counter file (for reject-then-approve)
+//
+// On a review prompt it emits findings ending in MERGE_READY (or not).
+// Bugbot prompts ( /review-bugbot ) end with BUGBOT_CLEAR when approved.
+
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+
+const BUGBOT_CLEAR_TOKEN = "BUGBOT_CLEAR";
+
+const argv = process.argv.slice(2);
+
+if (argv[0] === "--version") {
+  console.log("fake-cursor 0.0.0");
+  process.exit(0);
+}
+
+// cursor agent -p <prompt> --output-format stream-json
+const pIdx = argv.indexOf("-p");
+const prompt = pIdx >= 0 ? argv[pIdx + 1] : "";
+const mode = process.env.FAKE_AGENT_SCRIPT || "approve";
+
+function emit(text) {
+  console.log(
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
+  );
+}
+
+const isBugbot =
+  prompt.startsWith("/review-bugbot") ||
+  prompt.includes(`${BUGBOT_CLEAR_TOKEN} alone on the very last line`);
+if (isBugbot) {
+  if (mode === "bugbot-block") {
+    emit("## Findings\n\n- High: blocking issue in test.\n");
+  } else {
+    emit(`## Findings\n\nNone.\n\n${BUGBOT_CLEAR_TOKEN}`);
+  }
+  process.exit(0);
+}
+
+let approve = mode === "approve" || mode === "bugbot-block";
+if (mode === "reject-then-approve") {
+  const f = process.env.FAKE_REVIEW_STATE;
+  let n = 0;
+  if (f && existsSync(f)) n = parseInt(readFileSync(f, "utf8") || "0", 10);
+  n += 1;
+  if (f) writeFileSync(f, String(n));
+  approve = n >= 2; // reject the first review, approve the second
+}
+if (approve) {
+  emit("## Findings\n\nNone.\n\n## Mergeability\n\nReady to merge.\n\nMERGE_READY");
+} else {
+  emit("## Findings\n\n- High: not done yet, add more.\n\n## Mergeability\n\nNot ready to merge.");
+}
+process.exit(0);

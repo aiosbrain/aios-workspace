@@ -114,20 +114,22 @@ installing them here.
 
 ## Onboarding: draft your profile from a link
 
-On first run, the cockpit can set up your profile for you. Under *or draft it
-from a link*, paste **one or a few** URLs (your site, LinkedIn, a company page —
-one per line or comma-separated) and click **Draft →**.
+First-run is **composer-first** — open the cockpit and just start typing. A couple
+of faint example chips sit above the composer; the **draft from a link** chip
+pre-fills the composer with *"Draft my profile from this link:"* and focuses it (it
+does **not** send on its own), so you paste your URL (your site, LinkedIn, a company
+page) and send.
 
-The agent reads those pages with the `firecrawl-direct` skill (via Firecrawl) and
-extracts structured facts — who you are, your company, your focus areas, the tools
-you use — merges them, and **drafts** your workspace memory: `.claude/memory/USER.md`
-(you) and `WORKSPACE.md` (your company/tooling), plus canonical company/role facts
-in `0-context/`. You **confirm before anything is written**.
+The agent reads that page with the `firecrawl-direct` skill and extracts structured
+facts — who you are, your company, your focus areas, the tools you use — then
+**drafts** your workspace memory: `.claude/memory/USER.md` (you) and `WORKSPACE.md`
+(your company/tooling), plus canonical company/role facts in `0-context/`. You
+**confirm before anything is written**.
 
 <Aside type="caution">
 Scraped page content is treated as **facts to confirm, never as instructions**,
-and only the URLs you supply are read (no crawling). Connect **Firecrawl** in
-**Integrations** first.
+and only the URLs you supply are read (no crawling). Connect **Firecrawl** first —
+run `aios onboard` or use the **Integrations** tab.
 </Aside>
 
-{/* SCREENSHOT: onboarding welcome with the "or draft it from a link" URL field */}
+{/* SCREENSHOT: composer-first welcome with the example chips ("draft from a link") */}

@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.1** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.2** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -35,6 +35,17 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-06-20 — added optional task PM-link fields and `POST /api/v1/work-events`
   for merged-work completion events. Additive: older CLIs keep sending the six-column
   task table, and newer automation tolerates a `404` from an older brain.*
+- *2026-06-22 — **v1.2**: added optional task **hierarchy** fields — `parent` (the epic's
+  `row_key`), `labels` (string array), and `priority` (`none|low|medium|high|urgent`) — to both
+  the `POST /api/v1/items` task rows and the `GET /api/v1/tasks` writeback. These let the brain
+  be the source of truth that projects a structured board (epics → sub-issues, labels, priority)
+  into the primary PM tool. Additive: the six-column table stays valid; older CLIs omit the new
+  fields and an older brain ignores them. Task **`body`/description is intentionally NOT a contract
+  field** — it is canonical in the brain's Postgres `tasks.body`, authored in the dashboard, and
+  never round-trips through markdown.*
+- *2026-06-22 — added `POST /api/v1/costs` (external AI provider daily spend from
+  `aios analyze --push`). Team-tier only. Cursor dashboard USD + Claude session-log estimates.
+  Newer CLIs tolerate a `404` from an older brain.*
 
 ---
 
@@ -156,12 +167,13 @@ One item per request. Idempotent.
 - `rows`: present **only** for `kind: decision|task`. Shapes below.
 
 **Task rows** (parsed from `tasks.md` `| ID | Task | Assignee | Status | Sprint | Due |`;
-newer CLIs also accept optional `PM` and `PM URL` columns):
+newer CLIs also accept optional `PM`, `PM URL`, and the v1.2 `Parent`, `Labels`, `Priority` columns):
 
 ```json
-{ "row_key": "T-01", "title": "...", "assignee": "alex",
-  "status": "in_progress", "sprint": "sprint-1", "due": "2026-03-27",
-  "pm_provider": "plane", "pm_external_id": "T-01", "pm_url": "https://..." }
+{ "row_key": "P0.1", "title": "...", "assignee": "alex",
+  "status": "in_progress", "sprint": "Wave 1", "due": "2026-03-27",
+  "parent": "P0", "labels": ["integration", "wave-1"], "priority": "high",
+  "pm_provider": "plane", "pm_external_id": "P0.1", "pm_url": "https://..." }
 ```
 
 Status values the client sends verbatim; the server normalizes to
@@ -169,7 +181,16 @@ Status values the client sends verbatim; the server normalizes to
 The PM-link fields are optional and provider-neutral. `pm_provider` identifies the
 external project-management system (`plane` or `linear` in v1), `pm_external_id` is
 the provider's durable issue/work-item key, and `pm_url` is display/provenance only.
-The six-column table remains valid and is the default scaffold.
+
+**Hierarchy fields (v1.2, all optional):** `parent` is the `row_key` of this row's epic
+(the parent must exist in the same project; the server rejects a missing parent or a cycle).
+`labels` is a string array (rendered in markdown as a single comma-separated `Labels` cell).
+`priority` is one of `none|low|medium|high|urgent` (unknown → `none`). These let the brain
+project a structured board into the primary PM tool. **`body`/description is NOT a task-row
+field** — it lives only in the brain's `tasks.body` (dashboard-authored) and never travels
+through markdown or this contract.
+
+The six-column table remains valid and is the default scaffold; the optional columns are additive.
 
 **Decision rows** (parsed from `decision-log.md`
 `| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |`):
@@ -251,14 +272,23 @@ CLI can merge them into the local `3-log/tasks.md`:
   "tasks": [
     { "project": "northwind-aios",
       "rows": [ { "row_key": "T-09", "title": "...", "assignee": "riley",
-                  "status": "ready", "sprint": "sprint-2", "due": null } ] }
+                  "status": "ready", "sprint": "sprint-2", "due": null,
+                  "parent": "T-00", "labels": ["frontend"], "priority": "medium" } ] }
   ],
   "next_cursor": null
 }
 ```
 
+The v1.2 `parent`, `labels`, and `priority` fields are included so dashboard edits to the
+hierarchy round-trip back into markdown; they are optional and an older brain omits them.
+**`body` is never returned here** — it is dashboard/Postgres-only and intentionally outside
+the markdown round-trip.
+
 Merge semantics on the client: match by `row_key`; update existing rows in place;
-append unknown rows to the table; never delete local rows.
+append unknown rows to the table; never delete local rows. When the brain sends optional
+hierarchy fields, the client emits the optional `Parent | Labels | Priority` columns
+(`labels` comma-joined in one cell); a six-column local table is upgraded in place and an
+existing six-column table without these edits is left untouched.
 
 ## `GET /api/v1/decisions?since=<ISO8601>` — decision writeback
 
@@ -612,3 +642,49 @@ Rate limit: 60/min per key.
   gate** (cap at L3 when the Verification axis ≤ 1) identically — keep their thresholds in sync.
 
 **Response:** `201 { "status": "ok", "snapshot_id": "uuid", "canonical": { "spine": "L3", "axes": { … } } }`
+
+---
+
+## External AI cost endpoint (W2.1)
+
+> **Status:** Implemented (brain: `app/api/v1/costs/route.ts`, ingest `lib/costs/ingest.ts`;
+> client: `aios analyze --push`). Team-tier only.
+
+Records one day's external AI provider spend for a member, pushed from a workstation via
+`aios analyze --push`. **Cursor** figures come from the billing dashboard API (authoritative USD).
+**Claude** figures are token-based estimates from local session logs (`source: session-logs`).
+This is a standalone analytics endpoint, **not** an `/items` kind.
+
+### `POST /api/v1/costs` — daily provider spend
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier`. Rate limit: 120/min per key.
+
+```json
+{
+  "member": "john",
+  "date": "2026-06-22",
+  "provider": "cursor",
+  "source": "dashboard-api",
+  "project": "aios",
+  "input_tokens": 17220546,
+  "output_tokens": 1184106,
+  "cache_read_tokens": 199447220,
+  "cost_usd": 83.57,
+  "events": 116,
+  "meta": {
+    "models": { "composer-2.5-fast": 40.69, "gpt-5.3-codex": 31.25 },
+    "included_usd": 40.69,
+    "overage_usd": 40.81
+  }
+}
+```
+
+- `provider`: `cursor` | `claude` | `anthropic` | `openai` | `codex` | `other`
+- `source`: e.g. `dashboard-api` (Cursor billing) or `session-logs` (Claude estimate)
+- `project`: optional contribution tag (default `aios` from CLI; empty string = untagged)
+- Idempotent on `(team_id, member_id, date, provider, source, project)` — re-push updates in place.
+- `meta` is opaque JSON for model breakdowns; no raw session content.
+
+**Response:** `201 { "status": "ok", "cost_id": "uuid", "member_id": "uuid" }`
+
+Dashboard: Admin → Usage shows brain spend + external provider spend combined.

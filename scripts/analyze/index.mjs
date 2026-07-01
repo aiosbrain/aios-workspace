@@ -27,6 +27,9 @@ import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
 import { renderText, renderReport, toJson, buildPushPayload } from "./report.mjs";
 import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
+import { gatherCostData, pushProviderCosts } from "./push-costs.mjs";
+import { renderCostSummary } from "./cost-report.mjs";
+import { cursorBillingStart } from "./cursor-api.mjs";
 
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
 const PARSERS = { claude: parseClaude, codex: parseCodex };
@@ -52,8 +55,18 @@ function parseArgs(rest) {
   return opts;
 }
 
-/** Resolve --since ("7d" | "30d" | ISO date) to a Date. */
-function resolveSince(spec) {
+/** Resolve --since ("7d" | "billing" | ISO date) to a Date. */
+async function resolveSince(spec, warn = console.warn) {
+  if (spec === "billing") {
+    try {
+      return await cursorBillingStart();
+    } catch (e) {
+      warn(
+        `  --since billing: Cursor session unavailable (${e.message}) — falling back to 30d window`
+      );
+      return new Date(Date.now() - 30 * 86_400_000);
+    }
+  }
   const m = String(spec).match(/^(\d+)d$/);
   if (m) return new Date(Date.now() - Number(m[1]) * 86_400_000);
   const d = new Date(spec);
@@ -67,7 +80,7 @@ function isoDate(d) {
 
 export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const opts = parseArgs(rest);
-  const since = resolveSince(opts.since);
+  const since = await resolveSince(opts.since, (msg) => console.warn(color.yellow(msg)));
   const until = new Date();
   const sinceMs = since.getTime();
   const home = os.homedir();
@@ -145,16 +158,34 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     days,
   };
 
+  const costData = await gatherCostData({
+    sinceMs,
+    endMs: until.getTime(),
+    events: inWindow,
+    window: result.window,
+  });
+
   if (opts.json) {
-    console.log(JSON.stringify(toJson(result), null, 2));
+    console.log(JSON.stringify(toJson(result, costData), null, 2));
   } else {
     console.log(renderText(result, color));
+    const costBlock = renderCostSummary(costData, color);
+    if (costBlock) console.log(costBlock);
     if (opts.report) console.log(renderReport(result, color));
   }
 
   const state = loadAnalyzeState(repo);
   if (opts.push) {
     await pushDays(repo, cfg, result, helpers, state);
+    const { resolveMember, loadDotEnv } = helpers || {};
+    const member = resolveMember
+      ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {})
+      : "";
+    await pushProviderCosts(repo, cfg, helpers, costData, {
+      member,
+      project: process.env.AIOS_COST_PROJECT || "aios",
+      writeMarkdown: true,
+    });
   }
 
   // Record the run (push dedup + future tail-parse offsets build on this).
@@ -177,22 +208,34 @@ async function pushDays(repo, cfg, result, helpers, state) {
     return;
   }
   const missing = [];
-  if (!cfg.brain_url) missing.push("AIOS_BRAIN_URL");
-  if (!cfg.api_key) missing.push("AIOS_API_KEY");
+  if (!cfg.brain_url?.trim()) missing.push("AIOS_BRAIN_URL");
+  if (!cfg.api_key?.trim()) missing.push("AIOS_API_KEY");
   if (missing.length) {
     console.warn(
       color.yellow(`  --push skipped: brain not configured (missing ${missing.join(" + ")}).`)
     );
-    console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));
-    console.warn(color.dim("      export AIOS_BRAIN_URL=https://your-brain.example.com"));
-    console.warn(
-      color.dim(
-        "      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"
-      )
-    );
-    console.warn(
-      color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them).")
-    );
+    if (missing.includes("AIOS_BRAIN_URL") && "AIOS_BRAIN_URL" in process.env) {
+      console.warn(
+        color.yellow(
+          "    AIOS_BRAIN_URL is present but empty — dotenvx decrypted an empty value. Re-set it:"
+        )
+      );
+      console.warn(
+        color.dim("      dotenvx set AIOS_BRAIN_URL=https://your-brain.example.com -f .env")
+      );
+      console.warn(color.dim("      dotenvx encrypt -f .env"));
+    } else {
+      console.warn(color.dim("    Set them in your shell or a .env file, e.g.:"));
+      console.warn(color.dim("      export AIOS_BRAIN_URL=https://your-brain.example.com"));
+      console.warn(
+        color.dim(
+          "      export AIOS_API_KEY=aios_<key_id>_<secret>   # team-tier key from the brain admin UI"
+        )
+      );
+      console.warn(
+        color.dim("    (or run from a stamped workspace whose aios.yaml + .env provide them).")
+      );
+    }
     return;
   }
   const member = resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {});

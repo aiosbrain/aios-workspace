@@ -1,6 +1,8 @@
 # aios relay — Opus ↔ Cursor Review Loop
 
-`aios relay` runs an automated plan–review cycle: Opus 4.8 writes an implementation plan, Cursor reviews it adversarially, Opus revises based on the feedback, and the loop repeats until Cursor emits `MERGE_READY` or the round limit is hit.
+`aios relay` runs an automated plan–review cycle: Opus 4.8 writes an implementation plan, Cursor reviews it adversarially, Opus revises based on the feedback, and the loop repeats until Cursor emits `PLAN_READY` or the round limit is hit.
+
+> This is the **planning** half. To implement an approved plan, hand it to the **build** half — see [`agent-build.md`](./agent-build.md) or run `aios build <plan-file>`. The two compose: `aios relay "task" branch --build --merge` plans, builds, and merges in one run.
 
 It is wired into the `aios` CLI (`scripts/relay.mjs`, exposed as `aios relay`). Run it through the CLI:
 
@@ -56,6 +58,16 @@ Options:
   --log <file>         Save the approved (or last) plan to a Markdown file.
   --cursor-timeout N   Seconds before killing a stalled Cursor call. Default: 300
   --dry-run            Print what git commands would run but do not execute them.
+  --build              After the plan is approved, hand it straight to the build
+                       phase to implement it on a worktree (see agent-build.md).
+  --build-rounds N     Max build/review cycles when --build is set. Default: 4
+```
+
+When `--build` is set, the approved plan is passed in-memory to `aios build` — no
+file round-trip. Pair with a `branch` and `--merge` for a full plan→build→merge run:
+
+```bash
+npm run aios -- relay "Add a --version flag to aios.mjs" feat/aios-version --build --merge --yes
 ```
 
 ### Examples
@@ -108,10 +120,10 @@ Max rounds: 3
 …
 ```
 
-When Cursor approves, the last line of its output is `MERGE_READY` exactly. What happens next depends on your flags:
+When Cursor approves, the last line of its output is `PLAN_READY` exactly. What happens next depends on your flags:
 
 ```
-✓ MERGE_READY received after round 2.
+✓ PLAN_READY received after round 2.
 
 # With a branch but no --merge (default):
 Plan approved. Review the diff before merging:
@@ -126,7 +138,7 @@ Re-run with --merge to have aios relay merge automatically.
 If the loop exhausts all rounds without approval:
 
 ```
-✗ Reached max rounds (3) without receiving MERGE_READY.
+✗ Reached max rounds (3) without receiving PLAN_READY.
 ```
 
 Exit code is `0` on approval, `1` on exhaustion or fatal error. With `--log`, the approved plan (or the last plan on exhaustion) is written to the given file so the work is never lost.
@@ -151,9 +163,9 @@ The skill is at `~/.cursor/skills/review-plan/SKILL.md`. It takes Opus's plan an
 1. Identifies issues scored `Blocker`, `Major`, or `Minor`
 2. Outputs a copy-paste `<prompt>` block instructing Opus exactly how to revise
 
-### Approval gate — when Cursor emits `MERGE_READY`
+### Approval gate — when Cursor emits `PLAN_READY`
 
-Cursor emits `MERGE_READY` (alone on the final line) only when the plan is ready to implement: no `Blocker`s, no approach-level `Major`s, all open questions answered in the plan, every verification step names a concrete command/fixture/file, all referenced files/APIs either exist or are created by a prior step, and no hand-waving on architecture, data contracts, auth, security, access tiers, or user-visible behaviour. On the final round, Cursor approves unless a `Blocker` remains. If any condition fails, Cursor issues another feedback `<prompt>` and the loop continues.
+Cursor emits `PLAN_READY` (alone on the final line) only when the plan is ready to implement: no `Blocker`s, no approach-level `Major`s, all open questions answered in the plan, every verification step names a concrete command/fixture/file, all referenced files/APIs either exist or are created by a prior step, and no hand-waving on architecture, data contracts, auth, security, access tiers, or user-visible behaviour. On the final round, Cursor approves unless a `Blocker` remains. If any condition fails, Cursor issues another feedback `<prompt>` and the loop continues.
 
 ---
 
@@ -209,6 +221,9 @@ npm run aios -- relay "Add a --version flag to aios.mjs" feat/test-relay --merge
 
 | File | Purpose |
 |---|---|
-| `scripts/relay.mjs` | The relay loop implementation (`cmdRelay`), exposed as `aios relay` |
+| `scripts/relay.mjs` | The plan loop implementation (`cmdRelay`), exposed as `aios relay` |
+| `scripts/relay-core.mjs` | Primitives shared by the plan and build phases (Cursor driver, git, tokens, `--log`) |
+| `scripts/build.mjs` | The build loop (`cmdBuild`/`runBuild`), exposed as `aios build` — see [`agent-build.md`](./agent-build.md) |
 | `scripts/agent-relay.mjs` | Deprecated shim that forwards to `aios relay` |
-| `~/.cursor/skills/review-plan/SKILL.md` | Cursor's review persona and approval criteria |
+| `~/.cursor/skills/review-plan/SKILL.md` | Cursor's plan-review persona; emits `PLAN_READY` |
+| `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona used by `aios build`; emits `MERGE_READY` |

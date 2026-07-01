@@ -32,6 +32,34 @@ The brain is the hub; each person's workspace is a spoke. A spoke only ever send
 content the person has explicitly tagged and pushed; the brain re-applies tier
 filtering on retrieval so a query never returns content above the caller's ceiling.
 
+## Access surfaces — how callers reach the brain
+
+The brain has **one contract** ([`brain-api.md`](brain-api.md) v1) and **two ways to
+reach it**, chosen by a single question: *does the calling agent have a shell?*
+
+| Caller | Surface | Why |
+|--------|---------|-----|
+| Shell-capable agents (Claude Code, Codex, OpenCode, cron, CI) | the **`aios` CLI** — *primary, canonical* | faster, cheaper, no per-turn tool-schema cost; it owns the contract and the tier default-deny |
+| Shell-less agents (Claude Desktop, Claude Cowork, Claude.ai, Conductor) | **`aios mcp`** — a stdio MCP server bridge | MCP is the only way an agent without a shell can call out; same contract, schema-described tools |
+
+The MCP bridge (`scripts/brain-mcp.mjs`) is intentionally **thin and read-only**: it
+wraps the v1 read endpoints (`query`, `projects`, `tasks`, `decisions`, `items`) and
+re-uses the brain's server-side tier filtering as its safety boundary. It requires no
+workspace — config is resolved env-first — so a Claude Desktop user with no scaffolded
+repo can still query the team's shared memory. It never drives the contract: capability
+lands in `brain-api.md` for product reasons, and both the CLI and the MCP bridge follow.
+
+> Don't confuse this with BYOA. The **MCP bridge** decides which *AI surfaces* can reach
+> the **brain**; the **runtime adapters** (`gui/server/runtime-adapters/`, `aios skills
+> export`) decide which *agent runtimes* can run the **local harness**. Different lever,
+> different layer. See the [MCP connector PRD](prd-team-brain-mcp-connector.md). <!-- maintainer-only:
+> the deeper rationale lives in strategy/team-brain-access-strategy.md, which is removed at public
+> release; this section is the release-safe summary, so don't add a hard link to it here. -->
+
+> **This section is the public, release-safe summary of the access doctrine.** The full strategy
+> brief (`strategy/team-brain-access-strategy.md`) is maintainer-only and is removed before public
+> release — link *here*, not there, from public docs.
+
 ## Context-driven spine
 
 At onboarding the individual answers one question — *consultant working in a team
@@ -82,3 +110,35 @@ git, and legible to an agent without any database. On top of that substrate, the
 **dynamic-workflow harnesses** in `scaffold/.claude/skills/` do the operational heavy
 lifting, spawning focused sub-agents with adversarial verification rather than asking
 one context to do everything. See `docs/workflows.md`.
+
+## Toolkit internals — module boundaries
+
+How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep them.
+
+- **One brain HTTP front door.** All traffic to the Team Brain v1 API goes through
+  `scripts/brain-client.mjs` (`createBrainClient` → `fetchJson`/`query`/`streamQuery`). Both the
+  CLI (`scripts/aios.mjs`) and the MCP bridge (`scripts/brain-mcp.mjs`) use it; config resolution
+  intentionally stays in each caller (the CLI walks the workspace, the bridge is env-first). Don't
+  add ad-hoc `fetch()` to the brain elsewhere.
+- **The sync gate is the safety boundary.** `buildPlan` in `scripts/aios.mjs` classifies every
+  candidate file into push / blocked / clean and is the single place the tier rules
+  (default-deny, admin-never-syncs, `sync_tiers`) are enforced before any network call. It is
+  guarded by `test/sync-plan.test.mjs` (drives the real `aios status --json` and asserts the
+  blocked outcomes). Tier normalization is single-sourced (`normalizeTier`).
+- **The GUI server is a thin local gateway.** `gui/server/` binds `127.0.0.1` only, gates on a
+  per-session token, and imports just catalog/connector/skill helpers from `scripts/` —
+  `runtimes.mjs`, `gen-catalog.mjs`, `connector.mjs` (via `index.mjs`) and the `lock-*` helpers
+  (via `gui/server/skill-library.mjs`). It holds no sync logic and never calls `brain-client` —
+  it stays a presentation/orchestration shell.
+- **Validators + hooks are fail-closed.** `validation/validate-all.sh` (`set -euo pipefail`) and
+  the PreToolUse `hooks/` exit non-zero on any violation; never weaken them to make a change pass.
+
+### Known debt (deferred, post-release)
+
+Recorded so it isn't mistaken for intent:
+
+- `scripts/aios.mjs` is a ~2.3k-line monolith (CLI routing + push/pull domain logic + state). A
+  later pass can extract `scripts/sync/` command modules without changing behavior.
+- Small helpers (`sha256`, `die`, color output, git wrappers) are duplicated across several
+  scripts; there is no shared `scripts/lib/` kernel yet (`relay-core.mjs` is the only current
+  consolidation point). Extracting a thin kernel is deferred to avoid pre-release churn.

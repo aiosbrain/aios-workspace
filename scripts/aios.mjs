@@ -28,20 +28,42 @@ import {
   readdirSync,
   statSync,
   cpSync,
+  renameSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import readline from "node:readline";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { listConnectors, getDescriptor, validateConnector, storeConnector } from "./connector.mjs";
-import { parseFlatYaml, stripQuotes } from "./flat-yaml.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  listConnectors,
+  getDescriptor,
+  validateConnector,
+  storeConnector,
+  vaultSet,
+  ensureGitignore,
+  startOAuth,
+  pollOAuthStatus,
+  postBrainToken,
+} from "./connector.mjs";
+import { parseFlatYaml } from "./flat-yaml.mjs";
+import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
+import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import {
+  parseFrontmatter,
+  normalizeTier,
+  classifyKind,
+  parseDecisionRows,
+} from "./workspace-parse.mjs";
+import { resolveLoopIdentity } from "./loop-config.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
+import { cmdBuild } from "./build.mjs";
+import { cmdReviewBugbot } from "./review-bugbot.mjs";
+import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const API_VERSION = "v1";
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
 
 // Embedded fallback if validation/secret-patterns.txt is unavailable
@@ -61,6 +83,7 @@ const c = {
   yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
   blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
 };
 
 function die(msg) {
@@ -97,24 +120,9 @@ function gitConfig(repo, key) {
 // parseFlatYaml + stripQuotes now live in ./flat-yaml.mjs (shared with the GUI
 // runtime-adapter config reader). Imported at the top of this file.
 
-// ── frontmatter ─────────────────────────────────────────────────────────────
-
-function parseFrontmatter(content) {
-  if (!content.startsWith("---")) return { frontmatter: null, body: content };
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return { frontmatter: null, body: content };
-  const fmText = content.slice(content.indexOf("\n") + 1, end);
-  const body = content.slice(content.indexOf("\n", end + 1) + 1);
-  return { frontmatter: parseFlatYaml(fmText), body };
-}
-
-function normalizeTier(tier) {
-  // Friendly labels → canonical engine values. `private` never syncs (= admin);
-  // outward tiers `client` (consultant) and `company` (employee) → external.
-  if (tier === "private") return "admin";
-  if (tier === "client" || tier === "company") return "external";
-  return tier;
-}
+// ── frontmatter / tiers ──────────────────────────────────────────────────────
+// parseFrontmatter + normalizeTier now live in ./workspace-parse.mjs (shared with the
+// operator-loop collector so tier normalization stays single-sourced). Imported above.
 
 // ── config + identity ───────────────────────────────────────────────────────
 
@@ -158,36 +166,34 @@ function loadOfflineConfig(repo) {
   // Brain config from env/.env so offline-capable commands that opt into the
   // network (e.g. `aios analyze --push`) work outside a stamped workspace — the
   // toolkit repo and ad-hoc dirs have no aios.yaml. Mirrors loadConfig's resolution.
-  const dotenv = loadDotEnv(repo);
   const keyEnv = "AIOS_API_KEY";
-  return {
+  const cfg = {
     project: projCfg.slug || slugify(path.basename(repo)),
     project_members: projCfg.members || [],
     sync_tiers: ["team", "external"],
     sync_include: [],
     sync_exclude: [],
-    brain_url: process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || "",
-    api_key: process.env[keyEnv] || dotenv[keyEnv] || "",
+    brain_url: "",
+    api_key: "",
     api_key_env: keyEnv,
-    team_id: process.env.AIOS_TEAM || dotenv.AIOS_TEAM || "",
+    team_id: "",
   };
+  return mergeBrainSecrets(cfg, repo);
 }
 
-function loadDotEnv(repo) {
-  const envPath = path.join(repo, ".env");
-  if (!existsSync(envPath)) return {};
-  const out = {};
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (!m) continue;
-    const val = stripQuotes(m[2].trim());
-    // Skip dotenvx ciphertext + its public key — these are decrypted into
-    // process.env at runtime by `dotenvx run` (see package.json scripts), which
-    // every caller checks first. Returning ciphertext here would be wrong.
-    if (m[1] === "DOTENV_PUBLIC_KEY" || val.startsWith("encrypted:")) continue;
-    out[m[1]] = val;
-  }
-  return out;
+/**
+ * Resolve brain URL + API key from process.env and .env files on the target
+ * workspace AND the aios-workspace toolkit root. Delegates to the shared
+ * resolveBrainConfig (./brain-config.mjs) so the CLI and the GUI server reach the
+ * brain the same way; the only CLI-specific bit is the cfg.brain_url fallback +
+ * cfg.api_key_env override.
+ */
+function mergeBrainSecrets(cfg, repo) {
+  const resolved = resolveBrainConfig(repo, { apiKeyEnv: cfg.api_key_env || "AIOS_API_KEY" });
+  cfg.brain_url = resolved.brain_url || (cfg.brain_url || "").trim();
+  cfg.api_key = resolved.api_key;
+  if (resolved.team_id) cfg.team_id = resolved.team_id;
+  return cfg;
 }
 
 function loadConfig(repo) {
@@ -205,10 +211,7 @@ function loadConfig(repo) {
   cfg.sync_include = cfg.sync_include || [];
   cfg.sync_exclude = cfg.sync_exclude || [];
 
-  const dotenv = loadDotEnv(repo);
-  cfg.brain_url = process.env.AIOS_BRAIN_URL || dotenv.AIOS_BRAIN_URL || cfg.brain_url || "";
-  const keyEnv = cfg.api_key_env || "AIOS_API_KEY";
-  cfg.api_key = process.env[keyEnv] || dotenv[keyEnv] || "";
+  mergeBrainSecrets(cfg, repo);
 
   // Project slug from project.yaml | engagement.yaml
   let projCfg = {};
@@ -225,9 +228,10 @@ function loadConfig(repo) {
 }
 
 function resolveMember(repo, cfg, dotenv) {
+  const toolkit = path.join(SCRIPT_DIR, "..");
+  const extra = path.resolve(toolkit) !== path.resolve(repo) ? loadDotEnv(toolkit) : {};
   const candidate =
-    process.env.AIOS_MEMBER ||
-    dotenv.AIOS_MEMBER ||
+    envGet("AIOS_MEMBER", dotenv, extra) ||
     cfg.member ||
     gitConfig(repo, "aios.member") ||
     slugify(gitConfig(repo, "user.name"));
@@ -298,93 +302,9 @@ function walkFiles(repo, cfg) {
   return [...new Set(files)].sort();
 }
 
-function classifyKind(rel, frontmatter) {
-  // Spine-agnostic: match by filename/role so new (3-log, 2-work) and legacy
-  // (03-status, 02-deliverables) spines both classify correctly.
-  const base = rel.split("/").pop();
-  if (base === "decision-log.md") return "decision";
-  if (base === "tasks.md") return "task";
-  if (frontmatter?.type === "transcript" || rel.includes("/transcripts/")) return "transcript";
-  if (/^(2-work|02-deliverables)[/\\]/.test(rel)) return "deliverable";
-  return "artifact";
-}
-
-// ── markdown table row parsers ──────────────────────────────────────────────
-
-function parseTableRows(body) {
-  const rows = [];
-  for (const line of body.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("|")) continue;
-    const cells = t
-      .split("|")
-      .slice(1, -1)
-      .map((x) => x.trim());
-    if (!cells.length) continue;
-    if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
-    rows.push(cells);
-  }
-  return rows;
-}
-
-function parseTaskRows(body) {
-  // | ID | Task | Assignee | Status | Sprint | Due | PM | PM URL |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("id") || !header.includes("task")) return [];
-  const idx = (name) => header.indexOf(name);
-  return rows
-    .slice(1)
-    .map((cells) => {
-      const rowKey = cells[idx("id")] || "";
-      const pm = idx("pm") >= 0 ? parsePmCell(cells[idx("pm")] || "", rowKey) : {};
-      return {
-      row_key: rowKey,
-      title: cells[idx("task")] || "",
-      assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
-      status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
-      sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
-      due: idx("due") >= 0 ? cells[idx("due")] || null : null,
-      ...pm,
-      pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
-      };
-    })
-    .filter((r) => r.row_key);
-}
-
-function parsePmCell(raw, rowKey) {
-  const value = raw.trim();
-  if (!value) return {};
-  const m = value.match(/^(plane|linear)(?::|\s+)?(.+)?$/i);
-  if (!m) return {};
-  return {
-    pm_provider: m[1].toLowerCase(),
-    pm_external_id: (m[2] || rowKey).trim(),
-  };
-}
-
-function parseDecisionRows(body) {
-  // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("decision")) return [];
-  const idx = (name) => header.findIndex((h) => h.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) => ({
-      row_key: cells[idx("#")] ?? cells[0] ?? "",
-      decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
-      title: cells[idx("decision")] || "",
-      rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-      decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-      impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-      tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
-      audience: idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
-    }))
-    .filter((r) => r.row_key);
-}
+// classifyKind + parseDecisionRows now live in ./workspace-parse.mjs (shared with the
+// operator-loop collector). Imported above. parseTableRows/parseTaskRows stay in
+// ./tasks-table.mjs.
 
 // ── state ───────────────────────────────────────────────────────────────────
 
@@ -475,29 +395,19 @@ function requireOnline(cfg) {
   }
 }
 
-async function api(cfg, method, route, body = null) {
-  const url = `${cfg.brain_url.replace(/\/$/, "")}/api/${API_VERSION}${route}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${cfg.api_key}`,
-      "X-AIOS-Team": cfg.team_id || "",
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
+// Resolved-config → shared brain client. Config resolution stays here (workspace-
+// walking, see loadConfig); only the authed-request/SSE layer is shared with the
+// MCP server via scripts/brain-client.mjs.
+function brainClient(cfg) {
+  return createBrainClient({
+    brain_url: cfg.brain_url,
+    api_key: cfg.api_key,
+    team_id: cfg.team_id,
   });
-  const text = await res.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text };
-  }
-  if (!res.ok) {
-    const msg = json?.error?.message || text.slice(0, 200);
-    throw new Error(`${res.status} ${json?.error?.code || ""}: ${msg}`);
-  }
-  return json;
+}
+
+async function api(cfg, method, route, body = null) {
+  return brainClient(cfg).fetchJson(method, route, body);
 }
 
 // GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
@@ -587,6 +497,179 @@ function cmdStatus(repo, cfg, patterns, args = []) {
   }
 }
 
+// Best-effort: open a URL in the user's default browser. Returns false (caller prints the
+// URL) if the platform opener isn't available.
+function openUrl(u) {
+  const cmd =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    execFileSync(cmd, [u], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// One-click OAuth connect: ask the brain for an authorize_url, open the browser, poll until
+// the brain has the token, then install the skill. The token never touches this machine.
+// On timeout/denial (or `--token`), falls back to a manual paste POSTed straight to the brain.
+async function oauthConnectFlow(repo, d, { ask, tokenFlag } = {}) {
+  const cfg = resolveBrainConfig(repo);
+  console.log(c.blue(`\nConnect ${d.name}`));
+  if (!cfg.brain_url || !cfg.api_key) {
+    console.log(
+      c.red(
+        "  no brain connection — set brain_url in aios.yaml (or AIOS_BRAIN_URL) and your API key (run `aios onboard`)."
+      )
+    );
+    return false;
+  }
+  if (d.scopes?.length) console.log(c.dim(`  scopes: ${d.scopes.join(" · ")}`));
+
+  // Manual token provided up front (--token xoxp-…) → skip the browser dance.
+  if (tokenFlag) return storeOAuthToken(repo, d, cfg, tokenFlag);
+
+  let authorizeUrl;
+  try {
+    ({ authorize_url: authorizeUrl } = await startOAuth(d, cfg));
+  } catch (e) {
+    console.log(c.red(`  couldn't start sign-in: ${e.message}`));
+    return false;
+  }
+  console.log("  opening your browser to authorize…");
+  if (!openUrl(authorizeUrl))
+    console.log(c.dim(`  open this URL to authorize:\n  ${authorizeUrl}`));
+
+  process.stdout.write(c.dim("  waiting for you to finish in the browser… "));
+  let status;
+  try {
+    status = await pollOAuthStatus(d, cfg, { onTick: () => process.stdout.write(c.dim(".")) });
+  } catch (e) {
+    console.log("");
+    if (e.code !== "oauth_timeout") {
+      console.log(c.red(`  sign-in failed: ${e.message}`));
+      return false;
+    }
+    console.log(c.yellow("  timed out waiting for authorization."));
+    const ownRl = ask
+      ? null
+      : readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask_ = ask || ((q) => new Promise((res) => ownRl.question(q, res)));
+    const token = (
+      await ask_("  paste a Slack user token (xoxp-…), or press Enter to skip: ")
+    ).trim();
+    if (ownRl) ownRl.close();
+    if (!token) {
+      console.log(c.red(`  ${d.name} not connected.`));
+      return false;
+    }
+    return storeOAuthToken(repo, d, cfg, token);
+  }
+  console.log("");
+  return finishOAuth(repo, d, status);
+}
+
+// Manual fallback: send a pasted token straight to the brain, then install the skill.
+async function storeOAuthToken(repo, d, cfg, token) {
+  let res;
+  try {
+    res = await postBrainToken(d, cfg, token);
+  } catch (e) {
+    console.log(c.red(`  ${d.name} not connected: ${e.message}`));
+    return false;
+  }
+  return finishOAuth(repo, d, {
+    slack_user_id: res.slack_user_id,
+    workspace: res.workspace,
+  });
+}
+
+// Install the skill artifact + flip status, print the confident "connected as … in …".
+function finishOAuth(repo, d, status) {
+  try {
+    storeConnector(repo, d, {}); // no secret to vault — the token lives in the brain
+  } catch (e) {
+    console.log(
+      c.yellow(`\n⚠ Authorized in the team brain, but skill install failed: ${e.message}`)
+    );
+    console.log(c.dim("  retry: aios connect slack-personal"));
+    return false;
+  }
+  const who = status.slack_user_id ? ` as ${status.slack_user_id}` : "";
+  const where = status.workspace ? ` in ${status.workspace}` : "";
+  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
+  console.log(
+    c.dim(
+      `  token stored in the team brain (not on this machine) · skill installed → .claude/skills/${d.skill.skill_name}/`
+    )
+  );
+  return true;
+}
+
+// Connect one already-resolved descriptor: print guidance → collect secrets → validate
+// live → store. Returns true on success, false on a skipped/failed attempt (callers decide
+// how to signal that). Pass `ask` to share one readline across several connects (onboard);
+// omit it and connectFlow opens+closes its own for a single standalone connect.
+async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
+  // OAuth connectors take a separate one-click path (browser → brain), not local secrets.
+  if (d.auth_mode === "oauth") return oauthConnectFlow(repo, d, { ask, tokenFlag });
+
+  const required = (d.secrets || []).filter((s) => s.required !== false);
+
+  // print connect guidance (the "exact URL + scopes" moment)
+  console.log(c.blue(`\nConnect ${d.name}`));
+  if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
+  if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
+  if (d.scopes?.length)
+    console.log(
+      c.dim(
+        `  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`
+      )
+    );
+  console.log("");
+
+  const ownRl = ask
+    ? null
+    : readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask_ = ask || ((q) => new Promise((res) => ownRl.question(q, res)));
+  const values = {};
+  for (const s of required) {
+    if (sets[s.env] != null) values[s.env] = sets[s.env];
+    else if (tokenFlag && s === required[0]) values[s.env] = tokenFlag;
+    else values[s.env] = (await ask_(`  ${s.label} (${s.env}): `)).trim();
+  }
+  if (ownRl) ownRl.close();
+  if (required.some((s) => !values[s.env])) {
+    console.log(c.red("  missing required value(s) — skipped."));
+    return false;
+  }
+
+  // validate live
+  process.stdout.write(c.dim("  validating… "));
+  const result = await validateConnector(d, values);
+  console.log("");
+  for (const ch of result.checks)
+    console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
+  if (!result.ok) {
+    console.log(c.red(`\n${d.name} not connected (${result.error}).`));
+    if (d.docs?.token_create_url)
+      console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
+    return false;
+  }
+
+  // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
+  const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
+  const who = result.identity?.value ? ` as ${result.identity.value}` : "";
+  const where = result.instance?.value ? ` in ${result.instance.value}` : "";
+  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
+  console.log(
+    c.dim(
+      `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
+    )
+  );
+  return true;
+}
+
 // aios connect [<id>] — guided connect→validate→store for an integration (headless engine).
 async function cmdConnect(repo, args) {
   const id = args.find((a) => !a.startsWith("--"));
@@ -616,55 +699,92 @@ async function cmdConnect(repo, args) {
       sets[k] = v.join("=");
     }
   const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
-  const required = (d.secrets || []).filter((s) => s.required !== false);
 
-  // print connect guidance (the "exact URL + scopes" moment)
-  console.log(c.blue(`\nConnect ${d.name}`));
-  if (d.docs?.token_create_url) console.log(`  create a key:  ${d.docs.token_create_url}`);
-  if (d.docs?.instructions) console.log(c.dim(`  ${d.docs.instructions}`));
-  if (d.scopes?.length)
+  const ok = await connectFlow(repo, d, { sets, tokenFlag });
+  if (!ok) process.exitCode = 1;
+}
+
+// aios onboard — guided first-run setup: connect Firecrawl (so the GUI's "draft from a
+// link" works), the Team Brain key, and any other tools the workspace knows about. Every
+// step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints the
+// same guidance and exits 0 so it never blocks.
+async function cmdOnboard(repo, _args) {
+  const connectors = listConnectors(repo);
+  const isWired = (id) => connectors.find((conn) => conn.id === id)?.status === "wired";
+
+  if (!process.stdin.isTTY) {
+    console.log(c.blue("AIOS onboarding"));
+    console.log("  Run these from an interactive terminal:");
+    console.log(c.dim("    aios onboard              # guided setup (Firecrawl, brain, tools)"));
+    console.log(c.dim("    aios connect firecrawl    # read a link to draft your profile"));
+    console.log(c.dim("    aios connect <id>         # any other tool"));
     console.log(
       c.dim(
-        `  scopes: ${d.scopes.join(" · ")}${d.scopes_advisory ? " (set these on the key)" : ""}`
+        "  Brain: set AIOS_API_KEY in .env, fill brain_url + team_id in aios.yaml, then: aios status"
       )
     );
-  console.log("");
-
-  const values = {};
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise((res) => rl.question(q, res));
-  for (const s of required) {
-    if (sets[s.env] != null) values[s.env] = sets[s.env];
-    else if (tokenFlag && s === required[0]) values[s.env] = tokenFlag;
-    else values[s.env] = (await ask(`  ${s.label} (${s.env}): `)).trim();
-  }
-  rl.close();
-  if (required.some((s) => !values[s.env])) die("missing required value(s)");
-
-  // validate live
-  process.stdout.write(c.dim("  validating… "));
-  const result = await validateConnector(d, values);
-  console.log("");
-  for (const ch of result.checks)
-    console.log(`  ${ch.ok ? c.green("✓") : c.red("✗")} ${ch.name} ${c.dim("— " + ch.detail)}`);
-  if (!result.ok) {
-    console.log(c.red(`\n${d.name} not connected (${result.error}).`));
-    if (d.docs?.token_create_url)
-      console.log(c.dim(`  fix: create a fresh key at ${d.docs.token_create_url}`));
-    process.exitCode = 1;
     return;
   }
 
-  // store (encrypt + write artifact + flip status); include any captured values (e.g. team id)
-  const stored = storeConnector(repo, d, { ...values, ...(result.captured || {}) });
-  const who = result.identity?.value ? ` as ${result.identity.value}` : "";
-  const where = result.instance?.value ? ` in ${result.instance.value}` : "";
-  console.log(c.green(`\n✓ Connected to ${d.name}${who}${where}.`));
-  console.log(
-    c.dim(
-      `  secret encrypted in .env (dotenvx) · ${stored.transport === "mcp" ? "MCP server added to .mcp.json" : `skill installed → .claude/skills/${d.skill.skill_name}/`}`
-    )
-  );
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  const yes = async (q) => /^y(es)?$/i.test((await ask(q)).trim());
+
+  console.log(c.blue("\nWelcome to AIOS. Let's connect a few things — every step is optional.\n"));
+
+  // 1) Firecrawl — powers "draft from a link" in the GUI.
+  try {
+    if (isWired("firecrawl")) {
+      console.log(c.green("✓ Firecrawl already connected."));
+    } else if (await yes("Connect Firecrawl, so you can draft your profile from a link? [y/N] ")) {
+      await connectFlow(repo, getDescriptor(repo, "firecrawl"), { ask });
+    }
+  } catch (e) {
+    console.log(c.dim(`  (skipping Firecrawl — ${e.message})`));
+  }
+
+  // 2) Team Brain — store the API key so push/pull/status work (same dotenvx vault).
+  console.log("");
+  if (await yes("Connect the Team Brain now (set AIOS_API_KEY)? [y/N] ")) {
+    const key = (await ask("  AIOS_API_KEY: ")).trim();
+    if (!key) {
+      console.log(c.dim("  (no key entered — skipped)"));
+    } else {
+      try {
+        vaultSet(repo, "AIOS_API_KEY", key);
+        ensureGitignore(repo);
+        console.log(c.green("  ✓ AIOS_API_KEY encrypted into .env (dotenvx)"));
+        console.log(c.dim("    confirm brain_url + team_id in aios.yaml, then run: aios status"));
+      } catch (e) {
+        console.log(c.red(`  could not store the key (${e.message}).`));
+        console.log(
+          c.dim("    install dotenvx, or run: aios connect <a tool> to bootstrap the vault.")
+        );
+      }
+    }
+  }
+
+  // 3) Any other tools the workspace knows about.
+  const others = connectors.filter((conn) => conn.id !== "firecrawl" && conn.status !== "wired");
+  if (others.length) {
+    console.log("");
+    if (await yes(`Connect any other tools (${others.map((o) => o.id).join(", ")})? [y/N] `)) {
+      for (const conn of others) {
+        if (await yes(`  Connect ${conn.id}? [y/N] `)) {
+          try {
+            await connectFlow(repo, getDescriptor(repo, conn.id), { ask });
+          } catch (e) {
+            console.log(c.dim(`    (skipping ${conn.id} — ${e.message})`));
+          }
+        }
+      }
+    }
+  }
+
+  rl.close();
+  console.log(c.green("\n✓ You're set."));
+  console.log(c.dim("  Start the workspace GUI:  npm run gui -- --repo ."));
+  console.log(c.dim("  Re-run anytime:           aios onboard"));
 }
 
 // aios review — interactive review-and-push panel for the terminal.
@@ -902,21 +1022,12 @@ async function cmdPull(repo, cfg, args = []) {
   const tasksPath = existsSync(path.join(repo, "3-log", "tasks.md"))
     ? path.join(repo, "3-log", "tasks.md")
     : path.join(repo, "03-status", "tasks.md");
-  if (existsSync(tasksPath) && (tasksRes.tasks || []).length) {
-    let content = readFileSync(tasksPath, "utf8");
-    for (const group of tasksRes.tasks) {
-      if (group.project !== cfg.project) continue;
-      for (const row of group.rows || []) {
-        const line = `| ${row.row_key} | ${row.title} | ${row.assignee || ""} | ${row.status} | ${row.sprint || ""} | ${row.due || ""} |`;
-        const re = new RegExp(
-          `^\\|\\s*${row.row_key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\|.*$`,
-          "m"
-        );
-        if (re.test(content)) content = content.replace(re, line);
-        else content = content.trimEnd() + "\n" + line + "\n";
-        merged++;
-      }
-    }
+  const incomingTaskRows = (tasksRes.tasks || [])
+    .filter((g) => g.project === cfg.project)
+    .flatMap((g) => g.rows || []);
+  if (existsSync(tasksPath) && incomingTaskRows.length) {
+    let content = mergeTaskWriteback(readFileSync(tasksPath, "utf8"), incomingTaskRows);
+    merged += incomingTaskRows.length;
     writeFileSync(tasksPath, content);
   }
 
@@ -1306,44 +1417,17 @@ async function cmdQuery(repo, cfg, args) {
   if (!question) die('usage: aios query "your question"');
   requireOnline(cfg);
 
-  const url = `${cfg.brain_url.replace(/\/$/, "")}/api/${API_VERSION}/query`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.api_key}`,
-      "X-AIOS-Team": cfg.team_id || "",
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify({ question }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    die(`query failed: ${res.status} ${text.slice(0, 200)}`);
-  }
-
-  // SSE stream: delta / sources / done
-  const decoder = new TextDecoder();
-  let buffer = "";
+  // SSE stream: delta / sources / done. The shared client owns the request,
+  // error mapping, and robust event-block parsing; we keep the CLI's live
+  // side effects (stream deltas to stdout, print the done cost line) in handlers.
   let sources = [];
-  for await (const chunk of res.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      const event = (block.match(/^event:\s*(.*)$/m) || [])[1] || "message";
-      const dataLine = (block.match(/^data:\s*(.*)$/m) || [])[1];
-      if (!dataLine) continue;
-      let data;
-      try {
-        data = JSON.parse(dataLine);
-      } catch {
-        continue;
-      }
-      if (event === "delta") process.stdout.write(data.text || "");
-      else if (event === "sources") sources = data.sources || [];
-      else if (event === "done") {
+  try {
+    await brainClient(cfg).streamQuery(question, null, {
+      onDelta: (text) => process.stdout.write(text || ""),
+      onSources: (s) => {
+        sources = s || [];
+      },
+      onDone: (data) => {
         process.stdout.write("\n");
         if (typeof data.cost_usd === "number")
           console.log(
@@ -1351,8 +1435,10 @@ async function cmdQuery(repo, cfg, args) {
               `(${data.input_tokens} in / ${data.output_tokens} out · $${data.cost_usd.toFixed(4)})`
             )
           );
-      }
-    }
+      },
+    });
+  } catch (e) {
+    die(`query failed: ${e?.message ?? e}`);
   }
   if (sources.length) {
     console.log("");
@@ -2084,7 +2170,10 @@ function tasksFile(repo) {
 }
 
 function rowCells(line) {
-  return line.split("|").slice(1, -1).map((x) => x.trim());
+  return line
+    .split("|")
+    .slice(1, -1)
+    .map((x) => x.trim());
 }
 
 function renderRow(cells) {
@@ -2146,10 +2235,14 @@ async function postWorkEvent(repo, cfg, key, actor) {
       work_keys: [key],
       actor,
     });
-    console.log(`  ${c.green("✓")} PM sync event ${c.dim(`${res.applied?.length ?? 0} applied, ${res.unresolved?.length ?? 0} unresolved`)}`);
+    console.log(
+      `  ${c.green("✓")} PM sync event ${c.dim(`${res.applied?.length ?? 0} applied, ${res.unresolved?.length ?? 0} unresolved`)}`
+    );
   } catch (e) {
     if (String(e.message).startsWith("404")) {
-      console.log(c.dim("work-events endpoint not available on this Team Brain; task push succeeded."));
+      console.log(
+        c.dim("work-events endpoint not available on this Team Brain; task push succeeded.")
+      );
       return;
     }
     throw e;
@@ -2174,6 +2267,1143 @@ async function cmdWork(repo, cfg, patterns, args) {
   await postWorkEvent(repo, cfg, key, member);
 }
 
+// ── operator loop (C1 collector + manifest, C2 evidence ledger) ──────────────
+// The collector is TypeScript (workflow layer, per the Engineering Constitution), compiled
+// to dist/operator-loop. Imported dynamically ONLY here so no other command depends on the
+// build; if it's not built, fail with a clear hint instead of a module-not-found stack.
+
+async function loadOperatorLoop() {
+  const distPath = path.join(SCRIPT_DIR, "..", "dist", "operator-loop", "index.js");
+  if (!existsSync(distPath)) {
+    die("operator-loop is not built — run: npm run build:loop");
+  }
+  return import(pathToFileURL(distPath).href);
+}
+
+const LOOP_TIERS = ["admin", "team", "external"];
+
+// Read + parse a JSON file for `aios loop verify`, failing loud with a precise message rather
+// than a module-not-found / SyntaxError stack. CLI inputs are a user-visible contract.
+function parseJsonFile(p) {
+  if (!existsSync(p)) die(`file not found: ${p}`);
+  let raw;
+  try {
+    raw = readFileSync(p, "utf8");
+  } catch (e) {
+    die(`cannot read ${p}: ${e.message}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    die(`invalid JSON in ${p}: ${e.message}`);
+  }
+}
+
+// Lightweight runtime shape checks before handing JSON to the typed verifier. An empty
+// evidence array is intentionally allowed through — the verifier reports it as an ungrounded
+// must-fail (V1), which is the behavior under test, not a CLI usage error.
+function validateManifestShape(m) {
+  if (!m || typeof m !== "object" || Array.isArray(m)) die("manifest: expected a JSON object");
+  if (!Array.isArray(m.signals)) die("manifest: missing signals[] array");
+  if (!m.window || typeof m.window !== "object") die("manifest: missing window object");
+  // Each signal carries the evidence ref the verifier indexes — validate it so a malformed ref
+  // becomes a clear CLI error, not a TypeError deep in the verifier's manifest indexing.
+  m.signals.forEach((s, i) => {
+    if (!s || typeof s !== "object") die(`manifest.signals[${i}]: expected an object`);
+    // The top-level `tier` is the field C5's projection trusts as the egress gate — validate it
+    // (not just ref.tier) so a hand-edited --manifest with a bogus signal tier is a clear error.
+    if (!LOOP_TIERS.includes(s.tier))
+      die(`manifest.signals[${i}].tier must be admin|team|external`);
+    const ref = s.ref;
+    if (!ref || typeof ref.path !== "string")
+      die(`manifest.signals[${i}].ref: path must be a string`);
+    if (!LOOP_TIERS.includes(ref.tier))
+      die(`manifest.signals[${i}].ref: tier must be admin|team|external`);
+    if (ref.row !== undefined && typeof ref.row !== "string")
+      die(`manifest.signals[${i}].ref: row must be a string when present`);
+  });
+  return m;
+}
+
+function validateLedgerShape(l) {
+  if (!l || typeof l !== "object" || Array.isArray(l)) die("ledger: expected a JSON object");
+  if (!Array.isArray(l.entries)) die("ledger: missing entries[] array");
+  l.entries.forEach((e, i) => {
+    if (!e || typeof e !== "object") die(`ledger.entries[${i}]: expected an object`);
+    if (typeof e.claim !== "string") die(`ledger.entries[${i}]: claim must be a string`);
+    if (!Array.isArray(e.evidence)) die(`ledger.entries[${i}]: evidence must be an array`);
+    e.evidence.forEach((r, j) => {
+      if (!r || typeof r.path !== "string")
+        die(`ledger.entries[${i}].evidence[${j}]: path must be a string`);
+      if (!LOOP_TIERS.includes(r.tier))
+        die(`ledger.entries[${i}].evidence[${j}]: tier must be admin|team|external`);
+      if (r.row !== undefined && typeof r.row !== "string")
+        die(`ledger.entries[${i}].evidence[${j}]: row must be a string when present`);
+    });
+  });
+  return l;
+}
+
+// A clearly-labeled DEBUG ledger: one grounded claim per manifest signal (each claim's evidence
+// is exactly that signal's ref). This is NOT a digest drafter — it exists only to demonstrate the
+// verifier contract end-to-end before C5 exists. Output still flows through the tier-safe path.
+function smokeLedgerFrom(manifest) {
+  return {
+    entries: manifest.signals.map((s) => ({
+      claim: s.summary || `${s.kind} signal`,
+      evidence: [{ path: s.ref.path, row: s.ref.row, tier: s.ref.tier }],
+    })),
+  };
+}
+
+// Audience-safe serialization of a C6 writeback plan: whitelisted fields only (paths repo-relative,
+// never file content, never the admin brief body). A final leak sweep on the serialized string is a
+// belt-and-suspenders guard — if it ever trips, we refuse to emit rather than risk a leak.
+function jsonWriteback(plan, targets, manifest, loop) {
+  const payload = {
+    stamp: plan.stamp,
+    targets,
+    files: plan.fileWrites.map((f) => ({
+      id: f.id,
+      tier: f.tier,
+      destRel: f.destRel,
+      syncable: f.syncable,
+    })),
+    taskRows: plan.taskWrite
+      ? plan.taskWrite.rows.map((r) => ({ row_key: r.row_key, title: r.title }))
+      : [],
+    skips: plan.skips,
+    tierSafetyWithheld: plan.tierSafetyWithheld,
+  };
+  const json = JSON.stringify(payload, null, 2);
+  if (manifest) {
+    // Belt-and-suspenders: the serialized payload must carry no above-audience string.
+    const hits = loop.sweepForLeaks(json, loop.aboveAudienceStrings(manifest, "external"));
+    if (hits.length) {
+      console.error("writeback --json: refusing to emit — payload tripped the leak sweep");
+      process.exit(2);
+    }
+  } else if (payload.taskRows.length > 0 || payload.files.some((f) => f.syncable)) {
+    // No manifest ⇒ no leak corpus to sweep against. Syncable content must already have been
+    // withheld (fail-closed); if any survived into the payload, refuse rather than emit it unswept.
+    console.error("writeback --json: refusing to emit syncable content without a leak backstop");
+    process.exit(2);
+  }
+  return json;
+}
+
+// Human render of a C4 DailyOrientation — three sections, one screen, seconds to read. The
+// machine surface is `--json` (the full orientation); this is the terse owner-local view.
+function renderDaily(o) {
+  const today = o.generatedAt.slice(0, 10);
+  const marker = o.audience === "owner" ? "owner-private · local only" : `view: ${o.audience}`;
+  const printExcludedHint = () => {
+    if (!o.counts.excluded) return;
+    console.log("");
+    console.log(
+      c.dim(
+        `  ${o.counts.excluded} excluded (default-deny) — run \`aios loop manifest --explain --daily\` to inspect`
+      )
+    );
+  };
+  // "Ran (agent runtime)" — aggregate { tag, durationMin } only; safe at any audience (AIO-139).
+  const renderRan = () => {
+    if (!o.ranByTag?.length) return;
+    const h = (m) => `${(m / 60).toFixed(1)}h`;
+    const total = o.ranByTag.reduce((a, t) => a + t.durationMin, 0);
+    console.log("");
+    console.log(c.bold(`Ran (agent runtime · ${h(total)})`));
+    for (const t of o.ranByTag)
+      console.log(`  • ${c.dim(String(t.tag).padEnd(14))} ${h(t.durationMin)}`);
+  };
+
+  console.log(
+    c.blue("aios loop daily") +
+      c.dim(`  window ${o.window.from.slice(0, 10)} → ${o.window.to.slice(0, 10)}`) +
+      c.dim(`     ${marker}`)
+  );
+
+  if (o.counts.changed === 0 && o.counts.blocked === 0 && o.counts.owedToday === 0) {
+    console.log("");
+    console.log(
+      `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
+    );
+    console.log(
+      c.green(
+        o.counts.excluded
+          ? "No classifiable daily items. ✓"
+          : "Nothing carried over. You're clear. ✓"
+      )
+    );
+    renderRan();
+    printExcludedHint();
+    return;
+  }
+
+  const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  const refLabel = (it) => (it.ref.row ? `${it.ref.path}#${it.ref.row}` : it.ref.path);
+  const annot = (it) => {
+    if (it.stale != null) return c.dim(`  (stale ${it.stale}d)`);
+    if (it.due) {
+      const dd = String(it.due).slice(0, 10);
+      return c.dim(`  (due ${dd === today ? "today" : it.due})`);
+    }
+    return "";
+  };
+  const section = (title, items, total) => {
+    console.log("");
+    console.log(c.bold(`${title} (${total})`));
+    for (const it of items) {
+      console.log(
+        `  • ${c.dim(String(it.kind).padEnd(11))} ${truncate(it.summary, 60)}${annot(it)}   ${c.dim(
+          refLabel(it)
+        )}`
+      );
+    }
+    if (total > items.length) console.log(c.dim(`  +${total - items.length} more`));
+  };
+
+  section("Changed", o.changed, o.counts.changed);
+  section("Blocked", o.blocked, o.counts.blocked);
+  section("Owed today", o.owedToday, o.counts.owedToday);
+  renderRan();
+  printExcludedHint();
+}
+
+// C8 — the local dogfood dashboard. Owner-only (admin-tier operational data). Tier-leak first
+// (the product-ending metric), then a data-quality banner if the ledger has unreadable lines.
+function renderTelemetry(m) {
+  const badge = (met) =>
+    met === true ? c.green("MET") : met === false ? c.red("NOT MET") : c.yellow("N/A ");
+  const showVal = (mr) =>
+    mr.value === null
+      ? "—"
+      : mr.unit === "rate"
+        ? `${Math.round(mr.value * 100)}%`
+        : `${mr.value} ${mr.unit}`;
+  const line = (mr) =>
+    console.log(
+      `  ${badge(mr.met)}  ${mr.label}: ${showVal(mr)} ` +
+        c.dim(`(target ${mr.threshold}, n=${mr.sampleSize}${mr.note ? "; " + mr.note : ""})`)
+    );
+
+  const w = m.window;
+  console.log(
+    c.blue("aios loop telemetry") +
+      c.dim(
+        `  window ${w.days === null ? "all" : w.days + "d"} · ${w.from.slice(0, 10)} → ${w.to.slice(0, 10)}`
+      )
+  );
+
+  // Tier-leak FIRST — the one that's product-ending.
+  const leak = m.tierLeakCount;
+  const leakBadge =
+    leak.met === true ? c.green("CLEAN") : leak.met === false ? c.red("LEAK ") : c.yellow("?????");
+  console.log(
+    `  ${leakBadge}  ${leak.label}: ${leak.value === null ? "—" : leak.value} ` +
+      c.dim(`(target == 0, n=${leak.sampleSize}${leak.note ? "; " + leak.note : ""})`)
+  );
+
+  const dq = m.breakdown.dataQuality;
+  const badLines = dq.corruptLines + dq.unknownVersionLines + dq.missingFieldLines;
+  if (badLines > 0)
+    console.log(
+      c.yellow(
+        `  ⚠ data quality: ${badLines} unreadable line(s) — ${dq.corruptLines} corrupt, ` +
+          `${dq.unknownVersionLines} unknown-version, ${dq.missingFieldLines} missing-fields; ` +
+          `${dq.unattributableGaps} unattributable, ${dq.degradedRunIds.length} degraded run(s)`
+      )
+    );
+
+  line(m.weeklyWallClock);
+  line(m.verifierShippableRate);
+  line(m.nextWeekActionAcceptance);
+  line(m.dailyRunFrequency);
+  line(m.consecutiveCleanWeeklies);
+
+  const b = m.breakdown;
+  console.log(
+    c.dim(
+      `  runs: ${b.weeklyRuns} weekly, ${b.dailyRuns} daily · verifier ` +
+        `${b.verifier.pass}✓/${b.verifier.corrected}~/${b.verifier.failed}✗ · leak-withheld ${b.leakWithheldTotal}`
+    )
+  );
+  for (const wn of m.warnings)
+    if (wn.phase === "semantic")
+      console.log(
+        c.yellow(
+          `  ⚠ ${wn.reason}${wn.runId ? " " + wn.runId : ""}${wn.detail ? ": " + wn.detail : ""}`
+        )
+      );
+}
+
+async function cmdLoop(repo, cfg, args) {
+  const sub = args[0];
+  const flags = new Set(args.slice(1));
+  const loop = await loadOperatorLoop();
+  // Identity resolved via the shared helper so CLI + MCP stamp identical member/project.
+  const { member, project } = resolveLoopIdentity(repo);
+
+  if (sub === "collect") {
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const manifest = loop.collect({ root: repo, cadence, member, project });
+
+    // Manifests carry admin-tier signals → write to .aios/loop (outside sync_include; never pushed).
+    const dir = path.join(repo, ".aios", "loop", "manifests");
+    mkdirSync(dir, { recursive: true });
+    const stamp = manifest.generatedAt.replace(/[:.]/g, "-");
+    const out = path.join(dir, `${cadence}-${stamp}.json`);
+    writeFileSync(out, JSON.stringify(manifest, null, 2));
+
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(manifest, null, 2));
+      return;
+    }
+    const byKind = {};
+    for (const s of manifest.signals) byKind[s.kind] = (byKind[s.kind] || 0) + 1;
+    const kinds =
+      Object.entries(byKind)
+        .map(([k, n]) => `${k}:${n}`)
+        .join("  ") || "(none)";
+    console.log(
+      c.blue(`aios loop ${cadence}`) +
+        c.dim(`  window ${manifest.window.from.slice(0, 10)} → ${manifest.window.to.slice(0, 10)}`)
+    );
+    console.log(`  signals: ${manifest.signals.length}   ${kinds}`);
+    if (manifest.excluded.length) {
+      console.log(c.yellow(`  excluded (default-deny): ${manifest.excluded.length}`));
+      for (const e of manifest.excluded.slice(0, 10))
+        console.log(c.dim(`    - ${e.ref} — ${e.reason}`));
+    }
+    console.log(c.dim(`  manifest → ${path.relative(repo, out)}`));
+    return;
+  }
+
+  if (sub === "manifest") {
+    if (!flags.has("--explain"))
+      die("usage: aios loop manifest --explain [--as team|external] [--daily]");
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const asIdx = args.indexOf("--as");
+    const audience = asIdx >= 0 ? args[asIdx + 1] : "owner";
+    if (!["owner", "team", "external"].includes(audience)) die(`--as must be owner|team|external`);
+    const manifest = loop.collect({ root: repo, cadence, member, project });
+    const view = loop.explainManifest(manifest, audience);
+    console.log(
+      c.blue(`evidence — ${cadence}, audience: ${audience}`) +
+        c.dim(`  (${view.lines.length} signals)`)
+    );
+    // Owner view (default) shows every line in full. When simulating a digest audience
+    // (--as team|external), a line the audience may NOT see is redacted to kind + tier only —
+    // its ref (path/row) and summary are suppressed so the simulation itself doesn't leak.
+    const ownerView = audience === "owner";
+    for (const line of view.lines) {
+      if (!ownerView && !line.visibleToAudience) {
+        console.log(`  [${c.yellow("withheld")}] ${c.bold(line.kind)} (${line.tier})`);
+        continue;
+      }
+      const mark = line.visibleToAudience ? c.green("shown") : c.yellow("withheld");
+      const wh = line.withheldFrom.length
+        ? c.dim(` · withheld from: ${line.withheldFrom.join(",")}`)
+        : "";
+      console.log(`  [${mark}] ${c.bold(line.kind)} (${line.tier}) ${line.ref}${wh}`);
+      console.log(c.dim(`        ${line.summary}`));
+    }
+    if (view.excluded.length)
+      console.log(c.yellow(`  excluded (default-deny): ${view.excluded.length}`));
+    return;
+  }
+
+  if (sub === "verify") {
+    // Cadence drives the correction budget + status semantics, so reject a conflicting pair
+    // rather than silently picking one.
+    if (flags.has("--daily") && flags.has("--weekly"))
+      die("--daily and --weekly are mutually exclusive");
+    const cadence = flags.has("--daily") ? "daily" : "weekly";
+    const asIdx = args.indexOf("--as");
+    const audience = asIdx >= 0 ? args[asIdx + 1] : "team";
+    if (!["owner", "team", "external"].includes(audience)) die("--as must be owner|team|external");
+    const asJson = flags.has("--json");
+
+    const manIdx = args.indexOf("--manifest");
+    const ledIdx = args.indexOf("--ledger");
+    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+    const ledgerPath = ledIdx >= 0 ? args[ledIdx + 1] : null;
+
+    let manifest;
+    let ledger;
+    if (flags.has("--smoke")) {
+      manifest = manifestPath
+        ? validateManifestShape(parseJsonFile(manifestPath))
+        : loop.collect({ root: repo, cadence, member, project });
+      ledger = smokeLedgerFrom(manifest);
+      if (!asJson)
+        console.log(c.dim("# smoke ledger (debug, not a drafter) — one grounded claim per signal"));
+    } else {
+      if (!ledgerPath)
+        die(
+          "usage: aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--daily|--weekly] [--json]\n" +
+            "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]"
+        );
+      // A ledger's refs only resolve against the run it was drafted from — require the pair.
+      if (!manifestPath)
+        die(
+          "--ledger requires a matching --manifest so evidence refs resolve against the right run"
+        );
+      manifest = validateManifestShape(parseJsonFile(manifestPath));
+      ledger = validateLedgerShape(parseJsonFile(ledgerPath));
+    }
+
+    const result = await loop.runVerification({ manifest, ledger, audience, cadence });
+
+    if (asJson) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      const badge =
+        result.status === "pass"
+          ? c.green("PASS")
+          : result.status === "corrected"
+            ? c.yellow("CORRECTED")
+            : c.red("FAILED");
+      console.log(c.blue(`verify — ${cadence}, audience: ${audience}`) + `  ${badge}`);
+      console.log(
+        c.dim(`  claims: ${result.checkedClaims}   loops: ${result.loopsUsed}/${result.budget}`)
+      );
+      for (const f of result.findings) {
+        console.log(
+          c.red(`  ✗ [${f.ruleId} ${f.check}] entry #${f.entryIndex}: ${f.claimPreview}`)
+        );
+        console.log(c.dim(`      ${f.detail}`));
+      }
+      for (const a of result.advisory)
+        console.log(
+          c.yellow(`  · [advisory ${a.ruleId}] entry #${a.entryIndex}: ${a.claimPreview}`)
+        );
+      if (!result.findings.length) console.log(c.green("  no must-fails"));
+    }
+    // Fail loud: a failed verification must gate (non-zero) for scripts/CI. Not a usage error,
+    // so set the exit code rather than die().
+    if (result.status === "failed") process.exitCode = 1;
+    return;
+  }
+
+  if (sub === "weekly") {
+    // ── Audience selection: default brief(owner)+team; --as external; --all = both shareable. ──
+    const asIdx = args.indexOf("--as");
+    const asArg = asIdx >= 0 ? args[asIdx + 1] : null;
+    let shareableAudiences;
+    if (flags.has("--all")) shareableAudiences = ["team", "external"];
+    else if (asArg) {
+      if (!["team", "external"].includes(asArg)) die("weekly --as must be team|external");
+      shareableAudiences = [asArg];
+    } else shareableAudiences = ["team"];
+
+    // --smoke forces the offline path even alongside --remote (used by tests/demos).
+    const remote = flags.has("--remote") && !flags.has("--smoke");
+    const asJson = flags.has("--json");
+    const dryRun = flags.has("--dry-run");
+
+    // C8 telemetry: wall-clock spans the whole closeout command (CLI-duration fallback for the
+    // ritual span, which is completed later by the C6 writeback approval event).
+    const startedAt = new Date().toISOString();
+    const startedMs = Date.now();
+
+    const manIdx = args.indexOf("--manifest");
+    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+    const manifest = manifestPath
+      ? validateManifestShape(parseJsonFile(manifestPath))
+      : loop.collect({ root: repo, cadence: "weekly", member, project });
+
+    // Egress consent: the remote drafter runs ONLY under --remote AND with the key present.
+    let complete;
+    if (remote) {
+      if (!loop.hasAnthropicKey()) {
+        die(
+          "--remote requires ANTHROPIC_API_KEY (the egress-consent key). Run offline (omit --remote) or set the key."
+        );
+      }
+      complete = loop.anthropicCompletion;
+      if (!asJson)
+        console.log(
+          c.dim(
+            `# remote drafting ENABLED — sends only the ≤-audience projection (admin never leaves the machine)`
+          )
+        );
+    } else if (!asJson) {
+      console.log(
+        c.dim(
+          "# offline: LLM synthesis skipped — pass --remote to send the ≤-audience projection to Anthropic"
+        )
+      );
+    }
+
+    const closeout = await loop.runCloseout({
+      fullManifest: manifest,
+      shareableAudiences,
+      complete,
+    });
+
+    // ── Verifier status BEFORE any approval/write. ──
+    if (!asJson) {
+      for (const s of closeout.shareables) {
+        const badge =
+          s.status === "pass"
+            ? c.green("PASS")
+            : s.status === "corrected"
+              ? c.yellow("CORRECTED")
+              : c.red("FAILED");
+        console.log(
+          c.blue(`weekly digest — ${s.audience}`) +
+            `  ${badge}` +
+            (s.shippable ? "" : c.red(" · NOT SHIPPABLE"))
+        );
+        console.log(
+          c.dim(
+            `  claims: ${s.result.checkedClaims}  loops: ${s.result.loopsUsed}/${s.result.budget}  leak-withheld: ${s.leakWithheld}`
+          )
+        );
+        for (const f of s.result.findings)
+          console.log(c.red(`  ✗ [${f.ruleId} ${f.check}] #${f.entryIndex}: ${f.claimPreview}`));
+      }
+    }
+
+    // ── Write artifacts under .aios/loop/closeouts/<stamp>/ (outside sync_include; C6 owns
+    //    approval→writeback into the spine). admin-tier brief never enters the synced spine. ──
+    const stamp = manifest.generatedAt.replace(/[:.]/g, "-");
+    const outDir = path.join(repo, ".aios", "loop", "closeouts", stamp);
+    if (!dryRun) mkdirSync(outDir, { recursive: true });
+
+    let briefPath = null;
+    if (!dryRun) {
+      briefPath = path.join(outDir, "brief.md"); // owner-only
+      writeFileSync(briefPath, closeout.briefMarkdown);
+      writeFileSync(
+        path.join(outDir, "next-week-actions.json"),
+        JSON.stringify(closeout.ownerNextWeekActions, null, 2)
+      );
+      // Persist the exact manifest this closeout was verified against. C6's writeback uses it as the
+      // drift-free source for its independent leak re-sweep. Lives under .aios/loop (outside
+      // sync_include), so it is never pushed.
+      writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+    }
+
+    let anyFailed = false;
+    const audienceBlocks = [];
+    for (const s of closeout.shareables) {
+      if (!s.shippable) anyFailed = true;
+      let digestPath = null;
+      let unshippablePath = null;
+      if (!dryRun) {
+        if (s.shippable) {
+          digestPath = path.join(outDir, `digest-${s.audience}.md`);
+          writeFileSync(digestPath, s.digestMarkdown);
+        } else {
+          // Clearly-marked, inspection-only — NEVER referenced as an approved artifact.
+          unshippablePath = path.join(outDir, `digest-${s.audience}.FAILED.md`);
+          writeFileSync(unshippablePath, s.digestMarkdown);
+        }
+        writeFileSync(
+          path.join(outDir, `verifier-${s.audience}.json`),
+          JSON.stringify(s.result, null, 2)
+        );
+      }
+      audienceBlocks.push({
+        audience: s.audience,
+        status: s.status,
+        shippable: s.shippable,
+        digestPath: digestPath ? path.relative(repo, digestPath) : null,
+        unshippablePath: unshippablePath ? path.relative(repo, unshippablePath) : null,
+        verifier: s.result, // audience-safe by the C3 contract
+        nextWeekActions: s.nextWeekActions, // already tier <= this audience
+      });
+    }
+
+    if (asJson) {
+      // Audience-safe payload: brief by PATH only (never its content); no raw ledger; no admin
+      // actions; per-audience action filtering already applied by each pipeline.
+      console.log(
+        JSON.stringify(
+          {
+            runStamp: stamp,
+            cadence: "weekly",
+            briefPath: briefPath ? path.relative(repo, briefPath) : null,
+            audiences: audienceBlocks,
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      if (briefPath) console.log(c.dim(`  brief (owner-only) → ${path.relative(repo, briefPath)}`));
+      for (const b of audienceBlocks) {
+        const p = b.digestPath || b.unshippablePath;
+        if (p) console.log(c.dim(`  digest (${b.audience}) → ${p}`));
+      }
+      if (dryRun) console.log(c.dim("  (--dry-run: no files written)"));
+    }
+    // A non-shippable audience must gate (non-zero) for scripts/CI.
+    if (anyFailed) process.exitCode = 1;
+
+    // ── C8 telemetry + independent post-ship leak re-check (safety runs even if telemetry is off) ──
+    if (!dryRun) {
+      const telem = loop.telemetryEnabled();
+      const endedAt = new Date().toISOString();
+      const durationMs = Date.now() - startedMs;
+      if (telem) {
+        loop.recordEvent(repo, {
+          kind: "weekly.run",
+          runId: stamp,
+          cadence: "weekly",
+          member,
+          project,
+          at: endedAt,
+          payload: { startedAt, endedAt, durationMs, audiences: shareableAudiences, anyFailed },
+        });
+        for (const s of closeout.shareables)
+          loop.recordEvent(repo, {
+            kind: "weekly.verify",
+            runId: stamp,
+            cadence: "weekly",
+            member,
+            project,
+            at: endedAt,
+            payload: {
+              audience: s.audience,
+              status: s.status,
+              shippable: s.shippable,
+              leakWithheld: s.leakWithheld,
+              checkedClaims: s.result.checkedClaims,
+              loopsUsed: s.result.loopsUsed,
+              budget: s.result.budget,
+            },
+          });
+      }
+      // Re-derive leak truth from the bytes actually written — defense in depth over C5's sweep.
+      // If a shipped digest still carries admin content, quarantine it (rename → .LEAKED.md, which
+      // C6 can never promote), alarm, and fail. The one case C8 mutates a pipeline artifact.
+      for (const s of closeout.shareables) {
+        if (!s.shippable) continue;
+        // Re-scan the bytes ACTUALLY WRITTEN to disk (not the in-memory string) — that is the
+        // artifact C6 would promote/quarantine, so the defense-in-depth check must verify it.
+        const shippedDigestPath = path.join(outDir, `digest-${s.audience}.md`);
+        const tierLeak = loop.hasLeak(
+          readFileSync(shippedDigestPath, "utf8"),
+          loop.aboveAudienceStrings(manifest, s.audience)
+        );
+        if (telem)
+          loop.recordEvent(repo, {
+            kind: "weekly.shipped",
+            runId: stamp,
+            cadence: "weekly",
+            member,
+            project,
+            at: endedAt,
+            payload: { audience: s.audience, tierLeak },
+          });
+        if (tierLeak) {
+          try {
+            renameSync(shippedDigestPath, path.join(outDir, `digest-${s.audience}.LEAKED.md`));
+          } catch {
+            // best-effort quarantine; the alarm + non-zero exit still fire
+          }
+          console.error(
+            c.red(
+              `  ✗ TIER LEAK in shipped ${s.audience} digest — quarantined to digest-${s.audience}.LEAKED.md ` +
+                `(unpromotable by writeback). This is a C5-sweep escape; investigate before shipping.`
+            )
+          );
+          process.exitCode = 2;
+        }
+      }
+    }
+    return;
+  }
+
+  if (sub === "writeback") {
+    // C6 — approval-gated writeback of a saved C5 closeout. Default-deny: no target flag = preview.
+    // Each of --local / --sync / --pm opts into one target and they may be combined. C6 stages local
+    // files only and NEVER performs network egress — the actual send stays the user's `aios push`.
+    const stamp = args[1];
+    if (!stamp || stamp.startsWith("--"))
+      die(
+        "usage: aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]"
+      );
+    const wbFlags = new Set(args.slice(2));
+    const approved = new Set(["local", "sync", "pm"].filter((t) => wbFlags.has(`--${t}`)));
+    const asJson = wbFlags.has("--json");
+    const dryRun = wbFlags.has("--dry-run");
+    const manIdx = args.indexOf("--manifest");
+    const manifestPathArg = manIdx >= 0 ? args[manIdx + 1] : null;
+
+    // ── Read the closeout dir (must exist). ──
+    const dir = path.join(repo, ".aios", "loop", "closeouts", stamp);
+    if (!existsSync(dir))
+      die(`no closeout at ${path.relative(repo, dir)} — run 'aios loop weekly' first`);
+    const briefFile = path.join(dir, "brief.md");
+    if (!existsSync(briefFile)) die(`closeout ${stamp} has no brief.md`);
+    const briefMarkdown = readFileSync(briefFile, "utf8");
+
+    let ownerNextWeekActions = [];
+    const nwaFile = path.join(dir, "next-week-actions.json");
+    if (existsSync(nwaFile)) {
+      try {
+        ownerNextWeekActions = JSON.parse(readFileSync(nwaFile, "utf8"));
+      } catch {
+        die(`closeout ${stamp}: next-week-actions.json is not valid JSON`);
+      }
+      if (!Array.isArray(ownerNextWeekActions))
+        die(`closeout ${stamp}: next-week-actions.json is not an array`);
+    }
+
+    const shareables = [];
+    for (const audience of ["team", "external"]) {
+      const okPath = path.join(dir, `digest-${audience}.md`);
+      const failedPath = path.join(dir, `digest-${audience}.FAILED.md`);
+      const vFile = path.join(dir, `verifier-${audience}.json`);
+      const shippable = existsSync(okPath);
+      const hasFailedMarker = existsSync(failedPath);
+      const hasVerifier = existsSync(vFile);
+      // Skip only an audience that was never processed at all. If a verifier result exists but no
+      // digest body (C5 withheld everything), we still surface it so the planner emits `missing-digest`
+      // rather than silently dropping it.
+      if (!shippable && !hasFailedMarker && !hasVerifier) continue;
+      let verifierStatus = null;
+      if (hasVerifier) {
+        try {
+          verifierStatus = JSON.parse(readFileSync(vFile, "utf8")).status ?? null;
+        } catch {
+          verifierStatus = null; // unparsable → planner treats as verifier-unavailable
+        }
+      }
+      shareables.push({
+        audience,
+        shippable,
+        hasFailedMarker,
+        // A coexisting stale digest-<aud>.md must NOT be promoted alongside a FAILED marker — the
+        // planner treats hasFailedMarker as authoritative, so don't even read the stale body.
+        digestMarkdown: shippable && !hasFailedMarker ? readFileSync(okPath, "utf8") : null,
+        verifierStatus,
+      });
+    }
+
+    // ── Resolve spine folders + tasks.md + its (validated) tier. ──
+    const spine = loop.resolveSpine(repo);
+    const firstExisting = (names) => {
+      for (const n of names) if (existsSync(path.join(repo, n))) return path.join(repo, n);
+      return null;
+    };
+    const spinePaths = {
+      work: spine.work ? path.join(repo, spine.work) : null,
+      log: spine.log ? path.join(repo, spine.log) : null,
+      shared: firstExisting(["4-shared", "04-client-surface"]),
+    };
+    if (!spinePaths.log)
+      die(
+        "no log spine folder (3-log/) — cannot place the owner brief; is this an AIOS workspace?"
+      );
+    const tasksPath = path.join(spinePaths.log, "tasks.md");
+    const tasksExists = existsSync(tasksPath);
+    let tasksFileTier = "team";
+    if (tasksExists) {
+      const { frontmatter } = parseFrontmatter(readFileSync(tasksPath, "utf8"));
+      tasksFileTier = loop.resolveTierOrDefault(frontmatter?.access);
+    }
+
+    // ── Source the leak-backstop manifest: FAIL-CLOSED, no re-collect. ──
+    // The corpus MUST be the exact manifest of this closeout. Both sources are shape-validated AND
+    // stamp-matched: a malformed manifest yields an empty/wrong leak corpus (under-detection), and a
+    // wrong-timestamp manifest carries the wrong vocabulary — both are refused.
+    const stampOf = (m) => String(m?.generatedAt ?? "").replace(/[:.]/g, "-");
+    let manifest = null;
+    if (manifestPathArg) {
+      // Explicit user input → fail LOUD (die) on missing/invalid/mismatched.
+      if (!existsSync(manifestPathArg)) die(`--manifest not found: ${manifestPathArg}`);
+      let m;
+      try {
+        m = JSON.parse(readFileSync(manifestPathArg, "utf8"));
+      } catch {
+        die(`--manifest is not valid JSON: ${manifestPathArg}`);
+      }
+      validateManifestShape(m); // dies on a malformed manifest (empty corpus / not a manifest)
+      if (stampOf(m) !== stamp)
+        die(
+          `--manifest generatedAt (${m?.generatedAt}) does not map to closeout <stamp> ${stamp} — refusing (fail-closed)`
+        );
+      manifest = m;
+    } else {
+      // Persisted sidecar → fail SOFT (null → syncable withheld) on any corruption or stamp drift.
+      const sidecar = path.join(dir, "manifest.json");
+      if (existsSync(sidecar)) {
+        try {
+          const m = JSON.parse(readFileSync(sidecar, "utf8"));
+          const ok =
+            m &&
+            typeof m === "object" &&
+            !Array.isArray(m) &&
+            Array.isArray(m.signals) &&
+            m.window &&
+            typeof m.window === "object";
+          manifest = ok && stampOf(m) === stamp ? m : null;
+        } catch {
+          manifest = null; // corrupt sidecar → fail-closed on syncable writes
+        }
+      }
+    }
+
+    // ── Plan (pure, deterministic). ──
+    const plan = loop.planWriteback({
+      stamp,
+      member,
+      repoRel: (p) => path.relative(repo, p),
+      briefMarkdown,
+      ownerNextWeekActions,
+      shareables,
+      spinePaths,
+      tasksPath: tasksExists ? tasksPath : null,
+      tasksFileTier,
+      manifest,
+    });
+
+    // Tier-safety exit signal, scoped to the approved targets only.
+    const artifactTargets = { brief: ["local"], digest: ["local", "sync"], tasks: ["sync", "pm"] };
+    const relevantTierSafety = plan.skips.some(
+      (s) =>
+        (s.code === "no-manifest" || s.code === "leak-detected") &&
+        artifactTargets[s.artifact].some((t) => approved.has(t))
+    );
+
+    // ── Print the plan (repo-relative paths only; brief by path only, never its content). ──
+    if (!asJson) {
+      console.log(
+        c.blue(`writeback — ${stamp}`) +
+          (approved.size
+            ? c.dim(`  targets: ${[...approved].join(",")}`)
+            : c.dim("  (preview — no target flag)"))
+      );
+      for (const s of shareables) {
+        const badge =
+          s.verifierStatus === "pass"
+            ? c.green("PASS")
+            : s.verifierStatus === "corrected"
+              ? c.yellow("CORRECTED")
+              : c.red(s.verifierStatus ?? "no-verifier");
+        console.log(
+          c.dim(`  digest ${s.audience}: `) + badge + (s.shippable ? "" : c.red(" · not shippable"))
+        );
+      }
+      for (const f of plan.fileWrites)
+        console.log(
+          `  ${c.green("write")} ${f.artifact} (${f.tier}) → ${f.destRel}` +
+            (f.syncable ? c.dim(" [staged for aios push]") : c.dim(" [never syncs]"))
+        );
+      if (plan.taskWrite)
+        console.log(
+          `  ${c.green("write")} tasks (${plan.taskWrite.rows.length} tier-safe row(s)) → ${plan.taskWrite.tasksRel}` +
+            c.dim(" [staged for aios push]")
+        );
+      for (const s of plan.skips)
+        console.log(
+          `  ${c.yellow("skip")} ${s.artifact}${s.audience ? ` ${s.audience}` : ""} [${s.code}]` +
+            (s.count ? ` ×${s.count}` : "")
+        );
+    }
+
+    // ── Default-deny: no target flag ⇒ preview only, write nothing. ──
+    if (approved.size === 0) {
+      if (asJson) console.log(jsonWriteback(plan, [...approved], manifest, loop));
+      else console.log(c.dim("  preview only — pass --local / --sync / --pm to write."));
+      return;
+    }
+
+    // ── Execute approved targets (idempotent; overlaps are safe). ──
+    let wroteCount = 0;
+    if (!dryRun) {
+      for (const f of plan.fileWrites) {
+        if (!f.targets.some((t) => approved.has(t))) continue;
+        mkdirSync(path.dirname(f.destPath), { recursive: true });
+        writeFileSync(f.destPath, f.content);
+        wroteCount++;
+      }
+      if (plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t))) {
+        const cur = readFileSync(plan.taskWrite.tasksPath, "utf8");
+        writeFileSync(plan.taskWrite.tasksPath, mergeTaskWriteback(cur, plan.taskWrite.rows));
+        wroteCount++;
+      }
+    } else {
+      wroteCount =
+        plan.fileWrites.filter((f) => f.targets.some((t) => approved.has(t))).length +
+        (plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t)) ? 1 : 0);
+    }
+
+    if (asJson) {
+      console.log(jsonWriteback(plan, [...approved], manifest, loop));
+    } else {
+      if (dryRun) console.log(c.dim("  (--dry-run: no files written)"));
+      // Only nudge toward `aios push` when something syncable was actually staged.
+      if (wroteCount > 0 && approved.has("sync"))
+        console.log(
+          c.yellow("  staged for the team brain — run `aios push` to sync (C6 sends nothing).")
+        );
+      if (wroteCount > 0 && approved.has("pm"))
+        console.log(
+          c.yellow(
+            "  staged next-week task rows — run `aios push`; the brain projects them to Linear (AIO-72)."
+          )
+        );
+    }
+
+    // ── Exit codes: tier-safety withholding (fail-closed) → 2; nothing promotable → 1. ──
+    if (relevantTierSafety) {
+      if (!asJson)
+        console.error(c.red("  tier-safety: syncable content withheld (see skips) — exit 2"));
+      process.exitCode = 2;
+    } else if (wroteCount === 0) {
+      if (!asJson)
+        console.error(c.yellow("  nothing promotable for the approved target(s) — exit 1"));
+      process.exitCode = 1;
+    }
+
+    // ── C8 telemetry: a non-preview writeback is the approval event — it ends the wall-clock ritual
+    //    and, if it wrote task rows (only under --sync/--pm), records accepted next-week actions.
+    //    Preview (no target) already returned; --dry-run records nothing. ──
+    if (!dryRun && approved.size > 0 && loop.telemetryEnabled()) {
+      const taskRowsWritten =
+        plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t))
+          ? plan.taskWrite.rows.map((r) => r.row_key)
+          : [];
+      loop.recordEvent(repo, {
+        kind: "weekly.approve",
+        runId: stamp,
+        cadence: "weekly",
+        member,
+        project,
+        payload: {
+          targets: [...approved],
+          wroteCount,
+          taskRowsWritten,
+          tierSafetyWithheld: relevantTierSafety,
+          exitCode: process.exitCode ?? 0,
+          nextWeekActionsProposed: ownerNextWeekActions.length,
+        },
+      });
+    }
+    return;
+  }
+
+  if (sub === "daily") {
+    // Read-only daily orientation: changed / blocked / owed today. No verifier, no LLM, no sync,
+    // no approval gate. The ONLY write is the local change-snapshot under .aios/loop/state/ and
+    // ONLY on an owner run; --as / --manifest / --no-record are fully side-effect-free.
+    const asIdx = args.indexOf("--as");
+    const asArg = asIdx >= 0 ? args[asIdx + 1] : null;
+    let audience = "owner";
+    if (asArg) {
+      if (!["team", "external"].includes(asArg)) die("daily --as must be team|external");
+      audience = asArg;
+    }
+    const asJson = flags.has("--json");
+    const manIdx = args.indexOf("--manifest");
+    const hasManifest = manIdx >= 0;
+    const manifestPath = hasManifest ? args[manIdx + 1] : null;
+    if (hasManifest && (!manifestPath || manifestPath.startsWith("--")))
+      die("daily --manifest requires a path");
+
+    let orientation;
+    if (hasManifest) {
+      // Inspection path (deterministic; also how the CLI tests drive it). The saved manifest is
+      // the current state; the prior baseline is read from the workspace (absent in a temp fixture
+      // → first-run bootstrap). This path never records a snapshot.
+      const manifest = validateManifestShape(parseJsonFile(manifestPath));
+      if (manifest.window?.cadence !== "daily") die("daily --manifest requires a daily manifest");
+      if (manifest.windowed !== false)
+        die("daily --manifest requires an unwindowed full-state manifest (windowed:false)");
+      const prior = loop.readSnapshot(repo, loop.DAILY_SCOPE);
+      orientation = loop.buildDailyOrientation({ manifest, prior, audience }).orientation;
+    } else {
+      const dStart = Date.now();
+      orientation = loop.runDaily({
+        root: repo,
+        member,
+        audience,
+        record: !flags.has("--no-record"),
+      });
+      // C8 telemetry: the daily-run habit signal. Only a real recording OWNER run counts — an `--as`
+      // projection or `--no-record` run is side-effect-free by C4's contract, so it records nothing
+      // (and the `--manifest` inspection path never reaches this branch).
+      if (audience === "owner" && !flags.has("--no-record") && loop.telemetryEnabled()) {
+        loop.recordEvent(repo, {
+          kind: "daily.run",
+          runId: orientation.generatedAt.replace(/[:.]/g, "-"),
+          cadence: "daily",
+          member,
+          project,
+          at: orientation.generatedAt,
+          payload: {
+            durationMs: Date.now() - dStart,
+            signalCount:
+              orientation.counts.changed +
+              orientation.counts.blocked +
+              orientation.counts.owedToday,
+          },
+        });
+      }
+    }
+
+    if (asJson) {
+      console.log(JSON.stringify(orientation, null, 2));
+      return;
+    }
+    renderDaily(orientation);
+    return;
+  }
+
+  if (sub === "telemetry") {
+    // Local dogfood dashboard for the six V1 exit criteria. Owner-only: reads admin-tier
+    // operational data from .aios/loop/telemetry/ and has NO audience-safe projection.
+    const asJson = flags.has("--json");
+    const all = flags.has("--all");
+    const winIdx = args.indexOf("--window");
+    let windowDays = 14;
+    if (winIdx >= 0) {
+      if (all) die("choose one of --window / --all, not both");
+      const raw = args[winIdx + 1];
+      const n = Number(raw);
+      if (!raw || !Number.isInteger(n) || n < 1) die("--window must be a positive integer (days)");
+      windowDays = n;
+    }
+    const metrics = loop.computeMetrics(loop.readEvents(repo), {
+      windowDays: all ? null : windowDays,
+      dailySourceWired: true, // this CLI wires `aios loop daily` → daily.run
+    });
+    if (asJson) console.log(JSON.stringify(metrics, null, 2));
+    else renderTelemetry(metrics);
+    // A real shipped tier-leak on record is a CI-catchable alarm.
+    if ((metrics.tierLeakCount.value ?? 0) > 0) process.exitCode = 2;
+    return;
+  }
+
+  die(
+    "usage: aios loop collect [--daily|--weekly] [--json]\n" +
+      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]\n" +
+      "       aios loop manifest --explain [--as team|external] [--daily]\n" +
+      "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
+      "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
+      "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]\n" +
+      "       aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]\n" +
+      "       aios loop telemetry [--window <days>] [--all] [--json]"
+  );
+}
+
+// ── aios time (AIO-139): native agent-session runtime capture ────────────────
+// Offline + local-first. Reads ~/.claude session logs, scopes strictly by realpath allowlist
+// (unknown repos never up-scoped), and writes an admin-tier `<spine.log>/time-log.md` that never
+// syncs. `report` is read-only; `reconcile` targets rows by opaque id.
+async function cmdTime(repo, cfg, args) {
+  const sub = args[0];
+  const flags = new Set(args.slice(1));
+  const loop = await loadOperatorLoop();
+  const argVal = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+
+  if (sub === "capture") {
+    const configPath = argVal("--config");
+    const reposArg = argVal("--repos");
+    const extraTeamRepos = reposArg
+      ? reposArg
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    const dryRun = flags.has("--dry-run");
+    const projectsDir = argVal("--projects-dir"); // testing/override hook for ~/.claude/projects
+    const nowArg = argVal("--now"); // testing/override hook for "now"
+    const summary = loop.capture({
+      root: repo,
+      configPath,
+      extraTeamRepos,
+      dryRun,
+      ...(projectsDir ? { projectsDir } : {}),
+      ...(nowArg ? { now: new Date(nowArg) } : {}),
+    });
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(summary, null, 2));
+      return;
+    }
+    console.log(c.blue("aios time capture") + c.dim(dryRun ? "  (dry-run — no write)" : ""));
+    console.log(
+      `  blocks: ${summary.totalBlocks}   captured: ${summary.captured}   excluded (unlisted): ${summary.excludedUnlisted}`
+    );
+    console.log(
+      `  rows ${dryRun ? "would change" : "changed"}: ${summary.written}   store → ${summary.rel}`
+    );
+    if (summary.excludedUnlisted > 0)
+      console.log(c.dim("  tip: allowlist repos in .aios/time-config.json to capture them"));
+    return;
+  }
+
+  if (sub === "report") {
+    const window = argVal("--window") === "daily" ? "daily" : "weekly";
+    const days = window === "daily" ? 1 : 7;
+    const asJson = flags.has("--json");
+    const read = loop.readStore(repo);
+    const nowArg = argVal("--now"); // testing/override hook
+    const now = nowArg ? new Date(nowArg).getTime() : Date.now();
+    const fromMs = now - days * 86_400_000;
+    const inWin = read.rows.filter((r) => {
+      const t = Date.parse(r.startIso);
+      return Number.isFinite(t) && t >= fromMs && t <= now;
+    });
+    const totals = loop.runtimeByTag(inWin.map((r) => ({ tag: r.tag, durationMin: r.runtimeMin })));
+    const totalMin = totals.reduce((a, t) => a + t.durationMin, 0);
+    if (asJson) {
+      console.log(JSON.stringify({ window, byTag: totals, totalMin, rows: inWin }, null, 2));
+      return;
+    }
+    console.log(
+      c.blue("aios time report") + c.dim(`  ${window} · ${loop.formatHours(totalMin)} total`)
+    );
+    for (const t of totals) console.log(`  ${t.tag.padEnd(14)} ${loop.formatHours(t.durationMin)}`);
+    if (!totals.length)
+      console.log(c.dim("  no runtime in window — run `aios time capture` first"));
+    return;
+  }
+
+  if (sub === "reconcile") {
+    const idArg = argVal("--id");
+    const ids = idArg
+      ? idArg
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    if (!ids.length) die("aios time reconcile requires --id <id,...>");
+    const result = loop.reconcile({
+      root: repo,
+      ids,
+      setTag: argVal("--set-tag") ?? undefined,
+      setTier: argVal("--set-tier") ?? undefined,
+      confirm: flags.has("--confirm"),
+      dryRun: flags.has("--dry-run"),
+    });
+    if (flags.has("--json")) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    console.log(
+      c.blue("aios time reconcile") + c.dim(flags.has("--dry-run") ? "  (dry-run — no write)" : "")
+    );
+    console.log(`  updated: ${result.updated.join(", ") || "(none)"}`);
+    return;
+  }
+
+  die(
+    "usage: aios time capture [--config <path>] [--repos <realpath,...>] [--dry-run] [--json]\n" +
+      "       aios time report [--window daily|weekly] [--json]\n" +
+      "       aios time reconcile --id <id,...> [--set-tag <tag>] [--set-tier <tier>] [--confirm] [--dry-run] [--json]"
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -2191,6 +3421,7 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
+  aios onboard                          guided first-run setup (Firecrawl, brain, tools)
   aios connect [<id>]                   connect an integration (guided + live-validated)
     [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
@@ -2204,9 +3435,33 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
-  aios analyze [--since 7d] [--tool x]   agentic-maturity (AEM) report from local session logs
-    [--report] [--json] [--push]        tools: claude|codex|cursor (default: all); --report = deep
-    [--full]                            dive on your weakest axis; --push needs brain config
+  aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
+    [--json]                            (.aios/loop/manifests/; offline, never synced)
+  aios loop manifest --explain          inspect a manifest's evidence + tiers
+    [--as team|external] [--daily]      simulate what a digest audience would see
+  aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →
+    --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed
+    [--smoke]                           --smoke derives a debug ledger from a fresh manifest
+  aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),
+    [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;
+    [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)
+  aios loop daily [--as team|external]  fast daily orientation: changed / blocked / owed today
+    [--no-record] [--json]              (read-only; owner run records a local change-snapshot)
+  aios loop writeback <stamp>           approval-gated promotion of a saved closeout (default: preview)
+    [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
+  aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
+    [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
+  aios mcp                              run the Team Brain MCP server over stdio, for
+                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
+                                        that can't shell out; env-first, no workspace needed
+  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
+    [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
+    [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+  aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
+    [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
+  aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
+  aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
+    [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -2218,10 +3473,18 @@ usage:
   aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
-  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop
+  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
     [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
     [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
+    [--build] [--build-rounds N]        after approval, hand the plan to the build phase
+  aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)
+    [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
+    [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
+    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews
+    [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
+    [--base ref] [--worktree path]      requires an existing build worktree for the branch
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -2230,19 +3493,53 @@ if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
   process.exit(0);
 }
 
+// `mcp` is the GUI-surface bridge: a long-lived stdio MCP server for agents that can't
+// shell out to this CLI (Claude Desktop/Cowork/Codex/Conductor). It must run with NO
+// workspace — config is env-first — so it's handled before any repo resolution, and it
+// owns the process (blocks on stdin) until the client disconnects.
+if (cmd === "mcp") {
+  const { resolveBrainConfig, runStdio } = await import("./brain-mcp.mjs");
+  const mcpCfg = resolveBrainConfig();
+  if (mcpCfg.missing.length) {
+    // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
+    // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
+    // error when called. With neither brain config nor a workspace, there's nothing to do.
+    // Use the offline resolver so project.yaml / engagement.yaml workspaces are recognized too
+    // (matches `aios loop` + the MCP tool's findWorkspaceRoot, not just aios.yaml).
+    const ws = findRepoRootOffline(process.cwd());
+    if (!ws) {
+      die(
+        `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
+          `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
+      );
+    }
+    process.stderr.write(
+      `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
+        `starting in local-only mode — aios_* tools available.\n`
+    );
+  }
+  await runStdio(mcpCfg);
+  process.exit(0);
+}
+
 // export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
-// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs;
-// --push uses env/.env or aios.yaml brain config).
+// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs; time reads
+// ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
 const OFFLINE_CMDS = new Set([
   "export-okf",
   "graph",
   "install-skill",
   "connect",
+  "onboard",
   "skills",
   "assess-codebase",
   "learn",
   "analyze",
   "relay",
+  "build",
+  "review-bugbot",
+  "loop",
+  "time",
 ]);
 
 let repo, cfg;
@@ -2265,6 +3562,7 @@ try {
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "connect") await cmdConnect(repo, rest);
+  else if (cmd === "onboard") await cmdOnboard(repo, rest);
   else if (cmd === "whoami") await cmdWhoami(repo, cfg);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
@@ -2275,6 +3573,10 @@ try {
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
+  else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
+  else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
+  else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

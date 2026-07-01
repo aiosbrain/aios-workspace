@@ -11,6 +11,13 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { MEMORY_FILES } from "../memory-files.mjs";
+import { allowedApprovalModeIds, fullAccessEnabled } from "../../../scripts/runtimes.mjs";
+
+// Whether "Full access" (bypassPermissions) is enabled. Gated OFF by default: the mode
+// is only advertised when this env flag is set (see runtimes.claudeApprovalModes), and
+// the SDK requires allowDangerouslySkipPermissions to honor it — so we only pass that
+// option when the flag is on. Keeps the default build incapable of bypassing prompts.
+const FULL_ACCESS_ENABLED = fullAccessEnabled();
 
 export const meta = { runtime: "claude-code", driver: "claude-sdk" };
 
@@ -83,7 +90,12 @@ export function loadMemory(repo) {
 // unknown `agent_model` to the default here — so global `agent_model: ""` keeps
 // meaning "runtime default" for every other runtime (see docs/byoa.md), while the
 // GUI gets a fast, cheap default instead of Claude Code's heavy fallback.
-export const ALLOWED_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
+// id + display label co-located so the picker and the allow-list never drift.
+export const MODEL_OPTIONS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+];
+export const ALLOWED_MODELS = new Set(MODEL_OPTIONS.map((m) => m.id));
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 function resolveModel(model) {
@@ -114,6 +126,13 @@ export async function run({
   signal,
 }) {
   let active = resolveModel(model);
+  let activeApprovalMode = "default"; // SDK PermissionMode; switched mid-session per turn
+  // Under the UX test policy the host forces permissionMode "default" and consults
+  // canUseTool on every tool — approval-mode switching must be inert there so the
+  // deterministic harness can't be loosened, and no approval_mode event pollutes the
+  // transcript the tool_policy audit reads.
+  const approvalModeEnabled = !(process.env.AIOS_GUI_TEST_POLICY || "").trim();
+  const allowedApprovalModes = allowedApprovalModeIds();
   // Surface a clear note (not a hard error) when a configured model is unusable,
   // so a typo in aios.yaml degrades to Sonnet instead of breaking chat.
   if (model && !ALLOWED_MODELS.has(model)) {
@@ -138,6 +157,26 @@ export async function run({
           emit({ type: "model", model: active });
         } catch (e) {
           emit({ type: "warning", message: `Could not switch model: ${String(e?.message || e)}` });
+        }
+      }
+      // Approval mode: same q.setModel() pattern. Only honor a mode the driver actually
+      // advertises (env-gated allow-list) — an unknown/disallowed value is silently
+      // ignored, never bypasses prompts. Inert under the test policy.
+      if (
+        approvalModeEnabled &&
+        typeof turn.approvalMode === "string" &&
+        turn.approvalMode !== activeApprovalMode &&
+        allowedApprovalModes.has(turn.approvalMode)
+      ) {
+        try {
+          await q.setPermissionMode(turn.approvalMode);
+          activeApprovalMode = turn.approvalMode;
+          emit({ type: "approval_mode", mode: activeApprovalMode });
+        } catch (e) {
+          emit({
+            type: "warning",
+            message: `Could not switch approval mode: ${String(e?.message || e)}`,
+          });
         }
       }
       yield {
@@ -174,6 +213,9 @@ export async function run({
       systemPrompt,
       settingSources: underTestPolicy ? ["project"] : ["user", "project"], // CLAUDE.md + skills + PreToolUse guard hook fire
       ...(underTestPolicy ? { permissionMode: "default" } : {}), // force canUseTool consultation
+      // Only opt into bypassPermissions support when "Full access" is explicitly enabled
+      // (and never under the test policy); otherwise the SDK can't be put into that mode.
+      ...(FULL_ACCESS_ENABLED && !underTestPolicy ? { allowDangerouslySkipPermissions: true } : {}),
       includePartialMessages: true,
       canUseTool: confirmClaudeTool,
     },

@@ -9,7 +9,12 @@ __pycache__/
 .env.local
 gui/.sessions/
 gui/client/dist/
+dist/
 test/ux/evidence/
 .aios/
 
 .env.keys
+# Confidential leak-gate term set — local only, never commit (see scripts/leak-gate-terms.example.sh)
+leak-gate-terms.sh
+**/leak-gate-terms.sh
+.aios-nda/

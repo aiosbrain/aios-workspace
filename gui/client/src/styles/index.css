@@ -1,0 +1,138 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   AIOS cockpit — global stylesheet (the only one).
+   Everything else is Tailwind utilities on the @aios-alpha/design token bridge.
+   The proven consumption recipe — order matters:
+     1. tokens.css          → light = :root, dark = .dark (the --aios-* vars)
+     2. tailwind-theme.css  → Tailwind v4 @theme inline bridge (bg-*, text-*, …)
+     3. tailwindcss          → the engine
+     4. @source              → so @aios-alpha/ui's compiled utilities get generated
+                               (node_modules is workspace-hoisted to the repo root)
+     5. @custom-variant dark → class-driven dark mode
+   Self-host the three ecosystem fonts (no Google CDN).
+   ────────────────────────────────────────────────────────────────────────── */
+@import "@aios-alpha/design/tokens.css";
+@import "@aios-alpha/design/tailwind-theme.css";
+@import "tailwindcss";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
+@import "@fontsource/instrument-sans/400.css";
+@import "@fontsource/instrument-sans/500.css";
+@import "@fontsource/instrument-sans/600.css";
+@import "@fontsource/instrument-sans/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/600.css";
+
+/* rendered-markdown styles for assistant messages (scoped, can't be utilities) */
+@import "./prose.css";
+
+@source "../../../../node_modules/@aios-alpha/ui/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Bridge the GUI's hand-rolled variables onto the design tokens ──────────
+   A few residual scoped rules below (prose, the prism brand mark, the streaming
+   cursor) and arbitrary-value utilities in components speak in
+   --text-dim/--link/--accent-soft/…; map each onto an --aios-* token so they
+   inherit the design system AND both modes (light :root, dark .dark) for free.
+   The Tailwind bridge (bg-card, text-muted-foreground, …) is the primary path;
+   this is only for what a utility can't express. */
+:root,
+.dark {
+  --bg: var(--aios-bg);
+  --surface: var(--aios-surface);
+  --surface-2: var(--aios-elevated);
+  --muted: var(--aios-muted);
+  --border: var(--aios-border-visible);
+  --border-soft: var(--aios-border);
+  --text: var(--aios-fg);
+  --text-dim: var(--aios-fg-muted);
+  --accent: var(--aios-primary);
+  --accent-hover: var(--aios-primary-hover);
+  --accent-fg: var(--aios-primary-fg);
+  --accent-soft: color-mix(in srgb, var(--aios-violet) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--aios-violet) 35%, transparent);
+  --link: var(--aios-violet);
+  /* lime — the live/active color, rationed to status dots, checks, success */
+  --live: var(--aios-accent);
+  --green: var(--aios-emerald);
+  --red: var(--aios-destructive);
+  --display: var(--aios-font-display);
+  --body: var(--aios-font-body);
+  --mono: var(--aios-font-mono);
+  --shadow-card: var(--aios-shadow-card);
+  --shadow-overlay: var(--aios-shadow-overlay);
+  /* editorial effects layer: soft violet glow on primary hover */
+  --glow-violet: var(--aios-shadow-glow-featured);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: var(--aios-text-body) / var(--aios-leading-normal) var(--body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
+  font-synthesis: none;
+}
+
+/* ── forced-scoped rules: things a utility genuinely can't express ────────── */
+
+/* AIOS prism brand mark — violet → emerald → lime. */
+.brand-mark {
+  background: var(
+    --aios-gradient-prism,
+    linear-gradient(135deg, var(--aios-violet) 0%, var(--aios-emerald) 50%, var(--aios-accent) 100%)
+  );
+}
+
+/* streaming cursor — a blinking ▋ pseudo-element on the active assistant bubble */
+.streaming-cursor::after {
+  content: "▋";
+  opacity: 0.6;
+  animation: blink 1s infinite;
+}
+
+/* ── keyframes (referenced from components via animate-[…] utilities) ─────── */
+@keyframes blink {
+  50% {
+    opacity: 0.1;
+  }
+}
+@keyframes conn-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ── prefers-reduced-motion: neutralize animation + transitions, keep final state ──
+   Covers the streaming cursor blink, the composer + connection-status spinners, the
+   jump-to-latest entrance, and any token transitions. JS-driven smooth scroll is handled
+   in lib/motion.ts. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
