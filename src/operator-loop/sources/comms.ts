@@ -70,7 +70,10 @@ export const commsSource: Source = (ctx): SourceResult => {
     // Default-deny tier resolution — a record with no resolvable tier is excluded, never emitted.
     const tier = resolveTier((rec.tier ?? rec.access ?? null) as string | string[] | null);
     if (!tier) {
-      out.excluded.push({ ref: refKey, reason: "comms record has no resolvable tier (default-deny)" });
+      out.excluded.push({
+        ref: refKey,
+        reason: "comms record has no resolvable tier (default-deny)",
+      });
       continue;
     }
 

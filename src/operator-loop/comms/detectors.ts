@@ -23,7 +23,11 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
-function base(sig: Signal, kind: string, extra: Partial<NotificationEvent> = {}): NotificationEvent {
+function base(
+  sig: Signal,
+  kind: string,
+  extra: Partial<NotificationEvent> = {}
+): NotificationEvent {
   return { kind, tier: sig.tier, summary: sig.summary, ref: sig.ref, ...extra };
 }
 
