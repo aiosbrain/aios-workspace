@@ -469,13 +469,14 @@ export function computeMetrics(read: ReadResult, opts: ComputeOptions = {}): Loo
     if (g.shippeds.some((s) => asBool(s.payload.tierLeak) === true)) return false;
     return true;
   };
-  // The TAIL streak — consecutive clean runs ending at the MOST RECENT completed run — not the
+  // The TAIL streak — consecutive clean runs ending at the MOST RECENT weekly run — not the
   // best streak anywhere. `clean, clean, clean, leaked` must report 0, not 3: the exit criterion
-  // is "are we currently on a clean run", so a later non-clean weekly resets it. (`completed` is
-  // sorted ascending by endedAt, so we walk backward from the end.)
+  // is "are we currently on a clean run", so a later non-clean or degraded weekly resets it.
+  // (`weeklyGroups` is sorted ascending by endedAt, so we walk backward from the end.)
+  const weeklyRunsForStreak = weeklyGroups.filter((g) => g.run);
   let tailStreak = 0;
-  for (let i = completed.length - 1; i >= 0; i--) {
-    const g = completed[i];
+  for (let i = weeklyRunsForStreak.length - 1; i >= 0; i--) {
+    const g = weeklyRunsForStreak[i];
     if (g && isClean(g)) tailStreak++;
     else break;
   }

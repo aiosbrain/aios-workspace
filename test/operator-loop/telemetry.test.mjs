@@ -548,3 +548,22 @@ test("consecutiveCleanWeeklies is the TAIL streak: 3 clean then a leaked most-re
   assert.equal(m.consecutiveCleanWeeklies.met, false);
   assert.equal(m.tierLeakCount.value, 1);
 });
+
+test("a degraded most-recent weekly breaks the tail streak", () => {
+  const events = [
+    ...cleanWeekly("w1", iso("2026-06-20T00:00:00Z")),
+    ...cleanWeekly("w2", iso("2026-06-24T00:00:00Z")),
+    ...cleanWeekly("w3", iso("2026-06-27T00:00:00Z")),
+    ...cleanWeekly("w4", iso("2026-06-29T00:00:00Z")),
+  ];
+  const warnings = [{ phase: "parse", line: 99, reason: "missing-fields", runId: "w4" }];
+  const m = computeMetrics(
+    { events, warnings },
+    { now: NOW, windowDays: 30, dailySourceWired: true }
+  );
+  assert.deepEqual(m.breakdown.dataQuality.degradedRunIds, ["w4"]);
+  assert.equal(m.breakdown.weeklyRuns, 3, "degraded run is excluded from completed metrics");
+  assert.equal(m.consecutiveCleanWeeklies.value, 0, "degraded latest run breaks the tail streak");
+  assert.equal(m.consecutiveCleanWeeklies.met, false);
+  assert.equal(m.tierLeakCount.met, true, "attributable warning does not null global leak metric");
+});
