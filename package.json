@@ -20,6 +20,7 @@
     "build:loop": "tsc -p tsconfig.json",
     "check:docs": "node scripts/check-docs-drift.mjs",
     "check:v1-linear": "node scripts/check-v1-linear-drift.mjs",
+    "pr:backlog": "node scripts/pr-backlog-report.mjs",
     "lint": "eslint scripts validation gui/server gui/client/src test",
     "lint:fix": "eslint scripts validation gui/server gui/client/src test --fix",
     "format": "prettier --write .",
