@@ -55,6 +55,31 @@ test("decision in the window is Changed on first run; an out-of-window decision 
   );
 });
 
+test("an empty on-scope snapshot still uses the first-run bootstrap window", () => {
+  const dIn = sig(
+    "decision",
+    "team",
+    { path: "3-log/decision-log.md", row: "7", tier: "team" },
+    "Today"
+  );
+  const dOld = sig(
+    "decision",
+    "team",
+    { path: "3-log/decision-log.md", row: "1", tier: "team" },
+    "Old",
+    {},
+    "2026-01-01T00:00:00.000Z"
+  );
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([dIn, dOld]),
+    prior: { version: 1, scope: "daily", updatedAt: GEN, artifacts: {} },
+  });
+  assert.deepEqual(
+    orientation.changed.map((i) => i.ref.row),
+    ["7"]
+  );
+});
+
 test("an unchanged decision is omitted once a baseline exists", () => {
   const d = sig(
     "decision",
@@ -95,6 +120,7 @@ test("task owed / omitted / blocked classification, with precedence Blocked > Ow
     t("unblocked", { status: "unblocked", due: "2026-12-01" }), // "unblocked" ≠ blocked → omitted
     t("done", { status: "done", due: "2026-06-01" }), // closed → omitted
     t("malformed", { status: "open", due: "next week" }), // unparseable due → not owed → omitted
+    t("invalid-day", { status: "open", due: "2026-02-31" }), // impossible day → not owed
   ]);
   // Baseline so no task is "changed" — isolates owed/blocked/omit.
   const { orientation } = buildDailyOrientation({ manifest: m, prior: baselineOf(m.signals) });
@@ -147,6 +173,22 @@ test("carryover: fresh → owed; stale or waiting → blocked; missing createdAt
   assert.deepEqual(orientation.blocked.map((i) => i.ref.row).sort(), ["c2", "c3"]);
   assert.deepEqual(orientation.owedToday.map((i) => i.ref.row).sort(), ["c1", "c4"]);
   assert.ok(orientation.blocked.find((i) => i.ref.row === "c2").stale >= 28);
+});
+
+test("carryover staleness uses calendar days, not elapsed milliseconds", () => {
+  const ref = { path: ".aios/loop/continuity/actions.json", row: "c1", tier: "team" };
+  const co = sig("carryover", "team", ref, "Carry over: Follow up", {
+    title: "Follow up",
+    status: "open",
+    createdAt: "2026-06-22T23:30:00Z",
+  });
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([co], { generatedAt: "2026-06-30T00:30:00Z" }),
+    prior: null,
+    staleDays: 7,
+  });
+  assert.equal(orientation.blocked[0].ref.row, "c1");
+  assert.equal(orientation.blocked[0].stale, 8);
 });
 
 test("audience filter drops higher tiers; excluded full only for owner", () => {

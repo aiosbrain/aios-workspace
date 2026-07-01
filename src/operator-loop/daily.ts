@@ -78,7 +78,10 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   const now = new Date(generatedAt);
   const todayDay = dayOf(generatedAt) ?? generatedAt.slice(0, 10);
   const win = opts.manifest.window;
-  const hasPrior = opts.prior != null && opts.prior.scope === DAILY_SCOPE;
+  const hasPrior =
+    opts.prior != null &&
+    opts.prior.scope === DAILY_SCOPE &&
+    Object.keys(opts.prior.artifacts).length > 0;
 
   // 1) Baseline diff over the FULL owner-complete signal set — never the --as projection — so
   //    the recorded snapshot is a correct owner baseline regardless of the requested audience.
@@ -270,7 +273,11 @@ function looksBlocked(...fields: unknown[]): boolean {
 function dayOf(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null;
   const m = DAY_RE.exec(s);
-  return m?.[1] ?? null;
+  const day = m?.[1];
+  if (!day) return null;
+  const t = Date.parse(`${day}T00:00:00.000Z`);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t).toISOString().slice(0, 10) === day ? day : null;
 }
 
 /** Positive-form overdue/due-today test: a VALID due day on/ before today. Lexical ISO compare
@@ -287,9 +294,11 @@ function staleDaysOf(
   generatedAt: string,
   thresholdDays: number
 ): number | null {
-  if (typeof createdAt !== "string") return null;
-  const c = Date.parse(createdAt);
-  const now = Date.parse(generatedAt);
+  const createdDay = dayOf(typeof createdAt === "string" ? createdAt : null);
+  const generatedDay = dayOf(generatedAt);
+  if (!createdDay || !generatedDay) return null;
+  const c = Date.parse(`${createdDay}T00:00:00.000Z`);
+  const now = Date.parse(`${generatedDay}T00:00:00.000Z`);
   if (!Number.isFinite(c) || !Number.isFinite(now)) return null;
   const days = Math.floor((now - c) / 86_400_000);
   return days > thresholdDays ? days : null;

@@ -105,6 +105,16 @@ test("daily --manifest writes nothing — no snapshot, no artifacts (read-only)"
   assert.ok(!existsSync(path.join(dir, ".aios")));
 });
 
+test("daily --manifest without a path fails before any live collect or snapshot write", () => {
+  const { dir } = workspace();
+  const before = readdirSync(dir).sort();
+  const r = run(dir, ["--manifest", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /--manifest requires a path/);
+  assert.deepEqual(readdirSync(dir).sort(), before);
+  assert.ok(!existsSync(path.join(dir, ".aios")));
+});
+
 test("daily --as external hides admin content and withholds excluded refs", () => {
   const { dir, m } = workspace();
   const r = run(dir, ["--manifest", m, "--as", "external", "--json"]);
@@ -129,6 +139,16 @@ test("daily human view: owner marker + three sections; empty manifest → friend
   const { dir: d2, m: em } = workspace({ ...MANIFEST, signals: [], excluded: [] });
   const r2 = run(d2, ["--manifest", em]);
   assert.match(r2.stdout, /You're clear/);
+
+  const { dir: d3, m: excludedOnly } = workspace({
+    ...MANIFEST,
+    signals: [],
+    excluded: [{ ref: "3-log/tasks.md#x", reason: "no tier" }],
+  });
+  const r3 = run(d3, ["--manifest", excludedOnly]);
+  assert.match(r3.stdout, /No classifiable daily items/);
+  assert.match(r3.stdout, /excluded \(default-deny\)/);
+  assert.doesNotMatch(r3.stdout, /You're clear/);
 });
 
 test("daily --as bogus exits non-zero with a clear message", () => {

@@ -2396,6 +2396,15 @@ function jsonWriteback(plan, targets, manifest, loop) {
 function renderDaily(o) {
   const today = o.generatedAt.slice(0, 10);
   const marker = o.audience === "owner" ? "owner-private · local only" : `view: ${o.audience}`;
+  const printExcludedHint = () => {
+    if (!o.counts.excluded) return;
+    console.log("");
+    console.log(
+      c.dim(
+        `  ${o.counts.excluded} excluded (default-deny) — run \`aios loop manifest --explain --daily\` to inspect`
+      )
+    );
+  };
   console.log(
     c.blue("aios loop daily") +
       c.dim(`  window ${o.window.from.slice(0, 10)} → ${o.window.to.slice(0, 10)}`) +
@@ -2407,7 +2416,14 @@ function renderDaily(o) {
     console.log(
       `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
     );
-    console.log(c.green("Nothing carried over. You're clear. ✓"));
+    console.log(
+      c.green(
+        o.counts.excluded
+          ? "No classifiable daily items. ✓"
+          : "Nothing carried over. You're clear. ✓"
+      )
+    );
+    printExcludedHint();
     return;
   }
 
@@ -2437,14 +2453,7 @@ function renderDaily(o) {
   section("Changed", o.changed, o.counts.changed);
   section("Blocked", o.blocked, o.counts.blocked);
   section("Owed today", o.owedToday, o.counts.owedToday);
-  if (o.counts.excluded) {
-    console.log("");
-    console.log(
-      c.dim(
-        `  ${o.counts.excluded} excluded (default-deny) — run \`aios loop manifest --explain --daily\` to inspect`
-      )
-    );
-  }
+  printExcludedHint();
 }
 
 async function cmdLoop(repo, cfg, args) {
@@ -3009,10 +3018,13 @@ async function cmdLoop(repo, cfg, args) {
     }
     const asJson = flags.has("--json");
     const manIdx = args.indexOf("--manifest");
-    const manifestPath = manIdx >= 0 ? args[manIdx + 1] : null;
+    const hasManifest = manIdx >= 0;
+    const manifestPath = hasManifest ? args[manIdx + 1] : null;
+    if (hasManifest && (!manifestPath || manifestPath.startsWith("--")))
+      die("daily --manifest requires a path");
 
     let orientation;
-    if (manifestPath) {
+    if (hasManifest) {
       // Inspection path (deterministic; also how the CLI tests drive it). The saved manifest is
       // the current state; the prior baseline is read from the workspace (absent in a temp fixture
       // → first-run bootstrap). This path never records a snapshot.
