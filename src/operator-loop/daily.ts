@@ -22,6 +22,7 @@ import {
   type SignalChange,
   type SnapshotStore,
 } from "./changes.js";
+import { runtimeByTag, type TagTotal } from "./time/runtime.js";
 
 /** Snapshot scope for the daily cadence (keeps a baseline independent of the weekly one). */
 export const DAILY_SCOPE = "daily";
@@ -53,6 +54,9 @@ export interface DailyOrientation {
   changed: DailyItem[]; // capped to SECTION_CAP; counts.changed is the true total
   blocked: DailyItem[];
   owedToday: DailyItem[];
+  /** "What agents ran" in the daily window — aggregate { tag, durationMin } only (no repo/id/path),
+   *  audience-filtered like every other section. Empty when time capture hasn't run. */
+  ranByTag: TagTotal[];
   counts: { changed: number; blocked: number; owedToday: number; excluded: number };
   /** Full list only for the owner; [] for a shareable (--as) view — an unresolved-tier ref
    *  path can itself leak above-tier info, and it has no tier to filter on. */
@@ -170,6 +174,24 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   const blockedS = finish(blockedE, byBlocked);
   const owedS = finish(owedE, byOwed);
 
+  // Time (agent runtime): "what agents ran" in the daily window. Explicit kind:"time" handling —
+  // the main loop above ignores it (no changed/blocked/owed semantics). Aggregate { tag,
+  // durationMin } ONLY, from the already-audience-filtered signals; no repo/id/path is surfaced.
+  const winFromMs = Date.parse(win.from);
+  const winToMs = Date.parse(win.to);
+  const ranByTag = runtimeByTag(
+    signals
+      .filter((s) => s.kind === "time")
+      .filter((s) => {
+        const t = Date.parse(s.occurredAt);
+        return Number.isFinite(t) && t >= winFromMs && t <= winToMs;
+      })
+      .map((s) => ({
+        tag: typeof s.payload?.tag === "string" ? s.payload.tag : "engineering",
+        durationMin: typeof s.payload?.durationMin === "number" ? s.payload.durationMin : 0,
+      }))
+  );
+
   const orientation: DailyOrientation = {
     member: opts.manifest.member,
     window: { cadence: "daily", from: win.from, to: win.to },
@@ -178,6 +200,7 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     changed: changedS.items,
     blocked: blockedS.items,
     owedToday: owedS.items,
+    ranByTag,
     counts: {
       changed: changedS.total,
       blocked: blockedS.total,

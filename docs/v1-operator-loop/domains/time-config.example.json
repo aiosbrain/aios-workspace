@@ -1,0 +1,10 @@
+{
+  "repos": {
+    "/Users/you/Projects/acme/acme-workspace": { "tier": "team", "alias": "acme-workspace" },
+    "/Users/you/Projects/acme/acme-platform": { "tier": "team", "alias": "acme-platform" },
+    "/Users/you/Projects/acme/acme-client-brief": { "tier": "external", "alias": "acme-brief" },
+    "/Users/you/Projects/personal-notes": { "tier": "exclude" }
+  },
+  "default": "exclude",
+  "idleGapMin": 25
+}
