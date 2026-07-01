@@ -83,10 +83,10 @@ export const commsSource: Source = (ctx): SourceResult => {
     const refKey = `${rel}#${id}`;
 
     // Tier resolution (default-deny). For CHANNEL-BACKED records the channel→tier map is
-    // authoritative: an unlisted channel is unresolvable (excluded), and a record whose
-    // self-reported tier disagrees with its channel's tier is rejected — a record on an
-    // admin/private channel can no longer emit as `team`. When no channel map is configured at
-    // all, we fall back to the record's own default-deny tier resolution.
+    // authoritative even when empty: an unlisted channel is unresolvable (excluded), and a
+    // record whose self-reported tier disagrees with its channel's tier is rejected — a record
+    // on an admin/private (or unlisted) channel can never emit as `team`. Only channel-LESS
+    // records fall back to the record's own default-deny tier resolution.
     const tier = resolveRecordTier(config, channel, rec, out, refKey);
     if (!tier) continue;
 
@@ -143,11 +143,13 @@ function commsRefPath(source: string, tier: Tier, channel: string | undefined): 
 }
 
 /**
- * Resolve a record's emit tier under default-deny. When a channel→tier map is configured
- * (`config.channels` non-empty) and the record is channel-backed, the channel's tier is
- * authoritative: an unlisted channel or a self-reported/channel tier disagreement is excluded.
- * Otherwise (no map, or no channel) the record's own `tier`/`access` is used (still default-deny).
- * Pushes the exclusion reason itself; returns null when the record must not emit.
+ * Resolve a record's emit tier under default-deny. A CHANNEL-BACKED record (one carrying a
+ * `channel`) is ALWAYS resolved through the channel→tier map — the map is authoritative
+ * regardless of whether it is empty: an unlisted channel (including every channel when no map
+ * is configured) is unresolvable and excluded, and a self-reported/channel tier disagreement is
+ * excluded. Only channel-LESS records (e.g. email/calendar) fall back to the record's own
+ * `tier`/`access` (still default-deny). Pushes the exclusion reason; returns null when the
+ * record must not emit.
  */
 function resolveRecordTier(
   config: CommsConfig,
@@ -158,7 +160,7 @@ function resolveRecordTier(
 ): Tier | null {
   const selfTier = resolveTier((rec.tier ?? rec.access ?? null) as string | string[] | null);
 
-  if (config.channels.size > 0 && channel) {
+  if (channel) {
     const channelTier = resolveChannelTier(config, channel);
     if (!channelTier) {
       out.excluded.push({

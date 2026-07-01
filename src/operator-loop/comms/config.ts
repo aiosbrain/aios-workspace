@@ -81,10 +81,17 @@ export function loadCommsConfig(root: string, overridePath?: string): CommsConfi
   return parseCommsConfig(parsed, file);
 }
 
-/** Normalize `sender.on` to a non-empty list of event names, or null (gate inactive). Accepts a
- *  single string or an array of strings; rejects anything else (never silently disables the gate). */
+/** Normalize `sender.on` to a non-empty list of event names, or null (gate inactive). Only an
+ *  explicit `null` disables the gate; an EMPTY array is rejected loudly (it would otherwise
+ *  silently broaden dispatch to every authorized event). Accepts a single string or an array of
+ *  non-empty strings; rejects anything else. */
 function parseSenderOn(raw: unknown): string[] | null {
   if (raw === null) return null;
+  if (Array.isArray(raw) && raw.length === 0) {
+    throw new Error(
+      `comms-config: sender.on must not be an empty array (use null to disable the trigger gate)`
+    );
+  }
   const list = Array.isArray(raw) ? raw : [raw];
   const names: string[] = [];
   for (const v of list) {
@@ -93,7 +100,7 @@ function parseSenderOn(raw: unknown): string[] | null {
     }
     names.push(v.trim());
   }
-  return names.length ? names : null;
+  return names;
 }
 
 /** Validate + normalize a parsed config object. Exposed for tests. */

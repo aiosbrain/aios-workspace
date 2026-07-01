@@ -26,6 +26,7 @@ const NOW = new Date("2026-07-02T00:00:00Z");
 
 test("comms source: emits kind:'comms' signals with tier + evidence ref + payload contract", () => {
   const root = workspace();
+  writeCommsConfig(root, { channels: { "#eng": "team" } });
   writeActivity(root, [
     {
       source: "slack",
@@ -157,6 +158,26 @@ test("comms source (H2): a record on an unlisted/admin channel claiming team is 
   assert.equal(m.excluded.filter((e) => /unlisted channel/.test(e.reason)).length, 1);
 });
 
+test("comms source (H2): with NO channel map, a channel-backed record self-reporting team is default-denied", () => {
+  const root = workspace();
+  // No comms-config at all → empty channel map. A channel-backed Slack record must NOT be able
+  // to emit on its self-reported tier: every channel is unlisted, so it is default-denied.
+  writeActivity(root, [
+    {
+      source: "slack",
+      tier: "team", // self-reported, but the channel resolves through no map
+      occurredAt: "2026-07-01T12:00:00Z",
+      ref: "no-map-1",
+      channel: "#eng",
+      summary: "should not emit without a listed channel",
+    },
+  ]);
+
+  const m = collect({ root, cadence: "weekly", now: NOW });
+  assert.equal(m.signals.filter((s) => s.kind === "comms").length, 0);
+  assert.equal(m.excluded.filter((e) => /unlisted channel "#eng"/.test(e.reason)).length, 1);
+});
+
 test("comms source (M1): emitted refs are collision-proof and resolve by exact path+row+tier under verifyLedger", async () => {
   const root = workspace();
   // Two channels on the same tier, both listed. Two records reuse the SAME raw id on different
@@ -202,6 +223,7 @@ test("comms source (M1): emitted refs are collision-proof and resolve by exact p
 
 test("daily loop: comms waiting-on items populate the blocked section (AIO-140 acceptance)", () => {
   const root = workspace();
+  writeCommsConfig(root, { channels: { "#eng": "team" } });
   writeActivity(root, [
     {
       source: "slack",

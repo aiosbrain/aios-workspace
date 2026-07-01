@@ -224,3 +224,12 @@ test("parseCommsConfig: rejects a non-positive lookbackHours", () => {
     /lookbackHours must be a positive number/
   );
 });
+
+test("parseCommsConfig: rejects an empty sender.on array (never silently broadens dispatch)", () => {
+  assert.throws(
+    () => parseCommsConfig({ sender: { on: [] } }),
+    /sender.on must not be an empty array/
+  );
+  // An explicit null still disables the gate (documented behaviour).
+  assert.equal(parseCommsConfig({ sender: { on: null } }).sender.on, null);
+});
