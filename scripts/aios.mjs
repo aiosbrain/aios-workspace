@@ -2355,6 +2355,42 @@ function smokeLedgerFrom(manifest) {
   };
 }
 
+// Audience-safe serialization of a C6 writeback plan: whitelisted fields only (paths repo-relative,
+// never file content, never the admin brief body). A final leak sweep on the serialized string is a
+// belt-and-suspenders guard — if it ever trips, we refuse to emit rather than risk a leak.
+function jsonWriteback(plan, targets, manifest, loop) {
+  const payload = {
+    stamp: plan.stamp,
+    targets,
+    files: plan.fileWrites.map((f) => ({
+      id: f.id,
+      tier: f.tier,
+      destRel: f.destRel,
+      syncable: f.syncable,
+    })),
+    taskRows: plan.taskWrite
+      ? plan.taskWrite.rows.map((r) => ({ row_key: r.row_key, title: r.title }))
+      : [],
+    skips: plan.skips,
+    tierSafetyWithheld: plan.tierSafetyWithheld,
+  };
+  const json = JSON.stringify(payload, null, 2);
+  if (manifest) {
+    // Belt-and-suspenders: the serialized payload must carry no above-audience string.
+    const hits = loop.sweepForLeaks(json, loop.aboveAudienceStrings(manifest, "external"));
+    if (hits.length) {
+      console.error("writeback --json: refusing to emit — payload tripped the leak sweep");
+      process.exit(2);
+    }
+  } else if (payload.taskRows.length > 0 || payload.files.some((f) => f.syncable)) {
+    // No manifest ⇒ no leak corpus to sweep against. Syncable content must already have been
+    // withheld (fail-closed); if any survived into the payload, refuse rather than emit it unswept.
+    console.error("writeback --json: refusing to emit syncable content without a leak backstop");
+    process.exit(2);
+  }
+  return json;
+}
+
 async function cmdLoop(repo, cfg, args) {
   const sub = args[0];
   const flags = new Set(args.slice(1));
@@ -2593,6 +2629,10 @@ async function cmdLoop(repo, cfg, args) {
         path.join(outDir, "next-week-actions.json"),
         JSON.stringify(closeout.ownerNextWeekActions, null, 2)
       );
+      // Persist the exact manifest this closeout was verified against. C6's writeback uses it as the
+      // drift-free source for its independent leak re-sweep. Lives under .aios/loop (outside
+      // sync_include), so it is never pushed.
+      writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
     }
 
     let anyFailed = false;
@@ -2654,12 +2694,259 @@ async function cmdLoop(repo, cfg, args) {
     return;
   }
 
+  if (sub === "writeback") {
+    // C6 — approval-gated writeback of a saved C5 closeout. Default-deny: no target flag = preview.
+    // Each of --local / --sync / --pm opts into one target and they may be combined. C6 stages local
+    // files only and NEVER performs network egress — the actual send stays the user's `aios push`.
+    const stamp = args[1];
+    if (!stamp || stamp.startsWith("--"))
+      die(
+        "usage: aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]"
+      );
+    const wbFlags = new Set(args.slice(2));
+    const approved = new Set(["local", "sync", "pm"].filter((t) => wbFlags.has(`--${t}`)));
+    const asJson = wbFlags.has("--json");
+    const dryRun = wbFlags.has("--dry-run");
+    const manIdx = args.indexOf("--manifest");
+    const manifestPathArg = manIdx >= 0 ? args[manIdx + 1] : null;
+
+    // ── Read the closeout dir (must exist). ──
+    const dir = path.join(repo, ".aios", "loop", "closeouts", stamp);
+    if (!existsSync(dir))
+      die(`no closeout at ${path.relative(repo, dir)} — run 'aios loop weekly' first`);
+    const briefFile = path.join(dir, "brief.md");
+    if (!existsSync(briefFile)) die(`closeout ${stamp} has no brief.md`);
+    const briefMarkdown = readFileSync(briefFile, "utf8");
+
+    let ownerNextWeekActions = [];
+    const nwaFile = path.join(dir, "next-week-actions.json");
+    if (existsSync(nwaFile)) {
+      try {
+        ownerNextWeekActions = JSON.parse(readFileSync(nwaFile, "utf8"));
+      } catch {
+        die(`closeout ${stamp}: next-week-actions.json is not valid JSON`);
+      }
+      if (!Array.isArray(ownerNextWeekActions))
+        die(`closeout ${stamp}: next-week-actions.json is not an array`);
+    }
+
+    const shareables = [];
+    for (const audience of ["team", "external"]) {
+      const okPath = path.join(dir, `digest-${audience}.md`);
+      const failedPath = path.join(dir, `digest-${audience}.FAILED.md`);
+      const vFile = path.join(dir, `verifier-${audience}.json`);
+      const shippable = existsSync(okPath);
+      const hasFailedMarker = existsSync(failedPath);
+      const hasVerifier = existsSync(vFile);
+      // Skip only an audience that was never processed at all. If a verifier result exists but no
+      // digest body (C5 withheld everything), we still surface it so the planner emits `missing-digest`
+      // rather than silently dropping it.
+      if (!shippable && !hasFailedMarker && !hasVerifier) continue;
+      let verifierStatus = null;
+      if (hasVerifier) {
+        try {
+          verifierStatus = JSON.parse(readFileSync(vFile, "utf8")).status ?? null;
+        } catch {
+          verifierStatus = null; // unparsable → planner treats as verifier-unavailable
+        }
+      }
+      shareables.push({
+        audience,
+        shippable,
+        hasFailedMarker,
+        // A coexisting stale digest-<aud>.md must NOT be promoted alongside a FAILED marker — the
+        // planner treats hasFailedMarker as authoritative, so don't even read the stale body.
+        digestMarkdown: shippable && !hasFailedMarker ? readFileSync(okPath, "utf8") : null,
+        verifierStatus,
+      });
+    }
+
+    // ── Resolve spine folders + tasks.md + its (validated) tier. ──
+    const spine = loop.resolveSpine(repo);
+    const firstExisting = (names) => {
+      for (const n of names) if (existsSync(path.join(repo, n))) return path.join(repo, n);
+      return null;
+    };
+    const spinePaths = {
+      work: spine.work ? path.join(repo, spine.work) : null,
+      log: spine.log ? path.join(repo, spine.log) : null,
+      shared: firstExisting(["4-shared", "04-client-surface"]),
+    };
+    if (!spinePaths.log)
+      die(
+        "no log spine folder (3-log/) — cannot place the owner brief; is this an AIOS workspace?"
+      );
+    const tasksPath = path.join(spinePaths.log, "tasks.md");
+    const tasksExists = existsSync(tasksPath);
+    let tasksFileTier = "team";
+    if (tasksExists) {
+      const { frontmatter } = parseFrontmatter(readFileSync(tasksPath, "utf8"));
+      tasksFileTier = loop.resolveTierOrDefault(frontmatter?.access);
+    }
+
+    // ── Source the leak-backstop manifest: FAIL-CLOSED, no re-collect. ──
+    // The corpus MUST be the exact manifest of this closeout. Both sources are shape-validated AND
+    // stamp-matched: a malformed manifest yields an empty/wrong leak corpus (under-detection), and a
+    // wrong-timestamp manifest carries the wrong vocabulary — both are refused.
+    const stampOf = (m) => String(m?.generatedAt ?? "").replace(/[:.]/g, "-");
+    let manifest = null;
+    if (manifestPathArg) {
+      // Explicit user input → fail LOUD (die) on missing/invalid/mismatched.
+      if (!existsSync(manifestPathArg)) die(`--manifest not found: ${manifestPathArg}`);
+      let m;
+      try {
+        m = JSON.parse(readFileSync(manifestPathArg, "utf8"));
+      } catch {
+        die(`--manifest is not valid JSON: ${manifestPathArg}`);
+      }
+      validateManifestShape(m); // dies on a malformed manifest (empty corpus / not a manifest)
+      if (stampOf(m) !== stamp)
+        die(
+          `--manifest generatedAt (${m?.generatedAt}) does not map to closeout <stamp> ${stamp} — refusing (fail-closed)`
+        );
+      manifest = m;
+    } else {
+      // Persisted sidecar → fail SOFT (null → syncable withheld) on any corruption or stamp drift.
+      const sidecar = path.join(dir, "manifest.json");
+      if (existsSync(sidecar)) {
+        try {
+          const m = JSON.parse(readFileSync(sidecar, "utf8"));
+          const ok =
+            m &&
+            typeof m === "object" &&
+            !Array.isArray(m) &&
+            Array.isArray(m.signals) &&
+            m.window &&
+            typeof m.window === "object";
+          manifest = ok && stampOf(m) === stamp ? m : null;
+        } catch {
+          manifest = null; // corrupt sidecar → fail-closed on syncable writes
+        }
+      }
+    }
+
+    // ── Plan (pure, deterministic). ──
+    const plan = loop.planWriteback({
+      stamp,
+      member,
+      repoRel: (p) => path.relative(repo, p),
+      briefMarkdown,
+      ownerNextWeekActions,
+      shareables,
+      spinePaths,
+      tasksPath: tasksExists ? tasksPath : null,
+      tasksFileTier,
+      manifest,
+    });
+
+    // Tier-safety exit signal, scoped to the approved targets only.
+    const artifactTargets = { brief: ["local"], digest: ["local", "sync"], tasks: ["sync", "pm"] };
+    const relevantTierSafety = plan.skips.some(
+      (s) =>
+        (s.code === "no-manifest" || s.code === "leak-detected") &&
+        artifactTargets[s.artifact].some((t) => approved.has(t))
+    );
+
+    // ── Print the plan (repo-relative paths only; brief by path only, never its content). ──
+    if (!asJson) {
+      console.log(
+        c.blue(`writeback — ${stamp}`) +
+          (approved.size
+            ? c.dim(`  targets: ${[...approved].join(",")}`)
+            : c.dim("  (preview — no target flag)"))
+      );
+      for (const s of shareables) {
+        const badge =
+          s.verifierStatus === "pass"
+            ? c.green("PASS")
+            : s.verifierStatus === "corrected"
+              ? c.yellow("CORRECTED")
+              : c.red(s.verifierStatus ?? "no-verifier");
+        console.log(
+          c.dim(`  digest ${s.audience}: `) + badge + (s.shippable ? "" : c.red(" · not shippable"))
+        );
+      }
+      for (const f of plan.fileWrites)
+        console.log(
+          `  ${c.green("write")} ${f.artifact} (${f.tier}) → ${f.destRel}` +
+            (f.syncable ? c.dim(" [staged for aios push]") : c.dim(" [never syncs]"))
+        );
+      if (plan.taskWrite)
+        console.log(
+          `  ${c.green("write")} tasks (${plan.taskWrite.rows.length} tier-safe row(s)) → ${plan.taskWrite.tasksRel}` +
+            c.dim(" [staged for aios push]")
+        );
+      for (const s of plan.skips)
+        console.log(
+          `  ${c.yellow("skip")} ${s.artifact}${s.audience ? ` ${s.audience}` : ""} [${s.code}]` +
+            (s.count ? ` ×${s.count}` : "")
+        );
+    }
+
+    // ── Default-deny: no target flag ⇒ preview only, write nothing. ──
+    if (approved.size === 0) {
+      if (asJson) console.log(jsonWriteback(plan, [...approved], manifest, loop));
+      else console.log(c.dim("  preview only — pass --local / --sync / --pm to write."));
+      return;
+    }
+
+    // ── Execute approved targets (idempotent; overlaps are safe). ──
+    let wroteCount = 0;
+    if (!dryRun) {
+      for (const f of plan.fileWrites) {
+        if (!f.targets.some((t) => approved.has(t))) continue;
+        mkdirSync(path.dirname(f.destPath), { recursive: true });
+        writeFileSync(f.destPath, f.content);
+        wroteCount++;
+      }
+      if (plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t))) {
+        const cur = readFileSync(plan.taskWrite.tasksPath, "utf8");
+        writeFileSync(plan.taskWrite.tasksPath, mergeTaskWriteback(cur, plan.taskWrite.rows));
+        wroteCount++;
+      }
+    } else {
+      wroteCount =
+        plan.fileWrites.filter((f) => f.targets.some((t) => approved.has(t))).length +
+        (plan.taskWrite && plan.taskWrite.targets.some((t) => approved.has(t)) ? 1 : 0);
+    }
+
+    if (asJson) {
+      console.log(jsonWriteback(plan, [...approved], manifest, loop));
+    } else {
+      if (dryRun) console.log(c.dim("  (--dry-run: no files written)"));
+      // Only nudge toward `aios push` when something syncable was actually staged.
+      if (wroteCount > 0 && approved.has("sync"))
+        console.log(
+          c.yellow("  staged for the team brain — run `aios push` to sync (C6 sends nothing).")
+        );
+      if (wroteCount > 0 && approved.has("pm"))
+        console.log(
+          c.yellow(
+            "  staged next-week task rows — run `aios push`; the brain projects them to Linear (AIO-72)."
+          )
+        );
+    }
+
+    // ── Exit codes: tier-safety withholding (fail-closed) → 2; nothing promotable → 1. ──
+    if (relevantTierSafety) {
+      if (!asJson)
+        console.error(c.red("  tier-safety: syncable content withheld (see skips) — exit 2"));
+      process.exitCode = 2;
+    } else if (wroteCount === 0) {
+      if (!asJson)
+        console.error(c.yellow("  nothing promotable for the approved target(s) — exit 1"));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
       "       aios loop manifest --explain [--as team|external] [--daily]\n" +
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
-      "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]"
+      "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]\n" +
+      "       aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]"
   );
 }
 

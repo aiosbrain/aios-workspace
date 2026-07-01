@@ -71,3 +71,24 @@ export {
   type ContinuityActionSource,
   type ContinuityReadResult,
 } from "./continuity.js";
+
+// C6 — approval-gated writeback (deterministic promotion of verified C5 artifacts; no LLM).
+export {
+  planWriteback,
+  promotability,
+  audienceForTier,
+  resolveTierOrDefault,
+  stampFrontmatter,
+  deriveRowKey,
+  actionToRow,
+  type WritebackTarget,
+  type ShareAudience,
+  type SkipCode,
+  type Skip,
+  type TaskRow,
+  type FileWrite,
+  type TaskWrite,
+  type WritebackPlan,
+  type ShareableOnDisk,
+  type PlanWritebackInput,
+} from "./writeback.js";
