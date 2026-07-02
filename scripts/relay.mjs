@@ -14,6 +14,8 @@
  *   --dry-run        skip git operations
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   PLAN_READY_TOKEN,
@@ -26,6 +28,7 @@ import {
 } from "./relay-core.mjs";
 import { runBuild, parseBuildArgs } from "./build.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
+import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 
 const DEFAULT_SKILL = "/review-plan";
 
@@ -40,6 +43,7 @@ const VALUE_FLAGS = [
   "--base",
   "--worktree",
   "--verify",
+  "--spec",
 ];
 
 // ── arg parsing ───────────────────────────────────────────────────────────────
@@ -61,6 +65,7 @@ function parseArgs(args) {
   const build = hasFlag("--build");
   const buildRoundsRaw = parseInt(flag("--build-rounds") ?? "4", 10);
   const buildRounds = Number.isFinite(buildRoundsRaw) && buildRoundsRaw > 0 ? buildRoundsRaw : 4;
+  const specFile = flag("--spec");
 
   const positional = args.filter(
     (a, i) => !a.startsWith("--") && !VALUE_FLAGS.includes(args[i - 1])
@@ -78,6 +83,7 @@ function parseArgs(args) {
     logFile,
     build,
     buildRounds,
+    specFile,
   };
 }
 
@@ -161,6 +167,7 @@ export async function cmdRelay(repo, args) {
         "  --dry-run               skip git operations",
         "  --build                 on approval, hand the plan to the build phase",
         "  --build-rounds N        max build/review cycles when --build is set (default: 4)",
+        "  --spec <file>           gate: require the spec to pass readiness before planning (eval-only)",
         "",
         "next step:",
         "  Hand the approved plan to the build phase to implement it:",
@@ -187,6 +194,7 @@ export async function cmdRelay(repo, args) {
     logFile,
     build,
     buildRounds,
+    specFile,
   } = parseArgs(args);
   if (!task) die('task description is required.\nusage: aios relay "task" [branch] [options]');
 
@@ -215,6 +223,42 @@ export async function cmdRelay(repo, args) {
   if (cursorTimeoutSet) cliOverrides.plan_review = { timeoutMs: cursorTimeout };
   const models = resolveLoopModels({ repo, cliOverrides });
   const reviewTimeout = models.plan_review.timeoutMs ?? cursorTimeout;
+
+  // Spec-readiness gate (EE5, eval-only): don't spend a planning loop on an unready spec. This
+  // NEVER auto-fixes — it evaluates and refuses. Fix with `aios spec fix <file>` then re-run.
+  if (specFile) {
+    const p = path.resolve(specFile);
+    if (!existsSync(p)) die(`--spec file not found: ${specFile}`);
+    const specText = readFileSync(p, "utf8");
+    let rubric;
+    try {
+      rubric = loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md"));
+    } catch (e) {
+      die(e.message);
+    }
+    console.log(c.blue("\n── spec readiness gate (--spec) ─────────────────────────────"));
+    const decisions = await loadRecentDecisions(repo);
+    const res = await evaluateSpec({
+      specText,
+      repo,
+      rubric,
+      useLlm: true,
+      anthropic,
+      evalCfg: models.spec_eval,
+      decisions,
+    });
+    if (res.verdict === "NOT_READY") {
+      console.error(formatFindings(res.findings));
+      console.error(
+        c.red(
+          `\n✗ spec NOT_READY (score ${res.score ?? "n/a"}) — refusing to plan against an unready spec.`
+        )
+      );
+      console.error(c.dim(`  Fix it:  aios spec fix ${specFile}`));
+      process.exit(res.exitCode);
+    }
+    console.log(c.green(`✓ spec SPEC_READY (score ${res.score ?? "n/a"}) — proceeding to plan.`));
+  }
 
   const history = [{ role: "user", content: `Plan this task in detail:\n\n${task}` }];
 

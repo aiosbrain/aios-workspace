@@ -201,6 +201,39 @@ console.log("config validation fails loudly (M4)");
   rmSync(repo, { recursive: true, force: true });
 }
 
+console.log("spec harness steps (EE5) resolve + runner-family guard");
+{
+  const empty = mkdtempSync(path.join(tmpdir(), "lm-spec-"));
+  const r = resolveLoopModels({ repo: empty });
+  check(
+    "spec_eval resolves to opus/xhigh",
+    r.spec_eval.model === "claude-opus-4-8" && r.spec_eval.effort === "xhigh"
+  );
+  check(
+    "spec_fix resolves to opus/high",
+    r.spec_fix.model === "claude-opus-4-8" && r.spec_fix.effort === "high"
+  );
+  check("spec_eval is a known step", STEPS.includes("spec_eval"));
+  check("spec_fix is a known step", STEPS.includes("spec_fix"));
+  rmSync(empty, { recursive: true, force: true });
+
+  // spec_eval/spec_fix run on the Claude SDK → a gpt override must abort (runner-family guard).
+  const badEval = resolveInChild({
+    repo: null,
+    cliOverrides: { spec_eval: { model: "gpt-5.5-high" } },
+  });
+  check("gpt spec_eval model aborts", badEval.ok === false);
+  check(
+    "spec_eval abort names the Claude-family requirement",
+    /Claude-family/.test(badEval.stderr)
+  );
+  const badFix = resolveInChild({
+    repo: null,
+    cliOverrides: { spec_fix: { model: "gpt-5.3-codex" } },
+  });
+  check("gpt spec_fix model aborts", badFix.ok === false);
+}
+
 console.log("modelFamily");
 {
   check("claude → anthropic", modelFamily("claude-opus-4-8") === "anthropic");

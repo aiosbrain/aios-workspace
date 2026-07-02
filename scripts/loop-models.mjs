@@ -28,6 +28,12 @@ export const DEFAULT_MODELS = {
   safety_review: { model: "claude-opus-4-8", effort: "xhigh" },
   orchestrate: { model: "fable-5" },
   digest: { model: "claude-haiku-4-5" },
+  // Spec/plan readiness harness (EE5): the adversarial evaluator + the fix-loop reviser. Both
+  // run on the Anthropic SDK, so both are Claude-runner steps. There is NO diversity pair here —
+  // spec eval is a single adversarial pass, not a producer/reviewer loop (prompt-discipline, not
+  // model-family independence, is what makes it trustworthy).
+  spec_eval: { model: "claude-opus-4-8", effort: "xhigh" },
+  spec_fix: { model: "claude-opus-4-8", effort: "high" },
 };
 
 export const STEPS = Object.keys(DEFAULT_MODELS);
@@ -50,7 +56,7 @@ const DIVERSITY_PAIRS = [
 // build/fix/fix_escalated) or the Claude Agent SDK (plan). Their model MUST be Claude-family
 // (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would be passed straight to a Claude
 // runner and fail obscurely. The reviewer steps run on Cursor and are unconstrained here.
-const CLAUDE_RUNNER_STEPS = ["plan", "build", "fix", "fix_escalated"];
+const CLAUDE_RUNNER_STEPS = ["plan", "build", "fix", "fix_escalated", "spec_eval", "spec_fix"];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const STEP_SET = new Set(STEPS);
