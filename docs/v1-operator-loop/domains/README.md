@@ -12,3 +12,4 @@ Each is a well-bounded TypeScript module per the [Engineering Constitution](../.
 | Communication | [communication.md](./communication.md) | Reuse connectors; build **unified notification layer** |
 | Meetings | [meetings.md](./meetings.md) | Reuse Granola + decisions; build stakeholder map + governance nudge |
 | Asks Queue (AIO-167) | [asks-queue.md](./asks-queue.md) | **Net-new** non-blocking escalation queue (append-only store + capture hook + inbox transport + CLI); dogfood-only slice |
+| Attention Mode (AIO-168) | [attention-mode.md](./attention-mode.md) | **Net-new** deep-work / orchestration toggle for the local notification ping (`aios mode`); push untouched |

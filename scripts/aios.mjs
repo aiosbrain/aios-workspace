@@ -3607,6 +3607,43 @@ async function cmdAsks(repo, cfg, args) {
   );
 }
 
+// ── aios mode (AIO-168): deep-work / orchestration attention toggle ──────────
+// Flips Claude Code's `preferredNotifChannel` in ~/.claude/settings.json: deep-work silences the
+// local iTerm2 ping; orchestration restores exactly the prior value (including absence, via a
+// sidecar memory). Mobile push (`agentPushNotifEnabled`) is never touched.
+async function cmdMode(repo, cfg, args) {
+  const sub = args[0] ?? "status";
+  const asJson = args.includes("--json");
+  const loop = await loadOperatorLoop();
+  const settingsArg = (() => {
+    const i = args.indexOf("--settings");
+    return i >= 0 ? args[i + 1] : null;
+  })();
+  const paths = settingsArg
+    ? { settingsPath: settingsArg, statePath: settingsArg + ".aios-mode.json" }
+    : loop.defaultModePaths();
+
+  let out;
+  try {
+    if (sub === "status") out = { ...loop.modeStatus(paths), changed: false };
+    else if (sub === "deep-work") out = loop.enterDeepWork(paths);
+    else if (sub === "orchestration") out = loop.enterOrchestration(paths);
+    else die("usage: aios mode [status|deep-work|orchestration] [--settings <path>] [--json]");
+  } catch (e) {
+    die(String(e?.message ?? e));
+  }
+  if (asJson) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  const ping = out.mode === "deep-work" ? "silenced" : (out.channel ?? "default");
+  console.log(
+    c.blue("aios mode") +
+      `  ${out.mode}` +
+      c.dim(`  · local ping: ${ping}${out.changed ? "" : "  (no change)"}`)
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -3673,6 +3710,8 @@ usage:
   aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)
   aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue
     [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
+  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences the local ping
+    [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -3752,6 +3791,7 @@ const OFFLINE_CMDS = new Set([
   "loop",
   "time",
   "asks",
+  "mode",
 ]);
 
 let repo, cfg;
@@ -3790,6 +3830,7 @@ try {
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
+  else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);
