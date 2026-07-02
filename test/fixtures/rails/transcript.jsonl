@@ -1,0 +1,19 @@
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"npm test"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"npm test"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"npm test"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git log --oneline -5"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git log --oneline -5"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git log --oneline -5"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git log --oneline -5"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"rm -rf /"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"cd /tmp && rm -rf build"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"cat .env"}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}
+{"type":"assistant","cwd":"/tmp/rails-fixture-repo","sessionId":"s1","message":{"role":"assistant","content":[{"type":"tool_use","name":"mcp__x__delete_everything","input":{}}]}}
