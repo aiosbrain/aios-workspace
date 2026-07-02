@@ -46,6 +46,78 @@ const DIVERSITY_PAIRS = [
   ["plan", "plan_review"],
 ];
 
+// Steps whose model is handed to a Claude runner: the Claude Code CLI (callClaudeAgent —
+// build/fix/fix_escalated) or the Claude Agent SDK (plan). Their model MUST be Claude-family
+// (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would be passed straight to a Claude
+// runner and fail obscurely. The reviewer steps run on Cursor and are unconstrained here.
+const CLAUDE_RUNNER_STEPS = ["plan", "build", "fix", "fix_escalated"];
+
+const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const STEP_SET = new Set(STEPS);
+// A well-formed config key is `<step>_<field>`; step names contain underscores, so the
+// suffix alternation is anchored and the remainder must be a known step.
+const KEY_RE = /^(.+)_(model|effort|timeout_s)$/;
+
+// The config surface must fail loudly, not silently fall back to defaults. Rejects: junk /
+// unknown-step keys, non-scalar values, invalid effort strings, non-numeric or non-positive
+// timeouts. (A MISSING file is fine — that just means defaults; this only runs on a present file.)
+function validateFileCfg(fileCfg, file) {
+  for (const [key, value] of Object.entries(fileCfg)) {
+    const m = KEY_RE.exec(key);
+    if (!m || !STEP_SET.has(m[1])) {
+      die(
+        `unknown key '${key}' in ${file} — expected <step>_model / <step>_effort / ` +
+          `<step>_timeout_s for a known step (${STEPS.join(", ")}).`
+      );
+    }
+    const field = m[2];
+    if (Array.isArray(value)) {
+      die(`invalid '${key}' in ${file} — expected a scalar value, not a list.`);
+    }
+    if (field === "effort" && !VALID_EFFORTS.has(value)) {
+      die(
+        `invalid ${key}='${value}' in ${file} — effort must be one of ${[...VALID_EFFORTS].join("|")}.`
+      );
+    }
+    if (field === "timeout_s") {
+      const secs = Number(value);
+      if (!Number.isInteger(secs) || secs <= 0) {
+        die(
+          `invalid ${key}='${value}' in ${file} — timeout_s must be a positive integer (seconds).`
+        );
+      }
+    }
+  }
+}
+
+// Same loud-failure contract for CLI overrides (unknown step, bad effort).
+function validateCliOverrides(cliOverrides) {
+  for (const [step, over] of Object.entries(cliOverrides)) {
+    if (!STEP_SET.has(step)) {
+      die(`unknown step '${step}' in CLI overrides — known steps: ${STEPS.join(", ")}.`);
+    }
+    if (over.effort != null && !VALID_EFFORTS.has(over.effort)) {
+      die(
+        `invalid effort '${over.effort}' for ${step} — must be one of ${[...VALID_EFFORTS].join("|")}.`
+      );
+    }
+  }
+}
+
+// Claude-runner steps must resolve to a Claude-family (anthropic) model.
+function assertRunnerFamilies(resolved) {
+  for (const step of CLAUDE_RUNNER_STEPS) {
+    const fam = modelFamily(resolved[step].model);
+    if (fam !== "anthropic") {
+      die(
+        `${step} runs on a Claude runner and needs a Claude-family model, but ` +
+          `'${resolved[step].model}' resolves to '${fam}'. Set ${step}_model to a ` +
+          `claude-*/fable-* model in .aios/loop-models.yaml (or pass --model with a Claude id).`
+      );
+    }
+  }
+}
+
 function assertDiversity(resolved) {
   for (const [producer, reviewer] of DIVERSITY_PAIRS) {
     const pf = modelFamily(resolved[producer].model);
@@ -70,14 +142,24 @@ function assertDiversity(resolved) {
  */
 export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) {
   const file = configPath ?? (repo ? path.join(repo, ".aios", "loop-models.yaml") : null);
+  // A MISSING file is fine (defaults). A PRESENT-but-broken file fails loudly, never a
+  // silent fall-back to defaults — an unreadable/unparseable/malformed config is a bug.
   let fileCfg = {};
   if (file && existsSync(file)) {
+    let raw;
     try {
-      fileCfg = parseFlatYaml(readFileSync(file, "utf8"));
-    } catch {
-      fileCfg = {};
+      raw = readFileSync(file, "utf8");
+    } catch (e) {
+      die(`could not read ${file}: ${e.message}`);
     }
+    try {
+      fileCfg = parseFlatYaml(raw);
+    } catch (e) {
+      die(`could not parse ${file}: ${e.message}`);
+    }
+    validateFileCfg(fileCfg, file);
   }
+  validateCliOverrides(cliOverrides);
 
   const resolved = {};
   for (const step of STEPS) {
@@ -92,8 +174,8 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) 
     if (over.timeoutMs != null) {
       timeoutMs = over.timeoutMs;
     } else if (fileCfg[`${step}_timeout_s`] != null) {
-      const secs = parseInt(fileCfg[`${step}_timeout_s`], 10);
-      if (Number.isFinite(secs) && secs > 0) timeoutMs = secs * 1000;
+      // validateFileCfg has already guaranteed a positive integer here.
+      timeoutMs = Number(fileCfg[`${step}_timeout_s`]) * 1000;
     }
 
     const entry = { model };
@@ -103,6 +185,7 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) 
   }
 
   // Fail closed regardless of source — defaults, file, and CLI all pass through here.
+  assertRunnerFamilies(resolved);
   assertDiversity(resolved);
   return resolved;
 }

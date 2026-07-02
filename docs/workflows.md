@@ -55,8 +55,9 @@ an independent grounding step can do *worse* than a single pass.
 ## Per-step model config (agent relay)
 
 The agent relay (`aios relay` plan phase + `aios build` build phase) resolves a **model,
-reasoning effort, and timeout per pipeline step** from `scripts/loop-models.mjs`. This is
-tuning, not a safety boundary — a missing config file just yields the defaults.
+reasoning effort, and timeout per pipeline step** from `scripts/loop-models.mjs`. A **missing**
+config file just yields the defaults, but a **present-but-malformed** one fails loudly rather
+than silently reverting to defaults (see "Config validation" below).
 
 **Default matrix** (baked in code; also in `docs/loop-models.example.yaml`):
 
@@ -83,6 +84,17 @@ families, and so must `plan` and `plan_review` — the reviewer has to be an ind
 model. Families: `claude*`/`fable*` = anthropic, `gpt*` = openai. A same-family collision
 aborts the run with an actionable message. The defaults pass (anthropic producer vs openai
 reviewer on both pairs).
+
+**Runner-family guard (fail closed).** The Claude-runner steps — `plan` (Claude Agent SDK)
+and `build`/`fix`/`fix_escalated` (Claude Code CLI) — must resolve to a **Claude-family**
+model. Setting e.g. `build_model: gpt-5.3-codex` (or `--model` with a GPT id) aborts with an
+actionable message, rather than handing a non-Claude id straight to a Claude runner.
+
+**Config validation (fail loudly).** A present `.aios/loop-models.yaml` is validated: unknown
+or misspelled keys / step names, non-scalar values, an effort outside `low|medium|high|xhigh|max`,
+a non-numeric or non-positive `_timeout_s`, and an unreadable/unparseable file all abort with an
+actionable message. Only a *missing* file falls back to defaults. (Effort keys on non-Claude
+steps are currently accepted-and-ignored by their Cursor runner.)
 
 **Fix-escalation ladder** (`selectBuilderStep`). The build loop picks the builder step from
 prior feedback, **never the outer loop `round`** and **never `detectBugbotClear`**:

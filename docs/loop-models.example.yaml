@@ -15,6 +15,14 @@
 # families, and so must `plan` and `plan_review` — the reviewer has to be an
 # independent model. Families: claude*/fable* = anthropic, gpt* = openai. Setting
 # code_review_model to a claude-* model while build stays claude-* aborts the run.
+#
+# RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK) and
+# build/fix/fix_escalated (Claude Code CLI) — must be a Claude-family model. A gpt-*
+# id on any of them aborts, rather than being handed to a Claude runner.
+#
+# VALIDATION (fail loudly): an unknown/misspelled key or step, a non-scalar value, an
+# effort outside low|medium|high|xhigh|max, or a non-numeric/non-positive *_timeout_s
+# aborts with an actionable message. Only a MISSING file falls back to defaults.
 
 # recon_model: claude-haiku-4-5
 

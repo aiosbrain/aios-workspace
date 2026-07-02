@@ -26,10 +26,10 @@ function check(label, cond) {
 }
 
 // Resolve the loader in a child so a die()/exit(1) is observable as an exit code.
-function resolveInChild({ repo, configPath }) {
+function resolveInChild({ repo, configPath, cliOverrides }) {
   const script =
     `import { resolveLoopModels } from ${JSON.stringify(LOADER)};` +
-    `const r = resolveLoopModels(${JSON.stringify({ repo, configPath })});` +
+    `const r = resolveLoopModels(${JSON.stringify({ repo, configPath, cliOverrides })});` +
     `process.stdout.write(JSON.stringify(r));`;
   try {
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
@@ -118,6 +118,74 @@ console.log("diversity guard (fail closed)");
   );
   const bad2 = resolveInChild({ repo });
   check("plan/plan_review same-family aborts", bad2.ok === false);
+
+  rmSync(repo, { recursive: true, force: true });
+}
+
+console.log("runner-family guard (fail closed) — M1");
+{
+  const repo = mkdtempSync(path.join(tmpdir(), "lm-runner-"));
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+
+  // A GPT model on a Claude-runner step (build) via FILE must abort.
+  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: gpt-5.3-codex\n");
+  const badFile = resolveInChild({ repo });
+  check("gpt build_model via file aborts", badFile.ok === false);
+  check("message names the Claude-family requirement", /Claude-family/.test(badFile.stderr));
+
+  // Same via a CLI --model override (no config file needed).
+  const badCli = resolveInChild({
+    repo: null,
+    cliOverrides: { build: { model: "gpt-5.3-codex" } },
+  });
+  check("gpt build model via CLI aborts", badCli.ok === false);
+
+  // A Claude-family id is accepted.
+  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: claude-sonnet-5\n");
+  check("claude build_model passes", resolveInChild({ repo }).ok === true);
+
+  // The `plan` step is a Claude runner too (SDK) — a GPT plan model aborts.
+  const badPlan = resolveInChild({ repo: null, cliOverrides: { plan: { model: "gpt-5.5-high" } } });
+  check("gpt plan model aborts", badPlan.ok === false);
+
+  rmSync(repo, { recursive: true, force: true });
+}
+
+console.log("config validation fails loudly (M4)");
+{
+  const repo = mkdtempSync(path.join(tmpdir(), "lm-val-"));
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  const yaml = path.join(repo, ".aios", "loop-models.yaml");
+  const write = (s) => writeFileSync(yaml, s);
+
+  write("bogus_key: 1\n");
+  check("unknown key aborts", resolveInChild({ repo }).ok === false);
+
+  write("notastep_model: claude-opus-4-8\n");
+  check("unknown step name aborts", resolveInChild({ repo }).ok === false);
+
+  write("build_effort: turbo\n");
+  const badEff = resolveInChild({ repo });
+  check("invalid effort value aborts", badEff.ok === false);
+  check("effort message lists allowed values", /low\|medium\|high\|xhigh\|max/.test(badEff.stderr));
+
+  write("build_timeout_s: 0\n");
+  check("non-positive timeout aborts", resolveInChild({ repo }).ok === false);
+
+  write("build_timeout_s: soon\n");
+  check("non-numeric timeout aborts", resolveInChild({ repo }).ok === false);
+
+  // A CLI override naming an unknown step aborts too.
+  check(
+    "unknown CLI step aborts",
+    resolveInChild({ repo: null, cliOverrides: { nope: { model: "claude-opus-4-8" } } }).ok ===
+      false
+  );
+
+  // An unreadable file (configPath pointing at a directory → EISDIR) aborts, not silent defaults.
+  const asDir = mkdtempSync(path.join(tmpdir(), "lm-dir-"));
+  check("unreadable config file aborts", resolveInChild({ configPath: asDir }).ok === false);
+  rmSync(asDir, { recursive: true, force: true });
 
   rmSync(repo, { recursive: true, force: true });
 }
