@@ -154,6 +154,49 @@ export function weakestAxis(axes) {
   return Object.entries(axes).sort((a, b) => a[1] - b[1])[0][0];
 }
 
+// ── Attention card (NOT a 6th axis) ─────────────────────────────────────────
+// A compact read on operating RHYTHM from the four sanity signals (metrics.mjs).
+// Deliberately NOT an AEM axis: the 6th-lens research is EE8 (AIO-174). It never touches
+// AXIS_LABELS / scoreAxes / spineLevel / placement, so the pinned baseline placement is
+// unchanged. Bands are intentionally simple + commented; EE8 will calibrate them.
+
+/**
+ * @returns {{label:"Attention", metrics:{context_switch_rate:number, focus_block_avg_min:number,
+ *   interrupts_per_hour:number, concurrent_sessions_peak:number}, reading:string}}
+ */
+export function attentionCard(signals) {
+  const csr = signals.context_switch_rate ?? 0;
+  const focus = signals.focus_block_avg_min ?? 0;
+  const interrupts = signals.interrupts_per_hour ?? 0;
+  const concurrency = signals.concurrent_sessions_peak ?? 0;
+  return {
+    label: "Attention",
+    metrics: {
+      context_switch_rate: csr,
+      focus_block_avg_min: focus,
+      interrupts_per_hour: interrupts,
+      concurrent_sessions_peak: concurrency,
+    },
+    reading: attentionReading({ csr, focus, interrupts, concurrency }),
+  };
+}
+
+// Simple bands (tunable in EE8):
+//  - nothing timestamped → "no timestamped activity in window"
+//  - high switching OR many concurrent sessions OR frequent interrupts → orchestration-heavy
+//  - long focus blocks + low switching + few concurrent sessions → deep-work leaning
+//  - otherwise → mixed
+function attentionReading({ csr, focus, interrupts, concurrency }) {
+  if (focus === 0 && csr === 0 && interrupts === 0 && concurrency === 0) {
+    return "no timestamped activity in window";
+  }
+  const orchestrationHeavy = concurrency >= 3 || csr >= 4 || interrupts >= 4;
+  const deepWork = focus >= 20 && csr < 2 && concurrency <= 2;
+  if (orchestrationHeavy) return "orchestration-heavy — protect focus blocks";
+  if (deepWork) return "deep-work leaning — long focus blocks, low switching";
+  return "mixed — some focus, some context-switching";
+}
+
 /** Full AEM placement for a signals object. */
 export function placement(signals) {
   const axes = scoreAxes(signals);

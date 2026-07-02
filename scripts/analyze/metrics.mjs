@@ -96,6 +96,117 @@ function ratio(n, d) {
   return d > 0 ? n / d : 0;
 }
 
+// Idle-gap threshold (minutes) for splitting the global activity timeline into focus blocks.
+// SOURCE OF TRUTH: DEFAULT_IDLE_GAP_MIN in src/operator-loop/time/config.ts. Duplicated here as
+// a literal (NOT imported) because metrics.mjs is plain ESM and must never import from dist/.
+const IDLE_GAP_MIN = 25;
+const FIVE_MIN_MS = 5 * 60_000;
+
+function round2(n) {
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+/**
+ * Attention / sanity signals over the GLOBAL event timeline (all sessions interleaved, events
+ * with a usable `ts`, sorted ascending). Operationally defined — see
+ * docs/v1-operator-loop/domains/sanity-metrics.md:
+ *
+ *  - active_hours (internal denominator): the sorted global timeline is split into blocks at gaps
+ *    > IDLE_GAP_MIN; each block's duration = last.ts − first.ts with a FLOOR of 1 min per block
+ *    (a single-event block counts as 1 min); active_hours = Σ block-min / 60.
+ *  - focus_block_avg_min: mean block duration in minutes (2dp). 0 when no timestamped events.
+ *  - context_switch_rate: count of transitions where `project` changes between CONSECUTIVE USER
+ *    PROMPTS (actor==="user" && block_type==="text", both projects non-null, global ts order)
+ *    / active_hours (2dp; 0 when active_hours is 0). Prompts are the human acting — raw-event
+ *    transitions would count sub-second interleaving of concurrent sessions, which measures the
+ *    machine, not the operator's attention.
+ *  - interrupts_per_hour: user prompts that HOP sessions — events with actor==="user" &&
+ *    block_type==="text" whose session_id differs from the previous such event — / active_hours
+ *    (2dp). Measures attention-splitting across concurrent sessions (the ergonomics lever).
+ *  - concurrent_sessions_peak: max distinct session_ids with ≥1 event in any single 5-min UTC
+ *    bucket (integer).
+ *
+ * @returns {{active_hours:number, focus_block_avg_min:number, context_switch_rate:number,
+ *   interrupts_per_hour:number, concurrent_sessions_peak:number}}
+ */
+export function computeAttentionSignals(events) {
+  const timed = events
+    .filter((e) => e.ts && Number.isFinite(new Date(e.ts).getTime()))
+    .map((e) => ({ ev: e, ms: new Date(e.ts).getTime() }))
+    .sort((a, b) => a.ms - b.ms);
+
+  if (timed.length === 0) {
+    return {
+      active_hours: 0,
+      focus_block_avg_min: 0,
+      context_switch_rate: 0,
+      interrupts_per_hour: 0,
+      concurrent_sessions_peak: 0,
+    };
+  }
+
+  const gapMs = IDLE_GAP_MIN * 60_000;
+
+  // 1) Focus blocks: split the global timeline at idle gaps; floor each block at 1 min.
+  const blockMins = [];
+  let blockStart = timed[0].ms;
+  let prev = timed[0].ms;
+  for (let i = 1; i < timed.length; i++) {
+    const t = timed[i].ms;
+    if (t - prev > gapMs) {
+      blockMins.push(Math.max(1, (prev - blockStart) / 60_000));
+      blockStart = t;
+    }
+    prev = t;
+  }
+  blockMins.push(Math.max(1, (prev - blockStart) / 60_000));
+
+  const totalBlockMin = blockMins.reduce((a, b) => a + b, 0);
+  const activeHours = totalBlockMin / 60;
+  const focusBlockAvgMin = totalBlockMin / blockMins.length;
+
+  // 2) Context switches: project changes between consecutive USER PROMPTS (the human's
+  //    attention thread) — not raw events, which interleave sub-second under concurrency.
+  let switches = 0;
+  let lastPromptProject = null;
+  for (const { ev } of timed) {
+    if (ev.actor !== "user" || ev.block_type !== "text" || ev.project == null) continue;
+    if (lastPromptProject != null && ev.project !== lastPromptProject) switches += 1;
+    lastPromptProject = ev.project;
+  }
+
+  // 3) Interrupts: session-hopping user text prompts.
+  let interrupts = 0;
+  let lastPromptSession = null;
+  let seenPrompt = false;
+  for (const { ev } of timed) {
+    if (ev.actor === "user" && ev.block_type === "text") {
+      if (seenPrompt && ev.session_id !== lastPromptSession) interrupts += 1;
+      lastPromptSession = ev.session_id;
+      seenPrompt = true;
+    }
+  }
+
+  // 4) Concurrent sessions peak: max distinct session_ids sharing one 5-min UTC bucket.
+  const bucketSessions = new Map(); // bucketIndex → Set<session_id>
+  for (const { ev, ms } of timed) {
+    const bucket = Math.floor(ms / FIVE_MIN_MS);
+    let set = bucketSessions.get(bucket);
+    if (!set) bucketSessions.set(bucket, (set = new Set()));
+    set.add(ev.session_id);
+  }
+  let peak = 0;
+  for (const set of bucketSessions.values()) peak = Math.max(peak, set.size);
+
+  return {
+    active_hours: round2(activeHours),
+    focus_block_avg_min: round2(focusBlockAvgMin),
+    context_switch_rate: activeHours > 0 ? round2(switches / activeHours) : 0,
+    interrupts_per_hour: activeHours > 0 ? round2(interrupts / activeHours) : 0,
+    concurrent_sessions_peak: peak,
+  };
+}
+
 /**
  * Reduce a set of events into one signals object.
  * @returns {{
@@ -103,8 +214,13 @@ function ratio(n, d) {
  *   delegation_ratio:number, correction_loop_avg:number, error_rate:number,
  *   cost_per_task:number, tokens_per_task:number, cache_hit_rate:number,
  *   tool_diversity:number, verify_tool_rate:number, subagent_usage:number,
- *   permission_events:number
+ *   permission_events:number, active_hours:number, focus_block_avg_min:number,
+ *   context_switch_rate:number, interrupts_per_hour:number,
+ *   concurrent_sessions_peak:number
  * }}
+ * The attention/sanity signals (active_hours + the 4 operational signals) are LOCAL-ONLY: they
+ * are computed here so they flow into `--json` totals and per-day buckets, but they are NOT added
+ * to buildPushPayload (report.mjs) — they never cross the tier boundary to the brain (EE10).
  */
 export function computeSignals(events) {
   const bySession = new Map();
@@ -188,5 +304,7 @@ export function computeSignals(events) {
     verify_tool_rate: ratio(verifyToolUses, toolUseTotal),
     subagent_usage: ratio(sessionsWithSubagent, sessions),
     permission_events: permissionEvents,
+    // Attention / sanity signals (LOCAL-ONLY — never pushed; see buildPushPayload).
+    ...computeAttentionSignals(events),
   };
 }
