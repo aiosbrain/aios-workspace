@@ -199,6 +199,43 @@ test("ExitPlanMode rejected with feedback → choice=rejected, feedback in notes
   }
 });
 
+test("ExitPlanMode rejection whose feedback contains 'approve' is NOT misread as approval", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "PostToolUse",
+      tool_name: "ExitPlanMode",
+      session_id: "sess-plan3",
+      tool_input: { plan: "# Migrate the DB" },
+      tool_response:
+        "The user doesn't want to proceed. The user said: I would approve this if it included a rollback step.",
+    });
+    const [d] = list(dir);
+    assert.deepEqual(d.choice, ["rejected"], "rejection markers win over the word 'approve'");
+    assert.match(d.notes, /rollback step/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ExitPlanMode with unrecognized response phrasing → captured with choice=null, text kept as notes", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "PostToolUse",
+      tool_name: "ExitPlanMode",
+      session_id: "sess-plan4",
+      tool_input: { plan: "# Something" },
+      tool_response: "Some future harness phrasing we have never seen.",
+    });
+    const [d] = list(dir);
+    assert.equal(d.choice, null, "unknown phrasing is not guessed");
+    assert.match(d.notes, /future harness phrasing/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("non-matching tool → nothing written", () => {
   const dir = ws();
   try {

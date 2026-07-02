@@ -383,12 +383,19 @@ function handleExitPlanMode(root, payload) {
   let choice = null;
   let notes = null;
   if (text) {
-    if (/\bapprov/i.test(text)) {
-      choice = ["approved"];
-    } else {
-      // Any non-approval response is a rejection; the response text is the user's feedback.
+    // Rejection markers are checked FIRST: a rejection embeds the user's free-text feedback,
+    // which may itself contain the word "approve" ("I'd approve if…"). Only the harness's own
+    // approval phrasing counts as approval; anything unrecognized stays choice:null (captured,
+    // not guessed).
+    if (/rejected|doesn'?t want to proceed|not approved|denied/i.test(text)) {
       choice = ["rejected"];
       notes = text;
+    } else if (
+      /\bhas approved\b|\bapproved your plan\b|\bplan (?:was |is )?approved\b/i.test(text)
+    ) {
+      choice = ["approved"];
+    } else {
+      notes = text; // unknown phrasing: keep the evidence, don't classify
     }
   }
 
