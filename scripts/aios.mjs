@@ -2424,7 +2424,13 @@ function renderDaily(o) {
       c.dim(`     ${marker}`)
   );
 
-  if (o.counts.changed === 0 && o.counts.blocked === 0 && o.counts.owedToday === 0) {
+  const asksTotal = (o.counts.attention ?? 0) + (o.counts.queuedAsks ?? 0);
+  if (
+    o.counts.changed === 0 &&
+    o.counts.blocked === 0 &&
+    o.counts.owedToday === 0 &&
+    asksTotal === 0
+  ) {
     console.log("");
     console.log(
       `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
@@ -2464,6 +2470,10 @@ function renderDaily(o) {
     if (total > items.length) console.log(c.dim(`  +${total - items.length} more`));
   };
 
+  // Asks (owner-only, admin-tier) surface at the TOP — the operator's queue comes before the
+  // workspace roll-up. Empty for any --as view (buildDailyOrientation gates them out).
+  if (o.counts.attention) section("Attention", o.attention ?? [], o.counts.attention);
+  if (o.counts.queuedAsks) section("Queued asks", o.queuedAsks ?? [], o.counts.queuedAsks);
   section("Changed", o.changed, o.counts.changed);
   section("Blocked", o.blocked, o.counts.blocked);
   section("Owed today", o.owedToday, o.counts.owedToday);

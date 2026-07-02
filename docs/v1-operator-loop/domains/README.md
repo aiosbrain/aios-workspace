@@ -13,3 +13,4 @@ Each is a well-bounded TypeScript module per the [Engineering Constitution](../.
 | Meetings | [meetings.md](./meetings.md) | Reuse Granola + decisions; build stakeholder map + governance nudge |
 | Asks Queue (AIO-167) | [asks-queue.md](./asks-queue.md) | **Net-new** non-blocking escalation queue (append-only store + capture hook + inbox transport + CLI); dogfood-only slice |
 | Attention Mode (AIO-168) | [attention-mode.md](./attention-mode.md) | **Net-new** deep-work / orchestration toggle for the local notification ping (`aios mode`); push untouched |
+| Sanity Metrics (AIO-169) | [sanity-metrics.md](./sanity-metrics.md) | **Net-new** four operational attention signals + Attention card in `aios analyze`, and Queued-asks/Attention sections in the daily brief; **local-only** (never pushed) |

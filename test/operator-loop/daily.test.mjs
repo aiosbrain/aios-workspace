@@ -267,7 +267,14 @@ test("deterministic ordering with tied timestamps; unknown kind ignored; empty m
   assert.ok(![...a.changed, ...a.blocked, ...a.owedToday].some((i) => i.kind === "hours"));
 
   const empty = buildDailyOrientation({ manifest: mani([]), prior: null }).orientation;
-  assert.deepEqual(empty.counts, { changed: 0, blocked: 0, owedToday: 0, excluded: 0 });
+  assert.deepEqual(empty.counts, {
+    attention: 0,
+    queuedAsks: 0,
+    changed: 0,
+    blocked: 0,
+    owedToday: 0,
+    excluded: 0,
+  });
 });
 
 test("section cap: totals are true even when the display list is capped", () => {
@@ -288,4 +295,125 @@ test("section cap: totals are true even when the display list is capped", () => 
   const { orientation } = buildDailyOrientation({ manifest: mani(many), prior: null });
   assert.equal(orientation.counts.owedToday, 10);
   assert.equal(orientation.owedToday.length, 7); // SECTION_CAP
+});
+
+// ── Asks: Attention + Queued asks sections (AIO-169) ──────────────────────────────────────────
+// buildDailyOrientation stays pure — asks are passed in via opts.asks. Owner-only (admin-tier).
+
+// A minimal folded Ask (only the fields the classifier reads: id/severity/title/tier/createdAt/status).
+const ask = (id, severity, title, createdAt, status = "open", tier = "admin") => ({
+  id,
+  dedupeKey: null,
+  kind: severity,
+  severity,
+  title,
+  body: "",
+  ref: null,
+  source: "cli",
+  sessionId: null,
+  tailHash: null,
+  transcriptPath: null,
+  tier,
+  createdAt,
+  status,
+  resolvedAt: status === "open" ? null : createdAt,
+});
+
+test("open blocker ask → Attention section; item shape maps to the asks store row", () => {
+  const a = ask("blk-1", "blocker", "Prod is down", "2026-06-30T09:00:00.000Z");
+  const { orientation } = buildDailyOrientation({ manifest: mani([]), prior: null, asks: [a] });
+  assert.equal(orientation.counts.attention, 1);
+  assert.equal(orientation.attention.length, 1);
+  const it = orientation.attention[0];
+  assert.equal(it.kind, "ask");
+  assert.match(it.summary, /Prod is down \[blocker\]/);
+  assert.equal(it.tier, "admin");
+  assert.equal(it.ref.path, ".aios/loop/asks/asks.ndjson");
+  assert.equal(it.ref.row, "blk-1");
+  assert.equal(orientation.counts.queuedAsks, 0);
+});
+
+test("Attention blockers are oldest-first", () => {
+  const older = ask("blk-old", "blocker", "Older", "2026-06-28T00:00:00.000Z");
+  const newer = ask("blk-new", "blocker", "Newer", "2026-06-30T00:00:00.000Z");
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([]),
+    prior: null,
+    asks: [newer, older],
+  });
+  assert.deepEqual(
+    orientation.attention.map((i) => i.ref.row),
+    ["blk-old", "blk-new"]
+  );
+});
+
+test("decision + fyi → Queued asks; decisions before fyi, newest-first within severity", () => {
+  const decOld = ask("dec-old", "decision", "Pick DB", "2026-06-28T00:00:00.000Z");
+  const decNew = ask("dec-new", "decision", "Pick cloud", "2026-06-30T00:00:00.000Z");
+  const fyi = ask("fyi-1", "fyi", "Deploy done", "2026-06-29T00:00:00.000Z");
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([]),
+    prior: null,
+    asks: [fyi, decOld, decNew],
+  });
+  assert.equal(orientation.counts.queuedAsks, 3);
+  assert.deepEqual(
+    orientation.queuedAsks.map((i) => i.ref.row),
+    ["dec-new", "dec-old", "fyi-1"] // decisions (newest→oldest) before fyi
+  );
+  assert.equal(orientation.counts.attention, 0);
+});
+
+test("resolved / orphaned asks are excluded from both sections", () => {
+  const resolved = ask("blk-r", "blocker", "Fixed", "2026-06-30T00:00:00.000Z", "resolved");
+  const orphaned = ask("dec-o", "decision", "Gone", "2026-06-30T00:00:00.000Z", "orphaned");
+  const open = ask("blk-o", "blocker", "Open", "2026-06-30T00:00:00.000Z", "open");
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([]),
+    prior: null,
+    asks: [resolved, orphaned, open],
+  });
+  assert.equal(orientation.counts.attention, 1);
+  assert.equal(orientation.counts.queuedAsks, 0);
+  assert.equal(orientation.attention[0].ref.row, "blk-o");
+});
+
+test("asks sections respect SECTION_CAP with true counts", () => {
+  const many = Array.from({ length: 10 }, (_, i) =>
+    ask(`blk-${i}`, "blocker", `B${i}`, `2026-06-${10 + i}T00:00:00.000Z`)
+  );
+  const { orientation } = buildDailyOrientation({ manifest: mani([]), prior: null, asks: many });
+  assert.equal(orientation.counts.attention, 10);
+  assert.equal(orientation.attention.length, 7); // SECTION_CAP
+});
+
+test("CONSTITUTION: audience 'team' → asks never enter the output (both sections empty)", () => {
+  const asks = [
+    ask("blk-1", "blocker", "Prod is down", "2026-06-30T00:00:00.000Z"),
+    ask("dec-1", "decision", "Pick DB", "2026-06-30T00:00:00.000Z"),
+  ];
+  const { orientation } = buildDailyOrientation({
+    manifest: mani([]),
+    prior: null,
+    audience: "team",
+    asks,
+  });
+  assert.equal(orientation.counts.attention, 0);
+  assert.equal(orientation.counts.queuedAsks, 0);
+  assert.deepEqual(orientation.attention, []);
+  assert.deepEqual(orientation.queuedAsks, []);
+  // and no ask leaks into any other section either
+  assert.ok(
+    ![...orientation.changed, ...orientation.blocked, ...orientation.owedToday].some(
+      (i) => i.kind === "ask"
+    )
+  );
+});
+
+test("no asks (undefined) → empty sections, no crash", () => {
+  const { orientation } = buildDailyOrientation({ manifest: mani([]), prior: null });
+  assert.deepEqual(orientation.attention, []);
+  assert.deepEqual(orientation.queuedAsks, []);
+  assert.equal(orientation.counts.attention, 0);
+  assert.equal(orientation.counts.queuedAsks, 0);
 });

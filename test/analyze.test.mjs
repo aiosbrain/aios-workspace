@@ -7,8 +7,12 @@
 // Zero network, zero deps. Run: node test/analyze.test.mjs
 
 import { parseClaude, recordsToEvents } from "../scripts/analyze/parse-claude.mjs";
-import { computeSignals, bucketByDay } from "../scripts/analyze/metrics.mjs";
-import { scoreAxes, spineLevel, placement } from "../scripts/analyze/aem.mjs";
+import {
+  computeSignals,
+  computeAttentionSignals,
+  bucketByDay,
+} from "../scripts/analyze/metrics.mjs";
+import { scoreAxes, spineLevel, placement, attentionCard } from "../scripts/analyze/aem.mjs";
 import { makeEvent, normalizeTokens, totalTokens } from "../scripts/analyze/normalize.mjs";
 
 let failed = 0;
@@ -195,6 +199,138 @@ const sig = computeSignals(events);
     approx(sig.cache_hit_rate, 17000 / (17000 + 1700 + 200))
   );
   check("bucketByDay groups by UTC day", bucketByDay(events).has("2026-06-10"));
+}
+
+console.log("metrics — attention / sanity signals (AIO-169)");
+{
+  // Helper: a synthetic NormalizedEvent at ts with optional project/actor/block/session.
+  const ev = (ts, o = {}) =>
+    makeEvent({
+      tool: "claude",
+      session_id: o.session_id ?? "s1",
+      ts,
+      actor: o.actor ?? "assistant",
+      block_type: o.block_type ?? null,
+      project: o.project ?? null,
+    });
+
+  // Two projects alternating across consecutive USER PROMPTS → 3 project transitions.
+  // 10:00→10:30 span, 10-min gaps (< 25) → 1 block of 30 min → active_hours 0.5.
+  const prompt = (ts, project, session_id = "s1") =>
+    ev(ts, { project, actor: "user", block_type: "text", session_id });
+  const switching = [
+    prompt("2026-06-10T10:00:00Z", "alpha"),
+    prompt("2026-06-10T10:10:00Z", "beta"),
+    prompt("2026-06-10T10:20:00Z", "alpha"),
+    prompt("2026-06-10T10:30:00Z", "beta"),
+  ];
+  const sw = computeAttentionSignals(switching);
+  check("active_hours = one 30-min block = 0.5", approx(sw.active_hours, 0.5));
+  check("focus_block_avg_min = 30 for the single block", approx(sw.focus_block_avg_min, 30));
+  check("context_switch_rate = 3 switches / 0.5h = 6", approx(sw.context_switch_rate, 6));
+
+  // Machine-level interleaving of assistant events across projects does NOT count as switching —
+  // only the human's prompt thread does.
+  const interleaved = [
+    prompt("2026-06-10T10:00:00Z", "alpha"),
+    ev("2026-06-10T10:05:00Z", { project: "beta", session_id: "s2" }),
+    ev("2026-06-10T10:10:00Z", { project: "alpha", session_id: "s1" }),
+    ev("2026-06-10T10:15:00Z", { project: "beta", session_id: "s2" }),
+    prompt("2026-06-10T10:30:00Z", "alpha"),
+  ];
+  const il = computeAttentionSignals(interleaved);
+  check("assistant interleaving is not a context switch", approx(il.context_switch_rate, 0));
+
+  // A 30-min gap (> 25) splits into two blocks of 10 min each → mean 10.
+  const gapped = [
+    ev("2026-06-10T10:00:00Z"),
+    ev("2026-06-10T10:10:00Z"),
+    ev("2026-06-10T10:40:00Z"),
+    ev("2026-06-10T10:50:00Z"),
+  ];
+  const gp = computeAttentionSignals(gapped);
+  check("idle gap > 25min splits focus blocks; mean = 10min", approx(gp.focus_block_avg_min, 10));
+  check("active_hours = 20 block-min / 60 = 0.33", approx(gp.active_hours, 0.33));
+
+  // Session-hopping user prompts → interrupts. p1(s1) p2(s2 hop) p3(s2) p4(s1 hop) = 2 interrupts.
+  // 10:00→10:15 one block = 0.25h → interrupts_per_hour = 2/0.25 = 8.
+  const hopping = [
+    ev("2026-06-10T10:00:00Z", { actor: "user", block_type: "text", session_id: "s1" }),
+    ev("2026-06-10T10:05:00Z", { actor: "user", block_type: "text", session_id: "s2" }),
+    ev("2026-06-10T10:10:00Z", { actor: "user", block_type: "text", session_id: "s2" }),
+    ev("2026-06-10T10:15:00Z", { actor: "user", block_type: "text", session_id: "s1" }),
+  ];
+  const hp = computeAttentionSignals(hopping);
+  check(
+    "interrupts_per_hour counts session hops (2 / 0.25h = 8)",
+    approx(hp.interrupts_per_hour, 8)
+  );
+
+  // Three distinct sessions active in one 5-min UTC bucket → peak 3.
+  const overlap = [
+    ev("2026-06-10T10:00:00Z", { session_id: "s1" }),
+    ev("2026-06-10T10:02:00Z", { session_id: "s2" }),
+    ev("2026-06-10T10:04:00Z", { session_id: "s3" }),
+    ev("2026-06-10T10:07:00Z", { session_id: "s1" }),
+  ];
+  check(
+    "concurrent_sessions_peak = 3 (three sessions in one 5-min bucket)",
+    computeAttentionSignals(overlap).concurrent_sessions_peak === 3
+  );
+
+  // Zero-timestamp edge → all four signals are 0 (and finite).
+  const undated = [makeEvent({ tool: "claude", session_id: "s1", ts: null })];
+  const un = computeAttentionSignals(undated);
+  check(
+    "no timestamped events → all four signals 0",
+    un.focus_block_avg_min === 0 &&
+      un.context_switch_rate === 0 &&
+      un.interrupts_per_hour === 0 &&
+      un.concurrent_sessions_peak === 0
+  );
+
+  // The four keys also flow through computeSignals into --json totals.
+  const merged = computeSignals(switching);
+  check(
+    "computeSignals surfaces the four attention keys",
+    "context_switch_rate" in merged &&
+      "focus_block_avg_min" in merged &&
+      "interrupts_per_hour" in merged &&
+      "concurrent_sessions_peak" in merged
+  );
+}
+
+console.log("aem — attention card (bands, NOT a 6th axis)");
+{
+  const card = attentionCard({
+    context_switch_rate: 1,
+    focus_block_avg_min: 30,
+    interrupts_per_hour: 0,
+    concurrent_sessions_peak: 1,
+  });
+  check(
+    "card labelled Attention with the 4 metrics",
+    card.label === "Attention" &&
+      "context_switch_rate" in card.metrics &&
+      "concurrent_sessions_peak" in card.metrics
+  );
+  check("deep-work band: long focus + low switching", /deep-work/.test(card.reading));
+
+  const busy = attentionCard({
+    context_switch_rate: 6,
+    focus_block_avg_min: 4,
+    interrupts_per_hour: 5,
+    concurrent_sessions_peak: 4,
+  });
+  check("orchestration band: high concurrency/switching", /orchestration-heavy/.test(busy.reading));
+
+  const idle = attentionCard({
+    context_switch_rate: 0,
+    focus_block_avg_min: 0,
+    interrupts_per_hour: 0,
+    concurrent_sessions_peak: 0,
+  });
+  check("empty band: no timestamped activity", /no timestamped activity/.test(idle.reading));
 }
 
 console.log("aem — scoring + the verification gate");
