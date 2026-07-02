@@ -113,3 +113,20 @@ If BLOCKED: bullet list of what must be fixed before merge.
 Severity levels: `Critical` (blocks merge), `High` (blocks merge), `Medium` (should fix), `Low` (nice to have).
 
 If there are no Critical or High findings, end with `BUGBOT_CLEAR` on its own line.
+
+## When run by `aios consolidate-findings`
+
+This same prompt is read (frontmatter stripped) by `aios consolidate-findings`, which merges
+several independent reviews (CI, Cursor Bugbot, CodeRabbit, an optional GPT-5.5 review) plus the
+PR diff into one list. When consolidating:
+
+- Tag each merged finding with its origin: `(source: Bugbot|CodeRabbit|GPT-5.5)`.
+- Tag any AIOS-rule / plan-conformance finding with `(plan-conformance)` (these are kept even at
+  Medium severity when the builder later filters to a must-fix subset).
+- Use the `[severity] file:line — description` **bracket form** for each finding.
+
+**Deterministic guardrails run after you (you cannot downgrade past them):** a **red CI board is
+always ≥ High** and can never be `CLEAR`; and if any source reported a Critical/High finding, the
+consolidated verdict is forced to `BLOCKED` even if your output omitted it (fail-closed
+max-severity inheritance). Don't rely on this — surface every real blocker yourself — but know the
+verdict can only ever be escalated, never silently softened.

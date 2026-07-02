@@ -66,6 +66,8 @@ Options:
   --skill /name       Cursor review skill (default: /ai-code-review)
   --verify "<cmd>"    run this in the worktree before each review; a failure loops feedback
                       to the builder without spending a review round (e.g. "npm test")
+  --findings <file>   seed round 1 from a consolidated findings file (the must-fix subset:
+                      all Critical/High + plan-conformance Medium) — see aios consolidate-findings
   --base <ref>        base ref the new worktree branch is created from (default: origin/main)
   --worktree <path>   worktree directory (default: ../<repo>-<branch-slug>)
   --merge             on approval, merge into the PRIMARY checkout's current branch
@@ -182,6 +184,68 @@ loudly-warned escape hatch and never weakens the gate scripts themselves.
 
 ---
 
+## Review resilience
+
+Long-running unattended builds (see the [Hermes runbook](./hermes-runbook.md)) fail on two
+things a fixed timeout can't handle: a big diff that legitimately needs longer to review, and
+a transient review timeout. Two mechanisms fix this:
+
+- **Auto-retry once on timeout.** If the review call times out, it retries **exactly once with
+  a doubled timeout**. A non-timeout error (`agent exited N`) is not retried, and a second
+  timeout fails the round. Transient backend drops (`ECONNRESET` etc.) still retry inside each
+  attempt. The decision (original/doubled timeout, attempt) lands in the console and `--log`.
+- **Adaptive default review timeout.** When no explicit timeout is set, the per-round review
+  timeout scales with the **real review payload size**: `base (300s) + 60s per 10k chars`,
+  capped at `2× base = 600s`. The payload size is the pre-truncation diff length clamped to
+  `DIFF_CAP` (50000) — so the timeout scales off the true size even when the diff is collapsed
+  to a short truncation message. Each round logs `[cursor] review timeout Ns — adaptive (N chars)`.
+
+**Explicit wins, never scale.** Setting `--cursor-timeout N` (or `code_review_timeout_s` in
+`.aios/loop-models.yaml`) pins the review timeout to that value and bypasses adaptation entirely.
+
+## The full ship pipeline
+
+For a PR-based flow (as opposed to `--merge`), the resilient pipeline is:
+
+```
+aios build … --pr   →   wait-for-bots   →   GPT-5.5 PR review   →   aios consolidate-findings   →   aios build --findings <file>
+```
+
+1. **`aios build … --pr`** opens the PR after the local gates (including local Bugbot).
+2. **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback.
+3. An optional **GPT-5.5 PR review** writes a markdown findings file.
+4. **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the
+   bot comments/reviews, and the GPT review into **one severity-ranked finding list** at
+   `.aios/loop/<issue>/findings-r<N>.md`, printing `VERDICT=CLEAR|BLOCKED`.
+5. On `BLOCKED`, feed it back with **`aios build --findings <file>`** — round 1 becomes a fix
+   round seeded from the **must-fix subset** (all Critical/High + `(plan-conformance)` Medium).
+
+### `aios consolidate-findings`
+
+```
+aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/repo]
+                          [--gpt-review <path>] [--out <path>]
+```
+
+- Reads its prompt from `.claude/agents/code-reviewer.md` at runtime (frontmatter stripped —
+  never forked) and **supplies the PR diff** so its AIOS-rule / plan-conformance instructions
+  stay grounded.
+- **Inputs** (per `code-reviewer.md` "How to gather inputs"): CI checks (`gh pr checks --json`,
+  tolerant of a red board), the PR diff (capped at `DIFF_CAP` = 50000 chars), Bugbot + CodeRabbit
+  issue/inline comments + submitted reviews, and an optional GPT-5.5 review markdown
+  (`--gpt-review`, capped at `GPT_REVIEW_CAP` = 20000 chars). Truncations carry an explicit marker.
+- **Fail-closed max-severity inheritance.** After the model consolidates, a deterministic pass
+  forces `BLOCKED` when **CI is red** (a red board is ≥ High and can never be CLEAR) or when a
+  source reported Critical/High that the consolidated output dropped — rewriting the verdict and
+  appending an `## AIOS Rule Violations` note. The model is never trusted to silently downgrade.
+- The `consolidate` step runs on a **Claude-family** model (config surface: `consolidate_model`
+  / `consolidate_effort` / `consolidate_timeout_s`); a `gpt-*` override fails loud.
+- **Exit codes:** `0` = CLEAR, `3` = BLOCKED, `1` = error (bad args, missing reviewer prompt,
+  or a gh error other than a tolerated CI-red). A **red CI board returns 3, not 1** — it's data.
+- The findings file lives under `.aios/` (gitignored) and is **never committed**.
+
+---
+
 ## Exit codes
 
 | Code | Meaning                                                                 |
@@ -246,6 +310,7 @@ npm run aios -- build "Add a --version flag to aios.mjs" feat/version --task
 | ------------------------------------------ | ------------------------------------------------------------- |
 | `scripts/build.mjs`                        | The build loop (`cmdBuild` / `runBuild`), exposed as `aios build` |
 | `scripts/pr.mjs`                           | `aios pr` — idempotent push + `gh pr create` (chained by `aios build --pr`) |
+| `scripts/consolidate-findings.mjs`         | `aios consolidate-findings` — merge CI + bot + GPT reviews into one fail-closed finding list |
 | `scripts/loop-models.mjs`                  | Per-step model/effort/timeout resolver + cross-family diversity guard |
 | `scripts/relay-core.mjs`                   | Primitives shared with the plan phase (Cursor driver, git, tokens, `--log`) |
 | `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona; emits `MERGE_READY`             |

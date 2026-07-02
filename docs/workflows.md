@@ -85,10 +85,11 @@ model. Families: `claude*`/`fable*` = anthropic, `gpt*` = openai. A same-family 
 aborts the run with an actionable message. The defaults pass (anthropic producer vs openai
 reviewer on both pairs).
 
-**Runner-family guard (fail closed).** The Claude-runner steps — `plan` (Claude Agent SDK)
-and `build`/`fix`/`fix_escalated` (Claude Code CLI) — must resolve to a **Claude-family**
-model. Setting e.g. `build_model: gpt-5.3-codex` (or `--model` with a GPT id) aborts with an
-actionable message, rather than handing a non-Claude id straight to a Claude runner.
+**Runner-family guard (fail closed).** The Claude-runner steps — `plan` (Claude Agent SDK),
+`build`/`fix`/`fix_escalated` (Claude Code CLI), and `consolidate` (`aios consolidate-findings`,
+Claude Code CLI) — must resolve to a **Claude-family** model. Setting e.g. `build_model:
+gpt-5.3-codex` (or `--model` with a GPT id) aborts with an actionable message, rather than
+handing a non-Claude id straight to a Claude runner.
 
 **Config validation (fail loudly).** A present `.aios/loop-models.yaml` is validated: unknown
 or misspelled keys / step names, non-scalar values, an effort outside `low|medium|high|xhigh|max`,
@@ -119,8 +120,34 @@ drives the Cursor plan-review call in `aios relay` (with `--cursor-timeout` taki
 the Cursor code-review call in `aios build`. The **reviewer `model` keys** (`plan_review_model`,
 `code_review_model`) are resolved and enforced by the diversity guard but **not yet passed to the
 Cursor runner** (the `cursor` CLI's model selection is not wired here) — set them to keep the guard
-honest; the running review model is Cursor's own default. Remaining steps (`recon`, `consolidate`,
-`safety_review`, `orchestrate`, `digest`) are resolved for later consumers and not yet wired.
+honest; the running review model is Cursor's own default. `consolidate.{model,effort,timeoutMs}` now
+drives `aios consolidate-findings` (below). Remaining steps (`recon`, `safety_review`, `orchestrate`,
+`digest`) are resolved for later consumers and not yet wired.
+
+## The ship pipeline (build → PR → consolidate → fix)
+
+For a PR-based flow, `aios build --pr` is one stage of a resilient loop that survives unattended,
+overnight runs on an always-on host (see the [Hermes runbook](./hermes-runbook.md)):
+
+```
+aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate-findings → aios build --findings <file>
+```
+
+- **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback
+  (require-all by default; exit 2 on a missing bot at timeout).
+- **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the bot
+  comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
+  `.aios/loop/<issue>/findings-r<N>.md`, using `.claude/agents/code-reviewer.md` as its (single,
+  un-forked) prompt. A deterministic **fail-closed** pass forces `BLOCKED` on red CI or a dropped
+  source-level Critical/High. Exit `0` CLEAR · `3` BLOCKED · `1` error (red CI is data → `3`).
+- **`aios build --findings <file>`** seeds round 1 from the file's **must-fix subset** (all
+  Critical/High + `(plan-conformance)` Medium), so the builder fixes them through the
+  fix/fix_escalated ladder exactly like a Cursor review.
+
+**Review resilience** (in `aios build`): the review call **auto-retries once on timeout** with a
+doubled timeout, and the default review timeout **adapts to the real diff size** (`300s + 60s/10k
+chars`, capped `600s`) unless `--cursor-timeout` / `code_review_timeout_s` pins it explicitly. See
+[`agent-build.md` → Review resilience](./agent-build.md#review-resilience).
 
 ## Cost note
 

@@ -16,9 +16,10 @@
 # independent model. Families: claude*/fable* = anthropic, gpt* = openai. Setting
 # code_review_model to a claude-* model while build stays claude-* aborts the run.
 #
-# RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK) and
-# build/fix/fix_escalated (Claude Code CLI) — must be a Claude-family model. A gpt-*
-# id on any of them aborts, rather than being handed to a Claude runner.
+# RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK),
+# build/fix/fix_escalated (Claude Code CLI), and consolidate (aios consolidate-findings,
+# Claude Code CLI) — must be a Claude-family model. A gpt-* id on any of them aborts,
+# rather than being handed to a Claude runner.
 #
 # VALIDATION (fail loudly): an unknown/misspelled key or step, a non-scalar value, an
 # effort outside low|medium|high|xhigh|max, or a non-numeric/non-positive *_timeout_s
@@ -43,7 +44,10 @@
 # fix_escalated_model: claude-opus-4-8
 # fix_escalated_effort: high
 
+# consolidate is a Claude-runner step (aios consolidate-findings) — must stay claude-family.
 # consolidate_model: claude-haiku-4-5
+# consolidate_effort: high
+# consolidate_timeout_s: 300
 
 # safety_review_model: claude-opus-4-8
 # safety_review_effort: xhigh
