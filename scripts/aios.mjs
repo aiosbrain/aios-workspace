@@ -62,6 +62,7 @@ import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
+import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3655,10 +3656,10 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const rest = argv.slice(1);
 
-// `pr` owns its own `--repo` flag — a GitHub owner/repo slug, NOT the workspace path.
-// Don't consume it here, or `cmdPr` never sees the target-repo override (its git ops
-// run in the current worktree, resolved by the normal cwd walk-up below).
-const repoFlagIdx = cmd === "pr" ? -1 : rest.indexOf("--repo");
+// `pr` and `consolidate-findings` own their own `--repo` flag — a GitHub owner/repo slug,
+// NOT the workspace path. Don't consume it here, or the command never sees the target-repo
+// override (their local repo root is resolved by the normal cwd walk-up below).
+const repoFlagIdx = cmd === "pr" || cmd === "consolidate-findings" ? -1 : rest.indexOf("--repo");
 let repoArg = null;
 if (repoFlagIdx !== -1) {
   repoArg = rest[repoFlagIdx + 1];
@@ -3744,6 +3745,10 @@ usage:
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
   aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
     [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
+  aios consolidate-findings --pr <n>    merge CI + Bugbot + CodeRabbit + GPT reviews + the PR
+    --issue AIO-<n> [--round N]         diff into one severity-ranked finding list (fail-closed)
+    [--repo owner/repo] [--gpt-review p]  → .aios/loop/<issue>/findings-r<N>.md; feed to aios build
+    [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)
   aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
     [--base ref] [--worktree path]      requires an existing build worktree for the branch
 options:
@@ -3799,6 +3804,7 @@ const OFFLINE_CMDS = new Set([
   "relay",
   "build",
   "pr",
+  "consolidate-findings",
   "review-bugbot",
   "loop",
   "time",
@@ -3839,6 +3845,7 @@ try {
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
   else if (cmd === "pr") await cmdPr(repo, rest);
+  else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
