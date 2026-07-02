@@ -106,6 +106,9 @@ console.log("parseCheckResults");
     parseCheckResults("build   fail   1s").ciRed === true
   );
   check("empty → not red", parseCheckResults("").ciRed === false);
+  check("valid JSON array → parsed true", pass.parsed === true);
+  check("plaintext board → parsed true", parseCheckResults("build fail 1s").parsed === true);
+  check("empty stdout → parsed false", parseCheckResults("").parsed === false);
 }
 
 // ── pure: severity extractors ──────────────────────────────────────────────────
@@ -325,6 +328,50 @@ console.log("CI-red as data (Major 2)");
   );
   check("red CI returns 3, not 1", code === 3);
   check("findings file still written", existsSync(defaultOutPath(repo, "AIO-161", 1)));
+}
+
+// ── gh pr checks FAILS with no check data (auth/network) → fail closed, returns 1 ─────
+console.log("CI evidence unavailable (gh failure) → 1");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // gh pr checks exits non-zero with EMPTY stdout (auth/network/invalid repo); model CLEAR.
+      runGh: makeRunGh(
+        { checks: { code: 1, stdout: "", stderr: "auth failed" }, inlineComments: "[]" },
+        []
+      ),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  check("gh checks failure returns 1 (not 0/CLEAR)", code === 1);
+  check(
+    "no findings file written on unavailable CI",
+    !existsSync(defaultOutPath(repo, "AIO-161", 1))
+  );
+}
+
+// ── "no checks reported" (no CI configured) is benign → proceeds normally ─────────────
+console.log("no checks reported (benign) → proceeds");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // gh exits non-zero but the stderr says no CI is configured — treat as a green board.
+      runGh: makeRunGh(
+        {
+          checks: { code: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch" },
+          inlineComments: "[]",
+        },
+        []
+      ),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  check("benign no-checks returns 0 (CLEAR)", code === 0);
+  check("benign no-checks still writes findings", existsSync(defaultOutPath(repo, "AIO-161", 1)));
 }
 
 // ── written verdict can never contradict the computed verdict ───────────────────

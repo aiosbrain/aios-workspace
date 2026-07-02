@@ -103,8 +103,11 @@ function maxSev(a, b) {
   return rankSeverity(a) >= rankSeverity(b) ? a : b;
 }
 
-// Parse `gh pr checks --json name,state,conclusion` output → { checks, ciRed }. Falls back
-// to a plaintext-table scan when --json is unsupported (older gh). ciRed on any red state.
+// Parse `gh pr checks --json name,state,conclusion` output → { checks, ciRed, parsed }. Falls
+// back to a plaintext-table scan when --json is unsupported (older gh). ciRed on any red state.
+// `parsed` reports whether check DATA was actually available (valid JSON array or a non-empty
+// plaintext board) vs. an empty/unparseable stdout — the caller uses it to tell a real gh
+// failure (auth/network, no data) apart from a tolerated red board (data present).
 export function parseCheckResults(stdout) {
   const raw = String(stdout ?? "");
   let arr = null;
@@ -115,8 +118,9 @@ export function parseCheckResults(stdout) {
   }
   if (!Array.isArray(arr)) {
     // Plaintext `gh pr checks` table: a "fail"/"failing" cell means red.
-    const ciRed = /\bfail(ed|ing|ure)?\b/i.test(raw) && raw.trim().length > 0;
-    return { checks: [], ciRed };
+    const hasText = raw.trim().length > 0;
+    const ciRed = /\bfail(ed|ing|ure)?\b/i.test(raw) && hasText;
+    return { checks: [], ciRed, parsed: hasText };
   }
   const checks = arr.map((x) => ({
     name: x.name ?? x.context ?? "(unnamed)",
@@ -124,7 +128,7 @@ export function parseCheckResults(stdout) {
     conclusion: String(x.conclusion ?? "").toUpperCase(),
   }));
   const ciRed = checks.some((x) => CI_RED.has(x.state) || CI_RED.has(x.conclusion));
-  return { checks, ciRed };
+  return { checks, ciRed, parsed: true };
 }
 
 // Bugbot posts `**High Severity**`-style headers on its inline comments.
@@ -364,6 +368,14 @@ export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
     { tolerateNonZero: true }
   );
   const checks = parseCheckResults(checksRes.stdout);
+  // `gh pr checks` exits non-zero in TWO very different situations: (a) checks are failing/
+  // pending — stdout still carries the board (tolerated data), or (b) the command itself
+  // failed (auth/network/invalid repo) — stdout is empty. Case (b) means CI evidence was
+  // NEVER gathered; treating it as a clean board would fail OPEN. Flag it so the caller can
+  // fail closed. "no checks reported" (no CI configured on the PR) is benign, not a failure.
+  const code = checksRes.code ?? 0;
+  const noChecksBenign = /no checks reported/i.test(checksRes.stderr ?? "");
+  checks.unavailable = code !== 0 && !checks.parsed && !checks.ciRed && !noChecksBenign;
 
   // 2. PR diff (capped at DIFF_CAP with an explicit marker so the model knows it's clipped).
   let prDiff = runGh(["pr", "diff", String(pr), "--repo", slug]);
@@ -485,6 +497,19 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
     inputs = gatherInputs({ runGh, slug, pr: opts.pr, gptReviewPath: opts.gptReview });
   } catch (e) {
     console.error(c.red(`error: gathering inputs failed: ${e.message}`));
+    return 1;
+  }
+
+  // Fail closed if CI evidence could not be gathered. `gh pr checks` returning non-zero with
+  // NO check data (auth/network/invalid repo) is NOT a clean board — never let it consolidate
+  // to CLEAR. This is a gh error other than a tolerated CI-red, so it returns 1 (not 3).
+  if (inputs.checks?.unavailable) {
+    console.error(
+      c.red(
+        "error: could not gather CI check results — `gh pr checks` failed with no check data " +
+          "(auth/network/invalid repo?). Refusing to consolidate without CI evidence."
+      )
+    );
     return 1;
   }
 
