@@ -46,11 +46,26 @@ export function buildPushArgv(branch) {
 }
 
 export function buildPrCreateArgv({ repo, title, bodyFile, branch }) {
-  return ["pr", "create", "--repo", repo, "--title", title, "--body-file", bodyFile, "--head", branch];
+  return [
+    "pr",
+    "create",
+    "--repo",
+    repo,
+    "--title",
+    title,
+    "--body-file",
+    bodyFile,
+    "--head",
+    branch,
+  ];
 }
 
 function gitOut(argv, cwd) {
-  return execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", argv, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 // Existing open PR for this head branch, or null.
@@ -109,14 +124,6 @@ export async function cmdPr(repo, args) {
   const issue = flag("--issue") ?? branch.match(/AIO-\d+/)?.[0] ?? null;
   if (issue && !ISSUE_RE.test(issue)) die(`invalid --issue '${issue}' — expected AIO-<number>.`);
 
-  // Idempotency: if a PR is already open for this branch, reuse it — no push, no create.
-  const existing = existingPrNumber(repoSlug, branch);
-  if (existing) {
-    console.log(c.dim(`PR already exists for ${branch}: #${existing}`));
-    console.log(`PR_NUMBER=${existing}`);
-    return existing;
-  }
-
   const pushArgv = buildPushArgv(branch);
 
   // Title always carries the issue key when we have one (drives the Linear automations).
@@ -137,17 +144,30 @@ export async function cmdPr(repo, args) {
   const createArgv = buildPrCreateArgv({ repo: repoSlug, title, bodyFile, branch });
 
   try {
+    // --dry-run is a pure preview: print the argv and make NO child calls (no idempotency
+    // query, no push, no create). Requires --branch/--repo to avoid resolving them via git.
     if (dryRun) {
       console.log(c.dim("[dry-run] git " + pushArgv.join(" ")));
       console.log(c.dim("[dry-run] gh " + createArgv.join(" ")));
       return null;
     }
 
+    // Idempotency: if a PR is already open for this branch, reuse it — no push, no create.
+    const existing = existingPrNumber(repoSlug, branch);
+    if (existing) {
+      console.log(c.dim(`PR already exists for ${branch}: #${existing}`));
+      console.log(`PR_NUMBER=${existing}`);
+      return existing;
+    }
+
     execFileSync("git", pushArgv, { cwd: repo, stdio: "inherit" });
 
     let createOut = "";
     try {
-      createOut = execFileSync("gh", createArgv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      createOut = execFileSync("gh", createArgv, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       process.stdout.write(createOut);
     } catch (e) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();

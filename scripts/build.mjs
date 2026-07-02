@@ -669,7 +669,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
   // and fails closed on a bad config.
   const cliOverrides = {};
   if (modelOverride) {
-    for (const step of ["build", "fix", "fix_escalated"]) cliOverrides[step] = { model: modelOverride };
+    for (const step of ["build", "fix", "fix_escalated"])
+      cliOverrides[step] = { model: modelOverride };
   }
   if (cursorTimeoutSet) cliOverrides.code_review = { timeoutMs: cursorTimeout };
   const models = resolveLoopModels({ repo, cliOverrides });
@@ -678,9 +679,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
   // --pr needs an AIO issue to drive the Linear PR-in-review → Done automations. It can
   // come from --issue or be derived from a branch that already names one. Fail fast.
   if (pr && !issue && !/AIO-\d+/.test(branch)) {
-    die(
-      "--pr requires an issue: pass --issue AIO-<n>, or use a branch name containing AIO-<n>."
-    );
+    die("--pr requires an issue: pass --issue AIO-<n>, or use a branch name containing AIO-<n>.");
   }
 
   const { worktreePath: wt, resumed } = resolveWorktree({
@@ -757,7 +756,11 @@ export async function runBuild({ repo, plan, branch, opts }) {
       ? [...CLAUDE_BUILD_FLAGS, "--effort", cfg.effort]
       : CLAUDE_BUILD_FLAGS;
     const builderEnv = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(wt) };
-    console.log(c.dim(`[claude] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`));
+    console.log(
+      c.dim(
+        `[claude] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
+      )
+    );
     try {
       const builderOut = await withRetry(callClaudeAgent, fencedPrompt, buildTimeout, {
         cwd: wt,

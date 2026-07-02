@@ -103,13 +103,19 @@ console.log("diversity guard (fail closed)");
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
 
   // build vs code_review collide (both anthropic).
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "code_review_model: claude-opus-4-8\n");
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "code_review_model: claude-opus-4-8\n"
+  );
   const bad1 = resolveInChild({ repo });
   check("build/code_review same-family aborts", bad1.ok === false);
   check("abort message is actionable", /different model families/.test(bad1.stderr));
 
   // plan vs plan_review collide (both anthropic).
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "plan_review_model: claude-opus-4-8\n");
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "plan_review_model: claude-opus-4-8\n"
+  );
   const bad2 = resolveInChild({ repo });
   check("plan/plan_review same-family aborts", bad2.ok === false);
 

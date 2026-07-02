@@ -52,6 +52,55 @@ an independent grounding step can do *worse* than a single pass.
 9. **`args` is a JSON string** — `JSON.parse(args)`.
 10. **Read-only** — return data; the caller writes.
 
+## Per-step model config (agent relay)
+
+The agent relay (`aios relay` plan phase + `aios build` build phase) resolves a **model,
+reasoning effort, and timeout per pipeline step** from `scripts/loop-models.mjs`. This is
+tuning, not a safety boundary — a missing config file just yields the defaults.
+
+**Default matrix** (baked in code; also in `docs/loop-models.example.yaml`):
+
+| step | model | effort |
+|------|-------|--------|
+| recon | claude-haiku-4-5 | — |
+| plan | claude-opus-4-8 | xhigh |
+| plan_review | gpt-5.5-high | — |
+| build | claude-opus-4-8 | high |
+| code_review | gpt-5.5-high | — |
+| fix | claude-opus-4-8 | medium |
+| fix_escalated | claude-opus-4-8 | high |
+| consolidate | claude-haiku-4-5 | — |
+| safety_review | claude-opus-4-8 | xhigh |
+| orchestrate | fable-5 | — |
+| digest | claude-haiku-4-5 | — |
+
+**Config file** — `.aios/loop-models.yaml` (gitignored), flat keys only (parsed by
+`scripts/flat-yaml.mjs`; no nesting, no dots): `<step>_model`, `<step>_effort`,
+`<step>_timeout_s`. **Precedence, per field: CLI flag > file > default.**
+
+**Diversity guard (fail closed).** `build` and `code_review` must be different model
+families, and so must `plan` and `plan_review` — the reviewer has to be an independent
+model. Families: `claude*`/`fable*` = anthropic, `gpt*` = openai. A same-family collision
+aborts the run with an actionable message. The defaults pass (anthropic producer vs openai
+reviewer on both pairs).
+
+**Fix-escalation ladder** (`selectBuilderStep`). The build loop picks the builder step from
+prior feedback, **never the outer loop `round`** and **never `detectBugbotClear`**:
+
+- no prior feedback yet → **build** (round 1 is the initial implementation)
+- first fix attempt, no structural Critical/High finding → **fix** (medium effort)
+- otherwise (≥2nd fix attempt, or any Critical/High) → **fix_escalated** (high effort)
+
+The trigger is `hasCriticalOrHighFindings(reviewText)` — a *structural* match on a listed
+`- Critical:`/`| High |` finding, so a Medium/Low-only review escalates only on the 2nd
+attempt. **Gate-feedback note:** when the fed-back text is a verify/secrets gate failure
+(not a Cursor review), the structural matcher is virtually always false, so a first
+gate-retry resolves to **fix** and later attempts to **fix_escalated**.
+
+**Effort split.** The Claude *builder* steps (`build`/`fix`/`fix_escalated`) pass effort via
+the Claude Code CLI `--effort` flag. The relay *plan* step passes effort via the SDK's
+`output_config.effort` instead — the CLI flag is not used there.
+
 ## Cost note
 
 Harness runs cost meaningfully more than a single pass (often multiples). Use them

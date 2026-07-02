@@ -409,6 +409,5 @@ async function main() {
 }
 
 // Only run main when invoked directly (so tests can import decideTimeoutExit).
-const isMain =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) await main();

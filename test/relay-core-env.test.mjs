@@ -62,7 +62,10 @@ console.log("callClaudeAgent strips even when the caller supplies its own env");
   const out = await callClaudeAgent("do a thing", 30000, {
     env: { ...process.env, GIT_CEILING_DIRECTORIES: "/tmp" },
   });
-  check("caller-supplied env still has the key stripped", out.includes("ANTHROPIC_API_KEY=<unset>"));
+  check(
+    "caller-supplied env still has the key stripped",
+    out.includes("ANTHROPIC_API_KEY=<unset>")
+  );
 }
 
 console.log("callCursorAgent (no env override) inherits the parent env");
