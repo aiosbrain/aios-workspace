@@ -1,6 +1,10 @@
 # Domain spec — Agentic Maturity
 
 Governed by [`ENGINEERING-CONSTITUTION.md`](../../ENGINEERING-CONSTITUTION.md). Feeds the [Operator Loop](../README.md).
+The behavioral standard AEM scores against is the
+[Build Paradigm](../../agentic-ergonomics/build-paradigm.md) (AIO-172): the Attention card
+measures its "leverage per unit of attention" premise, and placement guidance links its sections
+rather than restating them.
 
 ## Why
 Analysis of each coding session — fed back to the user and into the team brain — is a headline AIOS capability and a differentiator. For V1 it is the most mature of the five domains; the work is mostly *wiring it into the loop*, not building it.
