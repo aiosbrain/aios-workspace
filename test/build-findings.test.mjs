@@ -5,7 +5,12 @@
 // escalation-ladder interaction (a consolidated [High] resolves to fix_escalated via the
 // extended bracket matcher). Run: node test/build-findings.test.mjs
 
-import { parseBuildArgs, extractMustFix, selectBuilderStep } from "../scripts/build.mjs";
+import {
+  parseBuildArgs,
+  extractMustFix,
+  selectBuilderStep,
+  hasActionableFindings,
+} from "../scripts/build.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -48,6 +53,34 @@ console.log("extractMustFix");
   check("drops untagged Medium", !out.includes("naming nit"));
   check("drops Low", !out.includes("typo"));
   check("preserves section headers", out.includes("## Bot Findings"));
+}
+
+console.log("hasActionableFindings (M3 seed gate)");
+{
+  check(
+    "Critical is actionable",
+    hasActionableFindings("[Critical] a.mjs:1 — data loss (source: Bugbot)")
+  );
+  check("High is actionable", hasActionableFindings("[High] b.mjs:2 — loop (source: GPT-5.5)"));
+  check(
+    "plan-conformance Medium is actionable",
+    hasActionableFindings("[Medium] d.mjs:4 — drifts from the plan (plan-conformance)")
+  );
+  check(
+    "untagged Medium is NOT actionable",
+    !hasActionableFindings("[Medium] c.mjs:3 — naming nit (source: CodeRabbit)")
+  );
+  check("Low is NOT actionable", !hasActionableFindings("[Low] e.mjs:5 — typo"));
+  check(
+    "a CLEAR file (headers + verdict + only Low) is NOT actionable",
+    !hasActionableFindings(
+      "## Bot Findings\n[Low] README.md:1 — typo\n\n## Verdict\nCLEAR\n\nBUGBOT_CLEAR"
+    )
+  );
+  check(
+    "empty / null is NOT actionable",
+    !hasActionableFindings("") && !hasActionableFindings(null)
+  );
 }
 
 console.log("selectBuilderStep — consolidated [High] escalates");

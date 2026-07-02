@@ -304,6 +304,23 @@ export function extractMustFix(consolidatedText) {
     .trim();
 }
 
+// True iff a consolidated findings file carries ≥1 ACTIONABLE must-fix item — a
+// Critical/High finding, or a plan-conformance-tagged Medium. extractMustFix preserves
+// section headers + verdict prose even for a CLEAR file, so its non-empty output is NOT a
+// reliable "there is work to do" signal; --findings seeding gates on THIS instead, so a
+// CLEAR findings file aborts fast rather than burning a builder round on a fresh build.
+// Pure; exported for tests.
+export function hasActionableFindings(consolidatedText) {
+  for (const line of (consolidatedText ?? "").split("\n")) {
+    const sev = line.trim().match(/\[(Critical|High|Medium|Low)\]/i);
+    if (!sev) continue;
+    const level = sev[1].toLowerCase();
+    if (level === "critical" || level === "high") return true;
+    if (level === "medium" && /\(plan-conformance\)/i.test(line)) return true;
+  }
+  return false;
+}
+
 // Classify what the builder produced this round from git counts.
 export function classifyDiff({ totalCommits, newCommits }) {
   if (totalCommits === 0) return "no-commits";
@@ -845,22 +862,32 @@ export async function runBuild({ repo, plan, branch, opts }) {
   }
 
   let prevReview = null;
+  // The must-fix subset seeded from --findings, kept for the WHOLE run: a gate failure
+  // replaces prevReview with the gate text, so without a separate handle the outstanding
+  // must-fix items would vanish from every later round (M1). null when not seeding.
+  let seededFindings = null;
   // Seed prior feedback from a consolidated findings file (aios consolidate-findings). This
   // makes round 1 a fix round (hasPriorFeedback === true) that resolves through the
   // fix/fix_escalated ladder exactly like a Cursor review — the consolidated must-fix subset
   // IS the reviewer feedback replacing a hand-pasted fix file. Seeding pre-loop is intended.
   if (findingsFile) {
     if (!existsSync(findingsFile)) die(`--findings file not found: ${findingsFile}`);
-    const mustFix = extractMustFix(readFileSync(findingsFile, "utf8"));
-    if (mustFix.trim()) {
-      prevReview = mustFix;
-      console.log(c.dim(`[findings] seeding round 1 from must-fix subset of ${findingsFile}`));
-      log("Seeded findings (must-fix)", mustFix.slice(-4000));
-    } else {
-      console.log(
-        c.dim(`[findings] ${findingsFile} had no must-fix items — starting a fresh build`)
+    const raw = readFileSync(findingsFile, "utf8");
+    // Seed ONLY when ≥1 actionable finding survives extraction (Critical/High or a
+    // plan-conformance Medium). A CLEAR findings file's leftover headers/verdict prose is
+    // NOT actionable — abort fast instead of burning a builder round on a fresh build (M3).
+    if (!hasActionableFindings(raw)) {
+      die(
+        `--findings ${findingsFile}: nothing to fix — no actionable findings ` +
+          `(Critical/High, or a plan-conformance Medium) in the file. A CLEAR findings ` +
+          `file does not seed a fix round; re-run without --findings to build from scratch.`
       );
     }
+    const mustFix = extractMustFix(raw);
+    prevReview = mustFix;
+    seededFindings = mustFix;
+    console.log(c.dim(`[findings] seeding round 1 from must-fix subset of ${findingsFile}`));
+    log("Seeded findings (must-fix)", mustFix.slice(-4000));
   }
   let blockedOnGate = false; // true when the last round failed verify/secrets, not review
   let prevCommits = parseInt(gitQuiet(["rev-list", "--count", `${baseSha}..HEAD`], wt) || "0", 10);
@@ -976,7 +1003,13 @@ export async function runBuild({ repo, plan, branch, opts }) {
       console.log(
         c.yellow("gate failed — sending feedback to the builder; skipping review this round")
       );
-      prevReview = gateFeedback;
+      // Carry the still-outstanding seeded must-fix findings ALONGSIDE the gate output, so a
+      // gate failure never drops them from later rounds (M1). Without this, a --findings-seeded
+      // round that then trips a gate would replace prevReview with the gate text alone and the
+      // Critical/High items would silently vanish.
+      prevReview = seededFindings
+        ? `${gateFeedback}\n\n## Still-outstanding must-fix findings (address these too)\n\n${seededFindings}`
+        : gateFeedback;
       blockedOnGate = true;
       continue;
     }

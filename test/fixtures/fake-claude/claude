@@ -23,6 +23,12 @@ const pIdx = argv.indexOf("-p");
 const prompt = pIdx >= 0 ? argv[pIdx + 1] : "";
 const mode = process.env.FAKE_AGENT_SCRIPT || "approve";
 
+// Optional: record each builder prompt (separated by a sentinel) so a test can assert what
+// the loop fed the builder on a given round (e.g. gate feedback + outstanding findings).
+if (process.env.FAKE_PROMPT_LOG) {
+  appendFileSync(process.env.FAKE_PROMPT_LOG, prompt + "\n<<<PROMPT_SEP>>>\n");
+}
+
 function emit(text) {
   console.log(
     JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } })
