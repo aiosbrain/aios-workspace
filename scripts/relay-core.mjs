@@ -78,6 +78,10 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
     const proc = spawn(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd ?? process.cwd(),
+      // Only override the child env when a caller supplies one (e.g. the build
+      // phase strips ANTHROPIC_API_KEY so Claude Code uses its own login auth).
+      // Absent opts.env, the child inherits process.env implicitly — unchanged.
+      ...(opts.env ? { env: opts.env } : {}),
     });
 
     const timer = setTimeout(() => {
@@ -160,6 +164,13 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
 // edits files, runs tests, commits). opts.model selects the model (default Opus);
 // the build phase passes --dangerously-skip-permissions for autonomous edits in the
 // sandboxed worktree.
+//
+// ANTHROPIC_API_KEY is ALWAYS stripped from the child env: `aios build` runs under
+// `npm run aios` (dotenvx-injected key), and without this strip the spawned Claude
+// Code flips from its own login/subscription auth to metered API billing and dies on
+// a low-credit account. The strip is idempotent — a caller-supplied opts.env is
+// cloned/mutated, not required, so this stays authoritative even when the build phase
+// passes its own env (e.g. GIT_CEILING_DIRECTORIES).
 export async function callClaudeAgent(prompt, timeoutMs, opts = {}) {
   const model = opts.model ?? "claude-opus-4-8";
   const args = [
@@ -172,7 +183,9 @@ export async function callClaudeAgent(prompt, timeoutMs, opts = {}) {
     model,
     ...(opts.extraArgs ?? []),
   ];
-  return spawnAgentStream("claude", "claude", args, timeoutMs, opts);
+  const childEnv = opts.env ?? { ...process.env };
+  delete childEnv.ANTHROPIC_API_KEY;
+  return spawnAgentStream("claude", "claude", args, timeoutMs, { ...opts, env: childEnv });
 }
 
 // ── git operations ───────────────────────────────────────────────────────────
