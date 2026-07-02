@@ -251,3 +251,17 @@ export {
 } from "./asks/store.js";
 export { createInboxTransport, type InboxTransportOptions } from "./asks/transport.js";
 export { harvestAsks, type HarvestOptions, type HarvestResult } from "./asks/harvest.js";
+
+// Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
+export {
+  NOTIF_CHANNEL_KEY,
+  NOTIF_DISABLED_VALUE,
+  defaultModePaths,
+  modeStatus,
+  enterDeepWork,
+  enterOrchestration,
+  type AttentionMode,
+  type ModePaths,
+  type ModeStatus,
+  type ModeChange,
+} from "./mode.js";
