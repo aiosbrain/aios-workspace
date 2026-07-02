@@ -15,7 +15,9 @@ export interface WindowConfig {
 export const DAILY: WindowConfig = {
   cadence: "daily",
   days: 1,
-  kinds: ["decision", "task", "deliverable", "carryover", "time"],
+  // `comms` (AIO-140) feeds C4's "what's blocked / waiting on someone" from Slack/email/calendar
+  // activity; inert (empty) until a workspace has a comms activity store.
+  kinds: ["decision", "task", "deliverable", "carryover", "time", "comms"],
 };
 
 /** Weekly: 7-day window, full source set — the heavy verified pull. */
@@ -25,7 +27,17 @@ export const WEEKLY: WindowConfig = {
   // github is listed (full set) but its source is an inert deferred stub — it emits nothing
   // until a local GitHub-activity source exists (AIO-32 is brain-side). See sources/github.ts.
   // time (AIO-139) feeds the C5 runtime-by-tag roll-up; closeout partitions it out of claims.
-  kinds: ["decision", "task", "hours", "deliverable", "inbox", "carryover", "github", "time"],
+  kinds: [
+    "decision",
+    "task",
+    "hours",
+    "deliverable",
+    "inbox",
+    "carryover",
+    "github",
+    "time",
+    "comms",
+  ],
 };
 
 export function windowFor(cadence: Cadence): WindowConfig {

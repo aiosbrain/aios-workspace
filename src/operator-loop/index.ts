@@ -191,3 +191,31 @@ export {
 } from "./time/store.js";
 export { capture, type CaptureOptions, type CaptureSummary } from "./time/capture.js";
 export { reconcile, type ReconcileOptions, type ReconcileResult } from "./time/reconcile.js";
+
+// Communication — unified notification layer (AIO-140).
+// Inbound: `commsSource` normalizes Slack/email/calendar activity into `comms` C1 signals.
+// Outbound: detectors → typed events → the tier-gated `dispatchOnEvent` sender.
+export {
+  COMMS_CONFIG_REL,
+  DEFAULT_LOOKBACK_HOURS,
+  COMMS_ACTIVITY_BASENAME,
+  defaultCommsConfig,
+  loadCommsConfig,
+  parseCommsConfig,
+  resolveChannelTier,
+  type CommsConfig,
+  type SenderConfig,
+  type SlackConfig,
+} from "./comms/config.js";
+export {
+  dispatchOnEvent,
+  canChannelReceive,
+  formatEvent,
+  type NotificationEvent,
+  type SendFn,
+  type DispatchDeps,
+  type DispatchResult,
+  type RejectReason,
+  type NoopReason,
+} from "./comms/sender.js";
+export { detectEvents, DEFAULT_STALE_INBOX_DAYS } from "./comms/detectors.js";
