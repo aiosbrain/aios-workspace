@@ -69,6 +69,24 @@ const CI_PENDING = new Set([
   "EXPECTED",
 ]);
 
+// `gh pr checks --json` emits a `bucket` field that categorizes `state` into one of:
+// pass | fail | pending | skipping | cancel. It is the authoritative, gh-computed
+// classification — we key off it first, then fall back to the raw state sets above so
+// older gh / odd states are still covered. (There is NO `conclusion` field on this
+// command — requesting it makes gh exit 1 with "Unknown JSON field", which is why the
+// check board used to always come back unavailable.)
+const CI_RED_BUCKET = new Set(["fail", "cancel"]);
+const CI_PENDING_BUCKET = new Set(["pending"]);
+
+// A red / pending check — bucket first, then the raw state sets. `skipping` (skipped) and
+// `neutral` are benign (neither red nor pending).
+function checkIsRed(x) {
+  return CI_RED_BUCKET.has(x.bucket) || CI_RED.has(x.state) || CI_RED.has(x.conclusion);
+}
+function checkIsPending(x) {
+  return CI_PENDING_BUCKET.has(x.bucket) || CI_PENDING.has(x.state) || CI_PENDING.has(x.conclusion);
+}
+
 const REVIEWER_PROMPT_REL = path.join(".claude", "agents", "code-reviewer.md");
 
 // ── pure helpers (exported for tests) ─────────────────────────────────────────
@@ -116,12 +134,39 @@ function maxSev(a, b) {
   return rankSeverity(a) >= rankSeverity(b) ? a : b;
 }
 
-// Parse `gh pr checks --json name,state,conclusion` output → { checks, ciRed, ciPending, parsed }.
+// A recognized status CELL in a plaintext `gh pr checks` table row — deliberately the exact
+// standalone status tokens gh prints (the bucket words + a few state words), NOT substrings.
+// Crucially this does NOT include "failed"/"failing": an auth message like "authentication
+// failed for host" must never look like a red board. Anchored so it only matches a whole cell.
+const PLAINTEXT_STATUS_CELL =
+  /^(pass|fail|pending|skipping|skipped|cancel(l?ed)?|success|failure|neutral|queued)$/i;
+
+// Does this stdout structurally resemble a `gh pr checks` table (≥1 row with ≥2 whitespace-
+// separated columns, one of which is a recognized status token)? Error prose ("authentication
+// failed for host") and empty stdout do NOT — so we never misread a gh auth/network message
+// that merely contains a "fail"-like word as a red board.
+function looksLikeChecksTable(raw) {
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.some((l) => {
+    const cols = l
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return cols.length >= 2 && cols.some((cell) => PLAINTEXT_STATUS_CELL.test(cell));
+  });
+}
+
+// Parse `gh pr checks --json name,state,bucket` output → { checks, ciRed, ciPending, parsed }.
 // Falls back to a plaintext-table scan when --json is unsupported (older gh). ciRed on any red
-// state; ciPending on any non-terminal (in-flight) state. `parsed` reports whether check DATA was
-// actually available (valid JSON array or a non-empty plaintext board) vs. an empty/unparseable
-// stdout — the caller uses it to tell a real gh failure (auth/network, no data) apart from a
-// tolerated red/pending board (data present).
+// bucket/state; ciPending on any non-terminal (in-flight) bucket/state. `parsed` reports whether
+// check DATA was actually available (valid JSON array or a structurally-table plaintext board)
+// vs. empty / error-prose stdout — the caller uses it to tell a real gh failure (auth/network,
+// no data) apart from a tolerated red/pending board (data present). Error prose is NOT parsed as
+// a board even when it contains "fail"-like words: it fails closed via `unavailable` (exit 1),
+// never a spurious red-board BLOCKED (exit 3).
 export function parseCheckResults(stdout) {
   const raw = String(stdout ?? "");
   let arr = null;
@@ -131,21 +176,24 @@ export function parseCheckResults(stdout) {
     /* not JSON — fall through to plaintext */
   }
   if (!Array.isArray(arr)) {
-    // Plaintext `gh pr checks` table: a "fail"/"failing" cell means red; a "pending"/
-    // "in progress"/"queued" cell means the board hasn't settled.
-    const hasText = raw.trim().length > 0;
-    const ciRed = /\bfail(ed|ing|ure)?\b/i.test(raw) && hasText;
-    const ciPending =
-      /\b(pending|in[_ -]?progress|queued|waiting|expected)\b/i.test(raw) && hasText;
-    return { checks: [], ciRed, ciPending, parsed: hasText };
+    // Only classify red/pending on stdout that structurally looks like a checks table;
+    // error prose / empty stdout ⇒ parsed:false ⇒ the caller fails closed (exit 1).
+    if (!looksLikeChecksTable(raw)) {
+      return { checks: [], ciRed: false, ciPending: false, parsed: false };
+    }
+    const ciRed = /\bfail(ed|ing|ure)?\b/i.test(raw) || /\bcancell?ed\b/i.test(raw);
+    const ciPending = /\b(pending|in[_ -]?progress|queued|waiting|expected)\b/i.test(raw);
+    return { checks: [], ciRed, ciPending, parsed: true };
   }
   const checks = arr.map((x) => ({
     name: x.name ?? x.context ?? "(unnamed)",
     state: String(x.state ?? "").toUpperCase(),
+    bucket: String(x.bucket ?? "").toLowerCase(),
+    // `conclusion` is retained only for injected/legacy fixtures; real gh never sets it.
     conclusion: String(x.conclusion ?? "").toUpperCase(),
   }));
-  const ciRed = checks.some((x) => CI_RED.has(x.state) || CI_RED.has(x.conclusion));
-  const ciPending = checks.some((x) => CI_PENDING.has(x.state) || CI_PENDING.has(x.conclusion));
+  const ciRed = checks.some(checkIsRed);
+  const ciPending = checks.some(checkIsPending);
   return { checks, ciRed, ciPending, parsed: true };
 }
 
@@ -203,7 +251,9 @@ export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
   const { pr, issue, checks, prDiff, issueComments, inlineComments, reviews, gptMarkdown } = inputs;
   const asJson = (v) => JSON.stringify(v ?? [], null, 2);
   const checkLines = checks?.checks?.length
-    ? checks.checks.map((x) => `[${x.conclusion || x.state || "?"}] ${x.name}`).join("\n")
+    ? checks.checks
+        .map((x) => `[${x.bucket || x.state || x.conclusion || "?"}] ${x.name}`)
+        .join("\n")
     : checks?.ciRed
       ? "(CI is red — see the raw board)"
       : "(no CI check data)";
@@ -293,14 +343,12 @@ export function postValidate({ modelOutput, sourceMax, ciRed, ciPending, checks 
   // Concrete, matcher-visible reason(s) for the forced block.
   const reasons = [];
   if (ciRed) {
-    const reds =
-      checks?.checks?.filter((x) => CI_RED.has(x.state) || CI_RED.has(x.conclusion)) ?? [];
+    const reds = checks?.checks?.filter(checkIsRed) ?? [];
     const names = reds.map((x) => x.name).join(", ") || "one or more jobs";
     reasons.push(`[High] CI — ${names} failed; a red CI board blocks merge (source: CI).`);
   }
   if (ciPending) {
-    const pend =
-      checks?.checks?.filter((x) => CI_PENDING.has(x.state) || CI_PENDING.has(x.conclusion)) ?? [];
+    const pend = checks?.checks?.filter(checkIsPending) ?? [];
     const names = pend.map((x) => x.name).join(", ") || "one or more jobs";
     reasons.push(
       `[High] CI — ${names} still pending; the board has not settled, so merge-readiness is ` +
@@ -392,7 +440,7 @@ const BOT_SELECT = 'select(.user.login | test("cursor|coderabbit"))';
 export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
   // 1. CI checks (tolerate a red/pending board — it's data, not a crash).
   const checksRes = runGh(
-    ["pr", "checks", String(pr), "--repo", slug, "--json", "name,state,conclusion"],
+    ["pr", "checks", String(pr), "--repo", slug, "--json", "name,state,bucket"],
     { tolerateNonZero: true }
   );
   const checks = parseCheckResults(checksRes.stdout);
@@ -541,11 +589,22 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
     return 1;
   }
 
-  // Deterministic pre-extraction (single severity dialect).
+  // Deterministic pre-extraction (single severity dialect). Scan EVERY gathered textual
+  // source for BOTH bots — inline diff comments, issue comments, AND submitted PR reviews.
+  // Each extractor self-filters by bot login, so feeding the union to both is safe and means
+  // a Critical/High that appears ONLY in a Bugbot issue comment or in a submitted review (of
+  // either bot) still forces the fail-closed max-severity inheritance below. (Previously only
+  // inline comments — plus issue comments for CodeRabbit — were scanned, so a blocker present
+  // solely in a review body or a Bugbot issue comment could be model-dropped to CLEAR.)
+  const allBotText = [
+    ...(inputs.inlineComments ?? []),
+    ...(inputs.issueComments ?? []),
+    ...(inputs.reviews ?? []),
+  ];
   const { sourceMax, ciRed, ciPending } = preExtractSeverities({
     checks: inputs.checks,
-    bugbot: inputs.inlineComments,
-    coderabbit: [...(inputs.inlineComments ?? []), ...(inputs.issueComments ?? [])],
+    bugbot: allBotText,
+    coderabbit: allBotText,
     gpt: inputs.gptMarkdown,
   });
 

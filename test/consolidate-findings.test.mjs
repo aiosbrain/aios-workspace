@@ -125,6 +125,29 @@ console.log("parseCheckResults");
   check("valid JSON array → parsed true", pass.parsed === true);
   check("plaintext board → parsed true", parseCheckResults("build fail 1s").parsed === true);
   check("empty stdout → parsed false", parseCheckResults("").parsed === false);
+  // Real gh shape carries `bucket`, not `conclusion`: bucket drives red/pending.
+  check("bucket=fail → ciRed true", fail.checks.some((x) => x.bucket === "fail") && fail.ciRed);
+  check(
+    "bucket=cancel → ciRed true",
+    parseCheckResults('[{"name":"x","state":"CANCELLED","bucket":"cancel"}]').ciRed === true
+  );
+  check(
+    "bucket=skipping → benign (not red, not pending)",
+    (() => {
+      const r = parseCheckResults('[{"name":"x","state":"NEUTRAL","bucket":"skipping"}]');
+      return r.ciRed === false && r.ciPending === false && r.parsed === true;
+    })()
+  );
+  // M2: gh error PROSE is not a checks table → parsed false, never a spurious red board.
+  {
+    const prose = parseCheckResults("authentication failed for host github.com");
+    check("error prose → parsed false (not a table)", prose.parsed === false);
+    check("error prose → ciRed false (no spurious red)", prose.ciRed === false);
+  }
+  check(
+    "multi-line error prose → parsed false",
+    parseCheckResults("gh: request failed\nplease re-authenticate").parsed === false
+  );
 }
 
 // ── pure: severity extractors ──────────────────────────────────────────────────
@@ -239,16 +262,24 @@ console.log("gatherInputs — exact argv, no shell; PR diff in the prompt");
   check(
     "checks argv exact",
     JSON.stringify(calls[0]) ===
-      JSON.stringify([
-        "pr",
-        "checks",
-        "44",
-        "--repo",
-        "acme/repo",
-        "--json",
-        "name,state,conclusion",
-      ])
+      JSON.stringify(["pr", "checks", "44", "--repo", "acme/repo", "--json", "name,state,bucket"])
   );
+  // H2 pin: the code MUST request exactly `name,state,bucket`. `conclusion` is NOT a valid
+  // `gh pr checks --json` field — requesting it makes real gh exit 1 ("Unknown JSON field"),
+  // so the board would always come back unavailable. This assertion fails the SUITE (not
+  // production) if the field list ever regresses to include an invalid field.
+  {
+    const jsonIdx = calls[0].indexOf("--json");
+    const fields = (calls[0][jsonIdx + 1] ?? "").split(",");
+    check(
+      "checks --json field list is exactly name,state,bucket",
+      jsonIdx >= 0 && JSON.stringify(fields) === JSON.stringify(["name", "state", "bucket"])
+    );
+    check(
+      "checks --json does NOT request the invalid 'conclusion' field",
+      !fields.includes("conclusion")
+    );
+  }
   check(
     "diff argv exact",
     JSON.stringify(calls[1]) === JSON.stringify(["pr", "diff", "44", "--repo", "acme/repo"])
@@ -404,6 +435,100 @@ console.log("CI evidence unavailable (gh failure) → 1");
   check("gh checks failure returns 1 (not 0/CLEAR)", code === 1);
   check(
     "no findings file written on unavailable CI",
+    !existsSync(defaultOutPath(repo, "AIO-161", 1))
+  );
+}
+
+// ── H1: a High present ONLY in a submitted PR review → BLOCKED even on a CLEAR model ─────
+console.log("H1: High only in a submitted review → 3");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // No inline/issue comments; the ONLY High lives in a submitted Bugbot review body.
+      runGh: makeRunGh(
+        {
+          checks: passChecks(),
+          inlineComments: "[]",
+          issueComments: "[]",
+          reviews: JSON.stringify([
+            {
+              user: "cursor[bot]",
+              state: "COMMENTED",
+              body: "**High Severity**\n\nUnbounded retry loop can hang the process.",
+            },
+          ]),
+        },
+        []
+      ),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
+  check("review-only High → returns 3 (not 0/CLEAR)", code === 3);
+  check("review-only High → file verdict BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
+  check("review-only High → no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+}
+
+// ── H1: a High present ONLY in a Bugbot ISSUE comment → BLOCKED even on a CLEAR model ─────
+console.log("H1: High only in a Bugbot issue comment → 3");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // No inline comments / no reviews; the ONLY High lives in a Bugbot ISSUE comment.
+      runGh: makeRunGh(
+        {
+          checks: passChecks(),
+          inlineComments: "[]",
+          issueComments: JSON.stringify([
+            {
+              user: "cursor[bot]",
+              body: "**High Severity**\n\nMissing null guard before dereference.",
+              created_at: "2026-07-01T00:00:00Z",
+            },
+          ]),
+          reviews: "[]",
+        },
+        []
+      ),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
+  check("issue-comment-only High → returns 3 (not 0/CLEAR)", code === 3);
+  check("issue-comment-only High → file verdict BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
+  check("issue-comment-only High → no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+}
+
+// ── M2: gh error PROSE (contains "fail") is NOT a red board → fail closed, returns 1 ─────
+console.log("M2: gh error prose → 1 (not a spurious red board)");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // gh pr checks exits non-zero with an auth-error MESSAGE (not a checks table). The word
+      // "failed" must NOT be read as red CI (exit 3) — no board data ⇒ unavailable ⇒ exit 1.
+      runGh: makeRunGh(
+        {
+          checks: {
+            code: 1,
+            stdout: "authentication failed for host github.com",
+            stderr: "gh: could not authenticate",
+          },
+          inlineComments: "[]",
+        },
+        []
+      ),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  check("gh error prose returns 1 (not 3)", code === 1);
+  check(
+    "no findings file written on gh error prose",
     !existsSync(defaultOutPath(repo, "AIO-161", 1))
   );
 }

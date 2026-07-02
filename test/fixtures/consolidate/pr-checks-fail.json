@@ -1,4 +1,4 @@
 [
-  { "name": "build", "state": "FAILURE", "conclusion": "FAILURE" },
-  { "name": "lint", "state": "SUCCESS", "conclusion": "SUCCESS" }
+  { "name": "build", "state": "FAILURE", "bucket": "fail" },
+  { "name": "lint", "state": "SUCCESS", "bucket": "pass" }
 ]

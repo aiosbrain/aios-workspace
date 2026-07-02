@@ -1,4 +1,4 @@
 [
-  { "name": "build", "state": "IN_PROGRESS", "conclusion": "" },
-  { "name": "lint", "state": "SUCCESS", "conclusion": "SUCCESS" }
+  { "name": "build", "state": "IN_PROGRESS", "bucket": "pending" },
+  { "name": "lint", "state": "SUCCESS", "bucket": "pass" }
 ]
