@@ -3404,6 +3404,199 @@ async function cmdTime(repo, cfg, args) {
   );
 }
 
+// ── aios asks (AIO-167): non-blocking escalation queue ───────────────────────
+// Offline + local-first. An append-only NDJSON store folded to state (`.aios/loop/asks/`,
+// admin-tier, never synced). Mirrors cmdTime: dist import, `--repo` respected, friendly die if
+// the loop isn't built. Subcommands: list / show / resolve / drain / add / harvest.
+async function cmdAsks(repo, cfg, args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = new Set(rest);
+  const asJson = flags.has("--json");
+  const argVal = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+  const loop = await loadOperatorLoop();
+  const warnNote = (warnings) => {
+    if (warnings?.length && !asJson)
+      console.error(c.dim(`  (${warnings.length} malformed line(s) skipped)`));
+  };
+  const resolveId = (asks, given) => {
+    const exact = asks.find((a) => a.id === given);
+    if (exact) return exact;
+    const prefixed = asks.filter((a) => a.id.startsWith(given));
+    if (prefixed.length === 1) return prefixed[0];
+    if (prefixed.length > 1) die(`ambiguous id prefix: ${given}`);
+    return null;
+  };
+
+  if (sub === "list") {
+    const status = argVal("--status") ?? "open";
+    const valid = ["open", "resolved", "orphaned", "all"];
+    if (!valid.includes(status)) die(`--status must be one of ${valid.join("|")}`);
+    const { asks, warnings } = loop.readAsks(repo);
+    const filtered = (status === "all" ? asks : asks.filter((a) => a.status === status)).sort((a, b) =>
+      (b.createdAt || "").localeCompare(a.createdAt || "")
+    );
+    if (asJson) {
+      console.log(JSON.stringify({ asks: filtered, warnings }, null, 2));
+      return;
+    }
+    console.log(c.blue("aios asks") + c.dim(`  ${status} · ${filtered.length}`));
+    for (const a of filtered)
+      console.log(
+        `  ${a.id.slice(0, 8)}  [${a.severity}] ${a.kind.padEnd(16)} ${a.title}` +
+          (a.ref ? c.dim(`  ↳ ${a.ref}`) : "")
+      );
+    if (!filtered.length) console.log(c.dim("  (none)"));
+    warnNote(warnings);
+    return;
+  }
+
+  if (sub === "show") {
+    const given = rest.find((a) => !a.startsWith("--"));
+    if (!given) die("usage: aios asks show <id> [--json]");
+    const { asks } = loop.readAsks(repo);
+    const ask = resolveId(asks, given);
+    if (!ask) die(`ask not found: ${given}`);
+    if (asJson) {
+      console.log(JSON.stringify(ask, null, 2));
+      return;
+    }
+    console.log(c.blue(`aios asks show`) + c.dim(`  ${ask.id}`));
+    console.log(`  status:    ${ask.status}`);
+    console.log(`  severity:  ${ask.severity}`);
+    console.log(`  kind:      ${ask.kind}`);
+    console.log(`  title:     ${ask.title}`);
+    if (ask.body) console.log(`  body:      ${ask.body}`);
+    if (ask.ref) console.log(`  ref:       ${ask.ref}`);
+    console.log(`  source:    ${ask.source}`);
+    console.log(`  created:   ${ask.createdAt}`);
+    if (ask.resolvedAt) console.log(`  closed:    ${ask.resolvedAt}`);
+    return;
+  }
+
+  if (sub === "resolve") {
+    const given = rest.filter((a) => !a.startsWith("--"));
+    if (!given.length) die("usage: aios asks resolve <id...> [--json]");
+    const { asks } = loop.readAsks(repo);
+    // Validate ALL ids before any write — an unknown id dies before touching the store.
+    const ids = given.map((g) => {
+      const match = resolveId(asks, g);
+      if (!match) die(`ask not found: ${g}`);
+      return match.id;
+    });
+    const now = new Date().toISOString();
+    for (const id of ids) loop.appendOp(repo, "resolve", id, now);
+    if (asJson) {
+      console.log(JSON.stringify({ resolved: ids }));
+      return;
+    }
+    console.log(c.blue("aios asks resolve") + c.dim(`  ${ids.length} resolved`));
+    return;
+  }
+
+  if (sub === "drain") {
+    const keepOpen = flags.has("--keep-open");
+    const nowArg = argVal("--now");
+    const now = nowArg ? new Date(nowArg) : new Date();
+    const nowIso = now.toISOString();
+    // (1) orphan-detect BEFORE resolve so orphaning is effective.
+    const orphanIds = loop.detectOrphans(
+      loop.readAsks(repo).asks.filter((a) => a.status === "open"),
+      now
+    );
+    for (const id of orphanIds) loop.appendOp(repo, "orphan", id, nowIso);
+    // (2) remaining open.
+    const remaining = loop.readAsks(repo).asks.filter((a) => a.status === "open");
+    // (3) auto-resolve (unless --keep-open).
+    let drained = 0;
+    if (!keepOpen)
+      for (const a of remaining) {
+        loop.appendOp(repo, "resolve", a.id, nowIso);
+        drained++;
+      }
+    // (4) GC under the lock.
+    const { removed } = loop.compact(repo, now);
+    const summary = {
+      drained,
+      orphaned: orphanIds.length,
+      gcRemoved: removed,
+      remainingOpen: keepOpen ? remaining.length : 0,
+    };
+    if (asJson) {
+      console.log(JSON.stringify(summary, null, 2));
+      return;
+    }
+    console.log(c.blue("aios asks drain") + c.dim(keepOpen ? "  (--keep-open)" : ""));
+    if (remaining.length) {
+      console.log(c.dim(`  ${keepOpen ? "open" : "resolving"} (${remaining.length}):`));
+      for (const a of remaining) console.log(`    ${a.id.slice(0, 8)}  [${a.severity}] ${a.title}`);
+    }
+    console.log(`  drained: ${drained}   orphaned: ${orphanIds.length}   gc-removed: ${removed}`);
+    return;
+  }
+
+  if (sub === "add") {
+    const kind = argVal("--kind");
+    const severity = argVal("--severity");
+    const title = argVal("--title");
+    if (!kind || !severity || !title)
+      die(
+        "usage: aios asks add --kind <k> --severity <blocker|decision|fyi> --title <t> [--body <b>] [--ref <r>] [--json]"
+      );
+    if (!["blocker", "decision", "fyi"].includes(severity))
+      die("--severity must be one of blocker|decision|fyi");
+    const openCount = loop.readAsks(repo).asks.filter((a) => a.status === "open").length;
+    if (openCount >= loop.OPEN_SOFT_CAP && !asJson)
+      console.error(
+        c.dim(`  warning: ${openCount} open asks (soft cap ${loop.OPEN_SOFT_CAP}) — run \`aios asks drain\``)
+      );
+    const rec = loop.appendCreate(repo, {
+      kind,
+      severity,
+      title,
+      body: argVal("--body") ?? "",
+      ref: argVal("--ref") ?? null,
+      source: "cli",
+    });
+    if (asJson) {
+      console.log(JSON.stringify({ id: rec.id }));
+      return;
+    }
+    console.log(c.blue("aios asks add") + c.dim(`  ${rec.id}`));
+    return;
+  }
+
+  if (sub === "harvest") {
+    const cadence = argVal("--cadence") === "weekly" ? "weekly" : "daily";
+    const nowArg = argVal("--now");
+    const res = await loop.harvestAsks(repo, {
+      cadence,
+      ...(nowArg ? { now: new Date(nowArg) } : {}),
+    });
+    if (asJson) {
+      console.log(JSON.stringify(res, null, 2));
+      return;
+    }
+    console.log(c.blue("aios asks harvest") + c.dim(`  ${cadence}`));
+    console.log(
+      `  events: ${res.events}   delivered: ${res.delivered}   rejected: ${res.rejected}   noop: ${res.noop}   suppressed: ${res.suppressed}`
+    );
+    return;
+  }
+
+  die(
+    "usage: aios asks list [--status open|resolved|orphaned|all] [--json]\n" +
+      "       aios asks show <id> [--json]\n" +
+      "       aios asks resolve <id...> [--json]\n" +
+      "       aios asks drain [--keep-open] [--json]\n" +
+      "       aios asks add --kind <k> --severity <blocker|decision|fyi> --title <t> [--body <b>] [--ref <r>] [--json]\n" +
+      "       aios asks harvest [--cadence daily|weekly] [--json]"
+  );
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -3462,6 +3655,14 @@ usage:
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
   aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
     [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
+  aios asks list [--status open|all]    non-blocking escalation queue (local, admin-tier, never synced)
+    [--json]                            list open (default) / resolved / orphaned / all
+  aios asks add --kind <k>              enqueue an ask (severity: blocker|decision|fyi)
+    --severity <s> --title <t> [--body <b>] [--ref <r>] [--json]
+  aios asks show <id> | resolve <id...> inspect one ask; mark ask(s) resolved (bookkeeping)
+  aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)
+  aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue
+    [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -3540,6 +3741,7 @@ const OFFLINE_CMDS = new Set([
   "review-bugbot",
   "loop",
   "time",
+  "asks",
 ]);
 
 let repo, cfg;
@@ -3577,6 +3779,7 @@ try {
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
+  else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

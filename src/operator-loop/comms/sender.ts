@@ -39,8 +39,21 @@ export interface NotificationEvent {
 /** Injected transport. Returns whatever receipt the wire produces (opaque to the sender). */
 export type SendFn = (msg: { channel: string; text: string }) => Promise<unknown> | unknown;
 
+/** A richer, additive transport hook: receives the full event + resolved gate context (not just
+ *  the formatted text), so a sink can persist structured fields (severity, ref, tier) rather than
+ *  parse them back out of a string. Used by the asks inbox transport (AIO-167). Optional — when
+ *  absent the sender falls back to `send`, so every existing caller is unaffected. */
+export type SendEventFn = (args: {
+  event: NotificationEvent;
+  channel: string;
+  messageTier: Tier;
+  channelTier: Tier;
+  text: string;
+}) => Promise<unknown> | unknown;
+
 export interface DispatchDeps {
   send: SendFn;
+  sendEvent?: SendEventFn;
 }
 
 export type RejectReason =
@@ -156,8 +169,11 @@ export async function dispatchOnEvent(
     };
   }
 
-  // Authorized — only now format + send.
+  // Authorized — only now format + send. Prefer the richer `sendEvent` hook when a sink provides
+  // it (structured fields); otherwise the plain text `send`. All four gates already ran above.
   const text = formatEvent(event);
-  const receipt = await deps.send({ channel, text });
+  const receipt = deps.sendEvent
+    ? await deps.sendEvent({ event, channel, messageTier, channelTier, text })
+    : await deps.send({ channel, text });
   return { status: "sent", channel, messageTier, channelTier, text, receipt };
 }
