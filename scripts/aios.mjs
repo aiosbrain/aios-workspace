@@ -3620,8 +3620,13 @@ async function cmdMode(repo, cfg, args) {
     const i = args.indexOf("--settings");
     return i >= 0 ? args[i + 1] : null;
   })();
+  // Sidecar is always the sibling `aios-mode.json` of the settings file — the SAME derivation as
+  // defaultModePaths(), so `--settings ~/.claude/settings.json` and the default share one memory.
   const paths = settingsArg
-    ? { settingsPath: settingsArg, statePath: settingsArg + ".aios-mode.json" }
+    ? {
+        settingsPath: settingsArg,
+        statePath: path.join(path.dirname(path.resolve(settingsArg)), "aios-mode.json"),
+      }
     : loop.defaultModePaths();
 
   let out;

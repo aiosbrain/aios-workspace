@@ -127,6 +127,10 @@ test("CLI: offline routing + --settings override + --json round-trip", () => {
     const dw = run(["deep-work"]);
     assert.equal(dw.mode, "deep-work");
     assert.equal(dw.changed, true);
+    assert.ok(
+      existsSync(paths.statePath),
+      "CLI sidecar is the sibling aios-mode.json — same derivation as defaultModePaths()"
+    );
     assert.equal(readSettings(paths).preferredNotifChannel, NOTIF_DISABLED_VALUE);
     const back = run(["orchestration"]);
     assert.equal(back.channel, "iterm2");
