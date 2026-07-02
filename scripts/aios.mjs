@@ -60,6 +60,7 @@ import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
+import { cmdSpec } from "./spec-eval.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
 import { createBrainClient } from "./brain-client.mjs";
@@ -3885,6 +3886,10 @@ usage:
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
     [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios spec eval <file> [--json]        score a spec/plan against .claude/rubrics/spec-readiness.md
+    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
+  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
+    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
   aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
     [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
   aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
@@ -3941,6 +3946,7 @@ const OFFLINE_CMDS = new Set([
   "analyze",
   "relay",
   "build",
+  "spec",
   "pr",
   "review-bugbot",
   "loop",
@@ -3982,6 +3988,7 @@ try {
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "spec") await cmdSpec(repo, rest);
   else if (cmd === "pr") await cmdPr(repo, rest);
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);

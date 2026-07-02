@@ -25,6 +25,8 @@ Every workflow-layer change follows **spec → plan → tasks → implement**:
 
 The spec is the durable artifact. Code that drifts from its spec is a bug in one of them.
 
+Spec readiness is machine-checked: `aios spec eval|fix` grades a spec against `.claude/rubrics/spec-readiness.md` before a builder picks it up — see [`docs/agentic-ergonomics/spec-readiness.md`](./agentic-ergonomics/spec-readiness.md).
+
 ## 2. The constitution = rules + rubrics
 
 AIOS already has the constitution layer; this document formalizes it:
