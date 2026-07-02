@@ -88,7 +88,11 @@ const CURSOR_REVIEW_FLAGS = ["--force", "--trust"];
 const DEFAULT_ROUNDS = 4;
 const DEFAULT_BUILD_TIMEOUT = 1800; // seconds — building + running tests is slow
 const DEFAULT_REVIEW_TIMEOUT = 300; // seconds — reviewing a diff is fast
-const DIFF_CAP = 50000; // chars of `git diff` to send the reviewer before falling back to --stat
+// Chars of `git diff` to send the reviewer before falling back to --stat. Shared with
+// scripts/consolidate-findings.mjs (via export) so the PR-diff cap and this cap can never
+// silently drift apart — one authoritative value. review-bugbot.mjs re-declares the same
+// literal locally (documented there); if this changes, update that copy too.
+export const DIFF_CAP = 50000;
 // Cursor's backend occasionally drops the connection mid-call; retry these (but not
 // real timeouts or agent errors, which are not transient).
 const TRANSIENT_RE = /ECONNRESET|aborted|socket hang up|ETIMEDOUT|EAI_AGAIN|fetch failed|network/i;
@@ -124,6 +128,7 @@ export function parseBuildArgs(args) {
     "--verify",
     "--issue",
     "--model",
+    "--findings",
   ];
 
   const rounds = parseInt(flag("--rounds") ?? flag("--build-rounds") ?? String(DEFAULT_ROUNDS), 10);
@@ -161,6 +166,7 @@ export function parseBuildArgs(args) {
     worktreePath: flag("--worktree") ?? null,
     base: flag("--base") ?? "origin/main",
     verify: flag("--verify") ?? null,
+    findingsFile: flag("--findings") ?? null,
     logFile: flag("--log") ?? null,
     merge,
     pr,
@@ -224,6 +230,74 @@ export function assertSafeBuildBranch(branch, currentBranch) {
         `The build phase only runs in an isolated worktree; pass a feature branch.`
     );
   }
+}
+
+// True for the timeout rejection shape from spawnAgentStream ("<label> agent timed out
+// after Ns …"); false for the non-zero-exit shape ("<label> agent exited N…"). The review
+// timeout-retry keys on this so a genuine agent error is never retried as a timeout.
+export function isTimeoutError(e) {
+  return /timed out after/.test(e?.message ?? "");
+}
+
+// The adaptive-review-timeout schedule (documented; exported for tests). Base + one
+// `stepSecs` step per `perChars` of review payload, capped at `capMult`× base.
+export const REVIEW_TIMEOUT_SCALE = {
+  base: DEFAULT_REVIEW_TIMEOUT,
+  perChars: 10000,
+  stepSecs: 60,
+  capMult: 2,
+};
+
+// Adaptive default review timeout in SECONDS (callers *1000): base + 60s per 10k chars of
+// review payload, capped at 2× base (600s). Since the payload is clamped to DIFF_CAP=50000,
+// the max scaled value (300 + 5·60 = 600) equals the 2× cap by construction. Only used when
+// the operator did NOT set an explicit timeout (--cursor-timeout / code_review_timeout_s).
+export function adaptiveReviewTimeout(
+  payloadChars,
+  { base = DEFAULT_REVIEW_TIMEOUT, cap = DEFAULT_REVIEW_TIMEOUT * 2 } = {}
+) {
+  const scaled =
+    base + Math.floor((payloadChars ?? 0) / REVIEW_TIMEOUT_SCALE.perChars) * REVIEW_TIMEOUT_SCALE.stepSecs;
+  return Math.min(scaled, cap);
+}
+
+// Pure: the review-payload size that drives the adaptive timeout — the ORIGINAL uncapped
+// diff length clamped to DIFF_CAP. Factored out of snapshotDiff so it can be unit-tested on
+// a raw string without a git-worktree fixture. (snapshotDiff collapses an over-cap diff to a
+// short truncation message, so its .length would under-scale the timeout for the biggest
+// diffs — this keys off the real size instead.)
+export function computeReviewPayloadChars(diffStr) {
+  return Math.min((diffStr ?? "").length, DIFF_CAP);
+}
+
+// Keep ALL [Critical]/[High] findings; keep [Medium] findings tagged (plan-conformance);
+// drop untagged Medium/Low. Section headers (## …) are preserved so the builder keeps
+// context. Operates on the consolidated findings format (bracket-severity lines). Pure;
+// exported for tests and for --findings seeding.
+export function extractMustFix(consolidatedText) {
+  const lines = (consolidatedText ?? "").split("\n");
+  const kept = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^#{1,6}\s/.test(t)) {
+      kept.push(line);
+      continue;
+    }
+    const sev = t.match(/\[(Critical|High|Medium|Low)\]/i);
+    if (!sev) {
+      // Non-finding prose (verdict lines, blank lines, notes) is preserved as-is.
+      kept.push(line);
+      continue;
+    }
+    const level = sev[1].toLowerCase();
+    if (level === "critical" || level === "high") {
+      kept.push(line);
+    } else if (level === "medium" && /\(plan-conformance\)/i.test(line)) {
+      kept.push(line);
+    }
+    // untagged Medium / Low findings are dropped
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // Classify what the builder produced this round from git counts.
@@ -497,11 +571,15 @@ function snapshotDiff(worktree, baseSha) {
   const diffStat = gitQuiet(["diff", "--stat", `${baseSha}..HEAD`], worktree);
   const logOneline = gitQuiet(["log", "--oneline", `${baseSha}..HEAD`], worktree);
   let diff = gitQuiet(["diff", `${baseSha}..HEAD`], worktree);
+  // Real (pre-truncation) payload size, clamped to DIFF_CAP — the adaptive review timeout
+  // keys off THIS, not diff.length, because the diff below collapses to a short message
+  // when over cap (which would under-scale the timeout for exactly the biggest diffs).
+  const reviewPayloadChars = computeReviewPayloadChars(diff);
   if (diff.length > DIFF_CAP) {
     const files = gitQuiet(["diff", "--name-only", `${baseSha}..HEAD`], worktree);
     diff = `(diff is ${diff.length} chars — truncated. Files changed:\n${files}\n\nReview the worktree directly: git -C ${worktree} diff ${baseSha}..HEAD)`;
   }
-  return { totalCommits, diffStat, logOneline, diff };
+  return { totalCommits, diffStat, logOneline, diff, reviewPayloadChars };
 }
 
 // Fail-closed secrets scan over EXACTLY the change set. Copies the changed files
@@ -642,6 +720,29 @@ async function withRetry(callFn, prompt, timeoutMs, opts, attempts = 3) {
   }
 }
 
+// Retry a REVIEW call exactly once on timeout, with a doubled timeout. A non-timeout error
+// ("agent exited N") propagates immediately; a second timeout also propagates (fails the
+// round). callFn is injected so tests exercise the retry with a fake agent — no live cursor.
+// The retry decision lands in both the console and the --log trail.
+export async function reviewWithTimeoutRetry(
+  callFn,
+  prompt,
+  timeoutMs,
+  opts = {},
+  { log, logLabel } = {}
+) {
+  try {
+    return await callFn(prompt, timeoutMs, opts);
+  } catch (e) {
+    if (!isTimeoutError(e)) throw e;
+    const doubled = timeoutMs * 2;
+    const msg = `review timed out after ${timeoutMs / 1000}s — retrying once with ${doubled / 1000}s (attempt 2/2)`;
+    console.log(c.yellow(msg));
+    log?.(logLabel ?? "review timeout retry", msg);
+    return await callFn(prompt, doubled, opts); // a second timeout throws → round fails
+  }
+}
+
 // ── core loop ─────────────────────────────────────────────────────────────────
 
 export async function runBuild({ repo, plan, branch, opts }) {
@@ -663,6 +764,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
     skill,
     base,
     verify,
+    findingsFile,
     worktreePath,
     logFile,
     merge,
@@ -685,7 +787,10 @@ export async function runBuild({ repo, plan, branch, opts }) {
   }
   if (cursorTimeoutSet) cliOverrides.code_review = { timeoutMs: cursorTimeout };
   const models = resolveLoopModels({ repo, cliOverrides });
-  const reviewTimeout = models.code_review.timeoutMs ?? cursorTimeout;
+  // Explicit wins, never scale: models.code_review.timeoutMs is non-null iff the operator set
+  // --cursor-timeout OR code_review_timeout_s. When it's null we adapt per round off the real
+  // review payload size (§ adaptiveReviewTimeout); when set, adaptation is bypassed entirely.
+  const explicitReviewTimeoutMs = models.code_review.timeoutMs ?? null;
 
   // --pr needs an AIO issue to drive the Linear PR-in-review → Done automations. It can
   // come from --issue or be derived from a branch that already names one. Fail fast.
@@ -736,6 +841,21 @@ export async function runBuild({ repo, plan, branch, opts }) {
   }
 
   let prevReview = null;
+  // Seed prior feedback from a consolidated findings file (aios consolidate-findings). This
+  // makes round 1 a fix round (hasPriorFeedback === true) that resolves through the
+  // fix/fix_escalated ladder exactly like a Cursor review — the consolidated must-fix subset
+  // IS the reviewer feedback replacing a hand-pasted fix file. Seeding pre-loop is intended.
+  if (findingsFile) {
+    if (!existsSync(findingsFile)) die(`--findings file not found: ${findingsFile}`);
+    const mustFix = extractMustFix(readFileSync(findingsFile, "utf8"));
+    if (mustFix.trim()) {
+      prevReview = mustFix;
+      console.log(c.dim(`[findings] seeding round 1 from must-fix subset of ${findingsFile}`));
+      log("Seeded findings (must-fix)", mustFix.slice(-4000));
+    } else {
+      console.log(c.dim(`[findings] ${findingsFile} had no must-fix items — starting a fresh build`));
+    }
+  }
   let blockedOnGate = false; // true when the last round failed verify/secrets, not review
   let prevCommits = parseInt(gitQuiet(["rev-list", "--count", `${baseSha}..HEAD`], wt) || "0", 10);
   // Counts builder invocations that consume prior feedback (a Cursor review OR a gate
@@ -868,11 +988,25 @@ export async function runBuild({ repo, plan, branch, opts }) {
       round,
       maxRounds: rounds,
     });
+    // Per-round review timeout: explicit (operator-set) wins; otherwise adapt to this round's
+    // real review payload size. Logged so the choice is visible in the console + --log trail.
+    const reviewTimeoutMs =
+      explicitReviewTimeoutMs != null
+        ? explicitReviewTimeoutMs
+        : adaptiveReviewTimeout(snap.reviewPayloadChars) * 1000;
+    const why =
+      explicitReviewTimeoutMs != null ? "explicit" : `adaptive (${snap.reviewPayloadChars} chars)`;
+    console.log(c.dim(`[cursor] review timeout ${reviewTimeoutMs / 1000}s — ${why}`));
+    log(`Build round ${round} — review timeout`, `${reviewTimeoutMs / 1000}s (${why})`);
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
-    const review = await withRetry(callCursorAgent, reviewPrompt, reviewTimeout, {
-      cwd: wt,
-      extraArgs: CURSOR_REVIEW_FLAGS,
-    });
+    // Auto-retry once on timeout (doubled), with transient-drop retries INSIDE each attempt.
+    const review = await reviewWithTimeoutRetry(
+      (p, t, o) => withRetry(callCursorAgent, p, t, o),
+      reviewPrompt,
+      reviewTimeoutMs,
+      { cwd: wt, extraArgs: CURSOR_REVIEW_FLAGS },
+      { log, logLabel: `Build round ${round} — review timeout retry` }
+    );
     log(`Build round ${round} — review`, review);
     console.log("\n── review done ─────────────────────────────────────────────");
 
@@ -895,7 +1029,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
         approvedHeadSha,
         verify,
         bugbot,
-        cursorTimeout: reviewTimeout,
+        // Bugbot (finish) uses the explicit timeout when set, else the plain default —
+        // it reviews the whole branch diff, not the per-round diff, so it doesn't adapt.
+        cursorTimeout: explicitReviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT * 1000,
       });
     }
 
@@ -1095,6 +1231,9 @@ export async function cmdBuild(repo, args) {
         "  --skill /name           Cursor review skill (default: /ai-code-review)",
         '  --verify "<cmd>"        run this command in the worktree before each review;',
         '                          a failure loops feedback to the builder (e.g. "npm test")',
+        "  --findings <file>       seed round 1 from a consolidated findings file (the must-fix",
+        "                          subset: all Critical/High + plan-conformance Medium) so the",
+        "                          builder fixes them first (see aios consolidate-findings)",
         "  --base <ref>            base ref for a new worktree branch (default: origin/main)",
         "  --worktree <path>       worktree directory (default: ../<repo>-<branch>)",
         "  --merge                 merge the branch on approval (off by default)",
