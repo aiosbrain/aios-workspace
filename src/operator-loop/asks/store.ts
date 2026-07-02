@@ -225,11 +225,24 @@ export function withLock<T>(root: string, fn: (ownsLock: () => boolean) => T): T
     }
   }
   if (fd === null) throw new Error(`asks: could not acquire store lock (${lockPath})`);
+  // Token still ours AND not yet reclaimable: a lock past LOCK_STALE_MS is treated as lost even
+  // before anyone reclaims it, so a stalled holder aborts its rewrite instead of racing a future
+  // reclaimer between this check and the rename.
   const ownsLock = (): boolean => {
+    try {
+      if (!readFileSync(lockPath, "utf8").includes(token)) return false;
+      return Date.now() - statSync(lockPath).mtimeMs <= LOCK_STALE_MS;
+    } catch {
+      return false; // lock gone or unreadable — assume reclaimed
+    }
+  };
+  // Token-only (no freshness): releasing our own stale lock is safe while the token matches —
+  // nobody has reclaimed it yet, and deleting it just lets the next writer in sooner.
+  const tokenMatches = (): boolean => {
     try {
       return readFileSync(lockPath, "utf8").includes(token);
     } catch {
-      return false; // lock gone or unreadable — assume reclaimed
+      return false;
     }
   };
   try {
@@ -242,7 +255,7 @@ export function withLock<T>(root: string, fn: (ownsLock: () => boolean) => T): T
     return fn(ownsLock);
   } finally {
     try {
-      if (ownsLock()) unlinkSync(lockPath); // never delete a reclaimer's lock
+      if (tokenMatches()) unlinkSync(lockPath); // never delete a reclaimer's lock
     } catch {
       /* already gone */
     }

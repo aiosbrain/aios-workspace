@@ -78,7 +78,7 @@ test("round-trip: add → list → show → resolve → drain (offline, no aios.
     const drain = run(dir, ["drain", "--json"]);
     assert.equal(drain.code, 0);
     const d = JSON.parse(drain.stdout);
-    for (const k of ["drained", "orphaned", "gcRemoved", "remainingOpen"])
+    for (const k of ["drained", "orphaned", "gcRemoved", "gcSkipped", "remainingOpen"])
       assert.ok(k in d, `drain JSON has ${k}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });

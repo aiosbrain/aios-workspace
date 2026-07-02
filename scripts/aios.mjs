@@ -3519,11 +3519,12 @@ async function cmdAsks(repo, cfg, args) {
         drained++;
       }
     // (4) GC under the lock.
-    const { removed } = loop.compact(repo, now);
+    const gc = loop.compact(repo, now);
     const summary = {
       drained,
       orphaned: orphanIds.length,
-      gcRemoved: removed,
+      gcRemoved: gc.removed,
+      gcSkipped: Boolean(gc.skipped),
       remainingOpen: keepOpen ? remaining.length : 0,
     };
     if (asJson) {
@@ -3535,7 +3536,10 @@ async function cmdAsks(repo, cfg, args) {
       console.log(c.dim(`  ${keepOpen ? "open" : "resolving"} (${remaining.length}):`));
       for (const a of remaining) console.log(`    ${a.id.slice(0, 8)}  [${a.severity}] ${a.title}`);
     }
-    console.log(`  drained: ${drained}   orphaned: ${orphanIds.length}   gc-removed: ${removed}`);
+    console.log(
+      `  drained: ${drained}   orphaned: ${orphanIds.length}   gc-removed: ${gc.removed}` +
+        (gc.skipped ? c.dim("   (gc skipped: lock contention — rerun drain)") : "")
+    );
     return;
   }
 

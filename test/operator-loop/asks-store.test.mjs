@@ -400,6 +400,15 @@ test("withLock ownership token: reports reclaimed locks so rewrites can abort", 
     assert.equal(observed.owned, true, "holder owns its fresh lock");
     assert.equal(observed.afterSteal, false, "a rewritten lockfile is detected as reclaimed");
     assert.ok(existsSync(lockPath), "a reclaimed lock is not deleted by the previous holder");
+    rmSync(lockPath, { force: true }); // clear the simulated reclaimer's lock before phase 2
+    const aged = withLock(root, (ownsLock) => {
+      const fresh = ownsLock();
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(lockPath, past, past); // backdate past LOCK_STALE_MS
+      return { fresh, afterStale: ownsLock() };
+    });
+    assert.equal(aged.fresh, true);
+    assert.equal(aged.afterStale, false, "a stale-but-unreclaimed lock is treated as lost");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
