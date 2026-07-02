@@ -75,8 +75,8 @@ Options:
                       Mutually exclusive with --merge; never removes the worktree/branch.
   --issue AIO-<n>     issue key for --pr (required unless the branch already names one)
   --model <id>        override the builder model for every build/fix step
-  --bugbot            run local /review-bugbot before merge (default when --merge)
-  --no-bugbot         skip the local Bugbot gate even with --merge
+  --bugbot            run local /review-bugbot before merge/PR (default when --merge or --pr)
+  --no-bugbot         skip the local Bugbot gate even with --merge/--pr
   --no-gate           skip the pre-merge secrets gate (NOT recommended; logged loudly)
   --keep-worktree     keep the worktree after a successful merge
   --log <file>        save build rounds + reviews to a Markdown file (APPENDS across runs)
@@ -100,22 +100,35 @@ npm run aios -- build plan.md feat/AIO-42-x --pr --issue AIO-42   # chained on a
 ```
 
 The PR title always carries the `AIO-<n>` key so the repo automations fire (`pr-in-review.yml`
-→ In Review on open, `aios-work-sync.yml` → Done on merge). `aios build --pr` runs `aios pr`
-**inside `finish()` after the same pre-merge gates as `--merge`** (HEAD-drift, `--verify`,
-fail-closed secrets), and — unlike `--merge` — leaves the worktree and branch in place. All
-child calls use argv arrays (no shell strings); `--dry-run` previews the push + `gh pr create`
-argv without any network call.
+→ In Review on open, `aios-work-sync.yml` → Done on merge). A **custom `--title` that omits the
+issue key is prefixed** with `AIO-<n>: ` so the automations never silently break. `aios build --pr`
+runs `aios pr` **inside `finish()` after the same pre-ship gates as `--merge`** (HEAD-drift,
+`--verify`, fail-closed secrets, **and the local Bugbot gate** — default-on for `--pr` too), and
+— unlike `--merge` — leaves the worktree and branch in place. All child calls use argv arrays (no
+shell strings); `--dry-run` previews the push + `gh pr create` argv without any network call.
 
-### The builder fence (worktree-only)
+### The builder fence (defense-in-depth, not containment)
 
-Every builder invocation is prefixed with a hard git fence: **no `git push`, no PR
-create/edit/comment, no touching the primary checkout or other worktrees, small commits in the
-worktree only** — it explicitly overrides any conflicting global instruction. A belt-and-braces
-env fence sets `GIT_CEILING_DIRECTORIES` to the worktree's parent dir so git cannot walk up into
-the primary checkout from outside the worktree; it does **not** break git inside the linked
-worktree (its `.git` is a gitdir-pointer file resolved by explicit path, not an upward walk).
-Manual checks: `claude --help` confirms `--effort low|medium|high|xhigh|max`; `test/git-ceiling.test.mjs`
-verifies the ceiling both ways.
+The builder runs with `--dangerously-skip-permissions`, so this is **not** a filesystem
+sandbox — a determined builder could still reach an explicit path. The "fence" is three
+overlapping layers that reduce blast radius:
+
+1. **Policy** — every builder invocation is prefixed with hard git rules: **no `git push`,
+   no PR create/edit/comment, no touching the primary checkout or other worktrees, small
+   commits in the worktree only** — explicitly overriding any conflicting global instruction.
+   A cooperative builder obeys these.
+2. **Accidental-discovery block** — an env fence sets `GIT_CEILING_DIRECTORIES` to the
+   worktree's parent dir so git cannot **walk up** into the primary checkout from outside the
+   worktree. It only stops *upward discovery*: an explicit `git -C <primary-path>` still works.
+   It does **not** break git inside the linked worktree (its `.git` is a gitdir-pointer file
+   resolved by explicit path, not an upward walk).
+3. **Detection** — the primary-checkout tripwire (status + HEAD snapshot) aborts the build if
+   the primary checkout changes at all. This is the layer that actually catches a builder that
+   reaches an explicit path despite layers 1–2.
+
+Manual checks: `claude --help` confirms `--effort low|medium|high|xhigh|max`;
+`test/git-ceiling.test.mjs` verifies the ceiling blocks upward discovery while leaving the
+linked worktree working.
 
 ---
 
