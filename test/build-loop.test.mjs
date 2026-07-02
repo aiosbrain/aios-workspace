@@ -187,6 +187,24 @@ console.log("Bugbot blocks merge on Critical/High → exit 4");
   check("worktree preserved", existsSync(wt));
 }
 
+console.log("--pr path runs the Bugbot gate too: Critical/High blocks before any push → exit 4");
+{
+  // H1 regression: --pr is a ship action, so the Bugbot gate must run on it (it used to be
+  // gated on --merge only). bugbot-block → the gate fails inside finish() BEFORE cmdPr's
+  // push/create, so no gh/git PR calls are needed. Branch carries AIO-<n> for --pr's issue.
+  const repo = freshRepo();
+  const wt = wtPath(repo, "feat/AIO-1-prbug");
+  const code = await run({
+    repo,
+    branch: "feat/AIO-1-prbug",
+    mode: "bugbot-block",
+    o: opts({ pr: true, bugbot: true, noBugbot: false }),
+  });
+  check("exit GATE_FAILED (Bugbot on --pr)", code === EXIT.GATE_FAILED);
+  check("worktree preserved (never merged/pushed)", existsSync(wt));
+  check("not merged to main", !existsSync(path.join(repo, "feature.js")));
+}
+
 console.log("approve + --merge + bugbot → merged after BUGBOT_CLEAR, exit 0");
 {
   const repo = freshRepo();

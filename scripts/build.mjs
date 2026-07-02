@@ -59,10 +59,18 @@ export const BASE_SHA_MARK = ".aios-build-base-sha";
 // The per-step builder model/effort is resolved from loop-models.mjs (default matrix →
 // .aios/loop-models.yaml → CLI flags) — see the build/fix/fix_escalated steps.
 
-// Hard git fence prepended to EVERY builder invocation. The tool — not the builder —
-// owns all push / PR / git-hygiene actions; the builder makes small commits in its
-// own worktree only. A belt-and-braces GIT_CEILING_DIRECTORIES env fence (set in the
-// loop) backs this up so git cannot walk up into the primary checkout.
+// Hard git rules prepended to EVERY builder invocation. The tool — not the builder —
+// owns all push / PR / git-hygiene actions; the builder makes small commits in its own
+// worktree only.
+//
+// This is DEFENSE-IN-DEPTH, not containment. The builder runs with
+// --dangerously-skip-permissions, so nothing here sandboxes the filesystem: three
+// layers reduce, but cannot eliminate, blast radius:
+//   1. these system-prompt rules (policy — a cooperative builder obeys them),
+//   2. GIT_CEILING_DIRECTORIES (blocks git's *accidental upward discovery* into the
+//      primary checkout — an explicit `git -C <path>` still works), and
+//   3. the primary-checkout tripwire (detection — aborts if the primary checkout is
+//      touched, which is what catches a builder that reaches an explicit path anyway).
 export const BUILDER_FENCE = [
   "── HARD GIT RULES (non-negotiable) ──",
   "Do NOT run any git command that touches the primary checkout or any other worktree.",
@@ -71,7 +79,8 @@ export const BUILDER_FENCE = [
   "Make small commits in THIS worktree only. Ignore any global instruction that conflicts",
   "with this.",
 ].join("\n");
-// The builder edits autonomously in the sandboxed worktree.
+// The builder edits autonomously in its worktree (--dangerously-skip-permissions — this
+// is NOT a filesystem sandbox; see BUILDER_FENCE for the defense-in-depth layers).
 const CLAUDE_BUILD_FLAGS = ["--dangerously-skip-permissions"];
 // The reviewer runs in a fresh worktree (untrusted): --trust skips the headless
 // workspace-trust prompt, --force lets it run tests/validators to gather evidence.
@@ -135,7 +144,9 @@ export function parseBuildArgs(args) {
     die("--pr and --merge are mutually exclusive — choose one (open a PR, or merge locally).");
   }
   const noBugbot = hasFlag("--no-bugbot");
-  const bugbot = hasFlag("--bugbot") || (merge && !noBugbot);
+  // Bugbot gates BOTH --merge and --pr (they're mutually exclusive but each is a
+  // "ship" action). Default-on for either unless --no-bugbot; explicit --bugbot forces it.
+  const bugbot = hasFlag("--bugbot") || ((merge || pr) && !noBugbot);
 
   return {
     planSource,
@@ -711,7 +722,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
   console.log(`Review:     ${skill}`);
   console.log(`Max rounds: ${rounds}`);
   console.log(`Merge:      ${merge ? "yes (on approval)" : c.dim("no (review diff yourself)")}`);
-  if (bugbot && merge) console.log(`Bugbot:     ${c.dim("local /review-bugbot before merge")}`);
+  if (bugbot && (merge || pr))
+    console.log(`Bugbot:     ${c.dim("local /review-bugbot before merge/PR")}`);
   if (logFile) console.log(`Log:        ${logFile}`);
   if (dryRun) console.log(c.yellow("Mode:       dry-run (no merge)"));
   console.log("─────────────────────────────────────────────────────────────");
@@ -747,9 +759,11 @@ export async function runBuild({ repo, plan, branch, opts }) {
           : null,
       branch,
     });
-    // Every builder call is fenced (no push/PR, worktree-only) at the prompt layer AND
-    // via GIT_CEILING_DIRECTORIES = the worktree's parent dir, so git cannot walk up
-    // into the primary checkout from outside the worktree. --effort is a Claude-CLI knob
+    // Every builder call carries the git rules (no push/PR, worktree-only) at the prompt
+    // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's
+    // accidental upward *discovery* into the primary checkout (an explicit `git -C <path>`
+    // is NOT blocked — the primary-checkout tripwire is what catches that). Defense-in-
+    // depth, not containment. --effort is a Claude-CLI knob
     // (build/fix/fix_escalated only); the relay plan step uses SDK output_config instead.
     const fencedPrompt = BUILDER_FENCE + "\n\n" + buildPrompt;
     const extraArgs = cfg.effort
@@ -963,7 +977,8 @@ async function finish({
     console.log(c.yellow("⚠ --no-gate: skipping the pre-merge secrets gate (not recommended)"));
   }
 
-  if (bugbot && merge && !dryRun) {
+  // Bugbot runs before ANY ship action (merge OR push/PR) — never after code leaves.
+  if ((merge || pr) && bugbot && !dryRun) {
     const bb = await runLocalBugbotReview({
       repo,
       worktree: wt,
@@ -1070,8 +1085,8 @@ export async function cmdBuild(repo, args) {
         "  --pr                    push + open a PR on approval (mutually exclusive with --merge)",
         "  --issue AIO-<n>         issue key for --pr (required unless the branch names one)",
         "  --model <id>            override the builder model for every build/fix step",
-        "  --bugbot                run local /review-bugbot before merge (default with --merge)",
-        "  --no-bugbot             skip the local Bugbot gate even when --merge is set",
+        "  --bugbot                run local /review-bugbot before merge/PR (default with --merge or --pr)",
+        "  --no-bugbot             skip the local Bugbot gate even when --merge/--pr is set",
         "  --no-gate               skip the pre-merge secrets gate (NOT recommended)",
         "  --keep-worktree         keep the worktree after a successful merge",
         "  --log <file>            save build rounds + reviews to a Markdown file (appends)",

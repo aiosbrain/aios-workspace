@@ -68,6 +68,16 @@ console.log("parseBuildArgs");
     "--no-bugbot overrides merge default",
     parseBuildArgs(["p.md", "b", "--merge", "--no-bugbot"]).bugbot === false
   );
+  // H1: --pr is a ship action too — the Bugbot gate must default on (and be overridable).
+  check("bugbot on with --pr", parseBuildArgs(["p.md", "b", "--pr"]).bugbot === true);
+  check(
+    "--no-bugbot overrides pr default",
+    parseBuildArgs(["p.md", "b", "--pr", "--no-bugbot"]).bugbot === false
+  );
+  check(
+    "explicit --bugbot on the --pr path",
+    parseBuildArgs(["p.md", "b", "--pr", "--bugbot"]).bugbot === true
+  );
 }
 
 console.log("extractPlanFromLog");
