@@ -63,6 +63,7 @@ import { cmdBuild } from "./build.mjs";
 import { cmdSpec } from "./spec-eval.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
+import { cmdRails } from "./rails.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3874,6 +3875,13 @@ usage:
     [--install]                         for hermes: also run hermes skills install on each
   aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
+  aios rails suggest [--repo <path>]    propose a SAFE permissions.allow from the transcript log
+    [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
+    [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
+  aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)
+    [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched
+  aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)
+    [--json]                            reuses assess-codebase scoring; each with a how-to pointer
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
   aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
@@ -3954,6 +3962,7 @@ const OFFLINE_CMDS = new Set([
   "asks",
   "decisions",
   "mode",
+  "rails",
 ]);
 
 let repo, cfg;
@@ -3996,6 +4005,7 @@ try {
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
+  else if (cmd === "rails") await cmdRails(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);
