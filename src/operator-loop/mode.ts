@@ -139,7 +139,18 @@ export function enterDeepWork(paths: ModePaths = defaultModePaths()): ModeChange
 export function enterOrchestration(paths: ModePaths = defaultModePaths()): ModeChange {
   const settings = readSettings(paths.settingsPath);
   const current = settings[NOTIF_CHANNEL_KEY];
+  const consumeState = (): void => {
+    if (!existsSync(paths.statePath)) return;
+    try {
+      unlinkSync(paths.statePath);
+    } catch {
+      /* stale sidecar is harmless; next deep-work overwrites it */
+    }
+  };
   if (current !== NOTIF_DISABLED_VALUE) {
+    // Already in orchestration (e.g. the channel was hand-edited back). Any surviving sidecar is
+    // from an older cycle — consume it so a later restore can never resurrect an outdated channel.
+    consumeState();
     return {
       mode: "orchestration",
       channel: channelOf(settings),
@@ -154,13 +165,7 @@ export function enterOrchestration(paths: ModePaths = defaultModePaths()): ModeC
     delete settings[NOTIF_CHANNEL_KEY];
   }
   writeSettingsAtomic(paths.settingsPath, settings);
-  if (existsSync(paths.statePath)) {
-    try {
-      unlinkSync(paths.statePath); // memory consumed — a fresh deep-work re-saves
-    } catch {
-      /* stale sidecar is harmless; next deep-work overwrites it */
-    }
-  }
+  consumeState(); // memory consumed — a fresh deep-work re-saves
   return {
     mode: "orchestration",
     channel: channelOf(settings),

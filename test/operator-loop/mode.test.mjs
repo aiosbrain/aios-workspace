@@ -136,3 +136,28 @@ test("CLI: offline routing + --settings override + --json round-trip", () => {
     rmSync(bare, { recursive: true, force: true });
   }
 });
+
+test("stale sidecar after a hand-edit cannot restore an outdated channel", () => {
+  const { dir, paths } = fixture({ preferredNotifChannel: "iterm2" });
+  try {
+    enterDeepWork(paths); // sidecar remembers "iterm2"
+    // Hand-edit: user flips the channel to "bell" themselves (now in orchestration).
+    const s1 = JSON.parse(readFileSync(paths.settingsPath, "utf8"));
+    s1.preferredNotifChannel = "bell";
+    writeFileSync(paths.settingsPath, JSON.stringify(s1, null, 2) + "\n");
+    assert.equal(enterOrchestration(paths).changed, false, "no-op, but consumes the stale sidecar");
+    assert.ok(!existsSync(paths.statePath), "sidecar consumed on the no-op path");
+    // Hand-edit: user sets notifications_disabled directly, then asks aios to restore.
+    const s2 = JSON.parse(readFileSync(paths.settingsPath, "utf8"));
+    s2.preferredNotifChannel = "notifications_disabled";
+    writeFileSync(paths.settingsPath, JSON.stringify(s2, null, 2) + "\n");
+    enterOrchestration(paths);
+    const after = readSettings(paths);
+    assert.ok(
+      !("preferredNotifChannel" in after),
+      "no stale memory: falls back to unset instead of resurrecting iterm2"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
