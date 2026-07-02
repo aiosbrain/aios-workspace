@@ -3411,7 +3411,10 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 const rest = argv.slice(1);
 
-const repoFlagIdx = rest.indexOf("--repo");
+// `pr` owns its own `--repo` flag — a GitHub owner/repo slug, NOT the workspace path.
+// Don't consume it here, or `cmdPr` never sees the target-repo override (its git ops
+// run in the current worktree, resolved by the normal cwd walk-up below).
+const repoFlagIdx = cmd === "pr" ? -1 : rest.indexOf("--repo");
 let repoArg = null;
 if (repoFlagIdx !== -1) {
   repoArg = rest[repoFlagIdx + 1];
