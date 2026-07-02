@@ -327,6 +327,48 @@ console.log("CI-red as data (Major 2)");
   check("findings file still written", existsSync(defaultOutPath(repo, "AIO-161", 1)));
 }
 
+// ── written verdict can never contradict the computed verdict ───────────────────
+console.log("verdict reconciliation (stale model verdict)");
+{
+  // Model lists a [High] finding but writes a stale CLEAR verdict → computed BLOCKED;
+  // the persisted file MUST say BLOCKED, not the model's stale CLEAR.
+  const repo = freshRepo();
+  const staleClear =
+    "## Findings\n\n[High] scripts/x.mjs:1 — boom (source: Bugbot)\n\n## Verdict\n\nCLEAR\n";
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => staleClear,
+    })
+  );
+  const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
+  check("[High]+stale CLEAR returns 3", code === 3);
+  check("[High]+stale CLEAR file says BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
+  check(
+    "[High]+stale CLEAR file has no stray CLEAR verdict",
+    !/##\s*Verdict\s*\n+\s*CLEAR/.test(out)
+  );
+  check("[High]+stale CLEAR file has no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+}
+{
+  // Clean sources + clean findings but the model wrote a stale BLOCKED verdict →
+  // computed CLEAR; the persisted file MUST say CLEAR and end with BUGBOT_CLEAR.
+  const repo = freshRepo();
+  const staleBlocked = "## Findings\n\n- No blocking issues found.\n\n## Verdict\n\nBLOCKED\n";
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => staleBlocked,
+    })
+  );
+  const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
+  check("clean+stale BLOCKED returns 0", code === 0);
+  check("clean+stale BLOCKED file says CLEAR", /##\s*Verdict\s*\n+\s*CLEAR/.test(out));
+  check("clean+stale BLOCKED file ends BUGBOT_CLEAR", out.trim().endsWith("BUGBOT_CLEAR"));
+}
+
 // ── output path: --round + --out override ───────────────────────────────────────
 console.log("output path");
 {

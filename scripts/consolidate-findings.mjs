@@ -290,19 +290,26 @@ export function computeVerdict({ text, forcedBlock } = {}) {
   return forcedBlock || hasCriticalOrHighFindings(text) ? "BLOCKED" : "CLEAR";
 }
 
-// Ensure the artifact ends with the right terminal marker for its verdict.
+// Ensure the artifact ends with the right terminal marker for its verdict AND that
+// the written `## Verdict` section can never contradict the computed verdict. The
+// model may emit a stale/incorrect verdict (e.g. a `[High]` finding under a CLEAR
+// verdict); the computed verdict is authoritative, so force the section to match.
 function finalizeOutput(text, verdict) {
   let out = String(text ?? "")
     .replace(/\n*BUGBOT_CLEAR\s*$/i, "")
     .trimEnd();
-  if (verdict === "CLEAR") {
-    // If there's no explicit Verdict section, add one so the artifact is self-describing.
-    if (!/##\s*Verdict/i.test(out)) out += "\n\n## Verdict\n\nCLEAR";
-    out += "\n\nBUGBOT_CLEAR\n";
+  // Reconcile any existing Verdict section with the authoritative computed verdict.
+  if (/##\s*Verdict\s*\n+\s*\[?(CLEAR|BLOCKED)\]?/i.test(out)) {
+    out = out.replace(/(##\s*Verdict\s*\n+\s*)\[?(CLEAR|BLOCKED)\]?/i, `$1${verdict}`);
+  } else if (/##\s*Verdict/i.test(out)) {
+    // Header present but no parseable value — insert the computed verdict after it.
+    out = out.replace(/(##\s*Verdict\s*)\n?/i, `$1\n\n${verdict}\n`);
   } else {
-    if (!/##\s*Verdict/i.test(out)) out += "\n\n## Verdict\n\nBLOCKED";
-    out += "\n";
+    // No explicit Verdict section — add one so the artifact is self-describing.
+    out += `\n\n## Verdict\n\n${verdict}`;
   }
+  if (verdict === "CLEAR") out += "\n\nBUGBOT_CLEAR\n";
+  else out += "\n";
   return out;
 }
 
