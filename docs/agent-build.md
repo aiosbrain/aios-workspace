@@ -231,17 +231,20 @@ aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/rep
   never forked) and **supplies the PR diff** so its AIOS-rule / plan-conformance instructions
   stay grounded.
 - **Inputs** (per `code-reviewer.md` "How to gather inputs"): CI checks (`gh pr checks --json`,
-  tolerant of a red board), the PR diff (capped at `DIFF_CAP` = 50000 chars), Bugbot + CodeRabbit
-  issue/inline comments + submitted reviews, and an optional GPT-5.5 review markdown
+  tolerant of a red/pending board), the PR diff (capped at `DIFF_CAP` = 50000 chars), Bugbot +
+  CodeRabbit issue/inline comments + submitted reviews, and an optional GPT-5.5 review markdown
   (`--gpt-review`, capped at `GPT_REVIEW_CAP` = 20000 chars). Truncations carry an explicit marker.
 - **Fail-closed max-severity inheritance.** After the model consolidates, a deterministic pass
-  forces `BLOCKED` when **CI is red** (a red board is ≥ High and can never be CLEAR) or when a
-  source reported Critical/High that the consolidated output dropped — rewriting the verdict and
-  appending an `## AIOS Rule Violations` note. The model is never trusted to silently downgrade.
+  forces `BLOCKED` when **CI is red** (a red board is ≥ High and can never be CLEAR), when **CI is
+  still pending** (the consolidator runs after `wait-for-bots`, so an unsettled board means
+  merge-readiness is unknown — it fails closed rather than pass through), or when a source reported
+  Critical/High that the consolidated output dropped — rewriting the verdict and appending an
+  `## AIOS Rule Violations` note. The model is never trusted to silently downgrade.
 - The `consolidate` step runs on a **Claude-family** model (config surface: `consolidate_model`
   / `consolidate_effort` / `consolidate_timeout_s`); a `gpt-*` override fails loud.
 - **Exit codes:** `0` = CLEAR, `3` = BLOCKED, `1` = error (bad args, missing reviewer prompt,
-  or a gh error other than a tolerated CI-red). A **red CI board returns 3, not 1** — it's data.
+  or a gh error other than a tolerated CI red/pending board). A **red OR still-pending CI board
+  returns 3, not 1** — it's data, and pending fails closed.
 - The findings file lives under `.aios/` (gitignored) and is **never committed**.
 
 ---

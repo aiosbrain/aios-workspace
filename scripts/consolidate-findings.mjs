@@ -17,10 +17,12 @@
  *
  * Exit codes (dispatch owns process.exit — this returns the number):
  *   0 — CLEAR   (no Critical/High after post-validation)
- *   3 — BLOCKED (a Critical/High finding, red CI, or a forced max-severity inheritance)
+ *   3 — BLOCKED (a Critical/High finding, red OR still-pending CI, or a forced max-severity
+ *                inheritance)
  *   1 — error   (bad args, missing reviewer prompt, gh error other than a tolerated CI-red)
  *
- * A red CI board is DATA, not an error: it returns 3 (BLOCKED), never 1.
+ * A red OR pending CI board is DATA, not an error: it returns 3 (BLOCKED), never 1. Pending
+ * fails closed — the consolidator runs after wait-for-bots, so an unsettled board is unknown.
  *
  * Exported:
  *   cmdConsolidateFindings(repo, args, deps = {})  — returns a numeric exit code
@@ -44,9 +46,7 @@ const ISSUE_RE = /^AIO-\d+$/;
 export const GPT_REVIEW_CAP = 20000;
 export const DEFAULT_CONSOLIDATE_TIMEOUT = 300; // seconds
 
-// CI states/conclusions that mean the board is red (block-worthy). Pending/in-progress is
-// deliberately NOT here — the consolidator runs after wait-for-bots, so an explicit failure
-// is the signal; treating in-progress as red would over-block a slow-but-passing job.
+// CI states/conclusions that mean the board is red (block-worthy).
 const CI_RED = new Set([
   "FAILURE",
   "TIMED_OUT",
@@ -54,6 +54,19 @@ const CI_RED = new Set([
   "ACTION_REQUIRED",
   "STARTUP_FAILURE",
   "ERROR",
+]);
+
+// Non-terminal (pending/in-flight) check states. The consolidator runs AFTER wait-for-bots,
+// so a still-pending check means CI evidence is INCOMPLETE — the board hasn't settled and a
+// pending job could still fail. Fail closed: block on a pending board rather than let the
+// model mark a PR merge-ready before CI finishes (the reviewer's "pending fails open" gap).
+const CI_PENDING = new Set([
+  "PENDING",
+  "IN_PROGRESS",
+  "QUEUED",
+  "REQUESTED",
+  "WAITING",
+  "EXPECTED",
 ]);
 
 const REVIEWER_PROMPT_REL = path.join(".claude", "agents", "code-reviewer.md");
@@ -103,11 +116,12 @@ function maxSev(a, b) {
   return rankSeverity(a) >= rankSeverity(b) ? a : b;
 }
 
-// Parse `gh pr checks --json name,state,conclusion` output → { checks, ciRed, parsed }. Falls
-// back to a plaintext-table scan when --json is unsupported (older gh). ciRed on any red state.
-// `parsed` reports whether check DATA was actually available (valid JSON array or a non-empty
-// plaintext board) vs. an empty/unparseable stdout — the caller uses it to tell a real gh
-// failure (auth/network, no data) apart from a tolerated red board (data present).
+// Parse `gh pr checks --json name,state,conclusion` output → { checks, ciRed, ciPending, parsed }.
+// Falls back to a plaintext-table scan when --json is unsupported (older gh). ciRed on any red
+// state; ciPending on any non-terminal (in-flight) state. `parsed` reports whether check DATA was
+// actually available (valid JSON array or a non-empty plaintext board) vs. an empty/unparseable
+// stdout — the caller uses it to tell a real gh failure (auth/network, no data) apart from a
+// tolerated red/pending board (data present).
 export function parseCheckResults(stdout) {
   const raw = String(stdout ?? "");
   let arr = null;
@@ -117,10 +131,13 @@ export function parseCheckResults(stdout) {
     /* not JSON — fall through to plaintext */
   }
   if (!Array.isArray(arr)) {
-    // Plaintext `gh pr checks` table: a "fail"/"failing" cell means red.
+    // Plaintext `gh pr checks` table: a "fail"/"failing" cell means red; a "pending"/
+    // "in progress"/"queued" cell means the board hasn't settled.
     const hasText = raw.trim().length > 0;
     const ciRed = /\bfail(ed|ing|ure)?\b/i.test(raw) && hasText;
-    return { checks: [], ciRed, parsed: hasText };
+    const ciPending =
+      /\b(pending|in[_ -]?progress|queued|waiting|expected)\b/i.test(raw) && hasText;
+    return { checks: [], ciRed, ciPending, parsed: hasText };
   }
   const checks = arr.map((x) => ({
     name: x.name ?? x.context ?? "(unnamed)",
@@ -128,7 +145,8 @@ export function parseCheckResults(stdout) {
     conclusion: String(x.conclusion ?? "").toUpperCase(),
   }));
   const ciRed = checks.some((x) => CI_RED.has(x.state) || CI_RED.has(x.conclusion));
-  return { checks, ciRed, parsed: true };
+  const ciPending = checks.some((x) => CI_PENDING.has(x.state) || CI_PENDING.has(x.conclusion));
+  return { checks, ciRed, ciPending, parsed: true };
 }
 
 // Bugbot posts `**High Severity**`-style headers on its inline comments.
@@ -174,7 +192,7 @@ export function preExtractSeverities({ checks, bugbot, coderabbit, gpt } = {}) {
     extractCodeRabbitSeverities(coderabbit),
     extractGptSeverities(gpt),
   ].reduce((acc, s) => maxSev(acc, s), null);
-  return { sourceMax, ciRed: !!checks?.ciRed };
+  return { sourceMax, ciRed: !!checks?.ciRed, ciPending: !!checks?.ciPending };
 }
 
 // Assemble the consolidation prompt. The reviewer-prompt body (code-reviewer.md, frontmatter
@@ -244,23 +262,24 @@ function readVerdictLine(text) {
  *
  * Forces BLOCK (and rewrites the artifact so the state is unloseable) when:
  *   - CI is red (a red board is ≥ High and can never be CLEAR), OR
+ *   - CI is still pending (the board hasn't settled — merge-readiness is unknown, fail closed), OR
  *   - a source reported Critical/High but the consolidated output shows no Critical/High
  *     (or its verdict is CLEAR) — i.e. the model dropped a source-level blocker.
  *
  * On a forced block: rewrite `## Verdict` to BLOCKED, strip any trailing BUGBOT_CLEAR, and
- * append a `## AIOS Rule Violations` section naming the dropped source severity / red CI
- * with a concrete `[High]` finding — so the bracket matcher (computeVerdict) also sees it.
+ * append a `## AIOS Rule Violations` section naming the dropped source severity / red / pending
+ * CI with a concrete `[High]` finding — so the bracket matcher (computeVerdict) also sees it.
  *
  * @returns {{ text: string, forcedBlock: boolean }}
  */
-export function postValidate({ modelOutput, sourceMax, ciRed, checks } = {}) {
+export function postValidate({ modelOutput, sourceMax, ciRed, ciPending, checks } = {}) {
   let text = String(modelOutput ?? "");
   const verdict = readVerdictLine(text);
   const outHasCritHigh = hasCriticalOrHighFindings(text);
   const sourceHadCritHigh = rankSeverity(sourceMax) >= rankSeverity("High");
 
   const droppedSource = sourceHadCritHigh && (!outHasCritHigh || verdict === "CLEAR");
-  const forceBlock = !!ciRed || droppedSource;
+  const forceBlock = !!ciRed || !!ciPending || droppedSource;
   if (!forceBlock) return { text, forcedBlock: false };
 
   // Strip any trailing CLEAR token — a forced block can never be CLEAR.
@@ -278,6 +297,15 @@ export function postValidate({ modelOutput, sourceMax, ciRed, checks } = {}) {
       checks?.checks?.filter((x) => CI_RED.has(x.state) || CI_RED.has(x.conclusion)) ?? [];
     const names = reds.map((x) => x.name).join(", ") || "one or more jobs";
     reasons.push(`[High] CI — ${names} failed; a red CI board blocks merge (source: CI).`);
+  }
+  if (ciPending) {
+    const pend =
+      checks?.checks?.filter((x) => CI_PENDING.has(x.state) || CI_PENDING.has(x.conclusion)) ?? [];
+    const names = pend.map((x) => x.name).join(", ") || "one or more jobs";
+    reasons.push(
+      `[High] CI — ${names} still pending; the board has not settled, so merge-readiness is ` +
+        `unknown. Failing closed until CI completes (source: CI).`
+    );
   }
   if (droppedSource) {
     reasons.push(
@@ -444,7 +472,7 @@ function usage() {
       "  --out <path>        override the output path (default: .aios/loop/<issue>/findings-r<N>.md)",
       "",
       "Prints VERDICT=CLEAR / VERDICT=BLOCKED. Exit codes: 0 CLEAR · 3 BLOCKED · 1 error.",
-      "A red CI board returns 3 (BLOCKED), never 1.",
+      "A red OR still-pending CI board returns 3 (BLOCKED), never 1 — pending fails closed.",
     ].join("\n")
   );
 }
@@ -514,7 +542,7 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   }
 
   // Deterministic pre-extraction (single severity dialect).
-  const { sourceMax, ciRed } = preExtractSeverities({
+  const { sourceMax, ciRed, ciPending } = preExtractSeverities({
     checks: inputs.checks,
     bugbot: inputs.inlineComments,
     coderabbit: [...(inputs.inlineComments ?? []), ...(inputs.issueComments ?? [])],
@@ -547,7 +575,13 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   }
 
   // Deterministic post-validation (fail-closed) + final verdict (forced block is unloseable).
-  const validated = postValidate({ modelOutput, sourceMax, ciRed, checks: inputs.checks });
+  const validated = postValidate({
+    modelOutput,
+    sourceMax,
+    ciRed,
+    ciPending,
+    checks: inputs.checks,
+  });
   const verdict = computeVerdict(validated);
   const finalText = finalizeOutput(validated.text, verdict);
 

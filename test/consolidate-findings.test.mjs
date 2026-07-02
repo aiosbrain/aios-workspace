@@ -69,6 +69,12 @@ const failChecks = () => ({
   stdout: readFix("pr-checks-fail.json"),
   stderr: "checks failed",
 });
+// `gh pr checks` exits non-zero while a check is still running; stdout carries the board.
+const pendingChecks = () => ({
+  code: 8,
+  stdout: readFix("pr-checks-pending.json"),
+  stderr: "",
+});
 
 // Silence the command's own console output during a run.
 async function quiet(fn) {
@@ -106,6 +112,16 @@ console.log("parseCheckResults");
     parseCheckResults("build   fail   1s").ciRed === true
   );
   check("empty → not red", parseCheckResults("").ciRed === false);
+  const pend = parseCheckResults(readFix("pr-checks-pending.json"));
+  check(
+    "pending board → ciPending true, ciRed false",
+    pend.ciPending === true && pend.ciRed === false
+  );
+  check("clean board → ciPending false", pass.ciPending === false);
+  check(
+    "plaintext fallback detects pending",
+    parseCheckResults("build   pending   -").ciPending === true
+  );
   check("valid JSON array → parsed true", pass.parsed === true);
   check("plaintext board → parsed true", parseCheckResults("build fail 1s").parsed === true);
   check("empty stdout → parsed false", parseCheckResults("").parsed === false);
@@ -150,6 +166,21 @@ console.log("postValidate + computeVerdict");
   check("forced block verdict is BLOCKED after FINAL compute", computeVerdict(red) === "BLOCKED");
   check("forced block strips BUGBOT_CLEAR", !/BUGBOT_CLEAR/.test(red.text));
   check("forced block names the red job", /build/.test(red.text) && /\[High\]/.test(red.text));
+
+  // CI pending forces BLOCKED even on a CLEAR model doc (fail closed — board unsettled).
+  const pending = postValidate({
+    modelOutput: readFix("agent-clear.md"),
+    sourceMax: null,
+    ciRed: false,
+    ciPending: true,
+    checks: parseCheckResults(readFix("pr-checks-pending.json")),
+  });
+  check("CI pending forces block", pending.forcedBlock === true);
+  check("pending forced verdict is BLOCKED", computeVerdict(pending) === "BLOCKED");
+  check(
+    "pending block names the pending job",
+    /build/.test(pending.text) && /pending/i.test(pending.text)
+  );
 
   // Dropped source High: sources say High, model says CLEAR → forced block.
   const dropped = postValidate({
@@ -328,6 +359,31 @@ console.log("CI-red as data (Major 2)");
   );
   check("red CI returns 3, not 1", code === 3);
   check("findings file still written", existsSync(defaultOutPath(repo, "AIO-161", 1)));
+}
+
+// ── pending CI fails closed (reviewer blocker) → returns 3, file BLOCKED ─────────────
+console.log("pending CI fails closed → 3");
+{
+  const repo = freshRepo();
+  const code = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+      // gh pr checks returns a still-running board; model claims CLEAR. Must NOT pass through.
+      runGh: makeRunGh({ checks: pendingChecks(), inlineComments: "[]" }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
+  );
+  const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
+  check("pending CI returns 3 (not 0/CLEAR)", code === 3);
+  check(
+    "pending CI file verdict BLOCKED after FINAL compute",
+    /##\s*Verdict\s*\n+\s*BLOCKED/.test(out)
+  );
+  check("pending CI file has no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+  check(
+    "pending CI note names the pending job",
+    /AIOS Rule Violations/.test(out) && /pending/i.test(out)
+  );
 }
 
 // ── gh pr checks FAILS with no check data (auth/network) → fail closed, returns 1 ─────

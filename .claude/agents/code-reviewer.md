@@ -126,7 +126,9 @@ PR diff into one list. When consolidating:
 - Use the `[severity] file:line — description` **bracket form** for each finding.
 
 **Deterministic guardrails run after you (you cannot downgrade past them):** a **red CI board is
-always ≥ High** and can never be `CLEAR`; and if any source reported a Critical/High finding, the
+always ≥ High** and can never be `CLEAR`; a **still-pending CI board also forces `BLOCKED`** (the
+consolidator runs after `wait-for-bots`, so an unsettled board means merge-readiness is unknown — it
+fails closed rather than pass through); and if any source reported a Critical/High finding, the
 consolidated verdict is forced to `BLOCKED` even if your output omitted it (fail-closed
 max-severity inheritance). Don't rely on this — surface every real blocker yourself — but know the
 verdict can only ever be escalated, never silently softened.

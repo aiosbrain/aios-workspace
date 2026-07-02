@@ -138,8 +138,9 @@ aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate
 - **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the bot
   comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
   `.aios/loop/<issue>/findings-r<N>.md`, using `.claude/agents/code-reviewer.md` as its (single,
-  un-forked) prompt. A deterministic **fail-closed** pass forces `BLOCKED` on red CI or a dropped
-  source-level Critical/High. Exit `0` CLEAR · `3` BLOCKED · `1` error (red CI is data → `3`).
+  un-forked) prompt. A deterministic **fail-closed** pass forces `BLOCKED` on red **or still-pending**
+  CI or a dropped source-level Critical/High. Exit `0` CLEAR · `3` BLOCKED · `1` error (red/pending
+  CI is data → `3`).
 - **`aios build --findings <file>`** seeds round 1 from the file's **must-fix subset** (all
   Critical/High + `(plan-conformance)` Medium), so the builder fixes them through the
   fix/fix_escalated ladder exactly like a Cursor review.
