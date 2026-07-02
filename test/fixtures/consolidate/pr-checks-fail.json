@@ -1,0 +1,4 @@
+[
+  { "name": "build", "state": "FAILURE", "conclusion": "FAILURE" },
+  { "name": "lint", "state": "SUCCESS", "conclusion": "SUCCESS" }
+]

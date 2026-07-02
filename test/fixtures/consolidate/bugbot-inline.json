@@ -1,0 +1,8 @@
+[
+  {
+    "user": "cursor[bot]",
+    "path": "scripts/example.mjs",
+    "line": 42,
+    "body": "**High Severity**\n\nThis retry loop has no upper bound and can hang the process on a persistent error."
+  }
+]

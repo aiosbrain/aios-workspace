@@ -2,6 +2,8 @@
 import {
   detectBugbotClear,
   buildBugbotPrompt,
+  hasCriticalOrHighFindings,
+  SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
 } from "../scripts/review-bugbot.mjs";
 
@@ -37,6 +39,20 @@ console.log("buildBugbotPrompt");
   check("includes skill", p.startsWith("/review-bugbot"));
   check("includes diff", p.includes("+line"));
   check("asks for CLEAR token", p.includes(BUGBOT_CLEAR_TOKEN));
+}
+
+console.log("hasCriticalOrHighFindings — one dialect (bullet, table, bracket)");
+{
+  // Bracket form (the consolidated findings report) — the new case.
+  check("[High] file:line bracket blocks", hasCriticalOrHighFindings("[High] scripts/x.mjs:42 — bad") === true);
+  check("[Critical] bracket blocks", hasCriticalOrHighFindings("[Critical] a:1 — leak") === true);
+  // Still matches the original bullet + table forms.
+  check("bullet form still matches", hasCriticalOrHighFindings("- High: something") === true);
+  check("table form still matches", hasCriticalOrHighFindings("| Critical | file | desc |") === true);
+  // Prose / lower severities do NOT match.
+  check("prose 'no Critical or High' ignored", hasCriticalOrHighFindings("There are no Critical or High findings.") === false);
+  check("[Medium]/[Low] brackets ignored", hasCriticalOrHighFindings("[Medium] x — nit\n[Low] y — typo") === false);
+  check("SEVERITY_RANK ordering", SEVERITY_RANK.Critical > SEVERITY_RANK.High && SEVERITY_RANK.High > SEVERITY_RANK.Medium && SEVERITY_RANK.Medium > SEVERITY_RANK.Low);
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
