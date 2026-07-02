@@ -175,6 +175,17 @@ console.log("config validation fails loudly (M4)");
   write("build_timeout_s: soon\n");
   check("non-numeric timeout aborts", resolveInChild({ repo }).ok === false);
 
+  // A syntactically malformed line (no colon) must NOT be silently dropped by the parser
+  // and resolve to defaults — strict parsing rejects it before validation even runs.
+  write("build_model claude-sonnet-5\n");
+  const badLine = resolveInChild({ repo });
+  check("malformed line (missing colon) aborts", badLine.ok === false);
+  check("parse-failure message is surfaced", /could not parse/.test(badLine.stderr));
+
+  // A stray list item with no key header is malformed too.
+  write("  - claude-sonnet-5\n");
+  check("stray list item aborts", resolveInChild({ repo }).ok === false);
+
   // A CLI override naming an unknown step aborts too.
   check(
     "unknown CLI step aborts",

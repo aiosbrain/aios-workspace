@@ -153,7 +153,9 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) 
       die(`could not read ${file}: ${e.message}`);
     }
     try {
-      fileCfg = parseFlatYaml(raw);
+      // strict: a malformed line (e.g. a missing colon) throws here rather than being
+      // silently dropped — otherwise the file would resolve to defaults without warning.
+      fileCfg = parseFlatYaml(raw, { strict: true });
     } catch (e) {
       die(`could not parse ${file}: ${e.message}`);
     }
