@@ -4005,7 +4005,7 @@ try {
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
-  else if (cmd === "rails") await cmdRails(repo, cfg, rest);
+  else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
   else {
     console.log(USAGE);
     process.exit(1);

@@ -138,3 +138,22 @@ test("rails apply creates settings.json when absent (bare repo)", () => {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("rails apply on a CORRUPT settings.json aborts with exit 4 and never rewrites the file", () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), "rails-apply-corrupt-"));
+  try {
+    const dir = path.join(tmp, ".claude");
+    mkdirSync(dir, { recursive: true });
+    const sp = path.join(dir, "settings.json");
+    writeFileSync(sp, "{ this is not json");
+    const r = spawnSync(
+      process.execPath,
+      [AIOS, "rails", "apply", "--repo", tmp, "--transcripts-dir", FIXTURE_DIR],
+      { encoding: "utf8" }
+    );
+    assert.equal(r.status, 4, `must abort, got ${r.status}: ${r.stdout}${r.stderr}`);
+    assert.equal(readFileSync(sp, "utf8"), "{ this is not json", "original bytes untouched");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

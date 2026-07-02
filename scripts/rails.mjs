@@ -304,6 +304,7 @@ function settingsPath(repo) {
 
 // ── missing-rails backlog ─────────────────────────────────────────────────────
 
+// Lenient read for READ-ONLY checks (missing-rails scoring): corrupt file → null.
 function readSettings(repo) {
   const p = settingsPath(repo);
   if (!existsSync(p)) return null;
@@ -312,6 +313,18 @@ function readSettings(repo) {
   } catch {
     return null;
   }
+}
+
+// Strict read for the WRITE path (apply): a corrupt existing settings.json must abort — treating
+// it as empty would silently wipe the user's hooks and every other key on rewrite.
+function readSettingsForWrite(repo) {
+  const p = settingsPath(repo);
+  if (!existsSync(p)) return {};
+  const parsed = JSON.parse(readFileSync(p, "utf8")); // throws → caller dies, file untouched
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`settings file is not a JSON object: ${p}`);
+  }
+  return parsed;
 }
 
 function hasAllowlist(repo) {
@@ -509,7 +522,18 @@ function railsApply(repo, args) {
   }
 
   const sp = settingsPath(repo);
-  const existing = readSettings(repo) || {};
+  let existing;
+  try {
+    existing = readSettingsForWrite(repo);
+  } catch (e) {
+    console.error(
+      c.red(
+        `error: ${sp} exists but cannot be parsed (${e.message}) — fix it by hand; ` +
+          `apply refuses to rewrite a file it cannot read.`
+      )
+    );
+    return 4;
+  }
   const beforeAllow = existing.permissions?.allow || [];
   const merged = mergeAllow(existing, allow);
   const added = merged.permissions.allow.filter((a) => !beforeAllow.includes(a));
