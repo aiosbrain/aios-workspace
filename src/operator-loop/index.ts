@@ -252,6 +252,29 @@ export {
 export { createInboxTransport, type InboxTransportOptions } from "./asks/transport.js";
 export { harvestAsks, type HarvestOptions, type HarvestResult } from "./asks/harvest.js";
 
+// Decision capture — durable learning/training corpus of human-in-the-loop prompt decisions
+// (AIO-170 / EE4). Append-only local store (writer-honored lock, admin-tier, never synced); the
+// dependency-free hooks/decision-capture.mjs reimplements the create-line writer + lock protocol.
+export {
+  DECISIONS_STORE_REL,
+  DECISIONS_SCHEMA_VERSION,
+  sha256 as decisionSha256,
+  buildDecisionRecord,
+  withLock as withDecisionLock,
+  foldDecisionLines,
+  readDecisions,
+  appendDecision,
+  appendOutcome,
+  type Decision,
+  type DecisionRecord,
+  type DecisionInput,
+  type DecisionOption,
+  type DecisionContext,
+  type DecisionOp,
+  type FoldResult as DecisionFoldResult,
+  type FoldWarning as DecisionFoldWarning,
+} from "./decisions/store.js";
+
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
   NOTIF_CHANNEL_KEY,

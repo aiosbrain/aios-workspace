@@ -3618,6 +3618,134 @@ async function cmdAsks(repo, cfg, args) {
   );
 }
 
+// ── aios decisions (AIO-170 / EE4): human-in-the-loop decision capture corpus ─
+// Offline + local-first. An append-only NDJSON store folded to state (`.aios/loop/decisions/`,
+// admin-tier, never synced). Captures the AskUserQuestion / plan-approval prompts the hook records
+// into a durable learning/training corpus. Mirrors cmdAsks: dist import, `--repo` respected,
+// friendly die if the loop isn't built. Subcommands: list / show / outcome / export.
+async function cmdDecisions(repo, cfg, args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = new Set(rest);
+  const asJson = flags.has("--json");
+  const argVal = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+  const loop = await loadOperatorLoop();
+  const warnNote = (warnings) => {
+    if (warnings?.length && !asJson)
+      console.error(c.dim(`  (${warnings.length} malformed line(s) skipped)`));
+  };
+  const resolveId = (decisions, given) => {
+    const exact = decisions.find((d) => d.id === given);
+    if (exact) return exact;
+    const prefixed = decisions.filter((d) => d.id.startsWith(given));
+    if (prefixed.length === 1) return prefixed[0];
+    if (prefixed.length > 1) die(`ambiguous id prefix: ${given}`);
+    return null;
+  };
+  const fmtChoice = (d) => {
+    if (Array.isArray(d.choice) && d.choice.length) return d.choice.join(", ");
+    return null;
+  };
+
+  if (sub === "list") {
+    const kind = argVal("--kind");
+    const sinceArg = argVal("--since");
+    let sinceMs = null;
+    if (sinceArg) {
+      sinceMs = Date.parse(sinceArg);
+      if (!Number.isFinite(sinceMs)) die(`--since is not a valid date: ${sinceArg}`);
+    }
+    const { decisions, warnings } = loop.readDecisions(repo);
+    let filtered = decisions;
+    if (kind) filtered = filtered.filter((d) => d.kind === kind);
+    if (sinceMs != null) filtered = filtered.filter((d) => Date.parse(d.createdAt) >= sinceMs);
+    filtered = filtered
+      .slice()
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    if (asJson) {
+      console.log(JSON.stringify({ decisions: filtered, warnings }, null, 2));
+      return;
+    }
+    console.log(c.blue("aios decisions") + c.dim(`  ${filtered.length}`));
+    for (const d of filtered) {
+      const choice = fmtChoice(d);
+      console.log(
+        `  ${d.id.slice(0, 8)}  ${d.kind.padEnd(18)} ${d.question}` +
+          (choice ? c.dim(`  → ${choice}`) : c.dim("  → (no choice)")) +
+          (d.outcome ? c.dim("  ✓outcome") : "")
+      );
+    }
+    if (!filtered.length) console.log(c.dim("  (none)"));
+    warnNote(warnings);
+    return;
+  }
+
+  if (sub === "show") {
+    const given = rest.find((a) => !a.startsWith("--"));
+    if (!given) die("usage: aios decisions show <id> [--json]");
+    const { decisions } = loop.readDecisions(repo);
+    const d = resolveId(decisions, given);
+    if (!d) die(`decision not found: ${given}`);
+    if (asJson) {
+      console.log(JSON.stringify(d, null, 2));
+      return;
+    }
+    console.log(c.blue("aios decisions show") + c.dim(`  ${d.id}`));
+    console.log(`  kind:      ${d.kind}`);
+    console.log(`  question:  ${d.question}`);
+    if (d.header) console.log(`  header:    ${d.header}`);
+    if (d.options?.length) {
+      console.log(`  options:`);
+      for (const o of d.options)
+        console.log(`    - ${o.label}` + (o.description ? c.dim(`  (${o.description})`) : ""));
+    }
+    console.log(`  choice:    ${fmtChoice(d) ?? c.dim("(none)")}`);
+    if (d.notes) console.log(`  notes:     ${d.notes}`);
+    if (d.context?.sessionId) console.log(`  session:   ${d.context.sessionId}`);
+    if (d.context?.project) console.log(`  project:   ${d.context.project}`);
+    console.log(`  created:   ${d.createdAt}`);
+    if (d.outcome) console.log(`  outcome:   ${d.outcome}` + c.dim(`  (${d.outcomeAt})`));
+    return;
+  }
+
+  if (sub === "outcome") {
+    const positional = rest.filter((a) => !a.startsWith("--"));
+    const given = positional[0];
+    const text = positional.slice(1).join(" ").trim();
+    if (!given || !text) die("usage: aios decisions outcome <id> <text...> [--json]");
+    const { decisions } = loop.readDecisions(repo);
+    const d = resolveId(decisions, given);
+    if (!d) die(`decision not found: ${given}`);
+    loop.appendOutcome(repo, d.id, text);
+    if (asJson) {
+      console.log(JSON.stringify({ id: d.id, outcome: text }));
+      return;
+    }
+    console.log(c.blue("aios decisions outcome") + c.dim(`  ${d.id}`));
+    return;
+  }
+
+  if (sub === "export") {
+    // The "training corpus" read path — always JSON (both --json and default emit the array).
+    const { decisions } = loop.readDecisions(repo);
+    const sorted = decisions
+      .slice()
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    console.log(JSON.stringify(sorted, null, 2));
+    return;
+  }
+
+  die(
+    "usage: aios decisions list [--kind <k>] [--since <date>] [--json]\n" +
+      "       aios decisions show <id> [--json]\n" +
+      "       aios decisions outcome <id> <text...> [--json]\n" +
+      "       aios decisions export [--json]"
+  );
+}
+
 // ── aios mode (AIO-168): deep-work / orchestration attention toggle ──────────
 // Flips Claude Code's `preferredNotifChannel` in ~/.claude/settings.json: deep-work silences the
 // local iTerm2 ping; orchestration restores exactly the prior value (including absence, via a
@@ -3730,6 +3858,11 @@ usage:
     [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
   aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences the local ping
     [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
+  aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
+    [--since date] [--json]             AskUserQuestion + plan-approval prompts, newest first
+  aios decisions show <id> [--json]     full record: options, choice, notes, outcome
+  aios decisions outcome <id> <text>    annotate a decision's outcome (append; decisions never mutate)
+  aios decisions export [--json]        dump all records as a JSON array (the training-corpus read path)
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -3813,6 +3946,7 @@ const OFFLINE_CMDS = new Set([
   "loop",
   "time",
   "asks",
+  "decisions",
   "mode",
 ]);
 
@@ -3853,6 +3987,7 @@ try {
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
+  else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else {
     console.log(USAGE);
