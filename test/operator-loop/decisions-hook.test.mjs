@@ -160,6 +160,101 @@ test("AskUserQuestion with no extractable answer → choice null, still captured
   }
 });
 
+test("shared header cannot steal answers: question-text match routes each answer", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "PostToolUse",
+      tool_name: "AskUserQuestion",
+      session_id: "sess-hdr",
+      tool_input: {
+        questions: [
+          {
+            question: "Deploy to staging?",
+            header: "Deploy",
+            options: [{ label: "Yes" }, { label: "No" }],
+          },
+          {
+            question: "Deploy to prod?",
+            header: "Deploy",
+            options: [{ label: "Yes" }, { label: "No" }],
+          },
+        ],
+      },
+      tool_response: {
+        answers: [
+          { question: "Deploy to staging?", answer: "Yes" },
+          { question: "Deploy to prod?", answer: "No" },
+        ],
+      },
+    });
+    const ds = list(dir);
+    const staging = ds.find((d) => /staging/.test(d.question));
+    const prod = ds.find((d) => /prod/.test(d.question));
+    assert.deepEqual(staging.choice, ["Yes"]);
+    assert.deepEqual(
+      prod.choice,
+      ["No"],
+      "second question with the shared header keeps its own answer"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("answer payloads echoing the options list do not inflate choice", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "PostToolUse",
+      tool_name: "AskUserQuestion",
+      session_id: "sess-echo",
+      tool_input: {
+        questions: [
+          {
+            question: "Pick a database",
+            header: "DB",
+            options: [{ label: "Postgres" }, { label: "SQLite" }],
+          },
+        ],
+      },
+      tool_response: {
+        answers: {
+          "Pick a database": {
+            answer: "Postgres",
+            options: [{ label: "Postgres" }, { label: "SQLite" }],
+          },
+        },
+      },
+    });
+    const [d] = list(dir);
+    assert.deepEqual(d.choice, ["Postgres"], "echoed options are not captured as choices");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("answers keyed by whitespace-collapsed question text still match", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "PostToolUse",
+      tool_name: "AskUserQuestion",
+      session_id: "sess-norm",
+      tool_input: {
+        questions: [
+          { question: "  Which   region? ", header: "Region", options: [{ label: "EU" }] },
+        ],
+      },
+      tool_response: { answers: { "Which region?": "EU" } },
+    });
+    const [d] = list(dir);
+    assert.deepEqual(d.choice, ["EU"], "normalized-key lookup matches");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("ExitPlanMode approved → plan-approval record, choice=approved", () => {
   const dir = ws();
   try {

@@ -221,6 +221,8 @@ function collectFromValue(value) {
       return;
     }
     if (typeof x === "object") {
+      // NOTE: deliberately NOT recursing into `options` — answer payloads that echo the
+      // question's option list would inflate `choice` with unselected labels.
       for (const k of [
         "label",
         "answer",
@@ -229,7 +231,6 @@ function collectFromValue(value) {
         "choice",
         "value",
         "option",
-        "options",
       ]) {
         if (k in x) visit(x[k], depth + 1);
       }
@@ -243,24 +244,43 @@ function collectFromValue(value) {
 }
 
 // Find the answer value for a specific question across candidate containers (tool_input.answers,
-// tool_response). Tries: object keyed by question text / header; array of {question|header,...}
-// entries; parallel-index array. Returns the raw matched value or undefined.
-function findAnswer(container, questionText, header, index) {
+// tool_response). Match priority: question text (raw, then whitespace-normalized) → header, but
+// ONLY when that header is unique among the payload's questions (several questions can share a
+// header chip, and a header match would hand the first entry to all of them) → parallel index.
+function findAnswer(
+  container,
+  { rawQuestion, normQuestion, rawHeader, normHeader, headerUnique, index }
+) {
   if (container == null) return undefined;
   if (Array.isArray(container)) {
     for (const el of container) {
-      if (el && typeof el === "object") {
-        const q = typeof el.question === "string" ? el.question : null;
-        const h = typeof el.header === "string" ? el.header : null;
-        if ((questionText && q === questionText) || (header && h === header)) return el;
+      if (el && typeof el === "object" && typeof el.question === "string") {
+        if (el.question === rawQuestion || singleLine(el.question, QUESTION_MAX) === normQuestion)
+          return el;
+      }
+    }
+    if (headerUnique && normHeader) {
+      for (const el of container) {
+        if (el && typeof el === "object" && typeof el.header === "string") {
+          if (el.header === rawHeader || singleLine(el.header, HEADER_MAX) === normHeader)
+            return el;
+        }
       }
     }
     if (index != null && index < container.length) return container[index];
     return undefined;
   }
   if (typeof container === "object") {
-    if (questionText && questionText in container) return container[questionText];
-    if (header && header in container) return container[header];
+    if (rawQuestion && rawQuestion in container) return container[rawQuestion];
+    for (const key of Object.keys(container)) {
+      if (singleLine(key, QUESTION_MAX) === normQuestion) return container[key];
+    }
+    if (headerUnique && rawHeader) {
+      if (rawHeader in container) return container[rawHeader];
+      for (const key of Object.keys(container)) {
+        if (singleLine(key, HEADER_MAX) === normHeader) return container[key];
+      }
+    }
   }
   return undefined;
 }
@@ -303,6 +323,15 @@ function handleAskUserQuestion(root, payload) {
     responseObj,
   ];
 
+  // Header uniqueness across the payload's questions — a shared header must never route answers.
+  const headerCounts = new Map();
+  for (const q of input.questions) {
+    if (q && typeof q === "object" && q.header != null) {
+      const h = singleLine(q.header, HEADER_MAX);
+      if (h) headerCounts.set(h, (headerCounts.get(h) ?? 0) + 1);
+    }
+  }
+
   const records = [];
   input.questions.forEach((q, i) => {
     if (!q || typeof q !== "object") return;
@@ -310,11 +339,19 @@ function handleAskUserQuestion(root, payload) {
     if (!questionText) return;
     const header = q.header == null ? null : singleLine(q.header, HEADER_MAX) || null;
     const options = normalizeOptions(q.options);
+    const headerUnique = header != null && headerCounts.get(header) === 1;
 
     let labels = [];
     let notes = null;
     for (const container of answerContainers) {
-      const value = findAnswer(container, q.question, q.header, i);
+      const value = findAnswer(container, {
+        rawQuestion: typeof q.question === "string" ? q.question : null,
+        normQuestion: questionText,
+        rawHeader: typeof q.header === "string" ? q.header : null,
+        normHeader: header,
+        headerUnique,
+        index: i,
+      });
       if (value === undefined) continue;
       const collected = collectFromValue(value);
       if (collected.labels.length || collected.notes) {
