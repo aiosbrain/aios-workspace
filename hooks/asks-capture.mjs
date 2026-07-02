@@ -84,17 +84,18 @@ function acquireLock(lockPath) {
   return null;
 }
 
-// Append one line under the lock. Returns true iff written; false on any failure (skip silently).
-function appendLineLocked(root, line) {
+// Run `fn` while holding the store lock. Returns fn's result, or null on any failure (skip
+// silently — a missed capture is acceptable, disturbing the session is not).
+function withStoreLock(root, fn) {
   const abs = storePath(root);
   const lockPath = abs + ".lock";
   try {
     mkdirSync(path.dirname(abs), { recursive: true });
   } catch {
-    return false;
+    return null;
   }
   const fd = acquireLock(lockPath);
-  if (fd === null) return false;
+  if (fd === null) return null;
   try {
     try {
       writeFileSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
@@ -102,10 +103,9 @@ function appendLineLocked(root, line) {
       /* advisory pid stamp only */
     }
     closeSync(fd);
-    appendFileSync(abs, line + "\n");
-    return true;
+    return fn(abs);
   } catch {
-    return false;
+    return null;
   } finally {
     try {
       unlinkSync(lockPath);
@@ -153,11 +153,15 @@ function buildCreateLine(rec) {
 }
 
 // Write a create line unless it is a duplicate of an open ask or the store is over the hard cap.
+// The dedupe/cap read happens INSIDE the held lock, so a concurrent writer with the same key
+// cannot slip between the check and the append.
 function capture(root, rec) {
-  const { keys, lineCount } = openDedupeKeys(root);
-  if (lineCount > HARD_LINE_CAP) return; // store is unmaintained — skip rather than pile on
-  if (rec.dedupeKey && keys.has(rec.dedupeKey)) return; // open duplicate
-  appendLineLocked(root, buildCreateLine(rec));
+  withStoreLock(root, (abs) => {
+    const { keys, lineCount } = openDedupeKeys(root);
+    if (lineCount > HARD_LINE_CAP) return; // store is unmaintained — skip rather than pile on
+    if (rec.dedupeKey && keys.has(rec.dedupeKey)) return; // open duplicate
+    appendFileSync(abs, buildCreateLine(rec) + "\n");
+  });
 }
 
 function baseRecord(fields) {

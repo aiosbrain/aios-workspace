@@ -363,6 +363,27 @@ export function appendCreate(root: string, input: AskInput): AskRecord {
   return rec;
 }
 
+/**
+ * Dedupe-aware create: re-checks the dedupeKey against the folded store INSIDE the lock, so two
+ * concurrent writers with the same key cannot both append (closes the check-then-append race a
+ * lock-free `hasOpenDuplicate` pre-check leaves open). Returns null when suppressed. An input
+ * without a dedupeKey never dedupes and always appends.
+ */
+export function appendCreateDeduped(root: string, input: AskInput): AskRecord | null {
+  const rec = buildRecord(input);
+  return withLock(root, () => {
+    if (rec.dedupeKey) {
+      const abs = storePath(root);
+      if (existsSync(abs)) {
+        const { asks } = foldLines(readFileSync(abs, "utf8").split(/\r?\n/));
+        if (asks.some((a) => a.status === "open" && a.dedupeKey === rec.dedupeKey)) return null;
+      }
+    }
+    appendFileSync(storePath(root), createLine(rec) + "\n");
+    return rec;
+  });
+}
+
 /** Append a resolve/orphan op under the lock. Existence is the caller's concern (CLI validates). */
 export function appendOp(
   root: string,

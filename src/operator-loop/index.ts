@@ -236,6 +236,7 @@ export {
   readAsks,
   hasOpenDuplicate,
   appendCreate,
+  appendCreateDeduped,
   appendOp,
   detectOrphans,
   compact,

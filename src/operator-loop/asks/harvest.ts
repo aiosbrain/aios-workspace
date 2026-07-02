@@ -76,7 +76,14 @@ export async function harvestAsks(root: string, opts: HarvestOptions): Promise<H
     const transport = createInboxTransport(root, { dedupeKey, now });
     const res = await dispatchOnEvent(event, config, transport);
     if (res.status === "sent") {
-      result.delivered++;
+      // The sink re-checks the dedupeKey under the store lock; a null receipt means a concurrent
+      // writer won the key and the write was suppressed there (the pre-check above is a fast path).
+      if (res.receipt === null) {
+        result.suppressed++;
+        bump("suppressed-open-duplicate");
+      } else {
+        result.delivered++;
+      }
     } else if (res.status === "rejected") {
       result.rejected++;
       bump(res.reason ?? "rejected");

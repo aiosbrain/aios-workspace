@@ -3436,8 +3436,8 @@ async function cmdAsks(repo, cfg, args) {
     const valid = ["open", "resolved", "orphaned", "all"];
     if (!valid.includes(status)) die(`--status must be one of ${valid.join("|")}`);
     const { asks, warnings } = loop.readAsks(repo);
-    const filtered = (status === "all" ? asks : asks.filter((a) => a.status === status)).sort((a, b) =>
-      (b.createdAt || "").localeCompare(a.createdAt || "")
+    const filtered = (status === "all" ? asks : asks.filter((a) => a.status === status)).sort(
+      (a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")
     );
     if (asJson) {
       console.log(JSON.stringify({ asks: filtered, warnings }, null, 2));
@@ -3551,7 +3551,9 @@ async function cmdAsks(repo, cfg, args) {
     const openCount = loop.readAsks(repo).asks.filter((a) => a.status === "open").length;
     if (openCount >= loop.OPEN_SOFT_CAP && !asJson)
       console.error(
-        c.dim(`  warning: ${openCount} open asks (soft cap ${loop.OPEN_SOFT_CAP}) — run \`aios asks drain\``)
+        c.dim(
+          `  warning: ${openCount} open asks (soft cap ${loop.OPEN_SOFT_CAP}) — run \`aios asks drain\``
+        )
       );
     const rec = loop.appendCreate(repo, {
       kind,

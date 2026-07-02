@@ -8,7 +8,7 @@
 
 import type { DispatchDeps, NotificationEvent } from "../comms/sender.js";
 import type { Tier } from "../signal.js";
-import { appendCreate, type AskSeverity } from "./store.js";
+import { appendCreateDeduped, type AskSeverity } from "./store.js";
 
 export interface InboxTransportOptions {
   /** Injectable clock (deterministic tests). */
@@ -28,13 +28,15 @@ function refString(event: NotificationEvent): string {
 
 /**
  * Build a `DispatchDeps` sink that appends authorized loop events to the local asks store. Pass it
- * to `dispatchOnEvent` — the gate decides authorization, this decides persistence.
+ * to `dispatchOnEvent` — the gate decides authorization, this decides persistence. Writes go
+ * through `appendCreateDeduped` (key re-checked under the store lock), so the receipt is the
+ * created record or null when an open duplicate suppressed the write.
  */
 export function createInboxTransport(root: string, opts: InboxTransportOptions = {}): DispatchDeps {
   const dedupeKey = opts.dedupeKey ?? null;
   return {
     sendEvent: ({ event, messageTier }) =>
-      appendCreate(root, {
+      appendCreateDeduped(root, {
         kind: event.kind,
         severity: severityFor(event),
         title: event.summary,
@@ -47,7 +49,7 @@ export function createInboxTransport(root: string, opts: InboxTransportOptions =
       }),
     // Text fallback: only reached if `sendEvent` were absent. Passed the already-gated text.
     send: ({ text }) =>
-      appendCreate(root, {
+      appendCreateDeduped(root, {
         kind: "notification",
         severity: "fyi",
         title: text,

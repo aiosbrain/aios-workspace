@@ -35,6 +35,27 @@ for (let i = 0; i < n; i++)
   });
 }
 
+function runDedupedAppender(root, tag, n, dedupeKey) {
+  return new Promise((resolve, reject) => {
+    const script = `const { appendCreateDeduped } = await import(${JSON.stringify(DIST_INDEX)});
+const [root, tag, n, key] = [process.argv[2], process.argv[3], Number(process.argv[4]), process.argv[5]];
+for (let i = 0; i < n; i++)
+  appendCreateDeduped(root, { kind: "c", severity: "fyi", title: tag + "-" + i, source: "test", dedupeKey: key });
+`;
+    const file = path.join(root, `deduped-appender-${tag}.mjs`);
+    writeFileSync(file, script);
+    const p = spawn("node", [file, root, tag, String(n), dedupeKey], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    p.stderr.on("data", (d) => (err += d));
+    p.on("error", reject);
+    p.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`deduped appender ${tag} exited ${code}: ${err}`))
+    );
+  });
+}
+
 test("2 sessions × 50 concurrent appends: no corruption, exact count, dedupeKeys distinct per session", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "asks-conc-"));
   try {
@@ -54,6 +75,25 @@ test("2 sessions × 50 concurrent appends: no corruption, exact count, dedupeKey
     assert.equal(s1.size, N, "S1 has 50 distinct dedupeKeys");
     assert.equal(s2.size, N, "S2 has 50 distinct dedupeKeys");
     for (const k of s1) assert.ok(!s2.has(k), "no dedupeKey collision across sessions");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent writers with the SAME dedupeKey: exactly one open ask survives (check under lock)", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "asks-dedupe-race-"));
+  try {
+    const KEY = "shared-key";
+    await Promise.all([
+      runDedupedAppender(root, "A", 25, KEY),
+      runDedupedAppender(root, "B", 25, KEY),
+    ]);
+
+    const raw = readFileSync(path.join(root, ASKS_STORE_REL), "utf8");
+    const { asks, warnings } = foldLines(raw.split(/\r?\n/));
+    assert.equal(warnings.length, 0, "no malformed lines under same-key contention");
+    const open = asks.filter((a) => a.status === "open" && a.dedupeKey === KEY);
+    assert.equal(open.length, 1, "exactly one open ask for the contested dedupeKey");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

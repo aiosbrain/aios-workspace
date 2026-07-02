@@ -22,6 +22,7 @@ import {
   OPEN_SOFT_CAP,
   RESOLVED_GC_DAYS,
   appendCreate,
+  appendCreateDeduped,
   appendOp,
   buildRecord,
   compact,
@@ -343,4 +344,45 @@ test("foldLines is pure over a line array", () => {
   const { asks, warnings } = foldLines([line, "", "  "]);
   assert.equal(asks.length, 1);
   assert.equal(warnings.length, 0);
+});
+
+test("appendCreateDeduped: suppresses an open duplicate, appends again once resolved", () => {
+  const root = ws();
+  try {
+    const first = appendCreateDeduped(root, {
+      kind: "c",
+      severity: "fyi",
+      title: "one",
+      source: "test",
+      dedupeKey: "k1",
+    });
+    assert.ok(first, "first write lands");
+    const dup = appendCreateDeduped(root, {
+      kind: "c",
+      severity: "fyi",
+      title: "two",
+      source: "test",
+      dedupeKey: "k1",
+    });
+    assert.equal(dup, null, "open duplicate suppressed under the lock");
+    const noKey = appendCreateDeduped(root, {
+      kind: "c",
+      severity: "fyi",
+      title: "three",
+      source: "test",
+    });
+    assert.ok(noKey, "a keyless input never dedupes");
+    appendOp(root, "resolve", first.id);
+    const again = appendCreateDeduped(root, {
+      kind: "c",
+      severity: "fyi",
+      title: "four",
+      source: "test",
+      dedupeKey: "k1",
+    });
+    assert.ok(again, "resolved asks no longer suppress the key");
+    assert.equal(readAsks(root).asks.length, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
