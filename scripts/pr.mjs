@@ -10,7 +10,8 @@
  * moves it to Done on merge.
  *
  * Exported:
- *   cmdPr(repo, args)                    — CLI + chained from `aios build --pr`
+ *   cmdPr(repo, args, opts)              — CLI + chained from `aios build --pr`
+ *   PrError                              — thrown (not die()) when opts.throwOnError is set
  *   buildPushArgv(branch)                — pure: git push argv
  *   buildPrCreateArgv({repo,title,bodyFile,branch}) — pure: gh pr create argv
  */
@@ -22,6 +23,11 @@ import path from "node:path";
 import { c, die, validateBranch } from "./relay-core.mjs";
 
 const ISSUE_RE = /^AIO-\d+$/;
+
+// A recoverable `aios pr` failure. The CLI path lets these reach die() (exit 1); the
+// `aios build --pr` path passes { throwOnError } so finish() can catch it and return a
+// gate-failure exit code instead of the process aborting mid-build via process.exit.
+export class PrError extends Error {}
 
 // Replicated from wait-for-bots.mjs (both are small offline commands; avoids coupling
 // two command modules). Returns owner/repo from the origin remote, or null.
@@ -81,7 +87,14 @@ function existingPrNumber(repo, branch) {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function cmdPr(repo, args) {
+export async function cmdPr(repo, args, { throwOnError = false } = {}) {
+  // fail() = die() for the CLI (exit 1), throw for the build path so finish() can map it
+  // to a gate-failure exit code. Every recoverable abort below goes through fail().
+  const fail = throwOnError
+    ? (msg) => {
+        throw new PrError(msg);
+      }
+    : die;
   if (args[0] === "--help" || args[0] === "-h") {
     console.log(
       [
@@ -114,18 +127,18 @@ export async function cmdPr(repo, args) {
 
   const dryRun = hasFlag("--dry-run");
   const branch = flag("--branch") ?? gitOut(["rev-parse", "--abbrev-ref", "HEAD"], repo);
-  if (!branch || branch === "HEAD") die("could not resolve a branch — pass --branch <name>.");
+  if (!branch || branch === "HEAD") fail("could not resolve a branch — pass --branch <name>.");
   validateBranch(branch);
 
   const repoSlug = flag("--repo") ?? detectRepo(repo);
-  if (!repoSlug) die("could not detect the target repo — pass --repo owner/repo.");
+  if (!repoSlug) fail("could not detect the target repo — pass --repo owner/repo.");
 
   const issue = flag("--issue") ?? branch.match(/AIO-\d+/)?.[0] ?? null;
-  if (issue && !ISSUE_RE.test(issue)) die(`invalid --issue '${issue}' — expected AIO-<number>.`);
+  if (issue && !ISSUE_RE.test(issue)) fail(`invalid --issue '${issue}' — expected AIO-<number>.`);
   // A PR title/body without an AIO-<n> key silently breaks the Linear automations
   // (pr-in-review.yml / aios-work-sync.yml). Fail fast, before any push or create.
   if (!issue)
-    die(
+    fail(
       "no issue key — pass --issue AIO-<n> or use a branch whose name contains AIO-<n> " +
         "(the PR title must carry the key to drive the Linear automations)."
     );
@@ -152,7 +165,7 @@ export async function cmdPr(repo, args) {
     if (issue) lines.push("", `Implements ${issue}.`);
     writeFileSync(bodyFile, lines.join("\n") + "\n");
   } else if (!existsSync(bodyFile)) {
-    die(`--body-file not found: ${bodyFile}`);
+    fail(`--body-file not found: ${bodyFile}`);
   }
   const createArgv = buildPrCreateArgv({ repo: repoSlug, title, bodyFile, branch });
 
@@ -172,7 +185,7 @@ export async function cmdPr(repo, args) {
       existing = existingPrNumber(repoSlug, branch);
     } catch (e) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
-      die(`could not query existing PRs (gh pr list): ${msg || e.message}`);
+      fail(`could not query existing PRs (gh pr list): ${msg || e.message}`);
     }
 
     // Push ALWAYS (push is idempotent). New local commits must reach the remote even when a
@@ -182,7 +195,7 @@ export async function cmdPr(repo, args) {
       execFileSync("git", pushArgv, { cwd: repo, stdio: "inherit" });
     } catch (e) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
-      die(`git push failed: ${msg || e.message}`);
+      fail(`git push failed: ${msg || e.message}`);
     }
 
     // With the branch pushed, an already-open PR is reused — skip create only.
@@ -201,7 +214,7 @@ export async function cmdPr(repo, args) {
       process.stdout.write(createOut);
     } catch (e) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
-      die(`gh pr create failed: ${msg || e.message}`);
+      fail(`gh pr create failed: ${msg || e.message}`);
     }
 
     // Determine the new PR number: parse the printed URL, else a best-effort re-query.
@@ -217,7 +230,7 @@ export async function cmdPr(repo, args) {
       }
     }
     if (!prNumber) {
-      die(
+      fail(
         "PR was created but its number could not be determined (unparseable `gh pr create` " +
           `output and the re-query failed). Check it on GitHub: https://github.com/${repoSlug}/pulls`
       );

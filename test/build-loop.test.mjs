@@ -205,6 +205,92 @@ console.log("--pr path runs the Bugbot gate too: Critical/High blocks before any
   check("not merged to main", !existsSync(path.join(repo, "feature.js")));
 }
 
+console.log("--pr path: undeterminable PR number → finish() returns GATE_FAILED (M3)");
+{
+  // M3: a cmdPr failure on the build path must surface as EXIT.GATE_FAILED via finish()
+  // (throwOnError), NOT abort the build with cmdPr's own process.exit, and never report an
+  // exit-0 "success" with no PR number. Fake gh: idempotency query finds no PR, create
+  // succeeds but prints no /pull/<n> URL, and the re-query fails → number is undeterminable.
+  // A delegating fake git handles only `push` (records + succeeds) and passes every other
+  // git call through to the real git so the build/worktree phase still works.
+  const savedPath = process.env.PATH;
+  const realGit = execFileSync(process.platform === "win32" ? "where" : "which", ["git"], {
+    encoding: "utf8",
+  })
+    .trim()
+    .split("\n")[0];
+
+  // Set up the test repo + origin (detectRepo needs it) with the REAL git first.
+  const repo = freshRepo();
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+    cwd: repo,
+    stdio: "pipe",
+  });
+  const wt = wtPath(repo, "feat/AIO-3-prnum");
+
+  const shimBin = mkdtempSync(path.join(tmpdir(), "pr-shim-"));
+  cleanups.push(shimBin);
+  const record = path.join(shimBin, "record.log");
+  const countFile = path.join(shimBin, "count");
+  writeFileSync(record, "");
+  writeFileSync(countFile, "0");
+  writeFileSync(
+    path.join(shimBin, "git"),
+    [
+      "#!/usr/bin/env node",
+      "import { appendFileSync } from 'node:fs';",
+      "import { spawnSync } from 'node:child_process';",
+      "const a = process.argv.slice(2);",
+      "if (a[0] === 'push') {",
+      "  appendFileSync(process.env.PR_SHIM_RECORD, 'git ' + a.join(' ') + '\\n');",
+      "  process.exit(0);",
+      "}",
+      "const r = spawnSync(process.env.PR_SHIM_REAL_GIT, a, { stdio: 'inherit' });",
+      "process.exit(r.status == null ? 1 : r.status);",
+    ].join("\n")
+  );
+  writeFileSync(
+    path.join(shimBin, "gh"),
+    [
+      "#!/usr/bin/env node",
+      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
+      "const a = process.argv.slice(2);",
+      "appendFileSync(process.env.PR_SHIM_RECORD, 'gh ' + a.join(' ') + '\\n');",
+      "if (a[0] === 'pr' && a[1] === 'list') {",
+      "  let n = 0; try { n = parseInt(readFileSync(process.env.PR_SHIM_COUNT, 'utf8'), 10) || 0; } catch {}",
+      "  n++; writeFileSync(process.env.PR_SHIM_COUNT, String(n));",
+      "  if (n >= 2) { process.stderr.write('gh: re-query failed\\n'); process.exit(1); }",
+      "  process.stdout.write(''); process.exit(0);", // first query: no existing PR
+      "}",
+      "if (a[0] === 'pr' && a[1] === 'create') { process.stdout.write('opened (no url)\\n'); process.exit(0); }",
+      "process.exit(0);",
+    ].join("\n")
+  );
+  chmodSync(path.join(shimBin, "git"), 0o755);
+  chmodSync(path.join(shimBin, "gh"), 0o755);
+  process.env.PR_SHIM_RECORD = record;
+  process.env.PR_SHIM_COUNT = countFile;
+  process.env.PR_SHIM_REAL_GIT = realGit;
+  process.env.PATH = [shimBin, savedPath].join(path.delimiter);
+
+  let code;
+  try {
+    code = await run({ repo, branch: "feat/AIO-3-prnum", mode: "approve", o: opts({ pr: true }) });
+  } finally {
+    process.env.PATH = savedPath;
+    delete process.env.PR_SHIM_RECORD;
+    delete process.env.PR_SHIM_COUNT;
+    delete process.env.PR_SHIM_REAL_GIT;
+  }
+
+  const calls = existsSync(record) ? readFileSync(record, "utf8") : "";
+  check("exit GATE_FAILED (undeterminable PR number on --pr)", code === EXIT.GATE_FAILED);
+  check("did push the branch (idempotent)", calls.includes("git push"));
+  check("did attempt gh pr create", calls.includes("gh pr create"));
+  check("worktree preserved (never merged)", existsSync(wt));
+  check("not merged to main", !existsSync(path.join(repo, "feature.js")));
+}
+
 console.log("approve + --merge + bugbot → merged after BUGBOT_CLEAR, exit 0");
 {
   const repo = freshRepo();

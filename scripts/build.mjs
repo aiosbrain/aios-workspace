@@ -1039,10 +1039,26 @@ async function finish({
   } else if (pr) {
     // --pr: push the branch and open a PR (never merge, never remove the worktree/branch
     // — the branch must survive for the PR). Runs ONLY after the pre-merge gates above.
+    // throwOnError: a PR failure (push/create/undeterminable number) must surface as a
+    // gate-failure exit code here — NOT abort the build via cmdPr's own process.exit, and
+    // NEVER report success (exit 0) without a PR_NUMBER.
     const prArgs = ["--branch", branch, ...(issue ? ["--issue", issue] : [])];
     if (dryRun) prArgs.push("--dry-run");
-    const prNumber = await cmdPr(repo, prArgs);
-    if (!dryRun && prNumber) log("PR opened", `PR_NUMBER=${prNumber}`);
+    let prNumber;
+    try {
+      prNumber = await cmdPr(repo, prArgs, { throwOnError: true });
+    } catch (e) {
+      console.error(c.red(`\n✗ opening the PR failed: ${e.message}`));
+      log("PR failed", e.message);
+      return EXIT.GATE_FAILED;
+    }
+    // dry-run legitimately returns null; a real run that yields no number is a failure.
+    if (!dryRun && !prNumber) {
+      console.error(c.red("\n✗ PR step returned no PR number — treating as failure."));
+      log("PR failed", "no PR number returned");
+      return EXIT.GATE_FAILED;
+    }
+    if (!dryRun) log("PR opened", `PR_NUMBER=${prNumber}`);
   } else {
     console.log(c.yellow("\nCode approved. Review the diff before merging:"));
     console.log(c.dim(`  git -C ${repo} diff ${branch}`));
