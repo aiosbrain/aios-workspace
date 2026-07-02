@@ -3643,11 +3643,9 @@ async function cmdMode(repo, cfg, args) {
     return;
   }
   const ping = out.mode === "deep-work" ? "silenced" : (out.channel ?? "default");
-  console.log(
-    c.blue("aios mode") +
-      `  ${out.mode}` +
-      c.dim(`  · local ping: ${ping}${out.changed ? "" : "  (no change)"}`)
-  );
+  // "(no change)" only makes sense on a toggle that was already in that mode — not on status.
+  const note = sub !== "status" && !out.changed ? "  (no change)" : "";
+  console.log(c.blue("aios mode") + `  ${out.mode}` + c.dim(`  · local ping: ${ping}${note}`));
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
