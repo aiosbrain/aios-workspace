@@ -219,3 +219,35 @@ export {
   type NoopReason,
 } from "./comms/sender.js";
 export { detectEvents, DEFAULT_STALE_INBOX_DAYS } from "./comms/detectors.js";
+export type { SendEventFn } from "./comms/sender.js";
+
+// Asks queue — non-blocking escalation queue (AIO-167). Append-only local store (writer-honored
+// lock), inbox transport on the comms sender, and the `aios asks harvest` production caller.
+export {
+  ASKS_STORE_REL,
+  ASKS_SCHEMA_VERSION,
+  RESOLVED_GC_DAYS,
+  OPEN_SOFT_CAP,
+  OPEN_STALE_DAYS,
+  sha256,
+  buildRecord,
+  withLock,
+  foldLines,
+  readAsks,
+  hasOpenDuplicate,
+  appendCreate,
+  appendCreateDeduped,
+  appendOp,
+  detectOrphans,
+  compact,
+  type Ask,
+  type AskRecord,
+  type AskInput,
+  type AskSeverity,
+  type AskStatus,
+  type AskOp,
+  type FoldResult,
+  type FoldWarning,
+} from "./asks/store.js";
+export { createInboxTransport, type InboxTransportOptions } from "./asks/transport.js";
+export { harvestAsks, type HarvestOptions, type HarvestResult } from "./asks/harvest.js";

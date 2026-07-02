@@ -11,3 +11,4 @@ Each is a well-bounded TypeScript module per the [Engineering Constitution](../.
 | Agentic Maturity | [agentic-maturity.md](./agentic-maturity.md) | Production-ready; wire into C8 + standalone view |
 | Communication | [communication.md](./communication.md) | Reuse connectors; build **unified notification layer** |
 | Meetings | [meetings.md](./meetings.md) | Reuse Granola + decisions; build stakeholder map + governance nudge |
+| Asks Queue (AIO-167) | [asks-queue.md](./asks-queue.md) | **Net-new** non-blocking escalation queue (append-only store + capture hook + inbox transport + CLI); dogfood-only slice |
