@@ -3501,6 +3501,7 @@ async function cmdAsks(repo, cfg, args) {
     const keepOpen = flags.has("--keep-open");
     const nowArg = argVal("--now");
     const now = nowArg ? new Date(nowArg) : new Date();
+    if (nowArg && Number.isNaN(now.getTime())) die(`--now is not a valid date: ${nowArg}`);
     const nowIso = now.toISOString();
     // (1) orphan-detect BEFORE resolve so orphaning is effective.
     const orphanIds = loop.detectOrphans(
@@ -3572,11 +3573,14 @@ async function cmdAsks(repo, cfg, args) {
   }
 
   if (sub === "harvest") {
-    const cadence = argVal("--cadence") === "weekly" ? "weekly" : "daily";
+    const cadence = argVal("--cadence") ?? "daily";
+    if (!["daily", "weekly"].includes(cadence)) die("--cadence must be daily|weekly");
     const nowArg = argVal("--now");
+    const now = nowArg ? new Date(nowArg) : null;
+    if (now && Number.isNaN(now.getTime())) die(`--now is not a valid date: ${nowArg}`);
     const res = await loop.harvestAsks(repo, {
       cadence,
-      ...(nowArg ? { now: new Date(nowArg) } : {}),
+      ...(now ? { now } : {}),
     });
     if (asJson) {
       console.log(JSON.stringify(res, null, 2));
@@ -3657,7 +3661,7 @@ usage:
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
   aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
     [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
-  aios asks list [--status open|all]    non-blocking escalation queue (local, admin-tier, never synced)
+  aios asks list [--status open|resolved|orphaned|all]  escalation queue (local, admin-tier, never synced)
     [--json]                            list open (default) / resolved / orphaned / all
   aios asks add --kind <k>              enqueue an ask (severity: blocker|decision|fyi)
     --severity <s> --title <t> [--body <b>] [--ref <r>] [--json]

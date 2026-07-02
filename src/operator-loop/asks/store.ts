@@ -189,10 +189,17 @@ function sleepSync(ms: number): void {
  * (mtime older than LOCK_STALE_MS) is reclaimed. Throws if the lock cannot be acquired — callers
  * decide whether that is fatal (CLI: die) or skippable (hook: silent no-op). The lock is always
  * released, even if `fn` throws.
+ *
+ * `fn` receives `ownsLock()`: true iff the lockfile still carries this holder's token. A holder
+ * that overruns LOCK_STALE_MS can have its lock reclaimed by another writer; any operation that
+ * REWRITES the store (compaction) must confirm ownership immediately before its rename and abort
+ * if reclaimed, so a reclaimer's fresh appends are never overwritten. Plain appends need no check
+ * (a single O_APPEND write cannot clobber other lines).
  */
-export function withLock<T>(root: string, fn: () => T): T {
+export function withLock<T>(root: string, fn: (ownsLock: () => boolean) => T): T {
   const lockPath = storePath(root) + ".lock";
   mkdirSync(path.dirname(lockPath), { recursive: true });
+  const token = randomUUID();
   let fd: number | null = null;
   for (let attempt = 0; attempt <= LOCK_RETRIES && fd === null; attempt++) {
     try {
@@ -218,17 +225,24 @@ export function withLock<T>(root: string, fn: () => T): T {
     }
   }
   if (fd === null) throw new Error(`asks: could not acquire store lock (${lockPath})`);
+  const ownsLock = (): boolean => {
+    try {
+      return readFileSync(lockPath, "utf8").includes(token);
+    } catch {
+      return false; // lock gone or unreadable — assume reclaimed
+    }
+  };
   try {
     try {
-      writeFileSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
+      writeFileSync(fd, `${process.pid} ${token} ${new Date().toISOString()}\n`);
     } catch {
-      /* pid stamp is advisory only */
+      /* stamp failed — ownsLock() will report false, so rewrites abort conservatively */
     }
     closeSync(fd);
-    return fn();
+    return fn(ownsLock);
   } finally {
     try {
-      unlinkSync(lockPath);
+      if (ownsLock()) unlinkSync(lockPath); // never delete a reclaimer's lock
     } catch {
       /* already gone */
     }
@@ -424,12 +438,16 @@ export function detectOrphans(asks: readonly Ask[], now: Date = new Date()): str
 /**
  * Compact the store: drop resolved/orphaned asks closed more than RESOLVED_GC_DAYS ago, and
  * collapse the log to one create line per kept ask (+ a close op for kept-but-closed asks). Held
- * entirely under the lock across fold → temp → rename, so no concurrent append is lost. Returns
- * the number of asks removed.
+ * entirely under the lock across fold → temp → rename; ownership is re-verified immediately
+ * before the rename and the rewrite is skipped if the lock was stale-reclaimed, so a reclaimer's
+ * appends are never overwritten. Returns the number of asks removed (`skipped` on abort).
  */
-export function compact(root: string, now: Date = new Date()): { removed: number } {
+export function compact(
+  root: string,
+  now: Date = new Date()
+): { removed: number; skipped?: boolean } {
   const abs = storePath(root);
-  return withLock(root, () => {
+  return withLock(root, (ownsLock) => {
     if (!existsSync(abs)) return { removed: 0 };
     const { asks } = foldLines(readFileSync(abs, "utf8").split(/\r?\n/));
     const cutoff = now.getTime() - RESOLVED_GC_DAYS * DAY_MS;
@@ -461,6 +479,16 @@ export function compact(root: string, now: Date = new Date()): { removed: number
     }
     const tmp = abs + `.tmp-${process.pid}`;
     writeFileSync(tmp, lines.length ? lines.join("\n") + "\n" : "");
+    if (!ownsLock()) {
+      // Lock was stale-reclaimed while we folded (holder overran LOCK_STALE_MS): a reclaimer may
+      // have appended lines our snapshot doesn't contain. Abort the rewrite rather than lose them.
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort tmp cleanup */
+      }
+      return { removed: 0, skipped: true };
+    }
     renameSync(tmp, abs);
     return { removed };
   });

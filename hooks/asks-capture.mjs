@@ -96,19 +96,21 @@ function withStoreLock(root, fn) {
   }
   const fd = acquireLock(lockPath);
   if (fd === null) return null;
+  const token = randomUUID();
   try {
     try {
-      writeFileSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
+      writeFileSync(fd, `${process.pid} ${token} ${new Date().toISOString()}\n`);
     } catch {
-      /* advisory pid stamp only */
+      /* advisory stamp only */
     }
     closeSync(fd);
     return fn(abs);
   } catch {
     return null;
   } finally {
+    // Never delete a reclaimer's lock: only unlink if the file still carries our token.
     try {
-      unlinkSync(lockPath);
+      if (readFileSync(lockPath, "utf8").includes(token)) unlinkSync(lockPath);
     } catch {
       /* already gone */
     }
@@ -253,7 +255,9 @@ function handleNotification(root, payload) {
       source: "hook:idle",
       sessionId,
       transcriptPath,
-      dedupeKey: sha256(`${sessionId}|idle`),
+      // No sessionId → a fresh UUID in the key, so unrelated sessions can never suppress each
+      // other; dedupe is simply disabled for that capture.
+      dedupeKey: sha256(`${sessionId ?? randomUUID()}|idle`),
     })
   );
 }
@@ -284,7 +288,7 @@ function handleStop(root, payload) {
       sessionId,
       transcriptPath,
       tailHash,
-      dedupeKey: sha256(`${sessionId}|${tailHash}`),
+      dedupeKey: sha256(`${sessionId ?? randomUUID()}|${tailHash}`),
     })
   );
 }

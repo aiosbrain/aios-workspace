@@ -30,6 +30,7 @@ import {
   foldLines,
   hasOpenDuplicate,
   readAsks,
+  withLock,
 } from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -382,6 +383,23 @@ test("appendCreateDeduped: suppresses an open duplicate, appends again once reso
     });
     assert.ok(again, "resolved asks no longer suppress the key");
     assert.equal(readAsks(root).asks.length, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("withLock ownership token: reports reclaimed locks so rewrites can abort", () => {
+  const root = ws();
+  try {
+    const lockPath = path.join(root, ASKS_STORE_REL) + ".lock";
+    const observed = withLock(root, (ownsLock) => {
+      const owned = ownsLock();
+      writeFileSync(lockPath, "9999 someone-else 2020-01-01T00:00:00.000Z\n"); // simulate stale-reclaim
+      return { owned, afterSteal: ownsLock() };
+    });
+    assert.equal(observed.owned, true, "holder owns its fresh lock");
+    assert.equal(observed.afterSteal, false, "a rewritten lockfile is detected as reclaimed");
+    assert.ok(existsSync(lockPath), "a reclaimed lock is not deleted by the previous holder");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
