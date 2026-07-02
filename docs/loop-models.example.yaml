@@ -1,0 +1,53 @@
+# loop-models.example.yaml — per-step model config for the agent relay (plan/build).
+#
+# Copy to .aios/loop-models.yaml (gitignored) and uncomment the keys you want to tune.
+# Any key you omit falls back to the baked-in default shown alongside it below.
+#
+# Flat keys only (parsed by scripts/flat-yaml.mjs): no nesting, no dots. Each step has
+# up to three keys:
+#   <step>_model       the model id for that step
+#   <step>_effort      reasoning effort (low|medium|high|xhigh|max) — Claude builder + SDK plan
+#   <step>_timeout_s   per-step timeout in seconds (converted to ms for callers)
+#
+# Precedence (per field): CLI flag > this file > default.
+#
+# DIVERSITY GUARD (fail closed): `build` and `code_review` must be different model
+# families, and so must `plan` and `plan_review` — the reviewer has to be an
+# independent model. Families: claude*/fable* = anthropic, gpt* = openai. Setting
+# code_review_model to a claude-* model while build stays claude-* aborts the run.
+#
+# RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK) and
+# build/fix/fix_escalated (Claude Code CLI) — must be a Claude-family model. A gpt-*
+# id on any of them aborts, rather than being handed to a Claude runner.
+#
+# VALIDATION (fail loudly): an unknown/misspelled key or step, a non-scalar value, an
+# effort outside low|medium|high|xhigh|max, or a non-numeric/non-positive *_timeout_s
+# aborts with an actionable message. Only a MISSING file falls back to defaults.
+
+# recon_model: claude-haiku-4-5
+
+# plan_model: claude-opus-4-8
+# plan_effort: xhigh
+
+# plan_review_model: gpt-5.5-high
+
+# build_model: claude-opus-4-8
+# build_effort: high
+
+# code_review_model: gpt-5.5-high
+# code_review_timeout_s: 300
+
+# fix_model: claude-opus-4-8
+# fix_effort: medium
+
+# fix_escalated_model: claude-opus-4-8
+# fix_escalated_effort: high
+
+# consolidate_model: claude-haiku-4-5
+
+# safety_review_model: claude-opus-4-8
+# safety_review_effort: xhigh
+
+# orchestrate_model: fable-5
+
+# digest_model: claude-haiku-4-5

@@ -58,6 +58,18 @@ export function buildBugbotPrompt({ skill, branch, baseSha, diffStat, diff, logO
   ].join("\n");
 }
 
+// Structural matchers for a listed Critical/High finding: a leading bullet
+// (`- Critical: …`) or a leading severity table cell (`| High |`). Prose such as
+// "no Critical or High findings" matches NEITHER — only an actual listed finding.
+const CRITICAL_HIGH_BULLET = /^\s*[-*]\s*`?(Critical|High)`?\b/im;
+const CRITICAL_HIGH_ROW = /^\s*\|\s*`?(Critical|High)`?\s*\|/im;
+
+/** True when review text lists a Critical/High finding (bullet or table row). */
+export function hasCriticalOrHighFindings(text) {
+  const body = text ?? "";
+  return CRITICAL_HIGH_BULLET.test(body) || CRITICAL_HIGH_ROW.test(body);
+}
+
 /** True when the review has no blocking Critical/High findings. */
 export function detectBugbotClear(text) {
   const body = text ?? "";
@@ -70,9 +82,9 @@ export function detectBugbotClear(text) {
         .filter(Boolean)
         .at(-1) ?? "";
     if (lastLine === BUGBOT_CLEAR_TOKEN) return true;
-    // Block if findings section lists Critical/High bullets
-    if (/^\s*[-*]\s*`?(Critical|High)`?\b/im.test(body)) return false;
-    if (/^\s*\|\s*`?(Critical|High)`?\s*\|/im.test(body)) return false;
+    // Block if findings section lists Critical/High bullets or table rows.
+    if (CRITICAL_HIGH_BULLET.test(body)) return false;
+    if (CRITICAL_HIGH_ROW.test(body)) return false;
     return false;
   }
   const lastLine =

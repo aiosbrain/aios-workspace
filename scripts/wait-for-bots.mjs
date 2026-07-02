@@ -14,13 +14,20 @@
  * Can be invoked cross-repo — pass --repo explicitly to target any AIOS-alpha repo.
  *
  * Exit codes:
- *   0 — all bots posted substantive signals (or timeout reached with --require-all unset)
+ *   0 — all bots posted substantive signals (or timeout reached with --any)
  *   1 — usage error
- *   2 — timeout reached and --require-all was set (bots did not post in time)
+ *   2 — timeout reached with a bot still missing (the DEFAULT — require all bots)
+ *
+ * The default is require-all: a missing bot at timeout exits 2 so the caller does NOT
+ * proceed to the Code Reviewer on incomplete signals. Pass --any to restore the old
+ * proceed-anyway behavior (exit 0 on timeout). --require-all is accepted as a no-op
+ * alias for the default (back-compat).
  */
 
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const BOT_CONFIG = {
   "cursor[bot]": {
@@ -51,7 +58,8 @@ function usage() {
       "  --pr <n>          PR number (required)",
       "  --repo <slug>     owner/repo (default: detected from git remote)",
       "  --timeout <min>   max wait in minutes (default: 10)",
-      "  --require-all     exit 2 if timeout reached before all bots posted (default: exit 0)",
+      "  --any             exit 0 on timeout even if a bot is missing (default: exit 2)",
+      "  --require-all     no-op alias for the default (require all bots; exit 2 on timeout)",
       "",
       "Cross-repo: pass --repo explicitly, e.g. --repo AIOS-alpha/aios-team-brain",
     ].join("\n")
@@ -239,56 +247,116 @@ async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Pure exit-code decision for the timeout path (exported for tests).
+ *   - no bot missing            → { code: 0, proceed: true }
+ *   - bot missing, --any        → { code: 0, proceed: true }  (proceed anyway)
+ *   - bot missing, default      → { code: 2, proceed: false } (require all)
+ */
+export function decideTimeoutExit({ proceedOnTimeout, missing }) {
+  const anyMissing = (missing?.length ?? 0) > 0;
+  if (!anyMissing) return { code: 0, proceed: true };
+  return proceedOnTimeout ? { code: 0, proceed: true } : { code: 2, proceed: false };
+}
+
 // --- main ---
 
-const { values } = parseArgs({
-  args: process.argv.slice(2),
-  options: {
-    pr: { type: "string" },
-    repo: { type: "string" },
-    timeout: { type: "string", default: "10" },
-    "require-all": { type: "boolean", default: false },
-    help: { type: "boolean", default: false },
-  },
-  strict: false,
-});
+async function main() {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      pr: { type: "string" },
+      repo: { type: "string" },
+      timeout: { type: "string", default: "10" },
+      // Default is require-all (exit 2 on a missing bot); --require-all is a no-op alias.
+      "require-all": { type: "boolean", default: false },
+      any: { type: "boolean", default: false },
+      help: { type: "boolean", default: false },
+    },
+    strict: false,
+  });
 
-if (values.help || !values.pr) {
-  usage();
-  process.exit(values.help ? 0 : 1);
-}
+  if (values.help || !values.pr) {
+    usage();
+    process.exit(values.help ? 0 : 1);
+  }
 
-const prNumber = values.pr;
-const repo = values.repo ?? detectRepo();
-if (!repo) {
-  console.error("error: could not detect repo — pass --repo owner/repo");
-  process.exit(1);
-}
+  const prNumber = values.pr;
+  const repo = values.repo ?? detectRepo();
+  if (!repo) {
+    console.error("error: could not detect repo — pass --repo owner/repo");
+    process.exit(1);
+  }
 
-const timeoutMin = parseInt(values.timeout, 10) || 10;
-const timeoutMs = timeoutMin * 60 * 1000;
-const requireAll = values["require-all"] ?? false;
-const botUsers = Object.keys(BOT_CONFIG);
+  const timeoutMin = parseInt(values.timeout, 10) || 10;
+  const timeoutMs = timeoutMin * 60 * 1000;
+  // Default: require all bots (exit 2 on a missing bot at timeout). --any restores the
+  // old proceed-anyway behavior (exit 0). --require-all is accepted but is now the default.
+  const proceedOnTimeout = values.any ?? false;
+  const botUsers = Object.keys(BOT_CONFIG);
 
-console.log(`Waiting for bot reviews on PR #${prNumber} (${repo})`);
-console.log(`Bots: ${botUsers.join(", ")}`);
-console.log(`Timeout: ${timeoutMin} min | Poll: ${POLL_INTERVAL_MS / 1000}s\n`);
+  console.log(`Waiting for bot reviews on PR #${prNumber} (${repo})`);
+  console.log(`Bots: ${botUsers.join(", ")}`);
+  console.log(`Timeout: ${timeoutMin} min | Poll: ${POLL_INTERVAL_MS / 1000}s\n`);
 
-const latestPush = getLatestPushTime(repo, prNumber);
-if (latestPush) {
-  console.log(`Latest push: ${latestPush.toISOString()} (filtering stale pre-push comments)\n`);
-} else {
-  console.log("Latest push: unknown (not filtering by timestamp)\n");
-}
+  const latestPush = getLatestPushTime(repo, prNumber);
+  if (latestPush) {
+    console.log(`Latest push: ${latestPush.toISOString()} (filtering stale pre-push comments)\n`);
+  } else {
+    console.log("Latest push: unknown (not filtering by timestamp)\n");
+  }
 
-const deadline = Date.now() + timeoutMs;
-let attempt = 0;
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
 
-while (Date.now() < deadline) {
-  attempt++;
-  const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
-  process.stdout.write(`[${elapsed}s] Polling (attempt ${attempt})… `);
+  while (Date.now() < deadline) {
+    attempt++;
+    const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
+    process.stdout.write(`[${elapsed}s] Polling (attempt ${attempt})… `);
 
+    let issueComments, pullComments, reviews, checkRuns;
+    try {
+      [issueComments, pullComments, reviews, checkRuns] = await Promise.all([
+        Promise.resolve(fetchIssueComments(repo, prNumber)),
+        Promise.resolve(fetchPullReviewComments(repo, prNumber)),
+        Promise.resolve(fetchPullReviews(repo, prNumber)),
+        Promise.resolve(fetchCheckRuns(repo, prNumber)),
+      ]);
+    } catch (e) {
+      console.log(`fetch error: ${e.message}`);
+      if (Date.now() + POLL_INTERVAL_MS < deadline) await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
+    const results = {};
+    for (const [botUser, config] of Object.entries(BOT_CONFIG)) {
+      results[botUser] = checkBotReady(
+        botUser,
+        config,
+        issueComments,
+        pullComments,
+        reviews,
+        checkRuns,
+        latestPush
+      );
+    }
+
+    const missing = botUsers.filter((b) => !results[b].ready);
+
+    if (missing.length === 0) {
+      console.log("all bots ready!\n");
+      console.log("=== Bot review summaries ===");
+      for (const bot of botUsers) console.log(summarizeBot(bot, results[bot]));
+      console.log("\nProceeding to Code Reviewer.");
+      process.exit(0);
+    }
+
+    console.log(`waiting for: ${missing.join(", ")}`);
+    if (Date.now() + POLL_INTERVAL_MS >= deadline) break;
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  // Timeout — do a final check before giving up
   let issueComments, pullComments, reviews, checkRuns;
   try {
     [issueComments, pullComments, reviews, checkRuns] = await Promise.all([
@@ -297,15 +365,13 @@ while (Date.now() < deadline) {
       Promise.resolve(fetchPullReviews(repo, prNumber)),
       Promise.resolve(fetchCheckRuns(repo, prNumber)),
     ]);
-  } catch (e) {
-    console.log(`fetch error: ${e.message}`);
-    if (Date.now() + POLL_INTERVAL_MS < deadline) await sleep(POLL_INTERVAL_MS);
-    continue;
+  } catch {
+    issueComments = pullComments = reviews = checkRuns = [];
   }
 
-  const results = {};
+  const finalResults = {};
   for (const [botUser, config] of Object.entries(BOT_CONFIG)) {
-    results[botUser] = checkBotReady(
+    finalResults[botUser] = checkBotReady(
       botUser,
       config,
       issueComments,
@@ -315,60 +381,33 @@ while (Date.now() < deadline) {
       latestPush
     );
   }
+  const finalMissing = botUsers.filter((b) => !finalResults[b].ready);
+  const decision = decideTimeoutExit({ proceedOnTimeout, missing: finalMissing });
 
-  const missing = botUsers.filter((b) => !results[b].ready);
-
-  if (missing.length === 0) {
-    console.log("all bots ready!\n");
+  if (finalMissing.length === 0) {
+    console.log("\n[final-check] All bots posted just before timeout.\n");
     console.log("=== Bot review summaries ===");
-    for (const bot of botUsers) console.log(summarizeBot(bot, results[bot]));
+    for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
     console.log("\nProceeding to Code Reviewer.");
-    process.exit(0);
+    process.exit(decision.code);
   }
 
-  console.log(`waiting for: ${missing.join(", ")}`);
-  if (Date.now() + POLL_INTERVAL_MS >= deadline) break;
-  await sleep(POLL_INTERVAL_MS);
-}
-
-// Timeout — do a final check before giving up
-let issueComments, pullComments, reviews, checkRuns;
-try {
-  [issueComments, pullComments, reviews, checkRuns] = await Promise.all([
-    Promise.resolve(fetchIssueComments(repo, prNumber)),
-    Promise.resolve(fetchPullReviewComments(repo, prNumber)),
-    Promise.resolve(fetchPullReviews(repo, prNumber)),
-    Promise.resolve(fetchCheckRuns(repo, prNumber)),
-  ]);
-} catch {
-  issueComments = pullComments = reviews = checkRuns = [];
-}
-
-const finalResults = {};
-for (const [botUser, config] of Object.entries(BOT_CONFIG)) {
-  finalResults[botUser] = checkBotReady(
-    botUser,
-    config,
-    issueComments,
-    pullComments,
-    reviews,
-    checkRuns,
-    latestPush
-  );
-}
-const finalMissing = botUsers.filter((b) => !finalResults[b].ready);
-
-if (finalMissing.length === 0) {
-  console.log("\n[final-check] All bots posted just before timeout.\n");
-  console.log("=== Bot review summaries ===");
+  const elapsed = Math.round(timeoutMs / 1000);
+  console.log(`\n[timeout after ${elapsed}s] Still waiting for: ${finalMissing.join(", ")}`);
+  console.log("=== Bot review summaries (partial) ===");
   for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
-  console.log("\nProceeding to Code Reviewer.");
-  process.exit(0);
+  if (decision.proceed) {
+    // --any: proceed to the Code Reviewer despite the missing bot(s).
+    console.log("\nProceeding to Code Reviewer (some bot results may be missing).");
+  } else {
+    // Default: a bot is missing — do NOT proceed. Exit 2 so the caller waits/retries.
+    console.log(
+      `\nNot proceeding: ${finalMissing.join(", ")} did not post in time (pass --any to override).`
+    );
+  }
+  process.exit(decision.code);
 }
 
-const elapsed = Math.round(timeoutMs / 1000);
-console.log(`\n[timeout after ${elapsed}s] Still waiting for: ${finalMissing.join(", ")}`);
-console.log("=== Bot review summaries (partial) ===");
-for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
-console.log("\nProceeding to Code Reviewer (some bot results may be missing).");
-process.exit(requireAll ? 2 : 0);
+// Only run main when invoked directly (so tests can import decideTimeoutExit).
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) await main();

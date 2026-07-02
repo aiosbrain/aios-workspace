@@ -52,6 +52,76 @@ an independent grounding step can do *worse* than a single pass.
 9. **`args` is a JSON string** — `JSON.parse(args)`.
 10. **Read-only** — return data; the caller writes.
 
+## Per-step model config (agent relay)
+
+The agent relay (`aios relay` plan phase + `aios build` build phase) resolves a **model,
+reasoning effort, and timeout per pipeline step** from `scripts/loop-models.mjs`. A **missing**
+config file just yields the defaults, but a **present-but-malformed** one fails loudly rather
+than silently reverting to defaults (see "Config validation" below).
+
+**Default matrix** (baked in code; also in `docs/loop-models.example.yaml`):
+
+| step | model | effort |
+|------|-------|--------|
+| recon | claude-haiku-4-5 | — |
+| plan | claude-opus-4-8 | xhigh |
+| plan_review | gpt-5.5-high | — |
+| build | claude-opus-4-8 | high |
+| code_review | gpt-5.5-high | — |
+| fix | claude-opus-4-8 | medium |
+| fix_escalated | claude-opus-4-8 | high |
+| consolidate | claude-haiku-4-5 | — |
+| safety_review | claude-opus-4-8 | xhigh |
+| orchestrate | fable-5 | — |
+| digest | claude-haiku-4-5 | — |
+
+**Config file** — `.aios/loop-models.yaml` (gitignored), flat keys only (parsed by
+`scripts/flat-yaml.mjs`; no nesting, no dots): `<step>_model`, `<step>_effort`,
+`<step>_timeout_s`. **Precedence, per field: CLI flag > file > default.**
+
+**Diversity guard (fail closed).** `build` and `code_review` must be different model
+families, and so must `plan` and `plan_review` — the reviewer has to be an independent
+model. Families: `claude*`/`fable*` = anthropic, `gpt*` = openai. A same-family collision
+aborts the run with an actionable message. The defaults pass (anthropic producer vs openai
+reviewer on both pairs).
+
+**Runner-family guard (fail closed).** The Claude-runner steps — `plan` (Claude Agent SDK)
+and `build`/`fix`/`fix_escalated` (Claude Code CLI) — must resolve to a **Claude-family**
+model. Setting e.g. `build_model: gpt-5.3-codex` (or `--model` with a GPT id) aborts with an
+actionable message, rather than handing a non-Claude id straight to a Claude runner.
+
+**Config validation (fail loudly).** A present `.aios/loop-models.yaml` is validated: unknown
+or misspelled keys / step names, non-scalar values, an effort outside `low|medium|high|xhigh|max`,
+a non-numeric or non-positive `_timeout_s`, and an unreadable/unparseable file all abort with an
+actionable message. Only a *missing* file falls back to defaults. (Effort keys on non-Claude
+steps are currently accepted-and-ignored by their Cursor runner.)
+
+**Fix-escalation ladder** (`selectBuilderStep`). The build loop picks the builder step from
+prior feedback, **never the outer loop `round`** and **never `detectBugbotClear`**:
+
+- no prior feedback yet → **build** (round 1 is the initial implementation)
+- first fix attempt, no structural Critical/High finding → **fix** (medium effort)
+- otherwise (≥2nd fix attempt, or any Critical/High) → **fix_escalated** (high effort)
+
+The trigger is `hasCriticalOrHighFindings(reviewText)` — a *structural* match on a listed
+`- Critical:`/`| High |` finding, so a Medium/Low-only review escalates only on the 2nd
+attempt. **Gate-feedback note:** when the fed-back text is a verify/secrets gate failure
+(not a Cursor review), the structural matcher is virtually always false, so a first
+gate-retry resolves to **fix** and later attempts to **fix_escalated**.
+
+**Effort split.** The Claude *builder* steps (`build`/`fix`/`fix_escalated`) pass effort via
+the Claude Code CLI `--effort` flag. The relay *plan* step passes effort via the SDK's
+`output_config.effort` instead — the CLI flag is not used there.
+
+**What's consumed today.** `plan.{model,effort}` drives the Opus planner; `plan_review.timeoutMs`
+drives the Cursor plan-review call in `aios relay` (with `--cursor-timeout` taking precedence);
+`build`/`fix`/`fix_escalated`'s `{model,effort}` drive the builder; `code_review.timeoutMs` drives
+the Cursor code-review call in `aios build`. The **reviewer `model` keys** (`plan_review_model`,
+`code_review_model`) are resolved and enforced by the diversity guard but **not yet passed to the
+Cursor runner** (the `cursor` CLI's model selection is not wired here) — set them to keep the guard
+honest; the running review model is Cursor's own default. Remaining steps (`recon`, `consolidate`,
+`safety_review`, `orchestrate`, `digest`) are resolved for later consumers and not yet wired.
+
 ## Cost note
 
 Harness runs cost meaningfully more than a single pass (often multiples). Use them

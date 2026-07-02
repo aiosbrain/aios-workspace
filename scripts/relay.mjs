@@ -25,6 +25,7 @@ import {
   makeLogger,
 } from "./relay-core.mjs";
 import { runBuild, parseBuildArgs } from "./build.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
 
 const DEFAULT_SKILL = "/review-plan";
 
@@ -54,6 +55,7 @@ function parseArgs(args) {
   const autoMerge = hasFlag("--merge");
   const maxRounds = parseInt(flag("--rounds") ?? "3", 10);
   const skill = flag("--skill") ?? DEFAULT_SKILL;
+  const cursorTimeoutSet = hasFlag("--cursor-timeout");
   const cursorTimeout = parseInt(flag("--cursor-timeout") ?? "300", 10) * 1000;
   const logFile = flag("--log") ?? null;
   const build = hasFlag("--build");
@@ -72,6 +74,7 @@ function parseArgs(args) {
     maxRounds,
     skill,
     cursorTimeout,
+    cursorTimeoutSet,
     logFile,
     build,
     buildRounds,
@@ -80,15 +83,20 @@ function parseArgs(args) {
 
 // ── Anthropic client ──────────────────────────────────────────────────────────
 
-async function callOpus(anthropic, messages) {
-  process.stdout.write("\n[opus] planning (xhigh effort)...");
+async function callOpus(anthropic, messages, planCfg = {}) {
+  // Model + effort come from the per-step config (loop-models.mjs `plan` step): default
+  // matrix → .aios/loop-models.yaml → CLI. Effort is passed via the SDK's output_config
+  // here (NOT the Claude CLI --effort flag, which only the build phase uses).
+  const model = planCfg.model ?? "claude-opus-4-8";
+  const effort = planCfg.effort ?? "xhigh";
+  process.stdout.write(`\n[opus] planning (${effort} effort)...`);
   // xhigh effort can exceed 10 minutes — streaming is required by the SDK.
   // .finalMessage() collects the full response once the stream completes.
   const stream = anthropic.messages.stream({
-    model: "claude-opus-4-8",
+    model,
     max_tokens: 32000,
     thinking: { type: "adaptive" },
-    output_config: { effort: "xhigh" },
+    output_config: { effort },
     system: [
       "You are a senior software architect.",
       "When given a task, produce a clear, numbered implementation plan.",
@@ -175,6 +183,7 @@ export async function cmdRelay(repo, args) {
     maxRounds,
     skill,
     cursorTimeout,
+    cursorTimeoutSet,
     logFile,
     build,
     buildRounds,
@@ -197,19 +206,29 @@ export async function cmdRelay(repo, args) {
   if (dryRun) console.log(c.yellow("Mode:       dry-run"));
   console.log("─────────────────────────────────────────────────────────────");
 
+  // Per-step model config (loop-models.mjs). The plan phase uses the `plan` step and the
+  // Cursor plan review uses the `plan_review` step; --cursor-timeout (when explicit)
+  // overrides the reviewer timeout, else .aios/loop-models.yaml's plan_review_timeout_s,
+  // else the 300s default. The diversity guard (plan vs plan_review family) runs here and
+  // fails closed on a bad config.
+  const cliOverrides = {};
+  if (cursorTimeoutSet) cliOverrides.plan_review = { timeoutMs: cursorTimeout };
+  const models = resolveLoopModels({ repo, cliOverrides });
+  const reviewTimeout = models.plan_review.timeoutMs ?? cursorTimeout;
+
   const history = [{ role: "user", content: `Plan this task in detail:\n\n${task}` }];
 
   for (let round = 1; round <= maxRounds; round++) {
     console.log(`\n══ Round ${round}/${maxRounds} ${"═".repeat(50 - String(round).length)}`);
 
-    const plan = await callOpus(anthropic, history);
+    const plan = await callOpus(anthropic, history, models.plan);
     console.log("\n── Opus plan ───────────────────────────────────────────────\n");
     console.log(plan);
     log(`Round ${round} — Opus plan`, plan);
     history.push({ role: "assistant", content: plan });
 
     const reviewPrompt = buildReviewPrompt(skill, plan, round, maxRounds);
-    const review = await callCursorAgent(reviewPrompt, cursorTimeout);
+    const review = await callCursorAgent(reviewPrompt, reviewTimeout);
     log(`Round ${round} — Cursor review`, review);
 
     console.log("\n\n── Cursor review done ──────────────────────────────────────");

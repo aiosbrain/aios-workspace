@@ -56,6 +56,19 @@ If any validator regex is weakened or a skip condition is added, flag it as High
 - `scripts/aios.mjs` is the sync CLI entrypoint — keep it a single file with no external runtime deps.
 - `validation/` scripts are Bash — keep them portable (no `bash`-only syntax in scripts that run in CI).
 
+## When to run (bot-readiness gate)
+
+`scripts/wait-for-bots.mjs` blocks until Bugbot + CodeRabbit have both posted. It now
+**requires all bots by default**: on timeout with a bot still missing it exits **2**, so
+you should NOT proceed to review on incomplete signals — wait and re-run, or investigate
+the missing bot. Exit **0** means every bot posted (or `--any` was passed to proceed
+anyway on timeout). `--require-all` is accepted as a no-op alias for the default.
+
+```bash
+node scripts/wait-for-bots.mjs --pr <PR_NUMBER> --repo AIOS-alpha/aios-workspace
+# exit 0 → all bots ready (or --any on timeout); exit 2 → a bot is missing (default)
+```
+
 ## How to gather inputs
 
 ```bash

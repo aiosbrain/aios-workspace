@@ -71,16 +71,64 @@ Options:
   --merge             on approval, merge into the PRIMARY checkout's current branch
                       (NOT --base). OFF by default — check out your target first, or
                       omit --merge and merge the branch yourself.
-  --bugbot            run local /review-bugbot before merge (default when --merge)
-  --no-bugbot         skip the local Bugbot gate even with --merge
+  --pr                on approval, push the branch + open a GitHub PR (see `aios pr`).
+                      Mutually exclusive with --merge; never removes the worktree/branch.
+  --issue AIO-<n>     issue key for --pr (required unless the branch already names one)
+  --model <id>        override the builder model for every build/fix step
+  --bugbot            run local /review-bugbot before merge/PR (default when --merge or --pr)
+  --no-bugbot         skip the local Bugbot gate even with --merge/--pr
   --no-gate           skip the pre-merge secrets gate (NOT recommended; logged loudly)
   --keep-worktree     keep the worktree after a successful merge
-  --log <file>        save build rounds + reviews to a Markdown file
-  --dry-run           run the loop but never merge
+  --log <file>        save build rounds + reviews to a Markdown file (APPENDS across runs)
+  --dry-run           run the loop but never merge / open a PR
 ```
 
 > Keep `--log` **outside the worktree** (e.g. in the repo root or `.planning/`). A log written
-> inside the worktree would be swept into the change set.
+> inside the worktree would be swept into the change set. `--log` **appends** by default, so
+> re-running a standalone `aios build --log X` adds a fresh header + sections rather than
+> clobbering the first run.
+
+### Push + open a PR (`aios pr` / `aios build --pr`)
+
+The fenced builder never pushes or opens PRs (see the fence below) — the tool owns that.
+`aios pr` pushes the branch and opens a GitHub PR, **idempotently** (an already-open PR for
+the head branch is reused, not duplicated), printing `PR_NUMBER=<n>`:
+
+```bash
+npm run aios -- pr --branch feat/AIO-42-x --issue AIO-42
+npm run aios -- build plan.md feat/AIO-42-x --pr --issue AIO-42   # chained on approval
+```
+
+The PR title always carries the `AIO-<n>` key so the repo automations fire (`pr-in-review.yml`
+→ In Review on open, `aios-work-sync.yml` → Done on merge). A **custom `--title` that omits the
+issue key is prefixed** with `AIO-<n>: ` so the automations never silently break. `aios build --pr`
+runs `aios pr` **inside `finish()` after the same pre-ship gates as `--merge`** (HEAD-drift,
+`--verify`, fail-closed secrets, **and the local Bugbot gate** — default-on for `--pr` too), and
+— unlike `--merge` — leaves the worktree and branch in place. All child calls use argv arrays (no
+shell strings); `--dry-run` previews the push + `gh pr create` argv without any network call.
+
+### The builder fence (defense-in-depth, not containment)
+
+The builder runs with `--dangerously-skip-permissions`, so this is **not** a filesystem
+sandbox — a determined builder could still reach an explicit path. The "fence" is three
+overlapping layers that reduce blast radius:
+
+1. **Policy** — every builder invocation is prefixed with hard git rules: **no `git push`,
+   no PR create/edit/comment, no touching the primary checkout or other worktrees, small
+   commits in the worktree only** — explicitly overriding any conflicting global instruction.
+   A cooperative builder obeys these.
+2. **Accidental-discovery block** — an env fence sets `GIT_CEILING_DIRECTORIES` to the
+   worktree's parent dir so git cannot **walk up** into the primary checkout from outside the
+   worktree. It only stops *upward discovery*: an explicit `git -C <primary-path>` still works.
+   It does **not** break git inside the linked worktree (its `.git` is a gitdir-pointer file
+   resolved by explicit path, not an upward walk).
+3. **Detection** — the primary-checkout tripwire (status + HEAD snapshot) aborts the build if
+   the primary checkout changes at all. This is the layer that actually catches a builder that
+   reaches an explicit path despite layers 1–2.
+
+Manual checks: `claude --help` confirms `--effort low|medium|high|xhigh|max`;
+`test/git-ceiling.test.mjs` verifies the ceiling blocks upward discovery while leaving the
+linked worktree working.
 
 ---
 
@@ -148,6 +196,11 @@ loudly-warned escape hatch and never weakens the gate scripts themselves.
 Plans can be force-finalized on the final planning round; **code is never force-merged** on a round
 limit — the branch is left for a human.
 
+> **Per-step model config + the fix-escalation ladder** (which model/effort drives each
+> build/fix round, the cross-family diversity guard, and the effort split) are documented in
+> [`workflows.md` → Per-step model config](./workflows.md#per-step-model-config-agent-relay).
+> Tune via `.aios/loop-models.yaml` (see `docs/loop-models.example.yaml`).
+
 ## Resumability
 
 State lives in git. Re-running `aios build <plan> <branch>` on an existing branch reuses the worktree,
@@ -192,6 +245,8 @@ npm run aios -- build "Add a --version flag to aios.mjs" feat/version --task
 | File                                       | Purpose                                                        |
 | ------------------------------------------ | ------------------------------------------------------------- |
 | `scripts/build.mjs`                        | The build loop (`cmdBuild` / `runBuild`), exposed as `aios build` |
+| `scripts/pr.mjs`                           | `aios pr` — idempotent push + `gh pr create` (chained by `aios build --pr`) |
+| `scripts/loop-models.mjs`                  | Per-step model/effort/timeout resolver + cross-family diversity guard |
 | `scripts/relay-core.mjs`                   | Primitives shared with the plan phase (Cursor driver, git, tokens, `--log`) |
 | `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona; emits `MERGE_READY`             |
 | `test/build.test.mjs`                      | Pure-function unit tests                                       |

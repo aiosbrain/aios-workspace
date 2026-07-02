@@ -3,4 +3,7 @@
 
 export function stripQuotes(s: string): string;
 
-export function parseFlatYaml(text: string): Record<string, string | string[]>;
+export function parseFlatYaml(
+  text: string,
+  opts?: { strict?: boolean }
+): Record<string, string | string[]>;

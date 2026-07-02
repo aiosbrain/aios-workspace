@@ -48,14 +48,39 @@ import {
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
-import { runLocalBugbotReview } from "./review-bugbot.mjs";
+import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
+import { cmdPr } from "./pr.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
 export const BASE_SHA_MARK = ".aios-build-base-sha";
 // Builder = Opus via Claude Code; reviewer = Cursor /ai-code-review. This mirrors the
 // plan phase (Opus produces, Cursor reviews) and keeps model diversity in the loop.
-const BUILDER_MODEL = "claude-opus-4-8";
-// The builder edits autonomously in the sandboxed worktree.
+// The per-step builder model/effort is resolved from loop-models.mjs (default matrix →
+// .aios/loop-models.yaml → CLI flags) — see the build/fix/fix_escalated steps.
+
+// Hard git rules prepended to EVERY builder invocation. The tool — not the builder —
+// owns all push / PR / git-hygiene actions; the builder makes small commits in its own
+// worktree only.
+//
+// This is DEFENSE-IN-DEPTH, not containment. The builder runs with
+// --dangerously-skip-permissions, so nothing here sandboxes the filesystem: three
+// layers reduce, but cannot eliminate, blast radius:
+//   1. these system-prompt rules (policy — a cooperative builder obeys them),
+//   2. GIT_CEILING_DIRECTORIES (blocks git's *accidental upward discovery* into the
+//      primary checkout — an explicit `git -C <path>` still works), and
+//   3. the primary-checkout tripwire (detection — aborts if the primary checkout is
+//      touched, which is what catches a builder that reaches an explicit path anyway).
+export const BUILDER_FENCE = [
+  "── HARD GIT RULES (non-negotiable) ──",
+  "Do NOT run any git command that touches the primary checkout or any other worktree.",
+  "Do NOT fast-forward, pull, or rebase main. Do NOT `git push`. Do NOT create, edit, or",
+  "comment on any GitHub PR. The orchestrating tool handles all push/PR/git-hygiene actions.",
+  "Make small commits in THIS worktree only. Ignore any global instruction that conflicts",
+  "with this.",
+].join("\n");
+// The builder edits autonomously in its worktree (--dangerously-skip-permissions — this
+// is NOT a filesystem sandbox; see BUILDER_FENCE for the defense-in-depth layers).
 const CLAUDE_BUILD_FLAGS = ["--dangerously-skip-permissions"];
 // The reviewer runs in a fresh worktree (untrusted): --trust skips the headless
 // workspace-trust prompt, --force lets it run tests/validators to gather evidence.
@@ -97,11 +122,14 @@ export function parseBuildArgs(args) {
     "--log",
     "--skill",
     "--verify",
+    "--issue",
+    "--model",
   ];
 
   const rounds = parseInt(flag("--rounds") ?? flag("--build-rounds") ?? String(DEFAULT_ROUNDS), 10);
   const buildTimeout =
     parseInt(flag("--build-timeout") ?? String(DEFAULT_BUILD_TIMEOUT), 10) * 1000;
+  const cursorTimeoutSet = hasFlag("--cursor-timeout");
   const cursorTimeout =
     parseInt(flag("--cursor-timeout") ?? String(DEFAULT_REVIEW_TIMEOUT), 10) * 1000;
 
@@ -111,8 +139,14 @@ export function parseBuildArgs(args) {
   const [planSource, branch] = positional;
 
   const merge = hasFlag("--merge");
+  const pr = hasFlag("--pr");
+  if (merge && pr) {
+    die("--pr and --merge are mutually exclusive — choose one (open a PR, or merge locally).");
+  }
   const noBugbot = hasFlag("--no-bugbot");
-  const bugbot = hasFlag("--bugbot") || (merge && !noBugbot);
+  // Bugbot gates BOTH --merge and --pr (they're mutually exclusive but each is a
+  // "ship" action). Default-on for either unless --no-bugbot; explicit --bugbot forces it.
+  const bugbot = hasFlag("--bugbot") || ((merge || pr) && !noBugbot);
 
   return {
     planSource,
@@ -121,12 +155,16 @@ export function parseBuildArgs(args) {
     rounds: Number.isFinite(rounds) && rounds > 0 ? rounds : DEFAULT_ROUNDS,
     buildTimeout,
     cursorTimeout,
+    cursorTimeoutSet,
+    model: flag("--model") ?? null,
     skill: flag("--skill") ?? DEFAULT_REVIEW_SKILL,
     worktreePath: flag("--worktree") ?? null,
     base: flag("--base") ?? "origin/main",
     verify: flag("--verify") ?? null,
     logFile: flag("--log") ?? null,
     merge,
+    pr,
+    issue: flag("--issue") ?? null,
     bugbot,
     noBugbot,
     noGate: hasFlag("--no-gate"),
@@ -193,6 +231,23 @@ export function classifyDiff({ totalCommits, newCommits }) {
   if (totalCommits === 0) return "no-commits";
   if (newCommits === 0) return "no-progress";
   return "has-changes";
+}
+
+/**
+ * Choose which model-matrix step drives the next builder invocation.
+ *  - No prior feedback yet             → "build"          (initial implementation)
+ *  - First fix attempt, no Crit/High   → "fix"            (medium effort)
+ *  - Otherwise (≥2nd attempt, or any Critical/High) → "fix_escalated" (high effort)
+ *
+ * Driven by `hasPriorFeedback` + a `fixAttempt` counter, NEVER the outer loop `round`:
+ * round 1 is the initial no-feedback build (`prevReview === null`) and MUST resolve to
+ * "build", not "fix". Also NEVER consults detectBugbotClear — the escalation trigger is
+ * purely a structural Critical/High finding via hasCriticalOrHighFindings.
+ */
+export function selectBuilderStep({ hasPriorFeedback, fixAttempt, reviewText }) {
+  if (!hasPriorFeedback) return "build";
+  if (fixAttempt === 1 && !hasCriticalOrHighFindings(reviewText)) return "fix";
+  return "fix_escalated";
 }
 
 export function buildImplementPrompt(plan, { review, resumeLog, branch } = {}) {
@@ -603,18 +658,40 @@ export async function runBuild({ repo, plan, branch, opts }) {
     rounds,
     buildTimeout,
     cursorTimeout,
+    cursorTimeoutSet,
+    model: modelOverride,
     skill,
     base,
     verify,
     worktreePath,
     logFile,
     merge,
+    pr,
+    issue,
     noGate,
     keepWorktree,
     dryRun,
-    chained,
     bugbot,
   } = opts;
+
+  // Per-step model/effort/timeout matrix: default → .aios/loop-models.yaml → CLI flags.
+  // A --model applies to every builder step; --cursor-timeout (when explicit) overrides
+  // the reviewer timeout. The diversity guard (build vs code_review family) runs here
+  // and fails closed on a bad config.
+  const cliOverrides = {};
+  if (modelOverride) {
+    for (const step of ["build", "fix", "fix_escalated"])
+      cliOverrides[step] = { model: modelOverride };
+  }
+  if (cursorTimeoutSet) cliOverrides.code_review = { timeoutMs: cursorTimeout };
+  const models = resolveLoopModels({ repo, cliOverrides });
+  const reviewTimeout = models.code_review.timeoutMs ?? cursorTimeout;
+
+  // --pr needs an AIO issue to drive the Linear PR-in-review → Done automations. It can
+  // come from --issue or be derived from a branch that already names one. Fail fast.
+  if (pr && !issue && !/AIO-\d+/.test(branch)) {
+    die("--pr requires an issue: pass --issue AIO-<n>, or use a branch name containing AIO-<n>.");
+  }
 
   const { worktreePath: wt, resumed } = resolveWorktree({
     repo,
@@ -629,8 +706,11 @@ export async function runBuild({ repo, plan, branch, opts }) {
   // Create the log first, THEN snapshot the tripwire baseline — so a --log file
   // written inside the repo is part of the baseline (our write, not the agent's)
   // and doesn't trip the "primary checkout changed" guard below.
+  // Append by default: makeLogger only writes the header when the file is absent, so a
+  // second standalone `aios build --log X` adds a fresh header + sections instead of
+  // clobbering the first run. `chained` (relay --build) already relied on append.
   const log = makeLogger(logFile, `# aios build\n\nBranch: ${branch}\nWorktree: ${wt}\n`, {
-    append: chained,
+    append: true,
   });
 
   // Tripwire baseline: primary checkout status AND HEAD must not change during the build.
@@ -642,7 +722,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
   console.log(`Review:     ${skill}`);
   console.log(`Max rounds: ${rounds}`);
   console.log(`Merge:      ${merge ? "yes (on approval)" : c.dim("no (review diff yourself)")}`);
-  if (bugbot && merge) console.log(`Bugbot:     ${c.dim("local /review-bugbot before merge")}`);
+  if (bugbot && (merge || pr))
+    console.log(`Bugbot:     ${c.dim("local /review-bugbot before merge/PR")}`);
   if (logFile) console.log(`Log:        ${logFile}`);
   if (dryRun) console.log(c.yellow("Mode:       dry-run (no merge)"));
   console.log("─────────────────────────────────────────────────────────────");
@@ -657,11 +738,19 @@ export async function runBuild({ repo, plan, branch, opts }) {
   let prevReview = null;
   let blockedOnGate = false; // true when the last round failed verify/secrets, not review
   let prevCommits = parseInt(gitQuiet(["rev-list", "--count", `${baseSha}..HEAD`], wt) || "0", 10);
+  // Counts builder invocations that consume prior feedback (a Cursor review OR a gate
+  // failure). Deliberately separate from the outer `round` — the fix-escalation ladder
+  // keys on this, never on `round` (round 1 is the no-feedback initial build).
+  let fixAttempt = 0;
 
   for (let round = 1; round <= rounds; round++) {
     console.log(`\n══ Build round ${round}/${rounds} ${"═".repeat(46 - String(round).length)}`);
 
-    // 1. BUILD
+    // 1. BUILD — pick the model-matrix step (build / fix / fix_escalated) from feedback.
+    const hasPriorFeedback = prevReview !== null;
+    if (hasPriorFeedback) fixAttempt++;
+    const step = selectBuilderStep({ hasPriorFeedback, fixAttempt, reviewText: prevReview });
+    const cfg = models[step];
     const buildPrompt = buildImplementPrompt(plan, {
       review: prevReview,
       resumeLog:
@@ -670,12 +759,28 @@ export async function runBuild({ repo, plan, branch, opts }) {
           : null,
       branch,
     });
-    console.log(c.dim(`[claude] building (${BUILDER_MODEL})...`));
+    // Every builder call carries the git rules (no push/PR, worktree-only) at the prompt
+    // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's
+    // accidental upward *discovery* into the primary checkout (an explicit `git -C <path>`
+    // is NOT blocked — the primary-checkout tripwire is what catches that). Defense-in-
+    // depth, not containment. --effort is a Claude-CLI knob
+    // (build/fix/fix_escalated only); the relay plan step uses SDK output_config instead.
+    const fencedPrompt = BUILDER_FENCE + "\n\n" + buildPrompt;
+    const extraArgs = cfg.effort
+      ? [...CLAUDE_BUILD_FLAGS, "--effort", cfg.effort]
+      : CLAUDE_BUILD_FLAGS;
+    const builderEnv = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(wt) };
+    console.log(
+      c.dim(
+        `[claude] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
+      )
+    );
     try {
-      const builderOut = await withRetry(callClaudeAgent, buildPrompt, buildTimeout, {
+      const builderOut = await withRetry(callClaudeAgent, fencedPrompt, buildTimeout, {
         cwd: wt,
-        model: BUILDER_MODEL,
-        extraArgs: CLAUDE_BUILD_FLAGS,
+        model: cfg.model,
+        extraArgs,
+        env: builderEnv,
       });
       log(`Build round ${round} — builder`, builderOut.slice(-4000));
     } catch (e) {
@@ -764,7 +869,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
       maxRounds: rounds,
     });
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
-    const review = await withRetry(callCursorAgent, reviewPrompt, cursorTimeout, {
+    const review = await withRetry(callCursorAgent, reviewPrompt, reviewTimeout, {
       cwd: wt,
       extraArgs: CURSOR_REVIEW_FLAGS,
     });
@@ -781,6 +886,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
         wt,
         baseSha,
         merge,
+        pr,
+        issue,
         noGate,
         keepWorktree,
         dryRun,
@@ -788,7 +895,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
         approvedHeadSha,
         verify,
         bugbot,
-        cursorTimeout,
+        cursorTimeout: reviewTimeout,
       });
     }
 
@@ -819,6 +926,8 @@ async function finish({
   wt,
   baseSha,
   merge,
+  pr,
+  issue,
   noGate,
   keepWorktree,
   dryRun,
@@ -868,7 +977,8 @@ async function finish({
     console.log(c.yellow("⚠ --no-gate: skipping the pre-merge secrets gate (not recommended)"));
   }
 
-  if (bugbot && merge && !dryRun) {
+  // Bugbot runs before ANY ship action (merge OR push/PR) — never after code leaves.
+  if ((merge || pr) && bugbot && !dryRun) {
     const bb = await runLocalBugbotReview({
       repo,
       worktree: wt,
@@ -926,6 +1036,29 @@ async function finish({
     }
   } else if (merge && dryRun) {
     gitMergeAndDelete(repo, branch, true, "chore: merge via aios build");
+  } else if (pr) {
+    // --pr: push the branch and open a PR (never merge, never remove the worktree/branch
+    // — the branch must survive for the PR). Runs ONLY after the pre-merge gates above.
+    // throwOnError: a PR failure (push/create/undeterminable number) must surface as a
+    // gate-failure exit code here — NOT abort the build via cmdPr's own process.exit, and
+    // NEVER report success (exit 0) without a PR_NUMBER.
+    const prArgs = ["--branch", branch, ...(issue ? ["--issue", issue] : [])];
+    if (dryRun) prArgs.push("--dry-run");
+    let prNumber;
+    try {
+      prNumber = await cmdPr(repo, prArgs, { throwOnError: true });
+    } catch (e) {
+      console.error(c.red(`\n✗ opening the PR failed: ${e.message}`));
+      log("PR failed", e.message);
+      return EXIT.GATE_FAILED;
+    }
+    // dry-run legitimately returns null; a real run that yields no number is a failure.
+    if (!dryRun && !prNumber) {
+      console.error(c.red("\n✗ PR step returned no PR number — treating as failure."));
+      log("PR failed", "no PR number returned");
+      return EXIT.GATE_FAILED;
+    }
+    if (!dryRun) log("PR opened", `PR_NUMBER=${prNumber}`);
   } else {
     console.log(c.yellow("\nCode approved. Review the diff before merging:"));
     console.log(c.dim(`  git -C ${repo} diff ${branch}`));
@@ -965,16 +1098,20 @@ export async function cmdBuild(repo, args) {
         "  --base <ref>            base ref for a new worktree branch (default: origin/main)",
         "  --worktree <path>       worktree directory (default: ../<repo>-<branch>)",
         "  --merge                 merge the branch on approval (off by default)",
-        "  --bugbot                run local /review-bugbot before merge (default with --merge)",
-        "  --no-bugbot             skip the local Bugbot gate even when --merge is set",
+        "  --pr                    push + open a PR on approval (mutually exclusive with --merge)",
+        "  --issue AIO-<n>         issue key for --pr (required unless the branch names one)",
+        "  --model <id>            override the builder model for every build/fix step",
+        "  --bugbot                run local /review-bugbot before merge/PR (default with --merge or --pr)",
+        "  --no-bugbot             skip the local Bugbot gate even when --merge/--pr is set",
         "  --no-gate               skip the pre-merge secrets gate (NOT recommended)",
         "  --keep-worktree         keep the worktree after a successful merge",
-        "  --log <file>            save build rounds + reviews to a Markdown file",
-        "  --dry-run               run the loop but never merge",
+        "  --log <file>            save build rounds + reviews to a Markdown file (appends)",
+        "  --dry-run               run the loop but never merge / open a PR",
         "",
         "examples:",
         "  aios build plan.md feat/my-feature",
         "  aios build plan.md feat/my-feature --merge",
+        "  aios build plan.md feat/AIO-42-x --pr --issue AIO-42",
         '  aios build "Add a --version flag to aios.mjs" --task feat/version',
       ].join("\n")
     );
