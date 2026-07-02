@@ -49,7 +49,11 @@ for (const name of ["claude", "cursor"]) {
 }
 process.env.PATH = [shimDir, process.env.PATH].join(path.delimiter);
 
-process.env.ANTHROPIC_API_KEY = "sk-test-should-be-stripped";
+// A non-secret sentinel: we only need a distinctive marker to prove the child does or
+// does not see this env var. Deliberately short (< 20 chars) and NOT a token so the
+// secrets scanner's "Generic API Key" rule (api_key = "<20+ chars>") never flags it.
+const PARENT_SENTINEL = "parent-set";
+process.env.ANTHROPIC_API_KEY = PARENT_SENTINEL;
 
 console.log("callClaudeAgent strips ANTHROPIC_API_KEY from the builder child");
 {
@@ -73,7 +77,7 @@ console.log("callCursorAgent (no env override) inherits the parent env");
   const out = await callCursorAgent("review", 30000, { extraArgs: [] });
   check(
     "Cursor child still sees the key",
-    out.includes("ANTHROPIC_API_KEY=sk-test-should-be-stripped")
+    out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL)
   );
 }
 
