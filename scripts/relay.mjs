@@ -55,6 +55,7 @@ function parseArgs(args) {
   const autoMerge = hasFlag("--merge");
   const maxRounds = parseInt(flag("--rounds") ?? "3", 10);
   const skill = flag("--skill") ?? DEFAULT_SKILL;
+  const cursorTimeoutSet = hasFlag("--cursor-timeout");
   const cursorTimeout = parseInt(flag("--cursor-timeout") ?? "300", 10) * 1000;
   const logFile = flag("--log") ?? null;
   const build = hasFlag("--build");
@@ -73,6 +74,7 @@ function parseArgs(args) {
     maxRounds,
     skill,
     cursorTimeout,
+    cursorTimeoutSet,
     logFile,
     build,
     buildRounds,
@@ -181,6 +183,7 @@ export async function cmdRelay(repo, args) {
     maxRounds,
     skill,
     cursorTimeout,
+    cursorTimeoutSet,
     logFile,
     build,
     buildRounds,
@@ -203,9 +206,15 @@ export async function cmdRelay(repo, args) {
   if (dryRun) console.log(c.yellow("Mode:       dry-run"));
   console.log("─────────────────────────────────────────────────────────────");
 
-  // Per-step model config (loop-models.mjs). The plan phase uses the `plan` step; the
-  // diversity guard (plan vs plan_review) runs here and fails closed on a bad config.
-  const models = resolveLoopModels({ repo });
+  // Per-step model config (loop-models.mjs). The plan phase uses the `plan` step and the
+  // Cursor plan review uses the `plan_review` step; --cursor-timeout (when explicit)
+  // overrides the reviewer timeout, else .aios/loop-models.yaml's plan_review_timeout_s,
+  // else the 300s default. The diversity guard (plan vs plan_review family) runs here and
+  // fails closed on a bad config.
+  const cliOverrides = {};
+  if (cursorTimeoutSet) cliOverrides.plan_review = { timeoutMs: cursorTimeout };
+  const models = resolveLoopModels({ repo, cliOverrides });
+  const reviewTimeout = models.plan_review.timeoutMs ?? cursorTimeout;
 
   const history = [{ role: "user", content: `Plan this task in detail:\n\n${task}` }];
 
@@ -219,7 +228,7 @@ export async function cmdRelay(repo, args) {
     history.push({ role: "assistant", content: plan });
 
     const reviewPrompt = buildReviewPrompt(skill, plan, round, maxRounds);
-    const review = await callCursorAgent(reviewPrompt, cursorTimeout);
+    const review = await callCursorAgent(reviewPrompt, reviewTimeout);
     log(`Round ${round} — Cursor review`, review);
 
     console.log("\n\n── Cursor review done ──────────────────────────────────────");

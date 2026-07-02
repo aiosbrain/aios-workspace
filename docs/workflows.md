@@ -101,6 +101,15 @@ gate-retry resolves to **fix** and later attempts to **fix_escalated**.
 the Claude Code CLI `--effort` flag. The relay *plan* step passes effort via the SDK's
 `output_config.effort` instead — the CLI flag is not used there.
 
+**What's consumed today.** `plan.{model,effort}` drives the Opus planner; `plan_review.timeoutMs`
+drives the Cursor plan-review call in `aios relay` (with `--cursor-timeout` taking precedence);
+`build`/`fix`/`fix_escalated`'s `{model,effort}` drive the builder; `code_review.timeoutMs` drives
+the Cursor code-review call in `aios build`. The **reviewer `model` keys** (`plan_review_model`,
+`code_review_model`) are resolved and enforced by the diversity guard but **not yet passed to the
+Cursor runner** (the `cursor` CLI's model selection is not wired here) — set them to keep the guard
+honest; the running review model is Cursor's own default. Remaining steps (`recon`, `consolidate`,
+`safety_review`, `orchestrate`, `digest`) are resolved for later consumers and not yet wired.
+
 ## Cost note
 
 Harness runs cost meaningfully more than a single pass (often multiples). Use them
