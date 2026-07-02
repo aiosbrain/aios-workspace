@@ -230,6 +230,30 @@ console.log("custom --title that already names the issue is left verbatim (H2)")
   check("does not double-prefix the key", !out.includes("AIO-42: AIO-42"));
 }
 
+console.log("custom --title naming a DIFFERENT key is still prefixed with the resolved key (H2)");
+{
+  // "AIO-420" contains the substring "AIO-42" — a plain includes() would false-positive and
+  // route the PR to the wrong issue. Word-boundary matching must prefix the resolved key.
+  process.env.FAKE_PR_LIST = "";
+  const { out } = await capture(() =>
+    cmdPr(".", [
+      "--branch",
+      "feat/AIO-42-x",
+      "--repo",
+      "acme/repo",
+      "--issue",
+      "AIO-42",
+      "--title",
+      "AIO-420: wrong issue",
+      "--dry-run",
+    ])
+  );
+  check(
+    "prefixes the resolved key ahead of the different one",
+    out.includes("--title AIO-42: AIO-420: wrong issue")
+  );
+}
+
 console.log("branch validation rejects shell metacharacters");
 {
   // validateBranch → die() → process.exit(1); run in a child so the harness survives.
@@ -296,12 +320,14 @@ console.log("failed idempotency query aborts before push");
 
 console.log("git push failure surfaces as die(), not a raw stack trace (M5)");
 {
-  // A rejected push must abort with the file's die() UX (exit 1) and never reach create.
+  // A rejected push must abort with the file's die() UX (exit 1), carry the git stderr detail
+  // (stderr is piped, not inherited, so the rejection text survives), and never reach create.
   resetRecord();
   const script =
     `import { cmdPr } from ${JSON.stringify(PR_MOD)};` +
     `await cmdPr('.', ['--branch', 'feat/AIO-42-x', '--repo', 'acme/repo', '--issue', 'AIO-42']);`;
-  let code = 0;
+  let code = 0,
+    stderr = "";
   try {
     execFileSync(process.execPath, ["--input-type=module", "-e", script], {
       encoding: "utf8",
@@ -310,10 +336,13 @@ console.log("git push failure surfaces as die(), not a raw stack trace (M5)");
     });
   } catch (e) {
     code = e.status ?? -1;
+    stderr = e.stderr ?? "";
   }
   const calls = readFileSync(record, "utf8");
   check("push failure aborts (exit 1)", code === 1);
   check("attempted the push", calls.includes("git push"));
+  check("die() message names the push failure", stderr.includes("git push failed"));
+  check("die() message carries the git rejection detail", stderr.includes("[rejected]"));
   check("did NOT create a PR after a failed push", !calls.includes("pr create"));
 }
 

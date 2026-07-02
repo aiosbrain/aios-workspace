@@ -148,9 +148,12 @@ export async function cmdPr(repo, args, { throwOnError = false } = {}) {
   // Title MUST carry the issue key (drives the Linear automations). A custom --title that
   // omits it is prefixed rather than trusted verbatim — otherwise a hand-written title
   // silently breaks pr-in-review.yml / aios-work-sync.yml. (issue is guaranteed above.)
+  // Match the key on a word boundary, mirroring the workflows' key extraction: a plain
+  // substring test would treat "AIO-420" as containing "AIO-42" and mis-route the issue.
   const customTitle = flag("--title");
+  const keyRe = new RegExp(`\\b${issue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
   const title = customTitle
-    ? customTitle.includes(issue)
+    ? keyRe.test(customTitle)
       ? customTitle
       : `${issue}: ${customTitle}`
     : `${issue}: ${branch}`;
@@ -189,10 +192,16 @@ export async function cmdPr(repo, args, { throwOnError = false } = {}) {
     }
 
     // Push ALWAYS (push is idempotent). New local commits must reach the remote even when a
-    // PR is already open — idempotency applies to PR *creation*, not to the push. Wrapped so
-    // a rejected push reports the file's consistent die() UX, not a raw stack trace.
+    // PR is already open — idempotency applies to PR *creation*, not to the push. stderr is
+    // PIPED (not inherited) so a rejected push's detail is available to the wrapped die() UX
+    // rather than lost to the terminal; git's normal progress is echoed back through on success.
     try {
-      execFileSync("git", pushArgv, { cwd: repo, stdio: "inherit" });
+      const out = execFileSync("git", pushArgv, {
+        cwd: repo,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (out) process.stdout.write(out);
     } catch (e) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
       fail(`git push failed: ${msg || e.message}`);
