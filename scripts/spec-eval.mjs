@@ -856,9 +856,10 @@ export async function cmdSpec(repo, args) {
   // An SDK call is needed only when the LLM layer runs without a stub.
   const evalStubbed = process.env.AIOS_SPEC_EVAL_STUB != null;
   const fixStubbed = process.env.AIOS_SPEC_FIX_STUB != null;
+  // With --no-llm neither the evaluator nor the reviser runs, so no key is ever needed.
   const needsKey =
     (sub === "eval" && !noLlm && !evalStubbed) ||
-    (sub === "fix" && ((!noLlm && !evalStubbed) || !fixStubbed));
+    (sub === "fix" && !noLlm && (!evalStubbed || !fixStubbed));
   let anthropic = null;
   if (needsKey) {
     if (!process.env.ANTHROPIC_API_KEY) {

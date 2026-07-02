@@ -6,7 +6,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  copyFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +39,18 @@ test("eval --no-llm on a clean spec → exit 3 (NOT_EVALUATED)", () => {
 
 test("eval --no-llm on a spec with a deterministic blocker → exit 1", () => {
   assert.equal(runSpec(["eval", DEMO, "--no-llm"]).code, 1);
+});
+
+test("fix --no-llm needs no API key (deterministic verify only)", () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), "spec-fix-nollm-"));
+  try {
+    const copy = path.join(tmp, "strong.md");
+    copyFileSync(STRONG, copy);
+    const r = runSpec(["fix", copy, "--no-llm"], { ANTHROPIC_API_KEY: "" });
+    assert.notEqual(r.code, 4, `must not demand a key with --no-llm: ${r.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("eval with a SPEC_READY stub on a clean spec → exit 0", () => {
