@@ -78,7 +78,11 @@ if (mode === "touch-primary-head") {
 
 // Append a unique line each round so every build round produces a real new commit.
 const marker = `// build ${Date.now()}-${process.pid}\n`;
-const leak = mode === "leak" ? "const home = '/Users/example/secret';\n" : "";
+// Build the forbidden absolute path from parts so the literal never appears in this
+// committed fixture (which the repo's own secrets gate scans) — the string written into
+// feature.js at runtime still trips the build loop's abs-path detector, as intended.
+const absPath = ["", "Users", "example", "secret"].join("/");
+const leak = mode === "leak" ? `const home = '${absPath}';\n` : "";
 appendFileSync("feature.js", "export const built = true;\n" + leak + marker);
 git(["add", "-A"]);
 git(["commit", "-m", "build: implement feature", "--no-verify"]);
