@@ -94,7 +94,8 @@ export async function cmdPr(repo, args) {
         "options:",
         "  --branch <name>    branch to push + open a PR for (default: current branch)",
         "  --issue AIO-<n>    issue key to weave into the PR title/body (default: from branch)",
-        "  --title <text>     PR title (default: '<issue>: <branch>')",
+        "  --title <text>     PR title (default: '<issue>: <branch>'); the AIO-<n> key is",
+        "                     prefixed automatically if a custom title omits it",
         "  --body-file <path> file to use as the PR body (default: generated)",
         "  --repo owner/repo  target repo (default: detected from origin)",
         "  --dry-run          print the push + gh pr create argv without executing",
@@ -131,8 +132,15 @@ export async function cmdPr(repo, args) {
 
   const pushArgv = buildPushArgv(branch);
 
-  // Title always carries the issue key when we have one (drives the Linear automations).
-  const title = flag("--title") ?? (issue ? `${issue}: ${branch}` : branch);
+  // Title MUST carry the issue key (drives the Linear automations). A custom --title that
+  // omits it is prefixed rather than trusted verbatim — otherwise a hand-written title
+  // silently breaks pr-in-review.yml / aios-work-sync.yml. (issue is guaranteed above.)
+  const customTitle = flag("--title");
+  const title = customTitle
+    ? customTitle.includes(issue)
+      ? customTitle
+      : `${issue}: ${customTitle}`
+    : `${issue}: ${branch}`;
 
   // Body: an explicit --body-file, else a generated body (always referencing the issue).
   let bodyFile = flag("--body-file");
@@ -157,9 +165,8 @@ export async function cmdPr(repo, args) {
       return null;
     }
 
-    // Idempotency: if a PR is already open for this branch, reuse it — no push, no create.
-    // A FAILED query (auth/network/API) aborts here, before any push — never treated as
-    // "no PR", which would push on top of a broken GitHub connection.
+    // Idempotency query FIRST. A FAILED query (auth/network/API) aborts here, before any
+    // push — never treated as "no PR", which would push on top of a broken GitHub connection.
     let existing;
     try {
       existing = existingPrNumber(repoSlug, branch);
@@ -167,13 +174,23 @@ export async function cmdPr(repo, args) {
       const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
       die(`could not query existing PRs (gh pr list): ${msg || e.message}`);
     }
+
+    // Push ALWAYS (push is idempotent). New local commits must reach the remote even when a
+    // PR is already open — idempotency applies to PR *creation*, not to the push. Wrapped so
+    // a rejected push reports the file's consistent die() UX, not a raw stack trace.
+    try {
+      execFileSync("git", pushArgv, { cwd: repo, stdio: "inherit" });
+    } catch (e) {
+      const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+      die(`git push failed: ${msg || e.message}`);
+    }
+
+    // With the branch pushed, an already-open PR is reused — skip create only.
     if (existing) {
       console.log(c.dim(`PR already exists for ${branch}: #${existing}`));
       console.log(`PR_NUMBER=${existing}`);
       return existing;
     }
-
-    execFileSync("git", pushArgv, { cwd: repo, stdio: "inherit" });
 
     let createOut = "";
     try {
@@ -187,8 +204,9 @@ export async function cmdPr(repo, args) {
       die(`gh pr create failed: ${msg || e.message}`);
     }
 
-    // Parse the PR number from the printed URL; fall back to a best-effort re-query
-    // (the PR is already created here, so a failed re-query must not abort — just yield null).
+    // Determine the new PR number: parse the printed URL, else a best-effort re-query.
+    // If BOTH fail, the PR exists on GitHub but we can't confirm its number — fail loudly
+    // rather than return null (which callers, incl. `aios build --pr`, read as success).
     const m = createOut.match(/\/pull\/(\d+)/);
     let prNumber = m ? parseInt(m[1], 10) : null;
     if (!prNumber) {
@@ -198,8 +216,14 @@ export async function cmdPr(repo, args) {
         prNumber = null;
       }
     }
-    if (prNumber) console.log(`PR_NUMBER=${prNumber}`);
-    return prNumber ?? null;
+    if (!prNumber) {
+      die(
+        "PR was created but its number could not be determined (unparseable `gh pr create` " +
+          `output and the re-query failed). Check it on GitHub: https://github.com/${repoSlug}/pulls`
+      );
+    }
+    console.log(`PR_NUMBER=${prNumber}`);
+    return prNumber;
   } finally {
     if (tmpDir) {
       try {

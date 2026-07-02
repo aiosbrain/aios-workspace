@@ -69,7 +69,10 @@ writeFileSync(
   [
     "#!/usr/bin/env node",
     "import { appendFileSync } from 'node:fs';",
-    "appendFileSync(process.env.RECORD, 'git ' + process.argv.slice(2).join(' ') + '\\n');",
+    "const a = process.argv.slice(2);",
+    "appendFileSync(process.env.RECORD, 'git ' + a.join(' ') + '\\n');",
+    // FAKE_GIT_PUSH_FAIL → a rejected push, so we can assert the wrapped die() UX.
+    "if (a[0] === 'push' && process.env.FAKE_GIT_PUSH_FAIL) { process.stderr.write('! [rejected] main -> main (fetch first)\\n'); process.exit(1); }",
     "process.exit(0);",
   ].join("\n")
 );
@@ -77,14 +80,23 @@ writeFileSync(
   path.join(bin, "gh"),
   [
     "#!/usr/bin/env node",
-    "import { appendFileSync, readFileSync } from 'node:fs';",
+    "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
     "const a = process.argv.slice(2);",
     "appendFileSync(process.env.RECORD, 'gh ' + a.join(' ') + '\\n');",
     "if (a[0] === 'pr' && a[1] === 'list') {",
     "  if (process.env.FAKE_PR_LIST_FAIL) { process.stderr.write('gh: could not connect to api.github.com\\n'); process.exit(1); }",
+    // FAKE_PR_LIST_COUNT → count list calls; the FIRST (idempotency) succeeds empty, a
+    // later one (the post-create re-query) fails — exercises the undeterminable-number path.
+    "  if (process.env.FAKE_PR_LIST_COUNT) {",
+    "    let n = 0; try { n = parseInt(readFileSync(process.env.FAKE_PR_LIST_COUNT, 'utf8'), 10) || 0; } catch {}",
+    "    n++; writeFileSync(process.env.FAKE_PR_LIST_COUNT, String(n));",
+    "    if (n >= 2) { process.stderr.write('gh: re-query failed\\n'); process.exit(1); }",
+    "  }",
     "  process.stdout.write(process.env.FAKE_PR_LIST || ''); process.exit(0);",
     "}",
     "if (a[0] === 'pr' && a[1] === 'create') {",
+    // FAKE_PR_CREATE_BAD → the PR is created but the output carries no /pull/<n> URL.
+    "  if (process.env.FAKE_PR_CREATE_BAD) { process.stdout.write('opened a pull request (no url)\\n'); process.exit(0); }",
     "  const bf = a[a.indexOf('--body-file') + 1];",
     "  const ti = a[a.indexOf('--title') + 1];",
     "  process.stdout.write('TITLE=' + ti + '\\n' + readFileSync(bf, 'utf8'));",
@@ -160,8 +172,10 @@ console.log("create flow: pushes, opens a PR, prints PR_NUMBER, body references 
   check("generated body references the issue", out.includes("Implements AIO-42."));
 }
 
-console.log("idempotency: existing PR is reused — no push, no create");
+console.log("idempotency: existing PR is reused — still PUSHES, but skips create");
 {
+  // M2: idempotency applies to PR *creation*, not the push. New local commits must reach
+  // the remote even when a PR is already open, so `git push` still runs; only create is skipped.
   resetRecord();
   process.env.FAKE_PR_LIST = "55"; // a PR already open for this branch
   const { out, rv } = await capture(() =>
@@ -170,8 +184,50 @@ console.log("idempotency: existing PR is reused — no push, no create");
   const calls = readFileSync(record, "utf8");
   check("returns the existing PR number", rv === 55);
   check("prints PR_NUMBER=55", out.includes("PR_NUMBER=55"));
-  check("did NOT push", !calls.includes("git push"));
+  check(
+    "DID push (idempotent) even with an open PR",
+    calls.includes("git push -u origin feat/AIO-42-x")
+  );
   check("did NOT create a PR", !calls.includes("pr create"));
+}
+
+console.log("custom --title without the issue key gets it prefixed (H2)");
+{
+  process.env.FAKE_PR_LIST = "";
+  const { out } = await capture(() =>
+    cmdPr(".", [
+      "--branch",
+      "feat/AIO-42-x",
+      "--repo",
+      "acme/repo",
+      "--issue",
+      "AIO-42",
+      "--title",
+      "custom title",
+      "--dry-run",
+    ])
+  );
+  check("resulting title carries the issue key", out.includes("--title AIO-42: custom title"));
+}
+
+console.log("custom --title that already names the issue is left verbatim (H2)");
+{
+  process.env.FAKE_PR_LIST = "";
+  const { out } = await capture(() =>
+    cmdPr(".", [
+      "--branch",
+      "feat/AIO-42-x",
+      "--repo",
+      "acme/repo",
+      "--issue",
+      "AIO-42",
+      "--title",
+      "AIO-42: already keyed",
+      "--dry-run",
+    ])
+  );
+  check("keeps the custom title verbatim", out.includes("--title AIO-42: already keyed"));
+  check("does not double-prefix the key", !out.includes("AIO-42: AIO-42"));
 }
 
 console.log("branch validation rejects shell metacharacters");
@@ -236,6 +292,64 @@ console.log("failed idempotency query aborts before push");
   check("failed query aborts (exit 1)", code === 1);
   check("queried gh pr list", calls.includes("gh pr list"));
   check("did NOT push after a failed query", !calls.includes("git push"));
+}
+
+console.log("git push failure surfaces as die(), not a raw stack trace (M5)");
+{
+  // A rejected push must abort with the file's die() UX (exit 1) and never reach create.
+  resetRecord();
+  const script =
+    `import { cmdPr } from ${JSON.stringify(PR_MOD)};` +
+    `await cmdPr('.', ['--branch', 'feat/AIO-42-x', '--repo', 'acme/repo', '--issue', 'AIO-42']);`;
+  let code = 0;
+  try {
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RECORD: record, FAKE_PR_LIST: "", FAKE_GIT_PUSH_FAIL: "1" },
+    });
+  } catch (e) {
+    code = e.status ?? -1;
+  }
+  const calls = readFileSync(record, "utf8");
+  check("push failure aborts (exit 1)", code === 1);
+  check("attempted the push", calls.includes("git push"));
+  check("did NOT create a PR after a failed push", !calls.includes("pr create"));
+}
+
+console.log("undeterminable PR number after create is a failure, not silent success (M3)");
+{
+  // create succeeds but prints no /pull/<n> URL AND the re-query fails → must die, never
+  // return null with an exit-0 no-PR_NUMBER "success".
+  resetRecord();
+  const countFile = path.join(bin, "count-m3");
+  writeFileSync(countFile, "0");
+  const script =
+    `import { cmdPr } from ${JSON.stringify(PR_MOD)};` +
+    `await cmdPr('.', ['--branch', 'feat/AIO-42-x', '--repo', 'acme/repo', '--issue', 'AIO-42']);`;
+  let code = 0,
+    stdout = "";
+  try {
+    stdout = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        RECORD: record,
+        FAKE_PR_LIST: "",
+        FAKE_PR_LIST_COUNT: countFile,
+        FAKE_PR_CREATE_BAD: "1",
+        FAKE_GIT_PUSH_FAIL: "",
+      },
+    });
+  } catch (e) {
+    code = e.status ?? -1;
+  }
+  const calls = readFileSync(record, "utf8");
+  check("undeterminable number aborts (exit 1)", code === 1);
+  check("did push", calls.includes("git push"));
+  check("did attempt create", calls.includes("gh pr create"));
+  check("did NOT print a bogus PR_NUMBER", !stdout.includes("PR_NUMBER="));
 }
 
 rmSync(bin, { recursive: true, force: true });
