@@ -216,6 +216,9 @@ function lastAssistantTail(transcriptPath) {
       continue; // partial first line or noise
     }
     if (!o || o.type !== "assistant") continue;
+    // Only the chronologically LAST assistant message counts. If it carries no text (e.g. it
+    // ended tool_use-only), return null rather than walking further back and capturing stale
+    // text from an earlier message as if it were the turn's tail.
     const content = o.message?.content;
     let textVal = null;
     if (typeof content === "string") {
@@ -229,12 +232,12 @@ function lastAssistantTail(transcriptPath) {
         }
       }
     }
-    if (textVal == null) continue;
+    if (textVal == null) return null;
     const nonEmpty = textVal
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean);
-    if (!nonEmpty.length) continue;
+    if (!nonEmpty.length) return null;
     return nonEmpty[nonEmpty.length - 1];
   }
   return null;

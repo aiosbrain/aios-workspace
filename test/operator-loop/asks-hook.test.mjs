@@ -198,3 +198,34 @@ test("parity: a long idle message is truncated to 200 chars by the hook (folds i
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Stop (last assistant message is tool_use-only) → nothing, even if an earlier message asked", () => {
+  const dir = ws();
+  try {
+    const tp = path.join(dir, "transcript.jsonl");
+    const lines = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Should I merge the PR now?" }] },
+      },
+      { type: "tool_result", content: "ok" },
+      {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Bash", input: {} }] },
+      },
+    ];
+    writeFileSync(tp, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const code = runHook(dir, {
+      hook_event_name: "Stop",
+      session_id: "sess-tool-tail",
+      transcript_path: tp,
+    });
+    assert.equal(code, 0);
+    assert.ok(
+      !existsSync(path.join(dir, ASKS_STORE_REL)),
+      "stale earlier text must not be captured as the turn's tail"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
