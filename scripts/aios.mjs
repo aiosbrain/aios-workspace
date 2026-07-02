@@ -61,6 +61,7 @@ import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
+import { cmdPr } from "./pr.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3480,9 +3481,12 @@ usage:
     [--build] [--build-rounds N]        after approval, hand the plan to the build phase
   aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)
     [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
+    [--pr] [--issue AIO-<n>]            --pr pushes + opens a PR on approval (mutually exclusive with --merge)
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
-    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews
+    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
+    [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
   aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
     [--base ref] [--worktree path]      requires an existing build worktree for the branch
 options:
@@ -3537,6 +3541,7 @@ const OFFLINE_CMDS = new Set([
   "analyze",
   "relay",
   "build",
+  "pr",
   "review-bugbot",
   "loop",
   "time",
@@ -3574,6 +3579,7 @@ try {
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "pr") await cmdPr(repo, rest);
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
