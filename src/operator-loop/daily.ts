@@ -23,6 +23,7 @@ import {
   type SnapshotStore,
 } from "./changes.js";
 import { runtimeByTag, type TagTotal } from "./time/runtime.js";
+import { readAsks, ASKS_STORE_REL, type Ask, type AskSeverity } from "./asks/store.js";
 
 /** Snapshot scope for the daily cadence (keeps a baseline independent of the weekly one). */
 export const DAILY_SCOPE = "daily";
@@ -51,13 +52,26 @@ export interface DailyOrientation {
   window: { cadence: "daily"; from: string; to: string };
   generatedAt: string;
   audience: Audience;
+  /** Open BLOCKER asks (admin-tier), oldest-first. OWNER-ONLY: empty for any shareable audience
+   *  (asks never enter a --as projection). Capped; counts.attention is the true total. */
+  attention: DailyItem[];
+  /** Open decision/fyi asks (admin-tier), decisions before fyi, newest-first within each. Same
+   *  owner-only gate + cap. counts.queuedAsks is the true total. */
+  queuedAsks: DailyItem[];
   changed: DailyItem[]; // capped to SECTION_CAP; counts.changed is the true total
   blocked: DailyItem[];
   owedToday: DailyItem[];
   /** "What agents ran" in the daily window — aggregate { tag, durationMin } only (no repo/id/path),
    *  audience-filtered like every other section. Empty when time capture hasn't run. */
   ranByTag: TagTotal[];
-  counts: { changed: number; blocked: number; owedToday: number; excluded: number };
+  counts: {
+    attention: number;
+    queuedAsks: number;
+    changed: number;
+    blocked: number;
+    owedToday: number;
+    excluded: number;
+  };
   /** Full list only for the owner; [] for a shareable (--as) view — an unresolved-tier ref
    *  path can itself leak above-tier info, and it has no tier to filter on. */
   excluded: Exclusion[];
@@ -68,6 +82,9 @@ export interface BuildDailyOptions {
   prior: SnapshotStore | null;
   audience?: Audience; // default "owner" (all tiers)
   staleDays?: number; // default STALE_CARRYOVER_DAYS
+  /** Open asks folded from the store. Owner-only: surfaced ONLY when audience === "owner"; for any
+   *  other audience they never enter the output (admin-tier — constitution hard rule). */
+  asks?: readonly Ask[];
 }
 
 /** PURE. "Today" is derived from `manifest.generatedAt` (no external `now` — the manifest is
@@ -185,6 +202,26 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   const blockedS = finish(blockedE, byBlocked);
   const owedS = finish(owedE, byOwed);
 
+  // Asks (AIO-169). Admin-tier + local-only: surface ONLY for the owner. For any shareable
+  // audience the two sections are empty and the asks never enter the output — they are NOT
+  // recorded as `excluded` either (they simply don't exist for a --as view). Hard rule.
+  const attentionE: Array<{ item: DailyItem; createdAt: string }> = [];
+  const queuedE: Array<{ item: DailyItem; createdAt: string; severity: AskSeverity }> = [];
+  if (audience === "owner") {
+    for (const ask of opts.asks ?? []) {
+      if (ask.status !== "open") continue; // resolved / orphaned → omit
+      const item = askItem(ask);
+      if (ask.severity === "blocker") {
+        attentionE.push({ item, createdAt: ask.createdAt });
+      } else {
+        // decision | fyi
+        queuedE.push({ item, createdAt: ask.createdAt, severity: ask.severity });
+      }
+    }
+  }
+  const attentionS = finish(attentionE, byAskOldest);
+  const queuedS = finish(queuedE, byQueued);
+
   // Time (agent runtime): "what agents ran" in the daily window. Explicit kind:"time" handling —
   // the main loop above ignores it (no changed/blocked/owed semantics). Aggregate { tag,
   // durationMin } ONLY, from the already-audience-filtered signals; no repo/id/path is surfaced.
@@ -208,11 +245,15 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     window: { cadence: "daily", from: win.from, to: win.to },
     generatedAt,
     audience,
+    attention: attentionS.items,
+    queuedAsks: queuedS.items,
     changed: changedS.items,
     blocked: blockedS.items,
     owedToday: owedS.items,
     ranByTag,
     counts: {
+      attention: attentionS.total,
+      queuedAsks: queuedS.total,
       changed: changedS.total,
       blocked: blockedS.total,
       owedToday: owedS.total,
@@ -244,11 +285,21 @@ export function runDaily(opts: RunDailyOptions): DailyOrientation {
     now: opts.now,
     window: false, // change detection + complete owed/blocked over ALL current signals
   });
+  // Read the local asks store (admin-tier, never synced). Fail-soft: any read/fold error → no
+  // asks rather than a broken daily. Only consumed for the owner audience (buildDailyOrientation
+  // enforces the gate); reading for a --as view is harmless — the classifier drops them.
+  let asks: readonly Ask[] = [];
+  try {
+    asks = readAsks(opts.root).asks;
+  } catch {
+    asks = [];
+  }
   const { orientation, nextSnapshot } = buildDailyOrientation({
     manifest,
     prior,
     audience,
     staleDays: opts.staleDays,
+    asks,
   });
   // The one local write: advance the owner baseline. NEVER on a shareable (--as) view — that
   // would silently consume changes the owner's next run should see — and never when record===false.
@@ -261,6 +312,39 @@ export function runDaily(opts: RunDailyOptions): DailyOrientation {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const END_OF_TIME = "9999-12-31"; // sorts undated owed items last
+
+/** Map an open ask → a DailyItem. Ref points at the (local-only, admin-tier) asks store row. */
+function askItem(ask: Ask): DailyItem {
+  return {
+    kind: "ask",
+    summary: `${ask.title} [${ask.severity}]`,
+    tier: ask.tier,
+    ref: { path: ASKS_STORE_REL, row: ask.id, tier: ask.tier },
+  };
+}
+
+// decision before fyi (blockers are handled in their own section)
+const QUEUED_SEVERITY_RANK: Record<AskSeverity, number> = { blocker: 0, decision: 1, fyi: 2 };
+
+/** Blocker asks: oldest-first (longest-waiting attention first). */
+function byAskOldest(
+  a: { item: DailyItem; createdAt: string },
+  b: { item: DailyItem; createdAt: string }
+): number {
+  return cmpStr(a.createdAt, b.createdAt) || cmpStr(a.item.ref.row, b.item.ref.row);
+}
+
+/** Queued asks: decisions before fyi, newest-first within each severity. */
+function byQueued(
+  a: { item: DailyItem; createdAt: string; severity: AskSeverity },
+  b: { item: DailyItem; createdAt: string; severity: AskSeverity }
+): number {
+  return (
+    QUEUED_SEVERITY_RANK[a.severity] - QUEUED_SEVERITY_RANK[b.severity] ||
+    -cmpStr(a.createdAt, b.createdAt) ||
+    cmpStr(a.item.ref.row, b.item.ref.row)
+  );
+}
 
 function baseItem(sig: Signal, extra: Partial<DailyItem>): DailyItem {
   const item: DailyItem = { kind: sig.kind, summary: sig.summary, tier: sig.tier, ref: sig.ref };

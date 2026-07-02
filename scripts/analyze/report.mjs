@@ -9,7 +9,7 @@
  * Zero dependencies.
  */
 
-import { AXIS_LABELS } from "./aem.mjs";
+import { AXIS_LABELS, attentionCard } from "./aem.mjs";
 import { AXIS_GUIDE } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
@@ -60,7 +60,7 @@ function plainStat(key, s) {
 /** Default terminal report — human-readable, every axis self-explaining. */
 export function renderText(result, color) {
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
-  const { window: win, tools, totals, placement } = result;
+  const { window: win, tools, totals, placement, signals } = result;
   const L = [];
   L.push(`AIOS analyze — ${win.since} → ${win.until} (${tools.join(", ")})`);
   L.push(
@@ -76,6 +76,21 @@ export function renderText(result, color) {
     const score = placement.axes[key];
     L.push(`  ${label.padEnd(22)} ${bar(score)} ${fmtNum(score, 1)}  ${AXIS_GUIDE[key].gloss}`);
   }
+  L.push("");
+  // Attention card — a compact read on operating rhythm (local-only sanity signals; NOT an axis).
+  const att = attentionCard(signals || {});
+  const m = att.metrics;
+  L.push(`  Attention — ${att.reading}`);
+  L.push(
+    c.dim(
+      `    context switches/hr ${fmtNum(m.context_switch_rate)}  ·  focus block avg ${fmtNum(
+        m.focus_block_avg_min,
+        1
+      )}m  ·  interrupts/hr ${fmtNum(m.interrupts_per_hour)}  ·  peak concurrent sessions ${
+        m.concurrent_sessions_peak
+      }`
+    )
+  );
   L.push("");
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
@@ -131,6 +146,8 @@ export function toJson(result, costData) {
     totals: result.totals,
     signals: result.signals,
     placement: result.placement,
+    // Local-only attention card (never pushed) — the 4 sanity signals + a human reading.
+    attention: attentionCard(result.signals || {}),
     days: result.days.map((d) => ({ date: d.date, signals: d.signals, placement: d.placement })),
   };
   if (costData) {

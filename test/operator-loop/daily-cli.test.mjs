@@ -169,6 +169,76 @@ test("daily --as bogus exits non-zero with a clear message", () => {
   assert.match(r.stderr, /must be team\|external/);
 });
 
+test("live owner daily surfaces seeded asks; --as team gates them out (constitution)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "c4-asks-"));
+  writeFileSync(path.join(dir, "aios.yaml"), "member: alex\n");
+  mkdirSync(path.join(dir, ".aios", "loop", "asks"), { recursive: true });
+  const now = new Date().toISOString();
+  const createLine = (ask) => JSON.stringify({ v: 1, op: "create", ask });
+  const asks = [
+    {
+      id: "blk-1",
+      severity: "blocker",
+      title: "Prod is down",
+      kind: "blocker",
+      source: "cli",
+      tier: "admin",
+      createdAt: now,
+    },
+    {
+      id: "dec-1",
+      severity: "decision",
+      title: "Pick a database",
+      kind: "decision",
+      source: "cli",
+      tier: "admin",
+      createdAt: now,
+    },
+    {
+      id: "fyi-1",
+      severity: "fyi",
+      title: "Deploy finished",
+      kind: "fyi",
+      source: "cli",
+      tier: "admin",
+      createdAt: now,
+    },
+  ];
+  writeFileSync(
+    path.join(dir, ".aios", "loop", "asks", "asks.ndjson"),
+    asks.map(createLine).join("\n") + "\n"
+  );
+
+  // Owner JSON: one blocker in Attention, decision+fyi in Queued asks.
+  const rj = run(dir, ["--json"]);
+  assert.equal(rj.code, 0, rj.stderr);
+  const o = JSON.parse(rj.stdout);
+  assert.equal(o.counts.attention, 1);
+  assert.equal(o.counts.queuedAsks, 2);
+  assert.equal(o.attention[0].ref.row, "blk-1");
+  assert.deepEqual(
+    o.queuedAsks.map((i) => i.ref.row),
+    ["dec-1", "fyi-1"]
+  );
+
+  // Owner human view renders BOTH sections with counts.
+  const rh = run(dir, []);
+  assert.equal(rh.code, 0, rh.stderr);
+  assert.match(rh.stdout, /Attention \(1\)/);
+  assert.match(rh.stdout, /Queued asks \(2\)/);
+  assert.match(rh.stdout, /Prod is down/);
+
+  // --as team: asks never enter the output.
+  const rt = run(dir, ["--as", "team", "--json"]);
+  assert.equal(rt.code, 0, rt.stderr);
+  const ot = JSON.parse(rt.stdout);
+  assert.equal(ot.counts.attention, 0);
+  assert.equal(ot.counts.queuedAsks, 0);
+  assert.deepEqual(ot.attention, []);
+  assert.deepEqual(ot.queuedAsks, []);
+  assert.ok(!rt.stdout.includes("Prod is down"));
+});
+
 test("owner run records ONLY the local snapshot; continuity store byte-unchanged; nothing outside .aios", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "c4-rec-"));
   writeFileSync(path.join(dir, "aios.yaml"), "member: alex\n");
