@@ -55,11 +55,13 @@ console.log("selectBuilderStep — consolidated [High] escalates");
   const review = "[High] b.mjs:2 — unbounded loop (source: GPT-5.5)";
   check(
     "prior feedback + [High] → fix_escalated",
-    selectBuilderStep({ hasPriorFeedback: true, fixAttempt: 1, reviewText: review }) === "fix_escalated"
+    selectBuilderStep({ hasPriorFeedback: true, fixAttempt: 1, reviewText: review }) ===
+      "fix_escalated"
   );
   check(
     "prior feedback, no crit/high, attempt 1 → fix",
-    selectBuilderStep({ hasPriorFeedback: true, fixAttempt: 1, reviewText: "[Medium] x — nit" }) === "fix"
+    selectBuilderStep({ hasPriorFeedback: true, fixAttempt: 1, reviewText: "[Medium] x — nit" }) ===
+      "fix"
   );
   check(
     "no prior feedback → build",

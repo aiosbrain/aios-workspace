@@ -41,7 +41,8 @@ function check(label, cond) {
   }
 }
 
-const REVIEWER = "You are the AIOS Workspace Code Reviewer.\n## Output format\n[severity] file:line — desc";
+const REVIEWER =
+  "You are the AIOS Workspace Code Reviewer.\n## Output format\n[severity] file:line — desc";
 const cleanups = [];
 function freshRepo() {
   const repo = mkdtempSync(path.join(tmpdir(), "consol-repo-"));
@@ -52,7 +53,7 @@ function freshRepo() {
 // A fake runGh keyed on argv. `responses` supplies each endpoint's payload; `calls` records
 // the exact argv arrays so we can assert no shell was used.
 function makeRunGh(responses, calls) {
-  return (argv, opts = {}) => {
+  return (argv) => {
     calls.push(argv);
     if (argv[0] === "pr" && argv[1] === "checks") return responses.checks; // {code,stdout,stderr}
     if (argv[0] === "pr" && argv[1] === "diff") return responses.prDiff ?? "";
@@ -63,7 +64,11 @@ function makeRunGh(responses, calls) {
   };
 }
 const passChecks = () => ({ code: 0, stdout: readFix("pr-checks-pass.json"), stderr: "" });
-const failChecks = () => ({ code: 1, stdout: readFix("pr-checks-fail.json"), stderr: "checks failed" });
+const failChecks = () => ({
+  code: 1,
+  stdout: readFix("pr-checks-fail.json"),
+  stderr: "checks failed",
+});
 
 // Silence the command's own console output during a run.
 async function quiet(fn) {
@@ -96,17 +101,29 @@ console.log("parseCheckResults");
   check("clean board → ciRed false", pass.ciRed === false && pass.checks.length === 2);
   const fail = parseCheckResults(readFix("pr-checks-fail.json"));
   check("failed board → ciRed true", fail.ciRed === true);
-  check("plaintext fallback detects failure", parseCheckResults("build   fail   1s").ciRed === true);
+  check(
+    "plaintext fallback detects failure",
+    parseCheckResults("build   fail   1s").ciRed === true
+  );
   check("empty → not red", parseCheckResults("").ciRed === false);
 }
 
 // ── pure: severity extractors ──────────────────────────────────────────────────
 console.log("severity extractors");
 {
-  check("Bugbot **High Severity** → High", extractBugbotSeverities(JSON.parse(readFix("bugbot-inline.json"))) === "High");
-  check("clean Bugbot → null", extractBugbotSeverities(JSON.parse(readFix("bugbot-inline-clean.json"))) === null);
+  check(
+    "Bugbot **High Severity** → High",
+    extractBugbotSeverities(JSON.parse(readFix("bugbot-inline.json"))) === "High"
+  );
+  check(
+    "clean Bugbot → null",
+    extractBugbotSeverities(JSON.parse(readFix("bugbot-inline-clean.json"))) === null
+  );
   check("GPT `High` bullet → High", extractGptSeverities(readFix("gpt-review.md")) === "High");
-  check("CodeRabbit Major/potential issue → High", extractCodeRabbitSeverities(JSON.parse(readFix("coderabbit-comments.json"))) === "High");
+  check(
+    "CodeRabbit Major/potential issue → High",
+    extractCodeRabbitSeverities(JSON.parse(readFix("coderabbit-comments.json"))) === "High"
+  );
   const pre = preExtractSeverities({
     checks: parseCheckResults(readFix("pr-checks-pass.json")),
     bugbot: JSON.parse(readFix("bugbot-inline.json")),
@@ -120,22 +137,42 @@ console.log("severity extractors");
 console.log("postValidate + computeVerdict");
 {
   // CI red forces BLOCKED even on a CLEAR model doc, and the forced state is unloseable.
-  const red = postValidate({ modelOutput: readFix("agent-clear.md"), sourceMax: null, ciRed: true, checks: parseCheckResults(readFix("pr-checks-fail.json")) });
+  const red = postValidate({
+    modelOutput: readFix("agent-clear.md"),
+    sourceMax: null,
+    ciRed: true,
+    checks: parseCheckResults(readFix("pr-checks-fail.json")),
+  });
   check("CI red forces block", red.forcedBlock === true);
   check("forced block verdict is BLOCKED after FINAL compute", computeVerdict(red) === "BLOCKED");
   check("forced block strips BUGBOT_CLEAR", !/BUGBOT_CLEAR/.test(red.text));
   check("forced block names the red job", /build/.test(red.text) && /\[High\]/.test(red.text));
 
   // Dropped source High: sources say High, model says CLEAR → forced block.
-  const dropped = postValidate({ modelOutput: readFix("agent-clear.md"), sourceMax: "High", ciRed: false });
-  check("dropped source High forces block", dropped.forcedBlock === true && computeVerdict(dropped) === "BLOCKED");
+  const dropped = postValidate({
+    modelOutput: readFix("agent-clear.md"),
+    sourceMax: "High",
+    ciRed: false,
+  });
+  check(
+    "dropped source High forces block",
+    dropped.forcedBlock === true && computeVerdict(dropped) === "BLOCKED"
+  );
 
   // Genuinely clean: no source severity, CI green, CLEAR doc → stays CLEAR.
-  const clean = postValidate({ modelOutput: readFix("agent-clear.md"), sourceMax: null, ciRed: false });
+  const clean = postValidate({
+    modelOutput: readFix("agent-clear.md"),
+    sourceMax: null,
+    ciRed: false,
+  });
   check("clean stays CLEAR", clean.forcedBlock === false && computeVerdict(clean) === "CLEAR");
 
   // A model [High] doc is BLOCKED via the bracket matcher.
-  const blocked = postValidate({ modelOutput: readFix("agent-blocked.md"), sourceMax: "High", ciRed: false });
+  const blocked = postValidate({
+    modelOutput: readFix("agent-blocked.md"),
+    sourceMax: "High",
+    ciRed: false,
+  });
   check("model [High] doc → BLOCKED", computeVerdict(blocked) === "BLOCKED");
 }
 
@@ -144,7 +181,9 @@ console.log("defaultOutPath");
 {
   check(
     "path is .aios/loop/<issue>/findings-r<N>.md",
-    defaultOutPath("/repo", "AIO-161", 2).endsWith(path.join(".aios", "loop", "AIO-161", "findings-r2.md"))
+    defaultOutPath("/repo", "AIO-161", 2).endsWith(
+      path.join(".aios", "loop", "AIO-161", "findings-r2.md")
+    )
   );
 }
 
@@ -163,9 +202,29 @@ console.log("gatherInputs — exact argv, no shell; PR diff in the prompt");
     calls
   );
   const inputs = gatherInputs({ runGh, slug: "acme/repo", pr: "44" });
-  check("checks argv exact", JSON.stringify(calls[0]) === JSON.stringify(["pr", "checks", "44", "--repo", "acme/repo", "--json", "name,state,conclusion"]));
-  check("diff argv exact", JSON.stringify(calls[1]) === JSON.stringify(["pr", "diff", "44", "--repo", "acme/repo"]));
-  check("issue-comments api argv", calls[2][0] === "api" && calls[2][1] === "repos/acme/repo/issues/44/comments" && calls[2][2] === "--jq");
+  check(
+    "checks argv exact",
+    JSON.stringify(calls[0]) ===
+      JSON.stringify([
+        "pr",
+        "checks",
+        "44",
+        "--repo",
+        "acme/repo",
+        "--json",
+        "name,state,conclusion",
+      ])
+  );
+  check(
+    "diff argv exact",
+    JSON.stringify(calls[1]) === JSON.stringify(["pr", "diff", "44", "--repo", "acme/repo"])
+  );
+  check(
+    "issue-comments api argv",
+    calls[2][0] === "api" &&
+      calls[2][1] === "repos/acme/repo/issues/44/comments" &&
+      calls[2][2] === "--jq"
+  );
   check("inline-comments api argv", calls[3][1] === "repos/acme/repo/pulls/44/comments");
   check("reviews api argv", calls[4][1] === "repos/acme/repo/pulls/44/reviews");
   check("PR diff captured", inputs.prDiff.includes("while (true)"));
@@ -180,8 +239,15 @@ console.log("gatherInputs — exact argv, no shell; PR diff in the prompt");
 console.log("gatherInputs — PR diff capped at DIFF_CAP");
 {
   const big = "x".repeat(DIFF_CAP + 5000);
-  const inputs = gatherInputs({ runGh: makeRunGh({ checks: passChecks(), prDiff: big }, []), slug: "a/b", pr: "1" });
-  check("diff clipped to cap + marker", inputs.prDiff.length <= DIFF_CAP + 60 && inputs.prDiff.includes(`truncated at ${DIFF_CAP}`));
+  const inputs = gatherInputs({
+    runGh: makeRunGh({ checks: passChecks(), prDiff: big }, []),
+    slug: "a/b",
+    pr: "1",
+  });
+  check(
+    "diff clipped to cap + marker",
+    inputs.prDiff.length <= DIFF_CAP + 60 && inputs.prDiff.includes(`truncated at ${DIFF_CAP}`)
+  );
 }
 
 // ── CLEAR path → returns 0, file ends BUGBOT_CLEAR ──────────────────────────────
@@ -189,7 +255,16 @@ console.log("CLEAR path");
 {
   const repo = freshRepo();
   const calls = [];
-  const runGh = makeRunGh({ checks: passChecks(), prDiff: "diff", inlineComments: "[]", issueComments: "[]", reviews: "[]" }, calls);
+  const runGh = makeRunGh(
+    {
+      checks: passChecks(),
+      prDiff: "diff",
+      inlineComments: "[]",
+      issueComments: "[]",
+      reviews: "[]",
+    },
+    calls
+  );
   const code = await quiet(() =>
     cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
       runGh,
@@ -257,22 +332,30 @@ console.log("output path");
 {
   const repo = freshRepo();
   await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "9", "--issue", "AIO-161", "--round", "2", "--repo", "a/b"], {
-      runGh: makeRunGh({ checks: passChecks() }, []),
-      readReviewerPrompt: () => REVIEWER,
-      callAgent: async () => readFix("agent-clear.md"),
-    })
+    cmdConsolidateFindings(
+      repo,
+      ["--pr", "9", "--issue", "AIO-161", "--round", "2", "--repo", "a/b"],
+      {
+        runGh: makeRunGh({ checks: passChecks() }, []),
+        readReviewerPrompt: () => REVIEWER,
+        callAgent: async () => readFix("agent-clear.md"),
+      }
+    )
   );
   check("writes findings-r2.md", existsSync(defaultOutPath(repo, "AIO-161", 2)));
 
   const repo2 = freshRepo();
   const outFile = path.join(repo2, "custom-findings.md");
   await quiet(() =>
-    cmdConsolidateFindings(repo2, ["--pr", "9", "--issue", "AIO-161", "--out", outFile, "--repo", "a/b"], {
-      runGh: makeRunGh({ checks: passChecks() }, []),
-      readReviewerPrompt: () => REVIEWER,
-      callAgent: async () => readFix("agent-clear.md"),
-    })
+    cmdConsolidateFindings(
+      repo2,
+      ["--pr", "9", "--issue", "AIO-161", "--out", outFile, "--repo", "a/b"],
+      {
+        runGh: makeRunGh({ checks: passChecks() }, []),
+        readReviewerPrompt: () => REVIEWER,
+        callAgent: async () => readFix("agent-clear.md"),
+      }
+    )
   );
   check("--out overrides the default path", existsSync(outFile));
 }
@@ -295,16 +378,31 @@ console.log("config-driven model call");
     })
   );
   check("model is the resolver default (claude-haiku-4-5)", recorded.model === "claude-haiku-4-5");
-  check("effort from the config file is passed", JSON.stringify(recorded.extraArgs) === JSON.stringify(["--effort", "high"]));
+  check(
+    "effort from the config file is passed",
+    JSON.stringify(recorded.extraArgs) === JSON.stringify(["--effort", "high"])
+  );
 }
 
 // ── bad args → returns 1 ─────────────────────────────────────────────────────────
 console.log("bad args → 1");
 {
   const repo = freshRepo();
-  const noPr = await quiet(() => cmdConsolidateFindings(repo, ["--issue", "AIO-161", "--repo", "a/b"], { runGh: () => "", readReviewerPrompt: () => REVIEWER, callAgent: async () => "" }));
+  const noPr = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--issue", "AIO-161", "--repo", "a/b"], {
+      runGh: () => "",
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => "",
+    })
+  );
   check("missing --pr → 1", noPr === 1);
-  const badIssue = await quiet(() => cmdConsolidateFindings(repo, ["--pr", "9", "--issue", "nope", "--repo", "a/b"], { runGh: () => "", readReviewerPrompt: () => REVIEWER, callAgent: async () => "" }));
+  const badIssue = await quiet(() =>
+    cmdConsolidateFindings(repo, ["--pr", "9", "--issue", "nope", "--repo", "a/b"], {
+      runGh: () => "",
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => "",
+    })
+  );
   check("bad --issue → 1", badIssue === 1);
 }
 
@@ -321,8 +419,17 @@ console.log("GPT review capped at GPT_REVIEW_CAP");
   const repo = freshRepo();
   const big = path.join(repo, "gpt-big.md");
   writeFileSync(big, "y".repeat(GPT_REVIEW_CAP + 3000));
-  const inputs = gatherInputs({ runGh: makeRunGh({ checks: passChecks() }, []), slug: "a/b", pr: "1", gptReviewPath: big });
-  check("gpt markdown clipped + marker", inputs.gptMarkdown.length <= GPT_REVIEW_CAP + 60 && inputs.gptMarkdown.includes(`truncated at ${GPT_REVIEW_CAP}`));
+  const inputs = gatherInputs({
+    runGh: makeRunGh({ checks: passChecks() }, []),
+    slug: "a/b",
+    pr: "1",
+    gptReviewPath: big,
+  });
+  check(
+    "gpt markdown clipped + marker",
+    inputs.gptMarkdown.length <= GPT_REVIEW_CAP + 60 &&
+      inputs.gptMarkdown.includes(`truncated at ${GPT_REVIEW_CAP}`)
+  );
 }
 
 for (const p of cleanups) {

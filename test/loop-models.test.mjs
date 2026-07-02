@@ -153,11 +153,17 @@ console.log("runner-family guard (fail closed) — M1");
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "consolidate_model: gpt-5.5-high\n");
   const badConsolidate = resolveInChild({ repo });
   check("gpt consolidate_model via file aborts", badConsolidate.ok === false);
-  check("consolidate abort names the Claude-family requirement", /Claude-family/.test(badConsolidate.stderr));
+  check(
+    "consolidate abort names the Claude-family requirement",
+    /Claude-family/.test(badConsolidate.stderr)
+  );
 
   // The default consolidate model still resolves (anthropic) and other guards are unaffected.
   const okDefault = resolveInChild({ repo: null });
-  check("default consolidate resolves (anthropic)", okDefault.ok === true && modelFamily(okDefault.resolved.consolidate.model) === "anthropic");
+  check(
+    "default consolidate resolves (anthropic)",
+    okDefault.ok === true && modelFamily(okDefault.resolved.consolidate.model) === "anthropic"
+  );
 
   rmSync(repo, { recursive: true, force: true });
 }

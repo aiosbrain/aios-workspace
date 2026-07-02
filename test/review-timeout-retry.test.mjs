@@ -36,7 +36,8 @@ async function quiet(fn) {
   }
 }
 
-const timeoutErr = () => new Error("cursor agent timed out after 300s — increase the timeout and retry");
+const timeoutErr = () =>
+  new Error("cursor agent timed out after 300s — increase the timeout and retry");
 const exitErr = () => new Error("cursor agent exited 1: boom");
 
 console.log("isTimeoutError");
@@ -58,13 +59,22 @@ console.log("reviewWithTimeoutRetry — one timeout then success");
   };
   const logs = [];
   const rv = await quiet(() =>
-    reviewWithTimeoutRetry(callFn, "prompt", 300000, { cwd: "/wt" }, { log: (l, m) => logs.push(`${l}: ${m}`) })
+    reviewWithTimeoutRetry(
+      callFn,
+      "prompt",
+      300000,
+      { cwd: "/wt" },
+      { log: (l, m) => logs.push(`${l}: ${m}`) }
+    )
   );
   check("returns the second-attempt result", rv === "REVIEW OK");
   check("retried exactly twice", calls.length === 2);
   check("second attempt uses 2× timeout", calls[1].t === 600000);
   check("opts are forwarded", calls[1].o.cwd === "/wt");
-  check("logs the retry decision (original/doubled/attempt)", logs.some((l) => /300s/.test(l) && /600s/.test(l) && /attempt 2\/2/.test(l)));
+  check(
+    "logs the retry decision (original/doubled/attempt)",
+    logs.some((l) => /300s/.test(l) && /600s/.test(l) && /attempt 2\/2/.test(l))
+  );
 }
 
 console.log("reviewWithTimeoutRetry — second timeout propagates");
@@ -123,7 +133,10 @@ console.log("computeReviewPayloadChars (Major 3) — clamped to DIFF_CAP");
   check("over-cap diff → clamped to DIFF_CAP", computeReviewPayloadChars(big) === DIFF_CAP);
   // The whole point of Major 3: an over-cap diff scales the timeout to the 2× cap (600s),
   // NOT to the tiny truncation-message length it would otherwise collapse to.
-  check("over-cap payload → timeout at the 600s cap", adaptiveReviewTimeout(computeReviewPayloadChars(big)) * 1000 === 600000);
+  check(
+    "over-cap payload → timeout at the 600s cap",
+    adaptiveReviewTimeout(computeReviewPayloadChars(big)) * 1000 === 600000
+  );
   check("null → 0", computeReviewPayloadChars(null) === 0);
 }
 

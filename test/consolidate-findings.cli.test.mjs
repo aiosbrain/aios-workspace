@@ -83,7 +83,10 @@ console.log("blocked fixture → process exits 3, stdout VERDICT=BLOCKED");
 {
   const r = runCli(
     ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo", "--out", path.join(outDir, "b.md")],
-    { FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"), FAKE_AGENT_OUT: path.join(FIX, "agent-blocked.md") }
+    {
+      FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
+      FAKE_AGENT_OUT: path.join(FIX, "agent-blocked.md"),
+    }
   );
   check("process exits 3", r.code === 3);
   check("stdout has VERDICT=BLOCKED", r.stdout.includes("VERDICT=BLOCKED"));
@@ -93,7 +96,10 @@ console.log("clear fixture → process exits 0");
 {
   const r = runCli(
     ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo", "--out", path.join(outDir, "c.md")],
-    { FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"), FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md") }
+    {
+      FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
+      FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md"),
+    }
   );
   check("process exits 0", r.code === 0);
   check("stdout has VERDICT=CLEAR", r.stdout.includes("VERDICT=CLEAR"));
@@ -117,8 +123,20 @@ console.log("--repo slug is honored (carve-out), not treated as a path");
   // If --repo were consumed as the workspace path, dispatch would fail to find a repo root.
   // Reaching a VERDICT proves the slug flowed through to the command as a GitHub target.
   const r = runCli(
-    ["--pr", "44", "--issue", "AIO-161", "--repo", "some-owner/some-repo", "--out", path.join(outDir, "s.md")],
-    { FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"), FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md") }
+    [
+      "--pr",
+      "44",
+      "--issue",
+      "AIO-161",
+      "--repo",
+      "some-owner/some-repo",
+      "--out",
+      path.join(outDir, "s.md"),
+    ],
+    {
+      FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
+      FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md"),
+    }
   );
   check("slug honored → command ran to a verdict", r.stdout.includes("VERDICT="));
 }

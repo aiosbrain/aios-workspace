@@ -178,23 +178,13 @@ export function preExtractSeverities({ checks, bugbot, coderabbit, gpt } = {}) {
 // the consolidation instruction and every gathered input (incl. the PR diff, so plan-
 // conformance findings are grounded).
 export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
-  const {
-    pr,
-    issue,
-    checks,
-    prDiff,
-    issueComments,
-    inlineComments,
-    reviews,
-    gptMarkdown,
-  } = inputs;
+  const { pr, issue, checks, prDiff, issueComments, inlineComments, reviews, gptMarkdown } = inputs;
   const asJson = (v) => JSON.stringify(v ?? [], null, 2);
-  const checkLines =
-    checks?.checks?.length
-      ? checks.checks.map((x) => `[${x.conclusion || x.state || "?"}] ${x.name}`).join("\n")
-      : checks?.ciRed
-        ? "(CI is red — see the raw board)"
-        : "(no CI check data)";
+  const checkLines = checks?.checks?.length
+    ? checks.checks.map((x) => `[${x.conclusion || x.state || "?"}] ${x.name}`).join("\n")
+    : checks?.ciRed
+      ? "(CI is red — see the raw board)"
+      : "(no CI check data)";
   return [
     reviewerPrompt.trim(),
     "",
@@ -403,10 +393,12 @@ export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
   // 6. Optional GPT-5.5 review markdown from a file (capped).
   let gptMarkdown = null;
   if (gptReviewPath) {
-    if (!existsSync(gptReviewPath)) throw new Error(`--gpt-review file not found: ${gptReviewPath}`);
+    if (!existsSync(gptReviewPath))
+      throw new Error(`--gpt-review file not found: ${gptReviewPath}`);
     gptMarkdown = readFileSync(gptReviewPath, "utf8");
     if (gptMarkdown.length > GPT_REVIEW_CAP) {
-      gptMarkdown = gptMarkdown.slice(0, GPT_REVIEW_CAP) + `\n\n(diff truncated at ${GPT_REVIEW_CAP} chars)`;
+      gptMarkdown =
+        gptMarkdown.slice(0, GPT_REVIEW_CAP) + `\n\n(diff truncated at ${GPT_REVIEW_CAP} chars)`;
     }
   }
 

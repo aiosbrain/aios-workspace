@@ -257,7 +257,8 @@ export function adaptiveReviewTimeout(
   { base = DEFAULT_REVIEW_TIMEOUT, cap = DEFAULT_REVIEW_TIMEOUT * 2 } = {}
 ) {
   const scaled =
-    base + Math.floor((payloadChars ?? 0) / REVIEW_TIMEOUT_SCALE.perChars) * REVIEW_TIMEOUT_SCALE.stepSecs;
+    base +
+    Math.floor((payloadChars ?? 0) / REVIEW_TIMEOUT_SCALE.perChars) * REVIEW_TIMEOUT_SCALE.stepSecs;
   return Math.min(scaled, cap);
 }
 
@@ -297,7 +298,10 @@ export function extractMustFix(consolidatedText) {
     }
     // untagged Medium / Low findings are dropped
   }
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return kept
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // Classify what the builder produced this round from git counts.
@@ -853,7 +857,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
       console.log(c.dim(`[findings] seeding round 1 from must-fix subset of ${findingsFile}`));
       log("Seeded findings (must-fix)", mustFix.slice(-4000));
     } else {
-      console.log(c.dim(`[findings] ${findingsFile} had no must-fix items — starting a fresh build`));
+      console.log(
+        c.dim(`[findings] ${findingsFile} had no must-fix items — starting a fresh build`)
+      );
     }
   }
   let blockedOnGate = false; // true when the last round failed verify/secrets, not review
