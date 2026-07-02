@@ -80,7 +80,10 @@ writeFileSync(
     "import { appendFileSync, readFileSync } from 'node:fs';",
     "const a = process.argv.slice(2);",
     "appendFileSync(process.env.RECORD, 'gh ' + a.join(' ') + '\\n');",
-    "if (a[0] === 'pr' && a[1] === 'list') { process.stdout.write(process.env.FAKE_PR_LIST || ''); process.exit(0); }",
+    "if (a[0] === 'pr' && a[1] === 'list') {",
+    "  if (process.env.FAKE_PR_LIST_FAIL) { process.stderr.write('gh: could not connect to api.github.com\\n'); process.exit(1); }",
+    "  process.stdout.write(process.env.FAKE_PR_LIST || ''); process.exit(0);",
+    "}",
     "if (a[0] === 'pr' && a[1] === 'create') {",
     "  const bf = a[a.indexOf('--body-file') + 1];",
     "  const ti = a[a.indexOf('--title') + 1];",
@@ -188,6 +191,51 @@ console.log("branch validation rejects shell metacharacters");
     code = e.status ?? -1;
   }
   check("invalid branch aborts (exit 1)", code === 1);
+}
+
+console.log("missing issue key aborts before any push/create");
+{
+  // A branch with no AIO-<n> and no --issue must fail fast (exit 1), recording no calls.
+  resetRecord();
+  const script =
+    `import { cmdPr } from ${JSON.stringify(PR_MOD)};` +
+    `await cmdPr('.', ['--branch', 'feat/no-issue', '--repo', 'acme/repo']);`;
+  let code = 0;
+  try {
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RECORD: record, FAKE_PR_LIST: "" },
+    });
+  } catch (e) {
+    code = e.status ?? -1;
+  }
+  const calls = readFileSync(record, "utf8").trim();
+  check("missing issue aborts (exit 1)", code === 1);
+  check("no push/create attempted", !calls.includes("git push") && !calls.includes("pr create"));
+}
+
+console.log("failed idempotency query aborts before push");
+{
+  // A failing `gh pr list` must NOT be read as "no PR" — abort before any push.
+  resetRecord();
+  const script =
+    `import { cmdPr } from ${JSON.stringify(PR_MOD)};` +
+    `await cmdPr('.', ['--branch', 'feat/AIO-42-x', '--repo', 'acme/repo', '--issue', 'AIO-42']);`;
+  let code = 0;
+  try {
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RECORD: record, FAKE_PR_LIST_FAIL: "1" },
+    });
+  } catch (e) {
+    code = e.status ?? -1;
+  }
+  const calls = readFileSync(record, "utf8");
+  check("failed query aborts (exit 1)", code === 1);
+  check("queried gh pr list", calls.includes("gh pr list"));
+  check("did NOT push after a failed query", !calls.includes("git push"));
 }
 
 rmSync(bin, { recursive: true, force: true });

@@ -68,19 +68,17 @@ function gitOut(argv, cwd) {
   }).trim();
 }
 
-// Existing open PR for this head branch, or null.
+// Existing open PR for this head branch, or null when the query succeeds and finds none.
+// Throws when the `gh pr list` query ITSELF fails (auth/network/API) — callers must NOT
+// swallow that into "no PR", or they'd push on top of a broken GitHub connection.
 function existingPrNumber(repo, branch) {
-  try {
-    const out = execFileSync(
-      "gh",
-      ["pr", "list", "--head", branch, "--repo", repo, "--json", "number", "--jq", ".[0].number"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    ).trim();
-    const n = parseInt(out, 10);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+  const out = execFileSync(
+    "gh",
+    ["pr", "list", "--head", branch, "--repo", repo, "--json", "number", "--jq", ".[0].number"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  ).trim();
+  const n = parseInt(out, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 export async function cmdPr(repo, args) {
@@ -123,6 +121,13 @@ export async function cmdPr(repo, args) {
 
   const issue = flag("--issue") ?? branch.match(/AIO-\d+/)?.[0] ?? null;
   if (issue && !ISSUE_RE.test(issue)) die(`invalid --issue '${issue}' — expected AIO-<number>.`);
+  // A PR title/body without an AIO-<n> key silently breaks the Linear automations
+  // (pr-in-review.yml / aios-work-sync.yml). Fail fast, before any push or create.
+  if (!issue)
+    die(
+      "no issue key — pass --issue AIO-<n> or use a branch whose name contains AIO-<n> " +
+        "(the PR title must carry the key to drive the Linear automations)."
+    );
 
   const pushArgv = buildPushArgv(branch);
 
@@ -153,7 +158,15 @@ export async function cmdPr(repo, args) {
     }
 
     // Idempotency: if a PR is already open for this branch, reuse it — no push, no create.
-    const existing = existingPrNumber(repoSlug, branch);
+    // A FAILED query (auth/network/API) aborts here, before any push — never treated as
+    // "no PR", which would push on top of a broken GitHub connection.
+    let existing;
+    try {
+      existing = existingPrNumber(repoSlug, branch);
+    } catch (e) {
+      const msg = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+      die(`could not query existing PRs (gh pr list): ${msg || e.message}`);
+    }
     if (existing) {
       console.log(c.dim(`PR already exists for ${branch}: #${existing}`));
       console.log(`PR_NUMBER=${existing}`);
@@ -174,9 +187,17 @@ export async function cmdPr(repo, args) {
       die(`gh pr create failed: ${msg || e.message}`);
     }
 
-    // Parse the PR number from the printed URL; fall back to a re-query.
+    // Parse the PR number from the printed URL; fall back to a best-effort re-query
+    // (the PR is already created here, so a failed re-query must not abort — just yield null).
     const m = createOut.match(/\/pull\/(\d+)/);
-    const prNumber = m ? parseInt(m[1], 10) : existingPrNumber(repoSlug, branch);
+    let prNumber = m ? parseInt(m[1], 10) : null;
+    if (!prNumber) {
+      try {
+        prNumber = existingPrNumber(repoSlug, branch);
+      } catch {
+        prNumber = null;
+      }
+    }
     if (prNumber) console.log(`PR_NUMBER=${prNumber}`);
     return prNumber ?? null;
   } finally {

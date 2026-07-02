@@ -75,10 +75,7 @@ console.log("callClaudeAgent strips even when the caller supplies its own env");
 console.log("callCursorAgent (no env override) inherits the parent env");
 {
   const out = await callCursorAgent("review", 30000, { extraArgs: [] });
-  check(
-    "Cursor child still sees the key",
-    out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL)
-  );
+  check("Cursor child still sees the key", out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL));
 }
 
 rmSync(dir, { recursive: true, force: true });
