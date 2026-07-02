@@ -123,6 +123,7 @@ test("CLI: offline routing + --settings override + --json round-trip", () => {
         )
       );
     assert.equal(run(["status"]).mode, "orchestration");
+    assert.equal(run([]).mode, "orchestration", "bare `aios mode --json` defaults to status");
     const dw = run(["deep-work"]);
     assert.equal(dw.mode, "deep-work");
     assert.equal(dw.changed, true);

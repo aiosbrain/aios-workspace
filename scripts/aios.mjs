@@ -3612,7 +3612,8 @@ async function cmdAsks(repo, cfg, args) {
 // local iTerm2 ping; orchestration restores exactly the prior value (including absence, via a
 // sidecar memory). Mobile push (`agentPushNotifEnabled`) is never touched.
 async function cmdMode(repo, cfg, args) {
-  const sub = args[0] ?? "status";
+  // A leading flag means no subcommand: `aios mode --json` = `aios mode status --json`.
+  const sub = args[0] && !args[0].startsWith("--") ? args[0] : "status";
   const asJson = args.includes("--json");
   const loop = await loadOperatorLoop();
   const settingsArg = (() => {
