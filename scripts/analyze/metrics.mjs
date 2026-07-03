@@ -340,6 +340,7 @@ export function computeSessionRecord(events) {
   let toolResults = 0;
   let toolResultErrors = 0;
   let permissionEvents = 0;
+  let hasSubagent = false;
   const distinctTools = new Set();
 
   for (const ev of events) {
@@ -351,6 +352,7 @@ export function computeSessionRecord(events) {
       cacheCreateTok += ev.tokens.cache_create;
       if (ev.actor === "subagent") subagentTok += totalTokens(ev.tokens);
     }
+    if (ev.actor === "subagent") hasSubagent = true;
     if (ev.block_type === "tool_use") {
       toolUseTotal += 1;
       if (ev.tool_name) distinctTools.add(ev.tool_name);
@@ -389,10 +391,13 @@ export function computeSessionRecord(events) {
     error_rate: ratio(toolResultErrors, toolResults),
     // hit rate vs. ALL first-seen tokens (input + newly-cached) — matches computeSignals.
     cache_hit_rate: ratio(cacheReadTok, cacheReadTok + inTok + cacheCreateTok),
-    tool_diversity: distinctToolsList.length,
+    // full distinct-tool count (matches computeSignals); the CAP applies only to
+    // the stored `counts.distinct_tools` name list, never to this numeric signal.
+    tool_diversity: distinctTools.size,
     verify_tool_rate: ratio(verifyToolUses, toolUseTotal),
-    // single-session collapse of sessionsWithSubagent / sessions.
-    subagent_usage: subagentTok > 0 ? 1 : 0,
+    // single-session collapse of sessionsWithSubagent / sessions — keyed off ANY
+    // subagent event (matches computeSignals), not subagent token volume.
+    subagent_usage: hasSubagent ? 1 : 0,
     correction_loop_avg: ratio(toolResults, tasks),
     // "fresh" tokens per task — excludes cache reads (matches computeSignals).
     tokens_per_task: ratio(workTok, tasks),

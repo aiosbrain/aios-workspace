@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { foldSessions, STORE_REL } from "../scripts/analyze/maturity-store.mjs";
-import { computeSessionRecord } from "../scripts/analyze/metrics.mjs";
+import { computeSessionRecord, computeSignals } from "../scripts/analyze/metrics.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = path.join(ROOT, "hooks", "maturity-capture.mjs");
@@ -270,10 +270,42 @@ test("computeSessionRecord: per-session formulas + counts", () => {
   assert.equal(signals.error_rate, 1 / 2);
   assert.equal(signals.cache_hit_rate, 200 / (200 + 110 + 30));
   assert.equal(signals.tool_diversity, 2);
-  assert.equal(signals.subagent_usage, 1); // subagent tokens present
+  assert.equal(signals.subagent_usage, 1); // a subagent event is present
   assert.equal(signals.correction_loop_avg, 2 / 1);
   assert.equal(signals.tokens_per_task, (110 + 55 + 30) / 1); // work_tok = in+out+cache_create
   assert.equal(signals.permission_events, 2);
+});
+
+test("computeSessionRecord: subagent_usage keyed off ANY subagent event, not tokens", () => {
+  // A subagent event with NO tokens (e.g. a tool_use block) must still flip
+  // subagent_usage to 1 — matching computeSignals, which counts any subagent event.
+  const events = [
+    { actor: "user", block_type: "text" },
+    { actor: "subagent", block_type: "tool_use", tool_name: "Grep" }, // no tokens
+  ];
+  const { signals, counts } = computeSessionRecord(events);
+  assert.equal(counts.subagent_tok, 0); // no subagent tokens
+  assert.equal(signals.subagent_usage, 1); // but a subagent event is present
+
+  // parity: single-session computeSignals agrees.
+  const agg = computeSignals(events.map((e) => ({ ...e, session_id: "s1" })));
+  assert.equal(agg.subagent_usage, signals.subagent_usage);
+});
+
+test("computeSessionRecord: tool_diversity signal is the full distinct count, not the name-list cap", () => {
+  // 60 distinct tools > the 50-name storage cap: the numeric signal must report
+  // the full count (matches computeSignals), while counts.distinct_tools is capped.
+  const events = [{ actor: "user", block_type: "text" }];
+  for (let i = 0; i < 60; i++) {
+    events.push({ actor: "assistant", block_type: "tool_use", tool_name: `Tool${i}` });
+  }
+  const { signals, counts } = computeSessionRecord(events);
+  assert.equal(signals.tool_diversity, 60); // full distinct count
+  assert.equal(counts.distinct_tools.length, 50); // stored name list is capped
+
+  // parity: single-session computeSignals reports the same diversity.
+  const agg = computeSignals(events.map((e) => ({ ...e, session_id: "s1" })));
+  assert.equal(agg.tool_diversity, signals.tool_diversity);
 });
 
 test("computeSessionRecord: empty events → zero-safe ratios", () => {
