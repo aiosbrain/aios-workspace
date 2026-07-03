@@ -899,6 +899,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     });
   } catch (e) {
     record("build", { error: e.message });
+    writeAudit(issueId, "build-FAILED.md", failedArtifact("build", e));
     console.error(c.red(`build: ${e.message}`));
     return { code: SHIP_EXIT.BUILD_FAILED, records };
   }
@@ -917,6 +918,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     });
   } catch (e) {
     record("pr", { error: e.message });
+    writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
     console.error(c.red(`pr: ${e.message}`));
     return { code: SHIP_EXIT.PR_FAILED, records };
   }
@@ -1038,6 +1040,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
     } catch (e) {
       record("fix", { error: e.message });
+      writeAudit(issueId, `fix-r${round}-FAILED.md`, failedArtifact("fix build", e));
       return { code: SHIP_EXIT.BUILD_FAILED, records };
     }
     const fixMapped = mapBuildExit(fixCode);
@@ -1052,6 +1055,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
     } catch (e) {
       record("fix", { error: e.message });
+      writeAudit(issueId, `fix-push-r${round}-FAILED.md`, failedArtifact("fix push", e));
       return { code: SHIP_EXIT.PR_FAILED, records };
     }
     round++;
@@ -1064,6 +1068,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     primaryStatus = gitExec(["status", "--porcelain"], repo);
   } catch (e) {
     record("merge-gate", { error: e.message });
+    writeAudit(issueId, "merge-gate-FAILED.md", failedArtifact("merge gate", e));
     return { code: SHIP_EXIT.CLEANUP_FAILED, records };
   }
   if (primaryStatus && primaryStatus.trim()) {
@@ -1150,6 +1155,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
     } catch (e) {
       record("merge-gate", { safetyError: e.message });
+      writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
       console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
       return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
     }

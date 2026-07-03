@@ -175,6 +175,29 @@ console.log("recon model death writes recon-FAILED.md");
   }
 }
 
+console.log("build stage death writes build-FAILED.md");
+{
+  const repo = mkdtempSync(path.join(tmpdir(), "ship-failed-"));
+  const auditFiles = [];
+  const deps = makeDeps(repo, auditFiles, {
+    callClaudeAgent: async (prompt) => {
+      if (/recon context pack/.test(prompt)) return "RECON";
+      if (/implementation plan/.test(prompt)) return "# Plan\n1. do it";
+      return "generic";
+    },
+    runBuild: async () => {
+      throw new Error("builder crashed");
+    },
+  });
+  try {
+    const { code } = await runShip({ repo, issue: "AIO-194", opts: OPTS, deps });
+    check("exit is BUILD_FAILED", code === SHIP_EXIT.BUILD_FAILED);
+    check("build-FAILED.md written", auditFiles.includes("build-FAILED.md"));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
 console.log("failedArtifact format");
 {
   const text = failedArtifact("plan", new Error("boom"), Date.now() - 5000);
