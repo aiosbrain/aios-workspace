@@ -1,0 +1,971 @@
+/**
+ * ship.mjs — `aios ship <AIO-nnn>`: the whole gated loop for one Linear issue.
+ *
+ * Composes the merged pipeline surfaces — never re-implements them:
+ *   recon (Linear + git-tracked files) → plan (loop) → follow-up capture → build (runBuild)
+ *   → PR (cmdPr) → review (waitForBots + GPT review + cmdConsolidateFindings) → fix loop
+ *   → merge gate (CI + consolidator + path-gated safety review + operator) → cleanup.
+ *
+ * Every stage maps to a distinct, documented SHIP_EXIT code (§ SHIP_EXIT below). Gates default
+ * ON; in a non-TTY context without the matching --auto flag they exit with a *_GATE_BLOCKED
+ * code rather than hanging (cron safety). Recon reads ONLY git-tracked, deny-filtered files
+ * (extractRepoFileRefs) so untrusted Linear text can never exfiltrate secrets/paths.
+ *
+ * The orchestration (runShip/cmdShip) takes injected deps so the whole pipeline is testable
+ * without touching the network, git, gh, claude, or cursor.
+ */
+
+import { readFileSync, mkdirSync, appendFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline";
+import path from "node:path";
+import { c, callClaudeAgent, callCursorAgent, PLAN_READY_TOKEN } from "./relay-core.mjs";
+import { EXIT as BUILD_EXIT, runBuild, slugify } from "./build.mjs";
+import { cmdPr, detectRepo } from "./pr.mjs";
+import { cmdConsolidateFindings, parseCheckResults, defaultOutPath } from "./consolidate-findings.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
+import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
+
+// ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
+export const SHIP_EXIT = {
+  OK: 0, // plan→merge→cleanup completed
+  USAGE: 1, // bad args / prereqs / unresolved issue id
+  RECON_FAILED: 10, // issue fetch or recon model step failed
+  PLAN_UNAPPROVED: 20, // plan loop spent its round budget without PLAN_READY
+  PLAN_REJECTED: 21, // operator rejected the plan at the plan gate
+  PLAN_GATE_BLOCKED: 22, // plan gate active in a non-TTY context without --auto (never hang)
+  BUILD_FAILED: 30, // runBuild returned a non-recoverable code (NO_DIFF/FATAL/TIMEOUT/GATE)
+  BUILD_NONCONVERGENCE: 31, // runBuild spent its rounds (worktree preserved)
+  PR_FAILED: 40, // cmdPr push/create failed
+  REVIEW_NONCONVERGENCE: 50, // fix loop hit --max-fix-rounds still BLOCKED (no partial merge)
+  MERGE_BLOCKED: 60, // merge gate: CI red/pending/unavailable or unresolved Critical/High
+  SAFETY_BLOCKED: 61, // path-gated safety review withheld approval
+  MERGE_GATE_BLOCKED: 62, // merge gate active in a non-TTY context without --auto-merge
+  MERGE_REJECTED: 63, // operator rejected at the merge gate
+  CLEANUP_FAILED: 70, // post-merge ff-only failed / primary checkout dirty (never reset/clobber)
+};
+
+export const SAFETY_APPROVED_TOKEN = "SAFETY_APPROVED";
+
+// Diff surfaces where an approval requires an explicit safety review over the diff. A changed
+// path matches if it equals a listed file or starts with a listed directory prefix.
+export const SAFETY_PATHS = [
+  "hooks/",
+  "validation/",
+  "scripts/leak-gate.sh",
+  "scaffold/.claude/",
+  "docs/brain-api.md",
+  "scripts/brain-client.mjs",
+  "scripts/brain-config.mjs",
+  "scripts/workspace-parse.mjs",
+];
+
+const DEFAULT_REVIEWERS = ["bugbot", "gpt-5.5"];
+const DEFAULT_MAX_FIX_ROUNDS = 3;
+const ISSUE_RE = /^AIO-\d+$/;
+
+// ── pure helpers (exported for tests) ───────────────────────────────────────────────────────
+
+export function parseShipArgs(args) {
+  const flag = (name) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : null;
+  };
+  const hasFlag = (name) => args.includes(name);
+
+  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner"];
+  const positional = args.filter((a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1]));
+  const issue = positional[0] ?? null;
+
+  const reviewersRaw = flag("--reviewers");
+  const reviewers = reviewersRaw
+    ? reviewersRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : [...DEFAULT_REVIEWERS];
+
+  const maxFixRaw = parseInt(flag("--max-fix-rounds") ?? String(DEFAULT_MAX_FIX_ROUNDS), 10);
+  const maxFixRounds = Number.isFinite(maxFixRaw) && maxFixRaw > 0 ? maxFixRaw : DEFAULT_MAX_FIX_ROUNDS;
+
+  const planRunner = flag("--plan-runner") ?? "cli";
+
+  return {
+    help: hasFlag("--help") || hasFlag("-h"),
+    issue,
+    auto: hasFlag("--auto"),
+    autoMerge: hasFlag("--auto-merge"),
+    reviewers,
+    maxFixRounds,
+    planRunner,
+    dryRun: hasFlag("--dry-run"),
+  };
+}
+
+// Validate parsed args, returning an error string (→ USAGE) or null.
+export function validateShipArgs(opts) {
+  if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
+  if (!ISSUE_RE.test(opts.issue)) return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
+  if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
+    return `invalid --plan-runner '${opts.planRunner}' — expected cli or sdk.`;
+  return null;
+}
+
+// Gate decision per phase: 'skip' (auto flag set), 'prompt' (interactive TTY), or 'blocked'
+// (gate active in a non-TTY context — never hang). Pure; exported.
+export function resolveGates({ auto, autoMerge, isTty }) {
+  const decide = (autoFlag) => (autoFlag ? "skip" : isTty ? "prompt" : "blocked");
+  return { plan: decide(auto), merge: decide(autoMerge) };
+}
+
+// build.mjs EXIT → ship codes. Pure; exported.
+export function mapBuildExit(buildCode) {
+  if (buildCode === BUILD_EXIT.OK) return SHIP_EXIT.OK;
+  if (buildCode === BUILD_EXIT.NONCONVERGENCE) return SHIP_EXIT.BUILD_NONCONVERGENCE;
+  // NO_DIFF / FATAL / TIMEOUT / GATE_FAILED → non-recoverable build failure.
+  return SHIP_EXIT.BUILD_FAILED;
+}
+
+// The safety reviewer approves by placing SAFETY_APPROVED alone on the final non-blank line.
+export function detectSafetyToken(text) {
+  const lastLine =
+    (text ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .at(-1) ?? "";
+  return lastLine === SAFETY_APPROVED_TOKEN;
+}
+
+// True iff any changed path equals a listed file or starts with a listed directory prefix.
+export function touchesSafetySurface(paths, safetyPaths = SAFETY_PATHS) {
+  const list = paths ?? [];
+  return list.some((p) =>
+    safetyPaths.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s))
+  );
+}
+
+// Parse the plan's `## Deferred (out of scope)` section into a list of normalized titles.
+// Tolerates `## Deferred` without the parenthetical; strips checkbox markers; stops at the next
+// heading or EOF; drops a lone `none`/empty. Pure; exported.
+export function parseDeferredScope(planText, { maxLen = 200 } = {}) {
+  const lines = String(planText ?? "").split("\n");
+  let inSection = false;
+  const titles = [];
+  for (const line of lines) {
+    if (/^#{1,6}\s/.test(line)) {
+      if (inSection) break; // next heading ends the section
+      if (/^#{1,6}\s+deferred\b/i.test(line)) {
+        inSection = true;
+      }
+      continue;
+    }
+    if (!inSection) continue;
+    const m = line.match(/^\s*[-*]\s+(.*)$/);
+    if (!m) continue;
+    let item = m[1].replace(/^\[[ xX]\]\s*/, "").trim();
+    if (!item) continue;
+    if (/^none\.?$/i.test(item)) continue;
+    if (item.length > maxLen) item = item.slice(0, maxLen).trimEnd();
+    titles.push(item);
+  }
+  return titles;
+}
+
+// A normalized title for dedup (lowercase, collapsed whitespace, trimmed trailing punctuation).
+export function normalizeTitle(t) {
+  return String(t ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.\s]+$/, "")
+    .trim();
+}
+
+// ── readChecks — survives a non-zero `gh pr checks` exit ─────────────────────────────────────
+// `gh pr checks` exits non-zero when checks are pending (8) or failing (1). ghExec must capture
+// stdout even on non-zero exit and NEVER throw for this call. Returns a fail-closed verdict:
+//   { ok, red, pending, unavailable, raw }. Empty/unparseable stdout → unavailable (→ MERGE_BLOCKED).
+export function readChecks(pr, { ghExec, slug } = {}) {
+  const argv = ["pr", "checks", String(pr), ...(slug ? ["--repo", slug] : []), "--json", "name,state,bucket"];
+  let res;
+  try {
+    res = ghExec(argv);
+  } catch (e) {
+    // A ghExec that throws despite the contract is treated as unavailable (fail closed).
+    return { ok: false, unavailable: true, red: false, pending: false, raw: String(e?.message ?? "") };
+  }
+  const stdout = res?.stdout ?? "";
+  const parsed = parseCheckResults(stdout);
+  if (!parsed.parsed) {
+    // No usable check data (auth/network/no checks yet/malformed) → fail closed.
+    return { ok: false, unavailable: true, red: false, pending: false, raw: stdout };
+  }
+  const ok = !parsed.ciRed && !parsed.ciPending;
+  return { ok, unavailable: false, red: parsed.ciRed, pending: parsed.ciPending, raw: stdout };
+}
+
+// ── dry-run report ───────────────────────────────────────────────────────────────────────────
+export function buildShipDryRunReport({ issue, issueTitle, resolvedModels, gates, reviewers, planRunner, maxFixRounds }) {
+  const stepLine = (name) => {
+    const cfg = resolvedModels?.[name];
+    if (!cfg) return `  ${name.padEnd(14)} (no model config)`;
+    const bits = [cfg.model];
+    if (cfg.effort) bits.push(`effort=${cfg.effort}`);
+    if (cfg.timeoutMs) bits.push(`timeout=${cfg.timeoutMs / 1000}s`);
+    return `  ${name.padEnd(14)} ${bits.join(" · ")}`;
+  };
+  const lines = [
+    "",
+    c.blue(`aios ship — dry-run for ${issue}${issueTitle ? `: ${issueTitle}` : ""}`),
+    "",
+    "Stages (plan → build → PR → review → fix → merge → cleanup):",
+    "  1. recon         Linear + git-tracked files → context pack",
+    "  2. plan          plan loop → operator plan gate",
+    "  3. follow-up     file `## Deferred` items as Linear children",
+    "  4. build         runBuild on an isolated worktree",
+    "  5. PR            cmdPr push + open PR",
+    "  6. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+    "  7. fix loop      re-build until CLEAR or --max-fix-rounds",
+    "  8. merge gate    CI + consolidator + path-gated safety review + operator",
+    "  9. cleanup       ff-only main → worktree remove → branch delete",
+    "",
+    "Per-step models:",
+    stepLine("recon"),
+    stepLine("plan"),
+    stepLine("plan_review"),
+    stepLine("build"),
+    stepLine("code_review"),
+    stepLine("consolidate"),
+    stepLine("safety_review"),
+    "",
+    `Plan runner:  ${planRunner}`,
+    `Reviewers:    ${(reviewers ?? []).join(", ")} (CodeRabbit swept, never gated on)`,
+    `Max fix rounds: ${maxFixRounds}`,
+    `Gates:        plan=${gates.plan}  merge=${gates.merge}`,
+    "",
+    "SHIP_EXIT codes:",
+    ...Object.entries(SHIP_EXIT).map(([k, v]) => `  ${String(v).padStart(3)}  ${k}`),
+    "",
+  ];
+  return lines.join("\n");
+}
+
+// ── prompt builders ──────────────────────────────────────────────────────────────────────────
+
+const DEFERRED_CONTRACT = [
+  "",
+  "End your plan with this exact section (empty is allowed — use a single `- none` bullet):",
+  "",
+  "## Deferred (out of scope)",
+  "- <one deferred follow-up per bullet, or `- none`>",
+].join("\n");
+
+export function buildReconPrompt(issue, { allowedFiles }) {
+  return [
+    `You are preparing a recon context pack for Linear issue ${issue.identifier}: ${issue.title}`,
+    "",
+    "## Issue description",
+    "",
+    issue.description || "(no description)",
+    "",
+    "## Referenced repo files (git-tracked only)",
+    "",
+    allowedFiles.length ? allowedFiles.map((f) => `- ${f}`).join("\n") : "(none)",
+    "",
+    "Read the referenced files (read-only) and summarize the concrete implementation context a",
+    "planner needs: the surfaces involved, the invariants to preserve, and the acceptance criteria.",
+    "Do NOT write files. Output the context pack as markdown.",
+  ].join("\n");
+}
+
+export function buildPlanPrompt(issue, contextPack, prevReview) {
+  const parts = [
+    `You are a senior software architect. Produce a clear, numbered implementation plan for`,
+    `Linear issue ${issue.identifier}: ${issue.title}`,
+    "",
+    "## Task",
+    "",
+    issue.description || "(no description)",
+    "",
+    "## Recon context pack",
+    "",
+    contextPack || "(none)",
+    DEFERRED_CONTRACT,
+  ];
+  if (prevReview) {
+    parts.push(
+      "",
+      "## Reviewer feedback on your previous plan (address every Blocker/Major)",
+      "",
+      prevReview
+    );
+  }
+  return parts.join("\n");
+}
+
+export function buildPlanReviewPrompt(plan, round, maxRounds) {
+  const isLast = round >= maxRounds;
+  const roundNote = isLast
+    ? `**Final round (${round}/${maxRounds}). Approve unless there is a Blocker.**`
+    : `Round ${round} of ${maxRounds}.`;
+  return [
+    "/review-plan",
+    "",
+    `> ${roundNote}`,
+    "",
+    "## Plan to review",
+    "",
+    plan,
+    "",
+    "---",
+    "Review the plan. List any Blockers or approach-level Majors. Minor issues do not block.",
+    `When the plan is ready to implement, place this token alone on the very last line:`,
+    PLAN_READY_TOKEN,
+  ].join("\n");
+}
+
+export function buildGptReviewPrompt(plan, prDiff, pr) {
+  return [
+    "/ai-code-review",
+    "",
+    `You are reviewing PR #${pr} against the approved plan below. Emit findings as`,
+    "`- \\`severity\\` \\`file\\`: …` lines (Critical/High/Medium/Low).",
+    "",
+    "## Approved plan",
+    "",
+    plan,
+    "",
+    "## PR diff",
+    "",
+    prDiff || "(no diff)",
+  ].join("\n");
+}
+
+export function buildSafetyPrompt(diff, changedPaths) {
+  return [
+    "You are a safety reviewer for the AIOS workspace toolkit. The diff below touches a",
+    "safety-critical surface (tier model, sync contract, secrets/leak gate, hooks, validators,",
+    "or scaffold governance). Confirm EVERY tier/sync/secrets/hook invariant is preserved.",
+    "",
+    "## Changed safety-surface paths",
+    "",
+    changedPaths.map((p) => `- ${p}`).join("\n"),
+    "",
+    "## Diff",
+    "",
+    diff || "(no diff)",
+    "",
+    "---",
+    `If (and ONLY if) every invariant is preserved, emit ${SAFETY_APPROVED_TOKEN} alone on the`,
+    "very last line. Otherwise list what is unsafe and do NOT emit the token.",
+  ].join("\n");
+}
+
+// ── default dep impls (real side effects) ────────────────────────────────────────────────────
+
+function defaultGitLsFiles(repo) {
+  try {
+    const out = execFileSync("git", ["ls-files"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return new Set(out.split("\n").map((s) => s.trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+// gitExec: returns stdout (trimmed); throws on non-zero exit. Used for status/merge/worktree.
+function defaultGitExec(argv, cwd) {
+  return execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+// ghExec: returns { code, stdout, stderr } and NEVER throws on non-zero (mirrors readChecks'
+// contract — a red/pending `gh pr checks` is data, not a crash).
+function defaultGhExec(argv) {
+  try {
+    const stdout = execFileSync("gh", argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { code: 0, stdout, stderr: "" };
+  } catch (e) {
+    return { code: e.status ?? 1, stdout: e.stdout?.toString() ?? "", stderr: e.stderr?.toString() ?? "" };
+  }
+}
+
+function defaultWriteAudit(repo, issue, name, text) {
+  try {
+    const dir = path.join(repo, ".aios", "loop", issue);
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(path.join(dir, name), `${text}\n`);
+  } catch {
+    /* best-effort — audit never blocks a run */
+  }
+}
+
+function defaultConfirm(promptText) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(`${promptText} [y/N] `, (ans) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(ans.trim()));
+    });
+  });
+}
+
+function defaultWaitForBots(argv) {
+  const script = path.join(path.dirname(new URL(import.meta.url).pathname), "wait-for-bots.mjs");
+  try {
+    execFileSync(process.execPath, [script, ...argv], { stdio: "inherit" });
+    return 0;
+  } catch (e) {
+    return e.status ?? 2;
+  }
+}
+
+// ── cleanup (exported for the ordering test) ──────────────────────────────────────────────────
+// Correct ordering: git refuses to delete a branch checked out in a worktree, so ff-only main
+// → worktree remove → prune → THEN branch delete. A dirty primary or a failed ff-only returns
+// CLEANUP_FAILED and NEVER issues a reset/merge/clobber.
+export function runCleanup(deps, { repo, branch, worktreePath }) {
+  const { gitExec } = deps;
+  // Preflight: a dirty primary checkout means an ff-only would be unsafe — surface, never clobber.
+  let status;
+  try {
+    status = gitExec(["status", "--porcelain"], repo);
+  } catch (e) {
+    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: `could not read primary checkout status: ${e.message}` };
+  }
+  if (status && status.trim()) {
+    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: "primary checkout is dirty — refusing to ff-only (fix manually)." };
+  }
+  try {
+    gitExec(["fetch", "origin", "main"], repo);
+  } catch {
+    /* fetch failure surfaces on the ff-only below */
+  }
+  try {
+    gitExec(["merge", "--ff-only", "origin/main"], repo);
+  } catch (e) {
+    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: `main is not fast-forwardable: ${e.message}` };
+  }
+  // Remove the worktree BEFORE deleting the branch (git blocks deleting a checked-out branch).
+  try {
+    gitExec(["worktree", "remove", "--force", worktreePath], repo);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    gitExec(["worktree", "prune"], repo);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    gitExec(["branch", "-D", branch], repo);
+  } catch {
+    /* best-effort — remote branch already deleted by --delete-branch at merge */
+  }
+  return { code: SHIP_EXIT.OK, reason: "cleaned up" };
+}
+
+// ── build opts ─────────────────────────────────────────────────────────────────────────────
+function makeBuildOpts({ branch, issue, logFile, findingsFile }) {
+  return {
+    planSource: null,
+    branch,
+    isTask: false,
+    rounds: 4,
+    buildTimeout: 1800 * 1000,
+    cursorTimeout: 300 * 1000,
+    cursorTimeoutSet: false,
+    model: null,
+    skill: "/ai-code-review",
+    worktreePath: null,
+    base: "origin/main",
+    verify: null,
+    findingsFile: findingsFile ?? null,
+    logFile: logFile ?? null,
+    merge: false,
+    pr: false,
+    issue,
+    bugbot: false,
+    noBugbot: true,
+    noGate: false,
+    keepWorktree: true,
+    dryRun: false,
+    chained: true,
+  };
+}
+
+const lastNonBlankLine = (text) =>
+  (text ?? "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+
+// ── orchestration ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * runShip — the testable pipeline core. Every dep is injectable; returns { code, records }.
+ * @returns {Promise<{code:number, records:object}>}
+ */
+export async function runShip({ repo, issue: issueId, opts, deps }) {
+  const {
+    linear,
+    resolveModels,
+    runBuild: runBuildDep,
+    cmdPr: cmdPrDep,
+    cmdConsolidateFindings: consolidateDep,
+    callClaudeAgent: claude,
+    callCursorAgent: cursor,
+    waitForBots,
+    gitExec,
+    ghExec,
+    gitLsFiles,
+    statFile,
+    readFile,
+    confirm,
+    isTty,
+    writeAudit,
+    slug,
+  } = deps;
+
+  const records = { issue: issueId, stages: [] };
+  const record = (stage, detail) => records.stages.push({ stage, ...detail });
+  const models = resolveModels({ repo });
+  const gates = resolveGates({ auto: opts.auto, autoMerge: opts.autoMerge, isTty });
+
+  // ── 1. RECON ───────────────────────────────────────────────────────────────
+  let issue;
+  try {
+    issue = await linear.getIssue(issueId, { full: true });
+    if (!issue) throw new Error(`issue not found: ${issueId}`);
+  } catch (e) {
+    record("recon", { error: e.message });
+    console.error(c.red(`recon: could not fetch ${issueId}: ${e.message}`));
+    return { code: SHIP_EXIT.RECON_FAILED, records };
+  }
+  writeAudit(issueId, "task.md", `# ${issue.identifier}: ${issue.title}\n\n${issue.description || ""}`);
+
+  const trackedFiles = gitLsFiles(repo);
+  const commentText = (issue.comments ?? []).map((cm) => cm.body).join("\n");
+  const CONTRACT_CHECKLIST = ["docs/brain-api.md", "docs/ENGINEERING-CONSTITUTION.md"];
+  const issueText = `${issue.description || ""}\n${commentText}\n${CONTRACT_CHECKLIST.map((f) => `\`${f}\``).join(" ")}`;
+  const { allowed, skipped } = extractRepoFileRefs(issueText, {
+    trackedFiles,
+    statFile: (rel) => {
+      try {
+        return statFile(path.join(repo, rel)).size;
+      } catch {
+        return 0;
+      }
+    },
+  });
+  writeAudit(
+    issueId,
+    "recon-skipped.md",
+    `# Skipped file references (path + reason only; contents never read)\n\n` +
+      (skipped.length ? skipped.map((s) => `- \`${s.raw}\` — ${s.reason}`).join("\n") : "(none)")
+  );
+
+  let recon = "";
+  try {
+    // Read ONLY allowed (tracked, non-denied) files — audit the rest by path+reason only.
+    const fileBlobs = allowed.map((rel) => {
+      let body = "";
+      try {
+        body = readFile(path.join(repo, rel));
+      } catch {
+        body = "(unreadable)";
+      }
+      return `### ${rel}\n\n${body.slice(0, 8000)}`;
+    });
+    const reconPrompt = buildReconPrompt(issue, { allowedFiles: allowed }) +
+      (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "");
+    const cfg = models.recon;
+    recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
+      model: cfg.model,
+      extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+    });
+    writeAudit(issueId, "recon.md", recon);
+  } catch (e) {
+    record("recon", { error: e.message });
+    console.error(c.red(`recon: model step failed: ${e.message}`));
+    return { code: SHIP_EXIT.RECON_FAILED, records };
+  }
+  record("recon", { allowed: allowed.length, skipped: skipped.length });
+
+  // ── 2. PLAN ────────────────────────────────────────────────────────────────
+  const PLAN_ROUNDS = 3;
+  let plan = null;
+  let approved = false;
+  let prevReview = null;
+  const planCfg = models.plan;
+  const planReviewCfg = models.plan_review;
+  for (let round = 1; round <= PLAN_ROUNDS; round++) {
+    const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+    try {
+      plan = await claude(planPrompt, planCfg.timeoutMs ?? 600 * 1000, {
+        model: planCfg.model,
+        extraArgs: ["--permission-mode", "plan", ...(planCfg.effort ? ["--effort", planCfg.effort] : [])],
+      });
+    } catch (e) {
+      record("plan", { error: e.message });
+      console.error(c.red(`plan: builder failed: ${e.message}`));
+      return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+    }
+    writeAudit(issueId, `plan-r${round}.md`, plan);
+    const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS);
+    let review;
+    try {
+      review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, { extraArgs: ["--force", "--trust"] });
+    } catch (e) {
+      record("plan", { error: e.message });
+      console.error(c.red(`plan: reviewer failed: ${e.message}`));
+      return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+    }
+    writeAudit(issueId, `plan-review-r${round}.md`, review);
+    if (lastNonBlankLine(review) === PLAN_READY_TOKEN) {
+      approved = true;
+      break;
+    }
+    prevReview = review;
+  }
+  if (!approved) {
+    record("plan", { unapproved: true });
+    console.error(c.yellow(`plan: spent ${PLAN_ROUNDS} rounds without ${PLAN_READY_TOKEN}.`));
+    return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+  }
+  writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
+
+  // Plan gate.
+  if (gates.plan === "blocked") {
+    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
+    record("plan-gate", { blocked: true });
+    return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
+  }
+  if (gates.plan === "prompt") {
+    const ok = await confirm("Approve this plan and proceed to build?");
+    if (!ok) {
+      record("plan-gate", { rejected: true });
+      return { code: SHIP_EXIT.PLAN_REJECTED, records };
+    }
+  }
+
+  // ── 3. FOLLOW-UP CAPTURE ─────────────────────────────────────────────────────
+  const deferred = parseDeferredScope(plan);
+  const existingChildTitles = new Set((issue.children ?? []).map((ch) => normalizeTitle(ch.title)));
+  const created = [];
+  for (const title of deferred) {
+    if (existingChildTitles.has(normalizeTitle(title))) continue;
+    try {
+      const child = await linear.createIssue({
+        title,
+        description: `Deferred from ${issue.identifier} during \`aios ship\`.`,
+        parentIdentifier: issue.identifier,
+      });
+      created.push(child.identifier);
+      existingChildTitles.add(normalizeTitle(title));
+    } catch (e) {
+      console.error(c.yellow(`follow-up: could not file '${title}': ${e.message}`));
+    }
+  }
+  writeAudit(
+    issueId,
+    "deferred.md",
+    `# Deferred follow-ups\n\n` +
+      (deferred.length ? deferred.map((t) => `- ${t}`).join("\n") : "(none)") +
+      `\n\nCreated: ${created.join(", ") || "(none)"}`
+  );
+  record("follow-up", { deferred: deferred.length, created: created.length });
+
+  // ── 4. BUILD ─────────────────────────────────────────────────────────────────
+  const branch = `feat/${issue.identifier}-${slugify(issue.title)}`;
+  const worktreePath = path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
+  const auditDir = path.join(repo, ".aios", "loop", issueId);
+  const buildLog = path.join(auditDir, "build.md");
+  let buildCode;
+  try {
+    buildCode = await runBuildDep({ repo, plan, branch, opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }) });
+  } catch (e) {
+    record("build", { error: e.message });
+    console.error(c.red(`build: ${e.message}`));
+    return { code: SHIP_EXIT.BUILD_FAILED, records };
+  }
+  const mapped = mapBuildExit(buildCode);
+  if (mapped !== SHIP_EXIT.OK) {
+    record("build", { buildCode, mapped });
+    return { code: mapped, records };
+  }
+  record("build", { branch });
+
+  // ── 5. PR ────────────────────────────────────────────────────────────────────
+  let prNumber;
+  try {
+    prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], { throwOnError: true });
+  } catch (e) {
+    record("pr", { error: e.message });
+    console.error(c.red(`pr: ${e.message}`));
+    return { code: SHIP_EXIT.PR_FAILED, records };
+  }
+  if (!prNumber) {
+    record("pr", { error: "no PR number" });
+    return { code: SHIP_EXIT.PR_FAILED, records };
+  }
+  record("pr", { pr: prNumber });
+
+  // ── 6 + 7. REVIEW + FIX LOOP ──────────────────────────────────────────────────
+  let round = 1;
+  for (;;) {
+    // (a) Bugbot-only gate (proceed on timeout — merge gate still fail-closes).
+    const wfbCode = waitForBots(["--pr", String(prNumber), "--bots", "cursor[bot]", "--timeout", "10"]);
+    if (wfbCode === 2) console.error(c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes)."));
+
+    // (b) GPT-5.5 PR review via Cursor.
+    let gptReviewFile = null;
+    try {
+      const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+      const prDiff = diffRes?.stdout ?? "";
+      const gptCfg = models.code_review;
+      const gptReview = await cursor(buildGptReviewPrompt(plan, prDiff, prNumber), gptCfg.timeoutMs ?? 300 * 1000, {
+        extraArgs: ["--force", "--trust"],
+      });
+      writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
+      gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
+    } catch (e) {
+      console.error(c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`));
+    }
+
+    // (c) Consolidate.
+    const consolidateArgs = ["--pr", String(prNumber), "--issue", issue.identifier, "--round", String(round)];
+    if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
+    if (slug) consolidateArgs.push("--repo", slug);
+    const verdictCode = await consolidateDep(repo, consolidateArgs);
+    record("review", { round, verdictCode });
+
+    if (verdictCode === 0) break; // CLEAR → merge gate
+    if (verdictCode !== 3) {
+      // 1 (error) or unknown → cannot proceed to merge.
+      console.error(c.red(`review: consolidator returned ${verdictCode} — blocking merge.`));
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+    // BLOCKED → fix, unless we're out of rounds.
+    if (round >= opts.maxFixRounds) {
+      record("fix", { nonconvergence: true, round });
+      console.error(c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`));
+      return { code: SHIP_EXIT.REVIEW_NONCONVERGENCE, records };
+    }
+    const findingsFile = defaultOutPath(repo, issue.identifier, round);
+    let fixCode;
+    try {
+      fixCode = await runBuildDep({ repo, plan, branch, opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }) });
+    } catch (e) {
+      record("fix", { error: e.message });
+      return { code: SHIP_EXIT.BUILD_FAILED, records };
+    }
+    const fixMapped = mapBuildExit(fixCode);
+    if (fixMapped !== SHIP_EXIT.OK) {
+      record("fix", { fixCode, mapped: fixMapped });
+      return { code: fixMapped, records };
+    }
+    // Re-push the fixes onto the existing PR.
+    try {
+      await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], { throwOnError: true });
+    } catch (e) {
+      record("fix", { error: e.message });
+      return { code: SHIP_EXIT.PR_FAILED, records };
+    }
+    round++;
+  }
+
+  // ── 8. MERGE GATE ──────────────────────────────────────────────────────────────
+  // Preflight: primary checkout must be clean so the post-merge ff-only is safe. Surface early.
+  let primaryStatus = "";
+  try {
+    primaryStatus = gitExec(["status", "--porcelain"], repo);
+  } catch (e) {
+    record("merge-gate", { error: e.message });
+    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
+  }
+  if (primaryStatus && primaryStatus.trim()) {
+    record("merge-gate", { dirtyPrimary: true });
+    console.error(c.red("merge gate: primary checkout is dirty — refusing to merge into an unffable state."));
+    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
+  }
+
+  // CI green.
+  const checks = readChecks(prNumber, { ghExec, slug });
+  if (!checks.ok) {
+    record("merge-gate", { ci: checks });
+    console.error(c.red(`merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`));
+    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+  }
+
+  // Path-gated safety review.
+  let changedPaths = [];
+  try {
+    const nameRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : []), "--name-only"]);
+    changedPaths = (nameRes?.stdout ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch {
+    /* best-effort — an empty list simply means no safety surface detected */
+  }
+  if (touchesSafetySurface(changedPaths)) {
+    try {
+      const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+      const cfg = models.safety_review;
+      const safety = await claude(buildSafetyPrompt(diffRes?.stdout ?? "", changedPaths), cfg.timeoutMs ?? 300 * 1000, {
+        model: cfg.model,
+        extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+      });
+      writeAudit(issueId, "safety-review.md", safety);
+      if (!detectSafetyToken(safety)) {
+        record("merge-gate", { safetyBlocked: true });
+        console.error(c.red("merge gate: safety review withheld approval."));
+        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      }
+    } catch (e) {
+      record("merge-gate", { safetyError: e.message });
+      console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
+      return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+    }
+  }
+
+  // Operator OK.
+  if (gates.merge === "blocked") {
+    record("merge-gate", { blocked: true });
+    console.error(c.red("merge gate active in a non-TTY context without --auto-merge — not hanging."));
+    return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
+  }
+  if (gates.merge === "prompt") {
+    const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
+    if (!ok) {
+      record("merge-gate", { rejected: true });
+      return { code: SHIP_EXIT.MERGE_REJECTED, records };
+    }
+  }
+
+  // Merge (squash + delete remote branch).
+  try {
+    ghExec(["pr", "merge", String(prNumber), "--squash", "--delete-branch"]);
+  } catch (e) {
+    record("merge", { error: e.message });
+    console.error(c.red(`merge: gh pr merge failed: ${e.message}`));
+    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+  }
+  record("merge", { pr: prNumber });
+
+  // ── 9. CLEANUP ───────────────────────────────────────────────────────────────
+  const cleanup = runCleanup(deps, { repo, branch, worktreePath });
+  record("cleanup", cleanup);
+  if (cleanup.code !== SHIP_EXIT.OK) {
+    console.error(c.red(`cleanup: ${cleanup.reason}`));
+    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
+  }
+
+  writeAudit(
+    issueId,
+    "ship-transcript.md",
+    `# ship ${issue.identifier}\n\n` + records.stages.map((s) => `- ${JSON.stringify(s)}`).join("\n")
+  );
+  console.log(c.green(`\n✓ shipped ${issue.identifier} (PR #${prNumber}).`));
+  return { code: SHIP_EXIT.OK, records };
+}
+
+// ── CLI entry point ─────────────────────────────────────────────────────────────────────────
+
+function usage() {
+  console.log(
+    [
+      "",
+      c.blue("aios ship — run the whole gated loop for one Linear issue"),
+      "",
+      "usage:",
+      "  aios ship AIO-<n> [options]",
+      "",
+      "options:",
+      "  --auto                 skip the plan gate (plan proceeds without operator OK)",
+      "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
+      "  --reviewers <list>     gating reviewers (default: bugbot,gpt-5.5; CodeRabbit advisory)",
+      "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
+      "  --plan-runner cli|sdk  plan-stage runner (default: cli — uses Claude Code login auth)",
+      "  --dry-run              print the resolved step plan; no side effects, no network needed",
+      "",
+      "Gates default ON. In a non-TTY context without the matching --auto flag, ship exits with",
+      "a *_GATE_BLOCKED code rather than hanging (cron safety). See docs/agent-build.md for the",
+      "full SHIP_EXIT table.",
+    ].join("\n")
+  );
+}
+
+/**
+ * cmdShip(repo, args, deps={}) → numeric exit code (SHIP_EXIT). Dispatch owns process.exit.
+ */
+export async function cmdShip(repo, args, deps = {}) {
+  const opts = parseShipArgs(args);
+  if (opts.help) {
+    usage();
+    return SHIP_EXIT.OK;
+  }
+  const err = validateShipArgs(opts);
+  if (err) {
+    console.error(c.red(`error: ${err}`));
+    return SHIP_EXIT.USAGE;
+  }
+
+  let models;
+  try {
+    models = resolveLoopModels({ repo });
+  } catch (e) {
+    console.error(c.red(`error: ${e.message}`));
+    return SHIP_EXIT.USAGE;
+  }
+  const isTty = deps.isTty ?? Boolean(process.stdout.isTTY);
+  const gates = resolveGates({ auto: opts.auto, autoMerge: opts.autoMerge, isTty });
+
+  // --dry-run: no side effects, no required network. A resolvable key makes fetching the issue
+  // title a best-effort nicety.
+  if (opts.dryRun) {
+    let issueTitle = null;
+    const apiKey = resolveLinearApiKey(repo);
+    if (apiKey) {
+      try {
+        const linear = createLinearClient({ apiKey });
+        const iss = await linear.getIssue(opts.issue);
+        issueTitle = iss?.title ?? null;
+      } catch {
+        /* best-effort — dry-run works offline */
+      }
+    }
+    console.log(
+      buildShipDryRunReport({
+        issue: opts.issue,
+        issueTitle,
+        resolvedModels: models,
+        gates,
+        reviewers: opts.reviewers,
+        planRunner: opts.planRunner,
+        maxFixRounds: opts.maxFixRounds,
+      })
+    );
+    return SHIP_EXIT.OK;
+  }
+
+  // Real run: build the default dep set (each overridable via deps).
+  const apiKey = resolveLinearApiKey(repo);
+  if (!apiKey && !deps.linear) {
+    console.error(c.red("error: LINEAR_API_KEY is not set — required for `aios ship` (use --dry-run to preview offline)."));
+    return SHIP_EXIT.USAGE;
+  }
+  const slug = deps.slug ?? detectRepo(repo);
+  const fullDeps = {
+    linear: deps.linear ?? createLinearClient({ apiKey }),
+    resolveModels: deps.resolveModels ?? resolveLoopModels,
+    runBuild: deps.runBuild ?? runBuild,
+    cmdPr: deps.cmdPr ?? cmdPr,
+    cmdConsolidateFindings: deps.cmdConsolidateFindings ?? cmdConsolidateFindings,
+    callClaudeAgent: deps.callClaudeAgent ?? callClaudeAgent,
+    callCursorAgent: deps.callCursorAgent ?? callCursorAgent,
+    waitForBots: deps.waitForBots ?? defaultWaitForBots,
+    gitExec: deps.gitExec ?? defaultGitExec,
+    ghExec: deps.ghExec ?? defaultGhExec,
+    gitLsFiles: deps.gitLsFiles ?? defaultGitLsFiles,
+    statFile: deps.statFile ?? ((p) => statSync(p)),
+    readFile: deps.readFile ?? ((p) => readFileSync(p, "utf8")),
+    confirm: deps.confirm ?? defaultConfirm,
+    isTty,
+    writeAudit: deps.writeAudit ?? ((issue, name, text) => defaultWriteAudit(repo, issue, name, text)),
+    slug,
+  };
+
+  const { code } = await runShip({ repo, issue: opts.issue, opts, deps: fullDeps });
+  return code;
+}
