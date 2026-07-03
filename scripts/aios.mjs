@@ -63,6 +63,7 @@ import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
 import { cmdSpec } from "./spec-eval.mjs";
+import { runCouncil } from "./council.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
 import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
@@ -4263,6 +4264,9 @@ usage:
   aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW
     [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress
     [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md
+  aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)
+    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet
+                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -4379,6 +4383,7 @@ const OFFLINE_CMDS = new Set([
   "decisions",
   "mode",
   "rails",
+  "council",
 ]);
 
 let repo, cfg;
@@ -4425,6 +4430,7 @@ try {
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
+  else if (cmd === "council") await runCouncil(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);

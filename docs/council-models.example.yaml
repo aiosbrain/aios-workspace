@@ -1,0 +1,21 @@
+# council-models.example.yaml — model panel for `aios council` (AIO-225, P0 prototype).
+#
+# Copy to .aios/council-models.yaml (gitignored) and edit council_models to taste.
+# Flat keys only (parsed by scripts/flat-yaml.mjs): no nesting, no dots.
+#
+# DIVERSITY GUARD (fail closed, mirrors loop-models.example.yaml): council_models must
+# resolve to at least 2 distinct model families or the run aborts before any API call.
+# Families recognized: claude*/fable* = anthropic, gpt* = openai, gemini* = google,
+# grok* = xai, deepseek* = deepseek, glm* = zhipu — see scripts/council-models.mjs.
+#
+# Auth: OPENROUTER_API_KEY (already cascades as a low-privilege global per the Tessera
+# root .envrc — see ~/Projects/CLAUDE.md).
+
+council_models:
+  - openai/gpt-5.5
+  - google/gemini-3.5-flash
+  - x-ai/grok-4.3
+
+# Optional: a dedicated non-Claude chairman for full lab-neutrality. Defaults to "invoking
+# session" (the Claude Code session itself synthesizes stage1 output — zero extra API call).
+# chairman_model: openai/gpt-5.5
