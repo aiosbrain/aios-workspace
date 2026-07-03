@@ -15,6 +15,8 @@ import {
   readDecisions,
   distill,
   projectForDistill,
+  scrubPaths,
+  hasResidualPath,
 } from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -136,6 +138,73 @@ test("projectForDistill strips every path-bearing field", () => {
     const [p] = projectForDistill(readAll(dir));
     assert.ok(!("cwd" in p) && !("transcriptPath" in p) && !("context" in p));
     assert.equal(p.contextTag, "aios");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("scrubPaths redacts absolute / home / Windows paths, leaves ordinary prose", () => {
+  assert.equal(scrubPaths(null), null);
+  assert.equal(
+    scrubPaths("edit /Users/alice/Projects/acme/spec.md now"),
+    "edit [redacted-path] now"
+  );
+  assert.equal(scrubPaths("see ~/Projects/client-x/notes.md"), "see [redacted-path]");
+  assert.equal(scrubPaths("open C:\\Users\\bob\\secret.txt"), "open [redacted-path]");
+  assert.equal(scrubPaths("no paths here, just words"), "no paths here, just words");
+  assert.ok(hasResidualPath("a /Users/x/y path"));
+  assert.ok(!hasResidualPath("scrubbed [redacted-path] fine"));
+});
+
+test("projectForDistill scrubs paths embedded in the decision PROSE before egress", () => {
+  const dir = ws();
+  try {
+    appendDecision(dir, {
+      kind: "ask-user-question",
+      question: "Should I refactor /Users/alice/Projects/acme-nda/billing.ts?",
+      header: "path ~/Projects/acme-nda/x",
+      options: [{ label: "yes, rewrite /Users/alice/secret.ts", description: null }],
+      choice: ["keep /Users/alice/Projects/acme-nda/billing.ts"],
+      notes: "note: also check ~/Projects/acme-nda/tests",
+      contextTag: "aios",
+      source: "backfill",
+      context: { sessionId: "sp" },
+    });
+    const [p] = projectForDistill(readAll(dir));
+    const blob = JSON.stringify(p);
+    assert.ok(!/\/Users\/alice/.test(blob), "no absolute path survives projection");
+    assert.ok(!/~\/Projects/.test(blob), "no home path survives projection");
+    assert.ok(!/acme-nda/.test(blob), "the client dir name (only ever in a path) is gone");
+    assert.ok(blob.includes("[redacted-path]"), "paths replaced with the placeholder");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("distill fails closed if the rendered draft still carries a filesystem path", async () => {
+  const dir = ws();
+  try {
+    const ids = seed(dir, 4);
+    // A misbehaving model that echoes an absolute path into a principle statement: the rendered
+    // draft must be refused rather than written.
+    await assert.rejects(
+      () =>
+        distill({
+          records: readAll(dir),
+          minSupport: 3,
+          complete: async () => ({
+            principles: [
+              {
+                title: "Leak",
+                principle: "Always edit /Users/alice/Projects/acme/x.ts first.",
+                contexts: ["aios"],
+                evidence: ids.slice(0, 3),
+              },
+            ],
+          }),
+        }),
+      /residual filesystem path/
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

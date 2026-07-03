@@ -184,6 +184,40 @@ test("backfill --all: NDA repo is skipped and leaves NO name / absolute path / t
   }
 });
 
+test("backfill --all --include clients: forbidden root is REFUSED loudly and ingests nothing from it", () => {
+  const { HOME, WORK, clientName } = build();
+  try {
+    const res = run(WORK, ["backfill", "--all", "--home", HOME, "--include", "clients", "--json"]);
+    assert.notEqual(res.code, 0, "--include of a protected root fails loud, never silently honored");
+    assert.match(res.err ?? "", /cannot re-enable protected root/);
+    // Nothing was written — a rejected invocation must not partially ingest.
+    if (existsSync(path.join(WORK, STORE_REL))) {
+      const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
+      assert.ok(!store.includes(clientName), "no client content leaked despite --include");
+    }
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+    rmSync(WORK, { recursive: true, force: true });
+  }
+});
+
+test("backfill --all --include unknown/personal: protected roots are refused", () => {
+  const { HOME, WORK } = build();
+  try {
+    for (const bad of ["unknown", "personal", "client"]) {
+      const res = run(WORK, ["backfill", "--all", "--home", HOME, "--include", bad, "--json"]);
+      assert.notEqual(res.code, 0, `--include ${bad} must be refused`);
+      assert.match(res.err ?? "", /cannot re-enable protected root/);
+    }
+    // A genuinely-safe extra root is still honored (no false positive).
+    const ok = run(WORK, ["backfill", "--all", "--home", HOME, "--include", "games", "--dry-run", "--json"]);
+    assert.equal(ok.code, 0, "a safe --include tag still works");
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+    rmSync(WORK, { recursive: true, force: true });
+  }
+});
+
 test("backfill --all: a foreign safe-repo record redacts cwd/transcriptPath/project but keeps contextTag + sessionId", () => {
   const { HOME, WORK } = build();
   try {

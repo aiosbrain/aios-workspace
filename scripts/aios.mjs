@@ -3765,6 +3765,11 @@ async function cmdDecisions(repo, cfg, args) {
       sinceMs = Date.parse(sinceArg);
       if (!Number.isFinite(sinceMs)) die(`--since is not a valid date: ${sinceArg}`);
     }
+    // HARD denylist — these roots hold client / engagement / personal content and can NEVER be
+    // ingested, not even via --include. `client`/`clients` are the NDA anchor + the clients/ bucket
+    // (contextTagFor lowercases the first segment); `personal` is the personal-life anchor rename;
+    // `unknown` is any root outside $HOME/Projects (an unclassifiable cwd we refuse to launder).
+    const FORBIDDEN_ROOTS = new Set(["client", "clients", "personal", "unknown"]);
     const includeArg = argVal("--include");
     const include = includeArg
       ? includeArg
@@ -3772,6 +3777,14 @@ async function cmdDecisions(repo, cfg, args) {
           .map((s) => s.trim().toLowerCase())
           .filter(Boolean)
       : [];
+    // Fail loud: --include may only ADD safe roots. Trying to opt a forbidden root back in is a
+    // mistake we surface, never silently honor.
+    const forbiddenIncluded = include.filter((t) => FORBIDDEN_ROOTS.has(t));
+    if (forbiddenIncluded.length)
+      die(
+        `--include cannot re-enable protected root(s): ${forbiddenIncluded.join(", ")} ` +
+          `(client/engagement/personal content is never ingested)`
+      );
     const SAFE_ALLOWLIST = new Set([
       "aios",
       "hermes",
@@ -3780,7 +3793,7 @@ async function cmdDecisions(repo, cfg, args) {
       "labs",
       "games",
       "workspace",
-      ...include,
+      ...include.filter((t) => !FORBIDDEN_ROOTS.has(t)),
     ]);
 
     const safeReal = (p) => {
@@ -3873,7 +3886,7 @@ async function cmdDecisions(repo, cfg, args) {
           continue;
         }
         const tag = contextTagFor(cwdReal, homeReal);
-        if (!SAFE_ALLOWLIST.has(tag)) {
+        if (FORBIDDEN_ROOTS.has(tag) || !SAFE_ALLOWLIST.has(tag)) {
           // clients / unknown / the NDA anchor / any unrecognized root — never ingested, and the
           // report NEVER names them (only this aggregate count leaves this branch).
           skippedSensitive += 1;

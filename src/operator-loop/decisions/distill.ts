@@ -1,13 +1,19 @@
 // Decision distillation (AIO-192 / EE4) — derives reusable steering "mental models" from the
 // decision corpus for HUMAN REVIEW (never auto-promoted). Pure + injectable: it takes a
 // `CompletionFn` seam (llm.ts owns the only SDK import), so it is fully unit-testable offline with
-// a fake `complete`. Two safety properties shape the code:
+// a fake `complete`. Three safety properties shape the code:
 //   • Path-free projection: only { id, kind, question, options, choice, notes, contextTag,
 //     createdAt } reaches `complete` — cwd/transcriptPath/project are stripped BEFORE any egress,
 //     upholding the boundary's "projected content only" rule even for current-repo records.
+//   • Scrubbed text: every FREE-TEXT field that DOES cross the boundary (question / header /
+//     options / choice / notes) is run through `scrubPaths` first — an absolute filesystem path or
+//     a `~/…` home path embedded in a decision's prose (which carries usernames / client dir names)
+//     is replaced with a placeholder BEFORE egress, and the rendered draft is re-scanned so a
+//     model echo can never smuggle one into the committed doc.
 //   • Fail closed, no partial doc: the structured result is validated in the spec-eval mold and
 //     every principle must cite >= minSupport record ids that EXIST in the corpus; ANY parse /
-//     validation failure THROWS (the CLI writes the draft once, only after distill returns).
+//     validation failure (or a surviving path in the rendered draft) THROWS (the CLI writes the
+//     draft once, only after distill returns).
 
 import type { Decision } from "./store.js";
 import type { CompletionFn } from "../llm.js";
@@ -52,16 +58,51 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Strip every path-bearing field; keep only what a mental-model draft needs. */
+// Absolute-filesystem-path patterns. A decision's PROSE (not just its stripped context fields) can
+// quote a real path — `/Users/<name>/…`, `~/Projects/<client>/…`, a Windows `C:\Users\…` — which
+// leaks a username or a client/engagement dir name. We redact these deterministically BEFORE the
+// text crosses the LLM boundary and re-scan the rendered draft to catch any echo. Over-redaction
+// (e.g. a stray `/api/v1` route) is acceptable in an admin→review DRAFT; under-redaction is not.
+const PATH_PATTERNS: readonly RegExp[] = [
+  /~\/[^\s"'`)\]}]+/g, // ~/foo/bar home-relative
+  /\b[A-Za-z]:\\[^\s"'`)\]}]+/g, // C:\Users\... Windows
+  /\/(?:[A-Za-z0-9._@+-]+\/){1,}[A-Za-z0-9._@+-]+/g, // /Users/x/... any 2+-segment POSIX path
+];
+export const PATH_PLACEHOLDER = "[redacted-path]";
+
+/** Replace any absolute filesystem / home path in `text` with a placeholder. Null-safe. */
+export function scrubPaths(text: string | null): string | null {
+  if (text == null) return null;
+  let out = text;
+  for (const re of PATH_PATTERNS) out = out.replace(re, PATH_PLACEHOLDER);
+  return out;
+}
+
+function scrubPathsRequired(text: string): string {
+  return scrubPaths(text) as string;
+}
+
+/** True if `text` still contains a path pattern (used to fail-close the rendered draft). */
+export function hasResidualPath(text: string): boolean {
+  return PATH_PATTERNS.some((re) => {
+    re.lastIndex = 0;
+    return re.test(text);
+  });
+}
+
+/**
+ * Strip every path-bearing field, then SCRUB the free-text fields that remain — so no absolute
+ * path in a decision's prose reaches `complete`. Keeps only what a mental-model draft needs.
+ */
 export function projectForDistill(records: readonly Decision[]): ProjectedDecision[] {
   return records.map((d) => ({
     id: d.id,
     kind: d.kind,
-    question: d.question,
-    header: d.header,
-    options: d.options.map((o) => o.label),
-    choice: d.choice,
-    notes: d.notes,
+    question: scrubPathsRequired(d.question),
+    header: scrubPaths(d.header),
+    options: d.options.map((o) => scrubPathsRequired(o.label)),
+    choice: d.choice ? d.choice.map(scrubPathsRequired) : null,
+    notes: scrubPaths(d.notes),
     contextTag: d.contextTag,
     createdAt: d.createdAt,
   }));
@@ -202,9 +243,12 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
   }
   if (!principles.length) throw new Error("distill: no principles survived validation");
 
-  return {
-    markdown: renderDraft(principles, { used: records.length }),
-    principles,
-    used: records.length,
-  };
+  const markdown = renderDraft(principles, { used: records.length });
+  // Defense in depth: even though egress was scrubbed, a model could echo a path it inferred. Refuse
+  // to hand back a draft that still carries an absolute path — the CLI writes only what we return.
+  if (hasResidualPath(markdown)) {
+    throw new Error("distill: rendered draft contains a residual filesystem path — refusing to emit.");
+  }
+
+  return { markdown, principles, used: records.length };
 }
