@@ -261,6 +261,7 @@ and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios
 | `member '<x>' is not in … members` | Your identity isn't on the workspace roster. The CLI resolves member from `$AIOS_MEMBER` → `aios.yaml` `member:` → `git config aios.member` → `git user.name`, then checks it against the workspace member list. Fix your identity or add yourself via `--owner`/the member list. |
 | `cannot resolve member identity` | None of the sources above is set. Set one: `export AIOS_MEMBER=abe` or `git config aios.member abe`. |
 | Key not yet issued | You haven't been provisioned. Ask John to run `create-member` then `issue-key` (§3). |
+| `unknown sync tier '{{...}}'` (or any `{{...}}` in an error) | `aios.yaml` was copied straight from `scaffold/aios.yaml.tmpl` instead of being generated — its `{{PLACEHOLDER}}` markers were never substituted. Re-run `scripts/scaffold-project.sh` (§4), or hand-fill a fresh `aios.yaml` from the worked example at `scaffold/aios.yaml.example`. |
 
 ---
 
