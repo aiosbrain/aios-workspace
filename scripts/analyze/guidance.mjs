@@ -66,3 +66,21 @@ export const AXIS_GUIDE = {
     ],
   },
 };
+
+/**
+ * One practical Cognitive Ergonomics nudge, keyed off the attention reading
+ * (AIO-190 Phase A — SHADOW, not a maturity verdict). Prefix-matched against
+ * attentionReading()'s full sentences (aem.mjs) so it works on live output and
+ * on shorthand inputs. Returns "" for the no-activity / unknown reading, so the
+ * caller simply omits the line.
+ */
+export function ergonomicsTip(reading) {
+  const r = String(reading || "");
+  if (r.startsWith("orchestration-heavy"))
+    return "You're running hot on parallelism — batch your agent check-ins and ring-fence one or two long focus blocks so orchestration doesn't shred the day.";
+  if (r.startsWith("deep-work"))
+    return "Focus is holding — protect the blocks that are working and let low-risk agent work run without pulling your attention back each step.";
+  if (r.startsWith("mixed"))
+    return "Some focus, some churn — notice what yanks you out of a block and try to close that loop before starting the next task.";
+  return "";
+}
