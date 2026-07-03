@@ -210,6 +210,25 @@ test("CLI distill --out into a tracked path prints the outside-admin-store notic
   }
 });
 
+test("CLI distill emits the third-party egress warning to stderr EVEN with --json", () => {
+  const dir = ws();
+  try {
+    seed(dir, 4);
+    // Real SDK path (no stub), but forced to fail fast against an unreachable base URL. The egress
+    // warning is printed to stderr BEFORE the call, and must not be suppressed by --json (it can't
+    // corrupt the JSON stdout, which lives on a different stream).
+    const res = runCli(dir, ["distill", "--remote", "--json"], {
+      ANTHROPIC_API_KEY: "sk-test",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:1",
+    });
+    assert.match(res.err, /third-party egress/, "egress warning present on stderr under --json");
+    assert.notEqual(res.code, 0, "the forced-fail SDK call still aborts with no draft");
+    assert.equal(existsSync(path.join(dir, DRAFT_REL)), false, "no draft on a failed egress");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // helper: read the folded corpus back
 function readAll(dir) {
   return readDecisions(dir).decisions;

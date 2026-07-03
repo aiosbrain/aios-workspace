@@ -83,6 +83,29 @@ test("extractDecisions: AskUserQuestion paired with a structured answer", () => 
   assert.equal(d.source, "backfill");
   assert.equal(d.context.sessionId, "s1");
   assert.equal(d.createdAt, "2026-06-01T10:00:00Z");
+  assert.equal(d.originCwd, "/repo", "carries its own record cwd for CLI origin classification");
+});
+
+test("extractDecisions: each decision carries its OWN record cwd (multi-cwd transcript)", () => {
+  const records = [
+    asstRec("s1", "2026-06-01T10:00:00Z", "/repo-a", [
+      askUse("tu1", [{ question: "A?", header: "A", options: [{ label: "x" }] }]),
+    ]),
+    resultRec("s1", "2026-06-01T10:00:05Z", "/repo-a", "tu1", {
+      answers: [{ question: "A?", answer: "x" }],
+    }),
+    // Same session file, a different cwd (resumed session / cd mid-session).
+    asstRec("s1", "2026-06-01T11:00:00Z", "/repo-b", [
+      askUse("tu2", [{ question: "B?", header: "B", options: [{ label: "y" }] }]),
+    ]),
+    resultRec("s1", "2026-06-01T11:00:05Z", "/repo-b", "tu2", {
+      answers: [{ question: "B?", answer: "y" }],
+    }),
+  ];
+  const { decisions } = extractDecisions(records);
+  assert.equal(decisions.length, 2);
+  assert.equal(decisions.find((d) => d.question === "A?").originCwd, "/repo-a");
+  assert.equal(decisions.find((d) => d.question === "B?").originCwd, "/repo-b");
 });
 
 test("extractDecisions: ExitPlanMode approved → plan-approval with the plan title", () => {

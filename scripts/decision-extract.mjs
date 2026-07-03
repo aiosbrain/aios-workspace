@@ -9,8 +9,11 @@
  * moment and a backfilled one fold to equivalent records (a parity test proves it).
  *
  * Pure + dependency-free (node:path only): it does NO path I/O and fills only
- * `context.sessionId` + `source:"backfill"` + `createdAt` (from the transcript timestamp). The CLI
- * fills / redacts cwd / transcriptPath / project / contextTag per the origin policy.
+ * `context.sessionId` + `source:"backfill"` + `createdAt` (from the transcript timestamp). It also
+ * carries each decision's ORIGINATING record cwd as a transient `originCwd` (never persisted — the
+ * store's DecisionInput has no such field) so the CLI can classify EACH decision by its own origin
+ * rather than the file's first record. The CLI fills / redacts cwd / transcriptPath / project /
+ * contextTag per the origin policy.
  */
 
 import path from "node:path";
@@ -149,6 +152,9 @@ function mkInput(ctx, fields) {
     notes: null,
     context: { sessionId: ctx.sessionId ?? null },
     source: "backfill",
+    // Transient: the per-record cwd the decision came from. The CLI reads it to classify origin,
+    // then builds/redacts the persisted context — buildDecisionRecord drops this unknown field.
+    originCwd: typeof ctx.cwd === "string" ? ctx.cwd : null,
     ...(ctx.createdAt ? { createdAt: ctx.createdAt } : {}),
     ...fields,
   };
@@ -294,10 +300,15 @@ const TARGET_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
  * e.g. the session ended mid-question) still yields records with `choice:null` and is counted in
  * `stats.unpaired`.
  *
+ * A single transcript file can span more than one cwd (a resumed session, or a `cd` mid-session),
+ * so every decision carries its own `originCwd` (the cwd of the assistant record that produced it).
+ * The CLI classifies per decision — never by the file's first cwd — so a safe leading record cannot
+ * launder a later client-cwd decision into the store.
+ *
  * @param {object[]} records  one session's JSONL records, in order
- * @returns {{ decisions: object[], stats: { unpaired: number } }}  DecisionInput[] + stats. The
- *   explicit stats side-channel is intentional (a Round-1 review fix) — the CLI report reads
- *   stats.unpaired directly; do NOT collapse it to a bare array.
+ * @returns {{ decisions: object[], stats: { unpaired: number } }}  DecisionInput[] (each with a
+ *   transient `originCwd`) + stats. The explicit stats side-channel is intentional (a Round-1 review
+ *   fix) — the CLI report reads stats.unpaired directly; do NOT collapse it to a bare array.
  */
 export function extractDecisions(records) {
   const list = Array.isArray(records) ? records : [];
@@ -327,6 +338,7 @@ export function extractDecisions(records) {
     const ctx = {
       sessionId: typeof r.sessionId === "string" ? r.sessionId : null,
       createdAt: typeof r.timestamp === "string" ? r.timestamp : undefined,
+      cwd: typeof r.cwd === "string" ? r.cwd : null,
     };
     for (const b of content) {
       if (!b || b.type !== "tool_use" || !TARGET_TOOLS.has(b.name)) continue;

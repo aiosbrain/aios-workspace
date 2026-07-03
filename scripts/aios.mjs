@@ -3827,55 +3827,59 @@ async function cmdDecisions(repo, cfg, args) {
       const sessionDecisions = decisions.filter(sinceOk);
       if (!sessionDecisions.length) continue;
 
-      const cwdRaw = firstCwd(records);
-      let cwdReal = null;
-      let cwdExists = false;
-      if (cwdRaw) {
-        try {
-          cwdReal = realpathSync(cwdRaw);
-          cwdExists = true;
-        } catch {
-          cwdReal = path.resolve(cwdRaw);
-          cwdExists = false;
+      // Classify EACH decision by its OWN originating record cwd — never the file's first cwd. A
+      // transcript can span multiple cwds (resumed session / `cd` mid-session), so a safe leading
+      // record must not launder a later client-cwd decision into the store. firstCwd is only a
+      // fallback for a decision whose record carried no cwd at all.
+      const fallbackCwd = firstCwd(records);
+      let acceptedFromFile = false;
+      for (const d of sessionDecisions) {
+        const cwdRaw =
+          typeof d.originCwd === "string" && d.originCwd.trim() ? d.originCwd : fallbackCwd;
+        let cwdReal = null;
+        let cwdExists = false;
+        if (cwdRaw) {
+          try {
+            cwdReal = realpathSync(cwdRaw);
+            cwdExists = true;
+          } catch {
+            cwdReal = path.resolve(cwdRaw);
+            cwdExists = false;
+          }
         }
-      }
-      const isCurrent =
-        cwdReal && (cwdReal === repoReal || cwdReal.startsWith(repoReal + path.sep));
+        const isCurrent =
+          cwdReal && (cwdReal === repoReal || cwdReal.startsWith(repoReal + path.sep));
 
-      if (isCurrent) {
-        const project = path.basename(cwdReal);
-        for (const d of sessionDecisions) {
+        if (isCurrent) {
           accepted.push({
             ...d,
             context: {
               sessionId: d.context?.sessionId ?? null,
-              project,
+              project: path.basename(cwdReal),
               transcriptPath: file,
               cwd: cwdRaw,
             },
             contextTag: currentTag,
           });
+          byContext.set(currentTag, (byContext.get(currentTag) ?? 0) + 1);
+          acceptedFromFile = true;
+          continue;
         }
-        byContext.set(currentTag, (byContext.get(currentTag) ?? 0) + sessionDecisions.length);
-        unpaired += stats.unpaired;
-        continue;
-      }
 
-      // Foreign origin — only under --all, and only for allowlisted roots.
-      if (!all) continue; // default mode ignores other repos entirely (not "sensitive")
-      if (!cwdExists) {
-        skippedNonexistentCwd += sessionDecisions.length;
-        continue;
-      }
-      const tag = contextTagFor(cwdReal, homeReal);
-      if (!SAFE_ALLOWLIST.has(tag)) {
-        // clients / unknown / the NDA anchor / any unrecognized root — never ingested, and the
-        // report NEVER names them (only this aggregate count leaves this branch).
-        skippedSensitive += sessionDecisions.length;
-        continue;
-      }
-      // Allowlisted foreign: REDACT the origin — no absolute paths, no basenames enter the store.
-      for (const d of sessionDecisions) {
+        // Foreign origin — only under --all, and only for allowlisted roots.
+        if (!all) continue; // default mode ignores other repos entirely (not "sensitive")
+        if (!cwdExists) {
+          skippedNonexistentCwd += 1;
+          continue;
+        }
+        const tag = contextTagFor(cwdReal, homeReal);
+        if (!SAFE_ALLOWLIST.has(tag)) {
+          // clients / unknown / the NDA anchor / any unrecognized root — never ingested, and the
+          // report NEVER names them (only this aggregate count leaves this branch).
+          skippedSensitive += 1;
+          continue;
+        }
+        // Allowlisted foreign: REDACT the origin — no absolute paths, no basenames enter the store.
         accepted.push({
           ...d,
           context: {
@@ -3886,9 +3890,10 @@ async function cmdDecisions(repo, cfg, args) {
           },
           contextTag: tag,
         });
+        byContext.set(tag, (byContext.get(tag) ?? 0) + 1);
+        acceptedFromFile = true;
       }
-      byContext.set(tag, (byContext.get(tag) ?? 0) + sessionDecisions.length);
-      unpaired += stats.unpaired;
+      if (acceptedFromFile) unpaired += stats.unpaired;
     }
 
     // Dedupe preview (report) via the store's exact key; the real write recomputes under the lock.
@@ -3997,12 +4002,12 @@ async function cmdDecisions(repo, cfg, args) {
         effort: step.effort,
         timeoutMs: step.timeoutMs,
       });
-      if (!asJson) {
-        console.error(c.yellow("⚠ aios decisions distill — third-party egress"));
-        console.error(
-          c.dim("  admin-tier steering decisions are sent to Anthropic for summarization.")
-        );
-      }
+      // Egress warning goes to STDERR regardless of --json — a machine reading JSON on stdout must
+      // still see (on stderr) that admin-tier content left the machine. Never suppressed.
+      console.error(c.yellow("⚠ aios decisions distill — third-party egress"));
+      console.error(
+        c.dim("  admin-tier steering decisions are sent to Anthropic for summarization.")
+      );
     }
 
     // Notice when the draft would land OUTSIDE the gitignored admin store (a tracked file).

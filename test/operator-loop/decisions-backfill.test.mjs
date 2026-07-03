@@ -219,6 +219,61 @@ test("backfill default (no --all): foreign repos are NOT ingested", () => {
   }
 });
 
+// A single transcript can span more than one cwd (resumed session / `cd` mid-session). Each
+// decision MUST be classified by its own record's cwd — a safe leading record must not launder a
+// later client-cwd decision into the store (the Round-3 High finding).
+function mixed(order) {
+  const HOME = mkdtempSync(path.join(tmpdir(), "bf-mix-home-"));
+  const WORK = mkdtempSync(path.join(tmpdir(), "bf-mix-work-"));
+  const P = (...seg) => path.join(HOME, "Projects", ...seg);
+  const labs = P("labs", "widget");
+  const client = P("clients", "acme-secret-engagement");
+  for (const d of [labs, client]) mkdirSync(d, { recursive: true });
+  const first = order === "safe-first" ? labs : client;
+  const second = order === "safe-first" ? client : labs;
+  const projDir = path.join(HOME, ".claude", "projects", "mixed");
+  mkdirSync(projDir, { recursive: true });
+  // Neutral question text on BOTH — the sensitivity under test is the record CWD (the client PATH),
+  // not the prompt. The client decision must be excluded by its cwd whichever slot it sits in.
+  const records = [
+    ...ask("m1", "2026-06-05T10:00:00Z", first, "mx1", "First question?", "One"),
+    ...ask("m1", "2026-06-05T10:01:00Z", second, "mx2", "Second question?", "Two"),
+  ];
+  writeFileSync(
+    path.join(projDir, "m.jsonl"),
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n"
+  );
+  return { HOME, WORK, clientName: "acme-secret-engagement", clientPath: client };
+}
+
+for (const order of ["safe-first", "client-first"]) {
+  test(`backfill --all: mixed-cwd transcript (${order}) classifies each decision by its OWN record cwd`, () => {
+    const { HOME, WORK, clientName, clientPath } = mixed(order);
+    try {
+      const r = JSON.parse(run(WORK, ["backfill", "--all", "--home", HOME, "--json"]).out);
+      // Exactly the labs decision is ingested; the client decision is skipped regardless of order.
+      assert.equal(r.appended, 1, "only the allowlisted labs decision lands");
+      assert.equal(r.skippedSensitive, 1, "the client-cwd decision in the same file is skipped");
+      assert.deepEqual(r.byContext, { labs: 1 });
+
+      const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
+      const recs = store
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l).decision);
+      assert.equal(recs.length, 1);
+      assert.equal(recs[0].contextTag, "labs");
+      // The redacted labs record keeps its question; the client one never reaches the store.
+      assert.ok(!/acme/i.test(store), "no client codename leaks from the mixed file");
+      assert.ok(!store.includes(clientName));
+      assert.ok(!store.includes(clientPath));
+    } finally {
+      rmSync(HOME, { recursive: true, force: true });
+      rmSync(WORK, { recursive: true, force: true });
+    }
+  });
+}
+
 test("backfill --since filters by the transcript timestamp", () => {
   const { HOME, WORK } = build();
   try {
