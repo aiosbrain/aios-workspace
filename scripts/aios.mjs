@@ -786,7 +786,9 @@ async function cmdOnboard(repo, _args) {
   if (await yes("Set up your profile now — name, role, working style? [y/N] ")) {
     console.log(c.green("  Say this once your GUI/CLI session starts:"));
     console.log(c.dim('    "set me up"'));
-    console.log(c.dim("    (interviews you, or drafts from a link — always confirms before writing)"));
+    console.log(
+      c.dim("    (interviews you, or drafts from a link — always confirms before writing)")
+    );
   } else {
     console.log(c.dim('  skipped — say "set me up" anytime in the GUI/CLI'));
   }
