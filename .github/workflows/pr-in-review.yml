@@ -98,11 +98,21 @@ jobs:
           }
 
           async function findIssue(ident) {
-            const d = await gql(
-              `query($ident:String!){ issues(first:1, filter:{ identifier:{ eq:$ident } }){ nodes{ id identifier state{ id name } } } }`,
-              { ident }
-            );
-            return d.issues.nodes[0] || null;
+            // `identifier` is not a filterable field on Linear's `IssueFilter` type (confirmed:
+            // this used to silently no-op every run — GraphQL rejected the filter with
+            // `Field "identifier" is not defined by type "IssueFilter"`, and the caller only
+            // logged it as an advisory warning, so it never blocked the PR check either). The
+            // singular `issue(id:)` query accepts a human-readable identifier (e.g. "AIO-130")
+            // directly, verified live against the API — no team-scoped list-and-filter needed.
+            try {
+              const d = await gql(`query($id:String!){ issue(id:$id){ id identifier state{ id name } } }`, {
+                id: ident,
+              });
+              return d.issue || null;
+            } catch (e) {
+              if (/not found/i.test(e.message)) return null;
+              throw e;
+            }
           }
 
           async function ensurePrComment(issueId, targetName) {
