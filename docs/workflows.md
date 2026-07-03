@@ -145,6 +145,24 @@ aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate
   Critical/High + `(plan-conformance)` Medium), so the builder fixes them through the
   fix/fix_escalated ladder exactly like a Cursor review.
 
+### `aios ship` — the single-command wrapper
+
+`aios ship AIO-<n>` runs the *whole* loop for one Linear issue — recon → plan → build → PR → review
+→ fix → merge → cleanup — behind two operator gates (plan + merge, both default ON). Recon reads
+**only git-tracked, deny-filtered files** referenced by the (untrusted) issue text; the merge gate
+requires green CI, a CLEAR consolidator, and — when the diff touches a safety surface — a
+`SAFETY_APPROVED` path-gated review. Gates fail closed in a non-TTY context (a `*_GATE_BLOCKED` exit,
+never a hang). `--dry-run` prints the step plan offline with no key. Full flag + `SHIP_EXIT` table:
+[`agent-build.md` → aios ship](./agent-build.md#aios-ship--the-whole-gated-loop-for-one-issue).
+
+### `aios roadmap-run` — the unattended walker
+
+`aios roadmap-run (--label|--epic|--project)` ships one **unblocked, unassigned, Todo** issue at a
+time (top priority, ties → oldest) via `aios ship --auto --auto-merge`, fast-forwarding `main`
+between issues and writing a deterministic morning digest every run. The `SHIP_EXIT` code decides
+continue / skip / halt. Ideal for the overnight Hermes host — see the
+[Hermes runbook](./hermes-runbook.md).
+
 **Review resilience** (in `aios build`): the review call **auto-retries once on timeout** with a
 doubled timeout, and the default review timeout **adapts to the real diff size** (`300s + 60s/10k
 chars`, capped `600s`) unless `--cursor-timeout` / `code_review_timeout_s` pins it explicitly. See

@@ -99,6 +99,22 @@ conventions distilled from that study (`workflows.md`, `scaffold/.claude/skills/
 Every harness is a **template**, tuned per workspace via `args`, read-only (it returns
 data; the caller writes), and demonstrated against the synthetic `examples/sample-engagement/`.
 
+### The agentic build pipeline (`aios ship` / `aios roadmap-run`)
+
+The same adversarial discipline drives an end-to-end build loop:
+
+- **`aios ship AIO-<n>`** runs the whole gated loop for one Linear issue — recon → plan → build →
+  PR → multi-reviewer consolidation → fix → merge → cleanup — behind an operator **plan gate** and
+  **merge gate** (both default ON; they fail closed, never hang, in a non-TTY context). Recon reads
+  only git-tracked, deny-filtered files referenced by the untrusted issue text; the merge gate
+  requires green CI, a CLEAR consolidator, and a path-gated safety review for safety-critical diffs.
+  A stable `SHIP_EXIT` table names every outcome. `--dry-run` previews the plan offline.
+- **`aios roadmap-run (--label|--epic|--project)`** is the unattended serial walker: it ships one
+  unblocked, unassigned, Todo issue at a time via `aios ship --auto --auto-merge`, fast-forwarding
+  `main` between issues and writing a deterministic morning digest every run.
+
+Full contract: [`docs/agent-build.md`](./agent-build.md).
+
 ---
 
 ## 6. Synthetic example engagement

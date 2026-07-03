@@ -249,6 +249,124 @@ aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/rep
 
 ---
 
+## `aios ship` — the whole gated loop for one issue
+
+`aios ship AIO-<n>` wraps the entire pipeline behind two operator gates:
+
+```
+aios ship AIO-<n>
+  │
+  ├─ 1. recon        Linear issue + git-tracked referenced files → context pack
+  ├─ 2. plan         Opus plan ↔ Cursor /review-plan loop  ──▶ [PLAN GATE]
+  ├─ 3. follow-up    file `## Deferred (out of scope)` items as Linear children
+  ├─ 4. build        runBuild on an isolated worktree (secrets gate inside)
+  ├─ 5. PR           cmdPr push + open PR (title carries AIO-<n>)
+  ├─ 6. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
+  ├─ 7. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
+  ├─ 8. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
+  └─ 9. cleanup      ff-only main → worktree remove → prune → branch delete
+```
+
+```
+aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
+                  [--reviewers b,g] [--plan-runner cli|sdk] [--dry-run]
+```
+
+- **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
+  **non-TTY** context with a gate still active (no matching auto flag), ship exits with a
+  `*_GATE_BLOCKED` code **rather than hanging** — cron safety.
+- **`--dry-run`** prints the resolved step plan (stages, per-step models/efforts, gate states,
+  reviewers, and the `SHIP_EXIT` table) with **no side effects and no required network** — it works
+  offline and without `LINEAR_API_KEY` (a resolvable key just fetches the issue title as a nicety).
+- **Recon is safe by construction.** Linear issue text is untrusted external input, so recon reads
+  **only files that are (a) git-tracked, (b) not on the hard deny list** (`.env*`, `.aios/…`,
+  `.git/…`, `node_modules/…`, `*.key`, `*.pem`), **and (c) free of absolute / `..`-traversal paths**
+  — enforced by `extractRepoFileRefs` (`scripts/linear-client.mjs`). Everything rejected is audited
+  by **path + reason only; its contents are never read**. The fixed contract checklist
+  (`docs/brain-api.md`, `docs/ENGINEERING-CONSTITUTION.md`) passes the *same* filter.
+- **`blockedBy` direction (proven).** Linear's `IssueRelationType` has **no `blocked_by` value** —
+  blocking is one directional record (`issue` **blocks** `relatedIssue`, `type: "blocks"`). The
+  blockers of an issue are therefore its **`inverseRelations`** of type `blocks` (see
+  `normalizeBlockedBy`); a forward `blocks` relation means the issue blocks *others* and is **not**
+  a blocker of it.
+- **Path-gated safety review.** If the diff touches a safety surface (`hooks/`, `validation/`,
+  `scripts/leak-gate.sh`, `scaffold/.claude/`, `docs/brain-api.md`, `scripts/brain-client.mjs`,
+  `scripts/brain-config.mjs`, `scripts/workspace-parse.mjs`), the merge gate runs a `safety_review`
+  over the diff and **blocks unless** it emits `SAFETY_APPROVED` alone on the final line.
+- **Plan runner.** `--plan-runner cli` (default) drives the planner through Claude Code (its own
+  login auth — sidesteps a dotenvx key with no API credits). `--plan-runner sdk` delegates to
+  `relay.mjs` and **requires a funded `ANTHROPIC_API_KEY`** (documented alternative, not default).
+- All run artifacts land under `.aios/loop/<issue>/` (gitignored) — `task.md`, `recon.md`,
+  `recon-skipped.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`, `build.md`, `review-gpt-r<N>.md`,
+  `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`. Nothing under `.aios/` is committed.
+
+### `SHIP_EXIT` codes
+
+| Const                   | Code | Meaning                                                            |
+| ----------------------- | ---- | ----------------------------------------------------------------- |
+| `OK`                    | 0    | plan → merge → cleanup completed                                  |
+| `USAGE`                 | 1    | bad args / prereqs / unresolved issue id                          |
+| `RECON_FAILED`          | 10   | issue fetch or recon model step failed                            |
+| `PLAN_UNAPPROVED`       | 20   | plan loop spent its round budget without `PLAN_READY`             |
+| `PLAN_REJECTED`         | 21   | operator rejected the plan at the plan gate                       |
+| `PLAN_GATE_BLOCKED`     | 22   | plan gate active in a non-TTY context without `--auto`            |
+| `BUILD_FAILED`          | 30   | `runBuild` returned a non-recoverable code (NO_DIFF/FATAL/TIMEOUT/GATE) |
+| `BUILD_NONCONVERGENCE`  | 31   | `runBuild` spent its rounds (worktree preserved)                  |
+| `PR_FAILED`             | 40   | `cmdPr` push/create failed                                        |
+| `REVIEW_NONCONVERGENCE` | 50   | fix loop hit `--max-fix-rounds` still BLOCKED (no partial merge)  |
+| `MERGE_BLOCKED`         | 60   | merge gate: CI red/pending/unavailable or unresolved Critical/High |
+| `SAFETY_BLOCKED`        | 61   | path-gated safety review withheld approval                        |
+| `MERGE_GATE_BLOCKED`    | 62   | merge gate active in a non-TTY context without `--auto-merge`     |
+| `MERGE_REJECTED`        | 63   | operator rejected at the merge gate                               |
+| `CLEANUP_FAILED`        | 70   | post-merge ff-only failed / primary checkout dirty (never clobber) |
+
+**Merge gate never treats a non-zero `gh pr checks` exit as a crash.** `readChecks` captures stdout
+even on non-zero exit (checks pending/failing) and parses it; empty/unparseable stdout → CI
+**unavailable → `MERGE_BLOCKED`** (fail closed). **Code is never force-merged** on non-convergence.
+
+## `aios roadmap-run` — the unattended serial walker
+
+`aios roadmap-run` picks one unblocked issue at a time and ships it with `aios ship --auto
+--auto-merge`, using the documented `SHIP_EXIT` code as the interface.
+
+```
+aios roadmap-run (--label <name> | --epic AIO-<n> | --project <name>)
+                 [--max-issues N] [--comment-digest [--digest-target AIO-<n>]] [--dry-run]
+```
+
+- **Exactly one source** (`--label` / `--epic` / `--project`) is required.
+- **Selection** (pure `selectNextIssue`): keep candidates that are **Todo (unstarted), unassigned,
+  and unblocked** (every `blockedBy` blocker `completed`, per the proven direction above); order by
+  **priority**, ties by **oldest `createdAt`**; skipped candidates are logged with a reason.
+- Between issues it **fast-forwards `main`** so the next issue bases off fresh state; a non-ff `main`
+  **halts** (the next issue would otherwise base off stale state).
+- A **morning digest** is written every run (even a zero-issue run) to
+  `.aios/loop/roadmap-digest-<date>.md`. A model may prepend prose, but the deterministic digest is
+  the fallback — **the digest can never be the reason a run fails**. `--comment-digest` posts it to
+  the resolved target: legal only with `--epic` (the epic) **or** an explicit `--digest-target`;
+  with `--label`/`--project` and no target it's a **usage error**.
+- **`--dry-run` requires `LINEAR_API_KEY`** (absent → a clean, actionable message, not a stack
+  trace); it lists the ordered candidates with blocked/unblocked reasoning and stops.
+
+### Roadmap decision table (`SHIP_EXIT` → action)
+
+| SHIP_EXIT                                  | Action     |
+| ------------------------------------------ | ---------- |
+| `OK`                                       | continue   |
+| `RECON_FAILED` / `PLAN_UNAPPROVED`         | skip       |
+| `BUILD_FAILED` / `BUILD_NONCONVERGENCE`    | skip       |
+| `REVIEW_NONCONVERGENCE` / `MERGE_BLOCKED`  | skip       |
+| `SAFETY_BLOCKED`                           | skip (the "touches auth/secrets/architecture" escalation) |
+| `USAGE` / `PLAN_REJECTED` / `PLAN_GATE_BLOCKED` | halt   |
+| `PR_FAILED`                                | halt       |
+| `MERGE_GATE_BLOCKED` / `MERGE_REJECTED`    | halt       |
+| `CLEANUP_FAILED`                           | halt       |
+| unknown                                    | halt (fail-safe) |
+
+Every `skip`/`halt` posts a Linear comment on that issue and records a digest entry.
+
+---
+
 ## Exit codes
 
 | Code | Meaning                                                                 |
