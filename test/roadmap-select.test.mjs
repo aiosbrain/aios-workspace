@@ -3,7 +3,7 @@
 // candidate by priority (ties → oldest), using the PROVEN blockedBy. Provably skips a candidate
 // whose blocker isn't Done, and skips assigned / non-Todo. Run: node test/roadmap-select.test.mjs
 
-import { selectNextIssue, isUnblocked, skipReason } from "../scripts/roadmap-run.mjs";
+import { selectNextIssue, rankEligible, isUnblocked, skipReason } from "../scripts/roadmap-run.mjs";
 import { normalizeBlockedBy } from "../scripts/linear-client.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -56,6 +56,30 @@ console.log("skips");
   check("AIO-4 assigned → skipped", skipReason(byId("AIO-4")) === "assigned");
   check("AIO-5 non-Todo → skipped", /not-Todo/.test(skipReason(byId("AIO-5"))));
   check("AIO-6 unblocked (blocker AIO-8 completed)", isUnblocked(byId("AIO-6")) === true);
+}
+
+console.log("rankEligible: shared by dry-run + live; missing createdAt sorts LAST");
+{
+  // The dry-run preview and the live selection MUST use the same ranking. rankEligible[0] is
+  // exactly what selectNextIssue returns, and a missing createdAt must not jump to the front.
+  const ranked = rankEligible(candidates);
+  check(
+    "rankEligible[0] === selectNextIssue()",
+    ranked[0]?.identifier === selectNextIssue(candidates, {})?.identifier
+  );
+  const pair = [
+    { identifier: "N", priority: 2, state: { type: "unstarted" }, assignee: null, blockedBy: [] },
+    {
+      identifier: "D",
+      priority: 2,
+      createdAt: "2020-01-01T00:00:00Z",
+      state: { type: "unstarted" },
+      assignee: null,
+      blockedBy: [],
+    },
+  ];
+  const r = rankEligible(pair);
+  check("issue WITH createdAt ranks before one missing it", r[0].identifier === "D");
 }
 
 console.log("empty pool → null");

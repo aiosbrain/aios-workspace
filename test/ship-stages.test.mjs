@@ -344,15 +344,60 @@ console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → 
   rmSync(deps2.repo, { recursive: true, force: true });
 }
 
-console.log("bugbot gate: wait-for-bots gets --repo <slug>; timeout (2) proceeds");
+console.log(
+  "bugbot gate: wait-for-bots gets --repo <slug>; timeout (2) fails closed → MERGE_BLOCKED"
+);
 {
   const deps = makeDeps();
   let wfbArgs = null;
-  deps.waitForBots = (argv) => ((wfbArgs = argv), 2); // timeout → proceed
+  deps.waitForBots = (argv) => ((wfbArgs = argv), 2); // timeout → missing evidence → fail closed
   const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
-  check("timeout (exit 2) still reaches OK", code === SHIP_EXIT.OK);
+  check(
+    "timeout (exit 2) blocks merge (requested reviewer missing)",
+    code === SHIP_EXIT.MERGE_BLOCKED
+  );
   check("wait-for-bots received --repo slug", wfbArgs.join(" ").includes("--repo acme/repo"));
   check("wait-for-bots gated on cursor[bot]", wfbArgs.join(" ").includes("--bots cursor[bot]"));
+  check(
+    "merge never issued when Bugbot timed out",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("GPT review failure → MERGE_BLOCKED (requested reviewer evidence missing)");
+{
+  const deps = makeDeps({
+    callCursorAgent: async (prompt) => {
+      if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
+      throw new Error("cursor GPT review crashed");
+    },
+  });
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("code MERGE_BLOCKED on GPT review failure", code === SHIP_EXIT.MERGE_BLOCKED);
+  check(
+    "merge never issued when GPT review failed",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("GPT review with unavailable diff → MERGE_BLOCKED (fail closed)");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    // Full `pr diff` (not --name-only) fails → no content for the GPT reviewer.
+    if (a.includes("pr diff") && !a.includes("--name-only")) {
+      deps.ghCalls.push(a);
+      return { code: 1, stdout: "", stderr: "could not fetch diff" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("code MERGE_BLOCKED when GPT diff unavailable", code === SHIP_EXIT.MERGE_BLOCKED);
+  check("merge never issued", !deps.ghCalls.some((c) => c.includes("pr merge")));
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

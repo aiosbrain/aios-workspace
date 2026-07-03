@@ -277,7 +277,11 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   `*_GATE_BLOCKED` code **rather than hanging** — cron safety.
 - **`--dry-run`** prints the resolved step plan (stages, per-step models/efforts, gate states,
   reviewers, and the `SHIP_EXIT` table) with **no side effects and no required network** — it works
-  offline and without `LINEAR_API_KEY` (a resolvable key just fetches the issue title as a nicety).
+  offline and without `LINEAR_API_KEY`. Key resolution follows the normal order
+  (`process.env.LINEAR_API_KEY` → the repo's `.env` via `loadDotEnv`), so if a key **is** resolvable
+  (env or `.env`), dry-run makes one **best-effort** `getIssue` call to show the issue title — a
+  failure there is swallowed and the dry-run still completes. No `git`/`gh`/`claude`/`cursor`
+  mutation ever runs in dry-run.
 - **Recon is safe by construction.** Linear issue text is untrusted external input, so recon reads
   **only files that are (a) git-tracked, (b) not on the hard deny list** (`.env*`, `.aios/…`,
   `.git/…`, `node_modules/…`, `*.key`, `*.pem`), **and (c) free of absolute / `..`-traversal paths**

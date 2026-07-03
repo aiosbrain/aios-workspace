@@ -107,14 +107,15 @@ function effectivePriority(issue) {
   return p == null || p === 0 ? 999 : p;
 }
 
-// Pure selection: top unblocked, unassigned, Todo (unstarted) candidate — by priority, ties
-// broken by oldest createdAt. Returns the issue or null.
-export function selectNextIssue(candidates, { now } = {}) {
-  void now; // selection is deterministic off createdAt; `now` kept for signature stability
+// The single ranking used by BOTH the live run and `--dry-run` so the preview can never show a
+// different order than what ships. Filters to eligible (unblocked, unassigned, Todo) then orders
+// by priority, ties broken by oldest createdAt (a MISSING createdAt sorts LAST, via Infinity —
+// consistent in both callers). Pure; exported.
+export function rankEligible(candidates) {
   const eligible = (candidates ?? []).filter(
     (i) => i?.state?.type === "unstarted" && !i.assignee && isUnblocked(i)
   );
-  eligible.sort((a, b) => {
+  return eligible.slice().sort((a, b) => {
     const pa = effectivePriority(a);
     const pb = effectivePriority(b);
     if (pa !== pb) return pa - pb;
@@ -122,7 +123,13 @@ export function selectNextIssue(candidates, { now } = {}) {
     const tb = b.createdAt ? new Date(b.createdAt).getTime() : Infinity;
     return ta - tb; // oldest first
   });
-  return eligible[0] ?? null;
+}
+
+// Pure selection: top unblocked, unassigned, Todo (unstarted) candidate — by priority, ties
+// broken by oldest createdAt. Returns the issue or null.
+export function selectNextIssue(candidates, { now } = {}) {
+  void now; // selection is deterministic off createdAt; `now` kept for signature stability
+  return rankEligible(candidates)[0] ?? null;
 }
 
 // Classify why a candidate was NOT selected (for the digest's "skipped candidates" section).
@@ -313,15 +320,9 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       console.error(c.red(`error: could not list issues (${selector}): ${e.message}`));
       return 1;
     }
-    const eligible = candidates.filter(
-      (i) => i?.state?.type === "unstarted" && !i.assignee && isUnblocked(i)
-    );
-    const ordered = eligible.slice().sort((a, b) => {
-      const pa = a.priority || 999;
-      const pb = b.priority || 999;
-      if (pa !== pb) return pa - pb;
-      return (a.createdAt || "").localeCompare(b.createdAt || "");
-    });
+    // Rank via the SAME rankEligible the live run uses — the preview cannot drift from selection.
+    const ordered = rankEligible(candidates);
+    const eligible = ordered;
     console.log(c.blue(`\naios roadmap-run — dry-run (${selector})`));
     console.log(
       `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}\n`

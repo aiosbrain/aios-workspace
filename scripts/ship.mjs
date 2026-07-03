@@ -19,6 +19,7 @@ import { readFileSync, mkdirSync, appendFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { c, callClaudeAgent, callCursorAgent, PLAN_READY_TOKEN } from "./relay-core.mjs";
 import { EXIT as BUILD_EXIT, runBuild, slugify } from "./build.mjs";
 import { cmdPr, detectRepo } from "./pr.mjs";
@@ -157,6 +158,12 @@ export function validateShipArgs(opts) {
       `unsupported --plan-runner '${opts.planRunner}' — 'cli' is the only supported runner ` +
       `(it uses Claude Code login auth). For SDK/Opus planning use \`aios relay\` directly.`
     );
+  // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
+  // silently disable BOTH gating reviewers and wave the PR through — reject it. (A bare
+  // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
+  // where a non-empty raw value normalizes to zero names.)
+  if (!opts.reviewers.length)
+    return `no reviewers resolved — --reviewers must name at least one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
   const unknown = opts.reviewers.filter((r) => !KNOWN_REVIEWERS.has(r));
   if (unknown.length)
     return `unknown reviewer(s) ${unknown.join(", ")} — expected one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
@@ -505,13 +512,21 @@ function defaultConfirm(promptText) {
   });
 }
 
+// wait-for-bots exit codes are the interface (see runShip's Bugbot gate): 0 = Bugbot posted,
+// 2 = timeout. A real SPAWN failure (script missing, ENOENT, killed by signal) has NO numeric
+// exit status — it must NOT be reported as `2` (which runShip treats as a benign timeout and
+// proceeds). Return `1` (gate could not run) so the caller fails closed and blocks merge.
+// fileURLToPath (not new URL(...).pathname) is used so the path is correct on every platform and
+// with spaces/encoded chars in the repo path.
 function defaultWaitForBots(argv) {
-  const script = path.join(path.dirname(new URL(import.meta.url).pathname), "wait-for-bots.mjs");
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "wait-for-bots.mjs");
   try {
     execFileSync(process.execPath, [script, ...argv], { stdio: "inherit" });
     return 0;
   } catch (e) {
-    return e.status ?? 2;
+    // Only a genuine non-zero child exit carries a numeric `status`. Anything else is a spawn
+    // failure → surface as `1` (could-not-run), never as the `2` timeout code.
+    return typeof e.status === "number" ? e.status : 1;
   }
 }
 
@@ -840,13 +855,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const wantGpt = opts.reviewers.includes("gpt-5.5");
   let round = 1;
   for (;;) {
-    // (a) Bugbot gate. Skipped if the operator dropped "bugbot" from --reviewers. Pass the
-    // resolved GitHub slug so wait-for-bots targets the right repo even under `ship --repo
-    // <path>` (its own git-remote detection runs in the primary checkout, not the slug).
-    // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout (proceed — the merge gate
-    // still fail-closes on CI/findings); anything else (1 = usage/auth/repo-detection, or an
-    // unexpected code) means the requested Bugbot gate could NOT run — fail closed rather than
-    // silently skip a reviewer the operator asked for.
+    // (a) Bugbot gate. Skipped ONLY if the operator explicitly dropped "bugbot" from --reviewers.
+    // Pass the resolved GitHub slug so wait-for-bots targets the right repo even under `ship
+    // --repo <path>` (its own git-remote detection runs in the primary checkout, not the slug).
+    // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout; anything else = the gate
+    // could not run. A requested reviewer whose evidence is NOT present must fail closed — a
+    // timeout means the consolidator would otherwise CLEAR without Bugbot's findings and merge
+    // before a late Critical/High appears. So ANY non-zero (timeout INCLUDED) blocks merge.
     if (wantBugbot) {
       const wfbCode = waitForBots([
         "--pr",
@@ -857,27 +872,34 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         "--timeout",
         "10",
       ]);
-      if (wfbCode === 2) {
-        console.error(
-          c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes).")
-        );
-      } else if (wfbCode !== 0) {
-        record("review", { round, bugbotGateError: wfbCode });
+      if (wfbCode !== 0) {
+        record("review", { round, bugbotUnavailable: wfbCode });
+        const why = wfbCode === 2 ? "timed out" : `exited ${wfbCode} (gate could not run)`;
         console.error(
           c.red(
-            `review: wait-for-bots exited ${wfbCode} — the Bugbot gate could not run; blocking merge.`
+            `review: Bugbot review unavailable — wait-for-bots ${why}; blocking merge ` +
+              `(drop it via --reviewers to skip it intentionally).`
           )
         );
         return { code: SHIP_EXIT.MERGE_BLOCKED, records };
       }
     }
 
-    // (b) GPT-5.5 PR review via Cursor. Skipped if the operator dropped "gpt-5.5".
+    // (b) GPT-5.5 PR review via Cursor. Skipped ONLY if the operator dropped "gpt-5.5". A
+    // requested GPT review that fails (or has no diff to review) is missing reviewer evidence —
+    // fail closed rather than consolidate without it.
     let gptReviewFile = null;
     if (wantGpt) {
       try {
         const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
         const prDiff = diffRes?.stdout ?? "";
+        if (diffRes?.code !== 0 || !prDiff.trim()) {
+          record("review", { round, gptDiffUnavailable: true, code: diffRes?.code });
+          console.error(
+            c.red("review: PR diff unavailable for the GPT review — blocking merge (fail closed).")
+          );
+          return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+        }
         const gptCfg = models.code_review;
         const gptReview = await cursor(
           buildGptReviewPrompt(plan, prDiff, prNumber),
@@ -889,9 +911,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
         gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
       } catch (e) {
+        record("review", { round, gptReviewError: e.message });
         console.error(
-          c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`)
+          c.red(`review: GPT review failed (${e.message}) — blocking merge (requested reviewer).`)
         );
+        return { code: SHIP_EXIT.MERGE_BLOCKED, records };
       }
     }
 
@@ -915,8 +939,10 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       console.error(c.red(`review: consolidator returned ${verdictCode} — blocking merge.`));
       return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
-    // BLOCKED → fix, unless we're out of rounds.
-    if (round >= opts.maxFixRounds) {
+    // BLOCKED → fix, unless we're out of rounds. `round` counts review passes starting at 1, so
+    // the guard is `round > maxFixRounds`: with --max-fix-rounds 1 the first BLOCKED review (round
+    // 1) still gets ONE fix attempt; nonconvergence only trips once we've spent all N fix rounds.
+    if (round > opts.maxFixRounds) {
       record("fix", { nonconvergence: true, round });
       console.error(
         c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`)
@@ -1015,9 +1041,21 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   if (touchesSafetySurface(changedPaths)) {
     try {
       const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+      // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
+      // or returned empty content, we would be asking it to approve `(no diff)` as green — fail
+      // closed instead. `--name-only` succeeding above does NOT prove the full diff fetch works.
+      if (diffRes?.code !== 0 || !(diffRes.stdout ?? "").trim()) {
+        record("merge-gate", { safetyDiffUnavailable: true, code: diffRes?.code });
+        console.error(
+          c.red(
+            "merge gate: safety-surface diff unavailable — cannot run the safety review; blocking."
+          )
+        );
+        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      }
       const cfg = models.safety_review;
       const safety = await claude(
-        buildSafetyPrompt(diffRes?.stdout ?? "", changedPaths),
+        buildSafetyPrompt(diffRes.stdout, changedPaths),
         cfg.timeoutMs ?? 300 * 1000,
         {
           model: cfg.model,
@@ -1115,7 +1153,8 @@ function usage() {
       "  --reviewers <list>     gating reviewers (default: bugbot,gpt-5.5; CodeRabbit advisory)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
       "  --plan-runner cli      plan-stage runner (default: cli — uses Claude Code login auth)",
-      "  --dry-run              print the resolved step plan; no side effects, no network needed",
+      "  --dry-run              print the resolved step plan; no side effects (a resolvable",
+      "                         LINEAR_API_KEY only enables a best-effort issue-title fetch)",
       "",
       "Gates default ON. In a non-TTY context without the matching --auto flag, ship exits with",
       "a *_GATE_BLOCKED code rather than hanging (cron safety). See docs/agent-build.md for the",

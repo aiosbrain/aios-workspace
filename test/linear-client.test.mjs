@@ -141,6 +141,82 @@ console.log("createIssue + addComment mutation inputs");
   );
 }
 
+console.log("mutations never retry (no duplicate issue/comment on a lost response)");
+{
+  // A 503 on the mutation must surface immediately — retrying could duplicate an accepted write.
+  let creates = 0;
+  const fetchFn = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (/IssueMeta/.test(body.query)) {
+      return jsonResponse({
+        data: {
+          issues: {
+            nodes: [{ id: "uuid-parent", identifier: "AIO-1", team: { id: "team-1", key: "AIO" } }],
+          },
+        },
+      });
+    }
+    if (/issueCreate/.test(body.query)) {
+      creates++;
+      return jsonResponse({}, { ok: false, status: 503 });
+    }
+    return jsonResponse({ data: {} });
+  };
+  const client = createLinearClient({ apiKey: FAKE_KEY, fetchFn, maxRetries: 1 });
+  let threw = false;
+  try {
+    await client.createIssue({ title: "X", parentIdentifier: "AIO-1" });
+  } catch {
+    threw = true;
+  }
+  check("issueCreate 503 not retried (attempted once)", creates === 1 && threw);
+
+  let comments = 0;
+  const fetch2 = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (/IssueMeta/.test(body.query)) {
+      return jsonResponse({
+        data: {
+          issues: { nodes: [{ id: "uuid-1", identifier: "AIO-1", team: { id: "t", key: "AIO" } }] },
+        },
+      });
+    }
+    if (/commentCreate/.test(body.query)) {
+      comments++;
+      return jsonResponse({}, { ok: false, status: 503 });
+    }
+    return jsonResponse({ data: {} });
+  };
+  const c2 = createLinearClient({ apiKey: FAKE_KEY, fetchFn: fetch2, maxRetries: 1 });
+  let threw2 = false;
+  try {
+    await c2.addComment("AIO-1", "note");
+  } catch {
+    threw2 = true;
+  }
+  check("commentCreate 503 not retried (attempted once)", comments === 1 && threw2);
+}
+
+console.log("listIssues label filter uses the implicit-some shape (labels.name.eq)");
+{
+  let listFilter = null;
+  const fetchFn = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (/ListIssues/.test(body.query)) listFilter = body.variables.filter;
+    return jsonResponse({ data: { issues: { nodes: [], pageInfo: { hasNextPage: false } } } });
+  };
+  const client = createLinearClient({ apiKey: FAKE_KEY, fetchFn });
+  await client.listIssues({ label: "ship" });
+  check(
+    "label filter is { labels: { name: { eq } } } (no extra `some` wrapper)",
+    listFilter &&
+      listFilter.labels &&
+      listFilter.labels.name &&
+      listFilter.labels.name.eq === "ship" &&
+      !("some" in listFilter.labels)
+  );
+}
+
 console.log("errors → LinearError, key redacted");
 {
   const fetchFn = async () => jsonResponse({}, { ok: false, status: 401 });

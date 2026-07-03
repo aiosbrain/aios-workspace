@@ -77,6 +77,14 @@ console.log("validateShipArgs");
     "known reviewers subset → null",
     validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot"])) === null
   );
+  check(
+    "reviewers that normalize to empty (',') → error (never silently disable gates)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", ","])) !== null
+  );
+  check(
+    "reviewers of only whitespace (' ') → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", " "])) !== null
+  );
 }
 
 console.log("resolveGates — non-TTY logic");

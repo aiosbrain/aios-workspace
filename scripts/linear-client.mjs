@@ -213,8 +213,15 @@ function parseIdentifier(identifier) {
  * @param {string} o.apiKey            raw personal API key (never logged)
  * @param {Function} [o.fetchFn]       injected fetch (default globalThis.fetch)
  * @param {number} [o.maxRetries]      bounded retries on 429/5xx (default 1)
+ * @param {number} [o.timeoutMs]       per-request abort timeout (default 30s) so a hung
+ *                                     connection can never block ship/roadmap-run forever.
  */
-export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetries = 1 } = {}) {
+export function createLinearClient({
+  apiKey,
+  fetchFn = globalThis.fetch,
+  maxRetries = 1,
+  timeoutMs = 30_000,
+} = {}) {
   if (!fetchFn) throw new LinearError("no fetch implementation available (pass fetchFn).");
 
   // Redact the key from any string that might carry it (defense in depth — we never
@@ -226,22 +233,34 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
           .join("«redacted»")
       : String(s ?? "");
 
-  // The single network seam. One bounded retry on HTTP 429/5xx only; no retry on 4xx.
-  async function request(query, variables = {}) {
+  // The single network seam. One bounded retry on HTTP 429/5xx only; no retry on 4xx. Mutations
+  // pass { retryable: false }: a retry after a write that Linear accepted-but-whose-response-was-
+  // lost would DUPLICATE the issue/comment, so mutations never retry (they surface the error and
+  // the caller escalates instead). Every request is also bounded by an abort timeout so a hung
+  // socket cannot wedge an unattended `roadmap-run`.
+  async function request(query, variables = {}, { retryable = true } = {}) {
     if (!apiKey) throw new LinearError("LINEAR_API_KEY is not set — cannot call Linear.");
+    const attempts = retryable ? maxRetries : 0;
     let lastErr = null;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= attempts; attempt++) {
       let res;
+      // A fresh abort timeout per attempt (AbortSignal.timeout is Node 18+; degrade gracefully).
+      const signal =
+        typeof AbortSignal !== "undefined" && AbortSignal.timeout
+          ? AbortSignal.timeout(timeoutMs)
+          : undefined;
       try {
         res = await fetchFn(LINEAR_API_URL, {
           method: "POST",
           headers: { Authorization: apiKey, "Content-Type": "application/json" },
           body: JSON.stringify({ query, variables }),
+          ...(signal ? { signal } : {}),
         });
       } catch (e) {
-        // Network-layer failure: retry once, then surface (key never in message).
+        // Network-layer failure (incl. abort timeout): retry once when retryable, then surface
+        // (key never in message).
         lastErr = new LinearError(`Linear request failed: ${redact(e.message)}`);
-        if (attempt < maxRetries) continue;
+        if (attempt < attempts) continue;
         throw lastErr;
       }
       const status = res.status;
@@ -252,8 +271,8 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
         } catch {
           /* ignore */
         }
-        // Retry only transient statuses (429 / 5xx); 4xx fails immediately.
-        if ((status === 429 || status >= 500) && attempt < maxRetries) {
+        // Retry only transient statuses (429 / 5xx) when retryable; 4xx fails immediately.
+        if ((status === 429 || status >= 500) && attempt < attempts) {
           lastErr = new LinearError(`Linear HTTP ${status}: ${redact(bodySnippet)}`);
           continue;
         }
@@ -310,7 +329,10 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
     }
     let filter;
     if (label) {
-      filter = { labels: { some: { name: { eq: label } } } };
+      // IssueFilter.labels is an IssueLabelCollectionFilter — the label-name comparator sits
+      // directly on it (implicit "some"). Wrapping it in an extra `some: { … }` is the wrong
+      // shape and returns nothing, so label-based lookups silently find zero issues.
+      filter = { labels: { name: { eq: label } } };
     } else if (epicIdentifier) {
       const meta = await resolveIssueMeta(epicIdentifier);
       filter = { parent: { id: { eq: meta.id } } };
@@ -353,7 +375,8 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
     const query = `mutation CreateIssue($input: IssueCreateInput!) {
       issueCreate(input: $input) { success issue { identifier } }
     }`;
-    const data = await request(query, { input });
+    // Never retry a mutation — a lost response after an accepted write would duplicate the issue.
+    const data = await request(query, { input }, { retryable: false });
     const identifier = data?.issueCreate?.issue?.identifier ?? null;
     if (!data?.issueCreate?.success || !identifier) {
       throw new LinearError(`issueCreate did not return a new identifier for '${title}'.`);
@@ -367,7 +390,8 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
     const query = `mutation AddComment($input: CommentCreateInput!) {
       commentCreate(input: $input) { success }
     }`;
-    const data = await request(query, { input: { issueId: meta.id, body } });
+    // Never retry a mutation — a lost response after an accepted write would duplicate the comment.
+    const data = await request(query, { input: { issueId: meta.id, body } }, { retryable: false });
     if (!data?.commentCreate?.success) {
       throw new LinearError(`commentCreate failed for ${identifier}.`);
     }
