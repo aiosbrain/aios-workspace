@@ -269,7 +269,7 @@ aios ship AIO-<n>
 
 ```
 aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
-                  [--reviewers b,g] [--plan-runner cli|sdk] [--dry-run]
+                  [--reviewers b,g] [--plan-runner cli] [--dry-run]
 ```
 
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
@@ -293,9 +293,21 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   `scripts/leak-gate.sh`, `scaffold/.claude/`, `docs/brain-api.md`, `scripts/brain-client.mjs`,
   `scripts/brain-config.mjs`, `scripts/workspace-parse.mjs`), the merge gate runs a `safety_review`
   over the diff and **blocks unless** it emits `SAFETY_APPROVED` alone on the final line.
-- **Plan runner.** `--plan-runner cli` (default) drives the planner through Claude Code (its own
-  login auth — sidesteps a dotenvx key with no API credits). `--plan-runner sdk` delegates to
-  `relay.mjs` and **requires a funded `ANTHROPIC_API_KEY`** (documented alternative, not default).
+- **Plan runner.** `--plan-runner cli` (default and only implemented value) drives the planner
+  through Claude Code (its own login auth — sidesteps a dotenvx key with no API credits). An `sdk`
+  runner delegating to `relay.mjs` (which would need a funded `ANTHROPIC_API_KEY`) is **not yet
+  implemented** — passing `--plan-runner sdk` is rejected as a usage error rather than silently
+  ignored.
+- **`--reviewers`.** Selects which gating reviewers actually run: `bugbot` waits on the
+  `cursor[bot]` check via wait-for-bots; `gpt-5.5` runs the Cursor GPT PR review. Unknown reviewer
+  names are a usage error. CodeRabbit, when present, is swept by the consolidator but never gated on.
+- **Verify chain.** Every build/fix round runs the repo verify chain
+  (`npm run build:loop && npm test && npm run lint && npm run format:check`) inside the worktree via
+  `runBuild`'s `--verify`, and again pre-merge — `aios ship` can never merge code that hasn't passed it.
+- **Merge is checked, not assumed.** `gh` calls return `{code,stdout,stderr}` without throwing, so
+  the merge gate checks the exit code of `gh pr merge`, `gh pr checks`, and `gh pr diff --name-only`
+  explicitly. A failed merge → `MERGE_BLOCKED` and cleanup never runs; unavailable CI or
+  changed-path metadata fails **closed** (`MERGE_BLOCKED`), never treated as green.
 - All run artifacts land under `.aios/loop/<issue>/` (gitignored) — `task.md`, `recon.md`,
   `recon-skipped.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`, `build.md`, `review-gpt-r<N>.md`,
   `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`. Nothing under `.aios/` is committed.

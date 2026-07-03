@@ -6,7 +6,7 @@
 // PLAN_GATE_BLOCKED / MERGE_GATE_BLOCKED (confirm never called).
 // Run: node test/ship-stages.test.mjs
 
-import { runShip, SHIP_EXIT } from "../scripts/ship.mjs";
+import { runShip, SHIP_EXIT, SHIP_VERIFY_CMD } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -237,6 +237,111 @@ console.log("non-TTY merge gate (plan auto) → MERGE_GATE_BLOCKED");
   check("confirm never called", confirmCalled === false);
   check("merge never issued", !deps.ghCalls.some((c) => c.includes("pr merge")));
   rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("failed `gh pr merge` (code≠0) → MERGE_BLOCKED, cleanup never runs");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("pr merge")) {
+      deps.ghCalls.push(a);
+      return { code: 1, stdout: "", stderr: "Pull request is not mergeable" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("code MERGE_BLOCKED on failed merge", code === SHIP_EXIT.MERGE_BLOCKED);
+  check(
+    "merge WAS attempted",
+    deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  check(
+    "worktree never removed after a failed merge",
+    !deps.gitCalls.some((c) => c.startsWith("worktree remove"))
+  );
+  check(
+    "local branch never deleted after a failed merge",
+    !deps.gitCalls.some((c) => c.startsWith("branch -D"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("build runs the repo verify chain (verify wired into runBuild opts)");
+{
+  const capturedOpts = [];
+  const deps = makeDeps({
+    runBuild: async ({ opts }) => {
+      capturedOpts.push(opts);
+      return BUILD_EXIT.OK;
+    },
+  });
+  await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("runBuild was called", capturedOpts.length > 0);
+  check(
+    "verify = the repo verify chain (not null)",
+    capturedOpts.every((o) => o.verify === SHIP_VERIFY_CMD)
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("changed-path metadata unavailable at merge gate → MERGE_BLOCKED (fail closed)");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("--name-only")) {
+      deps.ghCalls.push(a);
+      return { code: 1, stdout: "", stderr: "could not resolve PR" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("code MERGE_BLOCKED when name-only unavailable", code === SHIP_EXIT.MERGE_BLOCKED);
+  check(
+    "merge never issued when changed paths unavailable",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → bugbot wait skipped");
+{
+  const deps = makeDeps();
+  let wfbCalled = false;
+  deps.waitForBots = () => ((wfbCalled = true), 0);
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["bugbot"] }),
+    deps,
+  });
+  check("bugbot-only run still OK", code === SHIP_EXIT.OK);
+  check("wait-for-bots ran for bugbot", wfbCalled === true);
+  check(
+    "no GPT review audit file when gpt-5.5 dropped",
+    !deps.auditFiles.some((n) => n.startsWith("review-gpt"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+
+  const deps2 = makeDeps();
+  let wfb2 = false;
+  deps2.waitForBots = () => ((wfb2 = true), 0);
+  const { code: code2 } = await runShip({
+    repo: deps2.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["gpt-5.5"] }),
+    deps: deps2,
+  });
+  check("gpt-only run still OK", code2 === SHIP_EXIT.OK);
+  check("wait-for-bots skipped when bugbot dropped", wfb2 === false);
+  check(
+    "GPT review audit file written when gpt-5.5 kept",
+    deps2.auditFiles.some((n) => n.startsWith("review-gpt"))
+  );
+  rmSync(deps2.repo, { recursive: true, force: true });
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

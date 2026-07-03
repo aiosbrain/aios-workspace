@@ -65,6 +65,18 @@ console.log("validateShipArgs");
     "bad plan-runner → error",
     validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "wat"])) !== null
   );
+  check(
+    "unimplemented sdk plan-runner → error (only cli supported)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "sdk"])) !== null
+  );
+  check(
+    "unknown reviewer → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot,coderabbit"])) !== null
+  );
+  check(
+    "known reviewers subset → null",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot"])) === null
+  );
 }
 
 console.log("resolveGates — non-TTY logic");

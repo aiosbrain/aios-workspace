@@ -65,8 +65,17 @@ export const SAFETY_PATHS = [
 ];
 
 const DEFAULT_REVIEWERS = ["bugbot", "gpt-5.5"];
+// The gating reviewers ship actually knows how to run. "bugbot" → wait on the cursor[bot]
+// check via wait-for-bots; "gpt-5.5" → run the Cursor GPT PR review. Unknown names are a
+// usage error rather than a silently-ignored flag.
+const KNOWN_REVIEWERS = new Set(["bugbot", "gpt-5.5"]);
 const DEFAULT_MAX_FIX_ROUNDS = 3;
 const ISSUE_RE = /^AIO-\d+$/;
+
+// The repo verify chain runBuild runs in the worktree before each review round and pre-merge.
+// Wired into every build/fix round so `aios ship` can never merge code that hasn't passed it.
+export const SHIP_VERIFY_CMD =
+  "npm run build:loop && npm test && npm run lint && npm run format:check";
 
 // ── pure helpers (exported for tests) ───────────────────────────────────────────────────────
 
@@ -114,8 +123,13 @@ export function validateShipArgs(opts) {
   if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
   if (!ISSUE_RE.test(opts.issue))
     return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
-  if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
-    return `invalid --plan-runner '${opts.planRunner}' — expected cli or sdk.`;
+  // Only the CLI plan runner is implemented; `sdk` (relay/Opus) needs a funded ANTHROPIC_API_KEY
+  // and is not wired. Reject it rather than accept-and-ignore.
+  if (opts.planRunner !== "cli")
+    return `unsupported --plan-runner '${opts.planRunner}' — only 'cli' is implemented.`;
+  const unknown = opts.reviewers.filter((r) => !KNOWN_REVIEWERS.has(r));
+  if (unknown.length)
+    return `unknown reviewer(s) ${unknown.join(", ")} — expected one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
   return null;
 }
 
@@ -517,7 +531,7 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
 }
 
 // ── build opts ─────────────────────────────────────────────────────────────────────────────
-function makeBuildOpts({ branch, issue, logFile, findingsFile }) {
+function makeBuildOpts({ branch, issue, logFile, findingsFile, verify = SHIP_VERIFY_CMD }) {
   return {
     planSource: null,
     branch,
@@ -530,7 +544,7 @@ function makeBuildOpts({ branch, issue, logFile, findingsFile }) {
     skill: "/ai-code-review",
     worktreePath: null,
     base: "origin/main",
-    verify: null,
+    verify,
     findingsFile: findingsFile ?? null,
     logFile: logFile ?? null,
     merge: false,
@@ -782,41 +796,49 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   record("pr", { pr: prNumber });
 
   // ── 6 + 7. REVIEW + FIX LOOP ──────────────────────────────────────────────────
+  // --reviewers selects which gating reviewers actually run (validated against KNOWN_REVIEWERS).
+  const wantBugbot = opts.reviewers.includes("bugbot");
+  const wantGpt = opts.reviewers.includes("gpt-5.5");
   let round = 1;
   for (;;) {
-    // (a) Bugbot-only gate (proceed on timeout — merge gate still fail-closes).
-    const wfbCode = waitForBots([
-      "--pr",
-      String(prNumber),
-      "--bots",
-      "cursor[bot]",
-      "--timeout",
-      "10",
-    ]);
-    if (wfbCode === 2)
-      console.error(
-        c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes).")
-      );
+    // (a) Bugbot gate (proceed on timeout — merge gate still fail-closes). Skipped if the
+    // operator dropped "bugbot" from --reviewers.
+    if (wantBugbot) {
+      const wfbCode = waitForBots([
+        "--pr",
+        String(prNumber),
+        "--bots",
+        "cursor[bot]",
+        "--timeout",
+        "10",
+      ]);
+      if (wfbCode === 2)
+        console.error(
+          c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes).")
+        );
+    }
 
-    // (b) GPT-5.5 PR review via Cursor.
+    // (b) GPT-5.5 PR review via Cursor. Skipped if the operator dropped "gpt-5.5".
     let gptReviewFile = null;
-    try {
-      const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
-      const prDiff = diffRes?.stdout ?? "";
-      const gptCfg = models.code_review;
-      const gptReview = await cursor(
-        buildGptReviewPrompt(plan, prDiff, prNumber),
-        gptCfg.timeoutMs ?? 300 * 1000,
-        {
-          extraArgs: ["--force", "--trust"],
-        }
-      );
-      writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
-      gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
-    } catch (e) {
-      console.error(
-        c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`)
-      );
+    if (wantGpt) {
+      try {
+        const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+        const prDiff = diffRes?.stdout ?? "";
+        const gptCfg = models.code_review;
+        const gptReview = await cursor(
+          buildGptReviewPrompt(plan, prDiff, prNumber),
+          gptCfg.timeoutMs ?? 300 * 1000,
+          {
+            extraArgs: ["--force", "--trust"],
+          }
+        );
+        writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
+        gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
+      } catch (e) {
+        console.error(
+          c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`)
+        );
+      }
     }
 
     // (c) Consolidate.
@@ -906,23 +928,36 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     return { code: SHIP_EXIT.MERGE_BLOCKED, records };
   }
 
-  // Path-gated safety review.
-  let changedPaths = [];
+  // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
+  // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
+  // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
+  // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
+  let nameRes;
   try {
-    const nameRes = ghExec([
+    nameRes = ghExec([
       "pr",
       "diff",
       String(prNumber),
       ...(slug ? ["--repo", slug] : []),
       "--name-only",
     ]);
-    changedPaths = (nameRes?.stdout ?? "")
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  } catch {
-    /* best-effort — an empty list simply means no safety surface detected */
+  } catch (e) {
+    nameRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
   }
+  const nameStdout = nameRes?.stdout ?? "";
+  if (nameRes?.code !== 0 || !nameStdout.trim()) {
+    record("merge-gate", { changedPathsUnavailable: true, code: nameRes?.code });
+    console.error(
+      c.red(
+        "merge gate: changed-path metadata unavailable — cannot verify safety surface; blocking."
+      )
+    );
+    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+  }
+  const changedPaths = nameStdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (touchesSafetySurface(changedPaths)) {
     try {
       const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
@@ -964,12 +999,27 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     }
   }
 
-  // Merge (squash + delete remote branch).
+  // Merge (squash + delete remote branch). ghExec returns {code,stdout,stderr} WITHOUT throwing,
+  // so a failed `gh pr merge` must be caught by checking code — never assume success. A failed
+  // merge blocks and, critically, never advances to cleanup (which would remove the worktree/branch).
+  let mergeRes;
   try {
-    ghExec(["pr", "merge", String(prNumber), "--squash", "--delete-branch"]);
+    mergeRes = ghExec([
+      "pr",
+      "merge",
+      String(prNumber),
+      ...(slug ? ["--repo", slug] : []),
+      "--squash",
+      "--delete-branch",
+    ]);
   } catch (e) {
-    record("merge", { error: e.message });
-    console.error(c.red(`merge: gh pr merge failed: ${e.message}`));
+    mergeRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
+  }
+  if (mergeRes?.code !== 0) {
+    record("merge", { error: mergeRes?.stderr || "gh pr merge failed", code: mergeRes?.code });
+    console.error(
+      c.red(`merge: gh pr merge failed (code ${mergeRes?.code}): ${mergeRes?.stderr || ""}`)
+    );
     return { code: SHIP_EXIT.MERGE_BLOCKED, records };
   }
   record("merge", { pr: prNumber });
@@ -1008,7 +1058,7 @@ function usage() {
       "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
       "  --reviewers <list>     gating reviewers (default: bugbot,gpt-5.5; CodeRabbit advisory)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
-      "  --plan-runner cli|sdk  plan-stage runner (default: cli — uses Claude Code login auth)",
+      "  --plan-runner cli      plan-stage runner (default: cli — uses Claude Code login auth)",
       "  --dry-run              print the resolved step plan; no side effects, no network needed",
       "",
       "Gates default ON. In a non-TTY context without the matching --auto flag, ship exits with",
