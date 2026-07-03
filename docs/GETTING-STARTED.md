@@ -8,13 +8,78 @@ person to act on the brain side, that person is **John** (the brain admin).
 
 ---
 
-## 1. What you're setting up
+## 1. Where things live (read this first)
 
-AIOS is a three-part system: **your individual workspace** (this repo, one per
-person — you work here and choose what leaves your machine), the **Team Brain** (the
-one shared hub that receives everyone's pushes and answers questions across the team),
-and the **public site** (docs/marketing). You only run the workspace locally; the
-brain is hosted. See [`architecture.md`](architecture.md) for the hub-and-spoke model.
+There are **two separate folders** in this story, and mixing them up is the #1 way
+people get stuck. Neither is optional — you need both, but you only ever *work* in
+the second one.
+
+**Folder A — the toolkit you just cloned (`aios-workspace`).** This is a shared
+program, not your personal space. You run one command from here, and never touch
+most of it again day-to-day.
+
+```
+aios-workspace/                 ← you are here after `git clone` + `cd`
+├── scripts/
+│   ├── scaffold-project.sh     ← the ONE command that builds your real workspace (§5)
+│   └── aios.mjs                ← the `aios` CLI (status/push/pull/query), run via `npm run aios`
+├── scaffold/                   ← TEMPLATES ONLY — nothing here is a real file yet.
+│   │                             See scaffold/README.md if you're curious; you
+│   │                             shouldn't need to open this folder otherwise.
+│   ├── aios.yaml.tmpl          ← turns into YOUR aios.yaml (folder B below), not this one
+│   └── .claude/CLAUDE.md.tmpl  ← turns into YOUR .claude/CLAUDE.md (folder B below)
+├── validation/                 ← checkers you point at YOUR workspace, from here
+└── docs/                       ← this file, and the rest of the toolkit's own docs
+```
+
+**Folder B — your real workspace, created by step 5.** A brand-new folder,
+usually `~/Projects/<your-slug>/`, with its **own separate git repo**. This is
+where you work every day, and every file below is a real, filled-in file — none
+of it is a template.
+
+```
+~/Projects/abe-workspace/       ← created FOR you by scaffold-project.sh — a new folder
+├── aios.yaml                   ← HERE. At the top level. Real and filled in — not a template.
+├── .env                        ← your API key goes here (you create it from .env.example)
+├── 0-context/  1-inbox/  2-work/  3-log/  4-shared/  5-personal/   ← your spine (§2)
+├── .claude/
+│   ├── CLAUDE.md                ← real file, generated from the toolkit's CLAUDE.md.tmpl
+│   └── rules/  skills/  rubrics/  memory/     ← the agent layer, copied in for you
+└── README.md
+```
+
+**Straight answers to the exact questions that trip people up:**
+
+- **"Is `aios.yaml` in the root, or in `/scaffold`?"** — The root of **folder B**
+  (your workspace). It is never inside a `scaffold/` folder. Your workspace
+  doesn't even *have* a `scaffold/` folder — that name only exists inside the
+  toolkit (folder A).
+- **"What's actually inside `/scaffold`?"** — Only templates: files ending in
+  `.tmpl` with unfilled `{{PLACEHOLDER}}` markers, plus one filled worked
+  example (`aios.yaml.example`). If you ever see a literal `{{...}}` in an
+  error or in a file you're editing, a template got copied somewhere instead
+  of generated — re-run `scaffold-project.sh` (see the Troubleshooting table).
+- **"Is there a CLAUDE.md or README in `/scaffold` with instructions?"** — Not
+  ones meant to be *read* directly. `scaffold/.claude/CLAUDE.md.tmpl` and
+  `scaffold/README.md.tmpl` are templates that become your workspace's *real*
+  `CLAUDE.md` and `README.md` once you scaffold (folder B). `scaffold/README.md`
+  (no `.tmpl`) is the one real file in that folder, and it just explains the
+  folder itself to a human poking around — it is not workspace setup
+  instructions.
+
+If you remember one thing from this section: **you clone the toolkit once, run
+one command, and then live in the folder that command creates.**
+
+---
+
+## 2. What you're setting up
+
+AIOS is a three-part system: **your individual workspace** (folder B above — one
+per person, you work here and choose what leaves your machine), the **Team Brain**
+(the one shared hub that receives everyone's pushes and answers questions across
+the team), and the **public site** (docs/marketing). You only run the workspace
+locally; the brain is hosted. See [`architecture.md`](architecture.md) for the
+hub-and-spoke model.
 
 Everything in the workspace carries an **access tier** that travels with the content:
 
@@ -31,7 +96,7 @@ a deliberate `aios push`.
 
 ---
 
-## 2. Prerequisites
+## 3. Prerequisites
 
 - **Node ≥ 18** (`package.json` → `engines.node`). The `aios` CLI itself uses only
   Node built-ins (fetch, crypto, fs) — zero npm dependencies — so for sync you just
@@ -42,7 +107,7 @@ a deliberate `aios push`.
 
 ---
 
-## 3. Get your Team Brain API key
+## 4. Get your Team Brain API key
 
 A Team Brain **admin** issues you a per-member key. The key looks like
 `aios_<key_id>_<secret>` and is **shown once** — copy it immediately. It is scoped to
@@ -62,7 +127,10 @@ The `issue-key` output is your `aios_…` key. Keep it out of git — it goes in
 
 ---
 
-## 4. Scaffold your workspace
+## 5. Scaffold your workspace
+
+This is the one command from **folder A** (the toolkit) that builds **folder B**
+(your real workspace) — see §1 if that distinction is still fuzzy.
 
 You're an employee/contributor (not a client-facing consultant), so use
 `--context employee`. From a clone of this toolkit:
@@ -87,7 +155,7 @@ Flags (verified against `scripts/scaffold-project.sh`):
 - `--team "sam,jordan"` — *context only*; your teammates have their own workspaces.
   Optional.
 - `--brain-url` / `--team-id` — pre-fill the brain connection in `aios.yaml`. Both
-  optional; you can fill them in by hand later (step 5). Use `team_id: aios`.
+  optional; you can fill them in by hand later (step 6). Use `team_id: aios`.
 - `--output` — where to create it (defaults to `~/Projects/<slug>`).
 
 Add `--dry-run` to preview the spine without creating anything.
@@ -104,8 +172,9 @@ Add `--dry-run` to preview the spine without creating anything.
 | 5 | `5-personal/` | private scratch — **never syncs** | private |
 
 The scaffolder also drops in the `.claude/` agent layer (rules, skills, rubrics), the
-governance hook, `aios.yaml`, `.env.example`, and an initial git commit. When it
-finishes it prints:
+governance hook, `aios.yaml` **(a real, filled-in file at the workspace root — not a
+template, and not inside a `scaffold/` folder)**, `.env.example`, and an initial git
+commit. When it finishes it prints:
 
 ```
 Workspace ready: ~/Projects/abe-workspace
@@ -117,9 +186,10 @@ Next:
 
 ---
 
-## 5. Connect to the brain
+## 6. Connect to the brain
 
-`cd ~/Projects/abe-workspace`, then wire up two files.
+`cd ~/Projects/abe-workspace` — you are now inside **folder B**, your real
+workspace, not the toolkit. Wire up two files, both at this folder's top level.
 
 **`.env`** (copy from `.env.example`; gitignored — never commit it):
 
@@ -164,14 +234,17 @@ context: employee
 ```
 
 > Leave `brain_url` empty to stay fully offline — every non-sync part of the workspace
-> still works (see §7).
+> still works (see §8).
 
 A filled reference also lives at
-[`scaffold/aios.yaml.example`](../scaffold/aios.yaml.example).
+[`scaffold/aios.yaml.example`](../scaffold/aios.yaml.example) — **in the toolkit
+(folder A)**, for you to eyeball or hand-copy values from. Don't copy
+[`scaffold/aios.yaml.tmpl`](../scaffold/aios.yaml.tmpl) itself; it's unfilled
+(see §1).
 
 ---
 
-## 6. Your first push
+## 7. Your first push
 
 Create something to push — say a deliverable in `2-work/`:
 
@@ -237,7 +310,7 @@ then push the selection. Run `aios --help` for the full command list.
 
 ---
 
-## 7. Working offline
+## 8. Working offline
 
 No brain needed for: **scaffolding**, `validation/validate-all.sh`, the harness
 skills, the whole **operator loop** (`aios loop daily|collect|weekly|verify|writeback`)
@@ -252,7 +325,7 @@ and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause / fix |
 |---------|-------------|
@@ -260,12 +333,12 @@ and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios
 | `422 forbidden_tier` on push | You tried to push `private`/`admin`-tier (or untagged) content. **By design** — admin content never leaves the machine. Retag to `team`/`external` only if it really should be shared. |
 | `member '<x>' is not in … members` | Your identity isn't on the workspace roster. The CLI resolves member from `$AIOS_MEMBER` → `aios.yaml` `member:` → `git config aios.member` → `git user.name`, then checks it against the workspace member list. Fix your identity or add yourself via `--owner`/the member list. |
 | `cannot resolve member identity` | None of the sources above is set. Set one: `export AIOS_MEMBER=abe` or `git config aios.member abe`. |
-| Key not yet issued | You haven't been provisioned. Ask John to run `create-member` then `issue-key` (§3). |
-| `unknown sync tier '{{...}}'` (or any `{{...}}` in an error) | `aios.yaml` was copied straight from `scaffold/aios.yaml.tmpl` instead of being generated — its `{{PLACEHOLDER}}` markers were never substituted. Re-run `scripts/scaffold-project.sh` (§4), or hand-fill a fresh `aios.yaml` from the worked example at `scaffold/aios.yaml.example`. |
+| Key not yet issued | You haven't been provisioned. Ask John to run `create-member` then `issue-key` (§4). |
+| `unknown sync tier '{{...}}'` (or any `{{...}}` in an error) | `aios.yaml` was copied straight from `scaffold/aios.yaml.tmpl` instead of being generated — its `{{PLACEHOLDER}}` markers were never substituted. This is the #1 mix-up in §1: `scaffold/` (folder A) is templates only, `aios.yaml` belongs in your workspace root (folder B). Re-run `scripts/scaffold-project.sh` (§5), or hand-fill a fresh `aios.yaml` from the worked example at `scaffold/aios.yaml.example`. |
 
 ---
 
-## 9. Next: contribute to the platform
+## 10. Next: contribute to the platform
 
 Once your first push is live, start contributing. The canonical end-to-end path (understand →
 get access → scaffold → sync → first PR) is the website's
