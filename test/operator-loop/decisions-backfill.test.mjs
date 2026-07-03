@@ -14,6 +14,7 @@ import {
   existsSync,
   rmSync,
   realpathSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -468,6 +469,60 @@ test("backfill nulls transcriptPath when the transcript dir slug is not the curr
       /own\.jsonl$/,
       "own-slug transcript path is kept"
     );
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+  }
+});
+
+// Review r4 (GPT, Medium): classification runs on the realpath, so persistence must too — a raw
+// cwd reached through a symlink under a protected root must never enter the store as a string.
+test("backfill persists the canonical cwd, not a protected-root symlink alias", () => {
+  const { HOME, WORK } = build();
+  try {
+    const aliasDir = path.join(HOME, "Projects", "clients", "alias-link");
+    mkdirSync(path.dirname(aliasDir), { recursive: true });
+    symlinkSync(WORK, aliasDir);
+    const projDir = path.join(HOME, ".claude", "projects", "alias");
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      path.join(projDir, "a.jsonl"),
+      ask("al1", "2026-06-08T10:00:00Z", aliasDir, "al-a", "Via the alias?", "Yes")
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n"
+    );
+    const r = JSON.parse(run(WORK, ["backfill", "--home", HOME, "--json"]).out);
+    assert.equal(r.appended, 1, "the alias resolves into the current repo → ingested");
+    const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
+    assert.ok(!store.includes("alias-link"), "the protected-root alias string never lands");
+    assert.equal(
+      JSON.parse(store.trim().split("\n").at(-1)).decision.context.cwd,
+      realpathSync(WORK)
+    );
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+  }
+});
+
+// Review r4 (Bugbot, High): a decision whose record carries NO cwd must be skipped + counted —
+// inheriting the file's first cwd could launder a protected-context moment in as current-repo.
+test("backfill skips + counts decisions whose record has no cwd (origin never guessed)", () => {
+  const { HOME, WORK } = build();
+  try {
+    const projDir = path.join(HOME, ".claude", "projects", "nocwd");
+    mkdirSync(projDir, { recursive: true });
+    const records = [
+      ...ask("nc1", "2026-06-09T10:00:00Z", WORK, "nc-a", "I have a cwd", "Yes"),
+      ...ask("nc1", "2026-06-09T10:01:00Z", WORK, "nc-b", "I do not", "Yes").map((r, i) =>
+        i === 0 ? { ...r, cwd: undefined } : r
+      ),
+    ];
+    writeFileSync(
+      path.join(projDir, "n.jsonl"),
+      records.map((r) => JSON.stringify(r)).join("\n") + "\n"
+    );
+    const r = JSON.parse(run(WORK, ["backfill", "--home", HOME, "--dry-run", "--json"]).out);
+    assert.equal(r.recoverable, 1, "only the cwd-bearing decision is recoverable");
+    assert.equal(r.skippedNoCwd, 1, "the cwd-less one is skipped + counted, never guessed");
   } finally {
     rmSync(HOME, { recursive: true, force: true });
   }

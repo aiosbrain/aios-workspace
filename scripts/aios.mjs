@@ -3804,12 +3804,6 @@ async function cmdDecisions(repo, cfg, args) {
         return path.resolve(p);
       }
     };
-    const firstCwd = (records) => {
-      for (const r of records) {
-        if (r && typeof r === "object" && typeof r.cwd === "string" && r.cwd.trim()) return r.cwd;
-      }
-      return null;
-    };
     const sinceOk = (d) => sinceMs == null || !d.createdAt || Date.parse(d.createdAt) >= sinceMs;
 
     const repoReal = safeReal(repo);
@@ -3839,6 +3833,7 @@ async function cmdDecisions(repo, cfg, args) {
     let scannedFiles = 0;
     let unpaired = 0;
     let missingTimestamp = 0;
+    let skippedNoCwd = 0;
     let skippedNonexistentCwd = 0;
     let skippedSensitive = 0;
     const byContext = new Map();
@@ -3862,23 +3857,24 @@ async function cmdDecisions(repo, cfg, args) {
 
       // Classify EACH decision by its OWN originating record cwd — never the file's first cwd. A
       // transcript can span multiple cwds (resumed session / `cd` mid-session), so a safe leading
-      // record must not launder a later client-cwd decision into the store. firstCwd is only a
-      // fallback for a decision whose record carried no cwd at all.
-      const fallbackCwd = firstCwd(records);
+      // record must not launder a later client-cwd decision into the store. A decision whose
+      // record carried NO cwd is skipped + counted — origin is never guessed (spec + review r4:
+      // inheriting an earlier record's cwd could ingest a protected-context moment as safe).
       let acceptedFromFile = false;
       for (const d of sessionDecisions) {
-        const cwdRaw =
-          typeof d.originCwd === "string" && d.originCwd.trim() ? d.originCwd : fallbackCwd;
+        const cwdRaw = typeof d.originCwd === "string" && d.originCwd.trim() ? d.originCwd : null;
+        if (!cwdRaw) {
+          skippedNoCwd += 1;
+          continue;
+        }
         let cwdReal = null;
         let cwdExists = false;
-        if (cwdRaw) {
-          try {
-            cwdReal = realpathSync(cwdRaw);
-            cwdExists = true;
-          } catch {
-            cwdReal = path.resolve(cwdRaw);
-            cwdExists = false;
-          }
+        try {
+          cwdReal = realpathSync(cwdRaw);
+          cwdExists = true;
+        } catch {
+          cwdReal = path.resolve(cwdRaw);
+          cwdExists = false;
         }
         const isCurrent =
           cwdReal && (cwdReal === repoReal || cwdReal.startsWith(repoReal + path.sep));
@@ -3896,7 +3892,10 @@ async function cmdDecisions(repo, cfg, args) {
               sessionId: d.context?.sessionId ?? null,
               project: path.basename(cwdReal),
               transcriptPath: safeTranscript,
-              cwd: cwdRaw,
+              // Persist the CANONICAL path, never the raw one (review r4): the safe-classification
+              // ran on the realpath, and a raw cwd reached through a symlink under a protected
+              // root would smuggle that protected path string into the store.
+              cwd: cwdReal,
             },
             contextTag: currentTag,
           });
@@ -3935,12 +3934,12 @@ async function cmdDecisions(repo, cfg, args) {
       if (acceptedFromFile) unpaired += stats.unpaired;
     }
 
-    // Dedupe preview (report) via the store's exact key; the real write recomputes under the lock.
-    // The preview also simulates DECISIONS_HARD_LINE_CAP (review r2): dry-run's "would append"
-    // must match what appendDecisionsDeduped will actually write, never overstate it.
-    const existing = new Set(
-      loop.readDecisions(repo).decisions.map((d) => loop.decisionDedupeKey(d))
-    );
+    // Dedupe preview (report) via the store's exact RAW-LINE key set — the same reader the batch
+    // writer uses under its lock (review r4: a folded-store preview drops invalid-createdAt lines
+    // the raw writer still honors, so the two counts could diverge). The preview also simulates
+    // DECISIONS_HARD_LINE_CAP (review r2): dry-run's "would append" must match what
+    // appendDecisionsDeduped will actually write, never overstate it.
+    const existing = loop.existingDecisionKeys(repo);
     const storeAbs = path.join(repo, ".aios", "loop", "decisions", "decisions.ndjson");
     let storeLines = 0;
     try {
@@ -3987,6 +3986,7 @@ async function cmdDecisions(repo, cfg, args) {
       recoverable: accepted.length,
       appended,
       skippedDuplicate: skippedDup,
+      skippedNoCwd,
       skippedNonexistentCwd,
       skippedSensitive,
       skippedMissingTimestamp: missingTimestamp,
@@ -4013,8 +4013,15 @@ async function cmdDecisions(repo, cfg, args) {
       for (const [tag, n] of [...byContext.entries()].sort())
         console.log(`    ${tag.padEnd(12)} ${n}`);
     }
-    if (skippedNonexistentCwd || skippedSensitive || missingTimestamp || cappedStore) {
+    if (
+      skippedNoCwd ||
+      skippedNonexistentCwd ||
+      skippedSensitive ||
+      missingTimestamp ||
+      cappedStore
+    ) {
       console.log("  skipped:");
+      if (skippedNoCwd) console.log(c.dim(`    no cwd on record:   ${skippedNoCwd}`));
       if (skippedNonexistentCwd)
         console.log(c.dim(`    non-existent cwd:   ${skippedNonexistentCwd}`));
       if (skippedSensitive) console.log(c.dim(`    sensitive/unknown:  ${skippedSensitive}`));

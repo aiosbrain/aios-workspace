@@ -447,8 +447,11 @@ export function decisionDedupeKey(rec: DecisionRecord): string {
 }
 
 /** Mini-fold of the store's create lines to the set of existing dedupe keys. Reads raw lines (no
- *  full fold) — mirrors the hook's `existingKeys`. Missing / unreadable store → empty set. */
-function existingDecisionKeys(root: string): Set<string> {
+ *  full fold) — mirrors the hook's `existingKeys`. Missing / unreadable store → empty set.
+ *  Exported so the backfill CLI's dry-run PREVIEW dedupes against the SAME raw-line key set the
+ *  writer uses (review r4): a folded-store preview drops invalid-createdAt lines the raw writer
+ *  still honors, overstating "would append". */
+export function existingDecisionKeys(root: string): Set<string> {
   const keys = new Set<string>();
   const abs = storePath(root);
   if (!existsSync(abs)) return keys;
@@ -469,10 +472,11 @@ function existingDecisionKeys(root: string): Set<string> {
     if (!isRecord(o) || o.v !== DECISIONS_SCHEMA_VERSION || o.op !== "create") continue;
     if (!isRecord(o.decision)) continue;
     const d = o.decision;
-    // Mirror the hook's existingKeys exactly (review r3): an id-less create line is invalid at
-    // fold time and the hook does NOT index it — if we counted its key here, backfill would skip
-    // a record the hook still treats as new, and the two writers' dedupe views would diverge.
-    if (typeof d.id !== "string" || !d.id) continue;
+    // Mirror the hook's existingKeys EXACTLY (reviews r3+r4): the hook indexes any create whose
+    // id is a string — including "" — and ignores non-string ids. Any deviation here makes the
+    // two writers' dedupe views diverge (backfill skipping what the hook treats as new, or vice
+    // versa).
+    if (typeof d.id !== "string") continue;
     const question = normalizeSingleLine(d.question, QUESTION_MAX);
     const ctx = isRecord(d.context) ? d.context : {};
     const sid = asStr(ctx.sessionId) ?? "";
