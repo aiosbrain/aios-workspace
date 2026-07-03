@@ -534,8 +534,37 @@ export function snapshotsDiffer(before, after) {
   return after.status !== before.status || after.head !== before.head;
 }
 
+/**
+ * Pure tripwire verdict — true means ABORT. `git` facts are injected so this is table-testable:
+ *   originMainSha — `git rev-parse origin/main` at check time
+ *   headIsAncestor — whether before.head is an ancestor of after.head
+ * ANY working-tree status change (tracked or untracked) still trips — an untracked file escaping
+ * into the primary checkout is exactly what this wire exists to catch. The ONLY tolerated change
+ * is the HEAD move concurrent `roadmap-run` walkers legitimately cause between issues: an
+ * ff-only advance where before.head is an ancestor of after.head AND after.head is exactly
+ * origin/main. Anything else (rogue local commit, reset, checkout) still trips.
+ */
+export function tripwireVerdict(before, after, { originMainSha, headIsAncestor }) {
+  if (after.status !== before.status) return true;
+  if (after.head === before.head) return false;
+  return !(headIsAncestor && originMainSha && after.head === originMainSha);
+}
+
 export function tripwireTripped(before, repo) {
-  return snapshotsDiffer(before, primarySnapshot(repo));
+  const after = primarySnapshot(repo);
+  let headIsAncestor = false;
+  if (before.head && after.head && before.head !== after.head) {
+    try {
+      git(["merge-base", "--is-ancestor", before.head, after.head], repo, { capture: false });
+      headIsAncestor = true;
+    } catch {
+      headIsAncestor = false;
+    }
+  }
+  return tripwireVerdict(before, after, {
+    originMainSha: gitQuiet(["rev-parse", "origin/main"], repo),
+    headIsAncestor,
+  });
 }
 
 function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
