@@ -1,11 +1,11 @@
 ---
 name: maturity-report
 description: |
-  Produce an AI-transformation maturity report + roadmap deliverable from the three AEM
+  Produce an AI-transformation maturity report + roadmap deliverable from the three AM
   scopes — the individual (workstation), the codebase(s), and the team. Pulls the owner's
   placement, scores the relevant repos, folds in the team rollup if a brain is connected,
   and writes a client- or company-ready roadmap into 2-work/. Use when the user says
-  "maturity report", "transformation roadmap", "AEM report", "assess our agentic maturity",
+  "maturity report", "transformation roadmap", "AM report", "assess our agentic maturity",
   or when preparing an engagement or team readout.
 kind: skill
 version: 1.0.0
@@ -13,14 +13,15 @@ triggers:
   - maturity report
   - transformation roadmap
   - AEM report
+  - AM report
   - assess our agentic maturity
   - agentic maturity readout
 ---
 
 # Maturity report
 
-Assemble a single, honest AI-transformation readout from the three AEM scopes and write
-it as a deliverable. The AEM model is canonical in `agentic-engineering-maturity/` (root)
+Assemble a single, honest AI-transformation readout from the three AM scopes and write
+it as a deliverable. The AM model is canonical in `agentic-engineering-maturity/` (root)
 and published at `/agentic`. Assess → place → prescribe, then package as a roadmap.
 
 ## Step 1 — Gather the three scopes
@@ -56,7 +57,7 @@ outward readout) `access: client`/`company`. Structure:
 1. **Executive summary** — where they are in one paragraph + the single biggest lever.
 2. **Scorecard** — a table: scope · current level · weakest dimension · target.
 3. **Findings** — per scope, honest and specific (lead with the verification cap if it bit).
-4. **Roadmap** — sequenced next steps, each tied to a concrete AEM pattern and an owner.
+4. **Roadmap** — sequenced next steps, each tied to a concrete AM pattern and an owner.
    Order by leverage: verification first, then context/automation, then orchestration.
 5. **How we measure progress** — re-assess cadence (quarterly for people, per-PR for repos
    via `assess-codebase`, quarterly for the team) and the headline metric (% repos at L3+).
