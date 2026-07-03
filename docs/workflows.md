@@ -134,7 +134,8 @@ aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate
 ```
 
 - **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback
-  (require-all by default; exit 2 on a missing bot at timeout).
+  (require-all by default; exit 2 on a missing bot at timeout — `--any` opts back into
+  proceed-on-timeout, `--bots <list>` gates on a subset).
 - **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the bot
   comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
   `.aios/loop/<issue>/findings-r<N>.md`, using `.claude/agents/code-reviewer.md` as its (single,
