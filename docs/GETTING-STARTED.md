@@ -240,10 +240,15 @@ then push the selection. Run `aios --help` for the full command list.
 ## 7. Working offline
 
 No brain needed for: **scaffolding**, `validation/validate-all.sh`, the harness
-skills, `aios analyze` (agentic-maturity report from local logs), `aios export-okf`,
-`aios graph`, `aios assess-codebase`, and `aios learn`. Only **`push`**, **`pull`**,
-and **`query`** require a configured `brain_url` + key. Leave `brain_url` empty to run
-fully standalone.
+skills, the whole **operator loop** (`aios loop daily|collect|weekly|verify|writeback`)
+and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios spec`,
+`aios rails`, `aios time`), `aios analyze` (agentic-maturity report from local logs),
+`aios export-okf`, `aios graph`, `aios assess-codebase`, and `aios learn`. Only
+**`push`**, **`pull`**, and **`query`** require a configured `brain_url` + key. Leave
+`brain_url` empty to run fully standalone.
+
+> Once you're set up, the [operating manual](GUIDE.md) is the task-oriented tour of all of
+> the above — organized around your day, with real output and diagrams.
 
 ---
 

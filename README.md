@@ -51,6 +51,11 @@ aios-workspace/
 
 ## Quickstart
 
+> **Want to actually drive this?** [`docs/GUIDE.md`](docs/GUIDE.md) — *The AIOS operating manual* —
+> is the one task-oriented walkthrough of the whole surface, organized around your day: the daily
+> brief, the asks queue + attention mode, the weekly loop, syncing to the brain, measuring yourself
+> (AEM), gating specs, and the agent pipeline. Start there.
+>
 > **New contributor?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
 > step-by-step path from a fresh clone to your first `aios push` live on the Team Brain.
 
@@ -160,6 +165,34 @@ label that maps to the engine's **canonical** tier:
 **Default-deny:** untagged content and anything `private`/`admin` never syncs.
 Promotion is always a deliberate `aios push`.
 
+## The daily driver — loop, asks, mode, specs
+
+Beyond scaffolding and sync, the workspace runs an **operator loop** and a **human-operating layer**
+you drive from the CLI — all offline, all local-only until you push:
+
+- **Daily brief** — `aios loop daily`: what changed, what's blocked, what you owe today, with your
+  own escalation queue on top.
+- **Asks queue** — `aios asks list/add/resolve/drain`: a non-blocking escalation inbox that session
+  hooks fill for you (idle → blocker, an assistant question → decision, a completion → fyi).
+- **Attention mode** — `aios mode deep-work | orchestration`: one command to silence or restore the
+  local end-of-turn ping (touches only `preferredNotifChannel`; mobile push untouched).
+- **Steering decisions** — `aios decisions list/outcome/export`: a local, admin-tier corpus of the
+  `AskUserQuestion` / plan-approval moments (this is *not* the Team Brain decision log — see the
+  guide's disambiguation box).
+- **Weekly loop** — `aios loop collect → weekly → verify → writeback`: a verified, approval-gated
+  closeout that proves every shareable claim before it can sync.
+- **Measure yourself** — `aios analyze` (agentic-engineering maturity + attention + spend),
+  `aios time` (agent-runtime time tracking).
+- **Spec gate** — `aios spec eval | fix`: grade a spec against the pick-up-able-issue bar before a
+  builder touches it.
+- **Agent pipeline** — `aios relay | build | ship`: an Opus builder reviewed by an independent
+  model, gated at plan + merge. See [`docs/agent-build.md`](docs/agent-build.md).
+- **Repo hardening** — `aios assess-codebase`, `aios rails missing/suggest/apply`: score any repo's
+  agent-readiness and stand up a safe permission allowlist.
+
+Every one of these is walked through, with real output and diagrams, in
+[`docs/GUIDE.md`](docs/GUIDE.md).
+
 ## Skills & integrations
 
 Every workspace ships a generated **skills catalog** (`.claude/skills/INDEX.md`) and an
@@ -188,7 +221,9 @@ The toolkit started life in consulting; both vocabularies are accepted everywher
 | Counterparty | `--stakeholder` | `--client` |
 | Outward tier | `client`/`company` (→`external`) | — |
 
-See [`docs/architecture.md`](docs/architecture.md) for the hub-and-spoke model and
+See [`docs/GUIDE.md`](docs/GUIDE.md) for the task-oriented operating manual (the
+whole CLI, organized around your day),
+[`docs/architecture.md`](docs/architecture.md) for the hub-and-spoke model and
 access tiers, [`docs/feature-set.md`](docs/feature-set.md) for the full feature set,
 [`docs/workflows.md`](docs/workflows.md) for the harness design study that shaped
 the skills, [`docs/byoa.md`](docs/byoa.md) for **Bring Your Own Agent** (choose

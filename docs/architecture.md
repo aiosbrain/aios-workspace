@@ -103,6 +103,32 @@ client** (`scripts/aios.mjs`) default-denies anything not explicitly tiered with
 Brain side, retrieval is tier-filtered in SQL so a query never returns content
 above the caller's ceiling.
 
+## The local operator layer
+
+Above the sync substrate sits a **local-only operator layer** — the daily/weekly loop and the
+human-operating ergonomics — that the owner drives from the `aios` CLI. It is architecturally
+distinct from sync in one way that matters: **its stores never cross the tier boundary.** They live
+under `.aios/` in the workspace, are admin-tier by construction, and are excluded from
+`sync_include`, so no `aios push` can move them. The layer has three groups:
+
+- **The Verified Operator Loop** (`aios loop collect|daily|manifest|verify|weekly|writeback|
+  telemetry`) — collects local work signals into a run manifest, drafts a private brief plus
+  tier-safe digests, verifies every shareable claim against evidence and tier policy, and promotes
+  only explicitly approved output. Its state lives in `.aios/loop/{manifests,closeouts,continuity,
+  telemetry}/`. Specs: [`v1-operator-loop/`](v1-operator-loop/README.md).
+- **The human-operating ergonomics** (`aios asks`, `aios mode`, `aios decisions`, `aios analyze`,
+  `aios time`, `aios spec`, `aios rails`) — a non-blocking escalation queue
+  (`.aios/loop/asks/asks.ndjson`), an attention-mode toggle (machine-global at
+  `~/.claude/aios-mode.json` — the one store deliberately *outside* `.aios/`), a steering-decision
+  corpus (`.aios/loop/decisions/decisions.ndjson`), agentic-maturity + time measurement, the spec
+  gate, and permission-rails tooling. Epic: [`agentic-ergonomics/`](agentic-ergonomics/build-paradigm.md).
+- **Capture hooks** — dependency-free Claude Code hooks (`hooks/asks-capture.mjs`,
+  `hooks/decision-capture.mjs`, registered in the root `.claude/settings.json`) that route session
+  events into those stores deterministically and always exit 0, so a hook can never disturb a session.
+
+All of it is append-only NDJSON folded to state on read, with a writer-honored lockfile so
+maintenance never races an append. The [operating manual](GUIDE.md) walks the whole surface.
+
 ## Why agent-native
 
 The structure is plain folders of Markdown and YAML — readable by humans, diff-able in
