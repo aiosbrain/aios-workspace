@@ -283,6 +283,16 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
   **non-TTY** context with a gate still active (no matching auto flag), ship exits with a
   `*_GATE_BLOCKED` code **rather than hanging** — cron safety.
+- **Driving ship from an agent (or any non-TTY caller).** To pause at the gates and judge them
+  yourself, prefer running **stage-wise**: leave the auto flags off, let ship exit with the gate's
+  `*_GATE_BLOCKED` code, inspect the audit trail (`.aios/loop/<issue>/`), then re-run to continue.
+  Alternative for truly live gates: allocate a **pseudo-terminal** so the prompts behave
+  interactively — e.g.
+  `script -q /tmp/ship-tty.log node scripts/aios.mjs ship AIO-123 < <(tail -f /tmp/ship-stdin.txt)`
+  captures the session in the log file (your eyes) and answers prompts via appends to the stdin
+  file (your hands: `echo y >> /tmp/ship-stdin.txt`). This pattern works and has been used in the
+  field, but it hand-rolls what the flags already provide — use `--auto`/`--auto-merge` when you
+  simply want the gates skipped; they leave an honest audit record instead of a simulated keyboard.
 - **`--dry-run`** prints the resolved step plan (stages, per-step models/efforts, gate states,
   reviewers, and the `SHIP_EXIT` table) with **no side effects and no required network** — it works
   offline and without `LINEAR_API_KEY`. Key resolution follows the normal order
