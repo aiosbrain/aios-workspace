@@ -299,9 +299,17 @@ export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
 
 // Read the current `## Verdict` value (CLEAR | BLOCKED), or null when absent.
 function readVerdictLine(text) {
-  const m = (text ?? "").match(/^\s*(?:##\s*Verdict\s*\n+\s*)?\[?(CLEAR|BLOCKED)\]?\s*$/im);
+  // Tolerate markdown emphasis around the value (`**[BLOCKED]**`) — the model bolds verdicts,
+  // and a decoration-blind parse left the narrative verdict contradicting the computed one
+  // (AIO-239 / observation.md §9).
+  const DEC = "(?:\\*\\*|__|\\*|_)?";
+  const m = (text ?? "").match(
+    new RegExp(`^\\s*(?:##\\s*Verdict\\s*\\n+\\s*)?${DEC}\\[?(CLEAR|BLOCKED)\\]?${DEC}\\s*$`, "im")
+  );
   // Prefer a value that follows a "## Verdict" header specifically.
-  const hm = (text ?? "").match(/##\s*Verdict\s*\n+\s*\[?(CLEAR|BLOCKED)\]?/i);
+  const hm = (text ?? "").match(
+    new RegExp(`##\\s*Verdict\\s*\\n+\\s*${DEC}\\[?(CLEAR|BLOCKED)\\]?${DEC}`, "i")
+  );
   if (hm) return hm[1].toUpperCase();
   return m ? m[1].toUpperCase() : null;
 }
@@ -379,8 +387,13 @@ function finalizeOutput(text, verdict) {
     .replace(/\n*BUGBOT_CLEAR\s*$/i, "")
     .trimEnd();
   // Reconcile any existing Verdict section with the authoritative computed verdict.
-  if (/##\s*Verdict\s*\n+\s*\[?(CLEAR|BLOCKED)\]?/i.test(out)) {
-    out = out.replace(/(##\s*Verdict\s*\n+\s*)\[?(CLEAR|BLOCKED)\]?/i, `$1${verdict}`);
+  const DEC2 = "(?:\\*\\*|__|\\*|_)?";
+  const verdictValRe = new RegExp(
+    `(##\\s*Verdict\\s*\\n+\\s*)${DEC2}\\[?(CLEAR|BLOCKED)\\]?${DEC2}`,
+    "i"
+  );
+  if (verdictValRe.test(out)) {
+    out = out.replace(verdictValRe, `$1${verdict}`);
   } else if (/##\s*Verdict/i.test(out)) {
     // Header present but no parseable value — insert the computed verdict after it.
     out = out.replace(/(##\s*Verdict\s*)\n?/i, `$1\n\n${verdict}\n`);

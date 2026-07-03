@@ -1,0 +1,270 @@
+#!/usr/bin/env node
+// test/ship-resume.test.mjs — checkpoint/resume + async gates (AIO-239).
+// Covers: a blocked plan gate persists state + GATE-plan.pending and exits 22; `--resume
+// --approve-plan` re-enters WITHOUT re-running recon/plan and completes; a blocked merge gate
+// persists and `--resume --approve-merge` merges without re-running build/PR/review; the full
+// plan file referenced in planner stdout is captured inline; the plan reviewer receives the
+// prior round's required changes with a regression-check instruction; resolveGates 'approved'.
+// Run: node test/ship-resume.test.mjs
+
+import {
+  runShip,
+  resolveGates,
+  findPlanFilePath,
+  buildPlanReviewPrompt,
+  SHIP_EXIT,
+} from "../scripts/ship.mjs";
+import { resolveLoopModels } from "../scripts/loop-models.mjs";
+import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+let failed = 0;
+const RED = "\x1b[0;31m",
+  GREEN = "\x1b[0;32m",
+  NC = "\x1b[0m";
+function check(label, cond) {
+  if (cond) console.log(`  ${GREEN}✓${NC} ${label}`);
+  else {
+    console.log(`  ${RED}✗${NC} ${label}`);
+    failed++;
+  }
+}
+
+const PLAN_TEXT = "# Plan\n1. do the thing\n";
+
+function makeIssue() {
+  return {
+    identifier: "AIO-163",
+    title: "Add ship command",
+    description: "Build it.",
+    state: { name: "Todo", type: "unstarted" },
+    children: [],
+    comments: [],
+    blockedBy: [],
+  };
+}
+
+// In-memory state store shared across "runs" to model --resume.
+function makeStateStore() {
+  const store = { state: null, gates: {}, removed: [] };
+  return {
+    store,
+    readState: () => store.state,
+    writeState: (_issue, st) => {
+      store.state = JSON.parse(JSON.stringify(st));
+    },
+    writeGate: (_issue, name, text) => {
+      store.gates[name] = text;
+    },
+    removeGate: (_issue, name) => {
+      store.removed.push(name);
+      delete store.gates[name];
+    },
+  };
+}
+
+function makeDeps(over = {}) {
+  const repo = mkdtempSync(path.join(tmpdir(), "ship-resume-"));
+  const counters = { recon: 0, plan: 0, build: 0, pr: 0, review: 0 };
+  const ghCalls = [];
+  const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
+  const deps = {
+    repo,
+    counters,
+    ghCalls,
+    linear: {
+      getIssue: async () => makeIssue(),
+      createIssue: async () => ({ identifier: "AIO-901" }),
+      addComment: async () => ({ ok: true }),
+    },
+    resolveModels: resolveLoopModels,
+    runBuild: async () => (counters.build++, BUILD_EXIT.OK),
+    cmdPr: async () => (counters.pr++, 77),
+    cmdConsolidateFindings: async () => (counters.review++, 0), // CLEAR
+    callClaudeAgent: async (prompt) => {
+      if (/recon context pack/.test(prompt)) return (counters.recon++, "RECON CONTEXT");
+      if (/implementation plan/.test(prompt)) return (counters.plan++, PLAN_TEXT);
+      if (/safety reviewer/.test(prompt)) return "reviewed\nSAFETY_APPROVED";
+      return "generic";
+    },
+    callCursorAgent: async (prompt) => {
+      if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
+      return "- `Low` `f`: nit";
+    },
+    waitForBots: () => 0,
+    gitExec: () => "",
+    ghExec: (argv) => {
+      const a = argv.join(" ");
+      ghCalls.push(a);
+      if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
+      if (a.includes("--name-only")) return { code: 0, stdout: "README.md", stderr: "" };
+      if (a.includes("pr diff")) return { code: 0, stdout: "diff --git a b", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    gitLsFiles: () => new Set(["README.md"]),
+    statFile: () => ({ size: 10 }),
+    readFile: () => "file contents",
+    confirm: async () => true,
+    isTty: false, // async-gate territory
+    writeAudit: (issue, name, text) => {
+      const dir = path.join(repo, ".aios", "loop", issue);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, name), String(text));
+    },
+    slug: "acme/repo",
+  };
+  return { ...deps, ...over, repo, counters, ghCalls };
+}
+
+function optsFor(o = {}) {
+  return {
+    auto: false,
+    autoMerge: false,
+    maxFixRounds: 3,
+    reviewers: ["bugbot", "gpt-5.5"],
+    planRunner: "cli",
+    dryRun: false,
+    resume: false,
+    approvePlan: false,
+    approveMerge: false,
+    ...o,
+  };
+}
+
+console.log("resolveGates: --approve-* yields 'approved'; --auto still wins");
+{
+  const g1 = resolveGates({ auto: false, autoMerge: false, approvePlan: true, isTty: false });
+  check("plan approved via flag", g1.plan === "approved");
+  check("merge still blocked", g1.merge === "blocked");
+  const g2 = resolveGates({ auto: true, approvePlan: true, isTty: false });
+  check("--auto wins over --approve-plan (skip)", g2.plan === "skip");
+}
+
+console.log("blocked plan gate → exit 22, state + GATE-plan.pending persisted, work done once");
+console.log("…then --resume --approve-plan → completes WITHOUT re-running recon/plan");
+{
+  const ss = makeStateStore();
+  const deps = makeDeps({ ...ss });
+  const r1 = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("first run exits PLAN_GATE_BLOCKED", r1.code === SHIP_EXIT.PLAN_GATE_BLOCKED);
+  check("recon ran once", deps.counters.recon === 1);
+  check("plan ran once", deps.counters.plan === 1);
+  check("state persisted with reviewer-approved plan", ss.store.state?.planReviewed === true);
+  check("state records the gate as NOT operator-approved", ss.store.state?.planApproved === false);
+  check(
+    "GATE-plan.pending written with resume instructions",
+    /--resume --approve-plan/.test(ss.store.gates.plan ?? "")
+  );
+  check("build never ran", deps.counters.build === 0);
+
+  // Second "run": resume with the pending gate approved. Merge gate is auto to reach OK.
+  const deps2 = makeDeps({ ...ss });
+  const r2 = await runShip({
+    repo: deps2.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, approvePlan: true, autoMerge: true }),
+    deps: deps2,
+  });
+  check("resumed run reaches OK", r2.code === SHIP_EXIT.OK);
+  check("recon NOT re-run", deps2.counters.recon === 0);
+  check("plan NOT re-run", deps2.counters.plan === 0);
+  check("build ran on the resumed run", deps2.counters.build === 1);
+  check("plan pending gate removed on approval", ss.store.removed.includes("plan"));
+  check("merge recorded in state", ss.store.state?.merged === true);
+  rmSync(deps.repo, { recursive: true, force: true });
+  rmSync(deps2.repo, { recursive: true, force: true });
+}
+
+console.log(
+  "blocked merge gate → exit 62 with state; --resume --approve-merge merges without re-work"
+);
+{
+  const ss = makeStateStore();
+  const deps = makeDeps({ ...ss });
+  const r1 = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ auto: true }), // plan gate skipped; merge gate blocks (non-TTY)
+    deps,
+  });
+  check("first run exits MERGE_GATE_BLOCKED", r1.code === SHIP_EXIT.MERGE_GATE_BLOCKED);
+  check("PR number checkpointed", ss.store.state?.prNumber === 77);
+  check("review CLEAR checkpointed", ss.store.state?.reviewClear === true);
+  check("GATE-merge.pending written", /--resume --approve-merge/.test(ss.store.gates.merge ?? ""));
+  check("merge never issued on the blocked run", !deps.ghCalls.some((a) => a.includes("pr merge")));
+
+  const deps2 = makeDeps({ ...ss });
+  const r2 = await runShip({
+    repo: deps2.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, approveMerge: true }),
+    deps: deps2,
+  });
+  check("resumed run reaches OK", r2.code === SHIP_EXIT.OK);
+  check("build NOT re-run", deps2.counters.build === 0);
+  check("PR NOT re-opened", deps2.counters.pr === 0);
+  check("consolidator NOT re-run", deps2.counters.review === 0);
+  check(
+    "merge issued on the resumed run",
+    deps2.ghCalls.some((a) => a.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+  rmSync(deps2.repo, { recursive: true, force: true });
+}
+
+console.log("full plan file referenced in planner stdout is captured inline (R5b)");
+{
+  const ss = makeStateStore();
+  const FULL = "# The full plan\n\nEvery detail lives here.";
+  const deps = makeDeps({
+    ...ss,
+    callClaudeAgent: async (prompt) => {
+      if (/recon context pack/.test(prompt)) return "RECON CONTEXT";
+      if (/implementation plan/.test(prompt))
+        return "Summary only. Full plan at /Users/x/.claude/plans/some-plan.md.";
+      if (/safety reviewer/.test(prompt)) return "reviewed\nSAFETY_APPROVED";
+      return "generic";
+    },
+    readFile: (p) => (p.includes(".claude/plans") ? FULL : "file contents"),
+  });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ auto: true, autoMerge: true }),
+    deps,
+  });
+  check("run OK", r.code === SHIP_EXIT.OK);
+  check("captured full plan into state/plan text", (ss.store.state?.plan ?? "").includes(FULL));
+  check(
+    "capture is labeled with its source path",
+    /Full plan \(captured from/.test(ss.store.state?.plan ?? "")
+  );
+}
+
+console.log("findPlanFilePath: absolute + ~ forms; no false positive");
+{
+  check(
+    "absolute path found",
+    findPlanFilePath("saved to /Users/a/.claude/plans/x-y.md, done") ===
+      "/Users/a/.claude/plans/x-y.md"
+  );
+  check(
+    "~ path found",
+    findPlanFilePath("wrote ~/.claude/plans/tidy-bubble.md") === "~/.claude/plans/tidy-bubble.md"
+  );
+  check("no match in plain prose", findPlanFilePath("no plans path here") === null);
+}
+
+console.log("plan review round ≥2 carries prior required changes + regression instruction (R5a)");
+{
+  const prompt = buildPlanReviewPrompt("PLAN v2", 2, 3, "- [Blocker] fix X\n- [Major] fix Y");
+  check("prior review embedded", prompt.includes("[Blocker] fix X"));
+  check("regression instruction present", /Regression check/.test(prompt));
+  const r1 = buildPlanReviewPrompt("PLAN v1", 1, 3, null);
+  check("round 1 has no regression section", !/Regression check/.test(r1));
+}
+
+console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
+process.exit(failed ? 1 : 0);
