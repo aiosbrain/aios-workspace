@@ -344,5 +344,30 @@ console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → 
   rmSync(deps2.repo, { recursive: true, force: true });
 }
 
+console.log("bugbot gate: wait-for-bots gets --repo <slug>; timeout (2) proceeds");
+{
+  const deps = makeDeps();
+  let wfbArgs = null;
+  deps.waitForBots = (argv) => ((wfbArgs = argv), 2); // timeout → proceed
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("timeout (exit 2) still reaches OK", code === SHIP_EXIT.OK);
+  check("wait-for-bots received --repo slug", wfbArgs.join(" ").includes("--repo acme/repo"));
+  check("wait-for-bots gated on cursor[bot]", wfbArgs.join(" ").includes("--bots cursor[bot]"));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("bugbot gate: unexpected non-zero exit (1) → MERGE_BLOCKED, merge never issued");
+{
+  const deps = makeDeps();
+  deps.waitForBots = () => 1; // usage/auth/repo-detection failure → gate could not run
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("code MERGE_BLOCKED on wait-for-bots exit 1", code === SHIP_EXIT.MERGE_BLOCKED);
+  check(
+    "merge never issued when Bugbot gate could not run",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

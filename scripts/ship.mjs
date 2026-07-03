@@ -123,10 +123,16 @@ export function validateShipArgs(opts) {
   if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
   if (!ISSUE_RE.test(opts.issue))
     return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
-  // Only the CLI plan runner is implemented; `sdk` (relay/Opus) needs a funded ANTHROPIC_API_KEY
-  // and is not wired. Reject it rather than accept-and-ignore.
+  // `cli` is the sole supported plan runner, by deliberate scope decision. An SDK/relay-based
+  // planner would drive the plan loop through Opus via the Anthropic SDK, which requires a
+  // FUNDED ANTHROPIC_API_KEY — the operator/Hermes dotenvx key has no API credits, so an sdk
+  // runner would fail at ship time for the exact key it depends on. Reject it here (rather than
+  // accept-and-ignore) and point operators who want SDK planning at `aios relay` directly.
   if (opts.planRunner !== "cli")
-    return `unsupported --plan-runner '${opts.planRunner}' — only 'cli' is implemented.`;
+    return (
+      `unsupported --plan-runner '${opts.planRunner}' — 'cli' is the only supported runner ` +
+      `(it uses Claude Code login auth). For SDK/Opus planning use \`aios relay\` directly.`
+    );
   const unknown = opts.reviewers.filter((r) => !KNOWN_REVIEWERS.has(r));
   if (unknown.length)
     return `unknown reviewer(s) ${unknown.join(", ")} — expected one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
@@ -801,21 +807,36 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const wantGpt = opts.reviewers.includes("gpt-5.5");
   let round = 1;
   for (;;) {
-    // (a) Bugbot gate (proceed on timeout — merge gate still fail-closes). Skipped if the
-    // operator dropped "bugbot" from --reviewers.
+    // (a) Bugbot gate. Skipped if the operator dropped "bugbot" from --reviewers. Pass the
+    // resolved GitHub slug so wait-for-bots targets the right repo even under `ship --repo
+    // <path>` (its own git-remote detection runs in the primary checkout, not the slug).
+    // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout (proceed — the merge gate
+    // still fail-closes on CI/findings); anything else (1 = usage/auth/repo-detection, or an
+    // unexpected code) means the requested Bugbot gate could NOT run — fail closed rather than
+    // silently skip a reviewer the operator asked for.
     if (wantBugbot) {
       const wfbCode = waitForBots([
         "--pr",
         String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
         "--bots",
         "cursor[bot]",
         "--timeout",
         "10",
       ]);
-      if (wfbCode === 2)
+      if (wfbCode === 2) {
         console.error(
           c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes).")
         );
+      } else if (wfbCode !== 0) {
+        record("review", { round, bugbotGateError: wfbCode });
+        console.error(
+          c.red(
+            `review: wait-for-bots exited ${wfbCode} — the Bugbot gate could not run; blocking merge.`
+          )
+        );
+        return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+      }
     }
 
     // (b) GPT-5.5 PR review via Cursor. Skipped if the operator dropped "gpt-5.5".

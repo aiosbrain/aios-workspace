@@ -352,6 +352,10 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
     skipped: [],
   };
   const attemptedIds = new Set();
+  // Non-zero on any abnormal stop so cron/systemd sees the failure. A ship `halt` surfaces its
+  // original SHIP_EXIT code; infra failures (issue list, ff-only) surface an informative code.
+  // The digest + comment still run to completion first — this is returned AFTER them.
+  let exitCode = 0;
 
   for (let n = 0; n < opts.maxIssues; n++) {
     let candidates;
@@ -359,6 +363,7 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       candidates = await listBySource(linear, opts);
     } catch (e) {
       console.error(c.red(`error: could not list issues (${selector}): ${e.message}`));
+      exitCode = 1;
       break;
     }
     // Never re-pick an issue we already attempted this run (avoids a stuck-issue loop).
@@ -400,13 +405,17 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
 
       if (action === "halt") {
         console.error(c.red(`roadmap-run: ${next.identifier} → ${label} (halt) — stopping.`));
+        // Surface the halt as a non-zero exit (was previously masked as success).
+        exitCode = code;
         break;
       }
       console.error(c.yellow(`roadmap-run: ${next.identifier} → ${label} (skip) — advancing.`));
-      continue;
+      // Fall through to the between-issue refresh: a skip advances like a merge (a long failed
+      // ship can still have moved origin/main), only a halt bypasses it.
     }
 
-    // Between issues: fast-forward main so the next issue bases off fresh state.
+    // Between issues (after a merge OR a skip — never after a halt): fast-forward main so the
+    // next issue bases off fresh state.
     try {
       gitExec(["fetch", "origin", "main"], repo);
       gitExec(["merge", "--ff-only", "origin/main"], repo);
@@ -416,6 +425,8 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
           `roadmap-run: could not ff-only main after ${next.identifier}: ${e.message} — stopping.`
         )
       );
+      // main is not ff-able → the next issue would base off stale state; stop with a failure code.
+      exitCode = SHIP_EXIT.CLEANUP_FAILED;
       break;
     }
   }
@@ -458,7 +469,7 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
     }
   }
 
-  return 0;
+  return exitCode;
 }
 
 // Direct entrypoint so `node scripts/roadmap-run.mjs --help` works; the normal path is aios.mjs.
