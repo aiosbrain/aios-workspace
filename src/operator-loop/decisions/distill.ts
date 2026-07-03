@@ -247,7 +247,9 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
   // Defense in depth: even though egress was scrubbed, a model could echo a path it inferred. Refuse
   // to hand back a draft that still carries an absolute path — the CLI writes only what we return.
   if (hasResidualPath(markdown)) {
-    throw new Error("distill: rendered draft contains a residual filesystem path — refusing to emit.");
+    throw new Error(
+      "distill: rendered draft contains a residual filesystem path — refusing to emit."
+    );
   }
 
   return { markdown, principles, used: records.length };

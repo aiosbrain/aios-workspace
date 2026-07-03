@@ -188,7 +188,11 @@ test("backfill --all --include clients: forbidden root is REFUSED loudly and ing
   const { HOME, WORK, clientName } = build();
   try {
     const res = run(WORK, ["backfill", "--all", "--home", HOME, "--include", "clients", "--json"]);
-    assert.notEqual(res.code, 0, "--include of a protected root fails loud, never silently honored");
+    assert.notEqual(
+      res.code,
+      0,
+      "--include of a protected root fails loud, never silently honored"
+    );
     assert.match(res.err ?? "", /cannot re-enable protected root/);
     // Nothing was written — a rejected invocation must not partially ingest.
     if (existsSync(path.join(WORK, STORE_REL))) {
@@ -210,7 +214,16 @@ test("backfill --all --include unknown/personal: protected roots are refused", (
       assert.match(res.err ?? "", /cannot re-enable protected root/);
     }
     // A genuinely-safe extra root is still honored (no false positive).
-    const ok = run(WORK, ["backfill", "--all", "--home", HOME, "--include", "games", "--dry-run", "--json"]);
+    const ok = run(WORK, [
+      "backfill",
+      "--all",
+      "--home",
+      HOME,
+      "--include",
+      "games",
+      "--dry-run",
+      "--json",
+    ]);
     assert.equal(ok.code, 0, "a safe --include tag still works");
   } finally {
     rmSync(HOME, { recursive: true, force: true });
