@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.2** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.3** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -46,6 +46,11 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-06-22 — added `POST /api/v1/costs` (external AI provider daily spend from
   `aios analyze --push`). Team-tier only. Cursor dashboard USD + Claude session-log estimates.
   Newer CLIs tolerate a `404` from an older brain.*
+- *2026-07-03 — **v1.3**: added an optional `ce_band` scalar (integer `0`–`4`) to the
+  `POST /api/v1/metrics` payload — a coarse client-side **cognitive-ergonomics** band (higher =
+  more protected attention, scored relative to the operator's own baseline) derived alongside the
+  `provisional` placement. Additive and provenance-only: older CLIs omit it and an older brain
+  ignores it; when present the brain persists it verbatim and never recomputes it.*
 
 ---
 
@@ -624,6 +629,7 @@ Rate limit: 60/min per key.
     "verification": 3.1, "context_hygiene": 3.8, "autonomy": 2.4,
     "learning": 3.0, "cost_governance": 3.6
   } },
+  "ce_band": 3,
   "sessions": 41,
   "tasks": 137
 }
@@ -634,7 +640,13 @@ Rate limit: 60/min per key.
 - The point is keyed by `(team_id, member_id, date)` — idempotent: re-pushing the same day
   updates in place, no duplicate snapshot.
 - `signals` are structural facts only (ratios + counts) — **no tool names, no branch, no cwd,
-  no message text, no per-session detail**. This is the entire privacy surface.
+  no message text, no per-session detail**. Together with the coarse `ce_band` scalar and the
+  `provisional` placement, these are the entire privacy surface.
+- `ce_band` (v1.3, optional) is a single coarse **cognitive-ergonomics** band, integer `0`–`4`
+  (higher = more protected attention — longer focus blocks, fewer interrupts, concurrency matched to
+  the operator's own norm), scored client-side relative to the operator's own baseline and derived
+  alongside `provisional`. It is provenance-only: the brain persists it verbatim and never recomputes
+  it. Omitting it is valid; an older brain ignores it.
 - `provisional` carries the **client-side** AEM placement (axes 0–4 + Spine `L1`–`L5`) computed by
   `scripts/analyze/aem.mjs`. The brain **recomputes the canonical** axis/Spine scores from
   `signals` server-side (`lib/metrics/individual-maturity.ts`) so team rollups have one authority; it
