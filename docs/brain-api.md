@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.3** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.4** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -51,6 +51,20 @@ writeback/registration pulls), so a newer client still works against an older br
   more protected attention, scored relative to the operator's own baseline) derived alongside the
   `provisional` placement. Additive and provenance-only: older CLIs omit it and an older brain
   ignores it; when present the brain persists it verbatim and never recomputes it.*
+- *2026-07-03 — **v1.4**: documented **Linear→brain inbound apply** (AIO-145, completing the
+  deferred Phase 5 of brain→PM projection). A semantic/behavioral bump with **no wire-shape
+  change** to any request/response — the `POST /items` and `GET /tasks` shapes are unchanged, so it
+  stays within `v1`. Adds the normative **"Bidirectional PM sync (Linear ⇄ brain)"** section below:
+  status is applied Linear→brain only when the brain hasn't changed since its last projection
+  (`status: pm-wins-if-brain-unchanged`; `title/body/labels/priority` stay brain-wins); a PM change
+  concurrent with a pending brain change is **surfaced as a conflict, never auto-merged**;
+  Linear-native issues are **adopted as `team`-tier tasks** (never `admin`, never tier-elevated); and
+  an inbound apply updates the projection baseline (`last_projected_status` + fingerprint)
+  **atomically** with `tasks.status` so the next projection is a guaranteed no-op (no echo loop). The
+  trigger is **poll-driven** (the existing ingest scheduler) and gated by a per-team opt-in;
+  near-real-time **Linear webhooks remain out of scope for v1** (tracked as a fast-follow). This rule
+  is kept **separate from** the markdown↔dashboard "last write wins per `row_key`" conflict rule
+  below — the two axes (Linear⇄brain vs markdown⇄dashboard) resolve independently.*
 
 ---
 
@@ -452,10 +466,78 @@ between syncs. Resolution: **last write wins per `row_key`** on `updated_at`. Th
 disagreements surface in `aios status` when the local table and last-pulled state
 diverge.
 
+This rule governs the **markdown ⇄ dashboard** axis only. The **Linear ⇄ brain** axis
+(inbound apply, below) resolves on a different, field-level policy and the two are
+independent: a row can be settled on one axis while conflicted on the other.
+
+## Bidirectional PM sync (Linear ⇄ brain) — inbound apply (v1.4)
+
+> **Status:** contract-first (this section lands before the matching `aios-team-brain`
+> code). Projection stays brain→Linear (brain-wins) as documented in
+> [`docs/v1-operator-loop/domains/tasks-pm.md`](./v1-operator-loop/domains/tasks-pm.md);
+> this section adds the **inbound** direction (Linear→brain) that completes the round trip.
+> Brain-internal only: no `/api/v1` request/response shape changes, so no external client
+> (the `aios` CLI) is affected. Documented here because `brain-api.md` is the single pinned
+> place where cross-boundary task semantics are versioned.
+
+Historically the brain projects tasks one-way into Linear and **silently overwrites** any
+status a human drags on the Linear board at the next projection. Inbound apply makes those
+board edits durable and lets a Linear-native issue become an owned brain task, without
+creating an echo loop.
+
+**Field-level policy (default `INBOUND_FIELD_POLICY`, per-team configurable later):**
+
+| Field | Direction | Rule |
+|-------|-----------|------|
+| `status` | Linear → brain | `pm-wins-if-brain-unchanged` — applied at **state-group** granularity (not raw state name) only when the brain has not changed the task since its last projection. |
+| `title` · `body` · `labels` · `priority` | brain → Linear | brain-wins (projection); never applied inbound in v1. |
+
+**"Brain unchanged" is fingerprint equality, not a status-only check.** The brain recomputes
+`projectionFingerprint(task)` over the whole projectable shape (title, body, labels, priority,
+parent, sprint, assignee, status-group) and compares it to the link's stored
+`projection_fingerprint`. Equal ⇒ nothing is pending outbound ⇒ safe to accept an inbound
+status. This subsumes a status-group comparison and avoids swallowing a pending title/body edit.
+
+**Resolution matrix (per task):**
+
+| Linear moved? | Brain has a pending change? | Outcome |
+|---------------|-----------------------------|---------|
+| yes | no (fingerprint equal) | **apply** Linear status → `tasks.status` |
+| yes | yes (fingerprint differs) | **conflict** — surfaced for human resolution, never auto-merged |
+| no  | yes | normal outbound projection's job; inbound does nothing |
+| no  | no | no-op |
+
+A state name in Linear that no longer resolves to a known state group (renamed/deleted state,
+so no baseline can be established) is treated as a **conflict**, not an apply.
+
+**Loop-prevention invariant (normative).** An inbound apply updates
+`last_projected_status` **and** `projection_fingerprint` **atomically** with `tasks.status`
+(single DB transaction, guarded on the expected pre-apply status for optimistic concurrency —
+a concurrent brain edit aborts the apply and becomes a conflict). The next reactive projection
+therefore sees an equal fingerprint and makes **zero** provider writes. This is what prevents
+the inbound → outbound → inbound echo loop (the "regenerate" gotcha).
+
+**Inbound adopt/create — tier safety (normative).** A Linear-native issue (no `aios-ext`
+footer, not already linked) becomes a **`team`**-tier `kind=task` item. Inbound **never**
+creates `admin`/`private` content and **never elevates** tier — preserving the same boundary
+the API enforces at `422`. Adoption sets the task's `provider_resource_id` to the existing
+Linear issue (so projection never creates a duplicate), backfills the durable
+`aios-ext: <row_key> · source: <src>` footer, and marks the task owned. Tier provenance flows
+from the task's source item `access` (`team`), not from any new field.
+
+**Trigger — poll-first.** Inbound apply and adopt run on the existing **30-min ingest
+scheduler** (and the admin "Sync now" / "Reconcile" path), gated per team by an opt-in flag
+(default off) so enabling Linear-writes-brain is a deliberate, reversible, per-team act.
+**Near-real-time Linear webhooks remain out of scope for v1** (see below) and are tracked as a
+fast-follow; poll covers every acceptance criterion.
+
 ## Out of scope for v1
 
-Hours sync; binary artifact upload (storage bucket); webhooks; bulk endpoints;
-embedding-based retrieval (server may add it transparently — contract unchanged).
+Hours sync; binary artifact upload (storage bucket); **webhooks** (incl. the near-real-time
+Linear inbound webhook receiver — HMAC-over-raw-body verification, signing-secret provisioning,
+team routing, replay/idempotency — tracked as a fast-follow to the v1.4 poll-driven inbound
+apply above); bulk endpoints; embedding-based retrieval (server may add it transparently —
+contract unchanged).
 
 ---
 
