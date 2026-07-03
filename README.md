@@ -54,7 +54,7 @@ aios-workspace/
 > **Want to actually drive this?** [`docs/GUIDE.md`](docs/GUIDE.md) — *The AIOS operating manual* —
 > is the one task-oriented walkthrough of the whole surface, organized around your day: the daily
 > brief, the asks queue + attention mode, the weekly loop, syncing to the brain, measuring yourself
-> (AEM), gating specs, and the agent pipeline. Start there.
+> (AM), gating specs, and the agent pipeline. Start there.
 >
 > **New contributor?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
 > step-by-step path from a fresh clone to your first `aios push` live on the Team Brain.
@@ -181,7 +181,7 @@ you drive from the CLI — all offline, all local-only until you push:
   guide's disambiguation box).
 - **Weekly loop** — `aios loop collect → weekly → verify → writeback`: a verified, approval-gated
   closeout that proves every shareable claim before it can sync.
-- **Measure yourself** — `aios analyze` (agentic-engineering maturity + attention + spend),
+- **Measure yourself** — `aios analyze` (agentic maturity (AM) + attention + spend),
   `aios time` (agent-runtime time tracking).
 - **Spec gate** — `aios spec eval | fix`: grade a spec against the pick-up-able-issue bar before a
   builder touches it.

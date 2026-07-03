@@ -2151,7 +2151,7 @@ function cmdLearn(repo, cfg, patterns, _args = []) {
   const weakest = (mem.match(/Weakest axis:\s*([a-z_]+)/) || [])[1] || null;
 
   if (!spine) {
-    console.log("No AEM placement found yet.");
+    console.log("No agentic-maturity placement found yet.");
     console.log("  Run the assessment first:");
     console.log('    • in the cockpit: ask "assess my agentic maturity" (agentic-maturity skill)');
     console.log("    • or from signals:  npm run aios -- analyze --since 30d");
@@ -2165,7 +2165,9 @@ function cmdLearn(repo, cfg, patterns, _args = []) {
     entries.find((e) => e.when?.spine === spine && !e.when?.weakestAxis) ||
     entries.find((e) => e.when?.spine === spine);
 
-  console.log(`Your AEM placement: ${spine}${weakest ? `  (weakest axis: ${weakest})` : ""}`);
+  console.log(
+    `Your agentic-maturity (AM) placement: ${spine}${weakest ? `  (weakest axis: ${weakest})` : ""}`
+  );
   if (!match) {
     console.log("  No prescription mapped — see /agentic/patterns.");
     return;
@@ -4269,7 +4271,7 @@ usage:
   aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
     [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
     [--install]                         for hermes: also run hermes skills install on each
-  aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
+  aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
   aios rails suggest [--repo <path>]    propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
@@ -4278,7 +4280,7 @@ usage:
     [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched
   aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)
     [--json]                            reuses assess-codebase scoring; each with a how-to pointer
-  aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
+  aios learn                            prescribe your next AM patterns from MATURITY.md (offline)
   aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
     [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)

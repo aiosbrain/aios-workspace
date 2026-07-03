@@ -1,7 +1,7 @@
 ---
 name: agentic-maturity
 description: |
-  Place the workspace owner on the Agentic Engineering Maturity (AEM) model and give
+  Place the workspace owner on the Agentic Maturity (AM) model and give
   them a prescribed next step. Seeds objective signals from `aios analyze` (local
   session logs) when available, confirms with a short interview, applies the
   verification cap, writes the placement + journey to .claude/memory/MATURITY.md, and
@@ -19,11 +19,12 @@ triggers:
   - rate my AI workflow
   - am I getting better at agentic engineering
   - my AEM level
+  - my AM level
 ---
 
 # Agentic maturity self-assessment + journey
 
-Place the owner on the **AEM Spine** (L1–L5) and score the five **Axes** (0–4), then
+Place the owner on the **AM Spine** (L1–L5) and score the five **Axes** (0–4), then
 write a durable placement and prescribe the next patterns to practice. The model and
 rubric are canonical in `agentic-engineering-maturity/` (root); this skill reads the
 local copies: the scoring bands in `individual.rubric.json` and the pattern catalogue
