@@ -15,6 +15,7 @@ import {
   buildCodeReviewPrompt,
   buildImplementPrompt,
   snapshotsDiffer,
+  tripwireVerdict,
   EXIT,
 } from "../scripts/build.mjs";
 import { PLAN_READY_TOKEN, MERGE_READY_TOKEN } from "../scripts/relay-core.mjs";
@@ -187,6 +188,57 @@ console.log("snapshotsDiffer (tripwire)");
   check("status change trips", snapshotsDiffer(before, { status: " M x", head: "aaa" }));
   check("head change trips", snapshotsDiffer(before, { status: "", head: "bbb" }));
   check("unchanged ok", !snapshotsDiffer(before, before));
+}
+
+console.log("tripwireVerdict (concurrency-aware)");
+{
+  const gitFacts = { originMainSha: "ccc", headIsAncestor: true };
+  const before = { status: "?? old.png", head: "aaa" };
+
+  // benign: ff-only advance to origin/main (concurrent walker synced main)
+  check(
+    "ff to origin/main does not trip",
+    !tripwireVerdict(before, { status: "?? old.png", head: "ccc" }, gitFacts)
+  );
+  // trips: ANY status change — including an untracked file escaping into primary
+  check(
+    "untracked escape still trips",
+    tripwireVerdict(before, { status: "?? old.png\n?? TRIPWIRE_TEST.txt", head: "aaa" }, gitFacts)
+  );
+  check(
+    "tracked modification trips",
+    tripwireVerdict(before, { status: " M scripts/aios.mjs\n?? old.png", head: "aaa" }, gitFacts)
+  );
+  // trips: status change even alongside a benign head ff
+  check(
+    "status change during benign ff still trips",
+    tripwireVerdict(before, { status: "", head: "ccc" }, gitFacts)
+  );
+  // trips: HEAD moved but NOT to origin/main
+  check(
+    "head move off origin/main trips",
+    tripwireVerdict(before, { status: "?? old.png", head: "ddd" }, gitFacts)
+  );
+  // trips: HEAD at origin/main but not a descendant (reset/rewrite)
+  check(
+    "non-ff head move trips",
+    tripwireVerdict(
+      before,
+      { status: "?? old.png", head: "ccc" },
+      { originMainSha: "ccc", headIsAncestor: false }
+    )
+  );
+  // trips: origin/main unresolvable
+  check(
+    "missing origin/main trips on any head move",
+    tripwireVerdict(
+      before,
+      { status: "?? old.png", head: "ccc" },
+      { originMainSha: "", headIsAncestor: true }
+    )
+  );
+  // benign: nothing changed
+  check("unchanged ok", !tripwireVerdict(before, before, gitFacts));
 }
 
 console.log("EXIT codes");
