@@ -54,10 +54,11 @@ const DIVERSITY_PAIRS = [
 
 // Steps whose model is handed to a Claude runner: the Claude Code CLI (callClaudeAgent —
 // build/fix/fix_escalated) or the Claude Agent SDK (plan), plus the findings consolidator
-// (callClaudeAgent — consolidate) and the spec harness (spec_eval/spec_fix). Their model MUST
-// be Claude-family (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would be passed
-// straight to a Claude runner and fail obscurely. The reviewer steps run on Cursor and are
-// unconstrained here.
+// (callClaudeAgent — consolidate), the spec harness (spec_eval/spec_fix), and the
+// ship/roadmap-run steps that also run through callClaudeAgent (recon, safety_review, digest).
+// Their model MUST be Claude-family (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would
+// be passed straight to a Claude runner and fail obscurely. The reviewer steps run on Cursor
+// and are unconstrained here.
 const CLAUDE_RUNNER_STEPS = [
   "plan",
   "build",
@@ -66,6 +67,10 @@ const CLAUDE_RUNNER_STEPS = [
   "consolidate",
   "spec_eval",
   "spec_fix",
+  // NEW — executed via callClaudeAgent in ship/roadmap-run.
+  "recon",
+  "safety_review",
+  "digest",
 ];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);

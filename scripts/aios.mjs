@@ -64,6 +64,8 @@ import { cmdSpec } from "./spec-eval.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
 import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
+import { cmdShip } from "./ship.mjs";
+import { cmdRoadmapRun } from "./roadmap-run.mjs";
 import { cmdRails } from "./rails.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
@@ -3907,6 +3909,14 @@ usage:
     [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)
   aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
     [--base ref] [--worktree path]      requires an existing build worktree for the branch
+  aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→
+    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup (plan + merge gates default on)
+    [--reviewers b,g] [--dry-run]        --dry-run prints the step plan (offline, no key needed)
+    [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)
+  aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time
+    --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run
+    [--comment-digest [--digest-target   (requires LINEAR_API_KEY except ship --dry-run)
+    AIO-<n>]] [--dry-run]
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)`;
 
@@ -3963,6 +3973,11 @@ const OFFLINE_CMDS = new Set([
   "pr",
   "consolidate-findings",
   "review-bugbot",
+  // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (the generic walk-up, like
+  // build/relay) — NOT a GitHub slug — so they are NOT in the pr/consolidate --repo opt-out.
+  // Ship derives the GitHub slug internally via detectRepo(repo).
+  "ship",
+  "roadmap-run",
   "loop",
   "time",
   "asks",
@@ -4007,6 +4022,8 @@ try {
   else if (cmd === "pr") await cmdPr(repo, rest);
   else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
+  else if (cmd === "ship") process.exit(await cmdShip(repo, rest));
+  else if (cmd === "roadmap-run") process.exit(await cmdRoadmapRun(repo, rest));
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);

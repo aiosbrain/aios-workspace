@@ -89,7 +89,7 @@ function parseArgs(args) {
 
 // ── Anthropic client ──────────────────────────────────────────────────────────
 
-async function callOpus(anthropic, messages, planCfg = {}) {
+export async function callOpus(anthropic, messages, planCfg = {}) {
   // Model + effort come from the per-step config (loop-models.mjs `plan` step): default
   // matrix → .aios/loop-models.yaml → CLI. Effort is passed via the SDK's output_config
   // here (NOT the Claude CLI --effort flag, which only the build phase uses).

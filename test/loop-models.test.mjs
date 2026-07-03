@@ -168,6 +168,45 @@ console.log("runner-family guard (fail closed) — M1");
   rmSync(repo, { recursive: true, force: true });
 }
 
+console.log("ship/roadmap Claude-runner steps (R-Major-6) fail closed on a non-Claude override");
+{
+  // recon, safety_review, and digest are executed via callClaudeAgent in ship/roadmap-run,
+  // so a non-Claude override for any of them must abort at resolve time, before any run.
+  const badRecon = resolveInChild({
+    repo: null,
+    cliOverrides: { recon: { model: "gpt-5.5-high" } },
+  });
+  check("gpt recon model aborts", badRecon.ok === false);
+  check("recon abort names the Claude-family requirement", /Claude-family/.test(badRecon.stderr));
+
+  const badSafety = resolveInChild({
+    repo: null,
+    cliOverrides: { safety_review: { model: "gpt-5.5-high" } },
+  });
+  check("gpt safety_review model aborts", badSafety.ok === false);
+  check(
+    "safety_review abort names the Claude-family requirement",
+    /Claude-family/.test(badSafety.stderr)
+  );
+
+  const badDigest = resolveInChild({
+    repo: null,
+    cliOverrides: { digest: { model: "gpt-5.3-codex" } },
+  });
+  check("gpt digest model aborts", badDigest.ok === false);
+
+  // A Claude-family override for each is accepted.
+  const okRecon = resolveInChild({
+    repo: null,
+    cliOverrides: { recon: { model: "claude-sonnet-5" } },
+  });
+  check("claude recon model passes", okRecon.ok === true);
+
+  // The diversity pairs are unaffected by the new Claude-runner steps.
+  const okDefaults = resolveInChild({ repo: null });
+  check("defaults still pass all guards", okDefaults.ok === true);
+}
+
 console.log("config validation fails loudly (M4)");
 {
   const repo = mkdtempSync(path.join(tmpdir(), "lm-val-"));

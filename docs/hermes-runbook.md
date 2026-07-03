@@ -73,6 +73,10 @@ Placeholder paths only. Redirect console output to a gitignored per-day log unde
 ```cron
 # Nightly AIOS ship run at 02:30. Replace <user>/<workspace>.
 30 2 * * *  cd /home/<user>/<workspace> && /usr/bin/npm run aios -- build plan.md feat/AIO-<n>-x --pr --issue AIO-<n> >> /home/<user>/<workspace>/.aios/loop/nightly-$(date +\%F).log 2>&1
+
+# Unattended roadmap walker: ship up to 3 unblocked issues from an epic each night at 03:00.
+# roadmap-run invokes `aios ship --auto --auto-merge` internally, so both gates are skipped.
+0 3 * * *  cd /home/<user>/<workspace> && /usr/bin/npm run aios -- roadmap-run --epic AIO-<n> --max-issues 3 --comment-digest >> /home/<user>/<workspace>/.aios/loop/roadmap-$(date +\%F).log 2>&1
 ```
 
 Notes:
@@ -80,6 +84,11 @@ Notes:
 - `.aios/` is gitignored — the log never gets committed.
 - Escape the `%` in `date +\%F` for cron.
 - No real home paths, hostnames, or IPs — keep the crontab free of machine-specific values.
+- **`LINEAR_API_KEY` reaches the box via dotenvx** (`npm run aios` runs under `dotenvx run`); it is
+  never written into the crontab. `roadmap-run` and `ship` need no other secret — Claude Code and
+  Cursor use their own login auth, and `ANTHROPIC_API_KEY` is stripped from the builder subprocess.
+- `roadmap-run` writes a morning digest every run to `.aios/loop/roadmap-digest-<date>.md`; a
+  non-fast-forwardable `main` halts the walk (the next issue would otherwise base off stale state).
 
 ---
 
@@ -120,6 +129,17 @@ WantedBy=timers.target
 Enable with `systemctl enable --now aios-nightly.timer`; inspect with
 `systemctl status aios-nightly.service` and `journalctl -u aios-nightly.service`.
 
+For the unattended roadmap walker, use the same shape with a `roadmap-run` `ExecStart` (again,
+`LINEAR_API_KEY` arrives via dotenvx, not the unit file):
+
+```ini
+# /etc/systemd/system/aios-roadmap.service — [Service] ExecStart line
+ExecStart=/usr/bin/npm run aios -- roadmap-run --epic AIO-<n> --max-issues 3 --comment-digest
+```
+
+Pair it with an `aios-roadmap.timer` (`OnCalendar=*-*-* 03:00:00`). `roadmap-run` calls `aios ship
+--auto --auto-merge` per issue, so both operator gates are intentionally skipped on the host.
+
 ---
 
 ## 6. Verification checklist (dry-run on the host)
@@ -138,7 +158,11 @@ npm run aios -- build plan.md feat/smoke --dry-run
 # 3. The consolidator is invocable
 node scripts/consolidate-findings.mjs --help
 
-# 4. Offline tests pass without a brain key
+# 4. ship dry-run works offline (no LINEAR_API_KEY needed) and roadmap-run degrades cleanly
+env -u LINEAR_API_KEY npm run aios -- ship AIO-<n> --dry-run
+env -u LINEAR_API_KEY npm run aios -- roadmap-run --epic AIO-<n> --dry-run   # clean "key not set" message, non-zero
+
+# 5. Offline tests pass without a brain key
 env -u AIOS_API_KEY npm test
 ```
 
