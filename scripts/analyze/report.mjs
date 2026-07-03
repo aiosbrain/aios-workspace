@@ -10,6 +10,7 @@
  */
 
 import { AXIS_LABELS, attentionCard } from "./aem.mjs";
+import { scoreCognitiveErgonomics, ergonomicsBaseline } from "./ergonomics.mjs";
 import { AXIS_GUIDE } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
@@ -140,15 +141,33 @@ export function renderReport(result, color) {
 
 /** Machine-readable shape (no raw events, no message text). */
 export function toJson(result, costData) {
+  const days = result.days || [];
   const out = {
     window: result.window,
     tools: result.tools,
     totals: result.totals,
     signals: result.signals,
     placement: result.placement,
+    // Phase A SHADOW band for the candidate 6th axis (AIO-190): recorded for the
+    // calibration corpus only — NEVER inside placement.axes, never pushed. Each
+    // day scores against the trailing baseline of the days BEFORE it; the rollup
+    // scores the window signals against the window's trailing baseline.
+    axes_shadow: {
+      cognitive_ergonomics: scoreCognitiveErgonomics(result.signals, ergonomicsBaseline(days)),
+    },
     // Local-only attention card (never pushed) — the 4 sanity signals + a human reading.
     attention: attentionCard(result.signals || {}),
-    days: result.days.map((d) => ({ date: d.date, signals: d.signals, placement: d.placement })),
+    days: days.map((d, i) => ({
+      date: d.date,
+      signals: d.signals,
+      placement: d.placement,
+      axes_shadow: {
+        cognitive_ergonomics: scoreCognitiveErgonomics(
+          d.signals,
+          ergonomicsBaseline(days.slice(0, i))
+        ),
+      },
+    })),
   };
   if (costData) {
     out.costs = {
