@@ -46,12 +46,19 @@ jobs:
             console.log("::notice title=Draft PR skipped::Draft PRs are not moved to In Review until ready_for_review fires.");
             process.exit(0);
           }
-          // Strip HTML comments so PR-template placeholders (`<!-- e.g. AIO-72 -->`) don't count.
-          const text = [
-            pr.title || "",
-            (pr.body || "").replace(/<!--[\s\S]*?-->/g, " "),
-            pr.head?.ref || "",
-          ].join("\n");
+          // Deliberately NOT the whole PR body: a body freely mentions other issues as evidence,
+          // history, or "see also" — e.g. this very workflow's own fix PR described the bug by
+          // pointing at PRs referencing other AIO-<n> identifiers, and the (now-working) lookup
+          // moved/commented on THOSE issues too on the live run. Title + branch are where a PR is
+          // actually tied to its own issue (the documented convention: "put `(AIO-130)` in the
+          // title"); the body only counts for an EXPLICIT "Closes/Fixes/Resolves AIO-<n>" link,
+          // same convention GitHub itself uses for closing keywords.
+          const titleAndBranch = [pr.title || "", pr.head?.ref || ""].join("\n");
+          const bodyNoComments = (pr.body || "").replace(/<!--[\s\S]*?-->/g, " ");
+          const explicitBodyRefs = [
+            ...bodyNoComments.matchAll(/\b(?:closes?|fixes?|resolves?)\s*:?\s*(AIO-\d+)/gi),
+          ].map((m) => m[1].toUpperCase());
+          const text = [titleAndBranch, ...explicitBodyRefs].join("\n");
 
           // Same matcher the other workflows use, then keep only this repo's Linear identifiers
           // (AIO-130). Bare brain row_keys (W2.5.8) and other Linear teams aren't owned by this
