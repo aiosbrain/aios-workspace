@@ -205,7 +205,17 @@ function mergeBrainSecrets(cfg, repo) {
 function loadConfig(repo) {
   const cfgPath = path.join(repo, "aios.yaml");
   if (!existsSync(cfgPath)) die(`no aios.yaml found in ${repo}`);
-  const cfg = parseFlatYaml(readFileSync(cfgPath, "utf8"));
+  const raw = readFileSync(cfgPath, "utf8");
+  const unfilled = raw.match(/\{\{[A-Z_]+\}\}/);
+  if (unfilled) {
+    die(
+      `aios.yaml still has an unfilled template placeholder (${unfilled[0]}). ` +
+        `This looks like scaffold/aios.yaml.tmpl was copied in directly instead of generated. ` +
+        `Run scripts/scaffold-project.sh to create a real aios.yaml, or hand-fill one from ` +
+        `scaffold/aios.yaml.example (see docs/GETTING-STARTED.md).`
+    );
+  }
+  const cfg = parseFlatYaml(raw);
 
   cfg.sync_tiers = (cfg.sync_tiers || []).map(normalizeTier);
   if (cfg.sync_tiers.includes("admin")) {
