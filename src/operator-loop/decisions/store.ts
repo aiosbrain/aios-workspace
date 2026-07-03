@@ -46,6 +46,8 @@ const OUTCOME_MAX = 2000;
 const OPTION_LABEL_MAX = 200;
 const OPTION_DESC_MAX = 1000;
 const KIND_MAX = 40;
+const CONTEXT_TAG_MAX = 60;
+const SOURCE_MAX = 40;
 // Bound the option / choice arrays so a pathological payload can't blow up a single line.
 const OPTIONS_MAX = 50;
 const CHOICE_MAX = 50;
@@ -80,6 +82,11 @@ export interface DecisionRecord {
   choice: string[] | null;
   notes: string | null;
   context: DecisionContext;
+  /** Situational category (e.g. "aios", "products"); null for hook-captured records. Additive
+   *  since AIO-192 — old v1 lines without it fold to null via coerceRecord (forward-compat). */
+  contextTag: string | null;
+  /** Provenance ("backfill" for AIO-192-recovered records); null for live hook captures. */
+  source: string | null;
   tier: Tier;
   createdAt: string;
 }
@@ -99,6 +106,8 @@ export interface DecisionInput {
   choice?: string[] | string | null;
   notes?: string | null;
   context?: Partial<DecisionContext> | null;
+  contextTag?: string | null;
+  source?: string | null;
   tier?: Tier;
   createdAt?: string;
   id?: string;
@@ -156,6 +165,13 @@ function normalizeHeader(raw: unknown): string | null {
   if (raw == null) return null;
   const h = normalizeSingleLine(raw, HEADER_MAX);
   return h || null;
+}
+
+/** A short single-line tag (contextTag / source): non-string or empty → null. */
+function normalizeShort(raw: unknown, max: number): string | null {
+  if (raw == null) return null;
+  const s = normalizeSingleLine(raw, max);
+  return s || null;
 }
 
 function normalizeNotes(raw: unknown): string | null {
@@ -224,6 +240,8 @@ export function buildDecisionRecord(input: DecisionInput): DecisionRecord {
     choice: normalizeChoice(input.choice),
     notes: normalizeNotes(input.notes),
     context: normalizeContext(input.context),
+    contextTag: normalizeShort(input.contextTag, CONTEXT_TAG_MAX),
+    source: normalizeShort(input.source, SOURCE_MAX),
     tier,
     createdAt: resolveCreatedAt(input.createdAt),
   };
@@ -317,6 +335,9 @@ function coerceRecord(decision: unknown): DecisionRecord | null {
     choice: normalizeChoice(decision.choice),
     notes: normalizeNotes(decision.notes),
     context: normalizeContext(isRecord(decision.context) ? decision.context : null),
+    // Additive since AIO-192: absent on old v1 lines and on hook-written lines → null.
+    contextTag: normalizeShort(decision.contextTag, CONTEXT_TAG_MAX),
+    source: normalizeShort(decision.source, SOURCE_MAX),
     tier,
     createdAt,
   };
@@ -415,6 +436,79 @@ export function appendDecision(root: string, input: DecisionInput): DecisionReco
   const rec = buildDecisionRecord(input);
   withLock(root, () => appendFileSync(storePath(root), createLine(rec) + "\n"));
   return rec;
+}
+
+/** The dedupe key a record folds to: `${sessionId}|${sha256(normalizedQuestion)}`. Identical to
+ *  the capture hook's key (hooks/decision-capture.mjs) so hook-written and backfilled records
+ *  dedupe against each other. */
+export function decisionDedupeKey(rec: DecisionRecord): string {
+  return `${rec.context.sessionId ?? ""}|${sha256(rec.question)}`;
+}
+
+/** Mini-fold of the store's create lines to the set of existing dedupe keys. Reads raw lines (no
+ *  full fold) — mirrors the hook's `existingKeys`. Missing / unreadable store → empty set. */
+function existingDecisionKeys(root: string): Set<string> {
+  const keys = new Set<string>();
+  const abs = storePath(root);
+  if (!existsSync(abs)) return keys;
+  let text: string;
+  try {
+    text = readFileSync(abs, "utf8");
+  } catch {
+    return keys;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let o: unknown;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(o) || o.v !== DECISIONS_SCHEMA_VERSION || o.op !== "create") continue;
+    if (!isRecord(o.decision)) continue;
+    const d = o.decision;
+    const question = normalizeSingleLine(d.question, QUESTION_MAX);
+    const ctx = isRecord(d.context) ? d.context : {};
+    const sid = asStr(ctx.sessionId) ?? "";
+    keys.add(`${sid}|${sha256(question)}`);
+  }
+  return keys;
+}
+
+export interface DedupeBatchResult {
+  appended: number;
+  skipped: number;
+}
+
+/**
+ * Append many decisions in ONE lock hold, skipping any whose dedupe key already exists in the store
+ * or earlier in this batch. This is the ONLY safe backfill writer: the existing-key read AND the
+ * append happen under the same lock the live capture hook also honors, so a hook capture landing
+ * concurrently blocks on the lock and can never produce a duplicate in either interleaving (the
+ * racy read-then-`appendDecision` loop it replaces could). Returns per-batch counts.
+ */
+export function appendDecisionsDeduped(root: string, inputs: DecisionInput[]): DedupeBatchResult {
+  if (!inputs.length) return { appended: 0, skipped: 0 };
+  let appended = 0;
+  let skipped = 0;
+  withLock(root, () => {
+    const seen = existingDecisionKeys(root);
+    const lines: string[] = [];
+    for (const input of inputs) {
+      const rec = buildDecisionRecord(input);
+      const key = decisionDedupeKey(rec);
+      if (seen.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      seen.add(key); // suppress a duplicate later in the SAME batch too
+      lines.push(createLine(rec));
+      appended += 1;
+    }
+    if (lines.length) appendFileSync(storePath(root), lines.join("\n") + "\n");
+  });
+  return { appended, skipped };
 }
 
 /**

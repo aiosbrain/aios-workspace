@@ -60,7 +60,16 @@ export {
 } from "./drafter.js";
 export { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
 export { sweepForLeaks, hasLeak } from "./leak-sweep.js";
-export { anthropicCompletion, hasAnthropicKey, DRAFTER_MODEL, type CompletionFn } from "./llm.js";
+export {
+  anthropicCompletion,
+  makeAnthropicCompletion,
+  runCompletion,
+  hasAnthropicKey,
+  DRAFTER_MODEL,
+  type CompletionFn,
+  type CompletionRequest,
+  type CompletionOptions,
+} from "./llm.js";
 
 // C7 — habit + continuity
 export {
@@ -264,6 +273,8 @@ export {
   foldDecisionLines,
   readDecisions,
   appendDecision,
+  appendDecisionsDeduped,
+  decisionDedupeKey,
   appendOutcome,
   type Decision,
   type DecisionRecord,
@@ -271,9 +282,20 @@ export {
   type DecisionOption,
   type DecisionContext,
   type DecisionOp,
+  type DedupeBatchResult,
   type FoldResult as DecisionFoldResult,
   type FoldWarning as DecisionFoldWarning,
 } from "./decisions/store.js";
+export {
+  distill,
+  projectForDistill,
+  renderDraft,
+  DEFAULT_MIN_SUPPORT,
+  type DistillOptions,
+  type DistillResult,
+  type DistilledPrinciple,
+  type ProjectedDecision,
+} from "./decisions/distill.js";
 
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
