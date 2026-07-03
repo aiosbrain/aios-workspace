@@ -11,6 +11,7 @@ import {
   runShip,
   resolveGates,
   findPlanFilePath,
+  expandHomePath,
   buildPlanReviewPrompt,
   SHIP_EXIT,
 } from "../scripts/ship.mjs";
@@ -69,6 +70,7 @@ function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-resume-"));
   const counters = { recon: 0, plan: 0, build: 0, pr: 0, review: 0 };
   const ghCalls = [];
+  const gitCalls = [];
   const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
   const deps = {
     repo,
@@ -94,7 +96,11 @@ function makeDeps(over = {}) {
       return "- `Low` `f`: nit";
     },
     waitForBots: () => 0,
-    gitExec: () => "",
+    gitExec: (argv) => {
+      gitCalls.push(argv.join(" "));
+      if (argv[0] === "rev-parse") return "fakehead\n"; // stable branch head for review checkpoints
+      return "";
+    },
     ghExec: (argv) => {
       const a = argv.join(" ");
       ghCalls.push(a);
@@ -115,7 +121,7 @@ function makeDeps(over = {}) {
     },
     slug: "acme/repo",
   };
-  return { ...deps, ...over, repo, counters, ghCalls };
+  return { ...deps, ...over, repo, counters, ghCalls, gitCalls };
 }
 
 function optsFor(o = {}) {
@@ -264,6 +270,103 @@ console.log("plan review round ≥2 carries prior required changes + regression 
   check("regression instruction present", /Regression check/.test(prompt));
   const r1 = buildPlanReviewPrompt("PLAN v1", 1, 3, null);
   check("round 1 has no regression section", !/Regression check/.test(r1));
+}
+
+console.log("expandHomePath: ~ expands against home (path.join keeps the prefix) — r1 evidence");
+{
+  check(
+    "~/.claude path expands correctly",
+    expandHomePath("~/.claude/plans/x.md", "/Users/alice") === "/Users/alice/.claude/plans/x.md"
+  );
+  check("absolute path untouched", expandHomePath("/etc/hosts", "/Users/alice") === "/etc/hosts");
+}
+
+console.log("fresh --approve-plan (no pending gate) → treated as pending, never a silent bypass");
+{
+  const ss = makeStateStore();
+  const deps = makeDeps({ ...ss });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ approvePlan: true }), // NOT a resume; nothing pending
+    deps,
+  });
+  check("exits PLAN_GATE_BLOCKED", r.code === SHIP_EXIT.PLAN_GATE_BLOCKED);
+  check("pending gate written", !!ss.store.gates.plan);
+  check("pending marker persisted", ss.store.state?.planGatePending === true);
+  check("build never ran", deps.counters.build === 0);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("resume with state.merged → merge NOT re-attempted; cleanup still runs; exits OK");
+{
+  const ss = makeStateStore();
+  ss.store.state = {
+    recon: "RECON",
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-old-title", // ALSO proves the checkpointed branch wins (r1 High)
+    worktreePath: "/tmp/wt-old",
+    prNumber: 77,
+    reviewRound: 1,
+    reviewClear: true,
+    reviewHead: "fakehead",
+    merged: true,
+  };
+  const deps = makeDeps({ ...ss });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true }),
+    deps,
+  });
+  check("exits OK", r.code === SHIP_EXIT.OK);
+  check("gh pr merge NOT re-issued", !deps.ghCalls.some((a) => a.includes("pr merge")));
+  check(
+    "cleanup targeted the CHECKPOINTED branch, not one recomputed from the title",
+    deps.gitCalls.some((a) => a === "branch -D feat/AIO-163-old-title")
+  );
+  check(
+    "cleanup targeted the checkpointed worktree",
+    deps.gitCalls.some((a) => a.includes("worktree remove --force /tmp/wt-old"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("stale reviewClear (branch moved since checkpoint) → review re-runs before merge");
+{
+  const ss = makeStateStore();
+  ss.store.state = {
+    recon: "RECON",
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    reviewClear: true,
+    reviewHead: "STALE-HEAD", // fake gitExec reports "fakehead" → mismatch
+  };
+  const deps = makeDeps({ ...ss });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true }),
+    deps,
+  });
+  check("exits OK", r.code === SHIP_EXIT.OK);
+  check("consolidator re-ran (stale CLEAR not honored)", deps.counters.review === 1);
+  check(
+    "fresh CLEAR re-checkpointed with the current head",
+    ss.store.state?.reviewHead === "fakehead"
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

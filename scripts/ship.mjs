@@ -186,6 +186,13 @@ function defaultRemoveGate(repo, issue, name) {
   }
 }
 
+/** Expand a leading `~/` against the home directory. `path.join` (NOT `path.resolve`) keeps the
+ *  home prefix even though the slice leaves a leading slash — pinned by a unit test because a
+ *  review claimed otherwise (AIO-239 r1: declined-with-evidence). */
+export function expandHomePath(p, home = homedir()) {
+  return p.startsWith("~/") || p === "~" ? path.join(home, p.slice(1)) : p;
+}
+
 /** Find a `~/.claude/plans/<name>.md` (or absolute) path in planner stdout — the CLI plan runner
  *  writes the FULL plan there and only summarizes on stdout. Capturing the full text into the
  *  pipeline kills a pointer-chasing indirection for the builder and reviewers (AIO-239 R5b). */
@@ -938,9 +945,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       const planFilePath = findPlanFilePath(plan);
       if (planFilePath) {
         try {
-          const abs = planFilePath.startsWith("~")
-            ? path.join(homedir(), planFilePath.slice(1))
-            : planFilePath;
+          const abs = expandHomePath(planFilePath);
           const full = readFile(abs);
           if (full && full.trim()) {
             plan += `\n\n## Full plan (captured from ${planFilePath})\n\n${full}`;
@@ -991,8 +996,19 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // Plan gate — 'skip' (--auto), 'approved' (--approve-plan on a resumed run), 'prompt'
   // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
   if (!state.planApproved) {
-    if (gates.plan === "blocked") {
+    if (gates.plan === "blocked" || (gates.plan === "approved" && !state.planGatePending)) {
+      // "approved" without a pending gate (fresh run with --approve-plan, or stale state) must
+      // NOT wave the plan through: there was nothing inspected to approve (review r1, Medium).
+      if (gates.plan === "approved") {
+        console.error(
+          c.yellow(
+            "plan gate: --approve-plan given but no pending gate exists — treating as pending; " +
+              "inspect it, then resume with --resume --approve-plan."
+          )
+        );
+      }
       record("plan-gate", { blocked: true });
+      saveState({ planGatePending: true });
       console.log("SHIP_GATE plan pending"); // machine-greppable marker (AIO-239 R7c)
       writeGate(
         issueId,
@@ -1029,7 +1045,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       record("plan-gate", { approvedViaFlag: true });
       progress("plan gate: approved via --approve-plan");
     }
-    saveState({ planApproved: true });
+    saveState({ planApproved: true, planGatePending: false });
     removeGate(issueId, "plan");
   }
 
@@ -1068,8 +1084,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 4. BUILD ─────────────────────────────────────────────────────────────────
-  const branch = `feat/${issue.identifier}-${slugify(issue.title)}`;
-  const worktreePath = path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
+  // On resume, the CHECKPOINTED branch/worktree win: recomputing from the Linear title would
+  // silently retarget every later stage if the title was edited between runs (review r1, High).
+  const branch = state.branch ?? `feat/${issue.identifier}-${slugify(issue.title)}`;
+  const worktreePath =
+    state.worktreePath ?? path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
   const auditDir = path.join(repo, ".aios", "loop", issueId);
   const buildLog = path.join(auditDir, "build.md");
   if (state.buildDone) {
@@ -1132,6 +1151,21 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const wantBugbot = opts.reviewers.includes("bugbot");
   const wantGpt = opts.reviewers.includes("gpt-5.5");
   let round = state.reviewRound ?? 1;
+  // A resumed CLEAR is honored only if the branch head hasn't moved since the review round that
+  // cleared it — new commits after the checkpoint must re-run the reviewers (review r1, Medium).
+  if (state.reviewClear) {
+    let headNow = null;
+    try {
+      headNow = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+    } catch {
+      headNow = null;
+    }
+    if (!headNow || headNow !== state.reviewHead) {
+      progress("review: checkpointed CLEAR is stale (branch moved) — re-running the review round");
+      saveState({ reviewClear: false, reviewHead: null });
+      state.reviewClear = false;
+    }
+  }
   if (state.reviewClear) {
     record("review", { resumed: true, clear: true });
     progress("review: resumed from checkpoint (already CLEAR)");
@@ -1226,7 +1260,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       record("review", { round, verdictCode });
 
       if (verdictCode === 0) {
-        saveState({ reviewClear: true });
+        let reviewHead = null;
+        try {
+          reviewHead = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+        } catch {
+          reviewHead = null; // unknown head → a resume will conservatively re-review
+        }
+        saveState({ reviewClear: true, reviewHead });
         progress(`review: round ${round} CLEAR`);
         break; // CLEAR → merge gate
       }
@@ -1281,152 +1321,170 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // (AIO-239) A dirty primary checkout no longer blocks the merge: the merge happens on GitHub,
   // and the post-merge ff-only is best-effort convenience (see runCleanup) — another agent's or
   // the operator's in-flight working files must never veto a reviewed, CI-green PR.
+  // A checkpointed `merged` short-circuits the gate AND the merge: re-attempting `gh pr merge`
+  // on an already-merged PR fails and would block cleanup (review r1, High).
+  if (state.merged) {
+    record("merge", { resumed: true, pr: prNumber });
+    progress(`merge: resumed from checkpoint (PR #${prNumber} already merged)`);
+  } else {
+    // CI green.
+    const checks = readChecks(prNumber, { ghExec, slug });
+    if (!checks.ok) {
+      record("merge-gate", { ci: checks });
+      console.error(
+        c.red(
+          `merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
 
-  // CI green.
-  const checks = readChecks(prNumber, { ghExec, slug });
-  if (!checks.ok) {
-    record("merge-gate", { ci: checks });
-    console.error(
-      c.red(
-        `merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`
-      )
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-
-  // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
-  // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
-  // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
-  // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
-  let nameRes;
-  try {
-    nameRes = ghExec([
-      "pr",
-      "diff",
-      String(prNumber),
-      ...(slug ? ["--repo", slug] : []),
-      "--name-only",
-    ]);
-  } catch (e) {
-    nameRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
-  }
-  const nameStdout = nameRes?.stdout ?? "";
-  if (nameRes?.code !== 0 || !nameStdout.trim()) {
-    record("merge-gate", { changedPathsUnavailable: true, code: nameRes?.code });
-    console.error(
-      c.red(
-        "merge gate: changed-path metadata unavailable — cannot verify safety surface; blocking."
-      )
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-  const changedPaths = nameStdout
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (touchesSafetySurface(changedPaths)) {
+    // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
+    // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
+    // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
+    // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
+    let nameRes;
     try {
-      const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
-      // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
-      // or returned empty content, we would be asking it to approve `(no diff)` as green — fail
-      // closed instead. `--name-only` succeeding above does NOT prove the full diff fetch works.
-      if (diffRes?.code !== 0 || !(diffRes.stdout ?? "").trim()) {
-        record("merge-gate", { safetyDiffUnavailable: true, code: diffRes?.code });
+      nameRes = ghExec([
+        "pr",
+        "diff",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--name-only",
+      ]);
+    } catch (e) {
+      nameRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
+    }
+    const nameStdout = nameRes?.stdout ?? "";
+    if (nameRes?.code !== 0 || !nameStdout.trim()) {
+      record("merge-gate", { changedPathsUnavailable: true, code: nameRes?.code });
+      console.error(
+        c.red(
+          "merge gate: changed-path metadata unavailable — cannot verify safety surface; blocking."
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+    const changedPaths = nameStdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (touchesSafetySurface(changedPaths)) {
+      try {
+        const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+        // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
+        // or returned empty content, we would be asking it to approve `(no diff)` as green — fail
+        // closed instead. `--name-only` succeeding above does NOT prove the full diff fetch works.
+        if (diffRes?.code !== 0 || !(diffRes.stdout ?? "").trim()) {
+          record("merge-gate", { safetyDiffUnavailable: true, code: diffRes?.code });
+          console.error(
+            c.red(
+              "merge gate: safety-surface diff unavailable — cannot run the safety review; blocking."
+            )
+          );
+          return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+        }
+        const cfg = models.safety_review;
+        const safety = await claude(
+          buildSafetyPrompt(diffRes.stdout, changedPaths),
+          cfg.timeoutMs ?? 300 * 1000,
+          {
+            model: cfg.model,
+            // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
+            // never needs (and must not have) filesystem access over untrusted diff content.
+            extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
+          }
+        );
+        writeAudit(issueId, "safety-review.md", safety);
+        if (!detectSafetyToken(safety)) {
+          record("merge-gate", { safetyBlocked: true });
+          console.error(c.red("merge gate: safety review withheld approval."));
+          return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+        }
+      } catch (e) {
+        record("merge-gate", { safetyError: e.message });
+        writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
+        console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
+        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      }
+    }
+
+    // Operator OK — 'skip' (--auto-merge), 'approved' (--approve-merge on a resumed run), 'prompt'
+    // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
+    if (gates.merge === "blocked" || (gates.merge === "approved" && !state.mergeGatePending)) {
+      if (gates.merge === "approved") {
         console.error(
-          c.red(
-            "merge gate: safety-surface diff unavailable — cannot run the safety review; blocking."
+          c.yellow(
+            "merge gate: --approve-merge given but no pending gate exists — treating as pending; " +
+              "inspect PR #" +
+              prNumber +
+              ", then resume with --resume --approve-merge."
           )
         );
-        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
       }
-      const cfg = models.safety_review;
-      const safety = await claude(
-        buildSafetyPrompt(diffRes.stdout, changedPaths),
-        cfg.timeoutMs ?? 300 * 1000,
-        {
-          model: cfg.model,
-          // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
-          // never needs (and must not have) filesystem access over untrusted diff content.
-          extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
-        }
+      record("merge-gate", { blocked: true });
+      saveState({ mergeGatePending: true });
+      console.log("SHIP_GATE merge pending"); // machine-greppable marker (AIO-239 R7c)
+      writeGate(
+        issueId,
+        "merge",
+        [
+          `# MERGE gate pending — ${issueId} (PR #${prNumber})`,
+          "",
+          "CI is green, the consolidator is CLEAR, and the safety review (if triggered) approved.",
+          "",
+          "To merge and clean up:  aios ship " + issueId + " --resume --approve-merge",
+          "To reject: close the PR (gh pr close " + prNumber + ") and remove the worktree.",
+        ].join("\n")
       );
-      writeAudit(issueId, "safety-review.md", safety);
-      if (!detectSafetyToken(safety)) {
-        record("merge-gate", { safetyBlocked: true });
-        console.error(c.red("merge gate: safety review withheld approval."));
-        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      console.error(
+        c.yellow(
+          `merge gate: pending operator approval — inspect PR #${prNumber}, then resume with ` +
+            `--resume --approve-merge.`
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
+    }
+    if (gates.merge === "prompt") {
+      console.log("SHIP_GATE merge pending"); // marker precedes the prompt (AIO-239 R7c)
+      const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
+      if (!ok) {
+        record("merge-gate", { rejected: true });
+        return { code: SHIP_EXIT.MERGE_REJECTED, records };
       }
+    } else if (gates.merge === "approved") {
+      record("merge-gate", { approvedViaFlag: true });
+      progress("merge gate: approved via --approve-merge");
+    }
+    saveState({ mergeGatePending: false });
+    removeGate(issueId, "merge");
+
+    // Merge (squash + delete remote branch). ghExec returns {code,stdout,stderr} WITHOUT throwing,
+    // so a failed `gh pr merge` must be caught by checking code — never assume success. A failed
+    // merge blocks and, critically, never advances to cleanup (which would remove the worktree/branch).
+    let mergeRes;
+    try {
+      mergeRes = ghExec([
+        "pr",
+        "merge",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--squash",
+        "--delete-branch",
+      ]);
     } catch (e) {
-      record("merge-gate", { safetyError: e.message });
-      writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
-      console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
-      return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      mergeRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
     }
-  }
-
-  // Operator OK — 'skip' (--auto-merge), 'approved' (--approve-merge on a resumed run), 'prompt'
-  // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
-  if (gates.merge === "blocked") {
-    record("merge-gate", { blocked: true });
-    console.log("SHIP_GATE merge pending"); // machine-greppable marker (AIO-239 R7c)
-    writeGate(
-      issueId,
-      "merge",
-      [
-        `# MERGE gate pending — ${issueId} (PR #${prNumber})`,
-        "",
-        "CI is green, the consolidator is CLEAR, and the safety review (if triggered) approved.",
-        "",
-        "To merge and clean up:  aios ship " + issueId + " --resume --approve-merge",
-        "To reject: close the PR (gh pr close " + prNumber + ") and remove the worktree.",
-      ].join("\n")
-    );
-    console.error(
-      c.yellow(
-        `merge gate: pending operator approval — inspect PR #${prNumber}, then resume with ` +
-          `--resume --approve-merge.`
-      )
-    );
-    return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
-  }
-  if (gates.merge === "prompt") {
-    console.log("SHIP_GATE merge pending"); // marker precedes the prompt (AIO-239 R7c)
-    const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
-    if (!ok) {
-      record("merge-gate", { rejected: true });
-      return { code: SHIP_EXIT.MERGE_REJECTED, records };
+    if (mergeRes?.code !== 0) {
+      record("merge", { error: mergeRes?.stderr || "gh pr merge failed", code: mergeRes?.code });
+      console.error(
+        c.red(`merge: gh pr merge failed (code ${mergeRes?.code}): ${mergeRes?.stderr || ""}`)
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
-  } else if (gates.merge === "approved") {
-    record("merge-gate", { approvedViaFlag: true });
-    progress("merge gate: approved via --approve-merge");
-  }
-  removeGate(issueId, "merge");
-
-  // Merge (squash + delete remote branch). ghExec returns {code,stdout,stderr} WITHOUT throwing,
-  // so a failed `gh pr merge` must be caught by checking code — never assume success. A failed
-  // merge blocks and, critically, never advances to cleanup (which would remove the worktree/branch).
-  let mergeRes;
-  try {
-    mergeRes = ghExec([
-      "pr",
-      "merge",
-      String(prNumber),
-      ...(slug ? ["--repo", slug] : []),
-      "--squash",
-      "--delete-branch",
-    ]);
-  } catch (e) {
-    mergeRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
-  }
-  if (mergeRes?.code !== 0) {
-    record("merge", { error: mergeRes?.stderr || "gh pr merge failed", code: mergeRes?.code });
-    console.error(
-      c.red(`merge: gh pr merge failed (code ${mergeRes?.code}): ${mergeRes?.stderr || ""}`)
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-  record("merge", { pr: prNumber });
-  saveState({ merged: true });
+    record("merge", { pr: prNumber });
+    saveState({ merged: true });
+  } // end !state.merged
 
   // ── 9. CLEANUP (best-effort — the ship already succeeded; see runCleanup) ───────
   const cleanup = runCleanup(deps, { repo, branch, worktreePath });
