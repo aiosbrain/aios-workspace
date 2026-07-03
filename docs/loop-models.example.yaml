@@ -55,3 +55,11 @@
 # orchestrate_model: fable-5
 
 # digest_model: claude-haiku-4-5
+
+# Spec/plan readiness harness (EE5 / `aios spec eval|fix`). Both run on the Claude SDK; there is
+# no diversity pair (spec eval is a single adversarial pass, not a producer/reviewer loop).
+# spec_eval_model: claude-opus-4-8
+# spec_eval_effort: xhigh
+
+# spec_fix_model: claude-opus-4-8
+# spec_fix_effort: high

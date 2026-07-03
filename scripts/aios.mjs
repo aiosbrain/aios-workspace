@@ -60,9 +60,11 @@ import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
+import { cmdSpec } from "./spec-eval.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
 import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
+import { cmdRails } from "./rails.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3874,6 +3876,13 @@ usage:
     [--install]                         for hermes: also run hermes skills install on each
   aios assess-codebase [path]           score a repo's AEM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
+  aios rails suggest [--repo <path>]    propose a SAFE permissions.allow from the transcript log
+    [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
+    [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
+  aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)
+    [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched
+  aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)
+    [--json]                            reuses assess-codebase scoring; each with a how-to pointer
   aios learn                            prescribe your next AEM patterns from MATURITY.md (offline)
   aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
     [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
@@ -3886,6 +3895,10 @@ usage:
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
     [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios spec eval <file> [--json]        score a spec/plan against .claude/rubrics/spec-readiness.md
+    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
+  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
+    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
   aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
     [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
   aios consolidate-findings --pr <n>    merge CI + Bugbot + CodeRabbit + GPT reviews + the PR
@@ -3946,6 +3959,7 @@ const OFFLINE_CMDS = new Set([
   "analyze",
   "relay",
   "build",
+  "spec",
   "pr",
   "consolidate-findings",
   "review-bugbot",
@@ -3954,6 +3968,7 @@ const OFFLINE_CMDS = new Set([
   "asks",
   "decisions",
   "mode",
+  "rails",
 ]);
 
 let repo, cfg;
@@ -3988,6 +4003,7 @@ try {
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "spec") await cmdSpec(repo, rest);
   else if (cmd === "pr") await cmdPr(repo, rest);
   else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));
   else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
@@ -3996,6 +4012,7 @@ try {
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
+  else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
   else {
     console.log(USAGE);
     process.exit(1);
