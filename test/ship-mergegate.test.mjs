@@ -46,6 +46,16 @@ console.log("empty / unparseable stdout → unavailable (fail closed)");
   check("error prose → unavailable (not a red board)", r2.ok === false && r2.unavailable === true);
 }
 
+console.log("empty check array `[]` → unavailable (no CI data is NOT green)");
+{
+  // `gh pr checks --json ...` returns `[]` when a PR has no reported checks. That is the
+  // ABSENCE of CI data, not proof of green — the merge gate must fail closed.
+  const r = readChecks(44, { ghExec: ghReturning(0, "[]") });
+  check("[] → ok:false", r.ok === false);
+  check("[] → unavailable:true", r.unavailable === true);
+  check("[] → not red, not pending", r.red === false && r.pending === false);
+}
+
 console.log("all-green → gate proceeds");
 {
   const stdout = JSON.stringify([

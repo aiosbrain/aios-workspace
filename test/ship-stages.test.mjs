@@ -6,7 +6,7 @@
 // PLAN_GATE_BLOCKED / MERGE_GATE_BLOCKED (confirm never called).
 // Run: node test/ship-stages.test.mjs
 
-import { runShip, SHIP_EXIT, SHIP_VERIFY_CMD } from "../scripts/ship.mjs";
+import { runShip, SHIP_EXIT, SHIP_VERIFY_CMD, NO_TOOLS } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -366,6 +366,55 @@ console.log("bugbot gate: unexpected non-zero exit (1) → MERGE_BLOCKED, merge 
     "merge never issued when Bugbot gate could not run",
     !deps.ghCalls.some((c) => c.includes("pr merge"))
   );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("recon + safety run with NO filesystem tools (prompt-injection blast radius = 0)");
+{
+  // Recon/safety_review synthesize over untrusted, pre-injected content (Linear text; PR diff).
+  // They must be handed a default-deny tool stance so a prompt-injection payload cannot make the
+  // agent read arbitrary repo files (e.g. `.env`) outside the tracked-only allow list.
+  const seen = [];
+  const deps = makeDeps({
+    callClaudeAgent: async (prompt, _timeout, opts = {}) => {
+      const extra = (opts.extraArgs ?? []).join(" ");
+      if (/recon context pack/.test(prompt)) {
+        seen.push({ step: "recon", extra });
+        return "RECON CONTEXT";
+      }
+      if (/implementation plan/.test(prompt)) return PLAN_TEXT;
+      if (/safety reviewer/.test(prompt)) {
+        seen.push({ step: "safety", extra });
+        return "reviewed\nSAFETY_APPROVED";
+      }
+      return "generic";
+    },
+  });
+  // Force the safety surface so safety_review actually runs.
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("--name-only")) {
+      deps.ghCalls.push(a);
+      return { code: 0, stdout: "hooks/pretooluse-secrets.sh", stderr: "" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("run reaches OK with restricted recon/safety", code === SHIP_EXIT.OK);
+  const recon = seen.find((s) => s.step === "recon");
+  const safety = seen.find((s) => s.step === "safety");
+  check("recon step observed", !!recon);
+  check("safety step observed", !!safety);
+  const restricted = (s) =>
+    s &&
+    s.extra.includes("--permission-mode plan") &&
+    s.extra.includes("--disallowedTools") &&
+    NO_TOOLS.every((t) => s.extra.includes(t));
+  check("recon gets --permission-mode plan + every tool disallowed", restricted(recon));
+  check("safety gets --permission-mode plan + every tool disallowed", restricted(safety));
+  // A read/exec tool must NOT be handed to these steps as allowed.
+  check("recon never passes --allowedTools", recon && !recon.extra.includes("--allowedTools"));
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

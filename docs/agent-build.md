@@ -283,7 +283,12 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   `.git/…`, `node_modules/…`, `*.key`, `*.pem`), **and (c) free of absolute / `..`-traversal paths**
   — enforced by `extractRepoFileRefs` (`scripts/linear-client.mjs`). Everything rejected is audited
   by **path + reason only; its contents are never read**. The fixed contract checklist
-  (`docs/brain-api.md`, `docs/ENGINEERING-CONSTITUTION.md`) passes the *same* filter.
+  (`docs/brain-api.md`, `docs/ENGINEERING-CONSTITUTION.md`) passes the *same* filter. The recon
+  model step is then run with **no tools at all** (`--permission-mode plan` + a `--disallowedTools`
+  default-deny over every filesystem/exec/network tool): the pre-vetted file contents are already
+  in the prompt, so a prompt-injection payload buried in the untrusted Linear text has **no tool to
+  read `.env` or anything else outside the tracked-only allow list**. The path-gated `safety_review`
+  step runs under the same no-tools stance (its diff is fully injected).
 - **`blockedBy` direction (proven).** Linear's `IssueRelationType` has **no `blocked_by` value** —
   blocking is one directional record (`issue` **blocks** `relatedIssue`, `type: "blocks"`). The
   blockers of an issue are therefore its **`inverseRelations`** of type `blocks` (see

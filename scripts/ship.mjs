@@ -51,6 +51,30 @@ export const SHIP_EXIT = {
 
 export const SAFETY_APPROVED_TOKEN = "SAFETY_APPROVED";
 
+// Steps that only *synthesize* over content already injected into their prompt (recon reads the
+// pre-vetted `allowed` file blobs; safety_review reads the diff) must run with NO tools. The
+// prompt carries untrusted, external text (Linear issue bodies/comments; PR diffs), so a
+// prompt-injection payload must not be able to make the agent read arbitrary repo files — e.g.
+// `.env`/`.aios/` — outside the tracked-only allow list. We hand the CLI a default-deny stance:
+// `--permission-mode plan` (no writes) plus an explicit `--disallowedTools` blocking every
+// filesystem / exec / network / delegation tool. Everything these steps need is already inline,
+// so removing tool access changes nothing but the injection blast radius.
+export const NO_TOOLS = [
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "NotebookEdit",
+];
+// argv fragment applied to any `callClaudeAgent` step that must not touch the filesystem.
+// `--disallowedTools` takes one space-separated string (the CLI's documented list form).
+export const NO_TOOLS_ARGS = ["--permission-mode", "plan", "--disallowedTools", NO_TOOLS.join(" ")];
+
 // Diff surfaces where an approval requires an explicit safety review over the diff. A changed
 // path matches if it equals a listed file or starts with a listed directory prefix.
 export const SAFETY_PATHS = [
@@ -237,6 +261,12 @@ export function readChecks(pr, { ghExec, slug } = {}) {
   const parsed = parseCheckResults(stdout);
   if (!parsed.parsed) {
     // No usable check data (auth/network/no checks yet/malformed) → fail closed.
+    return { ok: false, unavailable: true, red: false, pending: false, raw: stdout };
+  }
+  // An empty check set with no red/pending signal (e.g. `gh pr checks --json` returns `[]`)
+  // means CI has reported NO checks — it is NOT proof of green. Treat it as unavailable so the
+  // merge gate fails closed rather than waving a PR through on the absence of any CI data.
+  if (parsed.checks.length === 0 && !parsed.ciRed && !parsed.ciPending) {
     return { ok: false, unavailable: true, red: false, pending: false, raw: stdout };
   }
   const ok = !parsed.ciRed && !parsed.ciPending;
@@ -657,9 +687,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       buildReconPrompt(issue, { allowedFiles: allowed }) +
       (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "");
     const cfg = models.recon;
+    // Recon runs with NO tools: the untrusted Linear text is in the prompt, and the only files it
+    // may see are the pre-vetted `allowed` blobs already injected above. A prompt-injection payload
+    // therefore cannot make recon read anything outside the tracked-only allow list.
     recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
       model: cfg.model,
-      extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+      extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
     });
     writeAudit(issueId, "recon.md", recon);
   } catch (e) {
@@ -988,7 +1021,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         cfg.timeoutMs ?? 300 * 1000,
         {
           model: cfg.model,
-          extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+          // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
+          // never needs (and must not have) filesystem access over untrusted diff content.
+          extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
         }
       );
       writeAudit(issueId, "safety-review.md", safety);
