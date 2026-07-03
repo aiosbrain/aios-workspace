@@ -785,7 +785,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     let review;
     try {
       review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
-        extraArgs: ["--force", "--trust"],
+        extraArgs: [
+          "--force",
+          "--trust",
+          ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
+        ],
       });
     } catch (e) {
       record("plan", { error: e.message });
@@ -941,7 +945,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           buildGptReviewPrompt(plan, prDiff, prNumber),
           gptCfg.timeoutMs ?? 300 * 1000,
           {
-            extraArgs: ["--force", "--trust"],
+            extraArgs: ["--force", "--trust", ...(gptCfg.model ? ["--model", gptCfg.model] : [])],
           }
         );
         writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
