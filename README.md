@@ -54,7 +54,7 @@ aios-workspace/
 > **Want to actually drive this?** [`docs/GUIDE.md`](docs/GUIDE.md) — *The AIOS operating manual* —
 > is the one task-oriented walkthrough of the whole surface, organized around your day: the daily
 > brief, the asks queue + attention mode, the weekly loop, syncing to the brain, measuring yourself
-> (AEM), gating specs, and the agent pipeline. Start there.
+> (AM), gating specs, and the agent pipeline. Start there.
 >
 > **New contributor?** [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) is the
 > step-by-step path from a fresh clone to your first `aios push` live on the Team Brain.
