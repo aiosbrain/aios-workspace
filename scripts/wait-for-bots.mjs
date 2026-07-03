@@ -45,6 +45,30 @@ const BOT_CONFIG = {
 const POLL_INTERVAL_MS = 30_000;
 const SUMMARY_LINES = 4;
 
+// Select which bots to gate on from a --bots value (comma-separated or repeated), validating
+// each name against BOT_CONFIG. Unknown names are a usage error (throws). Absent/empty → all
+// configured bots (default behavior). Exported + pure so `aios ship` can gate on cursor[bot]
+// alone without re-implementing validation. `botsArg` may be a string, an array (repeated
+// flag), or null/undefined.
+export function selectBots(config, botsArg) {
+  const keys = Object.keys(config);
+  if (botsArg == null || botsArg === "" || (Array.isArray(botsArg) && botsArg.length === 0)) {
+    return keys;
+  }
+  const requested = (Array.isArray(botsArg) ? botsArg : [botsArg])
+    .flatMap((s) => String(s).split(","))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unknown = requested.filter((b) => !keys.includes(b));
+  if (unknown.length) {
+    throw new Error(
+      `unknown bot(s): ${unknown.join(", ")} — known bots: ${keys.join(", ")}`
+    );
+  }
+  // De-dupe while preserving BOT_CONFIG order.
+  return keys.filter((k) => requested.includes(k));
+}
+
 function usage() {
   console.error(
     [
@@ -58,6 +82,7 @@ function usage() {
       "  --pr <n>          PR number (required)",
       "  --repo <slug>     owner/repo (default: detected from git remote)",
       "  --timeout <min>   max wait in minutes (default: 10)",
+      "  --bots <list>     comma-separated bots to gate on (default: all; e.g. cursor[bot])",
       "  --any             exit 0 on timeout even if a bot is missing (default: exit 2)",
       "  --require-all     no-op alias for the default (require all bots; exit 2 on timeout)",
       "",
@@ -220,8 +245,13 @@ function checkBotReady(
       if (!config.checkNamePattern.test(run.name)) continue;
       if (run.status !== "completed") continue;
       if (!after(run.completed_at)) continue;
-      // neutral = intentional skip (config/docs-only PR) — counts as done
-      if (run.conclusion === "success" || run.conclusion === "neutral") {
+      // neutral / skipped = intentional skip (config/docs-only PR, or Bugbot skipping a
+      // trivial push) — counts as done, same as success.
+      if (
+        run.conclusion === "success" ||
+        run.conclusion === "neutral" ||
+        run.conclusion === "skipped"
+      ) {
         return { ready: true, signal: `check-run:${run.conclusion}`, preview: run.name };
       }
     }
@@ -268,6 +298,8 @@ async function main() {
       pr: { type: "string" },
       repo: { type: "string" },
       timeout: { type: "string", default: "10" },
+      // May be repeated or comma-separated; validated via selectBots against BOT_CONFIG.
+      bots: { type: "string", multiple: true },
       // Default is require-all (exit 2 on a missing bot); --require-all is a no-op alias.
       "require-all": { type: "boolean", default: false },
       any: { type: "boolean", default: false },
@@ -293,7 +325,13 @@ async function main() {
   // Default: require all bots (exit 2 on a missing bot at timeout). --any restores the
   // old proceed-anyway behavior (exit 0). --require-all is accepted but is now the default.
   const proceedOnTimeout = values.any ?? false;
-  const botUsers = Object.keys(BOT_CONFIG);
+  let botUsers;
+  try {
+    botUsers = selectBots(BOT_CONFIG, values.bots);
+  } catch (e) {
+    console.error(`error: ${e.message}`);
+    process.exit(1);
+  }
 
   console.log(`Waiting for bot reviews on PR #${prNumber} (${repo})`);
   console.log(`Bots: ${botUsers.join(", ")}`);
