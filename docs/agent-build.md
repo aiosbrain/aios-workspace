@@ -32,7 +32,10 @@ npm run aios -- build "<plan-file>" [branch] [options]
 | a git repo        | `git status`       | build runs in a **worktree** off `origin/main`             |
 
 `aios build` does **not** need `ANTHROPIC_API_KEY` — the builder runs through Claude Code, which uses
-its own authentication.
+its own authentication. More than not *needing* it: the tool **actively strips `ANTHROPIC_API_KEY`
+from the builder child's environment**, so a dotenvx-injected key (e.g. when invoked via
+`npm run aios`) can never silently flip the builder from login/subscription auth to metered API
+billing. Cursor and the relay SDK path are untouched by the strip.
 
 ---
 
@@ -112,8 +115,9 @@ shell strings); `--dry-run` previews the push + `gh pr create` argv without any 
 ### The builder fence (defense-in-depth, not containment)
 
 The builder runs with `--dangerously-skip-permissions`, so this is **not** a filesystem
-sandbox — a determined builder could still reach an explicit path. The "fence" is three
-overlapping layers that reduce blast radius:
+sandbox — a determined builder could still reach an explicit path. Alongside the env
+hardening above (the `ANTHROPIC_API_KEY` strip), the "fence" is three overlapping layers
+that reduce blast radius:
 
 1. **Policy** — every builder invocation is prefixed with hard git rules: **no `git push`,
    no PR create/edit/comment, no touching the primary checkout or other worktrees, small
@@ -212,7 +216,11 @@ aios build … --pr   →   wait-for-bots   →   GPT-5.5 PR review   →   aios
 ```
 
 1. **`aios build … --pr`** opens the PR after the local gates (including local Bugbot).
-2. **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback.
+2. **`scripts/wait-for-bots.mjs`** blocks until the gated bots (Bugbot + CodeRabbit by default)
+   post substantive feedback. **Require-all is the default**: a bot still missing at timeout
+   exits `2`, so the caller never proceeds to the reviewer on incomplete signals. `--any` opts
+   back into the old proceed-on-timeout behavior (exit 0), `--bots <list>` (e.g. `cursor[bot]`)
+   gates on a subset, and `--require-all` remains as a no-op alias for the default.
 3. An optional **GPT-5.5 PR review** writes a markdown findings file.
 4. **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the
    bot comments/reviews, and the GPT review into **one severity-ranked finding list** at
