@@ -167,9 +167,10 @@ function normalizeHeader(raw: unknown): string | null {
   return h || null;
 }
 
-/** A short single-line tag (contextTag / source): non-string or empty → null. */
+/** A short single-line tag (contextTag / source): non-string or empty → null (a JSON number /
+ *  object on an untrusted line must not become a stringified tag). */
 function normalizeShort(raw: unknown, max: number): string | null {
-  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
   const s = normalizeSingleLine(raw, max);
   return s || null;
 }
