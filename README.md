@@ -181,7 +181,7 @@ you drive from the CLI — all offline, all local-only until you push:
   guide's disambiguation box).
 - **Weekly loop** — `aios loop collect → weekly → verify → writeback`: a verified, approval-gated
   closeout that proves every shareable claim before it can sync.
-- **Measure yourself** — `aios analyze` (agentic-engineering maturity + attention + spend),
+- **Measure yourself** — `aios analyze` (agentic maturity (AM) + attention + spend),
   `aios time` (agent-runtime time tracking).
 - **Spec gate** — `aios spec eval | fix`: grade a spec against the pick-up-able-issue bar before a
   builder touches it.
