@@ -31,10 +31,12 @@ try {
 
   const savedBrain = process.env.AIOS_BRAIN_URL;
   const savedTeam = process.env.AIOS_TEAM;
-  const savedApiKey = process.env.AIOS_API_KEY;
+  const savedKey = process.env.AIOS_API_KEY;
   delete process.env.AIOS_BRAIN_URL;
   delete process.env.AIOS_TEAM;
-  delete process.env.AIOS_API_KEY; // isolate from an ambient key (e.g. dotenvx cascade) so the .env fixture wins
+  // process.env wins over .env, so clear any ambient key (e.g. a dotenvx cascade)
+  // to actually exercise the .env fallback path this test asserts.
+  delete process.env.AIOS_API_KEY;
 
   const cfg = resolveBrainConfig(repo);
   check("brain_url falls back to aios.yaml", cfg.brain_url === "https://brain-from-yaml.example");
@@ -51,8 +53,8 @@ try {
   else process.env.AIOS_BRAIN_URL = savedBrain;
   if (savedTeam == null) delete process.env.AIOS_TEAM;
   else process.env.AIOS_TEAM = savedTeam;
-  if (savedApiKey == null) delete process.env.AIOS_API_KEY;
-  else process.env.AIOS_API_KEY = savedApiKey;
+  if (savedKey == null) delete process.env.AIOS_API_KEY;
+  else process.env.AIOS_API_KEY = savedKey;
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }
