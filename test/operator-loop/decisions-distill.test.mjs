@@ -302,3 +302,26 @@ test("CLI distill emits the third-party egress warning to stderr EVEN with --jso
 function readAll(dir) {
   return readDecisions(dir).decisions;
 }
+
+// Review r2 (GPT, Low): contexts are DERIVED from cited evidence — a model-fabricated context
+// must never reach the draft metadata.
+test("distill: model-emitted contexts are ignored; contexts derive from the cited records", async () => {
+  const dir = ws();
+  try {
+    const ids = seed(dir, 4);
+    const complete = async () => ({
+      principles: [
+        {
+          title: "T",
+          principle: "P.",
+          contexts: ["fabricated-context", "another-lie"],
+          evidence: ids.slice(0, 3),
+        },
+      ],
+    });
+    const { principles } = await distill({ records: readAll(dir), minSupport: 3, complete });
+    assert.deepEqual(principles[0].contexts, ["aios"], "evidence tags, not model claims");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

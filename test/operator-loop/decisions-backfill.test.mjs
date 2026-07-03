@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = path.join(ROOT, "scripts", "aios.mjs");
 const STORE_REL = ".aios/loop/decisions/decisions.ndjson";
+const CAP = 20_000; // DECISIONS_HARD_LINE_CAP (mirrored; the CLI reads it from the compiled loop)
 
 function askUse(id, questions) {
   return { type: "tool_use", id, name: "AskUserQuestion", input: { questions } };
@@ -385,6 +386,32 @@ test("backfill skips + counts decision moments whose record has no timestamp", (
     const r = JSON.parse(run(WORK, ["backfill", "--home", HOME, "--dry-run", "--json"]).out);
     assert.equal(r.skippedMissingTimestamp, 1, "the timestampless moment is counted");
     assert.equal(r.recoverable, 0, "…and not recoverable");
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+  }
+});
+
+// Bugbot r2 (Medium): dry-run must simulate DECISIONS_HARD_LINE_CAP — its "would append" has to
+// match what the live batch writer will actually write, never overstate it.
+test("backfill --dry-run simulates the store line cap (would-append matches a live run)", () => {
+  const { HOME, WORK } = build();
+  try {
+    // Fill the work repo's store to one line under the cap.
+    const storeAbs = path.join(WORK, STORE_REL);
+    mkdirSync(path.dirname(storeAbs), { recursive: true });
+    writeFileSync(
+      storeAbs,
+      Array.from({ length: CAP - 1 }, (_, i) => `{"pad":${i}}`).join("\n") + "\n"
+    );
+    const dry = JSON.parse(
+      run(WORK, ["backfill", "--all", "--home", HOME, "--dry-run", "--json"]).out
+    );
+    assert.equal(dry.recoverable, 6);
+    assert.equal(dry.appended, 1, "one slot under the cap → dry-run predicts exactly 1");
+    assert.equal(dry.cappedStore, 5, "the other 5 are reported as capped");
+    const live = JSON.parse(run(WORK, ["backfill", "--all", "--home", HOME, "--json"]).out);
+    assert.equal(live.appended, dry.appended, "live run matches the dry-run prediction");
+    assert.equal(live.cappedStore, dry.cappedStore);
   } finally {
     rmSync(HOME, { recursive: true, force: true });
   }

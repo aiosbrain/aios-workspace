@@ -340,7 +340,12 @@ export function extractDecisions(records) {
     const content = Array.isArray(msg.content) ? msg.content : [];
     const ctx = {
       sessionId: typeof r.sessionId === "string" ? r.sessionId : null,
-      createdAt: typeof r.timestamp === "string" ? r.timestamp : undefined,
+      // A present-but-unparseable timestamp is as bad as a missing one: buildDecisionRecord would
+      // silently fall back to "now" (review r2). Both join the missing-timestamp skip path.
+      createdAt:
+        typeof r.timestamp === "string" && Number.isFinite(Date.parse(r.timestamp))
+          ? r.timestamp
+          : undefined,
       cwd: typeof r.cwd === "string" ? r.cwd : null,
     };
     for (const b of content) {

@@ -3927,25 +3927,43 @@ async function cmdDecisions(repo, cfg, args) {
     }
 
     // Dedupe preview (report) via the store's exact key; the real write recomputes under the lock.
+    // The preview also simulates DECISIONS_HARD_LINE_CAP (review r2): dry-run's "would append"
+    // must match what appendDecisionsDeduped will actually write, never overstate it.
     const existing = new Set(
       loop.readDecisions(repo).decisions.map((d) => loop.decisionDedupeKey(d))
     );
+    const storeAbs = path.join(repo, ".aios", "loop", "decisions", "decisions.ndjson");
+    let storeLines = 0;
+    try {
+      storeLines = readFileSync(storeAbs, "utf8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim()).length;
+    } catch {
+      storeLines = 0;
+    }
+    let room = Math.max(0, loop.DECISIONS_HARD_LINE_CAP - storeLines);
     const seen = new Set(existing);
     let wouldAppend = 0;
     let wouldDup = 0;
+    let wouldCap = 0;
     for (const inp of accepted) {
       const k = loop.decisionDedupeKey(loop.buildDecisionRecord(inp));
       if (seen.has(k)) {
         wouldDup += 1;
         continue;
       }
+      if (room === 0) {
+        wouldCap += 1;
+        continue;
+      }
       seen.add(k);
       wouldAppend += 1;
+      room -= 1;
     }
 
     let appended = wouldAppend;
     let skippedDup = wouldDup;
-    let cappedStore = 0;
+    let cappedStore = wouldCap;
     if (!dryRun) {
       const res = loop.appendDecisionsDeduped(repo, accepted);
       appended = res.appended;

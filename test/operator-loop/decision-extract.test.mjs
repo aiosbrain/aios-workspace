@@ -153,6 +153,15 @@ test("extractDecisions: a record with no timestamp is skipped + counted (never a
   assert.equal(stats.unpaired, 0, "a dropped moment is not double-counted as unpaired");
 });
 
+test("extractDecisions: an UNPARSEABLE timestamp is skipped + counted like a missing one", () => {
+  const rec = asstRec("s3c", "not-a-real-date", "/repo", [
+    askUse("tu3c", [{ question: "Corrupt when?", header: "T", options: [{ label: "A" }] }]),
+  ]);
+  const { decisions, stats } = extractDecisions([rec]);
+  assert.equal(decisions.length, 0, "invalid createdAt would silently become 'now' — refuse");
+  assert.equal(stats.missingTimestamp, 1);
+});
+
 test("extractDecisions: two questions in one call each keep their own answer", () => {
   const records = [
     asstRec("s4", "2026-06-04T09:00:00Z", "/repo", [

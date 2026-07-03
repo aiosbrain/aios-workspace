@@ -207,6 +207,7 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
   }
   const projected = projectForDistill(records);
   const validIds = new Set(projected.map((p) => p.id));
+  const tagById = new Map(projected.map((p) => [p.id, p.contextTag]));
 
   const out = await opts.complete({
     system: SYSTEM,
@@ -236,9 +237,11 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
         `distill: principle "${title}" cites ${evidence.length} valid corpus id(s) — need >= ${minSupport}.`
       );
     }
-    const contexts = Array.isArray(p.contexts)
-      ? [...new Set(p.contexts.filter((x): x is string => typeof x === "string" && Boolean(x)))]
-      : [];
+    // Contexts are DERIVED from the cited evidence records — never taken from the model (review
+    // r2): a model-emitted context the citations don't support would mislead the human reviewer.
+    const contexts = [
+      ...new Set(evidence.map((id) => tagById.get(id)).filter((t): t is string => Boolean(t))),
+    ].sort();
     principles.push({ title, principle, contexts, evidence });
   }
   if (!principles.length) throw new Error("distill: no principles survived validation");
