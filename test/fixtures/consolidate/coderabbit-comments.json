@@ -1,0 +1,14 @@
+[
+  {
+    "user": "coderabbitai[bot]",
+    "path": "scripts/example.mjs",
+    "line": 10,
+    "body": "_⚠️ Potential issue_\n\n**Major:** this may throw on a null input before the guard runs."
+  },
+  {
+    "user": "coderabbitai[bot]",
+    "path": "README.md",
+    "line": 1,
+    "body": "🧹 Nitpick: minor wording tweak in the heading."
+  }
+]

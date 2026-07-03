@@ -1,0 +1,4 @@
+[
+  { "name": "build", "state": "SUCCESS", "bucket": "pass" },
+  { "name": "lint", "state": "SUCCESS", "bucket": "pass" }
+]

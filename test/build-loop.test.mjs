@@ -350,6 +350,91 @@ console.log("reject-then-approve → converges round 2, merges, logs both rounds
   );
 }
 
+console.log("--findings + gate failure keeps the outstanding findings in the next prompt (M1)");
+{
+  // Seed an actionable [High] via --findings, then make the secrets gate fail EVERY round
+  // (leak mode). Round 1's builder prompt carries the seeded findings; round 1 trips the gate;
+  // round 2's builder prompt MUST carry BOTH the gate output AND the still-outstanding findings
+  // (the pre-fix bug dropped the findings, leaving only the gate text).
+  const repo = freshRepo();
+  const findings = path.join(repo, "must-fix.md");
+  writeFileSync(
+    findings,
+    "## Findings\n\n[High] scripts/x.mjs:1 — unbounded retry loop (source: Bugbot)\n\n## Verdict\nBLOCKED\n"
+  );
+  const logDir = mkdtempSync(path.join(tmpdir(), "m1-"));
+  cleanups.push(logDir);
+  const promptLog = path.join(logDir, "prompts.log");
+  process.env.FAKE_PROMPT_LOG = promptLog;
+  let code;
+  try {
+    code = await run({
+      repo,
+      branch: "feat/m1",
+      mode: "leak",
+      o: opts({ rounds: 2, findingsFile: findings }),
+    });
+  } finally {
+    delete process.env.FAKE_PROMPT_LOG;
+  }
+  check("gate never clears → GATE_FAILED", code === EXIT.GATE_FAILED);
+  const prompts = (existsSync(promptLog) ? readFileSync(promptLog, "utf8") : "").split(
+    "<<<PROMPT_SEP>>>"
+  );
+  const round2 = prompts[1] ?? "";
+  check("captured a round-2 builder prompt", round2.trim().length > 0);
+  check("round-2 prompt carries the gate failure", /scan FAILED/i.test(round2));
+  check(
+    "round-2 prompt STILL carries the outstanding must-fix finding",
+    round2.includes("unbounded retry loop")
+  );
+}
+
+console.log("--findings CLEAR file → abort before any builder invocation (M3)");
+{
+  // A CLEAR findings file (only a [Low], no actionable item) must NOT seed a fresh build —
+  // it aborts fast (exit 1) with no builder call, instead of burning a builder round.
+  const repo = freshRepo();
+  const findings = path.join(repo, "clear-findings.md");
+  cpSync(path.join(REPO, "test", "fixtures", "consolidate", "agent-clear.md"), findings);
+  const logDir = mkdtempSync(path.join(tmpdir(), "m3-"));
+  cleanups.push(logDir);
+  const promptLog = path.join(logDir, "prompts.log");
+  process.env.FAKE_PROMPT_LOG = promptLog;
+  process.env.FAKE_AGENT_SCRIPT = "approve";
+
+  const origExit = process.exit;
+  let exitCode = null;
+  process.stdout.write = () => true;
+  process.stderr.write = () => true;
+  console.log = () => {};
+  console.error = () => {};
+  process.exit = (n) => {
+    exitCode = n;
+    throw new Error("__die__");
+  };
+  try {
+    await runBuild({
+      repo,
+      plan: "Add a feature module.",
+      branch: "feat/m3",
+      opts: opts({ findingsFile: findings }),
+    });
+  } catch {
+    /* die() throws through the stubbed process.exit */
+  } finally {
+    process.exit = origExit;
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+    console.log = origLog;
+    console.error = origError;
+    delete process.env.FAKE_PROMPT_LOG;
+  }
+  check("aborted with exit 1 (nothing to fix)", exitCode === 1);
+  const pl = existsSync(promptLog) ? readFileSync(promptLog, "utf8") : "";
+  check("builder never invoked (empty prompt log)", pl.trim() === "");
+}
+
 // teardown
 for (const p of cleanups) {
   try {

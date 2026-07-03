@@ -59,15 +59,26 @@ export function buildBugbotPrompt({ skill, branch, baseSha, diffStat, diff, logO
 }
 
 // Structural matchers for a listed Critical/High finding: a leading bullet
-// (`- Critical: …`) or a leading severity table cell (`| High |`). Prose such as
-// "no Critical or High findings" matches NEITHER — only an actual listed finding.
+// (`- Critical: …`), a leading severity table cell (`| High |`), or the bracket form
+// (`[High] file:line — …`) that the consolidated findings report (code-reviewer.md's
+// "Output format") emits. Prose such as "no Critical or High findings" matches NONE of
+// these — only an actual listed finding. This is the single severity dialect: both the
+// Cursor review loop and the consolidator gate on the same matcher.
 const CRITICAL_HIGH_BULLET = /^\s*[-*]\s*`?(Critical|High)`?\b/im;
 const CRITICAL_HIGH_ROW = /^\s*\|\s*`?(Critical|High)`?\s*\|/im;
+const CRITICAL_HIGH_BRACKET = /^\s*\[(Critical|High)\]/im;
 
-/** True when review text lists a Critical/High finding (bullet or table row). */
+// Rank for merging/comparing severities across sources (used by the consolidator).
+export const SEVERITY_RANK = { Critical: 4, High: 3, Medium: 2, Low: 1 };
+
+/** True when review text lists a Critical/High finding (bullet, table row, or bracket). */
 export function hasCriticalOrHighFindings(text) {
   const body = text ?? "";
-  return CRITICAL_HIGH_BULLET.test(body) || CRITICAL_HIGH_ROW.test(body);
+  return (
+    CRITICAL_HIGH_BULLET.test(body) ||
+    CRITICAL_HIGH_ROW.test(body) ||
+    CRITICAL_HIGH_BRACKET.test(body)
+  );
 }
 
 /** True when the review has no blocking Critical/High findings. */

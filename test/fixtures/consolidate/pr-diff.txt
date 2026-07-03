@@ -1,0 +1,11 @@
+diff --git a/scripts/example.mjs b/scripts/example.mjs
+index 1111111..2222222 100644
+--- a/scripts/example.mjs
++++ b/scripts/example.mjs
+@@ -1,4 +1,6 @@
+ export function example() {
+-  return doWork();
++  while (true) {
++    retry();
++  }
+ }
