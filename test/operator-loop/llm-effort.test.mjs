@@ -4,7 +4,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runCompletion, makeAnthropicCompletion, DRAFTER_MODEL } from "../../dist/operator-loop/index.js";
+import {
+  runCompletion,
+  makeAnthropicCompletion,
+  DRAFTER_MODEL,
+} from "../../dist/operator-loop/index.js";
 
 function fakeClient(capture) {
   return {
@@ -46,8 +50,13 @@ test("runCompletion without effort omits output_config and defaults the model", 
 });
 
 test("runCompletion throws when the model returns no tool_use block (fail-closed)", async () => {
-  const client = { messages: { create: async () => ({ content: [{ type: "text", text: "nope" }] }) } };
-  await assert.rejects(() => runCompletion(client, { system: "s", user: "u" }), /no structured tool_use/);
+  const client = {
+    messages: { create: async () => ({ content: [{ type: "text", text: "nope" }] }) },
+  };
+  await assert.rejects(
+    () => runCompletion(client, { system: "s", user: "u" }),
+    /no structured tool_use/
+  );
 });
 
 test("makeAnthropicCompletion returns a CompletionFn (constructing the client needs the egress key)", async () => {

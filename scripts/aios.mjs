@@ -3797,8 +3797,7 @@ async function cmdDecisions(repo, cfg, args) {
       }
       return null;
     };
-    const sinceOk = (d) =>
-      sinceMs == null || !d.createdAt || Date.parse(d.createdAt) >= sinceMs;
+    const sinceOk = (d) => sinceMs == null || !d.createdAt || Date.parse(d.createdAt) >= sinceMs;
 
     const repoReal = safeReal(repo);
     // Canonicalize the context-tag base to the SAME realpath domain as the cwds we resolve below
@@ -3893,7 +3892,9 @@ async function cmdDecisions(repo, cfg, args) {
     }
 
     // Dedupe preview (report) via the store's exact key; the real write recomputes under the lock.
-    const existing = new Set(loop.readDecisions(repo).decisions.map((d) => loop.decisionDedupeKey(d)));
+    const existing = new Set(
+      loop.readDecisions(repo).decisions.map((d) => loop.decisionDedupeKey(d))
+    );
     const seen = new Set(existing);
     let wouldAppend = 0;
     let wouldDup = 0;
@@ -3932,7 +3933,9 @@ async function cmdDecisions(repo, cfg, args) {
       return;
     }
     console.log(
-      c.blue("aios decisions backfill") + (dryRun ? c.dim("  (dry-run)") : "") + (all ? c.dim("  --all") : "")
+      c.blue("aios decisions backfill") +
+        (dryRun ? c.dim("  (dry-run)") : "") +
+        (all ? c.dim("  --all") : "")
     );
     console.log(`  scanned files:     ${scannedFiles}`);
     console.log(`  recoverable:       ${accepted.length}`);
@@ -3948,8 +3951,7 @@ async function cmdDecisions(repo, cfg, args) {
       console.log("  skipped:");
       if (skippedNonexistentCwd)
         console.log(c.dim(`    non-existent cwd:   ${skippedNonexistentCwd}`));
-      if (skippedSensitive)
-        console.log(c.dim(`    sensitive/unknown:  ${skippedSensitive}`));
+      if (skippedSensitive) console.log(c.dim(`    sensitive/unknown:  ${skippedSensitive}`));
     }
     return;
   }

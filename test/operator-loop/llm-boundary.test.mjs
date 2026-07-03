@@ -29,5 +29,9 @@ test("only llm.ts imports the Anthropic SDK / constructs a client", () => {
       offenders.push(path.relative(ROOT, file));
     }
   }
-  assert.deepEqual(offenders, [], `SDK usage must stay in llm.ts; found in: ${offenders.join(", ")}`);
+  assert.deepEqual(
+    offenders,
+    [],
+    `SDK usage must stay in llm.ts; found in: ${offenders.join(", ")}`
+  );
 });

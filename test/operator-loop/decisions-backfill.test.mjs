@@ -23,14 +23,47 @@ function planUse(id, plan) {
 }
 function ask(sessionId, ts, cwd, id, question, answer) {
   return [
-    { type: "assistant", sessionId, timestamp: ts, cwd, message: { role: "assistant", content: [askUse(id, [{ question, header: "H", options: [{ label: answer }] }])] } },
-    { type: "user", sessionId, timestamp: ts, cwd, toolUseResult: { answers: [{ question, answer }] }, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } },
+    {
+      type: "assistant",
+      sessionId,
+      timestamp: ts,
+      cwd,
+      message: {
+        role: "assistant",
+        content: [askUse(id, [{ question, header: "H", options: [{ label: answer }] }])],
+      },
+    },
+    {
+      type: "user",
+      sessionId,
+      timestamp: ts,
+      cwd,
+      toolUseResult: { answers: [{ question, answer }] },
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+    },
   ];
 }
 function plan(sessionId, ts, cwd, id, title) {
   return [
-    { type: "assistant", sessionId, timestamp: ts, cwd, message: { role: "assistant", content: [planUse(id, `# ${title}\n\nstep 1`)] } },
-    { type: "user", sessionId, timestamp: ts, cwd, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "User has approved your plan." }] } },
+    {
+      type: "assistant",
+      sessionId,
+      timestamp: ts,
+      cwd,
+      message: { role: "assistant", content: [planUse(id, `# ${title}\n\nstep 1`)] },
+    },
+    {
+      type: "user",
+      sessionId,
+      timestamp: ts,
+      cwd,
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: id, content: "User has approved your plan." },
+        ],
+      },
+    },
   ];
 }
 
@@ -65,14 +98,20 @@ function build() {
   // non-existent cwd → skipped + counted
   session("gone", "s3.jsonl", ask("s3", "2026-06-03T10:00:00Z", gone, "a5", "Ghost?", "A"));
   // NDA-like client repo, client-flavoured content → skipped by default + counted, never named
-  session("client", "s4.jsonl", ask("s4", "2026-06-04T10:00:00Z", client, "a6", "Use the acme-secret billing core?", "Yes"));
+  session(
+    "client",
+    "s4.jsonl",
+    ask("s4", "2026-06-04T10:00:00Z", client, "a6", "Use the acme-secret billing core?", "Yes")
+  );
 
   return { HOME, WORK, clientName: "acme-secret-engagement", clientPath: client };
 }
 
 function run(WORK, args) {
   try {
-    const out = execFileSync("node", [CLI, "decisions", ...args, "--repo", WORK], { encoding: "utf8" });
+    const out = execFileSync("node", [CLI, "decisions", ...args, "--repo", WORK], {
+      encoding: "utf8",
+    });
     return { code: 0, out };
   } catch (e) {
     return { code: e.status ?? 1, out: e.stdout ?? "", err: e.stderr ?? "" };
@@ -108,7 +147,10 @@ test("backfill --all: real run appends 6 with correct tags; re-run is idempotent
     assert.equal(first.skippedDuplicate, 0);
 
     const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
-    const recs = store.trim().split("\n").map((l) => JSON.parse(l).decision);
+    const recs = store
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l).decision);
     assert.equal(recs.length, 6);
     assert.equal(recs.filter((r) => r.contextTag === "labs").length, 3);
     assert.equal(recs.filter((r) => r.contextTag === "products").length, 3);
@@ -131,7 +173,10 @@ test("backfill --all: NDA repo is skipped and leaves NO name / absolute path / t
     assert.ok(!/acme/i.test(store), "no client codename anywhere in the store");
     assert.ok(!store.includes(clientName), "no client repo name");
     assert.ok(!store.includes(clientPath), "no client absolute path");
-    assert.ok(!store.includes(path.join(HOME, "Projects")), "no absolute Projects path (foreign origin redacted)");
+    assert.ok(
+      !store.includes(path.join(HOME, "Projects")),
+      "no absolute Projects path (foreign origin redacted)"
+    );
     assert.ok(!store.includes(".claude/projects"), "no raw transcriptPath from a foreign repo");
   } finally {
     rmSync(HOME, { recursive: true, force: true });
@@ -144,7 +189,10 @@ test("backfill --all: a foreign safe-repo record redacts cwd/transcriptPath/proj
   try {
     run(WORK, ["backfill", "--all", "--home", HOME, "--json"]);
     const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
-    const recs = store.trim().split("\n").map((l) => JSON.parse(l).decision);
+    const recs = store
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l).decision);
     const foreign = recs.find((r) => r.contextTag === "products");
     assert.ok(foreign);
     assert.equal(foreign.context.cwd, null);
@@ -174,11 +222,25 @@ test("backfill default (no --all): foreign repos are NOT ingested", () => {
 test("backfill --since filters by the transcript timestamp", () => {
   const { HOME, WORK } = build();
   try {
-    const r = JSON.parse(run(WORK, ["backfill", "--all", "--home", HOME, "--since", "2026-06-02T00:00:00Z", "--dry-run", "--json"]).out);
+    const r = JSON.parse(
+      run(WORK, [
+        "backfill",
+        "--all",
+        "--home",
+        HOME,
+        "--since",
+        "2026-06-02T00:00:00Z",
+        "--dry-run",
+        "--json",
+      ]).out
+    );
     // Only the products session (2026-06-02) survives; labs (06-01) is filtered out.
     assert.equal(r.recoverable, 3);
     assert.deepEqual(r.byContext, { products: 3 });
-    assert.notEqual(run(WORK, ["backfill", "--all", "--home", HOME, "--since", "nonsense"]).code, 0);
+    assert.notEqual(
+      run(WORK, ["backfill", "--all", "--home", HOME, "--since", "nonsense"]).code,
+      0
+    );
   } finally {
     rmSync(HOME, { recursive: true, force: true });
     rmSync(WORK, { recursive: true, force: true });

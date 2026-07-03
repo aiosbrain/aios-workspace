@@ -38,10 +38,22 @@ function planUse(id, plan) {
   return { type: "tool_use", id, name: "ExitPlanMode", input: { plan } };
 }
 function asstRec(sessionId, ts, cwd, blocks) {
-  return { type: "assistant", sessionId, timestamp: ts, cwd, message: { role: "assistant", content: blocks } };
+  return {
+    type: "assistant",
+    sessionId,
+    timestamp: ts,
+    cwd,
+    message: { role: "assistant", content: blocks },
+  };
 }
 function resultRec(sessionId, ts, cwd, toolUseId, toolUseResult, content = "ok") {
-  const rec = { type: "user", sessionId, timestamp: ts, cwd, message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content }] } };
+  const rec = {
+    type: "user",
+    sessionId,
+    timestamp: ts,
+    cwd,
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content }] },
+  };
   if (toolUseResult !== undefined) rec.toolUseResult = toolUseResult;
   return rec;
 }
@@ -49,9 +61,17 @@ function resultRec(sessionId, ts, cwd, toolUseId, toolUseResult, content = "ok")
 test("extractDecisions: AskUserQuestion paired with a structured answer", () => {
   const records = [
     asstRec("s1", "2026-06-01T10:00:00Z", "/repo", [
-      askUse("tu1", [{ question: "Which database?", header: "DB", options: [{ label: "Postgres" }, { label: "Mongo" }] }]),
+      askUse("tu1", [
+        {
+          question: "Which database?",
+          header: "DB",
+          options: [{ label: "Postgres" }, { label: "Mongo" }],
+        },
+      ]),
     ]),
-    resultRec("s1", "2026-06-01T10:00:05Z", "/repo", "tu1", { answers: [{ question: "Which database?", answer: "Postgres" }] }),
+    resultRec("s1", "2026-06-01T10:00:05Z", "/repo", "tu1", {
+      answers: [{ question: "Which database?", answer: "Postgres" }],
+    }),
   ];
   const { decisions, stats } = extractDecisions(records);
   assert.equal(decisions.length, 1);
@@ -67,8 +87,17 @@ test("extractDecisions: AskUserQuestion paired with a structured answer", () => 
 
 test("extractDecisions: ExitPlanMode approved → plan-approval with the plan title", () => {
   const records = [
-    asstRec("s2", "2026-06-02T09:00:00Z", "/repo", [planUse("tu2", "# Ship the billing module\n\nstep 1")]),
-    resultRec("s2", "2026-06-02T09:00:05Z", "/repo", "tu2", undefined, "User has approved your plan."),
+    asstRec("s2", "2026-06-02T09:00:00Z", "/repo", [
+      planUse("tu2", "# Ship the billing module\n\nstep 1"),
+    ]),
+    resultRec(
+      "s2",
+      "2026-06-02T09:00:05Z",
+      "/repo",
+      "tu2",
+      undefined,
+      "User has approved your plan."
+    ),
   ];
   const { decisions } = extractDecisions(records);
   assert.equal(decisions.length, 1);
@@ -94,12 +123,19 @@ test("extractDecisions: two questions in one call each keep their own answer", (
   const records = [
     asstRec("s4", "2026-06-04T09:00:00Z", "/repo", [
       askUse("tu4", [
-        { question: "Deploy staging?", header: "Stg", options: [{ label: "Yes" }, { label: "No" }] },
+        {
+          question: "Deploy staging?",
+          header: "Stg",
+          options: [{ label: "Yes" }, { label: "No" }],
+        },
         { question: "Deploy prod?", header: "Prod", options: [{ label: "Yes" }, { label: "No" }] },
       ]),
     ]),
     resultRec("s4", "2026-06-04T09:00:05Z", "/repo", "tu4", {
-      answers: [{ question: "Deploy staging?", answer: "Yes" }, { question: "Deploy prod?", answer: "No" }],
+      answers: [
+        { question: "Deploy staging?", answer: "Yes" },
+        { question: "Deploy prod?", answer: "No" },
+      ],
     }),
   ];
   const { decisions } = extractDecisions(records);
@@ -112,8 +148,15 @@ test("extractDecisions: two questions in one call each keep their own answer", (
 
 test("extractDecisions: non-target tools and noise are ignored", () => {
   const records = [
-    asstRec("s5", "2026-06-05T09:00:00Z", "/repo", [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "ls" } }]),
-    { type: "user", sessionId: "s5", timestamp: "2026-06-05T09:00:01Z", message: { role: "user", content: "hi" } },
+    asstRec("s5", "2026-06-05T09:00:00Z", "/repo", [
+      { type: "tool_use", id: "b1", name: "Bash", input: { command: "ls" } },
+    ]),
+    {
+      type: "user",
+      sessionId: "s5",
+      timestamp: "2026-06-05T09:00:01Z",
+      message: { role: "user", content: "hi" },
+    },
     { type: "summary", summary: "noise" },
   ];
   const { decisions } = extractDecisions(records);

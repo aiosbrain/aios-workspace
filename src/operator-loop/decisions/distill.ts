@@ -184,7 +184,11 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
     const principle = String(p.principle ?? "").trim();
     if (!title || !principle) throw new Error("distill: a principle is missing title/statement");
     const evidence = Array.isArray(p.evidence)
-      ? [...new Set(p.evidence.filter((x): x is string => typeof x === "string" && validIds.has(x)))]
+      ? [
+          ...new Set(
+            p.evidence.filter((x): x is string => typeof x === "string" && validIds.has(x))
+          ),
+        ]
       : [];
     if (evidence.length < minSupport) {
       throw new Error(
@@ -198,5 +202,9 @@ export async function distill(opts: DistillOptions): Promise<DistillResult> {
   }
   if (!principles.length) throw new Error("distill: no principles survived validation");
 
-  return { markdown: renderDraft(principles, { used: records.length }), principles, used: records.length };
+  return {
+    markdown: renderDraft(principles, { used: records.length }),
+    principles,
+    used: records.length,
+  };
 }

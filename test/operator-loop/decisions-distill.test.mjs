@@ -10,7 +10,12 @@ import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendDecision, readDecisions, distill, projectForDistill } from "../../dist/operator-loop/index.js";
+import {
+  appendDecision,
+  readDecisions,
+  distill,
+  projectForDistill,
+} from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = path.join(ROOT, "scripts", "aios.mjs");
@@ -28,7 +33,12 @@ function seed(dir, n = 4) {
       choice: ["Postgres"],
       contextTag: "aios",
       source: "backfill",
-      context: { sessionId: `s${i}`, cwd: "/secret/abs/path", transcriptPath: "/secret/t.jsonl", project: "secret" },
+      context: {
+        sessionId: `s${i}`,
+        cwd: "/secret/abs/path",
+        transcriptPath: "/secret/t.jsonl",
+        project: "secret",
+      },
     });
     ids.push(r.id);
   }
@@ -42,9 +52,22 @@ test("distill: valid model output → draft where every principle cites >= minSu
     let sentUser = null;
     const complete = async (req) => {
       sentUser = req.user;
-      return { principles: [{ title: "Prefer Postgres", principle: "Default to Postgres.", contexts: ["aios"], evidence: ids.slice(0, 3) }] };
+      return {
+        principles: [
+          {
+            title: "Prefer Postgres",
+            principle: "Default to Postgres.",
+            contexts: ["aios"],
+            evidence: ids.slice(0, 3),
+          },
+        ],
+      };
     };
-    const { markdown, principles, used } = await distill({ records: readAll(dir), minSupport: 3, complete });
+    const { markdown, principles, used } = await distill({
+      records: readAll(dir),
+      minSupport: 3,
+      complete,
+    });
     assert.equal(principles.length, 1);
     assert.equal(used, 4);
     assert.match(markdown, /DRAFT — FOR HUMAN REVIEW/);
@@ -60,10 +83,21 @@ test("distill: junk output throws (no partial doc); an under-supported principle
   const dir = ws();
   try {
     const ids = seed(dir, 4);
-    await assert.rejects(() => distill({ records: readAll(dir), minSupport: 3, complete: async () => ({ nope: true }) }), /no principles array/);
+    await assert.rejects(
+      () =>
+        distill({ records: readAll(dir), minSupport: 3, complete: async () => ({ nope: true }) }),
+      /no principles array/
+    );
     // cites only 1 real id but 2 fabricated ones → fewer than minSupport valid → throw
     await assert.rejects(
-      () => distill({ records: readAll(dir), minSupport: 3, complete: async () => ({ principles: [{ title: "X", principle: "Y", evidence: [ids[0], "fake-1", "fake-2"] }] }) }),
+      () =>
+        distill({
+          records: readAll(dir),
+          minSupport: 3,
+          complete: async () => ({
+            principles: [{ title: "X", principle: "Y", evidence: [ids[0], "fake-1", "fake-2"] }],
+          }),
+        }),
       /cites 1 valid corpus id/
     );
   } finally {
@@ -77,7 +111,16 @@ test("distill: contextFilter narrows the corpus; too-small corpus throws before 
     seed(dir, 4);
     let called = false;
     await assert.rejects(
-      () => distill({ records: readAll(dir), minSupport: 3, contextFilter: "products", complete: async () => { called = true; return {}; } }),
+      () =>
+        distill({
+          records: readAll(dir),
+          minSupport: 3,
+          contextFilter: "products",
+          complete: async () => {
+            called = true;
+            return {};
+          },
+        }),
       /need at least 3/
     );
     assert.equal(called, false, "no completion call when the corpus is too small");
@@ -126,13 +169,21 @@ test("CLI distill with --remote + stubbed completion writes the draft to the adm
   try {
     const ids = seed(dir, 4);
     const stub = path.join(dir, "stub.json");
-    writeFileSync(stub, JSON.stringify({ principles: [{ title: "T", principle: "P", contexts: ["aios"], evidence: ids.slice(0, 3) }] }));
+    writeFileSync(
+      stub,
+      JSON.stringify({
+        principles: [{ title: "T", principle: "P", contexts: ["aios"], evidence: ids.slice(0, 3) }],
+      })
+    );
     const res = runCli(dir, ["distill", "--remote", "--json"], { AIOS_DISTILL_STUB_FILE: stub });
     assert.equal(res.code, 0);
     const parsed = JSON.parse(res.out);
     assert.equal(parsed.principles, 1);
     // Default out is inside the gitignored .aios/ store (NOT docs/).
-    assert.ok(parsed.out.includes(path.join(".aios", "loop", "decisions")), "default draft under .aios/");
+    assert.ok(
+      parsed.out.includes(path.join(".aios", "loop", "decisions")),
+      "default draft under .aios/"
+    );
     assert.ok(existsSync(path.join(dir, DRAFT_REL)));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -144,8 +195,13 @@ test("CLI distill --out into a tracked path prints the outside-admin-store notic
   try {
     const ids = seed(dir, 4);
     const stub = path.join(dir, "stub.json");
-    writeFileSync(stub, JSON.stringify({ principles: [{ title: "T", principle: "P", evidence: ids.slice(0, 3) }] }));
-    const res = runCli(dir, ["distill", "--remote", "--out", "docs/review-principles.md"], { AIOS_DISTILL_STUB_FILE: stub });
+    writeFileSync(
+      stub,
+      JSON.stringify({ principles: [{ title: "T", principle: "P", evidence: ids.slice(0, 3) }] })
+    );
+    const res = runCli(dir, ["distill", "--remote", "--out", "docs/review-principles.md"], {
+      AIOS_DISTILL_STUB_FILE: stub,
+    });
     assert.equal(res.code, 0);
     assert.match(res.err, /OUTSIDE the ignored \.aios\/ store/);
     assert.ok(existsSync(path.join(dir, "docs", "review-principles.md")));

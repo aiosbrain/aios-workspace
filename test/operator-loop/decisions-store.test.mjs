@@ -274,7 +274,12 @@ test("forward-compat: an old v1 create line without contextTag/source folds clea
 });
 
 test("buildDecisionRecord carries contextTag/source; non-string → null", () => {
-  const a = buildDecisionRecord({ kind: "k", question: "q", contextTag: "aios", source: "backfill" });
+  const a = buildDecisionRecord({
+    kind: "k",
+    question: "q",
+    contextTag: "aios",
+    source: "backfill",
+  });
   assert.equal(a.contextTag, "aios");
   assert.equal(a.source, "backfill");
   const b = buildDecisionRecord({ kind: "k", question: "q", contextTag: 42, source: {} });
@@ -308,12 +313,21 @@ test("appendDecisionsDeduped: a pre-existing hook-style create line suppresses a
     const hookLine = JSON.stringify({
       v: 1,
       op: "create",
-      decision: baseDecision({ id: "hook-1", question: "Same question?", context: { sessionId: "sess-x", project: null, transcriptPath: null, cwd: null } }),
+      decision: baseDecision({
+        id: "hook-1",
+        question: "Same question?",
+        context: { sessionId: "sess-x", project: null, transcriptPath: null, cwd: null },
+      }),
     });
     writeRaw(root, [hookLine]);
     // A backfill input for the SAME session + question must dedupe against the hook line.
     const res = appendDecisionsDeduped(root, [
-      { kind: "ask-user-question", question: "Same question?", context: { sessionId: "sess-x" }, source: "backfill" },
+      {
+        kind: "ask-user-question",
+        question: "Same question?",
+        context: { sessionId: "sess-x" },
+        source: "backfill",
+      },
     ]);
     assert.deepEqual(res, { appended: 0, skipped: 1 }, "cross-source dedupe under the shared key");
     assert.equal(readDecisions(root).decisions.length, 1);
@@ -323,7 +337,11 @@ test("appendDecisionsDeduped: a pre-existing hook-style create line suppresses a
 });
 
 test("decisionDedupeKey matches the hook key shape (sessionId|sha256(question))", () => {
-  const rec = buildDecisionRecord({ kind: "k", question: "  Which   region? ", context: { sessionId: "s9" } });
+  const rec = buildDecisionRecord({
+    kind: "k",
+    question: "  Which   region? ",
+    context: { sessionId: "s9" },
+  });
   const key = decisionDedupeKey(rec);
   assert.match(key, /^s9\|[0-9a-f]{64}$/);
 });

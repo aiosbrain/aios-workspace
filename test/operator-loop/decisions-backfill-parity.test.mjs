@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,14 @@ function runHook(dir, payload) {
 }
 
 function core(d) {
-  return { kind: d.kind, question: d.question, header: d.header, options: d.options, choice: d.choice, notes: d.notes };
+  return {
+    kind: d.kind,
+    question: d.question,
+    header: d.header,
+    options: d.options,
+    choice: d.choice,
+    notes: d.notes,
+  };
 }
 
 test("AskUserQuestion: hook capture and backfill extraction produce equivalent records", () => {
@@ -41,21 +48,77 @@ test("AskUserQuestion: hook capture and backfill extraction produce equivalent r
       tool_name: "AskUserQuestion",
       session_id: "sess-parity",
       cwd: "/repo",
-      tool_input: { questions: [{ question: "Which database?", header: "DB", options: [{ label: "Postgres", description: "relational" }, { label: "Mongo", description: "document" }] }] },
-      tool_response: { answers: [{ question: "Which database?", answer: "Postgres", notes: "cheaper" }] },
+      tool_input: {
+        questions: [
+          {
+            question: "Which database?",
+            header: "DB",
+            options: [
+              { label: "Postgres", description: "relational" },
+              { label: "Mongo", description: "document" },
+            ],
+          },
+        ],
+      },
+      tool_response: {
+        answers: [{ question: "Which database?", answer: "Postgres", notes: "cheaper" }],
+      },
     });
     const hookRec = readDecisions(hookDir).decisions[0];
 
     // (b) Backfill path: the same moment as a transcript sequence.
     const records = [
-      { type: "assistant", sessionId: "sess-parity", timestamp: "2026-06-01T10:00:00Z", cwd: "/repo", message: { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "AskUserQuestion", input: { questions: [{ question: "Which database?", header: "DB", options: [{ label: "Postgres", description: "relational" }, { label: "Mongo", description: "document" }] }] } }] } },
-      { type: "user", sessionId: "sess-parity", timestamp: "2026-06-01T10:00:05Z", cwd: "/repo", toolUseResult: { answers: [{ question: "Which database?", answer: "Postgres", notes: "cheaper" }] }, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] } },
+      {
+        type: "assistant",
+        sessionId: "sess-parity",
+        timestamp: "2026-06-01T10:00:00Z",
+        cwd: "/repo",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tu1",
+              name: "AskUserQuestion",
+              input: {
+                questions: [
+                  {
+                    question: "Which database?",
+                    header: "DB",
+                    options: [
+                      { label: "Postgres", description: "relational" },
+                      { label: "Mongo", description: "document" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        sessionId: "sess-parity",
+        timestamp: "2026-06-01T10:00:05Z",
+        cwd: "/repo",
+        toolUseResult: {
+          answers: [{ question: "Which database?", answer: "Postgres", notes: "cheaper" }],
+        },
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }],
+        },
+      },
     ];
     const { decisions } = extractDecisions(records);
     appendDecisionsDeduped(bfDir, decisions);
     const bfRec = readDecisions(bfDir).decisions[0];
 
-    assert.deepEqual(core(bfRec), core(hookRec), "the decision core matches across representations");
+    assert.deepEqual(
+      core(bfRec),
+      core(hookRec),
+      "the decision core matches across representations"
+    );
     assert.equal(bfRec.source, "backfill");
     assert.equal(hookRec.source, null, "the live hook does not stamp a source");
   } finally {
@@ -79,8 +142,35 @@ test("ExitPlanMode: hook capture and backfill extraction agree on the plan-appro
     const hookRec = readDecisions(hookDir).decisions[0];
 
     const records = [
-      { type: "assistant", sessionId: "sess-plan", timestamp: "2026-06-01T10:00:00Z", cwd: "/repo", message: { role: "assistant", content: [{ type: "tool_use", id: "tp1", name: "ExitPlanMode", input: { plan: "# Ship the billing module\n\nStep 1" } }] } },
-      { type: "user", sessionId: "sess-plan", timestamp: "2026-06-01T10:00:05Z", cwd: "/repo", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tp1", content: "User has approved your plan." }] } },
+      {
+        type: "assistant",
+        sessionId: "sess-plan",
+        timestamp: "2026-06-01T10:00:00Z",
+        cwd: "/repo",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tp1",
+              name: "ExitPlanMode",
+              input: { plan: "# Ship the billing module\n\nStep 1" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        sessionId: "sess-plan",
+        timestamp: "2026-06-01T10:00:05Z",
+        cwd: "/repo",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "tp1", content: "User has approved your plan." },
+          ],
+        },
+      },
     ];
     const { decisions } = extractDecisions(records);
     appendDecisionsDeduped(bfDir, decisions);

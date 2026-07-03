@@ -58,7 +58,15 @@ function collectFromValue(value) {
     }
     if (typeof x === "object") {
       // deliberately NOT recursing into `options` — echoed option lists would inflate choice.
-      for (const k of ["label", "answer", "selected", "selectedOption", "choice", "value", "option"]) {
+      for (const k of [
+        "label",
+        "answer",
+        "selected",
+        "selectedOption",
+        "choice",
+        "value",
+        "option",
+      ]) {
         if (k in x) visit(x[k], depth + 1);
       }
       for (const k of ["notes", "note", "other", "freeText", "free_text", "text", "comment"]) {
@@ -70,7 +78,10 @@ function collectFromValue(value) {
   return { labels, notes };
 }
 
-function findAnswer(container, { rawQuestion, normQuestion, rawHeader, normHeader, headerUnique, index }) {
+function findAnswer(
+  container,
+  { rawQuestion, normQuestion, rawHeader, normHeader, headerUnique, index }
+) {
   if (container == null) return undefined;
   if (Array.isArray(container)) {
     for (const el of container) {
@@ -82,7 +93,8 @@ function findAnswer(container, { rawQuestion, normQuestion, rawHeader, normHeade
     if (headerUnique && normHeader) {
       for (const el of container) {
         if (el && typeof el === "object" && typeof el.header === "string") {
-          if (el.header === rawHeader || singleLine(el.header, HEADER_MAX) === normHeader) return el;
+          if (el.header === rawHeader || singleLine(el.header, HEADER_MAX) === normHeader)
+            return el;
         }
       }
     }
@@ -111,7 +123,8 @@ function normalizeOptions(rawOptions) {
     if (!o || typeof o !== "object") continue;
     const label = singleLine(o.label, OPTION_LABEL_MAX);
     if (!label) continue;
-    const description = o.description == null ? null : multiline(o.description, OPTION_DESC_MAX) || null;
+    const description =
+      o.description == null ? null : multiline(o.description, OPTION_DESC_MAX) || null;
     out.push({ label, description });
   }
   return out;
@@ -145,7 +158,8 @@ function mkInput(ctx, fields) {
 
 function askInputs(input, response, ctx) {
   if (!isObj(input) || !Array.isArray(input.questions)) return [];
-  const responseObj = response && typeof response === "object" && !Array.isArray(response) ? response : null;
+  const responseObj =
+    response && typeof response === "object" && !Array.isArray(response) ? response : null;
   const answerContainers = [
     input.answers,
     responseObj?.answers,
@@ -231,7 +245,8 @@ function responseToText(response) {
 }
 
 function planTitle(input) {
-  const plan = input && typeof input === "object" && typeof input.plan === "string" ? input.plan : "";
+  const plan =
+    input && typeof input === "object" && typeof input.plan === "string" ? input.plan : "";
   for (const line of plan.split(/\r?\n/)) {
     const t = line.replace(/^#+\s*/, "").trim();
     if (t) return singleLine(t, QUESTION_MAX - 16);
@@ -250,7 +265,9 @@ function planInput(input, response, ctx) {
     if (/rejected|doesn'?t want to proceed|not approved|denied/i.test(text)) {
       choice = ["rejected"];
       notes = text;
-    } else if (/\bhas approved\b|\bapproved your plan\b|\bplan (?:was |is )?approved\b/i.test(text)) {
+    } else if (
+      /\bhas approved\b|\bapproved your plan\b|\bplan (?:was |is )?approved\b/i.test(text)
+    ) {
       choice = ["approved"];
     } else {
       notes = text;
