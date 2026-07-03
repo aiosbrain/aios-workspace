@@ -126,8 +126,10 @@ under `.aios/` in the workspace, are admin-tier by construction, and are exclude
   `hooks/decision-capture.mjs`, registered in the root `.claude/settings.json`) that route session
   events into those stores deterministically and always exit 0, so a hook can never disturb a session.
 
-All of it is append-only NDJSON folded to state on read, with a writer-honored lockfile so
-maintenance never races an append. The [operating manual](GUIDE.md) walks the whole surface.
+The NDJSON-backed stores are append-only, folded to state on read, with a writer-honored
+lockfile so maintenance never races an append. `aios mode` is the exception: it flips
+`preferredNotifChannel` in `~/.claude/settings.json` and remembers the prior value in the
+`~/.claude/aios-mode.json` sidecar. The [operating manual](GUIDE.md) walks the whole surface.
 
 ## Why agent-native
 

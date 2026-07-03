@@ -31,8 +31,10 @@ Where a capability is planned rather than built, it says so.
 
 Every `aios` command in this guide walks up from your current directory to find the workspace
 (`aios.yaml`); pass `--repo <path>` to point at a different one. The *offline* commands (asks, mode,
-decisions, loop, analyze, time, spec, rails, assess-codebase, graph, export-okf, learn) need no brain
+decisions, loop, analyze, time, rails, assess-codebase, graph, export-okf, learn) need no brain
 and no network — only `push`, `pull`, and `query` require a configured `brain_url` + key.
+`aios spec` is offline only in deterministic `--no-llm` mode; its adversarial layer needs an API
+key (§8).
 
 ---
 
