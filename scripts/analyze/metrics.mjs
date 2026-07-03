@@ -308,3 +308,96 @@ export function computeSignals(events) {
     ...computeAttentionSignals(events),
   };
 }
+
+// Cap on the distinct-tool name list stored per session (spec: maturity-loop.md).
+const DISTINCT_TOOLS_CAP = 50;
+
+/**
+ * Reduce ONE session's events into a maturity capture record: `{signals, counts}`.
+ *
+ * This is the single-session projection of `computeSignals()` used by the AM1
+ * SessionEnd capture hook. It uses the SAME per-event accumulation rules and the
+ * SAME ratio formulas (verified against computeSignals above) but for one session
+ * only — no `bySession` grouping, no cross-session averaging — and it OMITS the 5
+ * attention/sanity signals, which are global-timeline signals by construction and
+ * are LOCAL-ONLY (never part of a per-session record).
+ *
+ * `counts` holds the raw numerators/denominators so downstream readers (AM5/AM6)
+ * can fold counts across a window and recompute ratios exactly, never averaging
+ * ratios. `signals` are numeric only — never transcript text or file paths.
+ *
+ * @returns {{signals: object, counts: object}}
+ */
+export function computeSessionRecord(events) {
+  let tasks = 0;
+  let inTok = 0;
+  let outTok = 0;
+  let cacheReadTok = 0;
+  let cacheCreateTok = 0;
+  let subagentTok = 0;
+  let toolUseTotal = 0;
+  let verifyToolUses = 0;
+  let toolResults = 0;
+  let toolResultErrors = 0;
+  let permissionEvents = 0;
+  const distinctTools = new Set();
+
+  for (const ev of events) {
+    if (ev.actor === "user" && ev.block_type === "text") tasks += 1;
+    if (ev.tokens) {
+      inTok += ev.tokens.in;
+      outTok += ev.tokens.out;
+      cacheReadTok += ev.tokens.cache_read;
+      cacheCreateTok += ev.tokens.cache_create;
+      if (ev.actor === "subagent") subagentTok += totalTokens(ev.tokens);
+    }
+    if (ev.block_type === "tool_use") {
+      toolUseTotal += 1;
+      if (ev.tool_name) distinctTools.add(ev.tool_name);
+      if (ev.tool_name && VERIFY_TOOLS.has(ev.tool_name)) verifyToolUses += 1;
+    }
+    if (ev.block_type === "tool_result") {
+      toolResults += 1;
+      if (ev.is_error) toolResultErrors += 1;
+    }
+    if (ev.block_type === "permission" || ev.block_type === "mode") permissionEvents += 1;
+  }
+
+  const totalTok = inTok + outTok + cacheReadTok + cacheCreateTok;
+  const workTok = inTok + outTok + cacheCreateTok; // "fresh" effort, excludes cache reads
+  const distinctToolsList = [...distinctTools].slice(0, DISTINCT_TOOLS_CAP);
+
+  const counts = {
+    in_tok: inTok,
+    out_tok: outTok,
+    cache_read_tok: cacheReadTok,
+    cache_create_tok: cacheCreateTok,
+    subagent_tok: subagentTok,
+    tool_use_total: toolUseTotal,
+    verify_tool_uses: verifyToolUses,
+    tool_results: toolResults,
+    tool_result_errors: toolResultErrors,
+    tasks,
+    permission_events: permissionEvents,
+    distinct_tools: distinctToolsList,
+  };
+
+  const signals = {
+    tasks,
+    total_tokens: totalTok,
+    delegation_ratio: ratio(subagentTok, totalTok),
+    error_rate: ratio(toolResultErrors, toolResults),
+    // hit rate vs. ALL first-seen tokens (input + newly-cached) — matches computeSignals.
+    cache_hit_rate: ratio(cacheReadTok, cacheReadTok + inTok + cacheCreateTok),
+    tool_diversity: distinctToolsList.length,
+    verify_tool_rate: ratio(verifyToolUses, toolUseTotal),
+    // single-session collapse of sessionsWithSubagent / sessions.
+    subagent_usage: subagentTok > 0 ? 1 : 0,
+    correction_loop_avg: ratio(toolResults, tasks),
+    // "fresh" tokens per task — excludes cache reads (matches computeSignals).
+    tokens_per_task: ratio(workTok, tasks),
+    permission_events: permissionEvents,
+  };
+
+  return { signals, counts };
+}
