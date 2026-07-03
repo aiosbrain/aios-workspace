@@ -3912,6 +3912,7 @@ usage:
   aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→
     [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup (plan + merge gates default on)
     [--reviewers b,g] [--dry-run]        --dry-run prints the step plan (offline, no key needed)
+    [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)
   aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time
     --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run
     [--comment-digest [--digest-target   (requires LINEAR_API_KEY except ship --dry-run)

@@ -148,16 +148,12 @@ export function validateShipArgs(opts) {
   if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
   if (!ISSUE_RE.test(opts.issue))
     return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
-  // `cli` is the sole supported plan runner, by deliberate scope decision. An SDK/relay-based
-  // planner would drive the plan loop through Opus via the Anthropic SDK, which requires a
-  // FUNDED ANTHROPIC_API_KEY — the operator/Hermes dotenvx key has no API credits, so an sdk
-  // runner would fail at ship time for the exact key it depends on. Reject it here (rather than
-  // accept-and-ignore) and point operators who want SDK planning at `aios relay` directly.
-  if (opts.planRunner !== "cli")
-    return (
-      `unsupported --plan-runner '${opts.planRunner}' — 'cli' is the only supported runner ` +
-      `(it uses Claude Code login auth). For SDK/Opus planning use \`aios relay\` directly.`
-    );
+  // Two plan-stage runners (§3.4): `cli` (default) drives the planner via callClaudeAgent, which
+  // strips ANTHROPIC_API_KEY and uses Claude Code login auth. `sdk` drives Opus through the
+  // Anthropic SDK (relay.mjs's callOpus) and REQUIRES a funded ANTHROPIC_API_KEY — documented
+  // caveat, and why cli is the default (the operator/Hermes dotenvx key has no API credits).
+  if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
+    return `unsupported --plan-runner '${opts.planRunner}' — expected 'cli' or 'sdk'.`;
   // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
   // silently disable BOTH gating reviewers and wave the PR through — reject it. (A bare
   // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
@@ -492,6 +488,18 @@ function defaultGhExec(argv) {
   }
 }
 
+// SDK plan-runner deps (--plan-runner sdk). Lazily imported so the default `cli` path never pays
+// for (or requires) the Anthropic SDK — only an actual sdk run constructs the client. `callOpus`
+// is the same Opus↔SDK planner `aios relay` uses; `makeAnthropic` needs a funded ANTHROPIC_API_KEY.
+async function defaultMakeAnthropic() {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return new Anthropic();
+}
+async function defaultCallOpus(anthropic, messages, planCfg) {
+  const { callOpus } = await import("./relay.mjs");
+  return callOpus(anthropic, messages, planCfg);
+}
+
 function defaultWriteAudit(repo, issue, name, text) {
   try {
     const dir = path.join(repo, ".aios", "loop", issue);
@@ -642,12 +650,31 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     isTty,
     writeAudit,
     slug,
+    callOpus = defaultCallOpus,
+    makeAnthropic = defaultMakeAnthropic,
   } = deps;
 
   const records = { issue: issueId, stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
   const gates = resolveGates({ auto: opts.auto, autoMerge: opts.autoMerge, isTty });
+
+  // Non-TTY gate short-circuit (cron safety): if a gate is active (no matching auto flag) and we
+  // cannot prompt, exit IMMEDIATELY with the gate code — before recon, before running any agent,
+  // and before any network. Gates are computed once from a single isTty, so a blocked plan/merge
+  // gate here is definitive; the later prompt paths only ever see "skip"/"prompt".
+  if (gates.plan === "blocked") {
+    record("plan-gate", { blocked: true });
+    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
+    return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
+  }
+  if (gates.merge === "blocked") {
+    record("merge-gate", { blocked: true });
+    console.error(
+      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
+    );
+    return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
+  }
 
   // ── 1. RECON ───────────────────────────────────────────────────────────────
   let issue;
@@ -724,10 +751,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   let prevReview = null;
   const planCfg = models.plan;
   const planReviewCfg = models.plan_review;
-  for (let round = 1; round <= PLAN_ROUNDS; round++) {
-    const planPrompt = buildPlanPrompt(issue, recon, prevReview);
-    try {
-      plan = await claude(planPrompt, planCfg.timeoutMs ?? 600 * 1000, {
+  // Plan-stage runner (§3.4). `cli` (default): callClaudeAgent under --permission-mode plan; it
+  // strips ANTHROPIC_API_KEY so the CLI uses Claude Code login auth. `sdk`: Opus via the Anthropic
+  // SDK (relay.mjs's callOpus), which requires a funded ANTHROPIC_API_KEY. The Cursor plan review
+  // (below) is identical for both runners. The Anthropic client is constructed once, lazily, only
+  // when the sdk runner is selected — the cli path never touches the SDK.
+  let generatePlan;
+  if (opts.planRunner === "sdk") {
+    const anthropic = await makeAnthropic();
+    generatePlan = (prompt) => callOpus(anthropic, [{ role: "user", content: prompt }], planCfg);
+  } else {
+    generatePlan = (prompt) =>
+      claude(prompt, planCfg.timeoutMs ?? 600 * 1000, {
         model: planCfg.model,
         extraArgs: [
           "--permission-mode",
@@ -735,6 +770,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
         ],
       });
+  }
+  for (let round = 1; round <= PLAN_ROUNDS; round++) {
+    const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+    try {
+      plan = await generatePlan(planPrompt);
     } catch (e) {
       record("plan", { error: e.message });
       console.error(c.red(`plan: builder failed: ${e.message}`));
@@ -766,12 +806,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
   writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
 
-  // Plan gate.
-  if (gates.plan === "blocked") {
-    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
-    record("plan-gate", { blocked: true });
-    return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
-  }
+  // Plan gate. A "blocked" gate was already short-circuited at the top of runShip; here the gate
+  // is only ever "skip" (--auto) or "prompt" (interactive TTY).
   if (gates.plan === "prompt") {
     const ok = await confirm("Approve this plan and proceed to build?");
     if (!ok) {
@@ -1077,14 +1113,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     }
   }
 
-  // Operator OK.
-  if (gates.merge === "blocked") {
-    record("merge-gate", { blocked: true });
-    console.error(
-      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
-    );
-    return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
-  }
+  // Operator OK. A "blocked" merge gate was already short-circuited at the top of runShip; here
+  // the gate is only ever "skip" (--auto-merge) or "prompt" (interactive TTY).
   if (gates.merge === "prompt") {
     const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
     if (!ok) {
@@ -1152,7 +1182,8 @@ function usage() {
       "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
       "  --reviewers <list>     gating reviewers (default: bugbot,gpt-5.5; CodeRabbit advisory)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
-      "  --plan-runner cli      plan-stage runner (default: cli — uses Claude Code login auth)",
+      "  --plan-runner cli|sdk  plan-stage runner (default: cli — Claude Code login auth; sdk drives",
+      "                         Opus via the Anthropic SDK and needs a funded ANTHROPIC_API_KEY)",
       "  --dry-run              print the resolved step plan; no side effects (a resolvable",
       "                         LINEAR_API_KEY only enables a best-effort issue-title fetch)",
       "",
@@ -1214,6 +1245,34 @@ export async function cmdShip(repo, args, deps = {}) {
       })
     );
     return SHIP_EXIT.OK;
+  }
+
+  // Non-TTY gate short-circuit (cron safety): a gate active without its --auto flag in a context
+  // where we cannot prompt is decided IMMEDIATELY — before requiring LINEAR_API_KEY, before recon,
+  // and before any agent runs. This keeps the *_GATE_BLOCKED contract honest: a default non-TTY
+  // `aios ship AIO-<n>` returns PLAN_GATE_BLOCKED, never a downstream missing-key USAGE error.
+  if (gates.plan === "blocked") {
+    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
+    return SHIP_EXIT.PLAN_GATE_BLOCKED;
+  }
+  if (gates.merge === "blocked") {
+    console.error(
+      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
+    );
+    return SHIP_EXIT.MERGE_GATE_BLOCKED;
+  }
+
+  // The sdk plan runner drives Opus through the Anthropic SDK, which needs a funded
+  // ANTHROPIC_API_KEY. A missing key is detectable up front — fail cleanly here rather than let the
+  // SDK throw mid-plan. (Credit exhaustion on a present key can only surface at call time.)
+  if (opts.planRunner === "sdk" && !process.env.ANTHROPIC_API_KEY) {
+    console.error(
+      c.red(
+        "error: --plan-runner sdk requires a funded ANTHROPIC_API_KEY (Opus via the Anthropic SDK). " +
+          "Use the default --plan-runner cli (Claude Code login auth) or set ANTHROPIC_API_KEY."
+      )
+    );
+    return SHIP_EXIT.USAGE;
   }
 
   // Real run: build the default dep set (each overridable via deps).

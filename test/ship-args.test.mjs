@@ -66,8 +66,12 @@ console.log("validateShipArgs");
     validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "wat"])) !== null
   );
   check(
-    "unimplemented sdk plan-runner → error (only cli supported)",
-    validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "sdk"])) !== null
+    "cli plan-runner → null (default, supported)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "cli"])) === null
+  );
+  check(
+    "sdk plan-runner → null (documented alternative, supported)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "sdk"])) === null
   );
   check(
     "unknown reviewer → error",

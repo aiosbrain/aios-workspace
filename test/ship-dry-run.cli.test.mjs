@@ -80,6 +80,31 @@ console.log("ship AIO-163 --dry-run (offline, no key)");
   if (existsSync(RECORD)) console.log("    record:", readFileSync(RECORD, "utf8"));
 }
 
+console.log("ship AIO-163 (non-TTY, no --auto, no key) → PLAN_GATE_BLOCKED (22), not a key error");
+{
+  // Spawned non-TTY with the plan gate active: the gate must be decided IMMEDIATELY — before
+  // requiring LINEAR_API_KEY and before any agent runs. Exit 22 (PLAN_GATE_BLOCKED), never the
+  // downstream missing-key USAGE (1), and no external claude/gh/git calls.
+  const r = runCli(["ship", "AIO-163", "--repo", REPO]);
+  check("exit 22 (PLAN_GATE_BLOCKED), not 1 (USAGE)", r.code === 22);
+  check(
+    "mentions plan gate, not missing key",
+    /plan gate/.test(r.stderr) && !/LINEAR_API_KEY/.test(r.stderr)
+  );
+  check("no external git/gh/claude/cursor call", !existsSync(RECORD));
+  check("no stack trace on stderr", !/\n\s+at\s/.test(r.stderr));
+}
+
+console.log("ship AIO-163 --auto (non-TTY, no --auto-merge, no key) → MERGE_GATE_BLOCKED (62)");
+{
+  // Plan gate skipped by --auto; the merge gate is still active in a non-TTY context → decided up
+  // front as MERGE_GATE_BLOCKED (62) rather than running the whole pipeline only to block at merge.
+  const r = runCli(["ship", "AIO-163", "--auto", "--repo", REPO]);
+  check("exit 62 (MERGE_GATE_BLOCKED)", r.code === 62);
+  check("mentions merge gate", /merge gate/.test(r.stderr));
+  check("no external git/gh/claude/cursor call", !existsSync(RECORD));
+}
+
 rmSync(stubDir, { recursive: true, force: true });
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

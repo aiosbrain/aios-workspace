@@ -149,6 +149,39 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("--plan-runner sdk → plans via callOpus (SDK), not callClaudeAgent; still OK");
+{
+  let opusCalls = 0;
+  let claudePlanCalls = 0;
+  let anthropicMade = 0;
+  const deps = makeDeps({
+    callClaudeAgent: async (prompt) => {
+      if (/implementation plan/.test(prompt)) claudePlanCalls++; // must NOT happen under sdk
+      if (/recon context pack/.test(prompt)) return "RECON CONTEXT";
+      if (/safety reviewer/.test(prompt)) return "reviewed\nSAFETY_APPROVED";
+      return "generic";
+    },
+    makeAnthropic: async () => (anthropicMade++, { fake: true }),
+    callOpus: async (_client, messages) => {
+      opusCalls++;
+      // The plan prompt is delivered as the single user message.
+      check("callOpus got the plan prompt", /implementation plan/.test(messages[0].content));
+      return PLAN_TEXT;
+    },
+  });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ planRunner: "sdk" }),
+    deps,
+  });
+  check("sdk run reaches OK", code === SHIP_EXIT.OK);
+  check("callOpus drove the plan (>=1 call)", opusCalls >= 1);
+  check("Anthropic client constructed once (lazy)", anthropicMade === 1);
+  check("callClaudeAgent NOT used for the plan under sdk", claudePlanCalls === 0);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log("fix-loop non-convergence → REVIEW_NONCONVERGENCE, merge never called");
 {
   const deps = makeDeps({ cmdConsolidateFindings: async () => 3 }); // always BLOCKED

@@ -269,7 +269,7 @@ aios ship AIO-<n>
 
 ```
 aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
-                  [--reviewers b,g] [--plan-runner cli] [--dry-run]
+                  [--reviewers b,g] [--plan-runner cli|sdk] [--dry-run]
 ```
 
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
@@ -302,13 +302,14 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   `scripts/leak-gate.sh`, `scaffold/.claude/`, `docs/brain-api.md`, `scripts/brain-client.mjs`,
   `scripts/brain-config.mjs`, `scripts/workspace-parse.mjs`), the merge gate runs a `safety_review`
   over the diff and **blocks unless** it emits `SAFETY_APPROVED` alone on the final line.
-- **Plan runner.** `--plan-runner cli` is the default and, by deliberate scope decision, the only
-  supported value. It drives the planner through Claude Code (its own login auth — sidesteps a
-  dotenvx key with no API credits). An `sdk` runner delegating to `relay.mjs` would drive the plan
-  loop through Opus via the Anthropic SDK, which needs a **funded `ANTHROPIC_API_KEY`** — but the
-  operator/Hermes dotenvx key has no API credits, so it would fail at ship time for the exact key
-  it depends on. `--plan-runner sdk` is therefore rejected as a usage error (not silently ignored);
-  operators who want SDK/Opus planning run **`aios relay`** directly.
+- **Plan runner.** `--plan-runner cli` (**default**) drives the planner through Claude Code, which
+  strips `ANTHROPIC_API_KEY` and uses its own login auth — sidestepping a dotenvx key with no API
+  credits. `--plan-runner sdk` is the **documented alternative**: it drives the plan loop through
+  Opus via the Anthropic SDK (the same `callOpus` path `aios relay` uses) and therefore **requires a
+  funded `ANTHROPIC_API_KEY`**. `sdk` is *not* the default precisely because the operator/Hermes
+  dotenvx key has no API credits; a missing `ANTHROPIC_API_KEY` is caught up front as a usage error
+  (credit exhaustion on a present key can only surface at call time). The Cursor plan review is
+  identical for both runners; the Anthropic client is constructed lazily only when `sdk` is selected.
 - **`--reviewers`.** Selects which gating reviewers actually run: `bugbot` waits on the
   `cursor[bot]` check via wait-for-bots; `gpt-5.5` runs the Cursor GPT PR review. Unknown reviewer
   names are a usage error. CodeRabbit, when present, is swept by the consolidator but never gated on.
