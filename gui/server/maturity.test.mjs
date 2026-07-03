@@ -25,9 +25,24 @@ const SAMPLE = {
   axes_shadow: { cognitive_ergonomics: 2 },
   attention: { reading: "orchestration-heavy — protect focus blocks" },
   days: [
-    { date: "2026-07-01", signals: {}, placement: { overall: 2.0 }, axes_shadow: { cognitive_ergonomics: 1 } },
-    { date: "2026-07-02", signals: {}, placement: { overall: 2.2 }, axes_shadow: { cognitive_ergonomics: null } },
-    { date: "2026-07-03", signals: {}, placement: { overall: 2.2 }, axes_shadow: { cognitive_ergonomics: 3 } },
+    {
+      date: "2026-07-01",
+      signals: {},
+      placement: { overall: 2.0 },
+      axes_shadow: { cognitive_ergonomics: 1 },
+    },
+    {
+      date: "2026-07-02",
+      signals: {},
+      placement: { overall: 2.2 },
+      axes_shadow: { cognitive_ergonomics: null },
+    },
+    {
+      date: "2026-07-03",
+      signals: {},
+      placement: { overall: 2.2 },
+      axes_shadow: { cognitive_ergonomics: 3 },
+    },
   ],
 };
 

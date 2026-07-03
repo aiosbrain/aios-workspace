@@ -73,8 +73,7 @@ export function MaturityPanel() {
       {/* (a) header */}
       <div className="flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
         <span>
-          Spine {plan.spine ?? "—"} · overall{" "}
-          {plan.overall === null ? "—" : `${plan.overall} / 4`}
+          Spine {plan.spine ?? "—"} · overall {plan.overall === null ? "—" : `${plan.overall} / 4`}
           {plan.window && (
             <>
               {" "}
