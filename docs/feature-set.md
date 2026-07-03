@@ -257,16 +257,42 @@ clobbered, and nothing is committed to git.
 
 ---
 
+## 12. The operator loop + human-operating layer
+
+The workspace runs a **local-only operator layer** you drive from the CLI — offline, admin-tier, and
+never synced unless a command explicitly stages content for `aios push`. See the task-oriented
+[operating manual](GUIDE.md) for the full walkthrough with real output and diagrams.
+
+- **Verified Operator Loop** (`aios loop collect|daily|manifest|verify|weekly|writeback|telemetry`) —
+  a lightweight **daily brief** (what changed / is blocked / is owed) and a heavy, verified,
+  approval-gated **weekly closeout**: collect local signals → private brief + tier-safe digests →
+  rubric-gated verifier → explicit writeback that only *stages* for a later push. C1–C8 all ship;
+  specs in [`v1-operator-loop/`](v1-operator-loop/README.md).
+- **Asks queue** (`aios asks`) — a non-blocking escalation inbox. Session hooks route events into it
+  (idle → blocker, an assistant question → decision, a completion → fyi); you drain it on your own
+  cadence. Local, admin-tier, never synced.
+- **Attention mode** (`aios mode deep-work|orchestration`) — one command to silence or restore the
+  local end-of-turn ping (toggles only `preferredNotifChannel`; mobile push untouched).
+- **Steering decisions** (`aios decisions`) — a local corpus of `AskUserQuestion` / plan-approval
+  moments (with outcomes on annotation). Distinct from the Team Brain decision log — one is *how you
+  steer the agent* (private), the other is *what the team decided* (shared).
+- **Spec gate** (`aios spec eval|fix`) — a two-layer (deterministic + adversarial) readiness check
+  that enforces the pick-up-able-issue bar before a builder starts; it also gates `aios relay --spec`.
+- **Permission rails** (`aios rails missing|suggest|apply`) + **`aios assess-codebase`** — score any
+  repo's agent-readiness and stand up a *safe* permission allowlist (suggest → review → apply;
+  guards are never touched).
+- **Native agent-session time tracking** (`aios time capture|report|reconcile`) — derives
+  agent-runtime work blocks from `~/.claude` session logs into an admin-tier `3-log/time-log.md`
+  (realpath-scoped, never synced); the closeout surfaces a runtime-by-tag roll-up. See
+  `docs/v1-operator-loop/domains/time-tracking.md`.
+
+---
+
 ## Roadmap
 
-The clean core + catalogs + share/pull + review panel ship today. Deliberately
-deferred — and ideal contribution targets:
+The clean core + catalogs + share/pull + review panel + operator loop + ergonomics layer ship today.
+Deliberately deferred — and ideal contribution targets:
 
-- **Verified Operator Loop (V1, in progress)** — the daily/weekly loop over tier-tagged
-  local signals, incl. **native agent-session time tracking**: `aios time capture` derives
-  agent-runtime work blocks from `~/.claude` session logs into an admin-tier
-  `3-log/time-log.md` (realpath-scoped, never synced) and the closeout surfaces a
-  runtime-by-tag roll-up. See `docs/v1-operator-loop/domains/time-tracking.md`.
 - **Live integration wiring** — wire a starter set (Gmail via gog-cli + Granola + one
   MCP server) end-to-end, beyond the catalog + `.mcp.json` scaffold that ships now.
 - **Sync pipeline** — fetch → triage → promote across email/chat/time-tracking, as

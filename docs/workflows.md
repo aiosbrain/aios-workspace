@@ -6,6 +6,13 @@ spawn focused sub-agents and add an independent verification stage. This doc rec
 what we learned building and A/B-testing them — single-pass skill vs. harness, on
 identical inputs — so contributors know *when* a harness helps and *how* to build one.
 
+> This doc is the *design study* behind the harnesses and the agent pipeline. For the
+> task-oriented walkthrough of every command — the daily/weekly loop, the asks queue and attention
+> mode, steering decisions, the spec gate, and the relay/build/ship pipeline, with real output and
+> diagrams — see the [operating manual](GUIDE.md). The pipeline sections below are gated by the spec
+> harness: `aios relay "task" --spec <file>` runs `aios spec eval` first and refuses to plan against
+> an unready spec (see [`agentic-ergonomics/spec-readiness.md`](agentic-ergonomics/spec-readiness.md)).
+
 ## The failure modes harnesses fix
 
 A single long-running context degrades in three ways on big, parallel, adversarial
