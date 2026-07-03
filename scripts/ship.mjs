@@ -102,6 +102,29 @@ const ISSUE_RE = /^AIO-\d+$/;
 export const SHIP_VERIFY_CMD =
   "npm run build:loop && npm test && npm run lint && npm run format:check";
 
+// Default plan-stage timeout. An Opus-xhigh planner with tool access empirically needs
+// 15-40 minutes (every AIO-156 epic plan round exceeded 10); the original 600s default
+// killed the first real-world run mid-work (AIO-194). Override per-run with
+// `plan_timeout_s` in .aios/loop-models.yaml.
+export const DEFAULT_PLAN_TIMEOUT_MS = 1800 * 1000;
+
+// A stage runner that dies (timeout or nonzero exit) must fail LOUDLY into the audit
+// trail — an aborted run whose directory just stops is indistinguishable from one that
+// never ran (AIO-194: the first real `aios ship` died at the plan stage leaving nothing).
+export function failedArtifact(stage, error, startedAt) {
+  const elapsed = startedAt ? `${Math.round((Date.now() - startedAt) / 1000)}s elapsed` : "";
+  return [
+    `# ${stage} FAILED`,
+    "",
+    `- error: ${error?.message ?? error}`,
+    ...(elapsed ? [`- ${elapsed}`] : []),
+    `- at: ${new Date().toISOString()}`,
+    "",
+    "The run aborted at this stage. See the SHIP_EXIT table in scripts/ship.mjs for the",
+    "exit code, and .aios/loop-models.yaml (`<step>_timeout_s`) to raise a step timeout.",
+  ].join("\n");
+}
+
 // ── pure helpers (exported for tests) ───────────────────────────────────────────────────────
 
 export function parseShipArgs(args) {
@@ -370,6 +393,10 @@ export function buildPlanPrompt(issue, contextPack, prevReview) {
     "## Recon context pack",
     "",
     contextPack || "(none)",
+    "",
+    "The context pack above was built from the live repo minutes ago — treat it as trusted",
+    "ground truth. Do NOT re-explore surfaces it already covers; verify beyond it only where",
+    "the plan hinges on a detail it does not settle. Budget your time for writing the plan.",
     DEFERRED_CONTRACT,
   ];
   if (prevReview) {
@@ -714,6 +741,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   );
 
   let recon = "";
+  const reconStartedAt = Date.now();
   try {
     // Read ONLY allowed (tracked, non-denied) files — audit the rest by path+reason only.
     const fileBlobs = allowed.map((rel) => {
@@ -739,6 +767,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     writeAudit(issueId, "recon.md", recon);
   } catch (e) {
     record("recon", { error: e.message });
+    writeAudit(issueId, "recon-FAILED.md", failedArtifact("recon", e, reconStartedAt));
     console.error(c.red(`recon: model step failed: ${e.message}`));
     return { code: SHIP_EXIT.RECON_FAILED, records };
   }
@@ -762,7 +791,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     generatePlan = (prompt) => callOpus(anthropic, [{ role: "user", content: prompt }], planCfg);
   } else {
     generatePlan = (prompt) =>
-      claude(prompt, planCfg.timeoutMs ?? 600 * 1000, {
+      claude(prompt, planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS, {
         model: planCfg.model,
         extraArgs: [
           "--permission-mode",
@@ -773,15 +802,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
   for (let round = 1; round <= PLAN_ROUNDS; round++) {
     const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+    const planStartedAt = Date.now();
     try {
       plan = await generatePlan(planPrompt);
     } catch (e) {
       record("plan", { error: e.message });
+      writeAudit(issueId, `plan-r${round}-FAILED.md`, failedArtifact("plan", e, planStartedAt));
       console.error(c.red(`plan: builder failed: ${e.message}`));
       return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
     }
     writeAudit(issueId, `plan-r${round}.md`, plan);
     const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS);
+    const reviewStartedAt = Date.now();
     let review;
     try {
       review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
@@ -793,6 +825,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
     } catch (e) {
       record("plan", { error: e.message });
+      writeAudit(
+        issueId,
+        `plan-review-r${round}-FAILED.md`,
+        failedArtifact("plan review", e, reviewStartedAt)
+      );
       console.error(c.red(`plan: reviewer failed: ${e.message}`));
       return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
     }
@@ -862,6 +899,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     });
   } catch (e) {
     record("build", { error: e.message });
+    writeAudit(issueId, "build-FAILED.md", failedArtifact("build", e));
     console.error(c.red(`build: ${e.message}`));
     return { code: SHIP_EXIT.BUILD_FAILED, records };
   }
@@ -880,6 +918,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     });
   } catch (e) {
     record("pr", { error: e.message });
+    writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
     console.error(c.red(`pr: ${e.message}`));
     return { code: SHIP_EXIT.PR_FAILED, records };
   }
@@ -952,6 +991,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
       } catch (e) {
         record("review", { round, gptReviewError: e.message });
+        writeAudit(issueId, `review-gpt-r${round}-FAILED.md`, failedArtifact("GPT review", e));
         console.error(
           c.red(`review: GPT review failed (${e.message}) — blocking merge (requested reviewer).`)
         );
@@ -1000,6 +1040,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
     } catch (e) {
       record("fix", { error: e.message });
+      writeAudit(issueId, `fix-r${round}-FAILED.md`, failedArtifact("fix build", e));
       return { code: SHIP_EXIT.BUILD_FAILED, records };
     }
     const fixMapped = mapBuildExit(fixCode);
@@ -1014,6 +1055,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
     } catch (e) {
       record("fix", { error: e.message });
+      writeAudit(issueId, `fix-push-r${round}-FAILED.md`, failedArtifact("fix push", e));
       return { code: SHIP_EXIT.PR_FAILED, records };
     }
     round++;
@@ -1026,6 +1068,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     primaryStatus = gitExec(["status", "--porcelain"], repo);
   } catch (e) {
     record("merge-gate", { error: e.message });
+    writeAudit(issueId, "merge-gate-FAILED.md", failedArtifact("merge gate", e));
     return { code: SHIP_EXIT.CLEANUP_FAILED, records };
   }
   if (primaryStatus && primaryStatus.trim()) {
@@ -1112,6 +1155,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
     } catch (e) {
       record("merge-gate", { safetyError: e.message });
+      writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
       console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
       return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
     }
