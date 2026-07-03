@@ -1,0 +1,16 @@
+{
+  "comment": "Synthetic Linear issue node exercising both relation directions. AIO-100 is blocked by AIO-200 (an inverseRelation of type 'blocks' whose relation.issue is the blocker AIO-200, still unstarted) and itself blocks AIO-300 (a relation of type 'blocks' whose relatedIssue is AIO-300). Only AIO-200 is a real blocker of AIO-100.",
+  "identifier": "AIO-100",
+  "title": "A downstream task",
+  "state": { "name": "Todo", "type": "unstarted" },
+  "relations": {
+    "nodes": [
+      { "type": "blocks", "relatedIssue": { "identifier": "AIO-300", "state": { "name": "Todo", "type": "unstarted" } } }
+    ]
+  },
+  "inverseRelations": {
+    "nodes": [
+      { "type": "blocks", "issue": { "identifier": "AIO-200", "state": { "name": "In Progress", "type": "started" } } }
+    ]
+  }
+}

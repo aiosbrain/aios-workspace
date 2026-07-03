@@ -1,0 +1,65 @@
+{
+  "comment": "Synthetic candidate pool for selectNextIssue. All in team AIO. AIO-1 is top-priority Todo/unassigned but blocked by AIO-9 (still started, not completed). AIO-2 is Todo/unassigned/unblocked priority 2. AIO-3 is Todo/unassigned/unblocked priority 2 but OLDER than AIO-2 (ties → oldest wins). AIO-4 is assigned (skip). AIO-5 is In Progress (skip). AIO-6 is unblocked because its blocker AIO-8 is completed.",
+  "candidates": [
+    {
+      "identifier": "AIO-1",
+      "title": "High priority but blocked",
+      "priority": 1,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "state": { "name": "Todo", "type": "unstarted" },
+      "assignee": null,
+      "inverseRelations": { "nodes": [ { "type": "blocks", "issue": { "identifier": "AIO-9", "state": { "name": "In Progress", "type": "started" } } } ] },
+      "relations": { "nodes": [] }
+    },
+    {
+      "identifier": "AIO-2",
+      "title": "Unblocked, priority 2, newer",
+      "priority": 2,
+      "createdAt": "2026-02-01T00:00:00.000Z",
+      "state": { "name": "Todo", "type": "unstarted" },
+      "assignee": null,
+      "inverseRelations": { "nodes": [] },
+      "relations": { "nodes": [] }
+    },
+    {
+      "identifier": "AIO-3",
+      "title": "Unblocked, priority 2, older",
+      "priority": 2,
+      "createdAt": "2026-01-15T00:00:00.000Z",
+      "state": { "name": "Todo", "type": "unstarted" },
+      "assignee": null,
+      "inverseRelations": { "nodes": [] },
+      "relations": { "nodes": [] }
+    },
+    {
+      "identifier": "AIO-4",
+      "title": "Assigned, should be skipped",
+      "priority": 1,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "state": { "name": "Todo", "type": "unstarted" },
+      "assignee": { "id": "user-abc" },
+      "inverseRelations": { "nodes": [] },
+      "relations": { "nodes": [] }
+    },
+    {
+      "identifier": "AIO-5",
+      "title": "In progress, should be skipped",
+      "priority": 1,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "state": { "name": "In Progress", "type": "started" },
+      "assignee": null,
+      "inverseRelations": { "nodes": [] },
+      "relations": { "nodes": [] }
+    },
+    {
+      "identifier": "AIO-6",
+      "title": "Unblocked because blocker is completed",
+      "priority": 3,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "state": { "name": "Todo", "type": "unstarted" },
+      "assignee": null,
+      "inverseRelations": { "nodes": [ { "type": "blocks", "issue": { "identifier": "AIO-8", "state": { "name": "Done", "type": "completed" } } } ] },
+      "relations": { "nodes": [] }
+    }
+  ]
+}
