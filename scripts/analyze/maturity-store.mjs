@@ -23,6 +23,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -169,19 +170,30 @@ export function appendSession(root, session) {
     // Dedup: same session_id at the same event_count is an idempotent re-fire.
     // event_count only grows, so comparing the folded latest snapshot is sufficient.
     const prev = sessions.get(session.session_id);
-    if (prev && prev.event_count === session.event_count) return false;
+    const isDup = Boolean(prev && prev.event_count === session.event_count);
 
+    // Cap check BEFORE the dedup early-return: an oversized store must compact
+    // even when the triggering write is an idempotent re-fire (otherwise sessions
+    // that keep resuming at the same event_count would pin the store oversized).
     const lineCount = text.split(/\r?\n/).filter((l) => l.trim()).length;
     try {
       if (lineCount > HARD_LINE_CAP) {
-        // Store is oversized — compact: fold, apply this record (last-wins), rewrite.
-        sessions.delete(session.session_id);
-        sessions.set(session.session_id, session);
+        // Compact: fold, apply this record (last-wins) if it's new, then rewrite
+        // atomically (temp + rename) so a crash mid-write can't corrupt the store.
+        // The lock is held across the whole fold → write → rename, so no append
+        // can interleave.
+        if (!isDup) {
+          sessions.delete(session.session_id);
+          sessions.set(session.session_id, session);
+        }
         const out = [...sessions.values()].map((s) => buildPutLine(s)).join("\n") + "\n";
-        writeFileSync(abs, out);
-      } else {
-        appendFileSync(abs, buildPutLine(session) + "\n");
+        const tmp = `${abs}.tmp`;
+        writeFileSync(tmp, out);
+        renameSync(tmp, abs);
+        return !isDup;
       }
+      if (isDup) return false;
+      appendFileSync(abs, buildPutLine(session) + "\n");
     } catch {
       return false;
     }
