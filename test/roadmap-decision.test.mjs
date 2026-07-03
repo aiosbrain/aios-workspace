@@ -39,9 +39,15 @@ const EXPECTED = {
 console.log("every SHIP_EXIT code maps correctly");
 {
   // Guard: the expected table must cover EVERY SHIP_EXIT code (no drift).
-  check("expected table covers all SHIP_EXIT codes", Object.keys(EXPECTED).length === Object.keys(SHIP_EXIT).length);
+  check(
+    "expected table covers all SHIP_EXIT codes",
+    Object.keys(EXPECTED).length === Object.keys(SHIP_EXIT).length
+  );
   for (const [name, action] of Object.entries(EXPECTED)) {
-    check(`${name} (${SHIP_EXIT[name]}) → ${action}`, decideFromShipExit(SHIP_EXIT[name]) === action);
+    check(
+      `${name} (${SHIP_EXIT[name]}) → ${action}`,
+      decideFromShipExit(SHIP_EXIT[name]) === action
+    );
   }
 }
 

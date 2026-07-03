@@ -22,7 +22,11 @@ import path from "node:path";
 import { c, callClaudeAgent, callCursorAgent, PLAN_READY_TOKEN } from "./relay-core.mjs";
 import { EXIT as BUILD_EXIT, runBuild, slugify } from "./build.mjs";
 import { cmdPr, detectRepo } from "./pr.mjs";
-import { cmdConsolidateFindings, parseCheckResults, defaultOutPath } from "./consolidate-findings.mjs";
+import {
+  cmdConsolidateFindings,
+  parseCheckResults,
+  defaultOutPath,
+} from "./consolidate-findings.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 
@@ -74,16 +78,22 @@ export function parseShipArgs(args) {
   const hasFlag = (name) => args.includes(name);
 
   const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner"];
-  const positional = args.filter((a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1]));
+  const positional = args.filter(
+    (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
+  );
   const issue = positional[0] ?? null;
 
   const reviewersRaw = flag("--reviewers");
   const reviewers = reviewersRaw
-    ? reviewersRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    ? reviewersRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
     : [...DEFAULT_REVIEWERS];
 
   const maxFixRaw = parseInt(flag("--max-fix-rounds") ?? String(DEFAULT_MAX_FIX_ROUNDS), 10);
-  const maxFixRounds = Number.isFinite(maxFixRaw) && maxFixRaw > 0 ? maxFixRaw : DEFAULT_MAX_FIX_ROUNDS;
+  const maxFixRounds =
+    Number.isFinite(maxFixRaw) && maxFixRaw > 0 ? maxFixRaw : DEFAULT_MAX_FIX_ROUNDS;
 
   const planRunner = flag("--plan-runner") ?? "cli";
 
@@ -102,7 +112,8 @@ export function parseShipArgs(args) {
 // Validate parsed args, returning an error string (→ USAGE) or null.
 export function validateShipArgs(opts) {
   if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
-  if (!ISSUE_RE.test(opts.issue)) return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
+  if (!ISSUE_RE.test(opts.issue))
+    return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
   if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
     return `invalid --plan-runner '${opts.planRunner}' — expected cli or sdk.`;
   return null;
@@ -137,9 +148,7 @@ export function detectSafetyToken(text) {
 // True iff any changed path equals a listed file or starts with a listed directory prefix.
 export function touchesSafetySurface(paths, safetyPaths = SAFETY_PATHS) {
   const list = paths ?? [];
-  return list.some((p) =>
-    safetyPaths.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s))
-  );
+  return list.some((p) => safetyPaths.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s)));
 }
 
 // Parse the plan's `## Deferred (out of scope)` section into a list of normalized titles.
@@ -183,13 +192,26 @@ export function normalizeTitle(t) {
 // stdout even on non-zero exit and NEVER throw for this call. Returns a fail-closed verdict:
 //   { ok, red, pending, unavailable, raw }. Empty/unparseable stdout → unavailable (→ MERGE_BLOCKED).
 export function readChecks(pr, { ghExec, slug } = {}) {
-  const argv = ["pr", "checks", String(pr), ...(slug ? ["--repo", slug] : []), "--json", "name,state,bucket"];
+  const argv = [
+    "pr",
+    "checks",
+    String(pr),
+    ...(slug ? ["--repo", slug] : []),
+    "--json",
+    "name,state,bucket",
+  ];
   let res;
   try {
     res = ghExec(argv);
   } catch (e) {
     // A ghExec that throws despite the contract is treated as unavailable (fail closed).
-    return { ok: false, unavailable: true, red: false, pending: false, raw: String(e?.message ?? "") };
+    return {
+      ok: false,
+      unavailable: true,
+      red: false,
+      pending: false,
+      raw: String(e?.message ?? ""),
+    };
   }
   const stdout = res?.stdout ?? "";
   const parsed = parseCheckResults(stdout);
@@ -202,7 +224,15 @@ export function readChecks(pr, { ghExec, slug } = {}) {
 }
 
 // ── dry-run report ───────────────────────────────────────────────────────────────────────────
-export function buildShipDryRunReport({ issue, issueTitle, resolvedModels, gates, reviewers, planRunner, maxFixRounds }) {
+export function buildShipDryRunReport({
+  issue,
+  issueTitle,
+  resolvedModels,
+  gates,
+  reviewers,
+  planRunner,
+  maxFixRounds,
+}) {
   const stepLine = (name) => {
     const cfg = resolvedModels?.[name];
     if (!cfg) return `  ${name.padEnd(14)} (no model config)`;
@@ -362,8 +392,17 @@ export function buildSafetyPrompt(diff, changedPaths) {
 
 function defaultGitLsFiles(repo) {
   try {
-    const out = execFileSync("git", ["ls-files"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return new Set(out.split("\n").map((s) => s.trim()).filter(Boolean));
+    const out = execFileSync("git", ["ls-files"], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return new Set(
+      out
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
   } catch {
     return new Set();
   }
@@ -371,17 +410,28 @@ function defaultGitLsFiles(repo) {
 
 // gitExec: returns stdout (trimmed); throws on non-zero exit. Used for status/merge/worktree.
 function defaultGitExec(argv, cwd) {
-  return execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", argv, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 // ghExec: returns { code, stdout, stderr } and NEVER throws on non-zero (mirrors readChecks'
 // contract — a red/pending `gh pr checks` is data, not a crash).
 function defaultGhExec(argv) {
   try {
-    const stdout = execFileSync("gh", argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = execFileSync("gh", argv, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
-    return { code: e.status ?? 1, stdout: e.stdout?.toString() ?? "", stderr: e.stderr?.toString() ?? "" };
+    return {
+      code: e.status ?? 1,
+      stdout: e.stdout?.toString() ?? "",
+      stderr: e.stderr?.toString() ?? "",
+    };
   }
 }
 
@@ -426,10 +476,16 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
   try {
     status = gitExec(["status", "--porcelain"], repo);
   } catch (e) {
-    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: `could not read primary checkout status: ${e.message}` };
+    return {
+      code: SHIP_EXIT.CLEANUP_FAILED,
+      reason: `could not read primary checkout status: ${e.message}`,
+    };
   }
   if (status && status.trim()) {
-    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: "primary checkout is dirty — refusing to ff-only (fix manually)." };
+    return {
+      code: SHIP_EXIT.CLEANUP_FAILED,
+      reason: "primary checkout is dirty — refusing to ff-only (fix manually).",
+    };
   }
   try {
     gitExec(["fetch", "origin", "main"], repo);
@@ -490,7 +546,11 @@ function makeBuildOpts({ branch, issue, logFile, findingsFile }) {
 }
 
 const lastNonBlankLine = (text) =>
-  (text ?? "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+  (text ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1) ?? "";
 
 // ── orchestration ─────────────────────────────────────────────────────────────────────────────
 
@@ -534,7 +594,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     console.error(c.red(`recon: could not fetch ${issueId}: ${e.message}`));
     return { code: SHIP_EXIT.RECON_FAILED, records };
   }
-  writeAudit(issueId, "task.md", `# ${issue.identifier}: ${issue.title}\n\n${issue.description || ""}`);
+  writeAudit(
+    issueId,
+    "task.md",
+    `# ${issue.identifier}: ${issue.title}\n\n${issue.description || ""}`
+  );
 
   const trackedFiles = gitLsFiles(repo);
   const commentText = (issue.comments ?? []).map((cm) => cm.body).join("\n");
@@ -569,7 +633,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
       return `### ${rel}\n\n${body.slice(0, 8000)}`;
     });
-    const reconPrompt = buildReconPrompt(issue, { allowedFiles: allowed }) +
+    const reconPrompt =
+      buildReconPrompt(issue, { allowedFiles: allowed }) +
       (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "");
     const cfg = models.recon;
     recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
@@ -596,7 +661,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     try {
       plan = await claude(planPrompt, planCfg.timeoutMs ?? 600 * 1000, {
         model: planCfg.model,
-        extraArgs: ["--permission-mode", "plan", ...(planCfg.effort ? ["--effort", planCfg.effort] : [])],
+        extraArgs: [
+          "--permission-mode",
+          "plan",
+          ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
+        ],
       });
     } catch (e) {
       record("plan", { error: e.message });
@@ -607,7 +676,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS);
     let review;
     try {
-      review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, { extraArgs: ["--force", "--trust"] });
+      review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
+        extraArgs: ["--force", "--trust"],
+      });
     } catch (e) {
       record("plan", { error: e.message });
       console.error(c.red(`plan: reviewer failed: ${e.message}`));
@@ -675,7 +746,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const buildLog = path.join(auditDir, "build.md");
   let buildCode;
   try {
-    buildCode = await runBuildDep({ repo, plan, branch, opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }) });
+    buildCode = await runBuildDep({
+      repo,
+      plan,
+      branch,
+      opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }),
+    });
   } catch (e) {
     record("build", { error: e.message });
     console.error(c.red(`build: ${e.message}`));
@@ -691,7 +767,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // ── 5. PR ────────────────────────────────────────────────────────────────────
   let prNumber;
   try {
-    prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], { throwOnError: true });
+    prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+      throwOnError: true,
+    });
   } catch (e) {
     record("pr", { error: e.message });
     console.error(c.red(`pr: ${e.message}`));
@@ -707,8 +785,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   let round = 1;
   for (;;) {
     // (a) Bugbot-only gate (proceed on timeout — merge gate still fail-closes).
-    const wfbCode = waitForBots(["--pr", String(prNumber), "--bots", "cursor[bot]", "--timeout", "10"]);
-    if (wfbCode === 2) console.error(c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes)."));
+    const wfbCode = waitForBots([
+      "--pr",
+      String(prNumber),
+      "--bots",
+      "cursor[bot]",
+      "--timeout",
+      "10",
+    ]);
+    if (wfbCode === 2)
+      console.error(
+        c.yellow("review: wait-for-bots timed out — proceeding (merge gate fail-closes).")
+      );
 
     // (b) GPT-5.5 PR review via Cursor.
     let gptReviewFile = null;
@@ -716,17 +804,30 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
       const prDiff = diffRes?.stdout ?? "";
       const gptCfg = models.code_review;
-      const gptReview = await cursor(buildGptReviewPrompt(plan, prDiff, prNumber), gptCfg.timeoutMs ?? 300 * 1000, {
-        extraArgs: ["--force", "--trust"],
-      });
+      const gptReview = await cursor(
+        buildGptReviewPrompt(plan, prDiff, prNumber),
+        gptCfg.timeoutMs ?? 300 * 1000,
+        {
+          extraArgs: ["--force", "--trust"],
+        }
+      );
       writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
       gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
     } catch (e) {
-      console.error(c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`));
+      console.error(
+        c.yellow(`review: GPT review failed (${e.message}) — consolidating without it.`)
+      );
     }
 
     // (c) Consolidate.
-    const consolidateArgs = ["--pr", String(prNumber), "--issue", issue.identifier, "--round", String(round)];
+    const consolidateArgs = [
+      "--pr",
+      String(prNumber),
+      "--issue",
+      issue.identifier,
+      "--round",
+      String(round),
+    ];
     if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
     if (slug) consolidateArgs.push("--repo", slug);
     const verdictCode = await consolidateDep(repo, consolidateArgs);
@@ -741,13 +842,20 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     // BLOCKED → fix, unless we're out of rounds.
     if (round >= opts.maxFixRounds) {
       record("fix", { nonconvergence: true, round });
-      console.error(c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`));
+      console.error(
+        c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`)
+      );
       return { code: SHIP_EXIT.REVIEW_NONCONVERGENCE, records };
     }
     const findingsFile = defaultOutPath(repo, issue.identifier, round);
     let fixCode;
     try {
-      fixCode = await runBuildDep({ repo, plan, branch, opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }) });
+      fixCode = await runBuildDep({
+        repo,
+        plan,
+        branch,
+        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }),
+      });
     } catch (e) {
       record("fix", { error: e.message });
       return { code: SHIP_EXIT.BUILD_FAILED, records };
@@ -759,7 +867,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     }
     // Re-push the fixes onto the existing PR.
     try {
-      await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], { throwOnError: true });
+      await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+        throwOnError: true,
+      });
     } catch (e) {
       record("fix", { error: e.message });
       return { code: SHIP_EXIT.PR_FAILED, records };
@@ -778,7 +888,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
   if (primaryStatus && primaryStatus.trim()) {
     record("merge-gate", { dirtyPrimary: true });
-    console.error(c.red("merge gate: primary checkout is dirty — refusing to merge into an unffable state."));
+    console.error(
+      c.red("merge gate: primary checkout is dirty — refusing to merge into an unffable state.")
+    );
     return { code: SHIP_EXIT.CLEANUP_FAILED, records };
   }
 
@@ -786,15 +898,28 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const checks = readChecks(prNumber, { ghExec, slug });
   if (!checks.ok) {
     record("merge-gate", { ci: checks });
-    console.error(c.red(`merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`));
+    console.error(
+      c.red(
+        `merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`
+      )
+    );
     return { code: SHIP_EXIT.MERGE_BLOCKED, records };
   }
 
   // Path-gated safety review.
   let changedPaths = [];
   try {
-    const nameRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : []), "--name-only"]);
-    changedPaths = (nameRes?.stdout ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+    const nameRes = ghExec([
+      "pr",
+      "diff",
+      String(prNumber),
+      ...(slug ? ["--repo", slug] : []),
+      "--name-only",
+    ]);
+    changedPaths = (nameRes?.stdout ?? "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
   } catch {
     /* best-effort — an empty list simply means no safety surface detected */
   }
@@ -802,10 +927,14 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     try {
       const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
       const cfg = models.safety_review;
-      const safety = await claude(buildSafetyPrompt(diffRes?.stdout ?? "", changedPaths), cfg.timeoutMs ?? 300 * 1000, {
-        model: cfg.model,
-        extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
-      });
+      const safety = await claude(
+        buildSafetyPrompt(diffRes?.stdout ?? "", changedPaths),
+        cfg.timeoutMs ?? 300 * 1000,
+        {
+          model: cfg.model,
+          extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+        }
+      );
       writeAudit(issueId, "safety-review.md", safety);
       if (!detectSafetyToken(safety)) {
         record("merge-gate", { safetyBlocked: true });
@@ -822,7 +951,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // Operator OK.
   if (gates.merge === "blocked") {
     record("merge-gate", { blocked: true });
-    console.error(c.red("merge gate active in a non-TTY context without --auto-merge — not hanging."));
+    console.error(
+      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
+    );
     return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
   }
   if (gates.merge === "prompt") {
@@ -854,7 +985,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   writeAudit(
     issueId,
     "ship-transcript.md",
-    `# ship ${issue.identifier}\n\n` + records.stages.map((s) => `- ${JSON.stringify(s)}`).join("\n")
+    `# ship ${issue.identifier}\n\n` +
+      records.stages.map((s) => `- ${JSON.stringify(s)}`).join("\n")
   );
   console.log(c.green(`\n✓ shipped ${issue.identifier} (PR #${prNumber}).`));
   return { code: SHIP_EXIT.OK, records };
@@ -942,7 +1074,11 @@ export async function cmdShip(repo, args, deps = {}) {
   // Real run: build the default dep set (each overridable via deps).
   const apiKey = resolveLinearApiKey(repo);
   if (!apiKey && !deps.linear) {
-    console.error(c.red("error: LINEAR_API_KEY is not set — required for `aios ship` (use --dry-run to preview offline)."));
+    console.error(
+      c.red(
+        "error: LINEAR_API_KEY is not set — required for `aios ship` (use --dry-run to preview offline)."
+      )
+    );
     return SHIP_EXIT.USAGE;
   }
   const slug = deps.slug ?? detectRepo(repo);
@@ -962,7 +1098,8 @@ export async function cmdShip(repo, args, deps = {}) {
     readFile: deps.readFile ?? ((p) => readFileSync(p, "utf8")),
     confirm: deps.confirm ?? defaultConfirm,
     isTty,
-    writeAudit: deps.writeAudit ?? ((issue, name, text) => defaultWriteAudit(repo, issue, name, text)),
+    writeAudit:
+      deps.writeAudit ?? ((issue, name, text) => defaultWriteAudit(repo, issue, name, text)),
     slug,
   };
 

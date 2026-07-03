@@ -35,7 +35,11 @@ function runCli(args) {
     });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
-    return { code: e.status ?? -1, stdout: e.stdout?.toString() ?? "", stderr: e.stderr?.toString() ?? "" };
+    return {
+      code: e.status ?? -1,
+      stdout: e.stdout?.toString() ?? "",
+      stderr: e.stderr?.toString() ?? "",
+    };
   }
 }
 

@@ -41,10 +41,19 @@ console.log("touchesSafetySurface — false for non-safety paths");
 
 console.log("detectSafetyToken");
 {
-  check("token alone on last line → true", detectSafetyToken(`review ok\n${SAFETY_APPROVED_TOKEN}`) === true);
-  check("token with trailing blank lines → true", detectSafetyToken(`ok\n${SAFETY_APPROVED_TOKEN}\n\n`) === true);
+  check(
+    "token alone on last line → true",
+    detectSafetyToken(`review ok\n${SAFETY_APPROVED_TOKEN}`) === true
+  );
+  check(
+    "token with trailing blank lines → true",
+    detectSafetyToken(`ok\n${SAFETY_APPROVED_TOKEN}\n\n`) === true
+  );
   check("no token → false", detectSafetyToken("looks fine but unsafe") === false);
-  check("token not on last line → false", detectSafetyToken(`${SAFETY_APPROVED_TOKEN}\nmore text`) === false);
+  check(
+    "token not on last line → false",
+    detectSafetyToken(`${SAFETY_APPROVED_TOKEN}\nmore text`) === false
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

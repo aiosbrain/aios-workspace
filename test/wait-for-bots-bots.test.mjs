@@ -31,9 +31,15 @@ const CONFIG = { "cursor[bot]": {}, "coderabbitai[bot]": {} };
 
 console.log("selectBots");
 {
-  check("no arg → all bots", JSON.stringify(selectBots(CONFIG, null)) === JSON.stringify(Object.keys(CONFIG)));
+  check(
+    "no arg → all bots",
+    JSON.stringify(selectBots(CONFIG, null)) === JSON.stringify(Object.keys(CONFIG))
+  );
   check("empty string → all bots", selectBots(CONFIG, "").length === 2);
-  check("single bot → just it", JSON.stringify(selectBots(CONFIG, "cursor[bot]")) === JSON.stringify(["cursor[bot]"]));
+  check(
+    "single bot → just it",
+    JSON.stringify(selectBots(CONFIG, "cursor[bot]")) === JSON.stringify(["cursor[bot]"])
+  );
   check(
     "comma list → both, in config order",
     JSON.stringify(selectBots(CONFIG, "coderabbitai[bot],cursor[bot]")) ===
@@ -93,7 +99,10 @@ function run(ghDir, extraArgs) {
 console.log("spawn: --bots cursor[bot] gates on Bugbot alone");
 {
   const gh = makeGh("skipped");
-  check("--bots cursor[bot] with skipped Bugbot → exit 0", run(gh, ["--bots", "cursor[bot]"]) === 0);
+  check(
+    "--bots cursor[bot] with skipped Bugbot → exit 0",
+    run(gh, ["--bots", "cursor[bot]"]) === 0
+  );
   // Without narrowing, CodeRabbit is still required → the 10-min timeout would apply; instead
   // assert an unknown --bots value fails fast with exit 1 (usage), quickly.
   check("unknown --bots → exit 1", run(gh, ["--bots", "nope[bot]", "--timeout", "1"]) === 1);

@@ -48,7 +48,10 @@ console.log("selectNextIssue");
 
 console.log("skips");
 {
-  check("AIO-1 provably blocked (blocker AIO-9 not completed)", isUnblocked(byId("AIO-1")) === false);
+  check(
+    "AIO-1 provably blocked (blocker AIO-9 not completed)",
+    isUnblocked(byId("AIO-1")) === false
+  );
   check("AIO-1 skip reason names blocker", /blocked by AIO-9/.test(skipReason(byId("AIO-1"))));
   check("AIO-4 assigned → skipped", skipReason(byId("AIO-4")) === "assigned");
   check("AIO-5 non-Todo → skipped", /not-Todo/.test(skipReason(byId("AIO-5"))));

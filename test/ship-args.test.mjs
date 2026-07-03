@@ -21,7 +21,10 @@ console.log("parseShipArgs defaults");
   const o = parseShipArgs(["AIO-163"]);
   check("issue parsed", o.issue === "AIO-163");
   check("gates default on (auto false)", o.auto === false && o.autoMerge === false);
-  check("reviewers default bugbot,gpt-5.5", JSON.stringify(o.reviewers) === JSON.stringify(["bugbot", "gpt-5.5"]));
+  check(
+    "reviewers default bugbot,gpt-5.5",
+    JSON.stringify(o.reviewers) === JSON.stringify(["bugbot", "gpt-5.5"])
+  );
   check("max-fix-rounds default 3", o.maxFixRounds === 3);
   check("plan-runner default cli", o.planRunner === "cli");
   check("dry-run off", o.dryRun === false);
@@ -43,7 +46,10 @@ console.log("parseShipArgs overrides");
   ]);
   check("--auto", o.auto === true);
   check("--auto-merge", o.autoMerge === true);
-  check("--reviewers list", JSON.stringify(o.reviewers) === JSON.stringify(["bugbot", "coderabbit"]));
+  check(
+    "--reviewers list",
+    JSON.stringify(o.reviewers) === JSON.stringify(["bugbot", "coderabbit"])
+  );
   check("--max-fix-rounds 5", o.maxFixRounds === 5);
   check("--plan-runner sdk", o.planRunner === "sdk");
   check("--dry-run", o.dryRun === true);
@@ -55,7 +61,10 @@ console.log("validateShipArgs");
   check("missing issue → error", validateShipArgs(parseShipArgs([])) !== null);
   check("bad id → error", validateShipArgs(parseShipArgs(["not-an-issue"])) !== null);
   check("valid id → null", validateShipArgs(parseShipArgs(["AIO-1"])) === null);
-  check("bad plan-runner → error", validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "wat"])) !== null);
+  check(
+    "bad plan-runner → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "wat"])) !== null
+  );
 }
 
 console.log("resolveGates — non-TTY logic");

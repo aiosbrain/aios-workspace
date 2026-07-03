@@ -118,7 +118,15 @@ function makeDeps(over = {}) {
 }
 
 function optsFor(o = {}) {
-  return { auto: false, autoMerge: false, maxFixRounds: 3, reviewers: ["bugbot", "gpt-5.5"], planRunner: "cli", dryRun: false, ...o };
+  return {
+    auto: false,
+    autoMerge: false,
+    maxFixRounds: 3,
+    reviewers: ["bugbot", "gpt-5.5"],
+    planRunner: "cli",
+    dryRun: false,
+    ...o,
+  };
 }
 
 console.log("happy path → OK, deferred deduped, audit written, merge issued");
@@ -126,8 +134,14 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
   const deps = makeDeps();
   const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
   check("code OK", code === SHIP_EXIT.OK);
-  check("only 'Follow up B' created (A deduped)", JSON.stringify(deps.created) === JSON.stringify(["Follow up B"]));
-  check("merge issued (gh pr merge)", deps.ghCalls.some((c) => c.includes("pr merge")));
+  check(
+    "only 'Follow up B' created (A deduped)",
+    JSON.stringify(deps.created) === JSON.stringify(["Follow up B"])
+  );
+  check(
+    "merge issued (gh pr merge)",
+    deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
   const issueDir = path.join(deps.repo, ".aios", "loop", "AIO-163");
   for (const f of ["task.md", "recon.md", "plan.md", "deferred.md", "ship-transcript.md"]) {
     check(`audit ${f} written`, existsSync(path.join(issueDir, f)));
@@ -138,10 +152,18 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
 console.log("fix-loop non-convergence → REVIEW_NONCONVERGENCE, merge never called");
 {
   const deps = makeDeps({ cmdConsolidateFindings: async () => 3 }); // always BLOCKED
-  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor({ maxFixRounds: 1 }), deps });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ maxFixRounds: 1 }),
+    deps,
+  });
   check("code REVIEW_NONCONVERGENCE", code === SHIP_EXIT.REVIEW_NONCONVERGENCE);
   check("merge never issued", !deps.ghCalls.some((c) => c.includes("pr merge")));
-  check("no worktree removal (worktree preserved)", !deps.gitCalls.some((c) => c.startsWith("worktree remove")));
+  check(
+    "no worktree removal (worktree preserved)",
+    !deps.gitCalls.some((c) => c.startsWith("worktree remove"))
+  );
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
@@ -184,7 +206,10 @@ console.log("safety surface + withheld token → SAFETY_BLOCKED");
   };
   const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
   check("code SAFETY_BLOCKED", code === SHIP_EXIT.SAFETY_BLOCKED);
-  check("merge never issued when safety withheld", !deps.ghCalls.some((c) => c.includes("pr merge")));
+  check(
+    "merge never issued when safety withheld",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
@@ -202,7 +227,12 @@ console.log("non-TTY merge gate (plan auto) → MERGE_GATE_BLOCKED");
 {
   let confirmCalled = false;
   const deps = makeDeps({ isTty: false, confirm: async () => ((confirmCalled = true), true) });
-  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor({ auto: true }), deps });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ auto: true }),
+    deps,
+  });
   check("code MERGE_GATE_BLOCKED", code === SHIP_EXIT.MERGE_GATE_BLOCKED);
   check("confirm never called", confirmCalled === false);
   check("merge never issued", !deps.ghCalls.some((c) => c.includes("pr merge")));

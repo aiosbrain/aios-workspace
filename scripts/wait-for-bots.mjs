@@ -61,9 +61,7 @@ export function selectBots(config, botsArg) {
     .filter(Boolean);
   const unknown = requested.filter((b) => !keys.includes(b));
   if (unknown.length) {
-    throw new Error(
-      `unknown bot(s): ${unknown.join(", ")} — known bots: ${keys.join(", ")}`
-    );
+    throw new Error(`unknown bot(s): ${unknown.join(", ")} — known bots: ${keys.join(", ")}`);
   }
   // De-dupe while preserving BOT_CONFIG order.
   return keys.filter((k) => requested.includes(k));

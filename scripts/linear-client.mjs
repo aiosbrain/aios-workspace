@@ -203,7 +203,8 @@ const LIST_PAGE_CAP = 200; // documented pagination cap
 // AIO-<n> → { teamKey: "AIO", number: n }. Deterministic; avoids depending on issue(id:).
 function parseIdentifier(identifier) {
   const m = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec(String(identifier ?? "").trim());
-  if (!m) throw new LinearError(`invalid Linear identifier '${identifier}' — expected TEAM-<number>.`);
+  if (!m)
+    throw new LinearError(`invalid Linear identifier '${identifier}' — expected TEAM-<number>.`);
   return { teamKey: m[1].toUpperCase(), number: parseInt(m[2], 10) };
 }
 
@@ -218,7 +219,12 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
 
   // Redact the key from any string that might carry it (defense in depth — we never
   // interpolate it, but a body snippet could theoretically echo a header).
-  const redact = (s) => (apiKey ? String(s ?? "").split(apiKey).join("«redacted»") : String(s ?? ""));
+  const redact = (s) =>
+    apiKey
+      ? String(s ?? "")
+          .split(apiKey)
+          .join("«redacted»")
+      : String(s ?? "");
 
   // The single network seam. One bounded retry on HTTP 429/5xx only; no retry on 4xx.
   async function request(query, variables = {}) {
@@ -335,7 +341,8 @@ export function createLinearClient({ apiKey, fetchFn = globalThis.fetch, maxRetr
     if (!title) throw new LinearError("createIssue requires a title.");
     if (!parentIdentifier) throw new LinearError("createIssue requires a parentIdentifier.");
     const parent = await resolveIssueMeta(parentIdentifier);
-    if (!parent.teamId) throw new LinearError(`could not resolve team for parent ${parentIdentifier}.`);
+    if (!parent.teamId)
+      throw new LinearError(`could not resolve team for parent ${parentIdentifier}.`);
     const input = {
       title,
       description: description ?? "",

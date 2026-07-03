@@ -53,7 +53,8 @@ export function parseRoadmapArgs(args) {
     ["project", project],
   ].filter(([, v]) => v != null && v !== "");
   if (sources.length !== 1) {
-    out.error = "exactly one source is required: --label <name> | --epic AIO-<n> | --project <name>";
+    out.error =
+      "exactly one source is required: --label <name> | --epic AIO-<n> | --project <name>";
     return out;
   }
   out.sourceType = sources[0][0];
@@ -127,7 +128,8 @@ export function selectNextIssue(candidates, { now } = {}) {
 // Classify why a candidate was NOT selected (for the digest's "skipped candidates" section).
 export function skipReason(issue) {
   if (issue?.assignee) return "assigned";
-  if (issue?.state?.type !== "unstarted") return `not-Todo (${issue?.state?.name ?? issue?.state?.type ?? "?"})`;
+  if (issue?.state?.type !== "unstarted")
+    return `not-Todo (${issue?.state?.name ?? issue?.state?.type ?? "?"})`;
   if (!isUnblocked(issue)) {
     const blocker = (issue.blockedBy ?? normalizeBlockedBy(issue)).find(
       (b) => b.stateType !== "completed"
@@ -182,7 +184,9 @@ export function buildDigest(records, { date, deterministicOnly } = {}) {
     `Source: ${r.source ?? "?"}   Issues attempted: ${r.attempted ?? 0}/${r.max ?? 0}`,
     "",
     "## Merged",
-    ...(merged.length ? merged.map((m) => `- ${m.issue} — ${m.pr ? `PR ${m.pr}` : "(merged)"}`) : ["- (none)"]),
+    ...(merged.length
+      ? merged.map((m) => `- ${m.issue} — ${m.pr ? `PR ${m.pr}` : "(merged)"}`)
+      : ["- (none)"]),
     "",
     "## Blocked on operator",
     ...(blocked.length
@@ -190,7 +194,9 @@ export function buildDigest(records, { date, deterministicOnly } = {}) {
       : ["- (none)"]),
     "",
     "## Refused to touch",
-    ...(refused.length ? refused.map((x) => `- ${x.issue} — safety review withheld`) : ["- (none)"]),
+    ...(refused.length
+      ? refused.map((x) => `- ${x.issue} — safety review withheld`)
+      : ["- (none)"]),
     "",
     "## Skipped candidates",
     ...(skipped.length ? skipped.map((s) => `- ${s.issue} — ${s.reason}`) : ["- (none)"]),
@@ -202,7 +208,11 @@ export function buildDigest(records, { date, deterministicOnly } = {}) {
 // ── default dep impls ────────────────────────────────────────────────────────────────────────
 
 function defaultGitExec(argv, cwd) {
-  return execFileSync("git", argv, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", argv, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 // Run `aios ship <id> --auto --auto-merge` as a child; its SHIP_EXIT is the interface.
@@ -285,9 +295,7 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
   if (!linear) {
     const apiKey = resolveLinearApiKey(repo);
     if (!apiKey) {
-      console.error(
-        c.red("error: LINEAR_API_KEY is not set — required for `aios roadmap-run`.")
-      );
+      console.error(c.red("error: LINEAR_API_KEY is not set — required for `aios roadmap-run`."));
       console.error(c.dim("Set it in your environment (dotenvx injects it) and retry."));
       return 1;
     }
@@ -308,16 +316,16 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
     const eligible = candidates.filter(
       (i) => i?.state?.type === "unstarted" && !i.assignee && isUnblocked(i)
     );
-    const ordered = eligible
-      .slice()
-      .sort((a, b) => {
-        const pa = a.priority || 999;
-        const pb = b.priority || 999;
-        if (pa !== pb) return pa - pb;
-        return (a.createdAt || "").localeCompare(b.createdAt || "");
-      });
+    const ordered = eligible.slice().sort((a, b) => {
+      const pa = a.priority || 999;
+      const pb = b.priority || 999;
+      if (pa !== pb) return pa - pb;
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
+    });
     console.log(c.blue(`\naios roadmap-run — dry-run (${selector})`));
-    console.log(`Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}\n`);
+    console.log(
+      `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}\n`
+    );
     console.log("Ordered eligible (would ship top-down):");
     if (!ordered.length) console.log("  (none eligible)");
     for (const i of ordered.slice(0, opts.maxIssues)) {
@@ -334,7 +342,15 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
   const spawnShip = deps.spawnShip ?? ((id) => defaultSpawnShip(repo, id));
   const gitExec = deps.gitExec ?? defaultGitExec;
 
-  const records = { source: selector, attempted: 0, max: opts.maxIssues, merged: [], blocked: [], refused: [], skipped: [] };
+  const records = {
+    source: selector,
+    attempted: 0,
+    max: opts.maxIssues,
+    merged: [],
+    blocked: [],
+    refused: [],
+    skipped: [],
+  };
   const attemptedIds = new Set();
 
   for (let n = 0; n < opts.maxIssues; n++) {
@@ -370,9 +386,14 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       // Escalate: comment on the issue + record it. SAFETY_BLOCKED is the "refused" bucket.
       const reason = `${action === "halt" ? "halted" : "skipped"} — ${label}`;
       try {
-        await linear.addComment(next.identifier, `\`aios roadmap-run\`: ${reason} (SHIP_EXIT ${code}).`);
+        await linear.addComment(
+          next.identifier,
+          `\`aios roadmap-run\`: ${reason} (SHIP_EXIT ${code}).`
+        );
       } catch (e) {
-        console.error(c.yellow(`roadmap-run: could not comment on ${next.identifier}: ${e.message}`));
+        console.error(
+          c.yellow(`roadmap-run: could not comment on ${next.identifier}: ${e.message}`)
+        );
       }
       if (code === SHIP_EXIT.SAFETY_BLOCKED) records.refused.push({ issue: next.identifier });
       else records.blocked.push({ issue: next.identifier, reason: label, code });
@@ -390,7 +411,11 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       gitExec(["fetch", "origin", "main"], repo);
       gitExec(["merge", "--ff-only", "origin/main"], repo);
     } catch (e) {
-      console.error(c.red(`roadmap-run: could not ff-only main after ${next.identifier}: ${e.message} — stopping.`));
+      console.error(
+        c.red(
+          `roadmap-run: could not ff-only main after ${next.identifier}: ${e.message} — stopping.`
+        )
+      );
       break;
     }
   }
@@ -409,7 +434,9 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       if (prose && prose.trim()) digestText = `${prose.trim()}\n\n${digestText}`;
     }
   } catch (e) {
-    console.error(c.yellow(`roadmap-run: digest prose failed (${e.message}) — using deterministic digest.`));
+    console.error(
+      c.yellow(`roadmap-run: digest prose failed (${e.message}) — using deterministic digest.`)
+    );
   }
 
   let digestPath = null;
@@ -425,7 +452,9 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       await linear.addComment(opts.digestTarget, digestText);
       console.log(c.dim(`digest posted to ${opts.digestTarget}`));
     } catch (e) {
-      console.error(c.yellow(`roadmap-run: could not post digest to ${opts.digestTarget}: ${e.message}`));
+      console.error(
+        c.yellow(`roadmap-run: could not post digest to ${opts.digestTarget}: ${e.message}`)
+      );
     }
   }
 

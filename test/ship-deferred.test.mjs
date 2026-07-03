@@ -47,7 +47,10 @@ console.log("empty / none");
 {
   check("lone none → []", parseDeferredScope("## Deferred (out of scope)\n- none").length === 0);
   check("None. → []", parseDeferredScope("## Deferred\n- None.").length === 0);
-  check("empty section → []", parseDeferredScope("## Deferred (out of scope)\n\n## Next").length === 0);
+  check(
+    "empty section → []",
+    parseDeferredScope("## Deferred (out of scope)\n\n## Next").length === 0
+  );
   check("no section → []", parseDeferredScope("# Plan\n- item").length === 0);
 }
 

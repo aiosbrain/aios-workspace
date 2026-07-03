@@ -64,7 +64,10 @@ console.log("dangerous references never allowed; recorded as skipped");
     "skipped paths are never stat'd",
     skippedRaws.every((p) => !statted.includes(p))
   );
-  check("only allowed paths were stat'd", statted.every((p) => allowed.includes(p)));
+  check(
+    "only allowed paths were stat'd",
+    statted.every((p) => allowed.includes(p))
+  );
 }
 
 console.log("maxFiles cap → overflow becomes cap-exceeded");

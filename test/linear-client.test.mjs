@@ -100,11 +100,17 @@ console.log("createIssue + addComment mutation inputs");
     calls.push(body);
     if (/IssueMeta/.test(body.query)) {
       return jsonResponse({
-        data: { issues: { nodes: [{ id: "uuid-parent", identifier: "AIO-1", team: { id: "team-1", key: "AIO" } }] } },
+        data: {
+          issues: {
+            nodes: [{ id: "uuid-parent", identifier: "AIO-1", team: { id: "team-1", key: "AIO" } }],
+          },
+        },
       });
     }
     if (/issueCreate/.test(body.query)) {
-      return jsonResponse({ data: { issueCreate: { success: true, issue: { identifier: "AIO-99" } } } });
+      return jsonResponse({
+        data: { issueCreate: { success: true, issue: { identifier: "AIO-99" } } },
+      });
     }
     if (/commentCreate/.test(body.query)) {
       return jsonResponse({ data: { commentCreate: { success: true } } });
@@ -166,7 +172,10 @@ console.log("errors → LinearError, key redacted");
   } catch (e) {
     e2 = e;
   }
-  check("key never appears in error text", e2 instanceof LinearError && !e2.message.includes(FAKE_KEY));
+  check(
+    "key never appears in error text",
+    e2 instanceof LinearError && !e2.message.includes(FAKE_KEY)
+  );
 
   // GraphQL errors[] → LinearError.
   const gqlErr = async () => jsonResponse({ errors: [{ message: "bad field" }] });

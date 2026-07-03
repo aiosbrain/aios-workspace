@@ -8,7 +8,17 @@
       "createdAt": "2026-01-01T00:00:00.000Z",
       "state": { "name": "Todo", "type": "unstarted" },
       "assignee": null,
-      "inverseRelations": { "nodes": [ { "type": "blocks", "issue": { "identifier": "AIO-9", "state": { "name": "In Progress", "type": "started" } } } ] },
+      "inverseRelations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "issue": {
+              "identifier": "AIO-9",
+              "state": { "name": "In Progress", "type": "started" }
+            }
+          }
+        ]
+      },
       "relations": { "nodes": [] }
     },
     {
@@ -58,7 +68,14 @@
       "createdAt": "2026-01-01T00:00:00.000Z",
       "state": { "name": "Todo", "type": "unstarted" },
       "assignee": null,
-      "inverseRelations": { "nodes": [ { "type": "blocks", "issue": { "identifier": "AIO-8", "state": { "name": "Done", "type": "completed" } } } ] },
+      "inverseRelations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "issue": { "identifier": "AIO-8", "state": { "name": "Done", "type": "completed" } }
+          }
+        ]
+      },
       "relations": { "nodes": [] }
     }
   ]

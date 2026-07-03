@@ -48,7 +48,11 @@ function runCli(args) {
     });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
-    return { code: e.status ?? -1, stdout: e.stdout?.toString() ?? "", stderr: e.stderr?.toString() ?? "" };
+    return {
+      code: e.status ?? -1,
+      stdout: e.stdout?.toString() ?? "",
+      stderr: e.stderr?.toString() ?? "",
+    };
   }
 }
 
@@ -67,7 +71,10 @@ console.log("ship AIO-163 --dry-run (offline, no key)");
   check("prints per-step models (recon)", /recon\s+claude/.test(r.stdout));
   check("prints gates", /Gates:/.test(r.stdout));
   check("prints reviewers", /Reviewers:/.test(r.stdout));
-  check("prints SHIP_EXIT table", /SHIP_EXIT codes:/.test(r.stdout) && /CLEANUP_FAILED/.test(r.stdout));
+  check(
+    "prints SHIP_EXIT table",
+    /SHIP_EXIT codes:/.test(r.stdout) && /CLEANUP_FAILED/.test(r.stdout)
+  );
   check("no external git/gh/claude/cursor call", !existsSync(RECORD));
   check("no stack trace on stderr", !/\n\s+at\s/.test(r.stderr));
   if (existsSync(RECORD)) console.log("    record:", readFileSync(RECORD, "utf8"));

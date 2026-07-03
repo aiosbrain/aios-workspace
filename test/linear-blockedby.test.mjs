@@ -63,7 +63,9 @@ console.log("forward-only blocks → not blocked");
 {
   const forwardOnly = {
     relations: {
-      nodes: [{ type: "blocks", relatedIssue: { identifier: "AIO-Z", state: { type: "unstarted" } } }],
+      nodes: [
+        { type: "blocks", relatedIssue: { identifier: "AIO-Z", state: { type: "unstarted" } } },
+      ],
     },
     inverseRelations: { nodes: [] },
   };

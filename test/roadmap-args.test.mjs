@@ -19,7 +19,10 @@ function check(label, cond) {
 console.log("exactly one source");
 {
   check("zero sources → error", parseRoadmapArgs([]).error !== null);
-  check("two sources → error", parseRoadmapArgs(["--label", "x", "--epic", "AIO-1"]).error !== null);
+  check(
+    "two sources → error",
+    parseRoadmapArgs(["--label", "x", "--epic", "AIO-1"]).error !== null
+  );
   check("one source (label) → ok", parseRoadmapArgs(["--label", "x"]).error === null);
   const e = parseRoadmapArgs(["--epic", "AIO-9"]);
   check("epic source parsed", e.sourceType === "epic" && e.sourceValue === "AIO-9");
@@ -46,14 +49,26 @@ console.log("--comment-digest target resolution");
 
   // --comment-digest with explicit --digest-target → that target.
   const dt = parseRoadmapArgs(["--label", "x", "--comment-digest", "--digest-target", "AIO-9"]);
-  check("label + comment-digest + target → AIO-9", dt.error === null && dt.digestTarget === "AIO-9");
+  check(
+    "label + comment-digest + target → AIO-9",
+    dt.error === null && dt.digestTarget === "AIO-9"
+  );
 
   // Explicit target with epic still honored (explicit wins).
-  const both = parseRoadmapArgs(["--epic", "AIO-5", "--comment-digest", "--digest-target", "AIO-9"]);
+  const both = parseRoadmapArgs([
+    "--epic",
+    "AIO-5",
+    "--comment-digest",
+    "--digest-target",
+    "AIO-9",
+  ]);
   check("explicit target wins over epic default", both.digestTarget === "AIO-9");
 
   // Bad digest-target id → error.
-  check("bad digest-target → error", parseRoadmapArgs(["--label", "x", "--comment-digest", "--digest-target", "nope"]).error !== null);
+  check(
+    "bad digest-target → error",
+    parseRoadmapArgs(["--label", "x", "--comment-digest", "--digest-target", "nope"]).error !== null
+  );
 
   // No --comment-digest → digestTarget null even if --digest-target passed alone.
   const none = parseRoadmapArgs(["--label", "x"]);

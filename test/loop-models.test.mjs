@@ -172,7 +172,10 @@ console.log("ship/roadmap Claude-runner steps (R-Major-6) fail closed on a non-C
 {
   // recon, safety_review, and digest are executed via callClaudeAgent in ship/roadmap-run,
   // so a non-Claude override for any of them must abort at resolve time, before any run.
-  const badRecon = resolveInChild({ repo: null, cliOverrides: { recon: { model: "gpt-5.5-high" } } });
+  const badRecon = resolveInChild({
+    repo: null,
+    cliOverrides: { recon: { model: "gpt-5.5-high" } },
+  });
   check("gpt recon model aborts", badRecon.ok === false);
   check("recon abort names the Claude-family requirement", /Claude-family/.test(badRecon.stderr));
 
@@ -186,11 +189,17 @@ console.log("ship/roadmap Claude-runner steps (R-Major-6) fail closed on a non-C
     /Claude-family/.test(badSafety.stderr)
   );
 
-  const badDigest = resolveInChild({ repo: null, cliOverrides: { digest: { model: "gpt-5.3-codex" } } });
+  const badDigest = resolveInChild({
+    repo: null,
+    cliOverrides: { digest: { model: "gpt-5.3-codex" } },
+  });
   check("gpt digest model aborts", badDigest.ok === false);
 
   // A Claude-family override for each is accepted.
-  const okRecon = resolveInChild({ repo: null, cliOverrides: { recon: { model: "claude-sonnet-5" } } });
+  const okRecon = resolveInChild({
+    repo: null,
+    cliOverrides: { recon: { model: "claude-sonnet-5" } },
+  });
   check("claude recon model passes", okRecon.ok === true);
 
   // The diversity pairs are unaffected by the new Claude-runner steps.

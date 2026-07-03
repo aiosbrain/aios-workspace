@@ -5,12 +5,21 @@
   "state": { "name": "Todo", "type": "unstarted" },
   "relations": {
     "nodes": [
-      { "type": "blocks", "relatedIssue": { "identifier": "AIO-300", "state": { "name": "Todo", "type": "unstarted" } } }
+      {
+        "type": "blocks",
+        "relatedIssue": {
+          "identifier": "AIO-300",
+          "state": { "name": "Todo", "type": "unstarted" }
+        }
+      }
     ]
   },
   "inverseRelations": {
     "nodes": [
-      { "type": "blocks", "issue": { "identifier": "AIO-200", "state": { "name": "In Progress", "type": "started" } } }
+      {
+        "type": "blocks",
+        "issue": { "identifier": "AIO-200", "state": { "name": "In Progress", "type": "started" } }
+      }
     ]
   }
 }

@@ -40,7 +40,9 @@ console.log("empty / unparseable stdout → unavailable (fail closed)");
 {
   const r1 = readChecks(44, { ghExec: ghReturning(1, "") });
   check("empty stdout → unavailable", r1.ok === false && r1.unavailable === true);
-  const r2 = readChecks(44, { ghExec: ghReturning(1, "authentication failed for host github.com") });
+  const r2 = readChecks(44, {
+    ghExec: ghReturning(1, "authentication failed for host github.com"),
+  });
   check("error prose → unavailable (not a red board)", r2.ok === false && r2.unavailable === true);
 }
 

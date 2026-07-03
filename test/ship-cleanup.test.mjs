@@ -32,7 +32,11 @@ function makeGit({ statusOut = "", throwOn = null } = {}) {
   return { gitExec, calls };
 }
 
-const ARGS = { repo: "/tmp/primary", branch: "feat/AIO-1-x", worktreePath: "/tmp/primary-feat-aio-1-x" };
+const ARGS = {
+  repo: "/tmp/primary",
+  branch: "feat/AIO-1-x",
+  worktreePath: "/tmp/primary-feat-aio-1-x",
+};
 
 console.log("happy path — correct ordering");
 {
@@ -48,8 +52,14 @@ console.log("happy path — correct ordering");
   check("ff-only issued", idxFf >= 0);
   check("worktree remove after ff-only", idxRemove > idxFf);
   check("prune after worktree remove", idxPrune > idxRemove);
-  check("branch -D is LAST, after worktree removal", idxBranchDel > idxRemove && idxBranchDel > idxPrune);
-  check("branch delete never before worktree removal", !(idxBranchDel >= 0 && idxBranchDel < idxRemove));
+  check(
+    "branch -D is LAST, after worktree removal",
+    idxBranchDel > idxRemove && idxBranchDel > idxPrune
+  );
+  check(
+    "branch delete never before worktree removal",
+    !(idxBranchDel >= 0 && idxBranchDel < idxRemove)
+  );
 }
 
 console.log("dirty primary → CLEANUP_FAILED, nothing destructive issued");
