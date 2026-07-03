@@ -67,3 +67,8 @@
 
 # spec_fix_model: claude-opus-4-8
 # spec_fix_effort: high
+
+# Decision-corpus distillation (EE4 / `aios decisions distill --remote`). Runs through the
+# operator-loop llm.ts seam (Anthropic SDK) — a single summarization pass, no diversity pair.
+# decisions_distill_model: claude-opus-4-8
+# decisions_distill_effort: high

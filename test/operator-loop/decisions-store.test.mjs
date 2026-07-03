@@ -17,7 +17,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DECISIONS_STORE_REL,
+  DECISIONS_HARD_LINE_CAP,
   appendDecision,
+  appendDecisionsDeduped,
+  decisionDedupeKey,
   appendOutcome,
   buildDecisionRecord,
   foldDecisionLines,
@@ -252,4 +255,145 @@ test("foldDecisionLines is pure over a line array (blanks ignored)", () => {
   const { decisions, warnings } = foldDecisionLines([line, "", "  "]);
   assert.equal(decisions.length, 1);
   assert.equal(warnings.length, 0);
+});
+
+// ── AIO-192: additive fields (contextTag/source) + deduped batch writer ──────────────────────────
+
+test("forward-compat: an old v1 create line without contextTag/source folds cleanly with both null", () => {
+  const root = ws();
+  try {
+    // baseDecision() has no contextTag/source — exactly an AIO-170-era line.
+    writeRaw(root, [JSON.stringify({ v: 1, op: "create", decision: baseDecision({ id: "old" }) })]);
+    const { decisions, warnings } = readDecisions(root);
+    assert.equal(warnings.length, 0);
+    assert.equal(decisions.length, 1);
+    assert.equal(decisions[0].contextTag, null);
+    assert.equal(decisions[0].source, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildDecisionRecord carries contextTag/source; non-string → null", () => {
+  const a = buildDecisionRecord({
+    kind: "k",
+    question: "q",
+    contextTag: "aios",
+    source: "backfill",
+  });
+  assert.equal(a.contextTag, "aios");
+  assert.equal(a.source, "backfill");
+  const b = buildDecisionRecord({ kind: "k", question: "q", contextTag: 42, source: {} });
+  assert.equal(b.contextTag, null);
+  assert.equal(b.source, null);
+});
+
+test("appendDecisionsDeduped: dedups within a batch and against existing lines", () => {
+  const root = ws();
+  try {
+    const inputs = [
+      { kind: "ask-user-question", question: "Deploy now?", context: { sessionId: "s1" } },
+      { kind: "ask-user-question", question: "Deploy now?", context: { sessionId: "s1" } }, // dup in-batch
+      { kind: "ask-user-question", question: "Deploy now?", context: { sessionId: "s2" } }, // diff session
+    ];
+    const r1 = appendDecisionsDeduped(root, inputs);
+    assert.deepEqual(r1, { appended: 2, skipped: 1, capped: 0 });
+    // Re-running the same batch appends nothing (all keys now exist).
+    const r2 = appendDecisionsDeduped(root, inputs);
+    assert.deepEqual(r2, { appended: 0, skipped: 3, capped: 0 });
+    assert.equal(readDecisions(root).decisions.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("appendDecisionsDeduped: a pre-existing hook-style create line suppresses an equivalent backfill input", () => {
+  const root = ws();
+  try {
+    // A hook-written create line (no contextTag/source) for sess-x / "Same question?".
+    const hookLine = JSON.stringify({
+      v: 1,
+      op: "create",
+      decision: baseDecision({
+        id: "hook-1",
+        question: "Same question?",
+        context: { sessionId: "sess-x", project: null, transcriptPath: null, cwd: null },
+      }),
+    });
+    writeRaw(root, [hookLine]);
+    // A backfill input for the SAME session + question must dedupe against the hook line.
+    const res = appendDecisionsDeduped(root, [
+      {
+        kind: "ask-user-question",
+        question: "Same question?",
+        context: { sessionId: "sess-x" },
+        source: "backfill",
+      },
+    ]);
+    assert.deepEqual(
+      res,
+      { appended: 0, skipped: 1, capped: 0 },
+      "cross-source dedupe under the shared key"
+    );
+    assert.equal(readDecisions(root).decisions.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("decisionDedupeKey matches the hook key shape (sessionId|sha256(question))", () => {
+  const rec = buildDecisionRecord({
+    kind: "k",
+    question: "  Which   region? ",
+    context: { sessionId: "s9" },
+  });
+  const key = decisionDedupeKey(rec);
+  assert.match(key, /^s9\|[0-9a-f]{64}$/);
+});
+
+// Bugbot r1 (Medium): the batch writer must honor the hook's HARD_LINE_CAP — a backfill that
+// pushed the store past it would silently disable live capture (the hook skips when over cap).
+test("appendDecisionsDeduped: refuses inputs once the store is at DECISIONS_HARD_LINE_CAP", () => {
+  const root = ws();
+  try {
+    // Seed the store to one line UNDER the cap (physical non-blank lines are what the cap counts).
+    writeRaw(
+      root,
+      Array.from({ length: DECISIONS_HARD_LINE_CAP - 1 }, (_, i) => `{"pad":${i}}`)
+    );
+    const res = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Fits under the cap?", context: { sessionId: "c1" } },
+      { kind: "ask-user-question", question: "Over the cap?", context: { sessionId: "c2" } },
+      { kind: "ask-user-question", question: "Also over?", context: { sessionId: "c3" } },
+    ]);
+    assert.deepEqual(res, { appended: 1, skipped: 0, capped: 2 }, "one slot left → 1 in, 2 capped");
+    // At the cap now: nothing further lands.
+    const res2 = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Definitely over?", context: { sessionId: "c4" } },
+    ]);
+    assert.deepEqual(res2, { appended: 0, skipped: 0, capped: 1 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Review r3 (Bugbot, Medium): the mini-fold must mirror the hook's — an id-less create line is
+// NOT dedupe-bearing (the hook ignores it; it is invalid-create at fold time). If it counted,
+// backfill would skip a record the hook still treats as new.
+test("appendDecisionsDeduped: an id-less create line does NOT suppress an equivalent input", () => {
+  const root = ws();
+  try {
+    const idless = JSON.stringify({
+      v: 1,
+      op: "create",
+      decision: { ...baseDecision({ question: "Orphan?" }), id: undefined },
+    });
+    writeRaw(root, [idless]);
+    const res = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Orphan?", context: { sessionId: "s-h" } },
+    ]);
+    assert.equal(res.appended, 1, "id-less line is invalid — must not claim the dedupe key");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

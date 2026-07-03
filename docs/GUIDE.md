@@ -21,7 +21,7 @@ Where a capability is planned rather than built, it says so.
 - [4. Through the day: asks, mode, and how sessions feed them](#4-through-the-day-asks-mode-and-how-sessions-feed-them)
 - [5. The weekly loop: collect → verify → writeback](#5-the-weekly-loop-collect--verify--writeback)
 - [6. Syncing to the brain: status, push, pull, tiers](#6-syncing-to-the-brain-status-push-pull-tiers)
-- [7. Measuring yourself: analyze, AEM, time](#7-measuring-yourself-analyze-aem-time)
+- [7. Measuring yourself: analyze, agentic maturity, time](#7-measuring-yourself-analyze-agentic-maturity-time)
 - [8. Gating specs before you build](#8-gating-specs-before-you-build)
 - [9. The agent pipeline: relay, build, ship](#9-the-agent-pipeline-relay-build-ship)
 - [10. Client & repo tooling: rails, assess-codebase, learn](#10-client--repo-tooling-rails-assess-codebase-learn)
@@ -396,9 +396,9 @@ Related read/traverse commands (all offline unless noted):
 
 ---
 
-## 7. Measuring yourself: analyze, AEM, time
+## 7. Measuring yourself: analyze, agentic maturity, time
 
-`aios analyze` scores your **agentic-engineering maturity (AEM)** from your local session logs across
+`aios analyze` scores your **agentic maturity (AM)** from your local session logs across
 Claude, Codex, and Cursor — plus an *Attention* card that measures your working rhythm, and provider
 spend. It's offline; raw sessions never leave the machine (`--push` shares only the scores).
 
@@ -430,7 +430,7 @@ You're at Spine L5 — Agentic Orchestration — multiple agents, your own evals
   sessions) so you can tell deep work from frantic orchestration. Both feed `aios loop daily`.
 - **Flags:** `--since 7d|billing`, `--tool claude|codex|cursor`, `--report` (step-by-step plan for
   the weakest axis), `--json`, `--push` (share scores + Cursor billing), `--full`.
-- **`aios learn`** prescribes your next AEM patterns from `MATURITY.md` (offline).
+- **`aios learn`** prescribes your next AM patterns from `MATURITY.md` (offline).
 
 **Time tracking** derives agent-runtime work blocks from your `~/.claude` session logs — no manual
 timer:
@@ -527,7 +527,7 @@ child) is documented there too.
 These score and harden *any* repo for agent work — built for standing up a fresh client repo without
 hand-auditing a thousand permission prompts.
 
-**`aios assess-codebase [path]`** scores a repo's agent-readiness (AEM) offline and read-only:
+**`aios assess-codebase [path]`** scores a repo's agent-readiness (AM) offline and read-only:
 
 ```text
 $ aios assess-codebase .
@@ -635,7 +635,7 @@ Every current subcommand, one line each. Offline = no brain/network needed.
 - `aios loop telemetry` — six V1 exit-criteria metrics.
 
 **Measure (offline)**
-- `aios analyze` — AEM + Attention + spend.
+- `aios analyze` — AM + Attention + spend.
 - `aios learn` — next-pattern prescription.
 - `aios time capture/report/reconcile` — agent-runtime time.
 

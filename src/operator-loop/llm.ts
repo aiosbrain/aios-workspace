@@ -29,6 +29,15 @@ export interface CompletionRequest {
  */
 export type CompletionFn = (req: CompletionRequest) => Promise<unknown>;
 
+/** Per-caller model/effort/timeout binding for a `CompletionFn`. `effort` is passed to the
+ *  Messages API as `output_config.effort` (Opus 4.8 contract); `temperature`/`top_p`/`top_k`/
+ *  `budget_tokens` are deliberately never sent (they 400 on 4.8). */
+export interface CompletionOptions {
+  model?: string;
+  effort?: string;
+  timeoutMs?: number;
+}
+
 /** True when a remote LLM call could be made (the egress key is present). */
 export function hasAnthropicKey(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(env.ANTHROPIC_API_KEY && String(env.ANTHROPIC_API_KEY).trim());
@@ -46,28 +55,56 @@ function getClient(): Anthropic {
 }
 
 /**
- * Default `CompletionFn`: one Anthropic Messages call with a single forced tool, so the model's
- * `tool_use.input` IS the validated structured object (no fragile free-text JSON parsing).
+ * The single forced-tool Messages call. Exported so the model/effort threading is unit-testable
+ * with a fake `client` (no network): the caller asserts the request carried the resolved `model`
+ * and `output_config.effort` and none of the banned sampling params. Returns the `tool_use.input`
+ * — the validated structured object (no fragile free-text JSON parsing).
  */
-export const anthropicCompletion: CompletionFn = async (req) => {
+export async function runCompletion(
+  client: Anthropic,
+  req: CompletionRequest,
+  opts: CompletionOptions = {}
+): Promise<unknown> {
   const schema = req.schema ?? { type: "object" };
-  const msg = await getClient().messages.create({
-    model: DRAFTER_MODEL,
+  const body: Record<string, unknown> = {
+    model: opts.model ?? DRAFTER_MODEL,
     max_tokens: req.maxTokens ?? 8000,
     system: req.system,
     messages: [{ role: "user", content: req.user }],
     tools: [
       {
         name: "emit",
-        description: "Emit the structured closeout draft.",
-        input_schema: schema as Anthropic.Tool.InputSchema,
+        description: "Emit the structured draft.",
+        input_schema: schema,
       },
     ],
     tool_choice: { type: "tool", name: "emit" },
-  });
+  };
+  // Reasoning effort rides in output_config on Opus 4.8 — only sent when set.
+  if (opts.effort) body.output_config = { effort: opts.effort };
+  const reqOpts = opts.timeoutMs ? { timeout: opts.timeoutMs } : undefined;
+  const msg = await client.messages.create(
+    body as unknown as Anthropic.MessageCreateParamsNonStreaming,
+    reqOpts
+  );
   const block = msg.content.find((b) => b.type === "tool_use");
   if (!block || block.type !== "tool_use") {
     throw new Error("drafter: model returned no structured tool_use block");
   }
   return block.input;
-};
+}
+
+/**
+ * Build a `CompletionFn` bound to a resolved model / effort / timeout (e.g. `loop-models.mjs`'s
+ * `decisions_distill` step). Constructing the client requires the egress key + explicit `--remote`
+ * consent at the CLI; this stays the ONLY module that imports the SDK.
+ */
+export function makeAnthropicCompletion(opts: CompletionOptions = {}): CompletionFn {
+  return (req) => runCompletion(getClient(), req, opts);
+}
+
+/**
+ * Default `CompletionFn`: the forced-tool Messages call at the default drafter model. Used by the
+ * weekly closeout drafter.
+ */
+export const anthropicCompletion: CompletionFn = (req) => runCompletion(getClient(), req);
