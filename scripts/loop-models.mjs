@@ -58,7 +58,15 @@ const DIVERSITY_PAIRS = [
 // be Claude-family (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would be passed
 // straight to a Claude runner and fail obscurely. The reviewer steps run on Cursor and are
 // unconstrained here.
-const CLAUDE_RUNNER_STEPS = ["plan", "build", "fix", "fix_escalated", "consolidate", "spec_eval", "spec_fix"];
+const CLAUDE_RUNNER_STEPS = [
+  "plan",
+  "build",
+  "fix",
+  "fix_escalated",
+  "consolidate",
+  "spec_eval",
+  "spec_fix",
+];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const STEP_SET = new Set(STEPS);
