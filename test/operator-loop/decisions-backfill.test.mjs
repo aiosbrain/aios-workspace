@@ -6,7 +6,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -412,6 +420,54 @@ test("backfill --dry-run simulates the store line cap (would-append matches a li
     const live = JSON.parse(run(WORK, ["backfill", "--all", "--home", HOME, "--json"]).out);
     assert.equal(live.appended, dry.appended, "live run matches the dry-run prediction");
     assert.equal(live.cappedStore, dry.cappedStore);
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+  }
+});
+
+// Review r3 (Bugbot, Medium): a current-repo record from a transcript whose PROJECT-DIR SLUG
+// encodes a different (possibly protected) origin must not persist that transcript path.
+test("backfill nulls transcriptPath when the transcript dir slug is not the current repo's", () => {
+  const { HOME, WORK } = build();
+  try {
+    const workReal = realpathSync(WORK);
+    const workSlug = "-" + workReal.split(path.sep).filter(Boolean).join("-");
+    // A mixed session that STARTED in a client repo (client-slugged dir) but contains a
+    // current-repo decision: the decision lands, its transcriptPath must not.
+    const clientSluggedDir = path.join(HOME, ".claude", "projects", "-secret-client-anchor");
+    mkdirSync(clientSluggedDir, { recursive: true });
+    writeFileSync(
+      path.join(clientSluggedDir, "mix.jsonl"),
+      ask("mixslug", "2026-06-07T10:00:00Z", WORK, "ms-a", "From a foreign slug?", "Yes")
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n"
+    );
+    // A session properly slugged for the current repo keeps its transcriptPath.
+    const ownSlugDir = path.join(HOME, ".claude", "projects", workSlug);
+    mkdirSync(ownSlugDir, { recursive: true });
+    writeFileSync(
+      path.join(ownSlugDir, "own.jsonl"),
+      ask("ownslug", "2026-06-07T11:00:00Z", WORK, "os-a", "From my own slug?", "Yes")
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n"
+    );
+    const r = JSON.parse(run(WORK, ["backfill", "--home", HOME, "--json"]).out);
+    assert.equal(r.appended, 2);
+    const store = readFileSync(path.join(WORK, STORE_REL), "utf8");
+    const byQ = Object.fromEntries(
+      store
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l).decision)
+        .map((d) => [d.question, d])
+    );
+    assert.equal(byQ["From a foreign slug?"].context.transcriptPath, null, "foreign slug → null");
+    assert.ok(!store.includes("secret-client-anchor"), "the foreign slug never enters the store");
+    assert.match(
+      byQ["From my own slug?"].context.transcriptPath ?? "",
+      /own\.jsonl$/,
+      "own-slug transcript path is kept"
+    );
   } finally {
     rmSync(HOME, { recursive: true, force: true });
   }

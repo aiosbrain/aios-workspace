@@ -3818,6 +3818,9 @@ async function cmdDecisions(repo, cfg, args) {
     // read as "unknown". In production ($HOME has no symlink) this is a no-op.
     const homeReal = safeReal(home) ?? home;
     const currentTag = contextTagFor(repoReal, homeReal);
+    // Claude project-dir slug for the current repo: "/" → "-" (e.g. "-Users-x-Projects-aios-…").
+    // Used to decide whether a transcript file's own dir slug encodes THIS repo (§isCurrent).
+    const repoSlug = "-" + repoReal.split(path.sep).filter(Boolean).join("-");
     // The protected-root rule applies to the CURRENT repo too, not just foreign `--all` roots
     // (review r1): a backfill run from a repo under Projects/clients/… would otherwise ingest
     // client content — with full raw context — into that repo's store. Client/engagement/personal
@@ -3881,12 +3884,18 @@ async function cmdDecisions(repo, cfg, args) {
           cwdReal && (cwdReal === repoReal || cwdReal.startsWith(repoReal + path.sep));
 
         if (isCurrent) {
+          // The transcript's project-dir name is a slug of the session's ORIGINAL cwd. A record
+          // classified current-repo by its own cwd can still live in a transcript whose dir slug
+          // encodes a protected path (mixed session that started elsewhere) — keep transcriptPath
+          // only when the slug encodes the current repo itself, else null it (review r3, Bugbot).
+          const fileSlug = path.basename(path.dirname(file));
+          const safeTranscript = fileSlug === repoSlug ? file : null;
           accepted.push({
             ...d,
             context: {
               sessionId: d.context?.sessionId ?? null,
               project: path.basename(cwdReal),
-              transcriptPath: file,
+              transcriptPath: safeTranscript,
               cwd: cwdRaw,
             },
             contextTag: currentTag,

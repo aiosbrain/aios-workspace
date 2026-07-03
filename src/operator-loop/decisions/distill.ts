@@ -62,11 +62,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 // quote a real path — `/Users/<name>/…`, `~/Projects/<client>/…`, a Windows `C:\Users\…` — which
 // leaks a username or a client/engagement dir name. We redact these deterministically BEFORE the
 // text crosses the LLM boundary and re-scan the rendered draft to catch any echo. Over-redaction
-// (e.g. a stray `/api/v1` route) is acceptable in an admin→review DRAFT; under-redaction is not.
+// (e.g. a stray `/api/v1` route, or trailing same-line prose after a path) is acceptable in an
+// admin→review DRAFT; under-redaction is not. Matches therefore run through SPACES and stop only
+// at hard delimiters (newline, quotes, backticks, closing brackets): a whitespace-bounded match
+// would split `…/clients/Acme Secret/spec.md` and leak the sensitive tail (review r3).
 const PATH_PATTERNS: readonly RegExp[] = [
-  /~\/[^\s"'`)\]}]+/g, // ~/foo/bar home-relative
-  /\b[A-Za-z]:\\[^\s"'`)\]}]+/g, // C:\Users\... Windows
-  /\/(?:[A-Za-z0-9._@+-]+\/){1,}[A-Za-z0-9._@+-]+/g, // /Users/x/... any 2+-segment POSIX path
+  /~\/[^\n"'`)\]}]+/g, // ~/foo/bar home-relative
+  /\b[A-Za-z]:\\[^\n"'`)\]}]+/g, // C:\Users\... Windows
+  /\/(?:[^/\n"'`)\]}]+\/)+[^\n"'`)\]}]*/g, // /Users/x/... any 2+-segment POSIX path
 ];
 export const PATH_PLACEHOLDER = "[redacted-path]";
 

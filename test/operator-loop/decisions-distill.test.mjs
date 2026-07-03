@@ -143,17 +143,38 @@ test("projectForDistill strips every path-bearing field", () => {
   }
 });
 
-test("scrubPaths redacts absolute / home / Windows paths, leaves ordinary prose", () => {
+test("scrubPaths redacts absolute / home / Windows paths, leaves pathless prose", () => {
   assert.equal(scrubPaths(null), null);
-  assert.equal(
-    scrubPaths("edit /Users/alice/Projects/acme/spec.md now"),
-    "edit [redacted-path] now"
-  );
+  // A path match runs THROUGH spaces to the next hard delimiter (newline/quote/bracket): trailing
+  // same-line prose after a path is deliberately over-redacted — a space-bounded match would split
+  // a "Acme Secret"-style dir and leak the tail (review r3). Under-redaction is the failure mode.
+  assert.equal(scrubPaths("edit /Users/alice/Projects/acme/spec.md now"), "edit [redacted-path]");
   assert.equal(scrubPaths("see ~/Projects/client-x/notes.md"), "see [redacted-path]");
   assert.equal(scrubPaths("open C:\\Users\\bob\\secret.txt"), "open [redacted-path]");
   assert.equal(scrubPaths("no paths here, just words"), "no paths here, just words");
   assert.ok(hasResidualPath("a /Users/x/y path"));
   assert.ok(!hasResidualPath("scrubbed [redacted-path] fine"));
+});
+
+// Review r3 (GPT, High): a path with SPACES in a segment must be redacted in full — the previous
+// whitespace-bounded pattern left "[redacted-path] Secret/spec.md" and the residual scan missed it.
+test("scrubPaths fully redacts paths whose segments contain spaces (no sensitive tail)", () => {
+  const spaced = "open /Users/alice/Projects/clients/Acme Secret/spec.md";
+  assert.equal(scrubPaths(spaced), "open [redacted-path]");
+  assert.ok(!/Secret/.test(scrubPaths(spaced)), "no tail of the client dir survives");
+  // A path ENDING in a space-containing dir (no trailing file) is covered too.
+  assert.ok(!/Secret/.test(scrubPaths("moved to /Users/x/clients/Acme Secret")));
+  // Hard delimiters bound the match: quoted paths do not eat the prose after the closing quote.
+  assert.equal(
+    scrubPaths('see "/Users/x/clients/Acme Secret/f.md" today'),
+    'see "[redacted-path]" today'
+  );
+  // Newline bounds the match: the next line's prose survives.
+  assert.equal(
+    scrubPaths("path: /Users/x/clients/Acme Secret\nnext line stays"),
+    "path: [redacted-path]\nnext line stays"
+  );
+  assert.ok(hasResidualPath("left over: /Users/x/clients/Acme Secret/spec.md"));
 });
 
 test("projectForDistill scrubs paths embedded in the decision PROSE before egress", () => {

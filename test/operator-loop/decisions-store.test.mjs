@@ -376,3 +376,24 @@ test("appendDecisionsDeduped: refuses inputs once the store is at DECISIONS_HARD
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Review r3 (Bugbot, Medium): the mini-fold must mirror the hook's — an id-less create line is
+// NOT dedupe-bearing (the hook ignores it; it is invalid-create at fold time). If it counted,
+// backfill would skip a record the hook still treats as new.
+test("appendDecisionsDeduped: an id-less create line does NOT suppress an equivalent input", () => {
+  const root = ws();
+  try {
+    const idless = JSON.stringify({
+      v: 1,
+      op: "create",
+      decision: { ...baseDecision({ question: "Orphan?" }), id: undefined },
+    });
+    writeRaw(root, [idless]);
+    const res = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Orphan?", context: { sessionId: "s-h" } },
+    ]);
+    assert.equal(res.appended, 1, "id-less line is invalid — must not claim the dedupe key");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

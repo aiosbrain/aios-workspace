@@ -469,6 +469,10 @@ function existingDecisionKeys(root: string): Set<string> {
     if (!isRecord(o) || o.v !== DECISIONS_SCHEMA_VERSION || o.op !== "create") continue;
     if (!isRecord(o.decision)) continue;
     const d = o.decision;
+    // Mirror the hook's existingKeys exactly (review r3): an id-less create line is invalid at
+    // fold time and the hook does NOT index it — if we counted its key here, backfill would skip
+    // a record the hook still treats as new, and the two writers' dedupe views would diverge.
+    if (typeof d.id !== "string" || !d.id) continue;
     const question = normalizeSingleLine(d.question, QUESTION_MAX);
     const ctx = isRecord(d.context) ? d.context : {};
     const sid = asStr(ctx.sessionId) ?? "";
