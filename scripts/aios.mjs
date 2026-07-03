@@ -27,10 +27,12 @@ import {
   mkdirSync,
   readdirSync,
   statSync,
+  realpathSync,
   cpSync,
   renameSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -67,6 +69,10 @@ import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
 import { cmdShip } from "./ship.mjs";
 import { cmdRoadmapRun } from "./roadmap-run.mjs";
 import { cmdRails } from "./rails.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
+import { discoverClaude } from "./analyze/sources.mjs";
+import { parseJsonl } from "./analyze/parse-claude.mjs";
+import { extractDecisions, contextTagFor } from "./decision-extract.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3743,11 +3749,303 @@ async function cmdDecisions(repo, cfg, args) {
     return;
   }
 
+  // ── backfill (AIO-192): recover historical steering decisions from ~/.claude transcripts ──
+  // Default: only the CURRENT repo (cwd realpath contained in `repo`), full context (mirrors the
+  // hook). --all: also ingest ALLOWLISTED foreign repos with their ORIGIN REDACTED (no paths / no
+  // basenames — contextTag + sessionId only). Client / unknown / non-existent-cwd roots (incl. the
+  // NDA anchor) are skipped + counted, never ingested. All records are written to THIS repo's
+  // store via the lock-held deduped batch writer.
+  if (sub === "backfill") {
+    const all = flags.has("--all");
+    const dryRun = flags.has("--dry-run");
+    const home = argVal("--home") || os.homedir();
+    const sinceArg = argVal("--since");
+    let sinceMs = null;
+    if (sinceArg) {
+      sinceMs = Date.parse(sinceArg);
+      if (!Number.isFinite(sinceMs)) die(`--since is not a valid date: ${sinceArg}`);
+    }
+    const includeArg = argVal("--include");
+    const include = includeArg
+      ? includeArg
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const SAFE_ALLOWLIST = new Set([
+      "aios",
+      "hermes",
+      "products",
+      "sites",
+      "labs",
+      "games",
+      "workspace",
+      ...include,
+    ]);
+
+    const safeReal = (p) => {
+      if (!p) return null;
+      try {
+        return realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const firstCwd = (records) => {
+      for (const r of records) {
+        if (r && typeof r === "object" && typeof r.cwd === "string" && r.cwd.trim()) return r.cwd;
+      }
+      return null;
+    };
+    const sinceOk = (d) =>
+      sinceMs == null || !d.createdAt || Date.parse(d.createdAt) >= sinceMs;
+
+    const repoReal = safeReal(repo);
+    // Canonicalize the context-tag base to the SAME realpath domain as the cwds we resolve below
+    // (macOS /var → /private/var, worktree symlinks, etc.) — otherwise every foreign root would
+    // read as "unknown". In production ($HOME has no symlink) this is a no-op.
+    const homeReal = safeReal(home) ?? home;
+    const currentTag = contextTagFor(repoReal, homeReal);
+
+    const accepted = [];
+    let scannedFiles = 0;
+    let unpaired = 0;
+    let skippedNonexistentCwd = 0;
+    let skippedSensitive = 0;
+    const byContext = new Map();
+
+    for (const file of discoverClaude(home)) {
+      let text;
+      try {
+        text = readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+      scannedFiles += 1;
+      const records = parseJsonl(text);
+      const { decisions, stats } = extractDecisions(records);
+      if (!decisions.length) continue;
+      const sessionDecisions = decisions.filter(sinceOk);
+      if (!sessionDecisions.length) continue;
+
+      const cwdRaw = firstCwd(records);
+      let cwdReal = null;
+      let cwdExists = false;
+      if (cwdRaw) {
+        try {
+          cwdReal = realpathSync(cwdRaw);
+          cwdExists = true;
+        } catch {
+          cwdReal = path.resolve(cwdRaw);
+          cwdExists = false;
+        }
+      }
+      const isCurrent =
+        cwdReal && (cwdReal === repoReal || cwdReal.startsWith(repoReal + path.sep));
+
+      if (isCurrent) {
+        const project = path.basename(cwdReal);
+        for (const d of sessionDecisions) {
+          accepted.push({
+            ...d,
+            context: {
+              sessionId: d.context?.sessionId ?? null,
+              project,
+              transcriptPath: file,
+              cwd: cwdRaw,
+            },
+            contextTag: currentTag,
+          });
+        }
+        byContext.set(currentTag, (byContext.get(currentTag) ?? 0) + sessionDecisions.length);
+        unpaired += stats.unpaired;
+        continue;
+      }
+
+      // Foreign origin — only under --all, and only for allowlisted roots.
+      if (!all) continue; // default mode ignores other repos entirely (not "sensitive")
+      if (!cwdExists) {
+        skippedNonexistentCwd += sessionDecisions.length;
+        continue;
+      }
+      const tag = contextTagFor(cwdReal, homeReal);
+      if (!SAFE_ALLOWLIST.has(tag)) {
+        // clients / unknown / the NDA anchor / any unrecognized root — never ingested, and the
+        // report NEVER names them (only this aggregate count leaves this branch).
+        skippedSensitive += sessionDecisions.length;
+        continue;
+      }
+      // Allowlisted foreign: REDACT the origin — no absolute paths, no basenames enter the store.
+      for (const d of sessionDecisions) {
+        accepted.push({
+          ...d,
+          context: {
+            sessionId: d.context?.sessionId ?? null,
+            project: null,
+            transcriptPath: null,
+            cwd: null,
+          },
+          contextTag: tag,
+        });
+      }
+      byContext.set(tag, (byContext.get(tag) ?? 0) + sessionDecisions.length);
+      unpaired += stats.unpaired;
+    }
+
+    // Dedupe preview (report) via the store's exact key; the real write recomputes under the lock.
+    const existing = new Set(loop.readDecisions(repo).decisions.map((d) => loop.decisionDedupeKey(d)));
+    const seen = new Set(existing);
+    let wouldAppend = 0;
+    let wouldDup = 0;
+    for (const inp of accepted) {
+      const k = loop.decisionDedupeKey(loop.buildDecisionRecord(inp));
+      if (seen.has(k)) {
+        wouldDup += 1;
+        continue;
+      }
+      seen.add(k);
+      wouldAppend += 1;
+    }
+
+    let appended = wouldAppend;
+    let skippedDup = wouldDup;
+    if (!dryRun) {
+      const res = loop.appendDecisionsDeduped(repo, accepted);
+      appended = res.appended;
+      skippedDup = res.skipped;
+    }
+
+    const report = {
+      dryRun,
+      all,
+      scannedFiles,
+      recoverable: accepted.length,
+      appended,
+      skippedDuplicate: skippedDup,
+      skippedNonexistentCwd,
+      skippedSensitive,
+      unpaired,
+      byContext: Object.fromEntries([...byContext.entries()].sort()),
+    };
+    if (asJson) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(
+      c.blue("aios decisions backfill") + (dryRun ? c.dim("  (dry-run)") : "") + (all ? c.dim("  --all") : "")
+    );
+    console.log(`  scanned files:     ${scannedFiles}`);
+    console.log(`  recoverable:       ${accepted.length}`);
+    console.log(`  ${dryRun ? "would append" : "appended"}:      ${appended}`);
+    console.log(`  skipped (dup):     ${skippedDup}`);
+    if (unpaired) console.log(c.dim(`  unpaired:          ${unpaired}`));
+    if (byContext.size) {
+      console.log("  by context:");
+      for (const [tag, n] of [...byContext.entries()].sort())
+        console.log(`    ${tag.padEnd(12)} ${n}`);
+    }
+    if (skippedNonexistentCwd || skippedSensitive) {
+      console.log("  skipped:");
+      if (skippedNonexistentCwd)
+        console.log(c.dim(`    non-existent cwd:   ${skippedNonexistentCwd}`));
+      if (skippedSensitive)
+        console.log(c.dim(`    sensitive/unknown:  ${skippedSensitive}`));
+    }
+    return;
+  }
+
+  // ── distill (AIO-192): draft reusable steering mental models for HUMAN REVIEW ──
+  // Egress-gated: --remote is explicit consent to send ADMIN-tier steering content to Anthropic;
+  // a present ANTHROPIC_API_KEY is not consent by itself. Fail-closed; the draft is written ONCE,
+  // only after distill's structured output fully validates.
+  if (sub === "distill") {
+    const remote = flags.has("--remote");
+    const contextFilter = argVal("--context");
+    const minSupportArg = argVal("--min-support");
+    const minSupport = minSupportArg != null ? Number(minSupportArg) : 3;
+    if (!Number.isInteger(minSupport) || minSupport < 1)
+      die(`--min-support must be a positive integer (got ${minSupportArg})`);
+
+    const DEFAULT_OUT = path.join(".aios", "loop", "decisions", "decision-principles.draft.md");
+    const outArg = argVal("--out");
+    const outRel = outArg || DEFAULT_OUT;
+    const outAbs = path.isAbsolute(outRel) ? outRel : path.join(repo, outRel);
+
+    if (!remote) {
+      die(
+        "aios decisions distill sends admin-tier steering content to a third-party model (Anthropic).\n" +
+          "  Re-run with --remote to consent. (Having ANTHROPIC_API_KEY set is not consent by itself.)"
+      );
+    }
+
+    // Test-only completion seam: a local JSON file stands in for the SDK (no network), still gated
+    // behind --remote. Mirrors the --now / --projects-dir test-override convention.
+    const stubFile = process.env.AIOS_DISTILL_STUB_FILE || null;
+    let complete;
+    if (stubFile) {
+      const canned = JSON.parse(readFileSync(stubFile, "utf8"));
+      complete = async () => canned;
+    } else {
+      if (!loop.hasAnthropicKey())
+        die("--remote requires ANTHROPIC_API_KEY — set it, or run offline (no distill).");
+      const models = resolveLoopModels({ repo });
+      const step = models.decisions_distill;
+      complete = loop.makeAnthropicCompletion({
+        model: step.model,
+        effort: step.effort,
+        timeoutMs: step.timeoutMs,
+      });
+      if (!asJson) {
+        console.error(c.yellow("⚠ aios decisions distill — third-party egress"));
+        console.error(
+          c.dim("  admin-tier steering decisions are sent to Anthropic for summarization.")
+        );
+      }
+    }
+
+    // Notice when the draft would land OUTSIDE the gitignored admin store (a tracked file).
+    const insideStore = !path.relative(path.join(repo, ".aios"), outAbs).startsWith("..");
+    if (!insideStore && !asJson) {
+      console.error(
+        c.yellow(`  note: --out is OUTSIDE the ignored .aios/ store (${outRel}) — the draft will`)
+      );
+      console.error(c.yellow("        be a TRACKED file that leak-gate scans at commit time."));
+    }
+
+    const { decisions } = loop.readDecisions(repo);
+    let result;
+    try {
+      result = await loop.distill({ records: decisions, minSupport, contextFilter, complete });
+    } catch (e) {
+      die(`distill failed — no draft written: ${e.message}`);
+    }
+    mkdirSync(path.dirname(outAbs), { recursive: true });
+    writeFileSync(outAbs, result.markdown + "\n");
+    if (asJson) {
+      console.log(
+        JSON.stringify(
+          { out: outAbs, principles: result.principles.length, used: result.used },
+          null,
+          2
+        )
+      );
+      return;
+    }
+    console.log(
+      c.blue("aios decisions distill") +
+        c.dim(`  ${result.principles.length} principle(s) → ${outRel}`)
+    );
+    console.log(c.dim("  DRAFT — for human review; promote accepted principles by hand."));
+    return;
+  }
+
   die(
     "usage: aios decisions list [--kind <k>] [--since <date>] [--json]\n" +
       "       aios decisions show <id> [--json]\n" +
       "       aios decisions outcome <id> <text...> [--json]\n" +
-      "       aios decisions export [--json]"
+      "       aios decisions export [--json]\n" +
+      "       aios decisions backfill [--all] [--home <dir>] [--since <date>] [--include <tag,…>] [--dry-run] [--json]\n" +
+      "       aios decisions distill --remote [--context <tag>] [--min-support <n>] [--out <file>] [--json]"
   );
 }
 
@@ -3868,6 +4166,12 @@ usage:
   aios decisions show <id> [--json]     full record: options, choice, notes, outcome
   aios decisions outcome <id> <text>    annotate a decision's outcome (append; decisions never mutate)
   aios decisions export [--json]        dump all records as a JSON array (the training-corpus read path)
+  aios decisions backfill [--all]       recover historical decisions from ~/.claude transcripts
+    [--home d] [--since date]           --all ingests allowlisted repos (foreign origin redacted);
+    [--include tag,…] [--dry-run]       client/unknown roots skipped + counted, never ingested
+  aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW
+    [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress
+    [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json

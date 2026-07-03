@@ -34,6 +34,11 @@ export const DEFAULT_MODELS = {
   // model-family independence, is what makes it trustworthy).
   spec_eval: { model: "claude-opus-4-8", effort: "xhigh" },
   spec_fix: { model: "claude-opus-4-8", effort: "high" },
+  // Decision-corpus distillation (EE4 / AIO-192): a single summarization pass over the local
+  // steering-decision corpus. Like spec_eval it is NOT a producer/reviewer loop — no diversity
+  // pair — so it stays out of DIVERSITY_PAIRS; it runs through llm.ts (Anthropic SDK) so it IS a
+  // Claude-runner step.
+  decisions_distill: { model: "claude-opus-4-8", effort: "high" },
 };
 
 export const STEPS = Object.keys(DEFAULT_MODELS);
@@ -71,6 +76,8 @@ const CLAUDE_RUNNER_STEPS = [
   "recon",
   "safety_review",
   "digest",
+  // Runs through the operator-loop llm.ts seam (Anthropic Messages API).
+  "decisions_distill",
 ];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
