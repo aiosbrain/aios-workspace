@@ -69,8 +69,11 @@ function plan(sessionId, ts, cwd, id, title) {
 
 function build() {
   const HOME = mkdtempSync(path.join(tmpdir(), "bf-home-"));
-  const WORK = mkdtempSync(path.join(tmpdir(), "bf-work-"));
   const P = (...seg) => path.join(HOME, "Projects", ...seg);
+  // The work repo lives under an allowlisted root: the current-repo protected-root check (review
+  // r1 fix-round) refuses backfill from a repo whose contextTag is forbidden/unrecognized.
+  const WORK = P("aios", "workbench");
+  mkdirSync(WORK, { recursive: true });
   const labs = P("labs", "widget");
   const prod = P("products", "vibrana");
   const client = P("clients", "acme-secret-engagement");
@@ -271,8 +274,9 @@ test("backfill default (no --all): foreign repos are NOT ingested", () => {
 // later client-cwd decision into the store (the Round-3 High finding).
 function mixed(order) {
   const HOME = mkdtempSync(path.join(tmpdir(), "bf-mix-home-"));
-  const WORK = mkdtempSync(path.join(tmpdir(), "bf-mix-work-"));
   const P = (...seg) => path.join(HOME, "Projects", ...seg);
+  const WORK = P("aios", "workbench");
+  mkdirSync(WORK, { recursive: true });
   const labs = P("labs", "widget");
   const client = P("clients", "acme-secret-engagement");
   for (const d of [labs, client]) mkdirSync(d, { recursive: true });
@@ -346,5 +350,42 @@ test("backfill --since filters by the transcript timestamp", () => {
   } finally {
     rmSync(HOME, { recursive: true, force: true });
     rmSync(WORK, { recursive: true, force: true });
+  }
+});
+
+// Review r1 (GPT, High): the protected-root rule must bind the CURRENT repo too — running
+// backfill FROM a client/NDA repo must refuse, not ingest raw client context into its store.
+test("backfill refuses to run when the current repo is under a protected root (clients/…)", () => {
+  const { HOME, clientPath, clientName } = build();
+  try {
+    const res = run(clientPath, ["backfill", "--home", HOME, "--dry-run"]);
+    assert.notEqual(res.code, 0, "protected current repo → non-zero exit");
+    assert.match(res.err ?? "", /protected or unrecognized root/);
+    assert.ok(!(res.err ?? "").includes(clientName), "refusal message never names the root");
+    assert.ok(!existsSync(path.join(clientPath, STORE_REL)), "nothing written to the client repo");
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
+  }
+});
+
+// Bugbot r1 (Medium): a record with no transcript timestamp must be skipped + counted, never
+// stored with a fabricated "now" createdAt (which would also bypass --since).
+test("backfill skips + counts decision moments whose record has no timestamp", () => {
+  const { HOME, WORK } = build();
+  try {
+    const projDir = path.join(HOME, ".claude", "projects", "nots");
+    mkdirSync(projDir, { recursive: true });
+    const records = ask("nt1", "2026-06-06T10:00:00Z", WORK, "nt-a", "Keep me?", "Yes").map(
+      (r, i) => (i === 0 ? { ...r, timestamp: undefined } : r)
+    );
+    writeFileSync(
+      path.join(projDir, "n.jsonl"),
+      records.map((r) => JSON.stringify(r)).join("\n") + "\n"
+    );
+    const r = JSON.parse(run(WORK, ["backfill", "--home", HOME, "--dry-run", "--json"]).out);
+    assert.equal(r.skippedMissingTimestamp, 1, "the timestampless moment is counted");
+    assert.equal(r.recoverable, 0, "…and not recoverable");
+  } finally {
+    rmSync(HOME, { recursive: true, force: true });
   }
 });

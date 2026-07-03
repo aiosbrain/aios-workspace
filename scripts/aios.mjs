@@ -3818,10 +3818,24 @@ async function cmdDecisions(repo, cfg, args) {
     // read as "unknown". In production ($HOME has no symlink) this is a no-op.
     const homeReal = safeReal(home) ?? home;
     const currentTag = contextTagFor(repoReal, homeReal);
+    // The protected-root rule applies to the CURRENT repo too, not just foreign `--all` roots
+    // (review r1): a backfill run from a repo under Projects/clients/… would otherwise ingest
+    // client content — with full raw context — into that repo's store. Client/engagement/personal
+    // ingestion is permanently out of AIO-192. Unrecognized roots are refused the same way
+    // (opt one in deliberately via --include); the message names no tag/path — the root itself
+    // may be NDA-protected.
+    if (FORBIDDEN_ROOTS.has(currentTag) || !SAFE_ALLOWLIST.has(currentTag)) {
+      die(
+        "backfill: the current repo resolves to a protected or unrecognized root — " +
+          "client/engagement/personal content is never ingested (out of scope; " +
+          "use --include <tag> only for roots that are safe to ingest)"
+      );
+    }
 
     const accepted = [];
     let scannedFiles = 0;
     let unpaired = 0;
+    let missingTimestamp = 0;
     let skippedNonexistentCwd = 0;
     let skippedSensitive = 0;
     const byContext = new Map();
@@ -3836,6 +3850,9 @@ async function cmdDecisions(repo, cfg, args) {
       scannedFiles += 1;
       const records = parseJsonl(text);
       const { decisions, stats } = extractDecisions(records);
+      // Counted before ANY early-continue: a file whose only moments are timestampless must still
+      // surface them in the report (they were dropped, not absent).
+      missingTimestamp += stats.missingTimestamp;
       if (!decisions.length) continue;
       const sessionDecisions = decisions.filter(sinceOk);
       if (!sessionDecisions.length) continue;
@@ -3928,10 +3945,12 @@ async function cmdDecisions(repo, cfg, args) {
 
     let appended = wouldAppend;
     let skippedDup = wouldDup;
+    let cappedStore = 0;
     if (!dryRun) {
       const res = loop.appendDecisionsDeduped(repo, accepted);
       appended = res.appended;
       skippedDup = res.skipped;
+      cappedStore = res.capped;
     }
 
     const report = {
@@ -3943,6 +3962,8 @@ async function cmdDecisions(repo, cfg, args) {
       skippedDuplicate: skippedDup,
       skippedNonexistentCwd,
       skippedSensitive,
+      skippedMissingTimestamp: missingTimestamp,
+      cappedStore,
       unpaired,
       byContext: Object.fromEntries([...byContext.entries()].sort()),
     };
@@ -3965,11 +3986,13 @@ async function cmdDecisions(repo, cfg, args) {
       for (const [tag, n] of [...byContext.entries()].sort())
         console.log(`    ${tag.padEnd(12)} ${n}`);
     }
-    if (skippedNonexistentCwd || skippedSensitive) {
+    if (skippedNonexistentCwd || skippedSensitive || missingTimestamp || cappedStore) {
       console.log("  skipped:");
       if (skippedNonexistentCwd)
         console.log(c.dim(`    non-existent cwd:   ${skippedNonexistentCwd}`));
       if (skippedSensitive) console.log(c.dim(`    sensitive/unknown:  ${skippedSensitive}`));
+      if (missingTimestamp) console.log(c.dim(`    no timestamp:       ${missingTimestamp}`));
+      if (cappedStore) console.log(c.dim(`    store at line cap:  ${cappedStore}`));
     }
     return;
   }
@@ -4024,8 +4047,10 @@ async function cmdDecisions(repo, cfg, args) {
     }
 
     // Notice when the draft would land OUTSIDE the gitignored admin store (a tracked file).
+    // Stderr regardless of --json, same rule as the egress warning above: a machine reading
+    // JSON on stdout must still see that the draft lands in a TRACKED file.
     const insideStore = !path.relative(path.join(repo, ".aios"), outAbs).startsWith("..");
-    if (!insideStore && !asJson) {
+    if (!insideStore) {
       console.error(
         c.yellow(`  note: --out is OUTSIDE the ignored .aios/ store (${outRel}) — the draft will`)
       );

@@ -477,9 +477,29 @@ function existingDecisionKeys(root: string): Set<string> {
   return keys;
 }
 
+/** Mirrors the capture hook's HARD_LINE_CAP (hooks/decision-capture.mjs): past this many physical
+ *  lines the hook treats the store as unmaintained and stops writing. The batch writer honors the
+ *  same ceiling — a backfill that blew past it would silently disable live capture. */
+export const DECISIONS_HARD_LINE_CAP = 20_000;
+
 export interface DedupeBatchResult {
   appended: number;
   skipped: number;
+  /** inputs refused because the store is at DECISIONS_HARD_LINE_CAP (0 when under the cap) */
+  capped: number;
+}
+
+/** Physical non-blank line count of the store file (what the hook's cap counts). */
+function storeLineCount(root: string): number {
+  const abs = storePath(root);
+  if (!existsSync(abs)) return 0;
+  try {
+    return readFileSync(abs, "utf8")
+      .split(/\r?\n/)
+      .filter((l) => l.trim()).length;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -487,14 +507,18 @@ export interface DedupeBatchResult {
  * or earlier in this batch. This is the ONLY safe backfill writer: the existing-key read AND the
  * append happen under the same lock the live capture hook also honors, so a hook capture landing
  * concurrently blocks on the lock and can never produce a duplicate in either interleaving (the
- * racy read-then-`appendDecision` loop it replaces could). Returns per-batch counts.
+ * racy read-then-`appendDecision` loop it replaces could). Honors DECISIONS_HARD_LINE_CAP the same
+ * way the hook does: once the store is at the cap, remaining inputs are refused and counted in
+ * `capped` rather than written. Returns per-batch counts.
  */
 export function appendDecisionsDeduped(root: string, inputs: DecisionInput[]): DedupeBatchResult {
-  if (!inputs.length) return { appended: 0, skipped: 0 };
+  if (!inputs.length) return { appended: 0, skipped: 0, capped: 0 };
   let appended = 0;
   let skipped = 0;
+  let capped = 0;
   withLock(root, () => {
     const seen = existingDecisionKeys(root);
+    let room = Math.max(0, DECISIONS_HARD_LINE_CAP - storeLineCount(root));
     const lines: string[] = [];
     for (const input of inputs) {
       const rec = buildDecisionRecord(input);
@@ -503,13 +527,18 @@ export function appendDecisionsDeduped(root: string, inputs: DecisionInput[]): D
         skipped += 1;
         continue;
       }
+      if (room === 0) {
+        capped += 1;
+        continue;
+      }
       seen.add(key); // suppress a duplicate later in the SAME batch too
       lines.push(createLine(rec));
       appended += 1;
+      room -= 1;
     }
     if (lines.length) appendFileSync(storePath(root), lines.join("\n") + "\n");
   });
-  return { appended, skipped };
+  return { appended, skipped, capped };
 }
 
 /**

@@ -274,6 +274,7 @@ export {
   readDecisions,
   appendDecision,
   appendDecisionsDeduped,
+  DECISIONS_HARD_LINE_CAP,
   decisionDedupeKey,
   appendOutcome,
   type Decision,

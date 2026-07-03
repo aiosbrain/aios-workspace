@@ -306,9 +306,11 @@ const TARGET_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
  * launder a later client-cwd decision into the store.
  *
  * @param {object[]} records  one session's JSONL records, in order
- * @returns {{ decisions: object[], stats: { unpaired: number } }}  DecisionInput[] (each with a
- *   transient `originCwd`) + stats. The explicit stats side-channel is intentional (a Round-1 review
- *   fix) — the CLI report reads stats.unpaired directly; do NOT collapse it to a bare array.
+ * @returns {{ decisions: object[], stats: { unpaired: number, missingTimestamp: number } }}
+ *   DecisionInput[] (each with a transient `originCwd`) + stats. The explicit stats side-channel is
+ *   intentional (a Round-1 review fix) — the CLI report reads the stats directly; do NOT collapse
+ *   it to a bare array. `missingTimestamp` counts decision moments dropped because their record
+ *   carried no transcript `timestamp` (they would otherwise be stored with a fabricated "now").
  */
 export function extractDecisions(records) {
   const list = Array.isArray(records) ? records : [];
@@ -330,6 +332,7 @@ export function extractDecisions(records) {
 
   const decisions = [];
   let unpaired = 0;
+  let missingTimestamp = 0;
   for (const r of list) {
     if (!isObj(r) || r.type !== "assistant") continue;
     const msg = r.message;
@@ -348,11 +351,18 @@ export function extractDecisions(records) {
         b.name === "AskUserQuestion"
           ? askInputs(b.input, response, ctx)
           : [planInput(b.input, response, ctx)];
+      // A record with no transcript `timestamp` has no historical `createdAt`; the store would
+      // stamp it with "now", misrepresenting its origin AND letting it bypass `--since` (Bugbot,
+      // review r1). Skip + count instead — never backdate-by-accident.
+      if (!ctx.createdAt) {
+        missingTimestamp += built.length;
+        continue;
+      }
       for (const d of built) decisions.push(d);
       if (!paired) unpaired += built.length;
     }
   }
-  return { decisions, stats: { unpaired } };
+  return { decisions, stats: { unpaired, missingTimestamp } };
 }
 
 // ── context tagging ─────────────────────────────────────────────────────────────────────────────

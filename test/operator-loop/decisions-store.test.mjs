@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DECISIONS_STORE_REL,
+  DECISIONS_HARD_LINE_CAP,
   appendDecision,
   appendDecisionsDeduped,
   decisionDedupeKey,
@@ -296,10 +297,10 @@ test("appendDecisionsDeduped: dedups within a batch and against existing lines",
       { kind: "ask-user-question", question: "Deploy now?", context: { sessionId: "s2" } }, // diff session
     ];
     const r1 = appendDecisionsDeduped(root, inputs);
-    assert.deepEqual(r1, { appended: 2, skipped: 1 });
+    assert.deepEqual(r1, { appended: 2, skipped: 1, capped: 0 });
     // Re-running the same batch appends nothing (all keys now exist).
     const r2 = appendDecisionsDeduped(root, inputs);
-    assert.deepEqual(r2, { appended: 0, skipped: 3 });
+    assert.deepEqual(r2, { appended: 0, skipped: 3, capped: 0 });
     assert.equal(readDecisions(root).decisions.length, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -329,7 +330,11 @@ test("appendDecisionsDeduped: a pre-existing hook-style create line suppresses a
         source: "backfill",
       },
     ]);
-    assert.deepEqual(res, { appended: 0, skipped: 1 }, "cross-source dedupe under the shared key");
+    assert.deepEqual(
+      res,
+      { appended: 0, skipped: 1, capped: 0 },
+      "cross-source dedupe under the shared key"
+    );
     assert.equal(readDecisions(root).decisions.length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -344,4 +349,30 @@ test("decisionDedupeKey matches the hook key shape (sessionId|sha256(question))"
   });
   const key = decisionDedupeKey(rec);
   assert.match(key, /^s9\|[0-9a-f]{64}$/);
+});
+
+// Bugbot r1 (Medium): the batch writer must honor the hook's HARD_LINE_CAP — a backfill that
+// pushed the store past it would silently disable live capture (the hook skips when over cap).
+test("appendDecisionsDeduped: refuses inputs once the store is at DECISIONS_HARD_LINE_CAP", () => {
+  const root = ws();
+  try {
+    // Seed the store to one line UNDER the cap (physical non-blank lines are what the cap counts).
+    writeRaw(
+      root,
+      Array.from({ length: DECISIONS_HARD_LINE_CAP - 1 }, (_, i) => `{"pad":${i}}`)
+    );
+    const res = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Fits under the cap?", context: { sessionId: "c1" } },
+      { kind: "ask-user-question", question: "Over the cap?", context: { sessionId: "c2" } },
+      { kind: "ask-user-question", question: "Also over?", context: { sessionId: "c3" } },
+    ]);
+    assert.deepEqual(res, { appended: 1, skipped: 0, capped: 2 }, "one slot left → 1 in, 2 capped");
+    // At the cap now: nothing further lands.
+    const res2 = appendDecisionsDeduped(root, [
+      { kind: "ask-user-question", question: "Definitely over?", context: { sessionId: "c4" } },
+    ]);
+    assert.deepEqual(res2, { appended: 0, skipped: 0, capped: 1 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -142,6 +142,17 @@ test("extractDecisions: an unpaired tool_use (no tool_result) → choice null + 
   assert.equal(stats.unpaired, 1);
 });
 
+test("extractDecisions: a record with no timestamp is skipped + counted (never a fabricated now)", () => {
+  const rec = asstRec("s3b", "2026-06-03T09:00:00Z", "/repo", [
+    askUse("tu3b", [{ question: "When was I?", header: "T", options: [{ label: "A" }] }]),
+  ]);
+  delete rec.timestamp;
+  const { decisions, stats } = extractDecisions([rec]);
+  assert.equal(decisions.length, 0, "no createdAt → not extracted");
+  assert.equal(stats.missingTimestamp, 1);
+  assert.equal(stats.unpaired, 0, "a dropped moment is not double-counted as unpaired");
+});
+
 test("extractDecisions: two questions in one call each keep their own answer", () => {
   const records = [
     asstRec("s4", "2026-06-04T09:00:00Z", "/repo", [
