@@ -1130,7 +1130,15 @@ export async function runBuild({ repo, plan, branch, opts }) {
       (p, t, o) => withRetry(callCursorAgent, p, t, o),
       reviewPrompt,
       reviewTimeoutMs,
-      { cwd: wt, extraArgs: CURSOR_REVIEW_FLAGS },
+      {
+        cwd: wt,
+        // Thread the resolved code_review model — without it this call runs on the Cursor
+        // account default, silently voiding the loop-models override + diversity guarantee.
+        extraArgs: [
+          ...CURSOR_REVIEW_FLAGS,
+          ...(models.code_review.model ? ["--model", models.code_review.model] : []),
+        ],
+      },
       { log, logLabel: `Build round ${round} — review timeout retry` }
     );
     log(`Build round ${round} — review`, review);
