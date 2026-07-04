@@ -22,6 +22,7 @@ const EXPECTED = {
   OK: "continue",
   USAGE: "halt",
   RECON_FAILED: "skip",
+  SPEC_NOT_READY: "skip",
   PLAN_UNAPPROVED: "skip",
   PLAN_REJECTED: "halt",
   PLAN_GATE_BLOCKED: "halt",
