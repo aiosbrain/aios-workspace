@@ -187,7 +187,10 @@ export function parseBuildArgs(args) {
 // relay --log files are `\n---\n`-separated sections, each starting with `## <label>`.
 export function extractPlanFromLog(text) {
   if (!text || !text.trim()) throw new Error("plan is empty");
-  const sections = text.split(/\n---\n/);
+  // Split only at a `---` that introduces the NEXT `## ` section header — not at every
+  // `---` in the file. A plan body can itself contain a markdown horizontal rule; splitting
+  // on every occurrence truncates the section at that rule and silently drops the rest.
+  const sections = text.split(/\n---\n(?=\s*## )/);
   const find = (prefix) => {
     for (const s of sections) {
       const m = s.match(/^\s*## (.+)\n/);
@@ -200,7 +203,9 @@ export function extractPlanFromLog(text) {
   return find("Approved plan") ?? find("Last plan") ?? text.trim();
 }
 
-// The build reviewer approves by placing MERGE_READY alone on the final non-blank line.
+// The build reviewer approves by placing MERGE_READY on the final non-blank line — tolerate
+// a streaming artifact gluing trailing prose onto that same line (e.g. "MERGE_READY - lgtm"),
+// but require a word boundary right after the token so "MERGE_READY_SOMETHING_ELSE" still misses.
 export function detectMergeToken(text) {
   const lastLine =
     (text ?? "")
@@ -208,7 +213,7 @@ export function detectMergeToken(text) {
       .map((l) => l.trim())
       .filter(Boolean)
       .at(-1) ?? "";
-  return lastLine === MERGE_READY_TOKEN;
+  return new RegExp(`^${MERGE_READY_TOKEN}\\b`).test(lastLine);
 }
 
 export function slugify(s) {

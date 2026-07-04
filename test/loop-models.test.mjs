@@ -249,6 +249,27 @@ console.log("config validation fails loudly (M4)");
       false
   );
 
+  // AIO-186 F7: an empty/blank *_model would beat the default via the `??` chain, then silently
+  // drop --model in the runner. It must abort at validation — including on a non-Claude-runner,
+  // non-diversity-paired step like plan_review (which otherwise slips both later guards).
+  write('plan_review_model: ""\n');
+  const emptyFileModel = resolveInChild({ repo });
+  check("empty file *_model aborts", emptyFileModel.ok === false);
+  check(
+    "empty-model message says non-empty string required",
+    /must be a non-empty string/.test(emptyFileModel.stderr)
+  );
+
+  const blankCliModel = resolveInChild({
+    repo: null,
+    cliOverrides: { plan_review: { model: "  " } },
+  });
+  check("blank CLI --model aborts", blankCliModel.ok === false);
+  check(
+    "blank CLI model message says non-empty string required",
+    /must be a non-empty string/.test(blankCliModel.stderr)
+  );
+
   // An unreadable file (configPath pointing at a directory → EISDIR) aborts, not silent defaults.
   const asDir = mkdtempSync(path.join(tmpdir(), "lm-dir-"));
   check("unreadable config file aborts", resolveInChild({ configPath: asDir }).ok === false);

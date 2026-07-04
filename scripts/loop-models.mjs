@@ -113,6 +113,11 @@ function validateFileCfg(fileCfg, file) {
     if (Array.isArray(value)) {
       die(`invalid '${key}' in ${file} — expected a scalar value, not a list.`);
     }
+    // An empty/blank model would beat the default via the `??` chain, then silently drop the
+    // `--model` arg in the runner (truthy-spread) — a hidden fallback. Reject it here instead.
+    if (field === "model" && (typeof value !== "string" || !value.trim())) {
+      die(`invalid ${key}='${value}' in ${file} — model must be a non-empty string.`);
+    }
     if (field === "effort" && !VALID_EFFORTS.has(value)) {
       die(
         `invalid ${key}='${value}' in ${file} — effort must be one of ${[...VALID_EFFORTS].join("|")}.`
@@ -134,6 +139,9 @@ function validateCliOverrides(cliOverrides) {
   for (const [step, over] of Object.entries(cliOverrides)) {
     if (!STEP_SET.has(step)) {
       die(`unknown step '${step}' in CLI overrides — known steps: ${STEPS.join(", ")}.`);
+    }
+    if (over.model != null && (typeof over.model !== "string" || !over.model.trim())) {
+      die(`invalid model '${over.model}' for ${step} — model must be a non-empty string.`);
     }
     if (over.effort != null && !VALID_EFFORTS.has(over.effort)) {
       die(
