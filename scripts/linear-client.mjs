@@ -198,7 +198,10 @@ const ISSUE_LIST_FIELDS = `
   assignee { id }
   ${RELATIONS_FRAGMENT}`;
 
-const LIST_PAGE_CAP = 200; // documented pagination cap
+// Pagination hard cap: listIssues fetches at most this many issues (4 pages × 50). A source with
+// more than this is TRUNCATED — listIssues emits a loud non-fatal warning when it stops here while
+// Linear still has more pages, so a large backlog can't silently starve the candidate pool.
+const LIST_PAGE_CAP = 200;
 
 // AIO-<n> → { teamKey: "AIO", number: n }. Deterministic; avoids depending on issue(id:).
 function parseIdentifier(identifier) {
@@ -348,13 +351,32 @@ export function createLinearClient({
     }`;
     const out = [];
     let after = null;
+    let truncated = false;
     for (let page = 0; page < Math.ceil(LIST_PAGE_CAP / 50); page++) {
       const data = await request(query, { filter, after });
       const conn = data?.issues;
       const nodes = conn?.nodes ?? [];
       for (const n of nodes) out.push(normalizeIssue(n));
-      if (!conn?.pageInfo?.hasNextPage || out.length >= LIST_PAGE_CAP) break;
+      if (!conn?.pageInfo?.hasNextPage || out.length >= LIST_PAGE_CAP) {
+        // Stopped at the cap while Linear still reported more pages → the caller is getting a
+        // TRUNCATED view of the source, not the whole thing. Flag it (surfaced loudly below).
+        truncated = Boolean(conn?.pageInfo?.hasNextPage) && out.length >= LIST_PAGE_CAP;
+        break;
+      }
       after = conn.pageInfo.endCursor;
+    }
+    // Non-fatal, but LOUD: silently dropping candidates past 200 would let a large backlog quietly
+    // starve the ranking pool (e.g. roadmap-run never sees the 201st issue). Name the source + cap.
+    if (truncated) {
+      const sel = label
+        ? `label '${label}'`
+        : epicIdentifier
+          ? `epic '${epicIdentifier}'`
+          : `project '${project}'`;
+      console.error(
+        `warning: Linear ${sel} has more than ${LIST_PAGE_CAP} matching issues — results capped ` +
+          `at ${LIST_PAGE_CAP}; issues beyond the cap are NOT considered.`
+      );
     }
     return out;
   }
