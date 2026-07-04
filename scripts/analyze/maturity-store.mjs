@@ -1,19 +1,23 @@
 /**
- * maturity-store.mjs — the AM1 per-session maturity signals store (AIO-227).
+ * maturity-store.mjs — shared fold/read/write helpers for the maturity-loop NDJSON stores
+ * under `.aios/loop/maturity/`: the AM1 per-session signals store (AIO-227) and the AM4a
+ * correction-observations store (AIO-229).
  *
- * Append-only NDJSON of v1 `{"v":1,"op":"put","session":{...}}` lines under
- * `.aios/loop/maturity/sessions.ndjson`. State is the in-order fold: `op:"put"`
- * is LAST-WINS per `session_id` (a resumed / post-/clear re-fire with more events
- * supersedes the earlier snapshot). Malformed / unknown-version lines are skipped
- * and counted, never fatal (forward-compat: readers ignore what they don't know).
+ * `sessions.ndjson` is append-only NDJSON of v1 `{"v":1,"op":"put","session":{...}}` lines.
+ * State is the in-order fold: `op:"put"` is LAST-WINS per `session_id` (a resumed / post-/clear
+ * re-fire with more events supersedes the earlier snapshot).
  *
- * `appendSession` clones the lockfile protocol of hooks/asks-capture.mjs verbatim
- * (30s stale reclaim + ~1s bounded retries; dedup + cap enforced INSIDE the lock)
- * and NEVER throws — a busy lock or fs error means "skip", because disturbing a
- * session is never acceptable but a missed capture is.
+ * `observations.ndjson` is append-only NDJSON of v1 `{"v":1,"op":"create","obs":{...}}` lines,
+ * one per detected correction turn; dedupe key is `sha256(session_id|prior_hash)`.
  *
- * The whole store is admin-tier and local-only (`.aios/` is gitignored). Zero
- * dependencies (Node >= 18).
+ * Both stores skip malformed / unknown-version lines (counted, never fatal — forward-compat:
+ * readers ignore what they don't know) and share the lockfile protocol of
+ * hooks/asks-capture.mjs verbatim (30s stale reclaim + ~1s bounded retries; dedup + cap
+ * enforced INSIDE the lock). Writers NEVER throw — a busy lock or fs error means "skip",
+ * because disturbing a session is never acceptable but a missed capture is.
+ *
+ * Both stores are admin-tier and local-only (`.aios/` is gitignored). Zero dependencies
+ * (Node >= 18).
  */
 
 import {
@@ -29,17 +33,25 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 export const STORE_REL = ".aios/loop/maturity/sessions.ndjson";
+export const OBS_STORE_REL = ".aios/loop/maturity/observations.ndjson";
 export const SCHEMA_VERSION = 1;
 const HARD_LINE_CAP = 20_000;
+const OBS_HARD_LINE_CAP = 20_000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRIES = 40; // ~1s bounded retries; a missed capture is acceptable
 const LOCK_DELAY_MS = 25;
 
+export const sha256 = (s) => createHash("sha256").update(s).digest("hex");
+
 export function storePath(root) {
   return path.join(root, STORE_REL);
+}
+
+export function obsStorePath(root) {
+  return path.join(root, OBS_STORE_REL);
 }
 
 /**
@@ -194,6 +206,84 @@ export function appendSession(root, session) {
       }
       if (isDup) return false;
       appendFileSync(abs, buildPutLine(session) + "\n");
+    } catch {
+      return false;
+    }
+    return true;
+  });
+  return result === true;
+}
+
+/**
+ * Fold NDJSON observations store text → the set of dedupeKeys already present + line count.
+ * Dedupe key is `sha256(session_id|prior_hash)` (AIO-229 / AM4a) — a repeat correction of the
+ * same assistant tail in the same session is treated as the same observation.
+ * @returns {{dedupeKeys: Set<string>, warnings: number, lineCount: number}}
+ */
+export function foldObservations(ndjsonText) {
+  const dedupeKeys = new Set();
+  let warnings = 0;
+  let lineCount = 0;
+  if (!ndjsonText) return { dedupeKeys, warnings, lineCount };
+  for (const line of ndjsonText.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    lineCount += 1;
+    let o;
+    try {
+      o = JSON.parse(s);
+    } catch {
+      warnings += 1;
+      continue;
+    }
+    if (
+      !o ||
+      typeof o !== "object" ||
+      o.v !== SCHEMA_VERSION ||
+      o.op !== "create" ||
+      !o.obs ||
+      typeof o.obs.session_id !== "string" ||
+      typeof o.obs.prior_hash !== "string"
+    ) {
+      warnings += 1;
+      continue;
+    }
+    dedupeKeys.add(sha256(`${o.obs.session_id}|${o.obs.prior_hash}`));
+  }
+  return { dedupeKeys, warnings, lineCount };
+}
+
+function buildCreateObsLine(obs) {
+  return JSON.stringify({ v: SCHEMA_VERSION, op: "create", obs });
+}
+
+/**
+ * Append one `create` observation record, under the store lock. The dedup + cap read happens
+ * INSIDE the held lock so a concurrent writer with the same key cannot slip between the check
+ * and the append. Returns true if written, false if skipped (dup, busy lock, fs error, or an
+ * unmaintained store over the hard cap).
+ *
+ * @param {string} root workspace root (store lives at <root>/.aios/loop/maturity/…)
+ * @param {object} obs the v1 observation object (must carry session_id + prior_hash)
+ * @returns {boolean}
+ */
+export function appendObservation(root, obs) {
+  const abs = obsStorePath(root);
+  const dedupeKey = sha256(`${obs.session_id}|${obs.prior_hash}`);
+  const result = withStoreLock(abs, () => {
+    let text = "";
+    if (existsSync(abs)) {
+      try {
+        text = readFileSync(abs, "utf8");
+      } catch {
+        return false;
+      }
+    }
+    const { dedupeKeys, lineCount } = foldObservations(text);
+    if (lineCount > OBS_HARD_LINE_CAP) return false; // unmaintained store — skip rather than pile on
+    if (dedupeKeys.has(dedupeKey)) return false;
+    try {
+      appendFileSync(abs, buildCreateObsLine(obs) + "\n");
     } catch {
       return false;
     }

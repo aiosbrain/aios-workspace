@@ -152,6 +152,7 @@ export const ROADMAP_DECISION = {
   [SHIP_EXIT.OK]: "continue",
   [SHIP_EXIT.USAGE]: "halt",
   [SHIP_EXIT.RECON_FAILED]: "skip",
+  [SHIP_EXIT.SPEC_NOT_READY]: "skip",
   [SHIP_EXIT.PLAN_UNAPPROVED]: "skip",
   [SHIP_EXIT.PLAN_REJECTED]: "halt",
   [SHIP_EXIT.PLAN_GATE_BLOCKED]: "halt",
@@ -287,6 +288,31 @@ async function listBySource(linear, { sourceType, sourceValue }) {
   return linear.listIssues({ project: sourceValue });
 }
 
+/**
+ * `--epic` pointing at a LEAF issue silently yields zero candidates — the #1 misconfiguration
+ * (child mistaken for its epic; a real run once targeted AIO-145 instead of AIO-122 and produced
+ * an empty 0/N digest with exit 0). When an epic source returns no sub-issues at all, distinguish
+ * "not an epic" from "no eligible work" and point at the parent. Returns the warning string, or
+ * null when the empty result is legitimate (a real epic with zero children) or unexplainable
+ * (fake clients without getIssue, lookup failure) — never throws.
+ */
+export async function explainEmptyEpic(linear, identifier) {
+  if (typeof linear.getIssue !== "function") return null;
+  try {
+    const issue = await linear.getIssue(identifier);
+    const parent = issue?.parent?.identifier;
+    if (parent) {
+      return (
+        `--epic ${identifier} has no sub-issues — it is not an epic; it is itself a child of ` +
+        `${parent}. Did you mean: aios roadmap-run --epic ${parent}?`
+      );
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ── public entry ──────────────────────────────────────────────────────────────────────────────
 
 function usage() {
@@ -353,6 +379,13 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       console.error(c.red(`error: could not list issues (${selector}): ${e.message}`));
       return 1;
     }
+    if (opts.sourceType === "epic" && candidates.length === 0) {
+      const why = await explainEmptyEpic(linear, opts.sourceValue);
+      if (why) {
+        console.error(c.red(`error: ${why}`));
+        return 1;
+      }
+    }
     // Rank via the SAME rankEligible the live run uses — the preview cannot drift from selection.
     const ordered = rankEligible(candidates);
     const eligible = ordered;
@@ -399,6 +432,17 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
       console.error(c.red(`error: could not list issues (${selector}): ${e.message}`));
       exitCode = 1;
       break;
+    }
+    // Misconfiguration beats "no work": an epic source with ZERO sub-issues on the first
+    // iteration is almost always a leaf issue mistaken for its epic. Fail loudly (exit 1, no
+    // empty 0/N digest masquerading as success) with the parent suggestion.
+    if (n === 0 && opts.sourceType === "epic" && candidates.length === 0) {
+      const why = await explainEmptyEpic(linear, opts.sourceValue);
+      if (why) {
+        console.error(c.red(`error: ${why}`));
+        exitCode = 1;
+        break;
+      }
     }
     // Never re-pick an issue we already attempted this run (avoids a stuck-issue loop).
     const pool = candidates.filter((i) => !attemptedIds.has(i.identifier));

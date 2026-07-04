@@ -8,6 +8,7 @@
 import { runShip, SHIP_EXIT, DEFAULT_PLAN_TIMEOUT_MS, failedArtifact } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
+import { stubSpecRubric } from "./ship-test-helpers.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -67,6 +68,17 @@ function makeDeps(repo, auditFiles, over = {}) {
       writeFileSync(path.join(dir, name), String(text));
     },
     slug: "acme/repo",
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 100,
+      deterministic: [],
+      adversarial: { findings: [] },
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
+    loadSpecRubric: () => stubSpecRubric(),
+    makeAnthropic: async () => ({ fake: true }),
     ...over,
   };
 }
@@ -78,6 +90,7 @@ const OPTS = {
   reviewers: ["bugbot", "gpt-5.5"],
   planRunner: "cli",
   dryRun: false,
+  skipSpecGate: false,
 };
 
 console.log("default plan timeout is 1800s and reaches the claude call");

@@ -81,6 +81,9 @@ they don't recognize.
 - **Harnesses must stay trustworthy.** Skills under `scaffold/.claude/skills/` are dynamic multi-agent
   workflows with **adversarial verification + rubric-gated self-correction** (`scaffold/.claude/rubrics/`).
   When you change a harness, keep its rubric honest — the rubric is what makes the output trustworthy.
+- **Spec before build.** Linear issue bodies (and domain specs under `docs/`) should pass
+  `aios spec eval` (`SPEC_READY`) before `aios ship` or `aios relay --spec` planning — ship enforces
+  this automatically; agents writing specs should self-check first. See `docs/agent-build.md`.
 - **Edit the template, not a stamped copy.** Product behavior lives in `scaffold/`; changing a single
   user's stamped workspace doesn't change the product.
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND

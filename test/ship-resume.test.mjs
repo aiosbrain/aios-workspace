@@ -17,9 +17,20 @@ import {
 } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { stubSpecRubric } from "./ship-test-helpers.mjs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function seedRubric(repo) {
+  const rubricSrc = path.join(REPO_ROOT, ".claude", "rubrics", "spec-readiness.md");
+  const rubricDst = path.join(repo, ".claude", "rubrics", "spec-readiness.md");
+  mkdirSync(path.dirname(rubricDst), { recursive: true });
+  writeFileSync(rubricDst, readFileSync(rubricSrc, "utf8"));
+}
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -68,7 +79,8 @@ function makeStateStore() {
 
 function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-resume-"));
-  const counters = { recon: 0, plan: 0, build: 0, pr: 0, review: 0 };
+  seedRubric(repo);
+  const counters = { recon: 0, plan: 0, specEval: 0, build: 0, pr: 0, review: 0 };
   const ghCalls = [];
   const gitCalls = [];
   const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
@@ -124,6 +136,20 @@ function makeDeps(over = {}) {
       writeFileSync(path.join(dir, name), String(text));
     },
     slug: "acme/repo",
+    evaluateSpec: async () => {
+      counters.specEval++;
+      return {
+        verdict: "SPEC_READY",
+        exitCode: 0,
+        score: 100,
+        deterministic: [],
+        adversarial: { findings: [] },
+        findings: [],
+      };
+    },
+    loadRecentDecisions: async () => [],
+    loadSpecRubric: () => stubSpecRubric(),
+    makeAnthropic: async () => ({ fake: true }),
   };
   return { ...deps, ...over, repo, counters, ghCalls, gitCalls };
 }
@@ -139,6 +165,7 @@ function optsFor(o = {}) {
     resume: false,
     approvePlan: false,
     approveMerge: false,
+    skipSpecGate: false,
     ...o,
   };
 }
@@ -179,6 +206,7 @@ console.log("…then --resume --approve-plan → completes WITHOUT re-running re
   });
   check("resumed run reaches OK", r2.code === SHIP_EXIT.OK);
   check("recon NOT re-run", deps2.counters.recon === 0);
+  check("spec eval NOT re-run", deps2.counters.specEval === 0);
   check("plan NOT re-run", deps2.counters.plan === 0);
   check("build ran on the resumed run", deps2.counters.build === 1);
   check("plan pending gate removed on approval", ss.store.removed.includes("plan"));
@@ -307,6 +335,7 @@ console.log("resume with state.merged → merge NOT re-attempted; cleanup still 
   const ss = makeStateStore();
   ss.store.state = {
     recon: "RECON",
+    specReady: true,
     plan: PLAN_TEXT,
     planReviewed: true,
     planApproved: true,
@@ -345,6 +374,7 @@ console.log("stale reviewClear (branch moved since checkpoint) → review re-run
   const ss = makeStateStore();
   ss.store.state = {
     recon: "RECON",
+    specReady: true,
     plan: PLAN_TEXT,
     planReviewed: true,
     planApproved: true,

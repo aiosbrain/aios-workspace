@@ -50,9 +50,17 @@ function codexTokens(u) {
   };
 }
 
-export function recordsToEvents(records, fallbackId) {
+/**
+ * Fresh carry-forward context for a rollout stream. Exported so the parse cache
+ * (cache.mjs) can snapshot/restore it at a byte offset and tail-parse appended
+ * records with EXACTLY the state a full parse would have had at that point.
+ */
+export function createCtx(fallbackId) {
+  return { session_id: fallbackId, project: null, branch: null, model: null };
+}
+
+export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)) {
   const events = [];
-  const ctx = { session_id: fallbackId, project: null, branch: null, model: null };
 
   for (const r of records) {
     if (!r || typeof r !== "object") continue;

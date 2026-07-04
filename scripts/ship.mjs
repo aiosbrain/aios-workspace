@@ -2,9 +2,10 @@
  * ship.mjs — `aios ship <AIO-nnn>`: the whole gated loop for one Linear issue.
  *
  * Composes the merged pipeline surfaces — never re-implements them:
- *   recon (Linear + git-tracked files) → plan (loop) → follow-up capture → build (runBuild)
- *   → PR (cmdPr) → review (waitForBots + GPT review + cmdConsolidateFindings) → fix loop
- *   → merge gate (CI + consolidator + path-gated safety review + operator) → cleanup.
+ *   recon (Linear + git-tracked files) → spec eval (EE5 readiness gate) → plan (loop)
+ *   → follow-up capture → build (runBuild) → PR (cmdPr) → review (waitForBots + GPT review
+ *   + cmdConsolidateFindings) → fix loop → merge gate (CI + consolidator + path-gated safety
+ *   review + operator) → cleanup.
  *
  * Every stage maps to a distinct, documented SHIP_EXIT code (§ SHIP_EXIT below). Gates default
  * ON; in a non-TTY context without the matching --auto flag they exit with a *_GATE_BLOCKED
@@ -47,12 +48,14 @@ import {
 } from "./consolidate-findings.mjs";
 import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
+import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
   OK: 0, // plan→merge→cleanup completed
   USAGE: 1, // bad args / prereqs / unresolved issue id
   RECON_FAILED: 10, // issue fetch or recon model step failed
+  SPEC_NOT_READY: 15, // spec-readiness gate failed (deterministic or adversarial blocker)
   PLAN_UNAPPROVED: 20, // plan loop spent its round budget without PLAN_READY
   PLAN_REJECTED: 21, // operator rejected the plan at the plan gate
   PLAN_GATE_BLOCKED: 22, // plan gate active in a non-TTY context without --auto (never hang)
@@ -233,6 +236,7 @@ export function parseShipArgs(args) {
     resume: hasFlag("--resume"),
     approvePlan: hasFlag("--approve-plan"),
     approveMerge: hasFlag("--approve-merge"),
+    skipSpecGate: hasFlag("--skip-spec-gate"),
   };
 }
 
@@ -393,19 +397,21 @@ export function buildShipDryRunReport({
     "",
     c.blue(`aios ship — dry-run for ${issue}${issueTitle ? `: ${issueTitle}` : ""}`),
     "",
-    "Stages (plan → build → PR → review → fix → merge → cleanup):",
+    "Stages (spec eval → plan → build → PR → review → fix → merge → cleanup):",
     "  1. recon         Linear + git-tracked files → context pack",
-    "  2. plan          plan loop → operator plan gate",
-    "  3. follow-up     file `## Deferred` items as Linear children",
-    "  4. build         runBuild on an isolated worktree",
-    "  5. PR            cmdPr push + open PR",
-    "  6. review        wait-for-bots (Bugbot) + GPT review + consolidate",
-    "  7. fix loop      re-build until CLEAR or --max-fix-rounds",
-    "  8. merge gate    CI + consolidator + path-gated safety review + operator",
-    "  9. cleanup       ff-only main → worktree remove → branch delete",
+    "  2. spec eval     spec-readiness gate on the Linear issue body (EE5)",
+    "  3. plan          plan loop → operator plan gate",
+    "  4. follow-up     file `## Deferred` items as Linear children",
+    "  5. build         runBuild on an isolated worktree",
+    "  6. PR            cmdPr push + open PR",
+    "  7. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+    "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
+    "  9. merge gate    CI + consolidator + path-gated safety review + operator",
+    " 10. cleanup       ff-only main → worktree remove → branch delete",
     "",
     "Per-step models:",
     stepLine("recon"),
+    stepLine("spec_eval"),
     stepLine("plan"),
     stepLine("plan_review"),
     stepLine("build"),
@@ -451,6 +457,40 @@ export function buildReconPrompt(issue, { allowedFiles }) {
     "planner needs: the surfaces involved, the invariants to preserve, and the acceptance criteria.",
     "Do NOT write files. Output the context pack as markdown.",
   ].join("\n");
+}
+
+/** Compose the spec-readiness input from a Linear issue: title + description + comments. */
+export function buildSpecTextFromIssue(issue) {
+  const parts = [
+    `# ${issue.identifier}: ${issue.title}`,
+    "",
+    issue.description || "(no description)",
+  ];
+  const comments = (issue.comments ?? []).filter((cm) => String(cm.body ?? "").trim());
+  if (comments.length) {
+    parts.push("", "## Issue comments", "");
+    for (const cm of comments) {
+      const who = cm.author?.name ?? cm.user?.name ?? "comment";
+      parts.push(`### ${who}`, "", String(cm.body).trim(), "");
+    }
+  }
+  return parts.join("\n");
+}
+
+/** Audit artifact for a spec-eval round (verdict + score + findings). */
+export function formatSpecEvalAudit(res) {
+  const lines = [
+    "# Spec readiness evaluation",
+    "",
+    `- verdict: ${res.verdict}`,
+    `- exit: ${res.exitCode}`,
+    ...(res.score != null ? [`- score: ${res.score}`] : []),
+    "",
+    "## Findings",
+    "",
+    formatFindings(res.findings),
+  ];
+  return lines.join("\n");
 }
 
 // Per-file body cap for recon: file blobs are sliced to this many chars before injection so a
@@ -845,6 +885,10 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     slug,
     callOpus = defaultCallOpus,
     makeAnthropic = defaultMakeAnthropic,
+    evaluateSpec: evaluateSpecDep = evaluateSpec,
+    loadRecentDecisions: loadRecentDecisionsDep = loadRecentDecisions,
+    loadSpecRubric: loadSpecRubricDep = () =>
+      loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md")),
     readState = () => null,
     writeState = () => {},
     writeGate = () => {},
@@ -880,6 +924,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     writeState(issueId, state);
   };
   const progress = (msg) => console.log(c.blue(`ship: ${msg}`));
+  // One Anthropic SDK client per run — shared by spec eval (EE5) and the sdk plan runner.
+  let anthropic = null;
+  const getAnthropic = async () => (anthropic ??= await makeAnthropic());
 
   // ── 1. RECON ───────────────────────────────────────────────────────────────
   let issue;
@@ -964,6 +1011,66 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { code: SHIP_EXIT.RECON_FAILED, records };
     }
 
+  // ── 1b. SPEC EVAL (EE5) ─────────────────────────────────────────────────────
+  // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds.
+  if (opts.skipSpecGate) {
+    record("spec-eval", { skipped: true, reason: "--skip-spec-gate" });
+    progress("spec eval: SKIPPED (--skip-spec-gate — logged for audit)");
+  } else if (state.specReady) {
+    record("spec-eval", { resumed: true });
+    progress("spec eval: resumed from checkpoint (SPEC_READY)");
+  } else {
+    const specText = buildSpecTextFromIssue(issue);
+    writeAudit(issueId, "spec.md", specText);
+    const specStartedAt = Date.now();
+    let rubric;
+    try {
+      rubric = loadSpecRubricDep();
+    } catch (e) {
+      record("spec-eval", { error: e.message });
+      writeAudit(issueId, "spec-eval-FAILED.md", failedArtifact("spec-eval", e, specStartedAt));
+      console.error(c.red(`spec eval: rubric load failed: ${e.message}`));
+      return { code: SHIP_EXIT.SPEC_NOT_READY, records };
+    }
+    try {
+      progress("spec eval: running spec-readiness gate…");
+      const decisions = await loadRecentDecisionsDep(repo);
+      const res = await evaluateSpecDep({
+        specText,
+        repo,
+        rubric,
+        useLlm: true,
+        anthropic: await getAnthropic(),
+        evalCfg: models.spec_eval,
+        decisions,
+      });
+      writeAudit(issueId, "spec-eval-r1.md", formatSpecEvalAudit(res));
+      if (res.verdict !== "SPEC_READY") {
+        record("spec-eval", { verdict: res.verdict, exitCode: res.exitCode, score: res.score });
+        console.error(formatFindings(res.findings));
+        console.error(
+          c.red(
+            `\nspec eval: NOT_READY (verdict ${res.verdict}, score ${res.score ?? "n/a"}) — refusing to plan.`
+          )
+        );
+        console.error(
+          c.dim(
+            `  Fix it:  aios spec fix .aios/loop/${issueId}/spec.md   then re-run aios ship ${issueId}`
+          )
+        );
+        return { code: SHIP_EXIT.SPEC_NOT_READY, records };
+      }
+      record("spec-eval", { verdict: res.verdict, score: res.score });
+      saveState({ specReady: true });
+      progress(`spec eval: SPEC_READY (score ${res.score ?? "n/a"})`);
+    } catch (e) {
+      record("spec-eval", { error: e.message });
+      writeAudit(issueId, "spec-eval-FAILED.md", failedArtifact("spec-eval", e, specStartedAt));
+      console.error(c.red(`spec eval: model step failed: ${e.message}`));
+      return { code: SHIP_EXIT.SPEC_NOT_READY, records };
+    }
+  }
+
   // ── 2. PLAN ────────────────────────────────────────────────────────────────
   const PLAN_ROUNDS = 3;
   let plan = null;
@@ -974,12 +1081,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // Plan-stage runner (§3.4). `cli` (default): callClaudeAgent under --permission-mode plan; it
   // strips ANTHROPIC_API_KEY so the CLI uses Claude Code login auth. `sdk`: Opus via the Anthropic
   // SDK (relay.mjs's callOpus), which requires a funded ANTHROPIC_API_KEY. The Cursor plan review
-  // (below) is identical for both runners. The Anthropic client is constructed once, lazily, only
-  // when the sdk runner is selected — the cli path never touches the SDK.
+  // (below) is identical for both runners. The Anthropic client is constructed once, lazily, when
+  // spec eval or the sdk plan runner needs it — the cli plan path never touches the SDK.
   let generatePlan;
   if (opts.planRunner === "sdk") {
-    const anthropic = await makeAnthropic();
-    generatePlan = (prompt) => callOpus(anthropic, [{ role: "user", content: prompt }], planCfg);
+    const client = await getAnthropic();
+    generatePlan = (prompt) => callOpus(client, [{ role: "user", content: prompt }], planCfg);
   } else {
     generatePlan = (prompt) =>
       claude(prompt, planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS, {
@@ -1604,6 +1711,7 @@ function usage() {
       "  --approve-plan         satisfy a pending PLAN gate (use with --resume after inspecting",
       "                         .aios/loop/<issue>/GATE-plan.pending.md)",
       "  --approve-merge        satisfy a pending MERGE gate (use with --resume)",
+      "  --skip-spec-gate       skip the spec-readiness gate (logged loudly; escape hatch only)",
       "",
       "Gates default ON. In a non-TTY context without the matching flag, ship runs UP TO the",
       "gate, persists GATE-<name>.pending.md + state.json, and exits with the gate code —",
