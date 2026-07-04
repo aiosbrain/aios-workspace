@@ -1079,7 +1079,10 @@ export async function runBuild({ repo, plan, branch, opts }) {
       reviewTimeoutMs,
       {
         cwd: wt,
-        extraArgs: [...CURSOR_REVIEW_FLAGS, ...(models.code_review.model ? ["--model", models.code_review.model] : [])],
+        extraArgs: [
+          ...CURSOR_REVIEW_FLAGS,
+          ...(models.code_review.model ? ["--model", models.code_review.model] : []),
+        ],
       },
       { log, logLabel: `Build round ${round} — review timeout retry` }
     );
