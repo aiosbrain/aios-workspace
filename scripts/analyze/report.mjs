@@ -257,6 +257,29 @@ export function toJson(result, costData) {
 }
 
 /**
+ * Precompute the Session Pulse Stop hook's entire read — same privacy class as
+ * the gitignored analyze-state file (derived scores + tips only, no raw events
+ * or tool names). Resolved at analyze time so the hook is a dumb instant reader
+ * with no scoring logic of its own (W3, AIO-214).
+ */
+export function buildLastSummary(result) {
+  const { placement, signals, window: win, days } = result;
+  const w = placement.weakest;
+  const att = attentionCard(signals || {});
+  return {
+    generated_at: new Date().toISOString(),
+    window: win,
+    spine: placement.spine,
+    overall: placement.overall,
+    weakest: w,
+    weakest_tip: AXIS_GUIDE[w].steps[0],
+    ce_band: shadowRollup(signals, days || []),
+    attention_reading: att.reading,
+    ce_tip: ergonomicsTip(att.reading),
+  };
+}
+
+/**
  * Build one team-tier daily-aggregate payload for POST /api/v1/metrics
  * (standalone endpoint). Carries ratios + counts + the provisional placement,
  * plus the optional v1.3 ce_band shadow integer (0–4|null). No tool names, no
