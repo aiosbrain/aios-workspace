@@ -241,7 +241,8 @@ export function buildPairs(days) {
  *  2. rho undefined (constant series) → HOLD (degenerate).
  *  3. |rho| >= MERGE_RHO → MERGE.
  *  4. |rho| < PROMOTE_RHO → test independence via the outcome point-biserial:
- *     zero-variance → HOLD; significant → PROMOTE; else HOLD.
+ *     zero-variance → HOLD; significant AND positive (band>0 predicts HIGHER
+ *     outcome quality) → PROMOTE; else HOLD (incl. significant-but-negative).
  *  5. buffer zone PROMOTE_RHO <= |rho| < MERGE_RHO → HOLD.
  */
 export function verdictFromPairs(pairs) {
@@ -284,7 +285,11 @@ export function verdictFromPairs(pairs) {
         note: "degenerate: zero-variance point-biserial",
       };
     }
-    if (pb.p != null && pb.p < SIG_P) {
+    // Directional gate: PROMOTE only on a significant POSITIVE point-biserial —
+    // band>0 must track HIGHER outcome quality. A significant negative relation
+    // (band>0 ↔ worse verification) does not "predict outcome quality" in the
+    // sense the axis promotion requires, so it HOLDs rather than promotes.
+    if (pb.p != null && pb.p < SIG_P && pb.r > 0) {
       return { verdict: "PROMOTE", rho, pointBiserial: pb.r, p: pb.p, n };
     }
     return { verdict: "HOLD", rho, pointBiserial: pb.r, p: pb.p, n };
@@ -325,8 +330,13 @@ export function renderVerdict(cal) {
   L.push(`  point-biserial r  ${fmt(c.pointBiserial)}   (band>0 vs ${c.metric})`);
   L.push(`  point-biserial p  ${fmt(c.p)}`);
   if (c.note) L.push(`  note              ${c.note}`);
-  L.push("  thresholds        MERGE |rho|≥0.7 · PROMOTE |rho|<0.5 & p<0.05 · min-days 14");
-  L.push("                    HOLD when 0.5≤|rho|<0.7, or inconclusive/degenerate");
+  L.push(
+    `  thresholds        MERGE |rho|≥${MERGE_RHO} · PROMOTE |rho|<${PROMOTE_RHO} & p<${SIG_P} (r>0) · ` +
+      `min-days ${MIN_PAIRED_DAYS}`
+  );
+  L.push(
+    `                    HOLD when ${PROMOTE_RHO}≤|rho|<${MERGE_RHO}, or inconclusive/degenerate`
+  );
   return L.join("\n");
 }
 
@@ -360,16 +370,19 @@ export function verdictArtifact(cal) {
   L.push("");
   L.push("| Constant | Value | Rule |");
   L.push("|----------|-------|------|");
-  L.push(`| MERGE_RHO | ${th.MERGE_RHO} | MERGE when \\|rho\\| ≥ 0.7 |`);
+  L.push(`| MERGE_RHO | ${th.MERGE_RHO} | MERGE when \\|rho\\| ≥ ${th.MERGE_RHO} |`);
   L.push(
-    `| PROMOTE_RHO | ${th.PROMOTE_RHO} | PROMOTE when \\|rho\\| < 0.5 and point-biserial p < 0.05 |`
+    `| PROMOTE_RHO | ${th.PROMOTE_RHO} | PROMOTE when \\|rho\\| < ${th.PROMOTE_RHO} and point-biserial p < ${th.SIG_P} with r > 0 |`
   );
-  L.push(`| SIG_P | ${th.SIG_P} | point-biserial significant when p < 0.05 |`);
-  L.push(`| MIN_PAIRED_DAYS | ${th.MIN_PAIRED_DAYS} | NOT_ENOUGH_DATA when n < 14 |`);
+  L.push(`| SIG_P | ${th.SIG_P} | point-biserial significant when p < ${th.SIG_P} |`);
+  L.push(
+    `| MIN_PAIRED_DAYS | ${th.MIN_PAIRED_DAYS} | NOT_ENOUGH_DATA when n < ${th.MIN_PAIRED_DAYS} |`
+  );
   L.push("");
   L.push(
-    "HOLD applies in the buffer zone (0.5 ≤ \\|rho\\| < 0.7), when the outcome " +
-      "point-biserial is not significant, or when a series is degenerate (constant / zero-variance)."
+    `HOLD applies in the buffer zone (${th.PROMOTE_RHO} ≤ \\|rho\\| < ${th.MERGE_RHO}), when the outcome ` +
+      "point-biserial is not significant (or significant but negative), or when a series is " +
+      "degenerate (constant / zero-variance)."
   );
   L.push("");
   L.push(

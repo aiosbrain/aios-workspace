@@ -25,11 +25,14 @@ never recomputed here). Then:
 
 - **MERGE** — `|rho| ≥ MERGE_RHO`. The band tracks autonomy so closely it is redundant; fold it in.
 - **PROMOTE** — `|rho| < PROMOTE_RHO` **and** the band's point-biserial correlation against the
-  outcome metric (`OUTCOME_METRIC`) is significant (`p < SIG_P`). The band is independent of
-  autonomy yet still predicts outcome quality → it earns its own axis.
+  outcome metric (`OUTCOME_METRIC`) is significant (`p < SIG_P`) **and positive** (`r > 0`). The
+  band is independent of autonomy yet still predicts *higher* outcome quality → it earns its own
+  axis. A significant *negative* point-biserial (band>0 ↔ *worse* outcome) does not satisfy the
+  contract and HOLDs.
 - **HOLD** — everything else: the buffer zone `PROMOTE_RHO ≤ |rho| < MERGE_RHO`, an insignificant
-  point-biserial, or a degenerate (constant / zero-variance) series where a correlation is
-  undefined. HOLD is also the safe result of any degeneracy — it never emits a false PROMOTE.
+  point-biserial, a *significant-but-negative* point-biserial, or a degenerate (constant /
+  zero-variance) series where a correlation is undefined. HOLD is also the safe result of any
+  degeneracy — it never emits a false PROMOTE.
 - **NOT_ENOUGH_DATA** — fewer than `MIN_PAIRED_DAYS` paired non-null days. Short-circuits before any
   correlation is computed, so no `rho` is ever reported on an under-minimum window.
 

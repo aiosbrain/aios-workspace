@@ -159,6 +159,25 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
   );
 }
 
+// HOLD (not PROMOTE) on a SIGNIFICANT NEGATIVE point-biserial: same band/aut as
+// the PROMOTE case (so |rho| < 0.5, and p is identical), but the outcome is
+// flipped so band>0 tracks LOWER outcome quality → r_pb < 0. A significant
+// inverse relation must NOT promote a new axis (directional gate).
+{
+  const band = [0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 2, 3, 1];
+  const aut = [2, 3, 4, 1, 4, 2, 3, 0, 1, 4, 0, 2, 1, 3];
+  const out = [3, 4, 4, 3, 4, 3, 4, 0, 1, 0, 1, 0, 1, 0]; // band==0 high, band>0 low → negative r
+  const v = verdictFromPairs(mk(band, aut, out));
+  check(
+    "HOLD (not PROMOTE) when point-biserial is significant but NEGATIVE",
+    v.verdict === "HOLD" &&
+      Math.abs(v.rho) < PROMOTE_RHO &&
+      v.pointBiserial < 0 &&
+      v.p != null &&
+      v.p < SIG_P
+  );
+}
+
 // HOLD buffer zone: 0.5 ≤ |rho| < 0.7
 {
   const band = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 1, 2, 0, 4];
@@ -343,6 +362,48 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
     leakedJson = false; // not JSON at all → good
   }
   check("CLI --calibrate --json does NOT emit an analyze JSON body", !leakedJson);
+}
+
+// ── default path unchanged: non---calibrate output is a full analyze body ────
+// The calibrate branch is a guarded early return; when --calibrate is absent it
+// must not fire. Prove the default path runs to completion — it emits a FULL
+// analyze JSON body (placement + signals + days + totals present, NOT
+// short-circuited to a verdict) and never prints the calibration verdict line.
+// This is the mirror of the --calibrate JSON test above and brackets the branch:
+// with the flag → verdict only; without it → the complete analyze body.
+// (A byte-for-byte golden snapshot isn't assertable here: analyze reads live
+// ~/.claude session logs via os.homedir() with no fixture-path flag, so counts
+// shift between runs. Structural completeness is the deterministic guarantee.)
+{
+  let out = "";
+  try {
+    out = execFileSync("node", ["scripts/aios.mjs", "analyze", "--since", "30d", "--json"], {
+      cwd: REPO,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    out = (e.stdout || "").toString();
+  }
+  let body = null;
+  try {
+    body = JSON.parse(out.trim());
+  } catch {
+    body = null;
+  }
+  const complete =
+    body &&
+    typeof body === "object" &&
+    "placement" in body &&
+    "signals" in body &&
+    "days" in body &&
+    "totals" in body &&
+    "window" in body;
+  check("CLI default (no --calibrate) emits the FULL analyze JSON body (not short-circuited)", !!complete);
+  check(
+    "CLI default (no --calibrate) never prints the calibration verdict line",
+    !out.includes("CE calibration verdict:")
+  );
 }
 
 // ── hard rail: no direct aem.mjs import in the module ────────────────────────
