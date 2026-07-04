@@ -209,21 +209,27 @@ export function TasksPanel() {
                     {row.title}
                   </td>
                   <td className="px-2.5 py-1.5">
-                    <select
-                      className={CELL_INPUT}
-                      value={STATUSES.includes(row.status) ? row.status : ""}
-                      disabled={saving !== null}
-                      onChange={(e) => saveField(row, { status: e.target.value })}
-                    >
-                      {!STATUSES.includes(row.status) && (
-                        <option value="">{row.status || "—"}</option>
-                      )}
-                      {STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
+                    {STATUSES.includes(row.status) ? (
+                      <select
+                        className={CELL_INPUT}
+                        value={row.status}
+                        disabled={saving !== null}
+                        onChange={(e) => saveField(row, { status: e.target.value })}
+                      >
+                        {STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span
+                        className="text-xs text-muted-foreground"
+                        title="Status is outside the cockpit vocabulary — edit in the brain or markdown"
+                      >
+                        {row.status || "—"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-2.5 py-1.5">
                     {/* uncontrolled (commit-on-blur); a derived key remounts it when the server
