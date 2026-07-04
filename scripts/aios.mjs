@@ -1477,15 +1477,30 @@ async function cmdStakeholders(repo, cfg, rest) {
 
   if (meeting != null) return stakeholdersMeeting(cfg, meeting, json);
 
-  // --owns / --who read the structured graph. 404-tolerant for an older brain that
-  // predates the endpoint (apiOptional → the empty fallback, then the clean message below).
-  const graph = await apiOptional(cfg, "/company-graph", { people: [], ownership: [] });
+  // --owns / --who read the structured graph. Tolerate ONLY a 404 (an older brain that
+  // predates the endpoint) → clean not-available result; surface any other failure
+  // (500/network/auth) as an error rather than masquerading it as an empty graph, mirroring
+  // the MCP tool. Do NOT route this through apiOptional — that helper is for pull writebacks
+  // where swallowing errors is correct; here a hidden failure would look like an empty team.
+  let graph;
+  try {
+    graph = await api(cfg, "GET", "/company-graph");
+  } catch (e) {
+    if (/^404\b/.test(String(e?.message))) {
+      graph = { people: [], ownership: [] };
+    } else {
+      die(`company graph unavailable: ${e?.message ?? e}`);
+    }
+  }
   const people = Array.isArray(graph.people) ? graph.people : [];
   const ownership = Array.isArray(graph.ownership) ? graph.ownership : [];
   if (!people.length && !ownership.length) {
     if (json) {
+      // Match each mode's found/not-found shape: owns → matches[], who → person.
       console.log(
-        JSON.stringify({ mode: owns != null ? "owns" : "who", query: owns ?? who, matches: [] })
+        owns != null
+          ? JSON.stringify({ mode: "owns", query: owns, matches: [] })
+          : JSON.stringify({ mode: "who", query: who, person: null })
       );
       return;
     }
