@@ -4,8 +4,8 @@
     "lib": ["ES2022"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "rootDir": "src/operator-loop",
-    "outDir": "dist/operator-loop",
+    "rootDir": "src",
+    "outDir": "dist",
     "strict": true,
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
@@ -16,5 +16,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/operator-loop/**/*.ts"]
+  "include": ["src/operator-loop/**/*.ts", "src/timeline/**/*.ts"]
 }

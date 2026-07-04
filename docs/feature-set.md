@@ -288,6 +288,35 @@ never synced unless a command explicitly stages content for `aios push`. See the
 
 ---
 
+## 13. Timeline — screenshot-rich weekly summaries (team + public)
+
+`aios timeline` turns a week of work across **any number of repos** into a styled, self-contained
+HTML "what we shipped" page — one run, two audiences:
+
+- **Collect** — merged PRs (`gh pr list`) + raw commits (`git log`) per `--repo <path>[=liveUrl]`
+  (or everything in `.aios/timeline-config.json`, which also carries each repo's tier + display
+  alias, same default-deny posture as `.aios/time-config.json`). Repos without a `gh`-visible
+  remote degrade gracefully to commit-only data.
+- **Faces** — contributor avatars resolve brain-first (`GET /api/v1/members` `github_login` →
+  `avatar_url`), fall back to GitHub's public avatar CDN, then to an inline initials mark — a new
+  contributor never renders as a broken image.
+- **Screenshots** — per merged PR: Vercel preview URL from the bot's PR comment → the repo's
+  production `liveUrl` → a "code change" card (diff stat) for non-visual work. Captured with the
+  same pinned `agent-browser` the nightly UX harness drives; `--no-shots` skips capture.
+- **Two renders, one dataset** — `--as team|external|all`. Team sees everything ≤ team tier with
+  PR links; external is strictly a subset (external-tier repos only, no links, no diagnostics).
+  Both are single-file HTML (images inlined as data URIs) styled with `@aios-alpha/design`
+  tokens, light + dark.
+- **Fail-closed sharing** — the external file ships **only** after `scripts/leak-gate.sh` actually
+  ran clean over it: a detected term withholds it (exit 2), an unconfigured term set withholds it
+  (exit 3) — never "filtered by convention". Admin-tier repos render nowhere.
+
+Output lands in `.aios/timeline/<stamp>/index-{team,external}.html` (gitignored, never synced);
+`--dry-run` previews repos/window/PR counts without capturing or writing; `--open` finishes on a
+browser tab.
+
+---
+
 ## Roadmap
 
 The clean core + catalogs + share/pull + review panel + operator loop + ergonomics layer ship today.
