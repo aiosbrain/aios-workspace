@@ -48,12 +48,7 @@ import {
 } from "./consolidate-findings.mjs";
 import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
-import {
-  evaluateSpec,
-  loadRubric,
-  loadRecentDecisions,
-  formatFindings,
-} from "./spec-eval.mjs";
+import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
@@ -892,9 +887,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     makeAnthropic = defaultMakeAnthropic,
     evaluateSpec: evaluateSpecDep = evaluateSpec,
     loadRecentDecisions: loadRecentDecisionsDep = loadRecentDecisions,
-    loadSpecRubric:
-      loadSpecRubricDep = () =>
-        loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md")),
+    loadSpecRubric: loadSpecRubricDep = () =>
+      loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md")),
     readState = () => null,
     writeState = () => {},
     writeGate = () => {},
@@ -1034,11 +1028,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       rubric = loadSpecRubricDep();
     } catch (e) {
       record("spec-eval", { error: e.message });
-      writeAudit(
-        issueId,
-        "spec-eval-FAILED.md",
-        failedArtifact("spec-eval", e, specStartedAt)
-      );
+      writeAudit(issueId, "spec-eval-FAILED.md", failedArtifact("spec-eval", e, specStartedAt));
       console.error(c.red(`spec eval: rubric load failed: ${e.message}`));
       return { code: SHIP_EXIT.SPEC_NOT_READY, records };
     }
@@ -1075,11 +1065,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       progress(`spec eval: SPEC_READY (score ${res.score ?? "n/a"})`);
     } catch (e) {
       record("spec-eval", { error: e.message });
-      writeAudit(
-        issueId,
-        "spec-eval-FAILED.md",
-        failedArtifact("spec-eval", e, specStartedAt)
-      );
+      writeAudit(issueId, "spec-eval-FAILED.md", failedArtifact("spec-eval", e, specStartedAt));
       console.error(c.red(`spec eval: model step failed: ${e.message}`));
       return { code: SHIP_EXIT.SPEC_NOT_READY, records };
     }

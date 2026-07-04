@@ -43,7 +43,8 @@ function makeIssue() {
   return {
     identifier: "AIO-262",
     title: "Wire spec eval into ship",
-    description: "## What\nShip must gate on spec readiness.\n\n## Acceptance criteria\n- `aios ship` exits 15 when NOT_READY.",
+    description:
+      "## What\nShip must gate on spec readiness.\n\n## Acceptance criteria\n- `aios ship` exits 15 when NOT_READY.",
     state: { name: "Todo", type: "unstarted" },
     children: [],
     comments: [{ body: "BUILD PLAN: add tests.", author: { name: "agent" } }],
@@ -59,7 +60,10 @@ function makeDeps(over = {}) {
   const deps = {
     repo,
     evalCalls: () => evalCalls,
-    linear: { getIssue: async () => makeIssue(), createIssue: async () => ({ identifier: "AIO-9" }) },
+    linear: {
+      getIssue: async () => makeIssue(),
+      createIssue: async () => ({ identifier: "AIO-9" }),
+    },
     resolveModels: resolveLoopModels,
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
@@ -69,8 +73,7 @@ function makeDeps(over = {}) {
       if (/implementation plan/.test(prompt)) return PLAN_TEXT;
       return "generic";
     },
-    callCursorAgent: async (prompt) =>
-      prompt.includes("/review-plan") ? "ok\nPLAN_READY" : "nit",
+    callCursorAgent: async (prompt) => (prompt.includes("/review-plan") ? "ok\nPLAN_READY" : "nit"),
     callDeepSeekDirect: async () => "ok\nPLAN_READY",
     waitForBots: () => 0,
     gitExec: (argv) => {
@@ -80,7 +83,11 @@ function makeDeps(over = {}) {
     ghExec: (argv) => {
       const a = argv.join(" ");
       if (a.includes("pr checks"))
-        return { code: 0, stdout: JSON.stringify([{ name: "t", state: "SUCCESS", bucket: "pass" }]), stderr: "" };
+        return {
+          code: 0,
+          stdout: JSON.stringify([{ name: "t", state: "SUCCESS", bucket: "pass" }]),
+          stderr: "",
+        };
       if (a.includes("--name-only")) return { code: 0, stdout: "README.md", stderr: "" };
       if (a.includes("pr diff")) return { code: 0, stdout: "diff --git a b", stderr: "" };
       if (a.includes("pr merge")) return { code: 0, stdout: "", stderr: "" };
