@@ -88,6 +88,34 @@ console.log("cmdRoadmapRun — throwing digest model → deterministic fallback,
   check("date from injected now", writes[0].date === "2026-07-03");
 }
 
+console.log("cmdRoadmapRun — successful digest model prepends prose (covers the live path)");
+{
+  const writes = [];
+  const deps = {
+    linear: {
+      listIssues: async () => [], // empty board → zero issues
+      addComment: async () => ({ ok: true }),
+    },
+    spawnShip: () => 0,
+    gitExec: () => "",
+    resolveModels: () => ({ digest: { model: "claude-haiku-4-5" } }),
+    callDigestAgent: async () => "One issue shipped cleanly; nothing blocked.",
+    now: () => new Date("2026-07-03T12:00:00Z"),
+    writeDigest: (date, text) => {
+      writes.push({ date, text });
+      return `/tmp/roadmap-digest-${date}.md`;
+    },
+  };
+  const code = await cmdRoadmapRun("/tmp/repo", ["--label", "x"], deps);
+  check("run returns 0", code === 0);
+  check(
+    "prose is prepended before the deterministic digest",
+    /^One issue shipped cleanly; nothing blocked\.\n\n# Roadmap run — 2026-07-03/.test(
+      writes[0].text
+    )
+  );
+}
+
 console.log("cmdRoadmapRun — a ship halt surfaces its SHIP_EXIT code, no refresh after halt");
 {
   const gitCalls = [];
@@ -98,6 +126,8 @@ console.log("cmdRoadmapRun — a ship halt surfaces its SHIP_EXIT code, no refre
     },
     spawnShip: () => SHIP_EXIT.PR_FAILED, // 40 → halt
     gitExec: (argv) => (gitCalls.push(argv.join(" ")), ""),
+    // Stub the digest agent so the (now live-by-default) prose call stays hermetic.
+    callDigestAgent: async () => "",
     now: () => new Date("2026-07-03T12:00:00Z"),
     writeDigest: () => "/tmp/d.md",
   };
@@ -117,6 +147,8 @@ console.log("cmdRoadmapRun — a skip runs the between-issue ff-only refresh, th
     },
     spawnShip: () => (shipCount++, SHIP_EXIT.BUILD_FAILED), // 30 → skip
     gitExec: (argv) => (gitCalls.push(argv.join(" ")), ""),
+    // Stub the digest agent so the (now live-by-default) prose call stays hermetic.
+    callDigestAgent: async () => "",
     now: () => new Date("2026-07-03T12:00:00Z"),
     writeDigest: () => "/tmp/d.md",
   };
