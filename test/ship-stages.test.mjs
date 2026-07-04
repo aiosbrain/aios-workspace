@@ -13,6 +13,7 @@ import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { seedSpecRubric } from "./helpers/seed-spec-rubric.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -51,6 +52,7 @@ function makeIssue() {
 // Build a full deps set; per-test overrides win. ghState controls the check board + merge.
 function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-stages-"));
+  seedSpecRubric(repo);
   const created = [];
   const auditFiles = [];
   const ghCalls = [];
@@ -116,6 +118,13 @@ function makeDeps(over = {}) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, name), String(text));
     },
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 10,
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
     slug: "acme/repo",
   };
   // Apply overrides (shallow, but linear/nested handled by callers passing full objects).

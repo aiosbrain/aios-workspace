@@ -265,21 +265,26 @@ aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/rep
 aios ship AIO-<n>
   │
   ├─ 1. recon        Linear issue + git-tracked referenced files → context pack
-  ├─ 2. plan         Opus plan ↔ Cursor /review-plan loop  ──▶ [PLAN GATE]
-  ├─ 3. follow-up    file `## Deferred (out of scope)` items as Linear children
-  ├─ 4. build        runBuild on an isolated worktree (secrets gate inside)
-  ├─ 5. PR           cmdPr push + open PR (title carries AIO-<n>)
-  ├─ 6. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
-  ├─ 7. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
-  ├─ 8. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
-  └─ 9. cleanup      ff-only main → worktree remove → prune → branch delete
+  ├─ 2. spec_eval    EE5 spec-readiness gate on the Linear issue description (fail-closed)
+  ├─ 3. plan         Opus plan ↔ Cursor /review-plan loop  ──▶ [PLAN GATE]
+  ├─ 4. follow-up    file `## Deferred (out of scope)` items as Linear children
+  ├─ 5. build        runBuild on an isolated worktree (secrets gate inside)
+  ├─ 6. PR           cmdPr push + open PR (title carries AIO-<n>)
+  ├─ 7. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
+  ├─ 8. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
+  ├─ 9. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
+  └─ 10. cleanup     ff-only main → worktree remove → prune → branch delete
 ```
 
 ```
 aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
                   [--reviewers b,g] [--plan-runner cli|sdk] [--dry-run]
+                  [--skip-spec-gate]
 ```
 
+- **Spec-readiness gate (EE5).** After recon, ship runs `aios spec eval` against the Linear issue
+  description. Only `SPEC_READY` proceeds to the plan loop; otherwise exit `SPEC_NOT_READY` (15) with
+  `spec-eval-r1.md` in the audit dir. Override with `--skip-spec-gate` (logged, not recommended).
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
   **non-TTY** context with a gate still active (no matching flag), ship **runs up to the gate**,
   persists everything needed to judge it (`GATE-<plan|merge>.pending.md` + `state.json` in the
@@ -349,7 +354,7 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   explicitly. A failed merge → `MERGE_BLOCKED` and cleanup never runs; unavailable CI or
   changed-path metadata fails **closed** (`MERGE_BLOCKED`), never treated as green.
 - All run artifacts land under `.aios/loop/<issue>/` (gitignored) — `task.md`, `recon.md`,
-  `recon-skipped.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`, `build.md`, `review-gpt-r<N>.md`,
+  `recon-skipped.md`, `spec-eval-r1.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`, `build.md`, `review-gpt-r<N>.md`,
   `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`. Nothing under `.aios/` is committed.
 
 ### `SHIP_EXIT` codes
@@ -359,6 +364,7 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 | `OK`                    | 0    | plan → merge → cleanup completed                                  |
 | `USAGE`                 | 1    | bad args / prereqs / unresolved issue id                          |
 | `RECON_FAILED`          | 10   | issue fetch or recon model step failed                            |
+| `SPEC_NOT_READY`        | 15   | Linear issue description failed the EE5 spec-readiness gate       |
 | `PLAN_UNAPPROVED`       | 20   | plan loop spent its round budget without `PLAN_READY`             |
 | `PLAN_REJECTED`         | 21   | operator rejected the plan at the plan gate                       |
 | `PLAN_GATE_BLOCKED`     | 22   | plan gate pending in a non-TTY context — resumable via `--resume --approve-plan` |
@@ -405,7 +411,7 @@ aios roadmap-run (--label <name> | --epic AIO-<n> | --project <name>)
 | SHIP_EXIT                                  | Action     |
 | ------------------------------------------ | ---------- |
 | `OK`                                       | continue   |
-| `RECON_FAILED` / `PLAN_UNAPPROVED`         | skip       |
+| `RECON_FAILED` / `SPEC_NOT_READY` / `PLAN_UNAPPROVED` | skip       |
 | `BUILD_FAILED` / `BUILD_NONCONVERGENCE`    | skip       |
 | `REVIEW_NONCONVERGENCE` / `MERGE_BLOCKED`  | skip       |
 | `SAFETY_BLOCKED`                           | skip (the "touches auth/secrets/architecture" escalation) |

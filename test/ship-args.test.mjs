@@ -28,6 +28,7 @@ console.log("parseShipArgs defaults");
   check("max-fix-rounds default 3", o.maxFixRounds === 3);
   check("plan-runner default cli", o.planRunner === "cli");
   check("dry-run off", o.dryRun === false);
+  check("skip-spec-gate off by default", o.skipSpecGate === false);
 }
 
 console.log("parseShipArgs overrides");
@@ -43,6 +44,7 @@ console.log("parseShipArgs overrides");
     "--plan-runner",
     "sdk",
     "--dry-run",
+    "--skip-spec-gate",
   ]);
   check("--auto", o.auto === true);
   check("--auto-merge", o.autoMerge === true);
@@ -53,6 +55,7 @@ console.log("parseShipArgs overrides");
   check("--max-fix-rounds 5", o.maxFixRounds === 5);
   check("--plan-runner sdk", o.planRunner === "sdk");
   check("--dry-run", o.dryRun === true);
+  check("--skip-spec-gate", o.skipSpecGate === true);
   check("issue still first positional", o.issue === "AIO-9");
 }
 

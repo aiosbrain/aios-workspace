@@ -15,6 +15,7 @@ import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { seedSpecRubric } from "./helpers/seed-spec-rubric.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -97,6 +98,13 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, name), String(text));
     },
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 10,
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
     slug: "acme/repo",
   };
 }
@@ -104,6 +112,7 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
 console.log("reviewer models reach DeepSeek by default (plan_review + code_review)");
 {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-cursor-model-"));
+  seedSpecRubric(repo);
   const cursorCalls = [];
   const deepseekCalls = [];
   try {
@@ -143,6 +152,7 @@ console.log("reviewer models reach DeepSeek by default (plan_review + code_revie
 console.log("an explicit Cursor-family override still reaches the Cursor argv");
 {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-cursor-model-cursor-"));
+  seedSpecRubric(repo);
   const cursorCalls = [];
   const deepseekCalls = [];
   mkdirSync(path.join(repo, ".aios"), { recursive: true });

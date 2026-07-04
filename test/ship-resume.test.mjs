@@ -20,6 +20,7 @@ import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { seedSpecRubric } from "./helpers/seed-spec-rubric.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -68,6 +69,7 @@ function makeStateStore() {
 
 function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-resume-"));
+  seedSpecRubric(repo);
   const counters = { recon: 0, plan: 0, build: 0, pr: 0, review: 0 };
   const ghCalls = [];
   const gitCalls = [];
@@ -123,6 +125,13 @@ function makeDeps(over = {}) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, name), String(text));
     },
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 10,
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
     slug: "acme/repo",
   };
   return { ...deps, ...over, repo, counters, ghCalls, gitCalls };
