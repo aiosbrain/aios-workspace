@@ -64,6 +64,7 @@ import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
 import { cmdSpec } from "./spec-eval.mjs";
+import { runCouncil } from "./council.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
 import { cmdPr } from "./pr.mjs";
 import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
@@ -3644,10 +3645,103 @@ async function cmdTime(repo, cfg, args) {
   );
 }
 
+// This toolkit's own hooks dir, resolved from aios.mjs's own location (works whether invoked
+// from the main checkout or an npm-linked global `aios` — either way this file lives inside the
+// one real toolkit checkout). `aios asks wire` (AIO-167 follow-up) uses ABSOLUTE paths into this
+// dir rather than `${CLAUDE_PROJECT_DIR}`-relative ones, so capture keeps working in a worktree
+// even when that worktree's own checked-out branch predates the hooks being added to main —
+// the same pattern already used to wire capture into john-workspace (a repo with no copy of
+// these hooks at all).
+const TOOLKIT_HOOKS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks");
+
+// `git worktree list --porcelain` → absolute paths of every worktree of `repo` (including
+// `repo` itself). Best-effort: a repo with no `.git` or git not on PATH returns just `[repo]`.
+function discoverWorktreePaths(repo) {
+  try {
+    const out = execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], {
+      encoding: "utf8",
+    });
+    const paths = out
+      .split("\n")
+      .filter((l) => l.startsWith("worktree "))
+      .map((l) => l.slice("worktree ".length).trim());
+    return paths.length ? paths : [repo];
+  } catch {
+    return [repo];
+  }
+}
+
+// Idempotently ensure `target`'s .claude/settings.json has the Notification/Stop asks-capture
+// hook and the PostToolUse decision-capture hook, pointed at THIS toolkit's absolute hook paths.
+// Merge-only: every other key (permissions, other hook events, other hooks on the same event) is
+// left byte-for-byte alone. Detection is a substring match on the hook script's basename, so a
+// hook already wired via `${CLAUDE_PROJECT_DIR}`-relative path (the in-tree convention once a
+// branch has the hooks merged) still counts as wired and is never duplicated.
+function wireAsksHooksInto(target, { dryRun = false } = {}) {
+  const settingsPath = path.join(target, ".claude", "settings.json");
+  let settings = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    } catch {
+      return {
+        repo: target,
+        ok: false,
+        error: "settings.json exists but is not valid JSON — skipped",
+      };
+    }
+  }
+  settings.hooks ??= {};
+  if (
+    typeof settings.hooks !== "object" ||
+    settings.hooks === null ||
+    Array.isArray(settings.hooks)
+  ) {
+    return {
+      repo: target,
+      ok: false,
+      error: "settings.json has an unexpected 'hooks' shape — skipped",
+    };
+  }
+
+  const hasHook = (event, matcher, basename) =>
+    (settings.hooks[event] ?? []).some(
+      (group) =>
+        (matcher === undefined || group.matcher === matcher) &&
+        (group.hooks ?? []).some((h) => String(h.command ?? "").includes(basename))
+    );
+  const addHook = (event, basename, matcher) => {
+    settings.hooks[event] ??= [];
+    const entry = { hooks: [{ type: "command", command: path.join(TOOLKIT_HOOKS_DIR, basename) }] };
+    if (matcher !== undefined) entry.matcher = matcher;
+    settings.hooks[event].push(entry);
+  };
+
+  const wanted = [
+    ["Notification", undefined, "asks-capture.mjs"],
+    ["Stop", undefined, "asks-capture.mjs"],
+    ["PostToolUse", "AskUserQuestion|ExitPlanMode", "decision-capture.mjs"],
+  ];
+  const added = [];
+  for (const [event, matcher, basename] of wanted) {
+    if (!hasHook(event, matcher, basename)) {
+      addHook(event, basename, matcher);
+      added.push(`${event}${matcher ? `(${matcher})` : ""} → ${basename}`);
+    }
+  }
+
+  if (!added.length) return { repo: target, ok: true, changed: false };
+  if (!dryRun) {
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  }
+  return { repo: target, ok: true, changed: true, added };
+}
+
 // ── aios asks (AIO-167): non-blocking escalation queue ───────────────────────
 // Offline + local-first. An append-only NDJSON store folded to state (`.aios/loop/asks/`,
 // admin-tier, never synced). Mirrors cmdTime: dist import, `--repo` respected, friendly die if
-// the loop isn't built. Subcommands: list / show / resolve / drain / add / harvest.
+// the loop isn't built. Subcommands: list / show / resolve / drain / add / harvest / wire.
 async function cmdAsks(repo, cfg, args) {
   const sub = args[0];
   const rest = args.slice(1);
@@ -3657,6 +3751,33 @@ async function cmdAsks(repo, cfg, args) {
     const i = args.indexOf(name);
     return i >= 0 ? args[i + 1] : null;
   };
+  // `wire` is pure settings.json bookkeeping — no ask-store access — so it runs before the
+  // operator-loop dist check below, unlike every other subcommand here.
+  if (sub === "wire") {
+    const dryRun = flags.has("--dry-run");
+    const targets = flags.has("--all-worktrees") ? discoverWorktreePaths(repo) : [repo];
+    const results = targets.map((t) => wireAsksHooksInto(t, { dryRun }));
+    if (asJson) {
+      console.log(JSON.stringify({ results }, null, 2));
+      if (results.some((r) => !r.ok)) process.exitCode = 1;
+      return;
+    }
+    console.log(
+      c.blue("aios asks wire") +
+        c.dim(`  ${targets.length} target(s)`) +
+        (dryRun ? c.dim("  (dry-run)") : "")
+    );
+    for (const r of results) {
+      if (!r.ok) console.log(`  ${c.dim(r.repo)}  ${c.dim("error: " + r.error)}`);
+      else if (!r.changed) console.log(`  ${c.dim(r.repo)}  ${c.dim("already wired")}`);
+      else {
+        console.log(`  ${r.repo}  ${dryRun ? "would add" : "added"}:`);
+        for (const a of r.added) console.log(c.dim(`    ${a}`));
+      }
+    }
+    if (results.some((r) => !r.ok)) process.exitCode = 1;
+    return;
+  }
   const loop = await loadOperatorLoop();
   const warnNote = (warnings) => {
     if (warnings?.length && !asJson)
@@ -3843,7 +3964,8 @@ async function cmdAsks(repo, cfg, args) {
       "       aios asks resolve <id...> [--json]\n" +
       "       aios asks drain [--keep-open] [--json]\n" +
       "       aios asks add --kind <k> --severity <blocker|decision|fyi> --title <t> [--body <b>] [--ref <r>] [--json]\n" +
-      "       aios asks harvest [--cadence daily|weekly] [--json]"
+      "       aios asks harvest [--cadence daily|weekly] [--json]\n" +
+      "       aios asks wire [--all-worktrees] [--dry-run] [--json]"
   );
 }
 
@@ -4862,6 +4984,9 @@ usage:
   aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)
   aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue
     [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
+  aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into
+    [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
+                                         worktrees whose checked-out branch predates the hooks
   aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences the local ping
     [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
   aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
@@ -4875,6 +5000,9 @@ usage:
   aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW
     [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress
     [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md
+  aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)
+    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet
+                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
@@ -4991,6 +5119,7 @@ const OFFLINE_CMDS = new Set([
   "decisions",
   "mode",
   "rails",
+  "council",
   "maturity-week",
   // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
   // (the brain only enriches avatars when configured).
@@ -5043,6 +5172,7 @@ try {
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);
   else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
+  else if (cmd === "council") await runCouncil(repo, rest);
   else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else {
     console.log(USAGE);
