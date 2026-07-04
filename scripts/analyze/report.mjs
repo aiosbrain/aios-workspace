@@ -258,16 +258,18 @@ export function toJson(result, costData) {
 
 /**
  * Build one team-tier daily-aggregate payload for POST /api/v1/metrics
- * (standalone endpoint). Carries ONLY ratios + counts + the provisional
- * placement: no tool names, no branch, no cwd, no message text. This is the
- * entire privacy surface.
+ * (standalone endpoint). Carries ratios + counts + the provisional placement,
+ * plus the optional v1.3 ce_band shadow integer (0–4|null). No tool names, no
+ * branch, no cwd, no message text, and none of the four raw attention signals.
+ * This is the entire privacy surface.
  */
-export function buildPushPayload(day, member) {
+export function buildPushPayload(day, member, ceBand) {
   return {
     member,
     metric: "aem-individual",
     date: day.date,
     window_days: 1,
+    ce_band: ceBand ?? null,
     signals: {
       delegation_ratio: day.signals.delegation_ratio,
       correction_loop_avg: day.signals.correction_loop_avg,

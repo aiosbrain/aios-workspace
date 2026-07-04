@@ -255,12 +255,55 @@ console.log("toJson wiring");
     "per-day placement objects pass through toJson untouched",
     out.days.every((d, i) => d.placement === days[i].placement)
   );
-  const payload = buildPushPayload({ ...days[days.length - 1], date: "2026-06-16" }, "alex");
+  const payload = buildPushPayload(
+    days[days.length - 1],
+    "alex",
+    scoreCognitiveErgonomics(
+      days[days.length - 1].signals,
+      ergonomicsBaseline(days.slice(0, days.length - 1))
+    )
+  );
+  const PUSH_SIGNAL_KEYS = [
+    "delegation_ratio",
+    "correction_loop_avg",
+    "error_rate",
+    "cost_per_task",
+    "tokens_per_task",
+    "total_cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_hit_rate",
+    "tool_diversity",
+    "verify_tool_rate",
+    "subagent_usage",
+  ];
+  const payloadJson = JSON.stringify(payload);
   check(
-    "buildPushPayload still excludes the shadow band and raw attention signals (EE10)",
-    !JSON.stringify(payload).includes("cognitive_ergonomics") &&
+    "buildPushPayload carries ce_band equal to toJson shadow band; raw attention never leaks (v1.3)",
+    payload.ce_band === out.days[out.days.length - 1].axes_shadow.cognitive_ergonomics &&
+      !payloadJson.includes("cognitive_ergonomics") &&
+      !("focus_block_avg_min" in payload) &&
+      !("context_switch_rate" in payload) &&
+      !("interrupts_per_hour" in payload) &&
+      !("concurrent_sessions_peak" in payload) &&
+      !("active_hours" in payload) &&
       !("focus_block_avg_min" in payload.signals) &&
-      !("active_hours" in payload.signals)
+      !("context_switch_rate" in payload.signals) &&
+      !("interrupts_per_hour" in payload.signals) &&
+      !("concurrent_sessions_peak" in payload.signals) &&
+      !("active_hours" in payload.signals) &&
+      JSON.stringify(Object.keys(payload.signals).sort()) ===
+        JSON.stringify(PUSH_SIGNAL_KEYS.sort())
+  );
+  const preBaselinePayload = buildPushPayload(
+    days[0],
+    "alex",
+    scoreCognitiveErgonomics(days[0].signals, ergonomicsBaseline([]))
+  );
+  check(
+    "pre-baseline ce_band is null in the push payload",
+    preBaselinePayload.ce_band === null && out.days[0].axes_shadow.cognitive_ergonomics === null
   );
 }
 

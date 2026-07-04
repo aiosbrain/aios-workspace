@@ -30,6 +30,7 @@ import { parseCursor, sqlite3Available } from "./parse-cursor.mjs";
 import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
 import { renderText, renderReport, toJson, buildPushPayload } from "./report.mjs";
+import { scoreCognitiveErgonomics, ergonomicsBaseline } from "./ergonomics.mjs";
 import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
 import { gatherCostData, pushProviderCosts } from "./push-costs.mjs";
 import { renderCostSummary } from "./cost-report.mjs";
@@ -331,8 +332,13 @@ async function pushDays(repo, cfg, result, helpers, state) {
   let sent = 0,
     skipped = 0,
     failed = 0;
-  for (const day of result.days) {
-    const payload = buildPushPayload(day, member);
+  for (let i = 0; i < result.days.length; i++) {
+    const day = result.days[i];
+    const ceBand = scoreCognitiveErgonomics(
+      day.signals,
+      ergonomicsBaseline(result.days.slice(0, i))
+    );
+    const payload = buildPushPayload(day, member, ceBand);
     const sha = simpleHash(JSON.stringify(payload));
     if (state.pushed[day.date] === sha) {
       skipped++;
