@@ -74,6 +74,9 @@ import { discoverClaude } from "./analyze/sources.mjs";
 import { parseJsonl } from "./analyze/parse-claude.mjs";
 import { extractDecisions, contextTagFor } from "./decision-extract.mjs";
 import { createBrainClient } from "./brain-client.mjs";
+import { foldSessions, storePath } from "./analyze/maturity-store.mjs";
+import { projectSlug, STORE_SIZE_CAP } from "./analyze/maturity-fold.mjs";
+import { buildWeekReport, renderWeekReport, splitWeeks } from "./maturity-week.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -4383,6 +4386,78 @@ async function cmdMode(repo, cfg, args) {
   console.log(c.blue("aios mode") + `  ${out.mode}` + c.dim(`  · local ping: ${ping}${note}`));
 }
 
+const MATURITY_WEEK_HELP = `aios maturity-week [--json] [--out <path>] [--project <slug>]
+  Weekly agentic-maturity trajectory: Spine level delta, per-axis gains, and the
+  next-belt criteria (belts: White→Black + Ninja Master at a perfect L5).
+  Reads .aios/loop/maturity/sessions.ndjson (AM1). Needs ≥ 5 sessions this week for
+  the project; the prior week is optional (its absence just leaves deltas blank).
+  Default → 3-log/maturity/week-<ISO-MONDAY>.md (admin tier, never synced).
+  --json → machine shape on stdout · --out <path> → write elsewhere.
+  --project <slug> overrides the project filter (default: this cwd's basename slug).
+  Cadence: run weekly (cron / a Claude routine):  npm run aios -- maturity-week`;
+
+// aios maturity-week — local weekly AEM report + belts (AM6, AIO-231). Read-only
+// consumer of AM1's session store; writes an admin-tier file under 3-log/. The
+// project filter mirrors AM2's brief: sessions are tagged by the SESSION cwd's
+// basename slug, so we filter by projectSlug(process.cwd()) (or --project), NOT by
+// the workspace-root basename (`repo` is only the store + output root).
+function cmdMaturityWeek(repo, rest) {
+  if (rest.includes("-h") || rest.includes("--help")) {
+    console.log(MATURITY_WEEK_HELP);
+    return;
+  }
+  const valOf = (flag) => {
+    const i = rest.indexOf(flag);
+    return i !== -1 ? rest[i + 1] : null;
+  };
+  const project = valOf("--project") || projectSlug(process.cwd());
+  const sp = storePath(repo);
+
+  let text;
+  try {
+    if (statSync(sp).size > STORE_SIZE_CAP) {
+      console.log(
+        c.yellow(
+          `maturity store is oversized (> ${Math.round(STORE_SIZE_CAP / 1024 / 1024)} MB) — skipping. It self-compacts; try again later.`
+        )
+      );
+      return;
+    }
+    text = readFileSync(sp, "utf8");
+  } catch {
+    console.log(
+      c.dim(
+        `no maturity sessions yet at ${path.relative(repo, sp)} — the AM1 capture hook writes them as you work.`
+      )
+    );
+    return;
+  }
+
+  const { sessions } = foldSessions(text);
+  const forProject = [...sessions.values()].filter((s) => s && s.counts && s.project === project);
+  const now = new Date();
+  const { thisWeek, prevWeek } = splitWeeks(forProject, now);
+  const report = buildWeekReport({ sessions: thisWeek, prevWeekSessions: prevWeek, now });
+
+  if (rest.includes("--json")) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  const md = renderWeekReport(report);
+  const out = valOf("--out") || path.join(repo, "3-log", "maturity", `week-${report.weekOf}.md`);
+  mkdirSync(path.dirname(out), { recursive: true });
+  writeFileSync(out, md);
+  console.log(c.green(`Wrote ${path.relative(repo, out)}`));
+  if (!report.sufficient) {
+    console.log(
+      c.dim(
+        `  (${report.insufficient.have} of ${report.insufficient.need} sessions this week for '${project}' — capture more for a trajectory read)`
+      )
+    );
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -4443,6 +4518,8 @@ usage:
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
     [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
+  aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
+    [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
   aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
     [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
@@ -4585,6 +4662,7 @@ const OFFLINE_CMDS = new Set([
   "decisions",
   "mode",
   "rails",
+  "maturity-week",
 ]);
 
 let repo, cfg;
@@ -4632,6 +4710,7 @@ try {
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
+  else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);
