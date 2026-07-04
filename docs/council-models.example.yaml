@@ -8,8 +8,7 @@
 # Families recognized: claude*/fable* = anthropic, gpt* = openai, gemini* = google,
 # grok* = xai, deepseek* = deepseek, glm* = zhipu — see scripts/council-models.mjs.
 #
-# Auth: OPENROUTER_API_KEY (already cascades as a low-privilege global per the Tessera
-# root .envrc — see ~/Projects/CLAUDE.md).
+# Auth: OPENROUTER_API_KEY — set in your environment or workspace .env (see docs/GUIDE.md).
 
 council_models:
   - openai/gpt-5.5
