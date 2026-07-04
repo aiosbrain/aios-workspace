@@ -4250,6 +4250,7 @@ usage:
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
   aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
     [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
