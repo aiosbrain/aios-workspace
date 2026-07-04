@@ -146,8 +146,16 @@ test("Stop (benign phrasing) → nothing", () => {
 test("Stop (said-again correction) → one observation", () => {
   const dir = ws();
   try {
-    const tp = transcript(dir, "I added a custom parser.", "I already told you to use flat-yaml.mjs");
-    const code = runHook(dir, { hook_event_name: "Stop", session_id: "s-said", transcript_path: tp });
+    const tp = transcript(
+      dir,
+      "I added a custom parser.",
+      "I already told you to use flat-yaml.mjs"
+    );
+    const code = runHook(dir, {
+      hook_event_name: "Stop",
+      session_id: "s-said",
+      transcript_path: tp,
+    });
     assert.equal(code, 0);
     assert.equal(readObs(dir).size, 1);
     const { obs } = JSON.parse(storeText(dir).trim());
