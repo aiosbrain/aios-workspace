@@ -5,8 +5,20 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.2**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.5**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
+
+## [Unreleased]
+
+### Added
+
+- **`aios stakeholders (--owns | --who | --meeting)`** — query the team
+  Company-Graph over the new team-tier `GET /api/v1/company-graph` endpoint
+  (brain-api **v1.5**, additive): who owns a workflow domain, one person's
+  role/reports-to/owned workflows, and meeting attendees derived from item
+  frontmatter. Team-tier only — an external key is rejected up front on every
+  mode via a `GET /me` probe. Exposed over MCP as `brain_stakeholders`.
+  (AIO-141)
 
 ## [0.6.0] — 2026-07-03
 

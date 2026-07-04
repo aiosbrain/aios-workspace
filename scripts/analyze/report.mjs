@@ -10,8 +10,12 @@
  */
 
 import { AXIS_LABELS, attentionCard } from "./aem.mjs";
-import { scoreCognitiveErgonomics, ergonomicsBaseline } from "./ergonomics.mjs";
-import { AXIS_GUIDE } from "./guidance.mjs";
+import {
+  scoreCognitiveErgonomics,
+  ergonomicsBaseline,
+  AXIS_LABEL_ERGONOMICS,
+} from "./ergonomics.mjs";
+import { AXIS_GUIDE, ergonomicsTip } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
 const SPINE_GLOSS = {
@@ -38,6 +42,43 @@ function pct(x) {
 function fmtTokens(n) {
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
   return String(Math.round(n));
+}
+
+// ── Cognitive Ergonomics SHADOW helpers (AIO-190 Phase A) ───────────────────
+// One formula, shared by the JSON shape, the text render, and (W5) the
+// calibration corpus. SHADOW-only: never an axis, never in placement, never
+// pushed. Each per-day band scores that day against the trailing baseline of
+// the days strictly BEFORE it; the rollup scores the window's own signals
+// against the baseline of all its days. Exported for W5 calibration reuse.
+
+/** Per-day CE shadow bands for a window: `[{ date, band }]`, band an int 0–4 or null. */
+export function shadowBands(days) {
+  const list = days || [];
+  return list.map((d, i) => ({
+    date: d.date,
+    band: scoreCognitiveErgonomics(d.signals, ergonomicsBaseline(list.slice(0, i))),
+  }));
+}
+
+/** Window rollup CE shadow band: window signals vs the baseline of all its days. */
+export function shadowRollup(signals, days) {
+  return scoreCognitiveErgonomics(signals, ergonomicsBaseline(days || []));
+}
+
+// Sparkline levels for a 0–4 band; null/non-finite → the no-data dot.
+const SPARK_GLYPHS = ["▁", "▂", "▄", "▆", "█"];
+function sparkGlyph(v) {
+  if (v == null || !Number.isFinite(v)) return "·";
+  return SPARK_GLYPHS[Math.max(0, Math.min(4, Math.round(v)))];
+}
+
+/** ↗ / ↘ / → from the last two non-null per-day bands (→ when < 2 exist). */
+function ceTrendArrow(bands) {
+  const vals = bands.map((b) => b.band).filter((v) => v != null);
+  if (vals.length < 2) return "→";
+  const last = vals[vals.length - 1];
+  const prev = vals[vals.length - 2];
+  return last > prev ? "↗" : last < prev ? "↘" : "→";
 }
 
 /** A plain-language stat line for an axis, drawn from its signals. */
@@ -77,6 +118,36 @@ export function renderText(result, color) {
     const score = placement.axes[key];
     L.push(`  ${label.padEnd(22)} ${bar(score)} ${fmtNum(score, 1)}  ${AXIS_GUIDE[key].gloss}`);
   }
+  // Cognitive ergonomics — SHADOW band (AIO-190 Phase A). Rendered beside the
+  // axes but deliberately NOT a maturity axis: uncalibrated, local-only, never
+  // pushed, and scored vs the operator's OWN baseline (not an absolute bar).
+  const ceDays = result.days || [];
+  const ceBands = shadowBands(ceDays);
+  const ceRollup = shadowRollup(signals, ceDays);
+  if (ceRollup == null) {
+    L.push(
+      `  ${AXIS_LABEL_ERGONOMICS.padEnd(22)} ${"·".repeat(4)} –  ` +
+        c.dim("(shadow — needs 5 active days of baseline first)")
+    );
+  } else {
+    L.push(
+      `  ${AXIS_LABEL_ERGONOMICS.padEnd(22)} ${bar(ceRollup)} ${ceRollup}/4 ${ceTrendArrow(
+        ceBands
+      )}  ` + c.dim("(shadow — vs your own baseline, uncalibrated, local-only)")
+    );
+  }
+  // 14-day AM-vs-CE dual sparkline (skipped with < 2 days; same window so the
+  // two rows' columns line up day-for-day).
+  if (ceDays.length >= 2) {
+    const win = ceDays.slice(-14);
+    const winBands = ceBands.slice(-14);
+    const amRow = win.map((d) => sparkGlyph(d.placement && d.placement.overall)).join("");
+    const ceRow = win.map((_, i) => sparkGlyph(winBands[i].band)).join("");
+    L.push(`  ${String(win.length)}-day trend  (AM = maturity · CE = ergonomics shadow)`);
+    L.push(`    AM  ${amRow}`);
+    L.push(`    CE  ${ceRow}`);
+    L.push(c.dim("    · = no data"));
+  }
   L.push("");
   // Attention card — a compact read on operating rhythm (local-only sanity signals; NOT an axis).
   const att = attentionCard(signals || {});
@@ -96,6 +167,8 @@ export function renderText(result, color) {
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
   L.push(`    ${AXIS_GUIDE[w].steps[0]}`);
+  const ceTip = ergonomicsTip(att.reading);
+  if (ceTip) L.push(c.dim(`  Cognitive ergonomics (shadow): ${ceTip}`));
   L.push(c.dim("  Run `aios analyze --report` for a step-by-step plan on this."));
   L.push(
     c.dim("  Raw sessions stay on your machine — `aios analyze --push` shares only these scores.")
@@ -142,6 +215,7 @@ export function renderReport(result, color) {
 /** Machine-readable shape (no raw events, no message text). */
 export function toJson(result, costData) {
   const days = result.days || [];
+  const bands = shadowBands(days);
   const out = {
     window: result.window,
     tools: result.tools,
@@ -153,7 +227,7 @@ export function toJson(result, costData) {
     // day scores against the trailing baseline of the days BEFORE it; the rollup
     // scores the window signals against the window's trailing baseline.
     axes_shadow: {
-      cognitive_ergonomics: scoreCognitiveErgonomics(result.signals, ergonomicsBaseline(days)),
+      cognitive_ergonomics: shadowRollup(result.signals, days),
     },
     // Local-only attention card (never pushed) — the 4 sanity signals + a human reading.
     attention: attentionCard(result.signals || {}),
@@ -162,10 +236,7 @@ export function toJson(result, costData) {
       signals: d.signals,
       placement: d.placement,
       axes_shadow: {
-        cognitive_ergonomics: scoreCognitiveErgonomics(
-          d.signals,
-          ergonomicsBaseline(days.slice(0, i))
-        ),
+        cognitive_ergonomics: bands[i].band,
       },
     })),
   };

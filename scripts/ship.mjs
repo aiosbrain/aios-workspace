@@ -15,7 +15,15 @@
  * without touching the network, git, gh, claude, or cursor.
  */
 
-import { readFileSync, mkdirSync, appendFileSync, statSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  appendFileSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import path from "node:path";
@@ -115,6 +123,74 @@ export function failedArtifact(stage, error, startedAt) {
   ].join("\n");
 }
 
+// ── checkpoint state + async gates (AIO-239) ────────────────────────────────────────────────
+// Ship persists per-stage progress to `.aios/loop/<issue>/state.json` so an aborted or
+// gate-blocked run is RESUMABLE (`--resume`): completed stages are skipped, the run re-enters at
+// the first incomplete one. A blocked gate writes `GATE-<name>.pending.md` with the material to
+// judge and exits with the gate code; `--resume --approve-plan` / `--approve-merge` satisfy it.
+
+export const SHIP_STATE_VERSION = 1;
+
+export function defaultReadState(repo, issue) {
+  try {
+    const raw = readFileSync(path.join(repo, ".aios", "loop", issue, "state.json"), "utf8");
+    const st = JSON.parse(raw);
+    return st && st.v === SHIP_STATE_VERSION ? st : null;
+  } catch {
+    return null;
+  }
+}
+
+export function defaultWriteState(repo, issue, state) {
+  try {
+    const dir = path.join(repo, ".aios", "loop", issue);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "state.json"),
+      JSON.stringify(
+        { ...state, v: SHIP_STATE_VERSION, updatedAt: new Date().toISOString() },
+        null,
+        2
+      ) + "\n"
+    );
+  } catch {
+    /* best-effort — state loss degrades to a fresh run, never a crash */
+  }
+}
+
+function defaultWriteGate(repo, issue, name, text) {
+  try {
+    const dir = path.join(repo, ".aios", "loop", issue);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `GATE-${name}.pending.md`), text); // overwrite, not append
+  } catch {
+    /* best-effort */
+  }
+}
+
+function defaultRemoveGate(repo, issue, name) {
+  try {
+    unlinkSync(path.join(repo, ".aios", "loop", issue, `GATE-${name}.pending.md`));
+  } catch {
+    /* absent is fine */
+  }
+}
+
+/** Expand a leading `~/` against the home directory. `path.join` (NOT `path.resolve`) keeps the
+ *  home prefix even though the slice leaves a leading slash — pinned by a unit test because a
+ *  review claimed otherwise (AIO-239 r1: declined-with-evidence). */
+export function expandHomePath(p, home = homedir()) {
+  return p.startsWith("~/") || p === "~" ? path.join(home, p.slice(1)) : p;
+}
+
+/** Find a `~/.claude/plans/<name>.md` (or absolute) path in planner stdout — the CLI plan runner
+ *  writes the FULL plan there and only summarizes on stdout. Capturing the full text into the
+ *  pipeline kills a pointer-chasing indirection for the builder and reviewers (AIO-239 R5b). */
+export function findPlanFilePath(text) {
+  const m = (text ?? "").match(/(?:~|\/[^\s"'`)\]]*)\/\.claude\/plans\/[^\s"'`)\]]+\.md/);
+  return m ? m[0] : null;
+}
+
 // ── pure helpers (exported for tests) ───────────────────────────────────────────────────────
 
 export function parseShipArgs(args) {
@@ -153,6 +229,9 @@ export function parseShipArgs(args) {
     maxFixRounds,
     planRunner,
     dryRun: hasFlag("--dry-run"),
+    resume: hasFlag("--resume"),
+    approvePlan: hasFlag("--approve-plan"),
+    approveMerge: hasFlag("--approve-merge"),
   };
 }
 
@@ -179,11 +258,13 @@ export function validateShipArgs(opts) {
   return null;
 }
 
-// Gate decision per phase: 'skip' (auto flag set), 'prompt' (interactive TTY), or 'blocked'
-// (gate active in a non-TTY context — never hang). Pure; exported.
-export function resolveGates({ auto, autoMerge, isTty }) {
-  const decide = (autoFlag) => (autoFlag ? "skip" : isTty ? "prompt" : "blocked");
-  return { plan: decide(auto), merge: decide(autoMerge) };
+// Gate decision per phase: 'skip' (auto flag), 'approved' (--approve-* after inspecting a
+// pending gate), 'prompt' (interactive TTY), or 'blocked' (non-TTY: run UP TO the gate, persist
+// a GATE-<name>.pending.md + state, and exit with the gate code — resumable, never hanging).
+export function resolveGates({ auto, autoMerge, approvePlan, approveMerge, isTty }) {
+  const decide = (autoFlag, approveFlag) =>
+    autoFlag ? "skip" : approveFlag ? "approved" : isTty ? "prompt" : "blocked";
+  return { plan: decide(auto, approvePlan), merge: decide(autoMerge, approveMerge) };
 }
 
 // build.mjs EXIT → ship codes. Pure; exported.
@@ -423,7 +504,7 @@ export function buildPlanPrompt(issue, contextPack, prevReview) {
   return parts.join("\n");
 }
 
-export function buildPlanReviewPrompt(plan, round, maxRounds) {
+export function buildPlanReviewPrompt(plan, round, maxRounds, prevReview = null) {
   const isLast = round >= maxRounds;
   const roundNote = isLast
     ? `**Final round (${round}/${maxRounds}). Approve unless there is a Blocker.**`
@@ -437,6 +518,20 @@ export function buildPlanReviewPrompt(plan, round, maxRounds) {
     "",
     plan,
     "",
+    // Regression guard (AIO-239 R5a): a revision round can silently revert a fix the previous
+    // review already demanded and got — the reviewer must re-verify prior acceptances, not just
+    // hunt new issues. (Observed live: round 3 reverted two accepted round-1 fixes.)
+    ...(prevReview
+      ? [
+          "## Previously required changes (from the prior review round)",
+          "",
+          prevReview,
+          "",
+          "**Regression check: verify EVERY previously required change above is still honored in",
+          "this revision. A silently reverted prior fix is a Blocker.**",
+          "",
+        ]
+      : []),
     "---",
     "Review the plan. List any Blockers or approach-level Majors. Minor issues do not block.",
     `When the plan is ready to implement, place this token alone on the very last line:`,
@@ -595,52 +690,26 @@ export function resolveWorktreePathFromList(porcelain, branch) {
 }
 
 // ── cleanup (exported for the ordering test) ──────────────────────────────────────────────────
-// Correct ordering: git refuses to delete a branch checked out in a worktree, so checkout main
-// → ff-only main → worktree remove → prune → THEN branch delete. A dirty primary or a failed
-// ff-only returns CLEANUP_FAILED and NEVER issues a reset/merge/clobber.
+// Correct ordering: git refuses to delete a branch checked out in a worktree, so worktree remove
+// → prune → branch delete, THEN the primary ff-only.
+// Cleanup is BEST-EFFORT since AIO-239: the merge already happened, so nothing here may fail the
+// run. Worktree/branch removal always proceeds; the ff-only of the primary checkout is attempted
+// only when it cannot clobber operator state (someone else's working files must never turn a
+// successful ship into CLEANUP_FAILED — the operator can ff later). Always returns SHIP_EXIT.OK
+// with `reason` describing what was done and `ffSkipped`/`ffDone` for callers/tests.
+// AIO-186 grafts (kept under the best-effort stance):
+//   F3 — remove the worktree at the path git ACTUALLY registered for the branch (a resumed build
+//        may sit at a non-default path; runBuild returns only an exit code), falling back to the
+//        caller-passed path.
+//   F1 — land the ff-only on `main` itself (checkout main first): the operator may have started
+//        `aios ship` from another branch, and ff-ing a non-main HEAD advances the wrong branch.
+//        A failed checkout records ffSkipped — never CLEANUP_FAILED, never a clobber.
 export function runCleanup(deps, { repo, branch, worktreePath }) {
   const { gitExec } = deps;
-  // Preflight: a dirty primary checkout means an ff-only would be unsafe — surface, never clobber.
-  let status;
-  try {
-    status = gitExec(["status", "--porcelain"], repo);
-  } catch (e) {
-    return {
-      code: SHIP_EXIT.CLEANUP_FAILED,
-      reason: `could not read primary checkout status: ${e.message}`,
-    };
-  }
-  if (status && status.trim()) {
-    return {
-      code: SHIP_EXIT.CLEANUP_FAILED,
-      reason: "primary checkout is dirty — refusing to ff-only (fix manually).",
-    };
-  }
-  // Land the ff-only on `main` itself. The operator may have started `aios ship` from another
-  // branch; merging origin/main into a non-main HEAD would advance the wrong branch (or fail).
-  // On failure, surface CLEANUP_FAILED — never clobber, consistent with the fail-safe stance.
-  try {
-    gitExec(["checkout", "main"], repo);
-  } catch (e) {
-    return {
-      code: SHIP_EXIT.CLEANUP_FAILED,
-      reason: `could not checkout main before ff-only: ${e.message}`,
-    };
-  }
-  try {
-    gitExec(["fetch", "origin", "main"], repo);
-  } catch {
-    /* fetch failure surfaces on the ff-only below */
-  }
-  try {
-    gitExec(["merge", "--ff-only", "origin/main"], repo);
-  } catch (e) {
-    return { code: SHIP_EXIT.CLEANUP_FAILED, reason: `main is not fast-forwardable: ${e.message}` };
-  }
-  // Resolve the ACTUAL worktree registered for this branch. A resumed build may have reused an
-  // existing worktree at a non-default path, and runBuild returns only an exit code — so the
-  // caller-recomputed `worktreePath` can be wrong. Ask git; fall back to the passed path when git
-  // reports none (already-pruned → the remove below is a harmless no-op).
+  const notes = [];
+
+  // F3: resolve the ACTUAL worktree registered for this branch; fall back to the passed path
+  // when git reports none (already-pruned → the remove below is a harmless no-op).
   let removePath = worktreePath;
   try {
     const listed = resolveWorktreePathFromList(
@@ -651,11 +720,12 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
   } catch {
     /* best-effort — fall back to the passed worktreePath */
   }
+
   // Remove the worktree BEFORE deleting the branch (git blocks deleting a checked-out branch).
   try {
     gitExec(["worktree", "remove", "--force", removePath], repo);
   } catch {
-    /* best-effort */
+    notes.push("worktree remove skipped");
   }
   try {
     gitExec(["worktree", "prune"], repo);
@@ -665,9 +735,49 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
   try {
     gitExec(["branch", "-D", branch], repo);
   } catch {
-    /* best-effort — remote branch already deleted by --delete-branch at merge */
+    notes.push("local branch delete skipped (remote deleted at merge)");
   }
-  return { code: SHIP_EXIT.OK, reason: "cleaned up" };
+
+  // ff-only the primary checkout — convenience, not a requirement.
+  let ffDone = false;
+  let ffSkipped = null;
+  let status = "";
+  try {
+    status = gitExec(["status", "--porcelain"], repo) ?? "";
+  } catch (e) {
+    ffSkipped = `could not read primary status (${e.message})`;
+  }
+  if (ffSkipped == null && status.trim()) {
+    // Dirty primary: git's own checkout safety would refuse an ff that touches modified files,
+    // but we skip proactively — never risk another agent's / the operator's in-flight work.
+    ffSkipped =
+      "primary checkout has local changes — run `git merge --ff-only origin/main` when ready";
+  }
+  if (ffSkipped == null) {
+    // F1: land the ff on `main` itself — the operator may have started from another branch.
+    try {
+      gitExec(["checkout", "main"], repo);
+    } catch (e) {
+      ffSkipped = `could not checkout main (${e.message}) — run the ff from main when ready`;
+    }
+  }
+  if (ffSkipped == null) {
+    try {
+      gitExec(["fetch", "origin", "main"], repo);
+      gitExec(["merge", "--ff-only", "origin/main"], repo);
+      ffDone = true;
+    } catch (e) {
+      ffSkipped = `ff-only not possible (${e.message}) — resolve manually`;
+    }
+  }
+  if (ffSkipped) notes.push(`ff skipped: ${ffSkipped}`);
+
+  return {
+    code: SHIP_EXIT.OK,
+    ffDone,
+    ffSkipped,
+    reason: notes.length ? notes.join("; ") : "cleaned up (worktree, branch, ff)",
+  };
 }
 
 // ── build opts ─────────────────────────────────────────────────────────────────────────────
@@ -733,29 +843,32 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     slug,
     callOpus = defaultCallOpus,
     makeAnthropic = defaultMakeAnthropic,
+    readState = () => null,
+    writeState = () => {},
+    writeGate = () => {},
+    removeGate = () => {},
   } = deps;
 
   const records = { issue: issueId, stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
-  const gates = resolveGates({ auto: opts.auto, autoMerge: opts.autoMerge, isTty });
+  const gates = resolveGates({
+    auto: opts.auto,
+    autoMerge: opts.autoMerge,
+    approvePlan: opts.approvePlan,
+    approveMerge: opts.approveMerge,
+    isTty,
+  });
 
-  // Non-TTY gate short-circuit (cron safety): if a gate is active (no matching auto flag) and we
-  // cannot prompt, exit IMMEDIATELY with the gate code — before recon, before running any agent,
-  // and before any network. Gates are computed once from a single isTty, so a blocked plan/merge
-  // gate here is definitive; the later prompt paths only ever see "skip"/"prompt".
-  if (gates.plan === "blocked") {
-    record("plan-gate", { blocked: true });
-    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
-    return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
-  }
-  if (gates.merge === "blocked") {
-    record("merge-gate", { blocked: true });
-    console.error(
-      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
-    );
-    return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
-  }
+  // Checkpoint state (AIO-239): `--resume` re-enters at the first incomplete stage. A blocked
+  // gate no longer exits before recon — ship runs UP TO the gate, persists everything needed to
+  // judge it (audit dir + GATE-<name>.pending.md + state.json), and exits with the gate code.
+  const state = (opts.resume ? readState(issueId) : null) ?? {};
+  const saveState = (patch) => {
+    Object.assign(state, patch);
+    writeState(issueId, state);
+  };
+  const progress = (msg) => console.log(c.blue(`ship: ${msg}`));
 
   // ── 1. RECON ───────────────────────────────────────────────────────────────
   let issue;
@@ -795,41 +908,50 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   );
 
   let recon = "";
-  const reconStartedAt = Date.now();
-  try {
-    // Read ONLY allowed (tracked, non-denied) files — audit the rest by path+reason only.
-    const fileBlobs = allowed.map((rel) => {
-      let body = "";
-      try {
-        body = readFile(path.join(repo, rel));
-      } catch {
-        body = "(unreadable)";
-      }
-      // Mark truncation instead of silently slicing — the model must know it saw a partial file.
-      return body.length > RECON_FILE_CAP
-        ? `### ${rel}\n\n${body.slice(0, RECON_FILE_CAP)}\n\n…[truncated: first ${RECON_FILE_CAP} of ${body.length} chars]`
-        : `### ${rel}\n\n${body}`;
-    });
-    const reconPrompt =
-      buildReconPrompt(issue, { allowedFiles: allowed }) +
-      (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "") +
-      buildOmittedRefsNote(skipped);
-    const cfg = models.recon;
-    // Recon runs with NO tools: the untrusted Linear text is in the prompt, and the only files it
-    // may see are the pre-vetted `allowed` blobs already injected above. A prompt-injection payload
-    // therefore cannot make recon read anything outside the tracked-only allow list.
-    recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
-      model: cfg.model,
-      extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
-    });
-    writeAudit(issueId, "recon.md", recon);
-  } catch (e) {
-    record("recon", { error: e.message });
-    writeAudit(issueId, "recon-FAILED.md", failedArtifact("recon", e, reconStartedAt));
-    console.error(c.red(`recon: model step failed: ${e.message}`));
-    return { code: SHIP_EXIT.RECON_FAILED, records };
+  if (state.recon) {
+    recon = state.recon;
+    record("recon", { resumed: true });
+    progress("recon: resumed from checkpoint");
   }
-  record("recon", { allowed: allowed.length, skipped: skipped.length });
+  const reconStartedAt = Date.now();
+  if (!state.recon)
+    try {
+      // Read ONLY allowed (tracked, non-denied) files — audit the rest by path+reason only.
+      const fileBlobs = allowed.map((rel) => {
+        let body = "";
+        try {
+          body = readFile(path.join(repo, rel));
+        } catch {
+          body = "(unreadable)";
+        }
+        // Mark truncation instead of silently slicing — the model must know it saw a partial file.
+        return body.length > RECON_FILE_CAP
+          ? `### ${rel}\n\n${body.slice(0, RECON_FILE_CAP)}\n\n…[truncated: first ${RECON_FILE_CAP} of ${body.length} chars]`
+          : `### ${rel}\n\n${body}`;
+      });
+      const reconPrompt =
+        buildReconPrompt(issue, { allowedFiles: allowed }) +
+        (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "") +
+        buildOmittedRefsNote(skipped);
+      const cfg = models.recon;
+      // Recon runs with NO tools: the untrusted Linear text is in the prompt, and the only files it
+      // may see are the pre-vetted `allowed` blobs already injected above. A prompt-injection payload
+      // therefore cannot make recon read anything outside the tracked-only allow list.
+      recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
+        model: cfg.model,
+        extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
+      });
+      writeAudit(issueId, "recon.md", recon);
+      record("recon", { allowed: allowed.length, skipped: skipped.length });
+      saveState({ recon });
+      progress("recon: done");
+    } catch (e) {
+      record("recon", { error: e.message });
+      writeAudit(issueId, "recon-FAILED.md", failedArtifact("recon", e, reconStartedAt));
+      if (e?.partial) writeAudit(issueId, "recon-PARTIAL.md", e.partial); // AIO-239 R4a
+      console.error(c.red(`recon: model step failed: ${e.message}`));
+      return { code: SHIP_EXIT.RECON_FAILED, records };
+    }
 
   // ── 2. PLAN ────────────────────────────────────────────────────────────────
   const PLAN_ROUNDS = 3;
@@ -861,409 +983,577 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         ],
       });
   }
-  for (let round = 1; round <= PLAN_ROUNDS; round++) {
-    const planPrompt = buildPlanPrompt(issue, recon, prevReview);
-    const planStartedAt = Date.now();
-    try {
-      plan = await generatePlan(planPrompt);
-    } catch (e) {
-      record("plan", { error: e.message });
-      writeAudit(issueId, `plan-r${round}-FAILED.md`, failedArtifact("plan", e, planStartedAt));
-      console.error(c.red(`plan: builder failed: ${e.message}`));
+  if (state.plan && state.planReviewed) {
+    plan = state.plan;
+    approved = true;
+    record("plan", { resumed: true });
+    progress("plan: resumed from checkpoint (reviewer-approved)");
+  } else {
+    progress("plan: loop started");
+    for (let round = 1; round <= PLAN_ROUNDS; round++) {
+      const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+      const planStartedAt = Date.now();
+      try {
+        plan = await generatePlan(planPrompt);
+      } catch (e) {
+        record("plan", { error: e.message });
+        writeAudit(issueId, `plan-r${round}-FAILED.md`, failedArtifact("plan", e, planStartedAt));
+        if (e?.partial) writeAudit(issueId, `plan-r${round}-PARTIAL.md`, e.partial); // AIO-239 R4a
+        console.error(c.red(`plan: builder failed: ${e.message}`));
+        return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+      }
+      // The cli plan runner writes the FULL plan to ~/.claude/plans/<name>.md and only summarizes
+      // on stdout. Capture the full text INLINE so the reviewer, the plan gate, and the builder
+      // all see the real plan instead of chasing a pointer (AIO-239 R5b).
+      const planFilePath = findPlanFilePath(plan);
+      if (planFilePath) {
+        try {
+          const abs = expandHomePath(planFilePath);
+          const full = readFile(abs);
+          if (full && full.trim()) {
+            plan += `\n\n## Full plan (captured from ${planFilePath})\n\n${full}`;
+          }
+        } catch {
+          /* pointer without a readable file — the summary still stands */
+        }
+      }
+      writeAudit(issueId, `plan-r${round}.md`, plan);
+      const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS, prevReview);
+      const reviewStartedAt = Date.now();
+      let review;
+      try {
+        review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
+          extraArgs: [
+            "--force",
+            "--trust",
+            ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
+          ],
+        });
+      } catch (e) {
+        record("plan", { error: e.message });
+        writeAudit(
+          issueId,
+          `plan-review-r${round}-FAILED.md`,
+          failedArtifact("plan review", e, reviewStartedAt)
+        );
+        console.error(c.red(`plan: reviewer failed: ${e.message}`));
+        return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+      }
+      writeAudit(issueId, `plan-review-r${round}.md`, review);
+      if (lastNonBlankLine(review) === PLAN_READY_TOKEN) {
+        approved = true;
+        break;
+      }
+      prevReview = review;
+    }
+    if (!approved) {
+      record("plan", { unapproved: true });
+      console.error(c.yellow(`plan: spent ${PLAN_ROUNDS} rounds without ${PLAN_READY_TOKEN}.`));
       return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
     }
-    writeAudit(issueId, `plan-r${round}.md`, plan);
-    const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS);
-    const reviewStartedAt = Date.now();
-    let review;
-    try {
-      review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
-        extraArgs: [
-          "--force",
-          "--trust",
-          ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
-        ],
-      });
-    } catch (e) {
-      record("plan", { error: e.message });
-      writeAudit(
-        issueId,
-        `plan-review-r${round}-FAILED.md`,
-        failedArtifact("plan review", e, reviewStartedAt)
-      );
-      console.error(c.red(`plan: reviewer failed: ${e.message}`));
-      return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
-    }
-    writeAudit(issueId, `plan-review-r${round}.md`, review);
-    if (lastNonBlankLine(review) === PLAN_READY_TOKEN) {
-      approved = true;
-      break;
-    }
-    prevReview = review;
+    writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
+    saveState({ plan, planReviewed: true, planApproved: false });
+    progress("plan: reviewer approved (PLAN_READY)");
   }
-  if (!approved) {
-    record("plan", { unapproved: true });
-    console.error(c.yellow(`plan: spent ${PLAN_ROUNDS} rounds without ${PLAN_READY_TOKEN}.`));
-    return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
-  }
-  writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
 
-  // Plan gate. A "blocked" gate was already short-circuited at the top of runShip; here the gate
-  // is only ever "skip" (--auto) or "prompt" (interactive TTY).
-  if (gates.plan === "prompt") {
-    const ok = await confirm("Approve this plan and proceed to build?");
-    if (!ok) {
-      record("plan-gate", { rejected: true });
-      return { code: SHIP_EXIT.PLAN_REJECTED, records };
+  // Plan gate — 'skip' (--auto), 'approved' (--approve-plan on a resumed run), 'prompt'
+  // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
+  if (!state.planApproved) {
+    if (gates.plan === "blocked" || (gates.plan === "approved" && !state.planGatePending)) {
+      // "approved" without a pending gate (fresh run with --approve-plan, or stale state) must
+      // NOT wave the plan through: there was nothing inspected to approve (review r1, Medium).
+      if (gates.plan === "approved") {
+        console.error(
+          c.yellow(
+            "plan gate: --approve-plan given but no pending gate exists — treating as pending; " +
+              "inspect it, then resume with --resume --approve-plan."
+          )
+        );
+      }
+      record("plan-gate", { blocked: true });
+      saveState({ planGatePending: true });
+      console.log("SHIP_GATE plan pending"); // machine-greppable marker (AIO-239 R7c)
+      writeGate(
+        issueId,
+        "plan",
+        [
+          `# PLAN gate pending — ${issueId}`,
+          "",
+          "The reviewer-approved plan is below (also at plan.md in this directory).",
+          "",
+          "To approve and continue:  aios ship " + issueId + " --resume --approve-plan",
+          "To reject: discard the worktree/state or re-run without --resume for a fresh plan.",
+          "",
+          "---",
+          "",
+          plan,
+        ].join("\n")
+      );
+      console.error(
+        c.yellow(
+          `plan gate: pending operator approval — inspect .aios/loop/${issueId}/GATE-plan.pending.md, ` +
+            `then resume with --resume --approve-plan.`
+        )
+      );
+      return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
     }
+    if (gates.plan === "prompt") {
+      console.log("SHIP_GATE plan pending"); // marker precedes the prompt (AIO-239 R7c)
+      const ok = await confirm("Approve this plan and proceed to build?");
+      if (!ok) {
+        record("plan-gate", { rejected: true });
+        return { code: SHIP_EXIT.PLAN_REJECTED, records };
+      }
+    } else if (gates.plan === "approved") {
+      record("plan-gate", { approvedViaFlag: true });
+      progress("plan gate: approved via --approve-plan");
+    }
+    saveState({ planApproved: true, planGatePending: false });
+    removeGate(issueId, "plan");
   }
 
   // ── 3. FOLLOW-UP CAPTURE ─────────────────────────────────────────────────────
-  const deferred = parseDeferredScope(plan);
-  const existingChildTitles = new Set((issue.children ?? []).map((ch) => normalizeTitle(ch.title)));
-  const created = [];
-  for (const title of deferred) {
-    if (existingChildTitles.has(normalizeTitle(title))) continue;
-    try {
-      const child = await linear.createIssue({
-        title,
-        description: `Deferred from ${issue.identifier} during \`aios ship\`.`,
-        parentIdentifier: issue.identifier,
-      });
-      created.push(child.identifier);
-      existingChildTitles.add(normalizeTitle(title));
-    } catch (e) {
-      console.error(c.yellow(`follow-up: could not file '${title}': ${e.message}`));
+  if (state.followUpDone) {
+    record("follow-up", { resumed: true });
+  } else {
+    const deferred = parseDeferredScope(plan);
+    const existingChildTitles = new Set(
+      (issue.children ?? []).map((ch) => normalizeTitle(ch.title))
+    );
+    const created = [];
+    for (const title of deferred) {
+      if (existingChildTitles.has(normalizeTitle(title))) continue;
+      try {
+        const child = await linear.createIssue({
+          title,
+          description: `Deferred from ${issue.identifier} during \`aios ship\`.`,
+          parentIdentifier: issue.identifier,
+        });
+        created.push(child.identifier);
+        existingChildTitles.add(normalizeTitle(title));
+      } catch (e) {
+        console.error(c.yellow(`follow-up: could not file '${title}': ${e.message}`));
+      }
     }
+    writeAudit(
+      issueId,
+      "deferred.md",
+      `# Deferred follow-ups\n\n` +
+        (deferred.length ? deferred.map((t) => `- ${t}`).join("\n") : "(none)") +
+        `\n\nCreated: ${created.join(", ") || "(none)"}`
+    );
+    record("follow-up", { deferred: deferred.length, created: created.length });
+    saveState({ followUpDone: true });
   }
-  writeAudit(
-    issueId,
-    "deferred.md",
-    `# Deferred follow-ups\n\n` +
-      (deferred.length ? deferred.map((t) => `- ${t}`).join("\n") : "(none)") +
-      `\n\nCreated: ${created.join(", ") || "(none)"}`
-  );
-  record("follow-up", { deferred: deferred.length, created: created.length });
 
   // ── 4. BUILD ─────────────────────────────────────────────────────────────────
-  const branch = `feat/${issue.identifier}-${slugify(issue.title)}`;
-  const worktreePath = path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
+  // On resume, the CHECKPOINTED branch/worktree win: recomputing from the Linear title would
+  // silently retarget every later stage if the title was edited between runs (review r1, High).
+  const branch = state.branch ?? `feat/${issue.identifier}-${slugify(issue.title)}`;
+  const worktreePath =
+    state.worktreePath ?? path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
   const auditDir = path.join(repo, ".aios", "loop", issueId);
   const buildLog = path.join(auditDir, "build.md");
-  let buildCode;
-  try {
-    buildCode = await runBuildDep({
-      repo,
-      plan,
-      branch,
-      opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }),
-    });
-  } catch (e) {
-    record("build", { error: e.message });
-    writeAudit(issueId, "build-FAILED.md", failedArtifact("build", e));
-    console.error(c.red(`build: ${e.message}`));
-    return { code: SHIP_EXIT.BUILD_FAILED, records };
+  if (state.buildDone) {
+    record("build", { resumed: true, branch });
+    progress(`build: resumed from checkpoint (branch ${branch})`);
+  } else {
+    progress("build: started");
+    let buildCode;
+    try {
+      buildCode = await runBuildDep({
+        repo,
+        plan,
+        branch,
+        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }),
+      });
+    } catch (e) {
+      record("build", { error: e.message });
+      writeAudit(issueId, "build-FAILED.md", failedArtifact("build", e));
+      console.error(c.red(`build: ${e.message}`));
+      return { code: SHIP_EXIT.BUILD_FAILED, records };
+    }
+    const mapped = mapBuildExit(buildCode);
+    if (mapped !== SHIP_EXIT.OK) {
+      record("build", { buildCode, mapped });
+      return { code: mapped, records };
+    }
+    record("build", { branch });
+    saveState({ buildDone: true, branch, worktreePath });
+    progress("build: done");
   }
-  const mapped = mapBuildExit(buildCode);
-  if (mapped !== SHIP_EXIT.OK) {
-    record("build", { buildCode, mapped });
-    return { code: mapped, records };
-  }
-  record("build", { branch });
 
   // ── 5. PR ────────────────────────────────────────────────────────────────────
   let prNumber;
-  try {
-    prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
-      throwOnError: true,
-    });
-  } catch (e) {
-    record("pr", { error: e.message });
-    writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
-    console.error(c.red(`pr: ${e.message}`));
-    return { code: SHIP_EXIT.PR_FAILED, records };
+  if (state.prNumber) {
+    prNumber = state.prNumber;
+    record("pr", { resumed: true, pr: prNumber });
+    progress(`pr: resumed from checkpoint (#${prNumber})`);
+  } else {
+    try {
+      prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+        throwOnError: true,
+      });
+    } catch (e) {
+      record("pr", { error: e.message });
+      writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
+      console.error(c.red(`pr: ${e.message}`));
+      return { code: SHIP_EXIT.PR_FAILED, records };
+    }
+    if (!prNumber) {
+      record("pr", { error: "no PR number" });
+      return { code: SHIP_EXIT.PR_FAILED, records };
+    }
+    record("pr", { pr: prNumber });
+    saveState({ prNumber });
+    progress(`pr: opened #${prNumber}`);
   }
-  if (!prNumber) {
-    record("pr", { error: "no PR number" });
-    return { code: SHIP_EXIT.PR_FAILED, records };
-  }
-  record("pr", { pr: prNumber });
 
   // ── 6 + 7. REVIEW + FIX LOOP ──────────────────────────────────────────────────
   // --reviewers selects which gating reviewers actually run (validated against KNOWN_REVIEWERS).
   const wantBugbot = opts.reviewers.includes("bugbot");
   const wantGpt = opts.reviewers.includes("gpt-5.5");
-  let round = 1;
-  for (;;) {
-    // (a) Bugbot gate. Skipped ONLY if the operator explicitly dropped "bugbot" from --reviewers.
-    // Pass the resolved GitHub slug so wait-for-bots targets the right repo even under `ship
-    // --repo <path>` (its own git-remote detection runs in the primary checkout, not the slug).
-    // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout; anything else = the gate
-    // could not run. A requested reviewer whose evidence is NOT present must fail closed — a
-    // timeout means the consolidator would otherwise CLEAR without Bugbot's findings and merge
-    // before a late Critical/High appears. So ANY non-zero (timeout INCLUDED) blocks merge.
-    if (wantBugbot) {
-      const wfbCode = waitForBots([
-        "--pr",
-        String(prNumber),
-        ...(slug ? ["--repo", slug] : []),
-        "--bots",
-        "cursor[bot]",
-        "--timeout",
-        "10",
-      ]);
-      if (wfbCode !== 0) {
-        record("review", { round, bugbotUnavailable: wfbCode });
-        const why = wfbCode === 2 ? "timed out" : `exited ${wfbCode} (gate could not run)`;
-        console.error(
-          c.red(
-            `review: Bugbot review unavailable — wait-for-bots ${why}; blocking merge ` +
-              `(drop it via --reviewers to skip it intentionally).`
-          )
-        );
-        return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-      }
+  let round = state.reviewRound ?? 1;
+  // A resumed CLEAR is honored only if the branch head hasn't moved since the review round that
+  // cleared it — new commits after the checkpoint must re-run the reviewers (review r1, Medium).
+  if (state.reviewClear) {
+    let headNow = null;
+    try {
+      headNow = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+    } catch {
+      headNow = null;
     }
-
-    // (b) GPT-5.5 PR review via Cursor. Skipped ONLY if the operator dropped "gpt-5.5". A
-    // requested GPT review that fails (or has no diff to review) is missing reviewer evidence —
-    // fail closed rather than consolidate without it.
-    let gptReviewFile = null;
-    if (wantGpt) {
-      try {
-        const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
-        const prDiff = diffRes?.stdout ?? "";
-        if (diffRes?.code !== 0 || !prDiff.trim()) {
-          record("review", { round, gptDiffUnavailable: true, code: diffRes?.code });
+    if (!headNow || headNow !== state.reviewHead) {
+      progress("review: checkpointed CLEAR is stale (branch moved) — re-running the review round");
+      saveState({ reviewClear: false, reviewHead: null });
+      state.reviewClear = false;
+    }
+  }
+  if (state.reviewClear) {
+    record("review", { resumed: true, clear: true });
+    progress("review: resumed from checkpoint (already CLEAR)");
+  } else
+    for (;;) {
+      saveState({ reviewRound: round });
+      progress(`review: round ${round} started`);
+      // (a) Bugbot gate. Skipped ONLY if the operator explicitly dropped "bugbot" from --reviewers.
+      // Pass the resolved GitHub slug so wait-for-bots targets the right repo even under `ship
+      // --repo <path>` (its own git-remote detection runs in the primary checkout, not the slug).
+      // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout; anything else = the gate
+      // could not run. A requested reviewer whose evidence is NOT present must fail closed — a
+      // timeout means the consolidator would otherwise CLEAR without Bugbot's findings and merge
+      // before a late Critical/High appears. So ANY non-zero (timeout INCLUDED) blocks merge.
+      if (wantBugbot) {
+        const wfbCode = waitForBots([
+          "--pr",
+          String(prNumber),
+          ...(slug ? ["--repo", slug] : []),
+          "--bots",
+          "cursor[bot]",
+          "--timeout",
+          "10",
+        ]);
+        if (wfbCode !== 0) {
+          record("review", { round, bugbotUnavailable: wfbCode });
+          const why = wfbCode === 2 ? "timed out" : `exited ${wfbCode} (gate could not run)`;
           console.error(
-            c.red("review: PR diff unavailable for the GPT review — blocking merge (fail closed).")
+            c.red(
+              `review: Bugbot review unavailable — wait-for-bots ${why}; blocking merge ` +
+                `(drop it via --reviewers to skip it intentionally).`
+            )
           );
           return { code: SHIP_EXIT.MERGE_BLOCKED, records };
         }
-        const gptCfg = models.code_review;
-        const gptReview = await cursor(
-          buildGptReviewPrompt(plan, prDiff, prNumber),
-          gptCfg.timeoutMs ?? 300 * 1000,
-          {
-            extraArgs: ["--force", "--trust", ...(gptCfg.model ? ["--model", gptCfg.model] : [])],
+      }
+
+      // (b) GPT-5.5 PR review via Cursor. Skipped ONLY if the operator dropped "gpt-5.5". A
+      // requested GPT review that fails (or has no diff to review) is missing reviewer evidence —
+      // fail closed rather than consolidate without it.
+      let gptReviewFile = null;
+      if (wantGpt) {
+        try {
+          const diffRes = ghExec([
+            "pr",
+            "diff",
+            String(prNumber),
+            ...(slug ? ["--repo", slug] : []),
+          ]);
+          const prDiff = diffRes?.stdout ?? "";
+          if (diffRes?.code !== 0 || !prDiff.trim()) {
+            record("review", { round, gptDiffUnavailable: true, code: diffRes?.code });
+            console.error(
+              c.red(
+                "review: PR diff unavailable for the GPT review — blocking merge (fail closed)."
+              )
+            );
+            return { code: SHIP_EXIT.MERGE_BLOCKED, records };
           }
-        );
-        writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
-        gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
-      } catch (e) {
-        record("review", { round, gptReviewError: e.message });
-        writeAudit(issueId, `review-gpt-r${round}-FAILED.md`, failedArtifact("GPT review", e));
-        console.error(
-          c.red(`review: GPT review failed (${e.message}) — blocking merge (requested reviewer).`)
-        );
+          const gptCfg = models.code_review;
+          const gptReview = await cursor(
+            buildGptReviewPrompt(plan, prDiff, prNumber),
+            gptCfg.timeoutMs ?? 300 * 1000,
+            {
+              extraArgs: ["--force", "--trust", ...(gptCfg.model ? ["--model", gptCfg.model] : [])],
+            }
+          );
+          writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
+          gptReviewFile = path.join(auditDir, `review-gpt-r${round}.md`);
+        } catch (e) {
+          record("review", { round, gptReviewError: e.message });
+          writeAudit(issueId, `review-gpt-r${round}-FAILED.md`, failedArtifact("GPT review", e));
+          console.error(
+            c.red(`review: GPT review failed (${e.message}) — blocking merge (requested reviewer).`)
+          );
+          return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+        }
+      }
+
+      // (c) Consolidate.
+      const consolidateArgs = [
+        "--pr",
+        String(prNumber),
+        "--issue",
+        issue.identifier,
+        "--round",
+        String(round),
+      ];
+      if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
+      if (slug) consolidateArgs.push("--repo", slug);
+      const verdictCode = await consolidateDep(repo, consolidateArgs);
+      record("review", { round, verdictCode });
+
+      if (verdictCode === 0) {
+        let reviewHead = null;
+        try {
+          reviewHead = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+        } catch {
+          reviewHead = null; // unknown head → a resume will conservatively re-review
+        }
+        saveState({ reviewClear: true, reviewHead });
+        progress(`review: round ${round} CLEAR`);
+        break; // CLEAR → merge gate
+      }
+      if (verdictCode !== 3) {
+        // 1 (error) or unknown → cannot proceed to merge.
+        console.error(c.red(`review: consolidator returned ${verdictCode} — blocking merge.`));
         return { code: SHIP_EXIT.MERGE_BLOCKED, records };
       }
+      // BLOCKED → fix, unless we're out of rounds. `round` counts review passes starting at 1, so
+      // the guard is `round > maxFixRounds`: with --max-fix-rounds 1 the first BLOCKED review (round
+      // 1) still gets ONE fix attempt; nonconvergence only trips once we've spent all N fix rounds.
+      if (round > opts.maxFixRounds) {
+        record("fix", { nonconvergence: true, round });
+        console.error(
+          c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`)
+        );
+        return { code: SHIP_EXIT.REVIEW_NONCONVERGENCE, records };
+      }
+      const findingsFile = defaultOutPath(repo, issue.identifier, round);
+      let fixCode;
+      try {
+        fixCode = await runBuildDep({
+          repo,
+          plan,
+          branch,
+          opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }),
+        });
+      } catch (e) {
+        record("fix", { error: e.message });
+        writeAudit(issueId, `fix-r${round}-FAILED.md`, failedArtifact("fix build", e));
+        return { code: SHIP_EXIT.BUILD_FAILED, records };
+      }
+      const fixMapped = mapBuildExit(fixCode);
+      if (fixMapped !== SHIP_EXIT.OK) {
+        record("fix", { fixCode, mapped: fixMapped });
+        return { code: fixMapped, records };
+      }
+      // Re-push the fixes onto the existing PR.
+      try {
+        await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+          throwOnError: true,
+        });
+      } catch (e) {
+        record("fix", { error: e.message });
+        writeAudit(issueId, `fix-push-r${round}-FAILED.md`, failedArtifact("fix push", e));
+        return { code: SHIP_EXIT.PR_FAILED, records };
+      }
+      round++;
     }
-
-    // (c) Consolidate.
-    const consolidateArgs = [
-      "--pr",
-      String(prNumber),
-      "--issue",
-      issue.identifier,
-      "--round",
-      String(round),
-    ];
-    if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
-    if (slug) consolidateArgs.push("--repo", slug);
-    const verdictCode = await consolidateDep(repo, consolidateArgs);
-    record("review", { round, verdictCode });
-
-    if (verdictCode === 0) break; // CLEAR → merge gate
-    if (verdictCode !== 3) {
-      // 1 (error) or unknown → cannot proceed to merge.
-      console.error(c.red(`review: consolidator returned ${verdictCode} — blocking merge.`));
-      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-    }
-    // BLOCKED → fix, unless we're out of rounds. `round` counts review passes starting at 1, so
-    // the guard is `round > maxFixRounds`: with --max-fix-rounds 1 the first BLOCKED review (round
-    // 1) still gets ONE fix attempt; nonconvergence only trips once we've spent all N fix rounds.
-    if (round > opts.maxFixRounds) {
-      record("fix", { nonconvergence: true, round });
-      console.error(
-        c.red(`review: still BLOCKED after ${opts.maxFixRounds} fix round(s) — no partial merge.`)
-      );
-      return { code: SHIP_EXIT.REVIEW_NONCONVERGENCE, records };
-    }
-    const findingsFile = defaultOutPath(repo, issue.identifier, round);
-    let fixCode;
-    try {
-      fixCode = await runBuildDep({
-        repo,
-        plan,
-        branch,
-        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }),
-      });
-    } catch (e) {
-      record("fix", { error: e.message });
-      writeAudit(issueId, `fix-r${round}-FAILED.md`, failedArtifact("fix build", e));
-      return { code: SHIP_EXIT.BUILD_FAILED, records };
-    }
-    const fixMapped = mapBuildExit(fixCode);
-    if (fixMapped !== SHIP_EXIT.OK) {
-      record("fix", { fixCode, mapped: fixMapped });
-      return { code: fixMapped, records };
-    }
-    // Re-push the fixes onto the existing PR.
-    try {
-      await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
-        throwOnError: true,
-      });
-    } catch (e) {
-      record("fix", { error: e.message });
-      writeAudit(issueId, `fix-push-r${round}-FAILED.md`, failedArtifact("fix push", e));
-      return { code: SHIP_EXIT.PR_FAILED, records };
-    }
-    round++;
-  }
 
   // ── 8. MERGE GATE ──────────────────────────────────────────────────────────────
-  // Preflight: primary checkout must be clean so the post-merge ff-only is safe. Surface early.
-  let primaryStatus = "";
-  try {
-    primaryStatus = gitExec(["status", "--porcelain"], repo);
-  } catch (e) {
-    record("merge-gate", { error: e.message });
-    writeAudit(issueId, "merge-gate-FAILED.md", failedArtifact("merge gate", e));
-    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
-  }
-  if (primaryStatus && primaryStatus.trim()) {
-    record("merge-gate", { dirtyPrimary: true });
-    console.error(
-      c.red("merge gate: primary checkout is dirty — refusing to merge into an unffable state.")
-    );
-    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
-  }
+  // (AIO-239) A dirty primary checkout no longer blocks the merge: the merge happens on GitHub,
+  // and the post-merge ff-only is best-effort convenience (see runCleanup) — another agent's or
+  // the operator's in-flight working files must never veto a reviewed, CI-green PR.
+  // A checkpointed `merged` short-circuits the gate AND the merge: re-attempting `gh pr merge`
+  // on an already-merged PR fails and would block cleanup (review r1, High).
+  if (state.merged) {
+    record("merge", { resumed: true, pr: prNumber });
+    progress(`merge: resumed from checkpoint (PR #${prNumber} already merged)`);
+  } else {
+    // CI green.
+    const checks = readChecks(prNumber, { ghExec, slug });
+    if (!checks.ok) {
+      record("merge-gate", { ci: checks });
+      console.error(
+        c.red(
+          `merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
 
-  // CI green.
-  const checks = readChecks(prNumber, { ghExec, slug });
-  if (!checks.ok) {
-    record("merge-gate", { ci: checks });
-    console.error(
-      c.red(
-        `merge gate: CI not green (${checks.unavailable ? "unavailable" : checks.red ? "red" : "pending"}).`
-      )
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-
-  // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
-  // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
-  // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
-  // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
-  let nameRes;
-  try {
-    nameRes = ghExec([
-      "pr",
-      "diff",
-      String(prNumber),
-      ...(slug ? ["--repo", slug] : []),
-      "--name-only",
-    ]);
-  } catch (e) {
-    nameRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
-  }
-  const nameStdout = nameRes?.stdout ?? "";
-  if (nameRes?.code !== 0 || !nameStdout.trim()) {
-    record("merge-gate", { changedPathsUnavailable: true, code: nameRes?.code });
-    console.error(
-      c.red(
-        "merge gate: changed-path metadata unavailable — cannot verify safety surface; blocking."
-      )
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-  const changedPaths = nameStdout
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (touchesSafetySurface(changedPaths)) {
+    // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
+    // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
+    // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
+    // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
+    let nameRes;
     try {
-      const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
-      // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
-      // or returned empty content, we would be asking it to approve `(no diff)` as green — fail
-      // closed instead. `--name-only` succeeding above does NOT prove the full diff fetch works.
-      if (diffRes?.code !== 0 || !(diffRes.stdout ?? "").trim()) {
-        record("merge-gate", { safetyDiffUnavailable: true, code: diffRes?.code });
+      nameRes = ghExec([
+        "pr",
+        "diff",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--name-only",
+      ]);
+    } catch (e) {
+      nameRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
+    }
+    const nameStdout = nameRes?.stdout ?? "";
+    if (nameRes?.code !== 0 || !nameStdout.trim()) {
+      record("merge-gate", { changedPathsUnavailable: true, code: nameRes?.code });
+      console.error(
+        c.red(
+          "merge gate: changed-path metadata unavailable — cannot verify safety surface; blocking."
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+    const changedPaths = nameStdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (touchesSafetySurface(changedPaths)) {
+      try {
+        const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
+        // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
+        // or returned empty content, we would be asking it to approve `(no diff)` as green — fail
+        // closed instead. `--name-only` succeeding above does NOT prove the full diff fetch works.
+        if (diffRes?.code !== 0 || !(diffRes.stdout ?? "").trim()) {
+          record("merge-gate", { safetyDiffUnavailable: true, code: diffRes?.code });
+          console.error(
+            c.red(
+              "merge gate: safety-surface diff unavailable — cannot run the safety review; blocking."
+            )
+          );
+          return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+        }
+        const cfg = models.safety_review;
+        const safety = await claude(
+          buildSafetyPrompt(diffRes.stdout, changedPaths),
+          cfg.timeoutMs ?? 300 * 1000,
+          {
+            model: cfg.model,
+            // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
+            // never needs (and must not have) filesystem access over untrusted diff content.
+            extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
+          }
+        );
+        writeAudit(issueId, "safety-review.md", safety);
+        if (!detectSafetyToken(safety)) {
+          record("merge-gate", { safetyBlocked: true });
+          console.error(c.red("merge gate: safety review withheld approval."));
+          return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+        }
+      } catch (e) {
+        record("merge-gate", { safetyError: e.message });
+        writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
+        console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
+        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      }
+    }
+
+    // Operator OK — 'skip' (--auto-merge), 'approved' (--approve-merge on a resumed run), 'prompt'
+    // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
+    if (gates.merge === "blocked" || (gates.merge === "approved" && !state.mergeGatePending)) {
+      if (gates.merge === "approved") {
         console.error(
-          c.red(
-            "merge gate: safety-surface diff unavailable — cannot run the safety review; blocking."
+          c.yellow(
+            "merge gate: --approve-merge given but no pending gate exists — treating as pending; " +
+              "inspect PR #" +
+              prNumber +
+              ", then resume with --resume --approve-merge."
           )
         );
-        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
       }
-      const cfg = models.safety_review;
-      const safety = await claude(
-        buildSafetyPrompt(diffRes.stdout, changedPaths),
-        cfg.timeoutMs ?? 300 * 1000,
-        {
-          model: cfg.model,
-          // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
-          // never needs (and must not have) filesystem access over untrusted diff content.
-          extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
-        }
+      record("merge-gate", { blocked: true });
+      saveState({ mergeGatePending: true });
+      console.log("SHIP_GATE merge pending"); // machine-greppable marker (AIO-239 R7c)
+      writeGate(
+        issueId,
+        "merge",
+        [
+          `# MERGE gate pending — ${issueId} (PR #${prNumber})`,
+          "",
+          "CI is green, the consolidator is CLEAR, and the safety review (if triggered) approved.",
+          "",
+          "To merge and clean up:  aios ship " + issueId + " --resume --approve-merge",
+          "To reject: close the PR (gh pr close " + prNumber + ") and remove the worktree.",
+        ].join("\n")
       );
-      writeAudit(issueId, "safety-review.md", safety);
-      if (!detectSafetyToken(safety)) {
-        record("merge-gate", { safetyBlocked: true });
-        console.error(c.red("merge gate: safety review withheld approval."));
-        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      console.error(
+        c.yellow(
+          `merge gate: pending operator approval — inspect PR #${prNumber}, then resume with ` +
+            `--resume --approve-merge.`
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
+    }
+    if (gates.merge === "prompt") {
+      console.log("SHIP_GATE merge pending"); // marker precedes the prompt (AIO-239 R7c)
+      const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
+      if (!ok) {
+        record("merge-gate", { rejected: true });
+        return { code: SHIP_EXIT.MERGE_REJECTED, records };
       }
+    } else if (gates.merge === "approved") {
+      record("merge-gate", { approvedViaFlag: true });
+      progress("merge gate: approved via --approve-merge");
+    }
+    saveState({ mergeGatePending: false });
+    removeGate(issueId, "merge");
+
+    // Merge (squash + delete remote branch). ghExec returns {code,stdout,stderr} WITHOUT throwing,
+    // so a failed `gh pr merge` must be caught by checking code — never assume success. A failed
+    // merge blocks and, critically, never advances to cleanup (which would remove the worktree/branch).
+    let mergeRes;
+    try {
+      mergeRes = ghExec([
+        "pr",
+        "merge",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--squash",
+        "--delete-branch",
+      ]);
     } catch (e) {
-      record("merge-gate", { safetyError: e.message });
-      writeAudit(issueId, "safety-review-FAILED.md", failedArtifact("safety review", e));
-      console.error(c.red(`merge gate: safety review failed (${e.message}) — failing closed.`));
-      return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      mergeRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
     }
-  }
-
-  // Operator OK. A "blocked" merge gate was already short-circuited at the top of runShip; here
-  // the gate is only ever "skip" (--auto-merge) or "prompt" (interactive TTY).
-  if (gates.merge === "prompt") {
-    const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
-    if (!ok) {
-      record("merge-gate", { rejected: true });
-      return { code: SHIP_EXIT.MERGE_REJECTED, records };
+    if (mergeRes?.code !== 0) {
+      record("merge", { error: mergeRes?.stderr || "gh pr merge failed", code: mergeRes?.code });
+      console.error(
+        c.red(`merge: gh pr merge failed (code ${mergeRes?.code}): ${mergeRes?.stderr || ""}`)
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
-  }
+    record("merge", { pr: prNumber });
+    saveState({ merged: true });
+  } // end !state.merged
 
-  // Merge (squash + delete remote branch). ghExec returns {code,stdout,stderr} WITHOUT throwing,
-  // so a failed `gh pr merge` must be caught by checking code — never assume success. A failed
-  // merge blocks and, critically, never advances to cleanup (which would remove the worktree/branch).
-  let mergeRes;
-  try {
-    mergeRes = ghExec([
-      "pr",
-      "merge",
-      String(prNumber),
-      ...(slug ? ["--repo", slug] : []),
-      "--squash",
-      "--delete-branch",
-    ]);
-  } catch (e) {
-    mergeRes = { code: 1, stdout: "", stderr: String(e?.message ?? "") };
-  }
-  if (mergeRes?.code !== 0) {
-    record("merge", { error: mergeRes?.stderr || "gh pr merge failed", code: mergeRes?.code });
-    console.error(
-      c.red(`merge: gh pr merge failed (code ${mergeRes?.code}): ${mergeRes?.stderr || ""}`)
-    );
-    return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-  }
-  record("merge", { pr: prNumber });
-
-  // ── 9. CLEANUP ───────────────────────────────────────────────────────────────
+  // ── 9. CLEANUP (best-effort — the ship already succeeded; see runCleanup) ───────
   const cleanup = runCleanup(deps, { repo, branch, worktreePath });
   record("cleanup", cleanup);
-  if (cleanup.code !== SHIP_EXIT.OK) {
-    console.error(c.red(`cleanup: ${cleanup.reason}`));
-    return { code: SHIP_EXIT.CLEANUP_FAILED, records };
-  }
+  if (cleanup.ffSkipped) console.log(c.yellow(`cleanup: ${cleanup.reason}`));
+  else progress(`cleanup: ${cleanup.reason}`);
 
   writeAudit(
     issueId,
@@ -1295,10 +1585,14 @@ function usage() {
       "                         Opus via the Anthropic SDK and needs a funded ANTHROPIC_API_KEY)",
       "  --dry-run              print the resolved step plan; no side effects (a resolvable",
       "                         LINEAR_API_KEY only enables a best-effort issue-title fetch)",
+      "  --resume               re-enter at the first incomplete stage (state.json checkpoint)",
+      "  --approve-plan         satisfy a pending PLAN gate (use with --resume after inspecting",
+      "                         .aios/loop/<issue>/GATE-plan.pending.md)",
+      "  --approve-merge        satisfy a pending MERGE gate (use with --resume)",
       "",
-      "Gates default ON. In a non-TTY context without the matching --auto flag, ship exits with",
-      "a *_GATE_BLOCKED code rather than hanging (cron safety). See docs/agent-build.md for the",
-      "full SHIP_EXIT table.",
+      "Gates default ON. In a non-TTY context without the matching flag, ship runs UP TO the",
+      "gate, persists GATE-<name>.pending.md + state.json, and exits with the gate code —",
+      "resumable, never hanging. See docs/agent-build.md for the full SHIP_EXIT table.",
     ].join("\n")
   );
 }
@@ -1326,7 +1620,13 @@ export async function cmdShip(repo, args, deps = {}) {
     return SHIP_EXIT.USAGE;
   }
   const isTty = deps.isTty ?? Boolean(process.stdout.isTTY);
-  const gates = resolveGates({ auto: opts.auto, autoMerge: opts.autoMerge, isTty });
+  const gates = resolveGates({
+    auto: opts.auto,
+    autoMerge: opts.autoMerge,
+    approvePlan: opts.approvePlan,
+    approveMerge: opts.approveMerge,
+    isTty,
+  });
 
   // --dry-run: no side effects, no required network. A resolvable key makes fetching the issue
   // title a best-effort nicety.
@@ -1356,20 +1656,11 @@ export async function cmdShip(repo, args, deps = {}) {
     return SHIP_EXIT.OK;
   }
 
-  // Non-TTY gate short-circuit (cron safety): a gate active without its --auto flag in a context
-  // where we cannot prompt is decided IMMEDIATELY — before requiring LINEAR_API_KEY, before recon,
-  // and before any agent runs. This keeps the *_GATE_BLOCKED contract honest: a default non-TTY
-  // `aios ship AIO-<n>` returns PLAN_GATE_BLOCKED, never a downstream missing-key USAGE error.
-  if (gates.plan === "blocked") {
-    console.error(c.red("plan gate active in a non-TTY context without --auto — not hanging."));
-    return SHIP_EXIT.PLAN_GATE_BLOCKED;
-  }
-  if (gates.merge === "blocked") {
-    console.error(
-      c.red("merge gate active in a non-TTY context without --auto-merge — not hanging.")
-    );
-    return SHIP_EXIT.MERGE_GATE_BLOCKED;
-  }
+  // (AIO-239) Blocked gates no longer short-circuit before recon: a non-TTY run without the
+  // matching --auto/--approve-* flag runs UP TO the gate, persists the audit trail + a
+  // GATE-<name>.pending.md + state.json, and exits with the gate code — resumable via
+  // `--resume --approve-plan` / `--approve-merge`. Unattended callers that want no gates at all
+  // keep using --auto/--auto-merge (the cron/roadmap-run pattern, unchanged).
 
   // The sdk plan runner drives Opus through the Anthropic SDK, which needs a funded
   // ANTHROPIC_API_KEY. A missing key is detectable up front — fail cleanly here rather than let the
@@ -1413,6 +1704,10 @@ export async function cmdShip(repo, args, deps = {}) {
     isTty,
     writeAudit:
       deps.writeAudit ?? ((issue, name, text) => defaultWriteAudit(repo, issue, name, text)),
+    readState: deps.readState ?? ((issue) => defaultReadState(repo, issue)),
+    writeState: deps.writeState ?? ((issue, st) => defaultWriteState(repo, issue, st)),
+    writeGate: deps.writeGate ?? ((issue, name, text) => defaultWriteGate(repo, issue, name, text)),
+    removeGate: deps.removeGate ?? ((issue, name) => defaultRemoveGate(repo, issue, name)),
     slug,
   };
 

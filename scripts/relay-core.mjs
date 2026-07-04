@@ -139,11 +139,13 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 
     const timer = setTimeout(() => {
       proc.kill();
-      reject(
-        new Error(
-          `${label} agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
-        )
+      const err = new Error(
+        `${label} agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
       );
+      // Carry whatever the agent streamed before the kill: callers persist it as a
+      // <stage>-PARTIAL artifact instead of discarding near-complete work (AIO-239 R4a).
+      err.partial = text;
+      reject(err);
     }, timeoutMs);
 
     const rl = createInterface({ input: proc.stdout });

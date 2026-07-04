@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// test/ship-cleanup.test.mjs — [R-Major-3] cleanup ordering + AIO-186 F1/F3.
-// Git refuses to delete a branch checked out in a worktree, so the order MUST be:
-// checkout main → ff-only main → worktree remove → worktree prune → THEN branch -D. A dirty
-// primary or a failed checkout/ff-only returns CLEANUP_FAILED and NEVER issues a reset/merge/
-// clobber. F3: the worktree removed is the one git ACTUALLY has for the branch, not a recompute.
+// test/ship-cleanup.test.mjs — cleanup is BEST-EFFORT (AIO-239) + AIO-186 F1/F3 grafts.
+// The merge already happened when cleanup runs, so cleanup NEVER fails the run: worktree
+// removal → prune → branch -D always proceed (in that order — git refuses to delete a branch
+// checked out in a worktree), and the ff-only of the primary checkout is a convenience that is
+// SKIPPED (with a reason) when the primary has local changes, `checkout main` fails (F1: the ff
+// must land on main, never a non-main HEAD), or the ff is not possible. F3: the worktree
+// removed is the one git ACTUALLY registered for the branch, not a recompute. Nothing here may
+// ever issue a reset/clobber.
 // Run: node test/ship-cleanup.test.mjs
 
 import { runCleanup, resolveWorktreePathFromList, SHIP_EXIT } from "../scripts/ship.mjs";
@@ -41,11 +44,12 @@ const ARGS = {
   worktreePath: "/tmp/primary-feat-aio-1-x",
 };
 
-console.log("happy path — correct ordering");
+console.log("happy path — worktree/branch ordering + ff done");
 {
   const { gitExec, calls } = makeGit();
   const res = runCleanup({ gitExec }, ARGS);
   check("returns OK", res.code === SHIP_EXIT.OK);
+  check("ff performed on a clean primary", res.ffDone === true && !res.ffSkipped);
 
   const idxCheckout = calls.findIndex((c) => c === "checkout main");
   const idxFf = calls.findIndex((c) => c.includes("merge --ff-only"));
@@ -53,30 +57,40 @@ console.log("happy path — correct ordering");
   const idxPrune = calls.findIndex((c) => c.startsWith("worktree prune"));
   const idxBranchDel = calls.findIndex((c) => c.startsWith("branch -D"));
 
-  check("checkout main issued", idxCheckout >= 0);
+  check("worktree remove issued", idxRemove >= 0);
+  check("checkout main issued (F1)", idxCheckout >= 0);
   check("checkout main BEFORE ff-only (F1)", idxCheckout >= 0 && idxCheckout < idxFf);
-  check("ff-only issued", idxFf >= 0);
-  check("worktree remove after ff-only", idxRemove > idxFf);
+  check("worktree cleanup BEFORE the ff (best-effort order)", idxRemove < idxCheckout);
   check("prune after worktree remove", idxPrune > idxRemove);
   check(
-    "branch -D is LAST, after worktree removal",
+    "branch -D after worktree removal (git refuses otherwise)",
     idxBranchDel > idxRemove && idxBranchDel > idxPrune
   );
   check(
-    "branch delete never before worktree removal",
-    !(idxBranchDel >= 0 && idxBranchDel < idxRemove)
+    "ff-only issued",
+    calls.some((c) => c.includes("merge --ff-only"))
   );
+  check("no reset issued", !calls.some((c) => c.includes("reset")));
 }
 
-console.log("F1: checkout main fails → CLEANUP_FAILED, nothing destructive issued");
+console.log("F1: checkout main fails → ff skipped, cleanup still proceeds (best-effort)");
 {
   const { gitExec, calls } = makeGit({ throwOn: "checkout main" });
   const res = runCleanup({ gitExec }, ARGS);
-  check("returns CLEANUP_FAILED", res.code === SHIP_EXIT.CLEANUP_FAILED);
-  check("reason mentions checkout main", /checkout main/.test(res.reason));
+  check("returns OK (cleanup never fails the run)", res.code === SHIP_EXIT.OK);
+  check(
+    "ff skip reason mentions checkout main",
+    !!res.ffSkipped && /checkout main/.test(res.ffSkipped)
+  );
   check("no ff-only after failed checkout", !calls.some((c) => c.includes("merge --ff-only")));
-  check("no worktree remove issued", !calls.some((c) => c.startsWith("worktree remove")));
-  check("no branch -D issued", !calls.some((c) => c.startsWith("branch -D")));
+  check(
+    "worktree remove STILL issued",
+    calls.some((c) => c.startsWith("worktree remove"))
+  );
+  check(
+    "branch -D STILL issued",
+    calls.some((c) => c.startsWith("branch -D"))
+  );
   check("no reset issued", !calls.some((c) => c.includes("reset")));
 }
 
@@ -140,25 +154,52 @@ console.log("resolveWorktreePathFromList — pure parse");
   check("null/undefined tolerated", resolveWorktreePathFromList(undefined, "x") === null);
 }
 
-console.log("dirty primary → CLEANUP_FAILED, nothing destructive issued");
+console.log("dirty primary → still OK; ff SKIPPED; worktree/branch cleanup still runs");
 {
   const { gitExec, calls } = makeGit({ statusOut: "M scripts/x.mjs" });
   const res = runCleanup({ gitExec }, ARGS);
-  check("returns CLEANUP_FAILED", res.code === SHIP_EXIT.CLEANUP_FAILED);
-  check("no merge issued", !calls.some((c) => c.includes("merge")));
-  check("no worktree remove issued", !calls.some((c) => c.startsWith("worktree remove")));
-  check("no branch -D issued", !calls.some((c) => c.startsWith("branch -D")));
+  check("returns OK (cleanup never fails the run)", res.code === SHIP_EXIT.OK);
+  check("ff skipped with a reason", !!res.ffSkipped && /local changes/.test(res.ffSkipped));
+  check("no merge issued into a dirty primary", !calls.some((c) => c.includes("merge")));
+  check(
+    "worktree remove STILL issued",
+    calls.some((c) => c.startsWith("worktree remove"))
+  );
+  check(
+    "branch -D STILL issued",
+    calls.some((c) => c.startsWith("branch -D"))
+  );
   check("no reset issued", !calls.some((c) => c.includes("reset")));
 }
 
-console.log("ff-only fails → CLEANUP_FAILED, no branch delete, no reset");
+console.log("ff-only fails → still OK; skip reported; no reset");
 {
   const { gitExec, calls } = makeGit({ throwOn: "merge --ff-only" });
   const res = runCleanup({ gitExec }, ARGS);
-  check("returns CLEANUP_FAILED", res.code === SHIP_EXIT.CLEANUP_FAILED);
-  check("no branch -D after ff failure", !calls.some((c) => c.startsWith("branch -D")));
-  check("no worktree remove after ff failure", !calls.some((c) => c.startsWith("worktree remove")));
+  check("returns OK (ff failure is not a run failure)", res.code === SHIP_EXIT.OK);
+  check("ff skip reason surfaced", !!res.ffSkipped && /ff-only not possible/.test(res.ffSkipped));
+  check(
+    "worktree remove STILL issued",
+    calls.some((c) => c.startsWith("worktree remove"))
+  );
+  check(
+    "branch -D STILL issued",
+    calls.some((c) => c.startsWith("branch -D"))
+  );
   check("no reset/clobber issued", !calls.some((c) => c.includes("reset")));
+}
+
+console.log("status read fails → still OK; ff skipped; cleanup still runs");
+{
+  const { gitExec, calls } = makeGit({ throwOn: "status" });
+  const res = runCleanup({ gitExec }, ARGS);
+  check("returns OK", res.code === SHIP_EXIT.OK);
+  check("ff skipped (cannot verify safety)", !!res.ffSkipped);
+  check("no merge issued", !calls.some((c) => c.includes("merge --ff-only")));
+  check(
+    "worktree remove STILL issued",
+    calls.some((c) => c.startsWith("worktree remove"))
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

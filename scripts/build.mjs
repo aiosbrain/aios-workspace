@@ -534,8 +534,72 @@ export function snapshotsDiffer(before, after) {
   return after.status !== before.status || after.head !== before.head;
 }
 
+/**
+ * Pure tripwire verdict — true means ABORT. `git` facts are injected so this is table-testable:
+ *   originMainSha — `git rev-parse origin/main` at check time
+ *   headIsAncestor — whether before.head is an ancestor of after.head
+ * ANY working-tree status change (tracked or untracked) still trips — an untracked file escaping
+ * into the primary checkout is exactly what this wire exists to catch. The ONLY tolerated change
+ * is the HEAD move concurrent `roadmap-run` walkers legitimately cause between issues: an
+ * ff-only advance where before.head is an ancestor of after.head AND after.head is exactly
+ * origin/main. Anything else (rogue local commit, reset, checkout) still trips.
+ */
+export function tripwireVerdict(before, after, { originMainSha, headIsAncestor }) {
+  if (after.status !== before.status) return true;
+  if (after.head === before.head) return false;
+  return !(headIsAncestor && originMainSha && after.head === originMainSha);
+}
+
 export function tripwireTripped(before, repo) {
-  return snapshotsDiffer(before, primarySnapshot(repo));
+  const after = primarySnapshot(repo);
+  let headIsAncestor = false;
+  if (before.head && after.head && before.head !== after.head) {
+    try {
+      git(["merge-base", "--is-ancestor", before.head, after.head], repo, { capture: false });
+      headIsAncestor = true;
+    } catch {
+      headIsAncestor = false;
+    }
+  }
+  return tripwireVerdict(before, after, {
+    originMainSha: gitQuiet(["rev-parse", "origin/main"], repo),
+    headIsAncestor,
+  });
+}
+
+/**
+ * Classify HOW the primary checkout changed during a build round (AIO-239 R1a).
+ * `headMoved` alone is the NORMAL parallel-workstream signal — other agents merging PRs to main
+ * advances HEAD without touching the working tree, and a worktree-isolated build is unaffected.
+ * `statusChanged` (new dirty/untracked state) is the one worth an operator's eyes: it can mean a
+ * builder escaped the worktree — but aborting cannot undo such damage, it only discards finished
+ * work, so callers WARN + audit instead of aborting.
+ */
+export function tripwireReport(before, repo) {
+  const after = primarySnapshot(repo);
+  const headMoved = !!before.head && !!after.head && after.head !== before.head;
+  let headIsAncestor = false;
+  if (headMoved) {
+    try {
+      git(["merge-base", "--is-ancestor", before.head, after.head], repo, { capture: false });
+      headIsAncestor = true;
+    } catch {
+      headIsAncestor = false;
+    }
+  }
+  // `suspicious` reuses AIO-241's pure verdict: a status change, or a HEAD move that is NOT the
+  // benign concurrent-walker ff to origin/main (rogue commit / reset / checkout). Suspicious
+  // changes get the LOUD warning; benign ff moves get a note. Nothing aborts either way.
+  const suspicious = tripwireVerdict(before, after, {
+    originMainSha: gitQuiet(["rev-parse", "origin/main"], repo),
+    headIsAncestor,
+  });
+  return {
+    headMoved,
+    statusChanged: after.status !== before.status,
+    suspicious,
+    after,
+  };
 }
 
 function resolveWorktree({ repo, branch, base, worktreePath, dryRun }) {
@@ -839,8 +903,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
     append: true,
   });
 
-  // Tripwire baseline: primary checkout status AND HEAD must not change during the build.
-  const primaryBefore = primarySnapshot(repo);
+  // Tripwire baseline: movement of the primary checkout is CLASSIFIED per round (non-fatal;
+  // see tripwireReport) — head-only movement is normal under parallel agents.
+  let primaryBefore = primarySnapshot(repo);
 
   console.log("\n── aios build ───────────────────────────────────────────────");
   console.log(`Branch:     ${branch}`);
@@ -956,14 +1021,36 @@ export async function runBuild({ repo, plan, branch, opts }) {
     console.log(c.dim(`→ ${snap.totalCommits} commit(s) on branch (${newCommits} new this round)`));
     if (snap.diffStat) console.log(snap.diffStat);
 
-    // 3. TRIPWIRE: the primary checkout must be untouched (status + HEAD)
-    if (tripwireTripped(primaryBefore, repo)) {
-      console.error(
-        c.red(
-          `\nSAFETY — the primary checkout at ${repo} changed during the build. Aborting. Inspect: git -C ${repo} status`
-        )
-      );
-      return EXIT.FATAL;
+    // 3. TRIPWIRE (non-fatal since AIO-239): classify primary-checkout movement instead of
+    // aborting. main advancing under parallel agents is the expected steady state and must not
+    // destroy a finished build; a working-tree change gets a loud warning + log entry (aborting
+    // would not undo it anyway). The baseline re-arms each round so a single event warns once.
+    {
+      const trip = tripwireReport(primaryBefore, repo);
+      if (trip.suspicious) {
+        const what = trip.statusChanged
+          ? "working tree changed (possible out-of-worktree write)"
+          : "HEAD moved in a non-fast-forward way (rogue commit / reset / checkout?)";
+        console.error(
+          c.yellow(
+            `\nWARNING — the primary checkout at ${repo}: ${what} during this build round. ` +
+              `The build itself is worktree-isolated and continues; inspect: git -C ${repo} status`
+          )
+        );
+        log(
+          `Build round ${round} — tripwire WARNING`,
+          `${what}\n` +
+            `before: head=${primaryBefore.head}\n${primaryBefore.status || "(clean)"}\n` +
+            `after: head=${trip.after.head}\n${trip.after.status || "(clean)"}`
+        );
+      } else if (trip.headMoved) {
+        console.log(
+          c.dim(
+            `note: the primary checkout fast-forwarded during this round (concurrent walkers) — build unaffected.`
+          )
+        );
+      }
+      if (trip.statusChanged || trip.headMoved) primaryBefore = trip.after;
     }
 
     // 4. Did the builder produce anything?
@@ -1043,7 +1130,15 @@ export async function runBuild({ repo, plan, branch, opts }) {
       (p, t, o) => withRetry(callCursorAgent, p, t, o),
       reviewPrompt,
       reviewTimeoutMs,
-      { cwd: wt, extraArgs: CURSOR_REVIEW_FLAGS },
+      {
+        cwd: wt,
+        // Thread the resolved code_review model — without it this call runs on the Cursor
+        // account default, silently voiding the loop-models override + diversity guarantee.
+        extraArgs: [
+          ...CURSOR_REVIEW_FLAGS,
+          ...(models.code_review.model ? ["--model", models.code_review.model] : []),
+        ],
+      },
       { log, logLabel: `Build round ${round} — review timeout retry` }
     );
     log(`Build round ${round} — review`, review);
