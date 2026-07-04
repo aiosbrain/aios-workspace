@@ -1444,6 +1444,195 @@ async function cmdWhoami(repo, cfg) {
   console.log(JSON.stringify(me));
 }
 
+// aios stakeholders — query the team-brain Company-Graph (AIO-141). Team-tier only:
+// the graph tables carry a team_id but no per-row tier column and there is no RLS
+// backstop, so the boundary is enforced in app code — the endpoint 403s an external
+// key, and this CLI probes GET /me and rejects EVERY mode for a non-team key up front
+// (so --meeting, which reads /items, can't leak a partial answer).
+//
+//   --owns <domain>    people who OWN/TOUCH/PRODUCE a workflow matching <domain>
+//   --who <person>     one person's role, job family, reports-to, and owned workflows
+//   --meeting <title>  attendees of a meeting, derived from items.participants
+async function cmdStakeholders(repo, cfg, rest) {
+  requireOnline(cfg);
+  const owns = flagValue(rest, "--owns");
+  const who = flagValue(rest, "--who");
+  const meeting = flagValue(rest, "--meeting");
+  const json = rest.includes("--json");
+  const modes = [owns, who, meeting].filter((v) => v != null).length;
+  if (modes !== 1) {
+    die("usage: aios stakeholders (--owns <domain> | --who <person> | --meeting <title>) [--json]");
+  }
+
+  // Tier probe FIRST — reject non-team keys on ALL three modes before any data leg runs.
+  let me;
+  try {
+    me = await api(cfg, "GET", "/me");
+  } catch (e) {
+    die(`could not verify identity: ${e?.message ?? e}`);
+  }
+  if (me?.tier !== "team") {
+    die("403 forbidden_tier: the stakeholder map is team-tier only");
+  }
+
+  if (meeting != null) return stakeholdersMeeting(cfg, meeting, json);
+
+  // --owns / --who read the structured graph. Tolerate ONLY a 404 (an older brain that
+  // predates the endpoint) → clean not-available result; surface any other failure
+  // (500/network/auth) as an error rather than masquerading it as an empty graph, mirroring
+  // the MCP tool. Do NOT route this through apiOptional — that helper is for pull writebacks
+  // where swallowing errors is correct; here a hidden failure would look like an empty team.
+  let graph;
+  try {
+    graph = await api(cfg, "GET", "/company-graph");
+  } catch (e) {
+    if (/^404\b/.test(String(e?.message))) {
+      graph = { people: [], ownership: [] };
+    } else {
+      die(`company graph unavailable: ${e?.message ?? e}`);
+    }
+  }
+  const people = Array.isArray(graph.people) ? graph.people : [];
+  const ownership = Array.isArray(graph.ownership) ? graph.ownership : [];
+  if (!people.length && !ownership.length) {
+    if (json) {
+      // Match each mode's found/not-found shape: owns → matches[], who → person.
+      console.log(
+        owns != null
+          ? JSON.stringify({ mode: "owns", query: owns, matches: [] })
+          : JSON.stringify({ mode: "who", query: who, person: null })
+      );
+      return;
+    }
+    console.log(c.dim("company graph not available or empty on this team."));
+    return;
+  }
+  const byId = new Map(people.map((p) => [p.entity_id, p]));
+  const nameOf = (id) => byId.get(id)?.name || id || "unknown";
+
+  if (owns != null) return stakeholdersOwns(owns, ownership, byId, json);
+  return stakeholdersWho(who, people, ownership, nameOf, json);
+}
+
+// --owns: match ownership edges by case-insensitive substring on the resolved workflow
+// name AND its job_family, then map each match's person_id → the actor's name/role.
+function stakeholdersOwns(domain, ownership, byId, json) {
+  const q = domain.toLowerCase();
+  const rows = ownership
+    .filter(
+      (o) =>
+        String(o.target_name || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(o.target_job_family || "")
+          .toLowerCase()
+          .includes(q)
+    )
+    .map((o) => {
+      const p = byId.get(o.person_id);
+      return {
+        person: p?.name || o.person_id,
+        role: p?.role || null,
+        relationship: o.relationship,
+        target: o.target_name,
+        job_family: o.target_job_family || null,
+      };
+    });
+  if (json) {
+    console.log(JSON.stringify({ mode: "owns", query: domain, matches: rows }));
+    return;
+  }
+  if (!rows.length) {
+    console.log(c.dim(`no one owns anything matching "${domain}".`));
+    return;
+  }
+  console.log(c.blue(`owners of "${domain}":`));
+  for (const r of rows) {
+    console.log(
+      `  ${c.bold(r.person)}${r.role ? c.dim(` (${r.role})`) : ""} — ${r.relationship} ${r.target}` +
+        (r.job_family ? c.dim(` · ${r.job_family}`) : "")
+    );
+  }
+}
+
+// --who: first person whose name substring-matches; report role/job_family, reports-to
+// (resolved to a name via people[]), and the workflows they own.
+function stakeholdersWho(person, people, ownership, nameOf, json) {
+  const q = person.toLowerCase();
+  const p = people.find((x) =>
+    String(x.name || "")
+      .toLowerCase()
+      .includes(q)
+  );
+  if (!p) {
+    if (json) {
+      console.log(JSON.stringify({ mode: "who", query: person, person: null }));
+      return;
+    }
+    console.log(c.dim(`no person matching "${person}" in the company graph.`));
+    return;
+  }
+  const owns = ownership.filter((o) => o.person_id === p.entity_id).map((o) => o.target_name);
+  const record = {
+    name: p.name,
+    role: p.role || null,
+    job_family: p.job_family || null,
+    reports_to: p.reports_to ? nameOf(p.reports_to) : null,
+    owns,
+  };
+  if (json) {
+    console.log(JSON.stringify({ mode: "who", query: person, person: record }));
+    return;
+  }
+  console.log(c.blue(record.name));
+  if (record.role) console.log(`  role: ${record.role}`);
+  if (record.job_family) console.log(`  job family: ${record.job_family}`);
+  if (record.reports_to) console.log(`  reports to: ${record.reports_to}`);
+  console.log(`  owns: ${owns.length ? owns.join(", ") : c.dim("—")}`);
+}
+
+// --meeting: attendance is items-derived, not graph-derived. Paginate the FULL /items
+// cursor loop (page size 200) so a team with >200 artifacts doesn't miss the meeting,
+// filtering frontmatter.meeting === true + a case-insensitive title match, then read the
+// comma-joined participants string.
+async function stakeholdersMeeting(cfg, title, json) {
+  const q = title.toLowerCase();
+  let cursor = null;
+  const found = [];
+  do {
+    const qs = new URLSearchParams({ since: "1970-01-01T00:00:00Z", kinds: "artifact" });
+    if (cursor) qs.set("cursor", cursor);
+    const res = await api(cfg, "GET", `/items?${qs}`);
+    for (const item of res.items || []) {
+      const fm = item.frontmatter || {};
+      if (fm.meeting !== true) continue;
+      const t = String(fm.title || item.path || "");
+      if (!t.toLowerCase().includes(q)) continue;
+      const participants = String(fm.participants || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      found.push({ title: t, path: item.path, participants });
+    }
+    cursor = res.next_cursor || null;
+  } while (cursor);
+
+  if (json) {
+    console.log(JSON.stringify({ mode: "meeting", query: title, meetings: found }));
+    return;
+  }
+  if (!found.length) {
+    console.log(c.dim(`no meeting matching "${title}" found.`));
+    return;
+  }
+  for (const m of found) {
+    console.log(c.blue(`attendees of "${m.title}":`));
+    console.log(
+      `  ${m.participants.length ? m.participants.join(", ") : c.dim("(none recorded)")}`
+    );
+  }
+}
+
 async function cmdQuery(repo, cfg, args) {
   const question = args
     .filter((a) => !a.startsWith("--"))
@@ -4228,6 +4417,9 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)
+    | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from
+    [--json]                            meeting items; external key → 403 forbidden_tier
   aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
     [--json]                            (.aios/loop/manifests/; offline, never synced)
   aios loop manifest --explain          inspect a manifest's evidence + tiers
@@ -4250,6 +4442,7 @@ usage:
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
   aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
     [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
@@ -4416,6 +4609,7 @@ try {
   else if (cmd === "connect") await cmdConnect(repo, rest);
   else if (cmd === "onboard") await cmdOnboard(repo, rest);
   else if (cmd === "whoami") await cmdWhoami(repo, cfg);
+  else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);

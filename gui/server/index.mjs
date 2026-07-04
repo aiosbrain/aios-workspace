@@ -59,6 +59,7 @@ import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
+import { buildMaturityPayload } from "./maturity.mjs";
 import { searchSessions } from "./sessions-search.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
@@ -409,6 +410,29 @@ const server = http.createServer((req, res) => {
     runAios(["status", "--json"], (err, out) => {
       res.writeHead(err ? 500 : 200, { "Content-Type": "application/json" });
       res.end(err ? JSON.stringify({ error: err.message }) : out);
+    });
+    return;
+  }
+  // ── maturity panel (token-gated; read-only) ──
+  // Runs a fresh `analyze --json` and reshapes it for the cockpit. CE stays SHADOW.
+  if (url.pathname === "/api/maturity") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    runAios(["analyze", "--json", "--since", "30d"], (err, out) => {
+      if (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: err.message }));
+      }
+      try {
+        const payload = buildMaturityPayload(out);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(payload));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
