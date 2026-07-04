@@ -77,6 +77,7 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 - `brain_list_decisions`
 - `brain_pull_items`
 - `brain_get_item`
+- `brain_stakeholders`
 - `aios_loop_collect`
 <!-- /drift:mcp-tools -->
 

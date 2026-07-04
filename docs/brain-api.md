@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.4** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.5** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -65,6 +65,15 @@ writeback/registration pulls), so a newer client still works against an older br
   near-real-time **Linear webhooks remain out of scope for v1** (tracked as a fast-follow). This rule
   is kept **separate from** the markdown↔dashboard "last write wins per `row_key`" conflict rule
   below — the two axes (Linear⇄brain vs markdown⇄dashboard) resolve independently.*
+- *2026-07-04 — **v1.5**: added `GET /api/v1/company-graph` (AIO-141 — the workspace stakeholder-map
+  surface). A new **team-tier** read that projects the brain's structured Company-Graph
+  (`graph_entities` / `graph_relationships`) as `people[]` (actors + role/job_family/org edges) and
+  `ownership[]` (server-resolved `OWNS`/`TOUCHES`/`PRODUCES` edges → the owned workflow's name +
+  job_family). Additive: a newer CLI/MCP calls it but **tolerates a `404` from an older brain**, and
+  an unseeded team returns `200 { "people": [], "ownership": [] }` (never `500`). **"Who attended
+  meeting Y" is NOT served here** — attendance is derived client-side from existing `GET /items`
+  meeting markers (`frontmatter.meeting: true`, `participants`); no new item kind, no who-met-whom
+  edges. Section below.*
 
 ---
 
@@ -155,6 +164,7 @@ Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_pay
 - `POST /items`: 120/min per key
 - `GET /items`, `GET /tasks`: 60/min per key
 - `GET /integrations`: 60/min per key
+- `GET /company-graph`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
 - `POST /work-events`: 60/min per key
@@ -352,6 +362,69 @@ pushed from a repo) as local marker files under `1-inbox/from-brain/_projects/`.
   ]
 }
 ```
+
+## `GET /api/v1/company-graph` — structured stakeholder map (team-tier only)
+
+Projects the brain's structured **Company-Graph** (the `graph_entities` / `graph_relationships`
+Postgres tables) as a queryable people + ownership view for the workspace stakeholder-map surface
+(`aios stakeholders`, MCP `brain_stakeholders`). This answers **"who owns domain X"** and
+**"who reports to / about whom."** It is the structured-graph counterpart to `POST /api/v1/query`
+(the NL Graphiti memory) — a *different* subsystem: this endpoint returns typed rows, not prose.
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier`. The graph tables carry a
+`team_id` but **no per-row tier column and there is no RLS backstop** on the Postgres target, so the
+tier boundary is an **app-code gate** (same posture as `/metrics`, `/costs`, `/codebases`,
+`/projects`). Rate limit: 60/min per key. Clients **MUST tolerate a `404`** from an older brain that
+predates this endpoint (the forward-compat rule).
+
+**Request:** no body. Team-scoped to the key's team via `X-AIOS-Team`.
+
+**Response `200` — snake_case throughout** (every v1 field is snake_case: `display_name`,
+`job_family`, `content_sha256`):
+
+```json
+{
+  "people": [
+    { "entity_id": "actor-006", "name": "Nadia Kovalchuk",
+      "role": "Head of Finance", "job_family": "Finance",
+      "reports_to": "actor-005" }
+  ],
+  "ownership": [
+    { "person_id": "actor-006", "relationship": "OWNS",
+      "target_id": "wf-001", "target_kind": "workflow",
+      "target_name": "Month-End Financial Close",
+      "target_job_family": "Finance" }
+  ]
+}
+```
+
+**Server semantics (normative):**
+
+1. `people[]` is every `graph_entities` row with `entity_type = "actor"` for the caller's team.
+   `role`, `job_family`, and `reports_to` are projected out of the entity's `attrs` object (the seed
+   stores the whole fixture object in `attrs`, so `attrs.role` / `attrs.job_family` /
+   `attrs.reports_to` are present); a missing attr is emitted as `null`.
+2. `ownership[]` is a **server-side join**: every `graph_relationships` row whose
+   `relationship_type` is one of `OWNS` / `TOUCHES` / `PRODUCES` for the team, with its `to_id`
+   resolved against `graph_entities` to fill `target_name` (the entity's `name`), `target_kind`
+   (its `entity_type`, typically `workflow`), and `target_job_family` (`attrs.job_family`). Edges
+   point at **workflow entities**, not free-text domains — this join is what makes a
+   `--owns "<domain>"` substring query matchable. An edge whose `to_id` doesn't resolve is skipped.
+3. **Empty-graph contract:** an authenticated team-tier key on an **unseeded** team (the structured
+   graph is seed-fixture-only today) returns `200 { "people": [], "ownership": [] }` — never `500`.
+4. **Attendance ("who attended meeting Y") is NOT served by this endpoint.** It is derived
+   client-side from existing `GET /api/v1/items` meeting markers (`kind: artifact`,
+   `frontmatter.meeting: true`, comma-joined `participants`). There is no meeting entity and no
+   who-met-whom / attendance edge in the structured graph in v1 (deferred).
+
+**Errors:** `401` invalid key/team; `403 forbidden_tier` for a non-team key; `429` rate-limited
+(60/min per key).
+
+> **Cross-repo sequencing.** The workspace CLI/MCP consumers merge independently because they
+> tolerate a `404` (they degrade to a clean "company graph not available / empty" message). But a
+> **tagged workspace release that advertises v1.5 `company-graph`** requires the `aios-team-brain`
+> endpoint **deployed first**; gate that with `/docs-sync` (contract-version + feature-vs-website
+> check) before tagging.
 
 ## `GET /api/v1/integrations` — enabled integration selections (non-secret)
 
