@@ -56,7 +56,12 @@ export function resolveCouncilConfig(repo, { modelsOverride } = {}) {
   }
   const file = configPath(repo);
   if (existsSync(file)) {
-    const parsed = parseFlatYaml(readFileSync(file, "utf8"), { strict: true });
+    let parsed;
+    try {
+      parsed = parseFlatYaml(readFileSync(file, "utf8"), { strict: true });
+    } catch (err) {
+      die(`invalid ${file}: ${err.message}`);
+    }
     if (!Array.isArray(parsed.council_models)) {
       die(`${file} exists but council_models is missing or not a list — fix the file or remove it`);
     }
