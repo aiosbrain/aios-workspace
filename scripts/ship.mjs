@@ -32,6 +32,7 @@ import {
   c,
   callClaudeAgent,
   callCursorAgent,
+  callDeepSeekDirect,
   PLAN_READY_TOKEN,
   NO_TOOLS,
   NO_TOOLS_ARGS,
@@ -44,7 +45,7 @@ import {
   parseCheckResults,
   defaultOutPath,
 } from "./consolidate-findings.mjs";
-import { resolveLoopModels } from "./loop-models.mjs";
+import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
@@ -831,6 +832,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     cmdConsolidateFindings: consolidateDep,
     callClaudeAgent: claude,
     callCursorAgent: cursor,
+    callDeepSeekDirect: deepseek,
     waitForBots,
     gitExec,
     ghExec,
@@ -852,6 +854,15 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const records = { issue: issueId, stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
+
+  // A reviewer model resolves to either the Cursor CLI (cursor-agent --model <x>) or
+  // DeepSeek's own API — the dispatch is by model family, not a hardcoded backend.
+  const reviewCall =
+    (model) =>
+    (prompt, timeoutMs, opts = {}) =>
+      modelFamily(model) === "deepseek"
+        ? deepseek(prompt, timeoutMs, { model })
+        : cursor(prompt, timeoutMs, opts);
   const gates = resolveGates({
     auto: opts.auto,
     autoMerge: opts.autoMerge,
@@ -1022,13 +1033,17 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       const reviewStartedAt = Date.now();
       let review;
       try {
-        review = await cursor(reviewPrompt, planReviewCfg.timeoutMs ?? 300 * 1000, {
-          extraArgs: [
-            "--force",
-            "--trust",
-            ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
-          ],
-        });
+        review = await reviewCall(planReviewCfg.model)(
+          reviewPrompt,
+          planReviewCfg.timeoutMs ?? 300 * 1000,
+          {
+            extraArgs: [
+              "--force",
+              "--trust",
+              ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
+            ],
+          }
+        );
       } catch (e) {
         record("plan", { error: e.message });
         writeAudit(
@@ -1289,7 +1304,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             return { code: SHIP_EXIT.MERGE_BLOCKED, records };
           }
           const gptCfg = models.code_review;
-          const gptReview = await cursor(
+          const gptReview = await reviewCall(gptCfg.model)(
             buildGptReviewPrompt(plan, prDiff, prNumber),
             gptCfg.timeoutMs ?? 300 * 1000,
             {
@@ -1694,6 +1709,7 @@ export async function cmdShip(repo, args, deps = {}) {
     cmdConsolidateFindings: deps.cmdConsolidateFindings ?? cmdConsolidateFindings,
     callClaudeAgent: deps.callClaudeAgent ?? callClaudeAgent,
     callCursorAgent: deps.callCursorAgent ?? callCursorAgent,
+    callDeepSeekDirect: deps.callDeepSeekDirect ?? callDeepSeekDirect,
     waitForBots: deps.waitForBots ?? defaultWaitForBots,
     gitExec: deps.gitExec ?? defaultGitExec,
     ghExec: deps.ghExec ?? defaultGhExec,

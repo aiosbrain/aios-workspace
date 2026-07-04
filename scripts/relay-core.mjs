@@ -215,6 +215,42 @@ export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
   return spawnAgentStream("cursor", "cursor", args, timeoutMs, opts);
 }
 
+// DeepSeek's own API — an alternative reviewer backend, called directly (no Cursor
+// subprocess, no Cursor account/quota). Matches callCursorAgent's external contract:
+// (prompt, timeoutMs, opts) in, a trimmed response string out, rejects on timeout or
+// a non-OK response. opts.model defaults to "deepseek-v4-pro".
+export async function callDeepSeekDirect(prompt, timeoutMs, opts = {}) {
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (!key) throw new Error("DEEPSEEK_API_KEY not set — required for a deepseek-* review model");
+  const model = opts.model ?? "deepseek-v4-pro";
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], stream: false }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new Error(`deepseek agent timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw new Error(`deepseek agent request failed: ${e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(`deepseek agent exited ${res.status}: ${text.slice(0, 400)}`);
+  const json = JSON.parse(text);
+  const content = json.choices?.[0]?.message?.content;
+  if (!content) throw new Error("deepseek agent returned no content");
+  return content.trim();
+}
+
 // Claude Code agent — used as the build-phase builder (Opus implements the plan,
 // edits files, runs tests, commits). opts.model selects the model (default Opus);
 // the build phase passes --dangerously-skip-permissions for autonomous edits in the

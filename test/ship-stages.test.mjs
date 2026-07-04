@@ -86,6 +86,10 @@ function makeDeps(over = {}) {
       if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
       return "- `Low` `f`: nit";
     },
+    callDeepSeekDirect: async (prompt) => {
+      if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
+      return "- `Low` `f`: nit";
+    },
     waitForBots: () => 0,
     gitExec: (argv) => {
       gitCalls.push(argv.join(" "));
@@ -405,6 +409,10 @@ console.log("GPT review failure → MERGE_BLOCKED (requested reviewer evidence m
     callCursorAgent: async (prompt) => {
       if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
       throw new Error("cursor GPT review crashed");
+    },
+    callDeepSeekDirect: async (prompt) => {
+      if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
+      throw new Error("deepseek review crashed");
     },
   });
   const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
