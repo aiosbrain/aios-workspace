@@ -153,11 +153,15 @@ console.log("builder produces nothing → exit 3");
   check("exit NO_DIFF", code === EXIT.NO_DIFF);
 }
 
-console.log("builder touches the PRIMARY checkout → tripwire trips, exit 1");
+// AIO-239: the tripwire is NON-FATAL — aborting cannot undo primary-checkout damage, it only
+// discards finished work, and main advancing under parallel agents must never kill a build.
+// A working-tree escape WARNS (and the run continues to its natural outcome — here NO_DIFF,
+// since the misbehaving builder made no worktree commits); a HEAD-only move is a benign note.
+console.log("builder touches the PRIMARY checkout → tripwire WARNS, build continues");
 {
   const repo = freshRepo();
   const code = await run({ repo, branch: "feat/t4b", mode: "touch-primary", o: opts() });
-  check("exit FATAL (tripwire)", code === EXIT.FATAL);
+  check("run continues to its natural exit (NO_DIFF, not FATAL)", code === EXIT.NO_DIFF);
   check(
     "the escape was detected (file landed in primary)",
     existsSync(path.join(repo, "TRIPWIRE_TEST.txt"))
@@ -165,11 +169,11 @@ console.log("builder touches the PRIMARY checkout → tripwire trips, exit 1");
   rmSync(path.join(repo, "TRIPWIRE_TEST.txt"), { force: true });
 }
 
-console.log("builder commits on PRIMARY checkout (HEAD tripwire) → exit 1");
+console.log("builder commits on PRIMARY checkout (HEAD moved) → note only, build continues");
 {
   const repo = freshRepo();
   const code = await run({ repo, branch: "feat/t4d", mode: "touch-primary-head", o: opts() });
-  check("exit FATAL (HEAD tripwire)", code === EXIT.FATAL);
+  check("run continues to its natural exit (NO_DIFF, not FATAL)", code === EXIT.NO_DIFF);
 }
 
 console.log("Bugbot blocks merge on Critical/High → exit 4");

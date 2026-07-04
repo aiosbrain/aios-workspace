@@ -229,7 +229,7 @@ Claude rather than installing them here. See `docs/phase3-skills-library.md`.
 
 First-run onboarding is **composer-first** — open the cockpit and start typing,
 like any chat. A couple of faint example chips sit above the composer; the
-**draft from a link** chip pre-fills the composer with *"Draft my profile from this
+**set up my profile** chip pre-fills the composer with *"Draft my profile from this
 link:"* and focuses it (it does **not** send on its own), so you paste your URL
 (your site, LinkedIn, a company page) and send. The agent reads that page with the
 `firecrawl-direct` skill — connect Firecrawl first via `aios onboard` or the

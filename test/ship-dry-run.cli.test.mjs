@@ -80,28 +80,26 @@ console.log("ship AIO-163 --dry-run (offline, no key)");
   if (existsSync(RECORD)) console.log("    record:", readFileSync(RECORD, "utf8"));
 }
 
-console.log("ship AIO-163 (non-TTY, no --auto, no key) → PLAN_GATE_BLOCKED (22), not a key error");
+console.log("ship AIO-163 (non-TTY, no --auto, no key) → clean key USAGE error (runs to the gate)");
 {
-  // Spawned non-TTY with the plan gate active: the gate must be decided IMMEDIATELY — before
-  // requiring LINEAR_API_KEY and before any agent runs. Exit 22 (PLAN_GATE_BLOCKED), never the
-  // downstream missing-key USAGE (1), and no external claude/gh/git calls.
+  // AIO-239: a blocked gate no longer short-circuits before recon — ship runs UP TO the gate,
+  // persists GATE-plan.pending.md + state.json, and exits 22 there (resumable). Reaching the gate
+  // requires LINEAR_API_KEY, so a keyless non-TTY run now fails cleanly on the missing key
+  // (USAGE, 1) BEFORE any external call — never a stack trace, never a silent hang.
   const r = runCli(["ship", "AIO-163", "--repo", REPO]);
-  check("exit 22 (PLAN_GATE_BLOCKED), not 1 (USAGE)", r.code === 22);
-  check(
-    "mentions plan gate, not missing key",
-    /plan gate/.test(r.stderr) && !/LINEAR_API_KEY/.test(r.stderr)
-  );
+  check("exit 1 (USAGE — key required to run to the gate)", r.code === 1);
+  check("mentions the missing LINEAR_API_KEY", /LINEAR_API_KEY/.test(r.stderr));
   check("no external git/gh/claude/cursor call", !existsSync(RECORD));
   check("no stack trace on stderr", !/\n\s+at\s/.test(r.stderr));
 }
 
-console.log("ship AIO-163 --auto (non-TTY, no --auto-merge, no key) → MERGE_GATE_BLOCKED (62)");
+console.log("ship AIO-163 --auto (non-TTY, no --auto-merge, no key) → same clean key USAGE error");
 {
-  // Plan gate skipped by --auto; the merge gate is still active in a non-TTY context → decided up
-  // front as MERGE_GATE_BLOCKED (62) rather than running the whole pipeline only to block at merge.
+  // Same contract with only the merge gate active: the pipeline would run all the way to the
+  // merge gate and exit 62 there; without a key it fails cleanly up front instead.
   const r = runCli(["ship", "AIO-163", "--auto", "--repo", REPO]);
-  check("exit 62 (MERGE_GATE_BLOCKED)", r.code === 62);
-  check("mentions merge gate", /merge gate/.test(r.stderr));
+  check("exit 1 (USAGE — key required)", r.code === 1);
+  check("mentions the missing LINEAR_API_KEY", /LINEAR_API_KEY/.test(r.stderr));
   check("no external git/gh/claude/cursor call", !existsSync(RECORD));
 }
 
