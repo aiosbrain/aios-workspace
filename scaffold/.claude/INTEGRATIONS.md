@@ -29,7 +29,6 @@
 |---|---|---|---|
 | **Jira** | ○ available | MCP | Search issues, read/comment/transition tickets, manage sprints and worklogs. |
 | **Linear** | ○ available | SKILL | Query issues/projects/cycles through the direct GraphQL skill; Team Brain can sync linked tasks to completed states. |
-| **Plane** | ○ available | API | Seed/read Plane work items and let Team Brain move linked AIOS task rows to DONE after merge. |
 
 ## Knowledge Base
 

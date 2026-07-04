@@ -10,6 +10,8 @@ export function parsePmCell(
 ): {
   pm_provider?: string;
   pm_external_id?: string;
+  /** Verbatim cell text for an unrecognized/retired provider (e.g. legacy `plane:T-01`), preserved for round-trip. */
+  pm_raw?: string;
 };
 
 export interface TaskRow {
@@ -21,6 +23,8 @@ export interface TaskRow {
   due: string | null;
   pm_provider?: string;
   pm_external_id?: string;
+  /** Verbatim PM cell for an unrecognized/retired provider, preserved so edits round-trip. */
+  pm_raw?: string;
   pm_url?: string | null;
   parent?: string | null;
   labels?: string[];

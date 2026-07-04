@@ -60,6 +60,13 @@ import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skil
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
 import { buildMaturityPayload } from "./maturity.mjs";
+import {
+  resolveTasksFile,
+  readTasks,
+  derivePushState,
+  applyTaskEdit,
+  TaskEditError,
+} from "./tasks.mjs";
 import { searchSessions } from "./sessions-search.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
@@ -432,6 +439,86 @@ const server = http.createServer((req, res) => {
       } catch (e) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+  // ── tasks panel (token-gated) ──
+  // GET: parsed rows + FILE-LEVEL tier + a local push-state badge (new|modified|blocked|clean)
+  // sourced from `aios status --json`. A missing task file is a graceful empty, not a 500.
+  if (url.pathname === "/api/tasks" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const file = resolveTasksFile(repo);
+    if (!file) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ rel: null, tier: null, rows: [], pushState: null }));
+    }
+    let base;
+    try {
+      base = readTasks(file);
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    // pushState is best-effort: if `aios status` fails (e.g. offline), still return the rows.
+    runAios(["status", "--json"], (err, out) => {
+      let pushState = null;
+      if (!err) {
+        try {
+          pushState = derivePushState(JSON.parse(out), base.rel);
+        } catch {
+          /* unparseable status → no badge */
+        }
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...base, pushState }));
+    });
+    return;
+  }
+  // POST: apply a single-row field patch and write it back to tasks.md — LOCAL ONLY, no network
+  // call. The brain write is the separate, explicit `POST /api/push`.
+  if (url.pathname === "/api/tasks/edit" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on("end", () => {
+      let rowKey = "",
+        patch = {};
+      try {
+        const j = JSON.parse(body || "{}");
+        rowKey = typeof j.row_key === "string" ? j.row_key : "";
+        patch = j.patch && typeof j.patch === "object" ? j.patch : {};
+      } catch {
+        /* bad body */
+      }
+      if (!rowKey) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "row_key is required" }));
+      }
+      const file = resolveTasksFile(repo);
+      if (!file) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "no tasks.md in this workspace" }));
+      }
+      try {
+        const content = readFileSync(file.abs, "utf8");
+        const { content: next, row, unchanged } = applyTaskEdit(content, rowKey, patch);
+        if (!unchanged) fsWriteFileSync(file.abs, next);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, rel: file.rel, row }));
+      } catch (e) {
+        const status = e instanceof TaskEditError ? e.status : 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: e.message }));
       }
     });
     return;

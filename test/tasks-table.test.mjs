@@ -194,5 +194,19 @@ const m5 = mergeTaskWriteback(pmTable, [
 ]);
 check("PM cell rebuilt as provider:id", /\| plane:T-01 \| http:\/\/x \|/.test(m5));
 
+// ── retired provider (plane) survives a parse → edit → merge round-trip ────────
+// Plane is retired: parsePmCell no longer treats `plane:` as a live provider, but the raw cell
+// must round-trip verbatim (history is kept, not blanked). Regression for the cockpit edit path.
+const planeRows = parseTaskRows(pmTable);
+check(
+  "plane: cell parsed as pm_raw (not a live pm_provider)",
+  planeRows[0].pm_raw === "plane:T-01"
+);
+check("retired plane: cell has no live pm_provider", planeRows[0].pm_provider === undefined);
+const edited = { ...planeRows[0], status: "done" }; // simulate a light status edit
+const m6 = mergeTaskWriteback(pmTable, [edited]);
+check("plane:T-01 PM link survives a status edit", /\| plane:T-01 \| http:\/\/x \|/.test(m6));
+check("the status edit still applied", /\| T-01 \| x \| a \| done \| s1 \|/.test(m6));
+
 console.log(failed ? `\n${RED}${failed} failed${NC}` : `\n${GREEN}all passed${NC}`);
 process.exit(failed ? 1 : 0);

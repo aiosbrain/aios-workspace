@@ -445,6 +445,56 @@ export interface PushResponse {
   error: string | null;
 }
 
+/* ---- tasks (Tasks) ---- */
+// Mirrors gui/server/tasks.mjs + scripts/tasks-table.d.mts byte-for-byte.
+
+export interface TaskRow {
+  row_key: string;
+  title: string;
+  assignee: string;
+  status: string;
+  sprint: string;
+  due: string | null;
+  pm_provider?: string;
+  pm_external_id?: string;
+  /** Verbatim PM cell for an unrecognized/retired provider, preserved so edits round-trip. */
+  pm_raw?: string;
+  pm_url?: string | null;
+  parent?: string | null;
+  labels?: string[];
+  priority?: string | null;
+}
+/** Local sync-state badge for tasks.md — sourced from `aios status --json`, never the brain. */
+export interface TaskPushState {
+  state: "new" | "modified" | "blocked" | "clean";
+  reason?: string;
+}
+export interface TasksResponse {
+  /** null when the workspace has no tasks.md (renders an empty state). */
+  rel: string | null;
+  /** File-level access tier (team|external|admin), or null. */
+  tier: string | null;
+  rows: TaskRow[];
+  pushState: TaskPushState | null;
+}
+/** Only the five light fields are editable; title/body are brain-canonical (server rejects them). */
+export interface TaskEditRequest {
+  row_key: string;
+  patch: {
+    status?: string;
+    assignee?: string;
+    priority?: string;
+    labels?: string[];
+    parent?: string | null;
+  };
+}
+export interface TaskEditResponse {
+  ok: boolean;
+  rel: string;
+  row: TaskRow;
+  error?: string;
+}
+
 /* ---- maturity (Maturity) ---- */
 // Mirrors gui/server/maturity.mjs `buildMaturityPayload` byte-for-byte.
 
