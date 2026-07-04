@@ -61,6 +61,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/hooks/maturity-nudge.mjs",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
