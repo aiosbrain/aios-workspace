@@ -16,15 +16,14 @@ import {
   renameSync,
   mkdirSync,
   statSync,
-  openSync,
-  readSync,
-  closeSync,
+  createReadStream,
 } from "node:fs";
+import { createInterface } from "node:readline";
 import path from "node:path";
-import { parseJsonl, recordsToEvents } from "../scripts/analyze/parse-claude.mjs";
+import { recordsToEvents } from "../scripts/analyze/parse-claude.mjs";
 
 const STDIN_MAX = 1_000_000;
-const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024; // 2 MB tail read
+const TRANSCRIPT_MAX_BYTES = 10 * 1024 * 1024; // same cap as maturity-capture.mjs
 const BLOAT_TURNS = 40;
 const GLOBAL_COOLDOWN_MIN = 60;
 const STATE_PRUNE_MS = 7 * 24 * 60 * 60 * 1000; // drop entries older than 7 days on write
@@ -48,36 +47,40 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-// Tail-read up to `maxBytes` from the end of a file. Returns "" on any failure.
-function readTail(filePath, maxBytes) {
+// Count genuine user turns across the full transcript (same classification rule as
+// scripts/analyze/parse-claude.mjs). Streams line-by-line and exits early once the threshold
+// is met. Oversized or missing transcripts → 0 (fail-open, same as maturity-capture.mjs).
+async function countUserTurns(transcriptPath, fallbackId) {
   try {
-    const size = statSync(filePath).size;
-    const start = Math.max(0, size - maxBytes);
-    const len = size - start;
-    const fd = openSync(filePath, "r");
-    try {
-      const buf = Buffer.alloc(len);
-      const read = readSync(fd, buf, 0, len, start);
-      return buf.subarray(0, read).toString("utf8");
-    } finally {
-      closeSync(fd);
+    if (statSync(transcriptPath).size > TRANSCRIPT_MAX_BYTES) return 0;
+  } catch {
+    return 0;
+  }
+
+  const rl = createInterface({
+    input: createReadStream(transcriptPath),
+    crlfDelay: Infinity,
+  });
+  let n = 0;
+  try {
+    for await (const line of rl) {
+      const s = line.trim();
+      if (!s) continue;
+      let record;
+      try {
+        record = JSON.parse(s);
+      } catch {
+        continue;
+      }
+      for (const e of recordsToEvents([record], fallbackId)) {
+        if (e.actor === "user" && e.block_type === "text") {
+          n++;
+          if (n >= BLOAT_TURNS) return n;
+        }
+      }
     }
   } catch {
-    return "";
-  }
-}
-
-// Count genuine user turns (a string/text body — same classification rule as
-// scripts/analyze/parse-claude.mjs uses for task roots). tool_result-bearing user records are
-// never counted, since recordsToEvents only tags them block_type:"tool_result".
-function countUserTurns(transcriptPath, fallbackId) {
-  const text = readTail(transcriptPath, TRANSCRIPT_TAIL_BYTES);
-  if (!text) return 0;
-  const records = parseJsonl(text);
-  const events = recordsToEvents(records, fallbackId);
-  let n = 0;
-  for (const e of events) {
-    if (e.actor === "user" && e.block_type === "text") n++;
+    return 0;
   }
   return n;
 }
@@ -103,6 +106,7 @@ function readState(sp) {
 }
 
 // Prune session entries older than 7 days, then best-effort atomic write. Never throws.
+// Returns false when the write fails — callers must not emit (per-session cooldown depends on it).
 function writeState(sp, state, now) {
   const cutoff = now - STATE_PRUNE_MS;
   const sessions = {};
@@ -115,8 +119,9 @@ function writeState(sp, state, now) {
     const tmp = sp + ".tmp";
     writeFileSync(tmp, JSON.stringify({ sessions, lastGlobalNudge: state.lastGlobalNudge }));
     renameSync(tmp, sp);
+    return true;
   } catch {
-    /* state write failed — the nudge itself still emits */
+    return false;
   }
 }
 
@@ -143,7 +148,7 @@ async function main() {
     typeof payload.transcript_path === "string" ? payload.transcript_path : null;
   if (!sessionId || !transcriptPath) return;
 
-  const turns = countUserTurns(transcriptPath, sessionId);
+  const turns = await countUserTurns(transcriptPath, sessionId);
   if (turns < BLOAT_TURNS) return;
 
   const sp = statePath(root);
@@ -160,7 +165,7 @@ async function main() {
   const nowIso = new Date(now).toISOString();
   state.sessions[sessionId] = nowIso;
   state.lastGlobalNudge = nowIso;
-  writeState(sp, state, now);
+  if (!writeState(sp, state, now)) return;
 
   process.stdout.write(
     JSON.stringify({

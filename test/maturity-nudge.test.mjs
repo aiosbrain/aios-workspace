@@ -120,6 +120,30 @@ test("20-user-turn transcript → silence", () => {
   }
 });
 
+test("exactly 40-user-turn transcript → nudge (threshold boundary)", () => {
+  const dir = ws();
+  try {
+    writeTranscript(dir, "s-1", 40);
+    const { code, stdout } = runHook(dir, defaultPayload(dir));
+    assert.equal(code, 0);
+    assert.equal(parseNudge(stdout), NUDGE_TEXT);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("39-user-turn transcript → silence (one below threshold)", () => {
+  const dir = ws();
+  try {
+    writeTranscript(dir, "s-1", 39);
+    const { code, stdout } = runHook(dir, defaultPayload(dir));
+    assert.equal(code, 0);
+    assert.equal(stdout, "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("second fire in the same session → silence (per-session cooldown)", () => {
   const dir = ws();
   try {
@@ -231,6 +255,54 @@ test("missing transcript_path → silence, exit 0", () => {
     const { code, stdout } = runHook(dir, defaultPayload(dir, { transcript_path: undefined }));
     assert.equal(code, 0);
     assert.equal(stdout, "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("missing transcript file → silence, exit 0", () => {
+  const dir = ws();
+  try {
+    const { code, stdout } = runHook(
+      dir,
+      defaultPayload(dir, { transcript_path: path.join(dir, "does-not-exist.jsonl") })
+    );
+    assert.equal(code, 0);
+    assert.equal(stdout, "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("45 user turns spread across a >2MB transcript → nudge (full scan, not tail-only)", () => {
+  const dir = ws();
+  try {
+    const p = path.join(dir, "transcript.jsonl");
+    const lines = [];
+    // 25 early turns, then a 2.5MB assistant blob, then 20 more turns — tail-only would miss early turns.
+    for (let i = 0; i < 25; i++) {
+      lines.push(userTextLine("s-1"));
+      lines.push(assistantLine("s-1"));
+    }
+    lines.push(
+      JSON.stringify({
+        type: "assistant",
+        sessionId: "s-1",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "x".repeat(2.5 * 1024 * 1024) }],
+        },
+      })
+    );
+    for (let i = 0; i < 20; i++) {
+      lines.push(userTextLine("s-1"));
+      lines.push(assistantLine("s-1"));
+    }
+    writeFileSync(p, lines.join("\n") + "\n");
+
+    const { code, stdout } = runHook(dir, defaultPayload(dir, { transcript_path: p }));
+    assert.equal(code, 0);
+    assert.equal(parseNudge(stdout), NUDGE_TEXT);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
