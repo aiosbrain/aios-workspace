@@ -7,7 +7,8 @@
 // each session aware of where the operator is weak.
 //
 // This is the READ side of AM1. It is:
-//   - read-only on the admin-tier local store (never writes it),
+//   - read-only on the admin-tier session store (never writes sessions.ndjson); its ONLY write is
+//     a tiny sibling brief-state.json that rotates the tip counter — best-effort, never fatal,
 //   - fail-open — ANY error, missing data, or doubt → print nothing and exit 0,
 //   - silent until there's signal (≥5 recent sessions for THIS project in 14 days),
 //   - under a strict compute budget (pure fs + arithmetic, no process spawn, no network).
