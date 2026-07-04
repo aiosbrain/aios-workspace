@@ -444,3 +444,40 @@ export interface PushResponse {
   output: string;
   error: string | null;
 }
+
+/* ---- maturity (Maturity) ---- */
+// Mirrors gui/server/maturity.mjs `buildMaturityPayload` byte-for-byte.
+
+export interface MaturityAxis {
+  key: string;
+  label: string;
+  score: number;
+  gloss: string;
+}
+/** One day of history: AM = placement.overall, CE = shadow band (null = uncalibrated). */
+export interface MaturityDay {
+  date: string;
+  am: number | null;
+  ce: number | null;
+}
+export interface AxisGuidance {
+  gloss: string;
+  meaning: string;
+  why: string;
+  steps: string[];
+}
+export interface MaturityResponse {
+  window: { since: string; until: string } | null;
+  spine: string | null;
+  overall: number | null;
+  weakest: string | null;
+  axes: MaturityAxis[];
+  /** Cognitive Ergonomics shadow band (0–4 or null). SHADOW / local-only — never syncs. */
+  ce_band: number | null;
+  days: MaturityDay[];
+  guidance: {
+    weakest: AxisGuidance | null;
+    ergonomics_tip: string;
+  };
+  error?: string;
+}

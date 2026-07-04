@@ -31,7 +31,7 @@ export function EmptyState({
         disabled={!canStart}
         onClick={onDraftFromLink}
       >
-        draft from a link
+        set up my profile
       </Button>
     </div>
   );

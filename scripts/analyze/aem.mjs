@@ -26,6 +26,42 @@ function band(value, bands) {
   return 0;
 }
 
+// ── band thresholds (named constants) ───────────────────────────────────────
+// The exact rubric thresholds, lifted out of the scorers so the SAME numbers the
+// scorer uses are the ones surfaced to the operator (next-belt gaps in AM6) — a
+// static duplicate table would silently drift. Values are byte-identical to the
+// prior inline arrays. MIRRORED in the brain scorer (aios-team-brain
+// lib/metrics/maturity.ts): any change here must be reflected there too — the two
+// must not diverge. Each is `[[min, score], …]` for `band()` (>= semantics),
+// except cost which is inverted (<=), see COST_GOVERNANCE_THRESHOLDS.
+export const VERIFICATION_BANDS = [
+  [0.25, 4],
+  [0.12, 3],
+  [0.04, 2],
+  [0.005, 1],
+]; // verify_tool_rate
+export const CONTEXT_HYGIENE_BANDS = [
+  [0.7, 4],
+  [0.5, 3],
+  [0.3, 2],
+  [0.05, 1],
+]; // cache_hit_rate
+export const AUTONOMY_BANDS = [
+  [0.25, 4],
+  [0.1, 3],
+  [0.02, 2],
+]; // delegation_ratio
+export const LEARNING_BANDS = [
+  [6, 3],
+  [3, 2],
+  [1, 1],
+]; // tool_diversity (score capped at 3)
+export const COST_GOVERNANCE_THRESHOLDS = [
+  [40_000, 4],
+  [90_000, 3],
+  [180_000, 2],
+]; // tokens_per_task (<=; inverted — lower is better; below the last bound → 1)
+
 // ── per-axis scorers (each cites its rubric row) ────────────────────────────
 
 // Verification: "Eyeballs output (0) · runs tests/build manually (2) · agent runs
@@ -33,35 +69,21 @@ function band(value, bands) {
 // the agent running checks it can act on. (Command bodies are intentionally
 // invisible, so this is coarse; documented as a proxy.)
 export function scoreVerification(s) {
-  return band(s.verify_tool_rate, [
-    [0.25, 4],
-    [0.12, 3],
-    [0.04, 2],
-    [0.005, 1],
-  ]);
+  return band(s.verify_tool_rate, VERIFICATION_BANDS);
 }
 
 // Context hygiene: "One long session (0) · /clears between tasks (2) · curated
 // CLAUDE.md + subagents + compaction (4)". Proxy: prompt-cache hit rate — high
 // reuse of a deliberately-maintained context.
 export function scoreContextHygiene(s) {
-  return band(s.cache_hit_rate, [
-    [0.7, 4],
-    [0.5, 3],
-    [0.3, 2],
-    [0.05, 1],
-  ]);
+  return band(s.cache_hit_rate, CONTEXT_HYGIENE_BANDS);
 }
 
 // Autonomy / leash: "Approves every action (0) · auto-accepts low-risk behind a
 // check (2) · dials leash per risk, earns longer leash (4)". Proxy: delegation
 // ratio (tokens spent in subagents) + active permission management.
 export function scoreAutonomy(s) {
-  const byDelegation = band(s.delegation_ratio, [
-    [0.25, 4],
-    [0.1, 3],
-    [0.02, 2],
-  ]);
+  const byDelegation = band(s.delegation_ratio, AUTONOMY_BANDS);
   const floor = s.subagent_usage > 0 || s.permission_events > 0 ? 1 : 0;
   return Math.max(byDelegation, floor);
 }
@@ -71,14 +93,7 @@ export function scoreAutonomy(s) {
 // observe rule write-back, so we use tool-diversity (building a toolbelt) as a
 // weak proxy and CAP at 3 — true compounding needs cross-session evidence.
 export function scoreLearning(s) {
-  return Math.min(
-    3,
-    band(s.tool_diversity, [
-      [6, 3],
-      [3, 2],
-      [1, 1],
-    ])
-  );
+  return Math.min(3, band(s.tool_diversity, LEARNING_BANDS));
 }
 
 // Cost & governance: "No cost sense (0) · aware of token cost (2) · token-
@@ -88,9 +103,9 @@ export function scoreCostGovernance(s) {
   // Bands over FRESH tokens/task (cache reads excluded). Tunable — calibrated for
   // agentic coding where tight fresh-context-per-task is the efficiency marker.
   if (s.tokens_per_task <= 0) return 0;
-  if (s.tokens_per_task <= 40_000) return 4;
-  if (s.tokens_per_task <= 90_000) return 3;
-  if (s.tokens_per_task <= 180_000) return 2;
+  for (const [max, score] of COST_GOVERNANCE_THRESHOLDS) {
+    if (s.tokens_per_task <= max) return score;
+  }
   return 1;
 }
 
@@ -113,7 +128,8 @@ export const AXIS_LABELS = {
   cost_governance: "Cost & governance",
 };
 
-const VERIFICATION_GATE = 1; // cap Spine at L3 when verification ≤ this
+export const VERIFICATION_GATE = 1; // cap Spine at L3 when verification ≤ this
+export const L5_SUBAGENT_MIN = 0.3; // subagent_usage floor in the L5 predicate
 
 /**
  * Derive the Spine level (L1–L5) from axis scores + signals, then apply the
@@ -133,13 +149,126 @@ export function spineLevel(axes, s) {
     axes.autonomy >= 3 &&
     axes.verification >= 3 &&
     axes.learning >= 3 &&
-    s.subagent_usage >= 0.3
+    s.subagent_usage >= L5_SUBAGENT_MIN
   ) {
     level = 5;
   }
   // HARD GATE: no climbing past L3 without verification.
   if (axes.verification <= VERIFICATION_GATE) level = Math.min(level, 3);
   return `L${level}`;
+}
+
+// ── next-belt gaps (AM6) ────────────────────────────────────────────────────
+// Derived programmatically from spineLevel()'s OWN predicates + the band
+// constants above — never a parallel level table. `nextSpineBlockers` reports the
+// signal moves that unlock the NEXT Spine level, so what the operator is told to
+// do is exactly what the scorer rewards.
+
+/** Minimum raw value that reaches `score` in a `[[min,score],…]` (>=) band, or null. */
+export function minForScore(bands, score) {
+  const hit = bands.find(([, sc]) => sc === score);
+  return hit ? hit[0] : null;
+}
+
+/** Max fresh tokens/task that still scores `score` on the inverted (<=) cost axis, or null. */
+export function maxTokensForScore(score) {
+  const hit = COST_GOVERNANCE_THRESHOLDS.find(([, sc]) => sc === score);
+  return hit ? hit[0] : null;
+}
+
+// axis → the signal it reads + its band constant, for threshold lookups. cost is
+// inverted (maxTokensForScore), so it carries no `bands` here.
+const AXIS_SIGNAL = {
+  verification: { signal: "verify_tool_rate", bands: VERIFICATION_BANDS },
+  context_hygiene: { signal: "cache_hit_rate", bands: CONTEXT_HYGIENE_BANDS },
+  autonomy: { signal: "delegation_ratio", bands: AUTONOMY_BANDS },
+  learning: { signal: "tool_diversity", bands: LEARNING_BANDS },
+  cost_governance: { signal: "tokens_per_task", bands: null },
+};
+
+// Requirements to reach each target level — a LITERAL MIRROR of spineLevel()'s
+// predicates above. `any` = OR (reach either); `all` = every requirement.
+//   L2: cost_governance>=2 OR learning>=1       (spineLevel line: the `||`)
+//   L3: context_hygiene>=2                        (the compound `>=2` for L3)
+//   L4: verification>=2 AND autonomy>=2           (the `&&` for L4)
+//   L5: verification>=3 AND autonomy>=3 AND learning>=3 AND subagent_usage>=L5_SUBAGENT_MIN
+// If spineLevel()'s predicates change, THIS table must change with it (the
+// anti-drift test in test/maturity-week.test.mjs bumps each reported blocker to
+// its neededValue and asserts spineLevel actually advances — it will fail here first).
+const TARGET_REQS = {
+  2: {
+    mode: "any",
+    reqs: [
+      { axis: "cost_governance", score: 2 },
+      { axis: "learning", score: 1 },
+    ],
+  },
+  3: { mode: "all", reqs: [{ axis: "context_hygiene", score: 2 }] },
+  4: {
+    mode: "all",
+    reqs: [
+      { axis: "verification", score: 2 },
+      { axis: "autonomy", score: 2 },
+    ],
+  },
+  5: {
+    mode: "all",
+    reqs: [
+      { axis: "verification", score: 3 },
+      { axis: "autonomy", score: 3 },
+      { axis: "learning", score: 3 },
+      // Not an axis — a raw-signal floor. neededValue comes straight from the constant.
+      { signal: "subagent_usage", value: L5_SUBAGENT_MIN },
+    ],
+  },
+};
+
+/**
+ * The signal moves that unlock the operator's NEXT Spine level.
+ * @param {Record<string,number>} axes  scoreAxes(signals) output
+ * @param {Record<string,number>} signals  the folded signals
+ * @returns {{target:("L2"|"L3"|"L4"|"L5"|null), mode:("any"|"all"|"done"), blockers:Array}}
+ *   blocker: { axis, signal, current, currentScore, neededScore, neededValue }
+ */
+export function nextSpineBlockers(axes, signals) {
+  const current = Number(spineLevel(axes, signals).slice(1)); // "L3" → 3
+  if (current >= 5) return { target: null, mode: "done", blockers: [] };
+  const target = current + 1;
+  const { mode, reqs } = TARGET_REQS[target];
+
+  const blockers = [];
+  for (const req of reqs) {
+    if (req.signal) {
+      // Raw-signal floor (L5 subagent_usage): unmet when below the floor.
+      const cur = Number(signals[req.signal]) || 0;
+      if (cur >= req.value) continue;
+      blockers.push({
+        axis: "autonomy", // closest axis for grouping / ordering
+        signal: req.signal,
+        current: cur,
+        currentScore: null,
+        neededScore: null,
+        neededValue: req.value,
+      });
+      continue;
+    }
+    const score = axes[req.axis];
+    if (score >= req.score) continue; // already met — not a blocker
+    const meta = AXIS_SIGNAL[req.axis];
+    const neededValue =
+      req.axis === "cost_governance"
+        ? maxTokensForScore(req.score)
+        : minForScore(meta.bands, req.score);
+    blockers.push({
+      axis: req.axis,
+      signal: meta.signal,
+      current: Number(signals[meta.signal]) || 0,
+      currentScore: score,
+      neededScore: req.score,
+      neededValue,
+    });
+  }
+  return { target: `L${target}`, mode, blockers };
 }
 
 /** Mean of the five axes (0–4), rounded to 2 dp. */

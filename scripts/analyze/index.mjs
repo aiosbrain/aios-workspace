@@ -30,6 +30,7 @@ import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
 import { gatherCostData, pushProviderCosts } from "./push-costs.mjs";
 import { renderCostSummary } from "./cost-report.mjs";
 import { cursorBillingStart } from "./cursor-api.mjs";
+import { calibrate, renderVerdict, writeVerdictArtifact } from "./ergonomics-calibrate.mjs";
 
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
 const PARSERS = { claude: parseClaude, codex: parseCodex };
@@ -42,7 +43,15 @@ const color = {
 };
 
 function parseArgs(rest) {
-  const opts = { since: "7d", tools: [], json: false, push: false, full: false, report: false };
+  const opts = {
+    since: "7d",
+    tools: [],
+    json: false,
+    push: false,
+    full: false,
+    report: false,
+    calibrate: false,
+  };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--report") opts.report = true;
@@ -51,6 +60,7 @@ function parseArgs(rest) {
     else if (a === "--json") opts.json = true;
     else if (a === "--push") opts.push = true;
     else if (a === "--full") opts.full = true;
+    else if (a === "--calibrate") opts.calibrate = true;
   }
   return opts;
 }
@@ -157,6 +167,24 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     placement: placement(overall),
     days,
   };
+
+  // Phase B calibration (AIO-216) is analysis-only and READ-ONLY: it emits a CE
+  // shadow-band verdict + a gitignored artifact, then returns BEFORE any side
+  // effect (no gatherCostData network, no JSON/text/push render, no
+  // saveAnalyzeState). --json/--push/--report are ignored with one warning so
+  // stdout carries only the verdict text (never a toJson body).
+  if (opts.calibrate) {
+    if (opts.json || opts.push || opts.report) {
+      console.warn(
+        color.yellow("  --calibrate is analysis-only: ignoring --json / --push / --report")
+      );
+    }
+    const cal = calibrate(result);
+    console.log(renderVerdict(cal));
+    const p = writeVerdictArtifact(repo, cal, isoDate);
+    console.log(color.dim(`  verdict written to ${p}`));
+    return result;
+  }
 
   const costData = await gatherCostData({
     sinceMs,

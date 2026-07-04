@@ -380,6 +380,127 @@ export const TOOLS = [
     },
   },
   {
+    name: "brain_stakeholders",
+    description:
+      "Query the team's structured Company-Graph (AIO-141): people, roles, org chart, and " +
+      "who-owns-what. Team-tier only — an external-tier key is rejected. Provide EXACTLY ONE of: " +
+      "`owns` (people who own/touch/produce a workflow matching the term — 'who owns finance'), " +
+      "`who` (one person's role, job family, reports-to, and owned workflows), or `meeting` " +
+      "(attendees of a meeting, derived from meeting items' participants). Returns snake_case rows " +
+      "verbatim. Read-only; tier re-checked server-side.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        owns: {
+          type: "string",
+          description: "Domain/workflow term — returns the people who own/touch/produce a match.",
+        },
+        who: {
+          type: "string",
+          description: "Person name (substring) — returns their role, org, and owned workflows.",
+        },
+        meeting: {
+          type: "string",
+          description: "Meeting title (substring) — returns attendees from the meeting item.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: READ_ONLY,
+    async handler(args, client) {
+      const modes = ["owns", "who", "meeting"].filter((k) => args[k] != null && args[k] !== "");
+      if (modes.length !== 1) {
+        throw new Error("provide exactly one of: owns, who, meeting");
+      }
+      // Tier probe first (defense in depth) — reject non-team keys before any data leg, so the
+      // `meeting` mode (which reads /items) can't leak a partial answer to an external key.
+      const me = await client.fetchJson("GET", "/me");
+      if (me?.tier !== "team") {
+        throw new Error("403 forbidden_tier: the stakeholder map is team-tier only");
+      }
+
+      if (args.meeting != null && args.meeting !== "") {
+        const q = String(args.meeting).toLowerCase();
+        let cursor = null;
+        const meetings = [];
+        do {
+          const route = `/items${qs({
+            since: "1970-01-01T00:00:00Z",
+            kinds: "artifact",
+            cursor,
+          })}`;
+          const res = await client.fetchJson("GET", route);
+          for (const item of res.items || []) {
+            const fm = item.frontmatter || {};
+            if (fm.meeting !== true) continue;
+            const t = String(fm.title || item.path || "");
+            if (!t.toLowerCase().includes(q)) continue;
+            meetings.push({
+              title: t,
+              path: item.path,
+              participants: String(fm.participants || "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+            });
+          }
+          cursor = res.next_cursor || null;
+        } while (cursor);
+        return asContent({ mode: "meeting", query: args.meeting, meetings });
+      }
+
+      // owns / who read the structured graph. Tolerate a 404 from an older brain that predates
+      // the endpoint by returning a clean not-available result rather than an error.
+      let graph;
+      try {
+        graph = await client.fetchJson("GET", "/company-graph");
+      } catch (e) {
+        if (/^404\b/.test(String(e?.message))) {
+          return asContent({ available: false, reason: "company graph endpoint not available" });
+        }
+        throw e;
+      }
+      const people = Array.isArray(graph.people) ? graph.people : [];
+      const ownership = Array.isArray(graph.ownership) ? graph.ownership : [];
+
+      if (args.owns != null && args.owns !== "") {
+        const q = String(args.owns).toLowerCase();
+        const matches = ownership.filter(
+          (o) =>
+            String(o.target_name || "")
+              .toLowerCase()
+              .includes(q) ||
+            String(o.target_job_family || "")
+              .toLowerCase()
+              .includes(q)
+        );
+        const ids = new Set(matches.map((o) => o.person_id));
+        // Return the matched edges + involved people rows verbatim (snake_case) so the caller
+        // can resolve person_id → name/role without a second call.
+        return asContent({
+          mode: "owns",
+          query: args.owns,
+          ownership: matches,
+          people: people.filter((p) => ids.has(p.entity_id)),
+        });
+      }
+
+      // who
+      const q = String(args.who).toLowerCase();
+      const person =
+        people.find((p) =>
+          String(p.name || "")
+            .toLowerCase()
+            .includes(q)
+        ) || null;
+      const owned = person ? ownership.filter((o) => o.person_id === person.entity_id) : [];
+      const reports_to = person?.reports_to
+        ? people.find((p) => p.entity_id === person.reports_to) || null
+        : null;
+      return asContent({ mode: "who", query: args.who, person, ownership: owned, reports_to });
+    },
+  },
+  {
     // Local-tool namespace (`aios_*`) — reads the workspace, not the brain. Lets GUI-only
     // agents drive the Operator Loop through the SAME core the CLI uses (`aios loop collect`).
     name: "aios_loop_collect",
