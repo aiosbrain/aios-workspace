@@ -28,6 +28,18 @@ export const BELTS = { L1: "White", L2: "Yellow", L3: "Green", L4: "Brown", L5: 
 // Below this, a week is too thin for an honest trajectory read.
 export const MIN_WEEK_SESSIONS = 5;
 
+// Per-axis ceiling. Every axis tops out at 4 EXCEPT learning, which scoreLearning()
+// caps at 3 (session logs can't observe true rule/skill write-back). So the "perfect"
+// placement that earns Ninja Master is all-axes-maxed, NOT literally all-4s — the
+// latter is unreachable and the honorific would be dead code.
+const AXIS_MAX = {
+  verification: 4,
+  context_hygiene: 4,
+  autonomy: 4,
+  learning: 3,
+  cost_governance: 4,
+};
+
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Plain-English gloss for each Spine level. Redefined here (not imported) because
@@ -122,7 +134,8 @@ export function buildWeekReport({ sessions, prevWeekSessions = [], now }) {
   }
 
   const belt = BELTS[spine];
-  const isNinjaMaster = spine === "L5" && Object.values(axes).every((v) => v === 4);
+  const isNinjaMaster =
+    spine === "L5" && Object.entries(axes).every(([k, v]) => v >= (AXIS_MAX[k] ?? 4));
   const nextBelt = spine === "L5" ? null : nextSpineBlockers(axes, signals);
 
   return {
