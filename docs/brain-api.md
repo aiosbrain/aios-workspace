@@ -702,8 +702,8 @@ The `--include-body` flag passes `include_body=true` to the endpoint (subject to
 ### `POST /api/v1/codebases` — codebase scan ingest
 
 Records a point-in-time scan of a repository. **Team-tier only** — an `external`-tier key
-gets `403 forbidden_tier` (codebase analytics never reach external stakeholders; there is no
-RLS backstop on the Postgres target, so this is an app-code gate). Rate limit: 60/min per key.
+gets `403 forbidden_tier` (codebase analytics never reach external stakeholders; tier
+isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per key.
 
 ```json
 {
@@ -760,7 +760,7 @@ standalone analytics endpoint, **not** an `/items` kind.
 ### `POST /api/v1/metrics` — agentic-maturity daily aggregate
 
 **Team-tier only** — an `external`-tier key gets `403 forbidden_tier` (maturity is team-only
-intelligence; there is no RLS backstop on the Postgres target, so this is an app-code gate).
+intelligence; tier isolation is enforced in app code, with no DB backstop).
 Rate limit: 60/min per key.
 
 ```json

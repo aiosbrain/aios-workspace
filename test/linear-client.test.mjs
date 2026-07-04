@@ -217,6 +217,65 @@ console.log("listIssues label filter uses the implicit-some shape (labels.name.e
   );
 }
 
+console.log("listIssues pagination cap (200) is surfaced loudly when truncated");
+{
+  const node = (n) => ({
+    identifier: `AIO-${n}`,
+    title: `t${n}`,
+    priority: 2,
+    createdAt: "2026-01-01T00:00:00Z",
+    state: { name: "Todo", type: "unstarted" },
+    assignee: null,
+    relations: { nodes: [] },
+    inverseRelations: { nodes: [] },
+  });
+  // Every page returns a full 50 nodes AND hasNextPage:true → the source has >200 issues.
+  let served = 0;
+  const fetchFn = async () => {
+    const nodes = Array.from({ length: 50 }, () => node(served++));
+    return jsonResponse({
+      data: { issues: { nodes, pageInfo: { hasNextPage: true, endCursor: `c${served}` } } },
+    });
+  };
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => errs.push(a.join(" "));
+  let out;
+  try {
+    const client = createLinearClient({ apiKey: FAKE_KEY, fetchFn });
+    out = await client.listIssues({ label: "big" });
+  } finally {
+    console.error = origErr;
+  }
+  check("returns exactly the 200-issue cap", out.length === 200);
+  check(
+    "a truncation warning fired naming the source + cap",
+    errs.some((e) => /more than 200/.test(e) && /label 'big'/.test(e))
+  );
+
+  // Inverse: a source that fits under the cap (hasNextPage:false) must NOT warn.
+  let served2 = 0;
+  const fetch2 = async () => {
+    const nodes = Array.from({ length: 10 }, () => node(served2++));
+    return jsonResponse({ data: { issues: { nodes, pageInfo: { hasNextPage: false } } } });
+  };
+  const errs2 = [];
+  const origErr2 = console.error;
+  console.error = (...a) => errs2.push(a.join(" "));
+  let out2;
+  try {
+    const client = createLinearClient({ apiKey: FAKE_KEY, fetchFn: fetch2 });
+    out2 = await client.listIssues({ label: "small" });
+  } finally {
+    console.error = origErr2;
+  }
+  check("returns the full small result", out2.length === 10);
+  check(
+    "no warning when the source fits under the cap",
+    !errs2.some((e) => /more than 200/.test(e))
+  );
+}
+
 console.log("errors → LinearError, key redacted");
 {
   const fetchFn = async () => jsonResponse({}, { ok: false, status: 401 });

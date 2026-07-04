@@ -100,6 +100,16 @@ console.log("extractPlanFromLog");
     threw = true;
   }
   check("throws on empty", threw);
+
+  // AIO-182: a plan body containing its own markdown horizontal rule must not be
+  // truncated at that embedded `---` — only a `---` immediately before the NEXT
+  // `## ` section header is a real section boundary.
+  const embeddedRule =
+    "# h\n\n---\n## Round 1 — Opus plan\n\nDRAFT\n\n---\n## Approved plan (round 2)\n\nSTEP 1\n\n---\n\nSTEP 2 after a horizontal rule\n\n---\n## trailing\n\nz\n";
+  check(
+    "does not truncate at an embedded horizontal rule",
+    extractPlanFromLog(embeddedRule) === "STEP 1\n\n---\n\nSTEP 2 after a horizontal rule"
+  );
 }
 
 console.log("detectMergeToken");
@@ -116,6 +126,20 @@ console.log("detectMergeToken");
     detectMergeToken("x\n" + PLAN_READY_TOKEN) === false
   );
   check("tokens are distinct", PLAN_READY_TOKEN !== MERGE_READY_TOKEN);
+
+  // AIO-182: a streaming artifact can glue the token to trailing prose on the same line.
+  check(
+    "approves when trailing prose is glued to the token",
+    detectMergeToken("findings ok\nMERGE_READY - approved, ship it") === true
+  );
+  check(
+    "approves with no space before glued punctuation",
+    detectMergeToken("MERGE_READY.") === true
+  );
+  check(
+    "still rejects a distinct token sharing the prefix",
+    detectMergeToken("x\nMERGE_READY_STATUS: pending") === false
+  );
 }
 
 console.log("slugify");
