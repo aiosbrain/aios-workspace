@@ -240,9 +240,12 @@ export function buildPairs(days) {
  *     (never print a rho computed on under-minimum n).
  *  2. rho undefined (constant series) → HOLD (degenerate).
  *  3. |rho| >= MERGE_RHO → MERGE.
- *  4. |rho| < PROMOTE_RHO → test independence via the outcome point-biserial:
- *     zero-variance → HOLD; significant AND positive (band>0 predicts HIGHER
- *     outcome quality) → PROMOTE; else HOLD (incl. significant-but-negative).
+ *  4. |rho| < PROMOTE_RHO → test independence via the outcome point-biserial,
+ *     computed on the outcome-bearing SUBSET (nOutcome): nOutcome below the
+ *     same MIN_PAIRED_DAYS floor → HOLD (never PROMOTE off a handful of
+ *     outcome days); zero-variance → HOLD; significant AND positive (band>0
+ *     predicts HIGHER outcome quality) → PROMOTE; else HOLD (incl.
+ *     significant-but-negative).
  *  5. buffer zone PROMOTE_RHO <= |rho| < MERGE_RHO → HOLD.
  */
 export function verdictFromPairs(pairs) {
@@ -271,17 +274,34 @@ export function verdictFromPairs(pairs) {
 
   if (Math.abs(rho) < PROMOTE_RHO) {
     // Independence gate: does the band predict outcome quality on its own?
+    // The point-biserial runs on the outcome-bearing SUBSET, so it needs its
+    // own floor — without it, PROMOTE could fire off a handful of outcome days
+    // even when the window has MIN_PAIRED_DAYS+ paired days overall.
     const outRows = pairs.filter((r) => r.outcome != null);
-    const binary = outRows.map((r) => (r.band > 0 ? 1 : 0));
-    const outcomes = outRows.map((r) => r.outcome);
-    const pb = pointBiserial(binary, outcomes);
-    if (pb.r === null) {
+    const nOutcome = outRows.length;
+    if (nOutcome < MIN_PAIRED_DAYS) {
       return {
         verdict: "HOLD",
         rho,
         pointBiserial: null,
         p: null,
         n,
+        nOutcome,
+        note: `insufficient outcome-bearing days for point-biserial (n_outcome=${nOutcome} < ${MIN_PAIRED_DAYS})`,
+      };
+    }
+    const binary = outRows.map((r) => (r.band > 0 ? 1 : 0));
+    const outcomes = outRows.map((r) => r.outcome);
+    const pb = pointBiserial(binary, outcomes);
+    if (pb.r === null) {
+      // nOutcome >= MIN_PAIRED_DAYS here, so a null r is genuinely zero variance.
+      return {
+        verdict: "HOLD",
+        rho,
+        pointBiserial: null,
+        p: null,
+        n,
+        nOutcome,
         note: "degenerate: zero-variance point-biserial",
       };
     }
@@ -290,9 +310,9 @@ export function verdictFromPairs(pairs) {
     // (band>0 ↔ worse verification) does not "predict outcome quality" in the
     // sense the axis promotion requires, so it HOLDs rather than promotes.
     if (pb.p != null && pb.p < SIG_P && pb.r > 0) {
-      return { verdict: "PROMOTE", rho, pointBiserial: pb.r, p: pb.p, n };
+      return { verdict: "PROMOTE", rho, pointBiserial: pb.r, p: pb.p, n, nOutcome };
     }
-    return { verdict: "HOLD", rho, pointBiserial: pb.r, p: pb.p, n };
+    return { verdict: "HOLD", rho, pointBiserial: pb.r, p: pb.p, n, nOutcome };
   }
 
   // buffer zone: PROMOTE_RHO <= |rho| < MERGE_RHO
@@ -329,6 +349,7 @@ export function renderVerdict(cal) {
   L.push(`  spearman rho      ${fmt(c.rho)}   (band vs autonomy)`);
   L.push(`  point-biserial r  ${fmt(c.pointBiserial)}   (band>0 vs ${c.metric})`);
   L.push(`  point-biserial p  ${fmt(c.p)}`);
+  if (c.nOutcome != null) L.push(`  outcome days      ${c.nOutcome}   (point-biserial n)`);
   if (c.note) L.push(`  note              ${c.note}`);
   L.push(
     `  thresholds        MERGE |rho|≥${MERGE_RHO} · PROMOTE |rho|<${PROMOTE_RHO} & p<${SIG_P} (r>0) · ` +
@@ -363,6 +384,7 @@ export function verdictArtifact(cal) {
   L.push(`| Spearman rho (band vs autonomy) | ${fmt(c.rho)} |`);
   L.push(`| Point-biserial r (band>0 vs ${c.metric}) | ${fmt(c.pointBiserial)} |`);
   L.push(`| Point-biserial p | ${fmt(c.p)} |`);
+  if (c.nOutcome != null) L.push(`| Outcome-bearing days (point-biserial n) | ${c.nOutcome} |`);
   L.push(`| Outcome metric | ${c.metric} |`);
   if (c.note) L.push(`| Note | ${c.note} |`);
   L.push("");

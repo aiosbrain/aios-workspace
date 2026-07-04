@@ -178,6 +178,33 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
   );
 }
 
+// HOLD (not PROMOTE) when the outcome-bearing subset is under the floor: same
+// band/aut as the PROMOTE case (14 paired days, |rho| < 0.5), but only 10 rows
+// carry an outcome — the point-biserial n has its own MIN_PAIRED_DAYS floor, so
+// a strong positive relation on a small outcome subset must NOT promote.
+{
+  const band = [0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 2, 3, 1];
+  const aut = [2, 3, 4, 1, 4, 2, 3, 0, 1, 4, 0, 2, 1, 3];
+  const out = [0, 1, 0, 1, null, null, null, 3, 4, 4, 3, 4, null, 4];
+  const v = verdictFromPairs(mk(band, aut, out));
+  check(
+    "HOLD (not PROMOTE) when n_outcome < MIN_PAIRED_DAYS (point-biserial floor gate)",
+    v.verdict === "HOLD" &&
+      v.nOutcome === 10 &&
+      v.pointBiserial === null &&
+      /n_outcome=10 < 14/.test(v.note || "")
+  );
+}
+
+// The PROMOTE case surfaces its point-biserial sample size (all 14 rows carry outcomes).
+{
+  const band = [0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 2, 3, 1];
+  const aut = [2, 3, 4, 1, 4, 2, 3, 0, 1, 4, 0, 2, 1, 3];
+  const out = [0, 1, 0, 1, 0, 1, 0, 3, 4, 4, 3, 4, 3, 4];
+  const v = verdictFromPairs(mk(band, aut, out));
+  check("PROMOTE carries nOutcome === n when every row has an outcome", v.nOutcome === 14);
+}
+
 // HOLD buffer zone: 0.5 ≤ |rho| < 0.7
 {
   const band = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 1, 2, 0, 4];
@@ -292,7 +319,7 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
   const pairs = buildPairs(days);
   check(
     "buildPairs drops null-autonomy and warm-up null-band rows",
-    pairs.every((p) => p.band != null && p.autonomy != null)
+    pairs.length > 0 && pairs.every((p) => p.band != null && p.autonomy != null)
   );
 }
 
@@ -345,7 +372,13 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
     out = execFileSync(
       "node",
       ["scripts/aios.mjs", "analyze", "--since", "30d", "--calibrate", "--json"],
-      { cwd: REPO, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+      {
+        cwd: REPO,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+      }
     );
   } catch (e) {
     code = e.status ?? 1;
@@ -381,6 +414,8 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
       cwd: REPO,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      maxBuffer: 10 * 1024 * 1024,
     });
   } catch (e) {
     out = (e.stdout || "").toString();
