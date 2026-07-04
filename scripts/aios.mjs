@@ -3486,6 +3486,17 @@ function wireAsksHooksInto(target, { dryRun = false } = {}) {
     }
   }
   settings.hooks ??= {};
+  if (
+    typeof settings.hooks !== "object" ||
+    settings.hooks === null ||
+    Array.isArray(settings.hooks)
+  ) {
+    return {
+      repo: target,
+      ok: false,
+      error: "settings.json has an unexpected 'hooks' shape — skipped",
+    };
+  }
 
   const hasHook = (event, matcher, basename) =>
     (settings.hooks[event] ?? []).some(
@@ -3542,6 +3553,7 @@ async function cmdAsks(repo, cfg, args) {
     const results = targets.map((t) => wireAsksHooksInto(t, { dryRun }));
     if (asJson) {
       console.log(JSON.stringify({ results }, null, 2));
+      if (results.some((r) => !r.ok)) process.exitCode = 1;
       return;
     }
     console.log(
@@ -3557,6 +3569,7 @@ async function cmdAsks(repo, cfg, args) {
         for (const a of r.added) console.log(c.dim(`    ${a}`));
       }
     }
+    if (results.some((r) => !r.ok)) process.exitCode = 1;
     return;
   }
   const loop = await loadOperatorLoop();

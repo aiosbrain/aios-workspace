@@ -21,6 +21,7 @@ export const DEFAULT_COUNCIL_MODELS = [
 export function modelFamily(model) {
   const id = String(model ?? "").toLowerCase();
   const tail = id.includes("/") ? id.slice(id.indexOf("/") + 1) : id;
+  if (!tail) return "other";
   if (tail.startsWith("claude") || tail.startsWith("fable")) return "anthropic";
   if (tail.startsWith("gpt") || tail.startsWith("o1") || tail.startsWith("o3")) return "openai";
   if (tail.startsWith("gemini")) return "google";
@@ -30,35 +31,51 @@ export function modelFamily(model) {
   return "other";
 }
 
+// Drop blank ids (trailing commas, empty YAML items) and require at least two models.
+export function normalizePanelModels(models, { label = "council_models" } = {}) {
+  if (!Array.isArray(models)) {
+    die(`${label} must be a non-empty list of OpenRouter model ids`);
+  }
+  const cleaned = models.map((m) => String(m ?? "").trim()).filter(Boolean);
+  if (cleaned.length < 2) {
+    die(
+      `${label} must list at least 2 non-empty model ids (got ${cleaned.length} after dropping blanks)`
+    );
+  }
+  return cleaned;
+}
+
 function configPath(repo) {
   return path.join(repo, ".aios", "council-models.yaml");
 }
 
-// Precedence: CLI override > file > default. Returns { models, chairmanModel }.
+// Precedence: CLI override > file > default. Returns { models }.
 export function resolveCouncilConfig(repo, { modelsOverride } = {}) {
-  if (modelsOverride?.length) {
-    return { models: modelsOverride, chairmanModel: null };
+  if (modelsOverride != null) {
+    return { models: normalizePanelModels(modelsOverride, { label: "--models" }) };
   }
   const file = configPath(repo);
   if (existsSync(file)) {
     const parsed = parseFlatYaml(readFileSync(file, "utf8"), { strict: true });
-    const models = Array.isArray(parsed.council_models) ? parsed.council_models : null;
-    if (models?.length) {
-      return { models, chairmanModel: parsed.chairman_model ?? null };
+    if (!Array.isArray(parsed.council_models)) {
+      die(`${file} exists but council_models is missing or not a list — fix the file or remove it`);
     }
+    return { models: normalizePanelModels(parsed.council_models, { label: "council_models" }) };
   }
-  return { models: DEFAULT_COUNCIL_MODELS, chairmanModel: null };
+  return { models: DEFAULT_COUNCIL_MODELS };
 }
 
 // Fail-closed diversity guard: abort before any API call if the panel resolves to fewer than
 // 2 distinct model families. Mirrors loop-models.mjs's DIVERSITY_PAIRS guard doctrine.
 export function assertDiverse(models) {
-  const families = new Set(models.map(modelFamily));
+  const panel = normalizePanelModels(models);
+  const families = new Set(panel.map(modelFamily));
   if (families.size < 2) {
     die(
-      `council panel has no cross-lab diversity — all ${models.length} model(s) resolve to a ` +
+      `council panel has no cross-lab diversity — all ${panel.length} model(s) resolve to a ` +
         `single family (${[...families][0]}). Add a model from a different family or the ` +
         `council result is just one lab talking to itself.`
     );
   }
+  return panel;
 }

@@ -1,6 +1,6 @@
 # PRD — Council Harness (`/council`)
 
-**Status:** Proposed — **backlog, not scheduled, no implementation started.**
+**Status:** In progress — **P0 shipped** (`aios council`, stage-1 first opinions only). P1 ranking/synthesis not started.
 **Last updated:** 2026-07-03 · **Owner:** John
 **Inspiration:** [karpathy/llm-council](https://github.com/karpathy/llm-council) (external, unmaintained by its author)
 **Precedent in this repo:** [`loop-models.example.yaml`](./loop-models.example.yaml) (diversity-guard doctrine),

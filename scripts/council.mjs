@@ -15,19 +15,19 @@ import { c, die } from "./relay-core.mjs";
 import { resolveCouncilConfig, assertDiverse, modelFamily } from "./council-models.mjs";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const REQUEST_TIMEOUT_MS = 120_000;
 
-function parseArgs(argv) {
+export function parseCouncilArgs(argv) {
   const rest = [...argv];
   let modelsOverride = null;
   const positional = [];
   while (rest.length) {
     const a = rest.shift();
-    if (a === "--models")
-      modelsOverride = rest
-        .shift()
-        .split(",")
-        .map((s) => s.trim());
-    else positional.push(a);
+    if (a === "--models") {
+      const raw = rest.shift();
+      if (raw === undefined) die('usage: aios council "<question>" [--models id,id,id]');
+      modelsOverride = raw.split(",").map((s) => s.trim());
+    } else positional.push(a);
   }
   return { question: positional.join(" "), modelsOverride };
 }
@@ -48,6 +48,7 @@ async function askOneModel(model, question, apiKey) {
         messages: [{ role: "user", content: question }],
         max_tokens: 2000,
       }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const durationMs = Date.now() - startedAt;
     if (!res.ok) {
@@ -71,14 +72,19 @@ async function askOneModel(model, question, apiKey) {
 // `repo` + `rest` let aios.mjs's `cmdCouncil` call this directly (repo-aware, like cmdAsks);
 // direct `node scripts/council.mjs` invocation below passes repo=cwd + the raw argv tail.
 export async function runCouncil(repo, rest) {
-  const { question, modelsOverride } = parseArgs(rest);
+  const { question, modelsOverride } = parseCouncilArgs(rest);
   if (!question.trim()) die('usage: aios council "<question>" [--models id,id,id]');
 
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) die("OPENROUTER_API_KEY is not set — council needs it to reach OpenRouter");
 
-  const { models } = resolveCouncilConfig(repo, { modelsOverride });
-  assertDiverse(models);
+  const { models: configured } = resolveCouncilConfig(repo, { modelsOverride });
+  const models = assertDiverse(configured);
+
+  console.error(
+    c.yellow("⚠ aios council — third-party egress") +
+      c.dim("  your question is sent to OpenRouter and each configured model provider")
+  );
 
   console.log(c.blue("aios council") + c.dim(`  ${models.length} models · P0 (stage 1 only)`));
   for (const m of models) console.log(c.dim(`  · ${m}  [${modelFamily(m)}]`));
