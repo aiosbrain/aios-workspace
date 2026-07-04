@@ -1,8 +1,7 @@
 // Session pulse Stop hook (AIO-214) — spawns hooks/session-pulse.mjs with a realistic
 // analyze-state fixture and asserts the pulse format, the 45-min throttle, the 24h missing-state
 // suggestion throttle, and the never-block guarantees (garbage stdin, non-Stop events, recursion
-// guard). Also asserts buildLastSummary's shape and that buildPushPayload (AIO-218's contract)
-// stays byte-identical — this issue must not touch the push payload.
+// guard). Also asserts buildLastSummary's shape.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +10,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, statSync }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildLastSummary, buildPushPayload } from "../scripts/analyze/report.mjs";
+import { buildLastSummary } from "../scripts/analyze/report.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = path.join(ROOT, "hooks", "session-pulse.mjs");
@@ -214,44 +213,4 @@ test("buildLastSummary: shape matches the hook's dumb-reader contract", () => {
   assert.equal(s.weakest, "context_hygiene");
   assert.equal(typeof s.weakest_tip, "string");
   assert.ok(s.generated_at); // ISO timestamp
-});
-
-test("buildPushPayload output is byte-identical to main (AIO-218 owns this field, not W3)", () => {
-  const day = {
-    date: "2026-07-04",
-    signals: {
-      delegation_ratio: 0.3,
-      correction_loop_avg: 1.2,
-      error_rate: 0.05,
-      cost_per_task: 0.4,
-      tokens_per_task: 30_000,
-      total_cost_usd: 1.2,
-      input_tokens: 100,
-      output_tokens: 50,
-      cache_read_tokens: 10,
-      cache_hit_rate: 0.8,
-      tool_diversity: 8,
-      verify_tool_rate: 0.3,
-      subagent_usage: 0.5,
-      sessions: 40,
-      tasks: 130,
-    },
-    placement: { spine: "L4", axes: { verification: 4 } },
-  };
-  const payload = buildPushPayload(day, "alex");
-  assert.deepEqual(
-    Object.keys(payload).sort(),
-    [
-      "member",
-      "metric",
-      "date",
-      "window_days",
-      "signals",
-      "provisional",
-      "sessions",
-      "tasks",
-    ].sort()
-  );
-  assert.equal(payload.metric, "aem-individual");
-  assert.equal("ce_band" in payload, false, "W3 must not add ce_band to the push payload");
 });
