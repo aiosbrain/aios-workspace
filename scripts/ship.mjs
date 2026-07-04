@@ -20,7 +20,15 @@ import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { c, callClaudeAgent, callCursorAgent, PLAN_READY_TOKEN } from "./relay-core.mjs";
+import {
+  c,
+  callClaudeAgent,
+  callCursorAgent,
+  PLAN_READY_TOKEN,
+  NO_TOOLS,
+  NO_TOOLS_ARGS,
+  PLAN_DISALLOWED_ARGS,
+} from "./relay-core.mjs";
 import { EXIT as BUILD_EXIT, runBuild, slugify } from "./build.mjs";
 import { cmdPr, detectRepo } from "./pr.mjs";
 import {
@@ -52,29 +60,11 @@ export const SHIP_EXIT = {
 
 export const SAFETY_APPROVED_TOKEN = "SAFETY_APPROVED";
 
-// Steps that only *synthesize* over content already injected into their prompt (recon reads the
-// pre-vetted `allowed` file blobs; safety_review reads the diff) must run with NO tools. The
-// prompt carries untrusted, external text (Linear issue bodies/comments; PR diffs), so a
-// prompt-injection payload must not be able to make the agent read arbitrary repo files — e.g.
-// `.env`/`.aios/` — outside the tracked-only allow list. We hand the CLI a default-deny stance:
-// `--permission-mode plan` (no writes) plus an explicit `--disallowedTools` blocking every
-// filesystem / exec / network / delegation tool. Everything these steps need is already inline,
-// so removing tool access changes nothing but the injection blast radius.
-export const NO_TOOLS = [
-  "Bash",
-  "Read",
-  "Edit",
-  "Write",
-  "Glob",
-  "Grep",
-  "WebFetch",
-  "WebSearch",
-  "Task",
-  "NotebookEdit",
-];
-// argv fragment applied to any `callClaudeAgent` step that must not touch the filesystem.
-// `--disallowedTools` takes one space-separated string (the CLI's documented list form).
-export const NO_TOOLS_ARGS = ["--permission-mode", "plan", "--disallowedTools", NO_TOOLS.join(" ")];
+// The agent tool-access tiers (NO_TOOLS / PLAN_DISALLOWED) now live in relay-core.mjs so ship and
+// roadmap-run share one source of truth; re-exported here for back-compat (tests import NO_TOOLS
+// from ship.mjs). recon + safety_review run at the NO_TOOLS tier; the plan cli runner at the
+// PLAN_DISALLOWED (read-only, no exfil/mutate) tier — see the boundary doc in relay-core.mjs.
+export { NO_TOOLS, NO_TOOLS_ARGS };
 
 // Diff surfaces where an approval requires an explicit safety review over the diff. A changed
 // path matches if it equals a listed file or starts with a listed directory prefix.
@@ -381,6 +371,29 @@ export function buildReconPrompt(issue, { allowedFiles }) {
   ].join("\n");
 }
 
+// Per-file body cap for recon: file blobs are sliced to this many chars before injection so a
+// single large file cannot dominate the recon prompt. Truncation is now marked, never silent.
+export const RECON_FILE_CAP = 8000;
+
+// Recon transparency: `extractRepoFileRefs` drops referenced files once its maxFiles/maxBytes caps
+// are hit (reason "cap-exceeded"). Those drops land in the recon-skipped.md audit but NOT in the
+// prompt, so the model plans as if nothing was omitted. This note surfaces the cap-exceeded drops
+// to the model. Other skip reasons (not-tracked/denied/absolute/parent-traversal) are deliberate
+// security filters, not truncation, so they stay out of the plan-context note. Pure; exported.
+export function buildOmittedRefsNote(skipped) {
+  const dropped = (skipped ?? []).filter((s) => s.reason === "cap-exceeded");
+  if (!dropped.length) return "";
+  return [
+    "",
+    "## Omitted references (NOT read — recon file caps exceeded)",
+    "",
+    `${dropped.length} referenced repo file(s) were dropped before reading because the recon caps`,
+    "(max file count / total bytes) were hit. Treat the context as INCOMPLETE for these paths and",
+    "call out where the plan depends on a file that was not read:",
+    ...dropped.map((s) => `- \`${s.raw}\``),
+  ].join("\n");
+}
+
 export function buildPlanPrompt(issue, contextPack, prevReview) {
   const parts = [
     `You are a senior software architect. Produce a clear, numbered implementation plan for`,
@@ -565,10 +578,26 @@ function defaultWaitForBots(argv) {
   }
 }
 
+// Parse `git worktree list --porcelain` for the path of the worktree checked out on `branch`.
+// The porcelain format is stanza-per-worktree: a `worktree <path>` line followed by (among
+// others) a `branch refs/heads/<branch>` line, stanzas separated by blank lines. Returns the
+// matching path, or null when no worktree holds that branch. Pure; exported for the test.
+export function resolveWorktreePathFromList(porcelain, branch) {
+  const target = `refs/heads/${branch}`;
+  let currentPath = null;
+  for (const line of String(porcelain ?? "").split("\n")) {
+    if (line.startsWith("worktree ")) currentPath = line.slice("worktree ".length).trim();
+    else if (line.startsWith("branch ")) {
+      if (line.slice("branch ".length).trim() === target) return currentPath;
+    }
+  }
+  return null;
+}
+
 // ── cleanup (exported for the ordering test) ──────────────────────────────────────────────────
-// Correct ordering: git refuses to delete a branch checked out in a worktree, so ff-only main
-// → worktree remove → prune → THEN branch delete. A dirty primary or a failed ff-only returns
-// CLEANUP_FAILED and NEVER issues a reset/merge/clobber.
+// Correct ordering: git refuses to delete a branch checked out in a worktree, so checkout main
+// → ff-only main → worktree remove → prune → THEN branch delete. A dirty primary or a failed
+// ff-only returns CLEANUP_FAILED and NEVER issues a reset/merge/clobber.
 export function runCleanup(deps, { repo, branch, worktreePath }) {
   const { gitExec } = deps;
   // Preflight: a dirty primary checkout means an ff-only would be unsafe — surface, never clobber.
@@ -587,6 +616,17 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
       reason: "primary checkout is dirty — refusing to ff-only (fix manually).",
     };
   }
+  // Land the ff-only on `main` itself. The operator may have started `aios ship` from another
+  // branch; merging origin/main into a non-main HEAD would advance the wrong branch (or fail).
+  // On failure, surface CLEANUP_FAILED — never clobber, consistent with the fail-safe stance.
+  try {
+    gitExec(["checkout", "main"], repo);
+  } catch (e) {
+    return {
+      code: SHIP_EXIT.CLEANUP_FAILED,
+      reason: `could not checkout main before ff-only: ${e.message}`,
+    };
+  }
   try {
     gitExec(["fetch", "origin", "main"], repo);
   } catch {
@@ -597,9 +637,23 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
   } catch (e) {
     return { code: SHIP_EXIT.CLEANUP_FAILED, reason: `main is not fast-forwardable: ${e.message}` };
   }
+  // Resolve the ACTUAL worktree registered for this branch. A resumed build may have reused an
+  // existing worktree at a non-default path, and runBuild returns only an exit code — so the
+  // caller-recomputed `worktreePath` can be wrong. Ask git; fall back to the passed path when git
+  // reports none (already-pruned → the remove below is a harmless no-op).
+  let removePath = worktreePath;
+  try {
+    const listed = resolveWorktreePathFromList(
+      gitExec(["worktree", "list", "--porcelain"], repo),
+      branch
+    );
+    if (listed) removePath = listed;
+  } catch {
+    /* best-effort — fall back to the passed worktreePath */
+  }
   // Remove the worktree BEFORE deleting the branch (git blocks deleting a checked-out branch).
   try {
-    gitExec(["worktree", "remove", "--force", worktreePath], repo);
+    gitExec(["worktree", "remove", "--force", removePath], repo);
   } catch {
     /* best-effort */
   }
@@ -751,11 +805,15 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       } catch {
         body = "(unreadable)";
       }
-      return `### ${rel}\n\n${body.slice(0, 8000)}`;
+      // Mark truncation instead of silently slicing — the model must know it saw a partial file.
+      return body.length > RECON_FILE_CAP
+        ? `### ${rel}\n\n${body.slice(0, RECON_FILE_CAP)}\n\n…[truncated: first ${RECON_FILE_CAP} of ${body.length} bytes]`
+        : `### ${rel}\n\n${body}`;
     });
     const reconPrompt =
       buildReconPrompt(issue, { allowedFiles: allowed }) +
-      (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "");
+      (fileBlobs.length ? `\n\n## File contents\n\n${fileBlobs.join("\n\n")}` : "") +
+      buildOmittedRefsNote(skipped);
     const cfg = models.recon;
     // Recon runs with NO tools: the untrusted Linear text is in the prompt, and the only files it
     // may see are the pre-vetted `allowed` blobs already injected above. A prompt-injection payload
@@ -793,9 +851,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     generatePlan = (prompt) =>
       claude(prompt, planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS, {
         model: planCfg.model,
+        // Plan tier (§ tool-access tiers, relay-core.mjs): read-only, no exfil/mutation. The plan
+        // prompt embeds `recon` (derived from untrusted Linear text), so the planner may READ the
+        // repo to ground itself but must not Bash/Write/Edit/WebFetch/WebSearch/Task. This is
+        // stricter than the old bare `--permission-mode plan` (which allowed all of those).
         extraArgs: [
-          "--permission-mode",
-          "plan",
+          ...PLAN_DISALLOWED_ARGS,
           ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
         ],
       });
