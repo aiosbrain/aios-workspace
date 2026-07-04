@@ -23,11 +23,12 @@ import {
   die,
   checkPrereqs,
   callCursorAgent,
+  callDeepSeekDirect,
   gitMergeAndDelete,
   makeLogger,
 } from "./relay-core.mjs";
 import { runBuild, parseBuildArgs } from "./build.mjs";
-import { resolveLoopModels } from "./loop-models.mjs";
+import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
 import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 
 const DEFAULT_SKILL = "/review-plan";
@@ -272,11 +273,15 @@ export async function cmdRelay(repo, args) {
     history.push({ role: "assistant", content: plan });
 
     const reviewPrompt = buildReviewPrompt(skill, plan, round, maxRounds);
-    const review = await callCursorAgent(reviewPrompt, reviewTimeout, {
-      // Thread the resolved plan_review model (same rationale as ship's plan review):
-      // an unparameterized call runs on the Cursor account default model.
-      extraArgs: models.plan_review.model ? ["--model", models.plan_review.model] : [],
-    });
+    // The reviewer resolves to either the Cursor CLI or DeepSeek's own API, by model family.
+    const review =
+      modelFamily(models.plan_review.model) === "deepseek"
+        ? await callDeepSeekDirect(reviewPrompt, reviewTimeout, { model: models.plan_review.model })
+        : await callCursorAgent(reviewPrompt, reviewTimeout, {
+            // Thread the resolved plan_review model (same rationale as ship's plan review):
+            // an unparameterized call runs on the Cursor account default model.
+            extraArgs: models.plan_review.model ? ["--model", models.plan_review.model] : [],
+          });
     log(`Round ${round} — Cursor review`, review);
 
     console.log("\n\n── Cursor review done ──────────────────────────────────────");

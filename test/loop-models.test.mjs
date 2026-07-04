@@ -295,7 +295,28 @@ console.log("modelFamily");
   check("claude → anthropic", modelFamily("claude-opus-4-8") === "anthropic");
   check("fable → anthropic", modelFamily("fable-5") === "anthropic");
   check("gpt → openai", modelFamily("gpt-5.5-high") === "openai");
+  check("deepseek → deepseek", modelFamily("deepseek-v4-pro") === "deepseek");
   check("unknown → other", modelFamily("mystery-1") === "other");
+}
+
+console.log("default reviewer models (2026-07-04 — Cursor Ultra cap)");
+{
+  check(
+    "code_review defaults to deepseek-v4-pro",
+    DEFAULT_MODELS.code_review.model === "deepseek-v4-pro"
+  );
+  check(
+    "plan_review defaults to deepseek-v4-pro",
+    DEFAULT_MODELS.plan_review.model === "deepseek-v4-pro"
+  );
+  check(
+    "build/code_review stay cross-family",
+    modelFamily(DEFAULT_MODELS.build.model) !== modelFamily(DEFAULT_MODELS.code_review.model)
+  );
+  check(
+    "plan/plan_review stay cross-family",
+    modelFamily(DEFAULT_MODELS.plan.model) !== modelFamily(DEFAULT_MODELS.plan_review.model)
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

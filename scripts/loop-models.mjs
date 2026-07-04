@@ -19,9 +19,18 @@ import { die } from "./relay-core.mjs";
 export const DEFAULT_MODELS = {
   recon: { model: "claude-haiku-4-5" },
   plan: { model: "claude-opus-4-8", effort: "xhigh" },
-  plan_review: { model: "gpt-5.5-high" },
+  // plan_review/code_review moved to DeepSeek's own API (2026-07-04): the Cursor Ultra plan's
+  // monthly usage cap was already exhausted, blocking gpt-5.5-high AND glm-5.2-high alike — an
+  // account-wide cap, not a model-specific one. A same-diff sanity check (see
+  // 2-work/experiments/glm-deepseek-review-sanity-check/REPORT.md) found deepseek-v4-pro gave an
+  // accurate, honestly-reasoned review with no fabrication, while glm-5.2 (direct via Z.ai,
+  // bypassing the cap) produced a confident but FALSE "Critical" finding with fabricated tool-call
+  // transcripts — disqualifying for an unsupervised merge-gate role. gpt-5.5-high couldn't be
+  // re-tested (still capped) so this isn't a head-to-head win over it, but deepseek-v4-pro is a
+  // real, network-independent-of-Cursor, verified-accurate reviewer.
+  plan_review: { model: "deepseek-v4-pro" },
   build: { model: "claude-opus-4-8", effort: "high" },
-  code_review: { model: "gpt-5.5-high" },
+  code_review: { model: "deepseek-v4-pro" },
   fix: { model: "claude-opus-4-8", effort: "medium" },
   fix_escalated: { model: "claude-opus-4-8", effort: "high" },
   consolidate: { model: "claude-haiku-4-5" },
@@ -43,11 +52,13 @@ export const DEFAULT_MODELS = {
 
 export const STEPS = Object.keys(DEFAULT_MODELS);
 
-// Family for the diversity guard: Anthropic (claude*/fable*), OpenAI (gpt*), else other.
+// Family for the diversity guard: Anthropic (claude*/fable*), OpenAI (gpt*), DeepSeek
+// (deepseek*), else other.
 export function modelFamily(model) {
   const m = String(model ?? "").toLowerCase();
   if (m.startsWith("claude") || m.startsWith("fable")) return "anthropic";
   if (m.startsWith("gpt")) return "openai";
+  if (m.startsWith("deepseek")) return "deepseek";
   return "other";
 }
 

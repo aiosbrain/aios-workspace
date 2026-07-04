@@ -44,12 +44,13 @@ import {
   checkPrereqs,
   callCursorAgent,
   callClaudeAgent,
+  callDeepSeekDirect,
   gitMergeAndDelete,
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
 import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
-import { resolveLoopModels } from "./loop-models.mjs";
+import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
 import { cmdPr } from "./pr.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
@@ -1125,9 +1126,14 @@ export async function runBuild({ repo, plan, branch, opts }) {
     console.log(c.dim(`[cursor] review timeout ${reviewTimeoutMs / 1000}s — ${why}`));
     log(`Build round ${round} — review timeout`, `${reviewTimeoutMs / 1000}s (${why})`);
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
+    // The reviewer resolves to either the Cursor CLI or DeepSeek's own API, by model family.
+    const reviewCallFn =
+      modelFamily(models.code_review.model) === "deepseek"
+        ? (p, t) => callDeepSeekDirect(p, t, { model: models.code_review.model })
+        : callCursorAgent;
     // Auto-retry once on timeout (doubled), with transient-drop retries INSIDE each attempt.
     const review = await reviewWithTimeoutRetry(
-      (p, t, o) => withRetry(callCursorAgent, p, t, o),
+      (p, t, o) => withRetry(reviewCallFn, p, t, o),
       reviewPrompt,
       reviewTimeoutMs,
       {

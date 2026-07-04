@@ -13,7 +13,8 @@
 #
 # DIVERSITY GUARD (fail closed): `build` and `code_review` must be different model
 # families, and so must `plan` and `plan_review` — the reviewer has to be an
-# independent model. Families: claude*/fable* = anthropic, gpt* = openai. Setting
+# independent model. Families: claude*/fable* = anthropic, gpt* = openai, deepseek* =
+# deepseek. Setting
 # code_review_model to a claude-* model while build stays claude-* aborts the run.
 #
 # RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK),
@@ -32,6 +33,9 @@
 # plan_model: claude-opus-4-8
 # plan_effort: xhigh
 
+# plan_review/code_review default to deepseek-v4-pro (DeepSeek's own API, not Cursor) since
+# 2026-07-04 — the Cursor Ultra plan's usage cap blocked gpt-5.5-high and glm-5.2-high alike.
+# gpt-5.5-high (or any Cursor-routed model) still works if you set it explicitly here.
 # plan_review_model: gpt-5.5-high
 
 # build_model: claude-opus-4-8

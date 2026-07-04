@@ -108,6 +108,11 @@ function freshRepo() {
   cpSync(path.join(REPO, "scripts", "leak-gate.sh"), path.join(repo, "scripts", "leak-gate.sh"));
   cpSync(path.join(REPO, "validation"), path.join(repo, "validation"), { recursive: true });
   writeFileSync(path.join(repo, "README.md"), "# base\n");
+  // Pin code_review to a Cursor-family model so this suite keeps hitting the PATH-shimmed
+  // fake cursor binary regardless of what the real DEFAULT_MODELS.code_review becomes —
+  // this file has no fake for the DeepSeek-direct dispatch path (that's a real fetch call).
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "code_review_model: gpt-5.5-high\n");
   g(["add", "-A"]);
   g(["commit", "-m", "base"]);
   return repo;

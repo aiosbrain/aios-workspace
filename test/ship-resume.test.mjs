@@ -95,6 +95,10 @@ function makeDeps(over = {}) {
       if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
       return "- `Low` `f`: nit";
     },
+    callDeepSeekDirect: async (prompt) => {
+      if (prompt.includes("/review-plan")) return "looks good\nPLAN_READY";
+      return "- `Low` `f`: nit";
+    },
     waitForBots: () => 0,
     gitExec: (argv) => {
       gitCalls.push(argv.join(" "));

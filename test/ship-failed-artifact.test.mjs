@@ -51,6 +51,7 @@ function makeDeps(repo, auditFiles, over = {}) {
     cmdConsolidateFindings: async () => 0,
     callClaudeAgent: async () => "generic",
     callCursorAgent: async () => "looks good\nPLAN_READY",
+    callDeepSeekDirect: async () => "looks good\nPLAN_READY",
     waitForBots: () => 0,
     gitExec: () => "",
     ghExec: () => ({ code: 0, stdout: greenChecks, stderr: "" }),
@@ -146,6 +147,9 @@ console.log("plan reviewer death writes plan-review-r1-FAILED.md");
     },
     callCursorAgent: async () => {
       throw new Error("cursor agent timed out after 300s");
+    },
+    callDeepSeekDirect: async () => {
+      throw new Error("deepseek agent timed out after 300s");
     },
   });
   try {
