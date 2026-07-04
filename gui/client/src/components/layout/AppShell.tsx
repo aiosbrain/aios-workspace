@@ -2,6 +2,7 @@ import { useSession } from "../../state/cockpit";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "../chat/ChatView";
 import { ReviewPanel } from "../review/ReviewPanel";
+import { MaturityPanel } from "../maturity/MaturityPanel";
 import { SettingsView } from "../settings/SettingsView";
 
 function ViewRouter() {
@@ -11,6 +12,8 @@ function ViewRouter() {
       return <ChatView />;
     case "review":
       return <ReviewPanel />;
+    case "maturity":
+      return <MaturityPanel />;
     case "settings":
       return <SettingsView />;
   }
