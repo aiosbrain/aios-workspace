@@ -152,6 +152,7 @@ export const ROADMAP_DECISION = {
   [SHIP_EXIT.OK]: "continue",
   [SHIP_EXIT.USAGE]: "halt",
   [SHIP_EXIT.RECON_FAILED]: "skip",
+  [SHIP_EXIT.SPEC_NOT_READY]: "skip",
   [SHIP_EXIT.PLAN_UNAPPROVED]: "skip",
   [SHIP_EXIT.PLAN_REJECTED]: "halt",
   [SHIP_EXIT.PLAN_GATE_BLOCKED]: "halt",

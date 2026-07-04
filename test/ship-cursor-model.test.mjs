@@ -12,6 +12,7 @@
 import { runShip, SHIP_EXIT } from "../scripts/ship.mjs";
 import { resolveLoopModels, DEFAULT_MODELS } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
+import { stubSpecRubric } from "./ship-test-helpers.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -98,6 +99,17 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
       writeFileSync(path.join(dir, name), String(text));
     },
     slug: "acme/repo",
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 100,
+      deterministic: [],
+      adversarial: { findings: [] },
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
+    loadSpecRubric: () => stubSpecRubric(),
+    makeAnthropic: async () => ({ fake: true }),
   };
 }
 

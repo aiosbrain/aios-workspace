@@ -10,9 +10,20 @@ import { runShip, SHIP_EXIT, SHIP_VERIFY_CMD, NO_TOOLS } from "../scripts/ship.m
 import { PLAN_DISALLOWED } from "../scripts/relay-core.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
-import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { stubSpecRubric } from "./ship-test-helpers.mjs";
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function seedRubric(repo) {
+  const rubricSrc = path.join(REPO_ROOT, ".claude", "rubrics", "spec-readiness.md");
+  const rubricDst = path.join(repo, ".claude", "rubrics", "spec-readiness.md");
+  mkdirSync(path.dirname(rubricDst), { recursive: true });
+  writeFileSync(rubricDst, readFileSync(rubricSrc, "utf8"));
+}
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -51,6 +62,7 @@ function makeIssue() {
 // Build a full deps set; per-test overrides win. ghState controls the check board + merge.
 function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-stages-"));
+  seedRubric(repo);
   const created = [];
   const auditFiles = [];
   const ghCalls = [];
@@ -117,6 +129,17 @@ function makeDeps(over = {}) {
       writeFileSync(path.join(dir, name), String(text));
     },
     slug: "acme/repo",
+    evaluateSpec: async () => ({
+      verdict: "SPEC_READY",
+      exitCode: 0,
+      score: 100,
+      deterministic: [],
+      adversarial: { findings: [] },
+      findings: [],
+    }),
+    loadRecentDecisions: async () => [],
+    loadSpecRubric: () => stubSpecRubric(),
+    makeAnthropic: async () => ({ fake: true }),
   };
   // Apply overrides (shallow, but linear/nested handled by callers passing full objects).
   return { ...deps, ...over, repo, created, auditFiles, ghCalls, gitCalls };
@@ -130,6 +153,7 @@ function optsFor(o = {}) {
     reviewers: ["bugbot", "gpt-5.5"],
     planRunner: "cli",
     dryRun: false,
+    skipSpecGate: false,
     ...o,
   };
 }

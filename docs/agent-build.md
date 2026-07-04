@@ -265,19 +265,20 @@ aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/rep
 aios ship AIO-<n>
   │
   ├─ 1. recon        Linear issue + git-tracked referenced files → context pack
-  ├─ 2. plan         Opus plan ↔ Cursor /review-plan loop  ──▶ [PLAN GATE]
-  ├─ 3. follow-up    file `## Deferred (out of scope)` items as Linear children
-  ├─ 4. build        runBuild on an isolated worktree (secrets gate inside)
-  ├─ 5. PR           cmdPr push + open PR (title carries AIO-<n>)
-  ├─ 6. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
-  ├─ 7. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
-  ├─ 8. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
-  └─ 9. cleanup      ff-only main → worktree remove → prune → branch delete
+  ├─ 2. spec eval    EE5 spec-readiness gate on the Linear issue body
+  ├─ 3. plan         Opus plan ↔ Cursor /review-plan loop  ──▶ [PLAN GATE]
+  ├─ 4. follow-up    file `## Deferred (out of scope)` items as Linear children
+  ├─ 5. build        runBuild on an isolated worktree (secrets gate inside)
+  ├─ 6. PR           cmdPr push + open PR (title carries AIO-<n>)
+  ├─ 7. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
+  ├─ 8. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
+  ├─ 9. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
+  └─ 10. cleanup     ff-only main → worktree remove → prune → branch delete
 ```
 
 ```
 aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
-                  [--reviewers b,g] [--plan-runner cli|sdk] [--dry-run]
+                  [--reviewers b,g] [--plan-runner cli|sdk] [--skip-spec-gate] [--dry-run]
 ```
 
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
@@ -287,9 +288,9 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   gate's `*_GATE_BLOCKED` code — **resumable, never hanging**. (Interactive prompts print the same
   marker before the `[y/N]`.)
 - **Checkpoint + resume.** Every stage checkpoint lands in `.aios/loop/<issue>/state.json`
-  (recon/plan text, gate approvals, branch, PR number, review round). `aios ship AIO-<n> --resume`
-  skips completed stages and re-enters at the first incomplete one — an aborted run costs minutes,
-  not a fresh plan loop. `--resume --approve-plan` / `--resume --approve-merge` satisfy a pending
+  (recon text, `specReady`, plan text, gate approvals, branch, PR number, review round).
+  `aios ship AIO-<n> --resume` skips completed stages and re-enters at the first incomplete one —
+  an aborted run costs minutes, not a fresh plan loop. `--resume --approve-plan` / `--resume --approve-merge` satisfy a pending
   gate after you've inspected it (an honest audit record of who approved what).
 - **Parallel workstreams are safe.** `main` advancing mid-build (other agents merging) does **not**
   abort a build: the tripwire classifies primary-checkout movement — a HEAD-only move is a benign
@@ -349,8 +350,30 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   explicitly. A failed merge → `MERGE_BLOCKED` and cleanup never runs; unavailable CI or
   changed-path metadata fails **closed** (`MERGE_BLOCKED`), never treated as green.
 - All run artifacts land under `.aios/loop/<issue>/` (gitignored) — `task.md`, `recon.md`,
-  `recon-skipped.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`, `build.md`, `review-gpt-r<N>.md`,
-  `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`. Nothing under `.aios/` is committed.
+  `recon-skipped.md`, `spec.md`, `spec-eval-r1.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`,
+  `build.md`, `review-gpt-r<N>.md`, `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`.
+  Nothing under `.aios/` is committed.
+- **Spec-readiness gate (EE5).** After recon and before the plan loop, ship runs `aios spec eval`
+  against the Linear issue body (description + comments). Only `SPEC_READY` proceeds; otherwise ship
+  exits `SPEC_NOT_READY` (15) with findings in the audit dir and a hint to
+  `aios spec fix .aios/loop/<issue>/spec.md`. Use `--skip-spec-gate` only as a logged escape hatch.
+
+### Agent convention — writing Linear specs
+
+When you **author or materially revise** a Linear issue that will be built (via `aios ship`,
+`aios relay --build`, or a handover build):
+
+1. Write the issue body as a pick-up-able spec: What/Why, observable acceptance criteria, real
+   integration paths, scope/deferred, tier-safety when touching sync surfaces.
+2. **Before calling `aios ship`**, run a spec eval pass on the body (export to a temp file if
+   helpful): `npm run aios -- spec eval path/to/spec.md` — or rely on ship's built-in gate (step 2
+   above), which evaluates the live Linear description + comments.
+3. If `NOT_READY`, run `aios spec fix` on the audit copy (`.aios/loop/<issue>/spec.md` after a
+   failed ship, or your draft file) and update Linear before planning/building.
+
+`aios relay "task" --spec <file>` already enforces the same gate for file-based specs (EE5).
+
+---
 
 ### `SHIP_EXIT` codes
 
@@ -359,6 +382,7 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 | `OK`                    | 0    | plan → merge → cleanup completed                                  |
 | `USAGE`                 | 1    | bad args / prereqs / unresolved issue id                          |
 | `RECON_FAILED`          | 10   | issue fetch or recon model step failed                            |
+| `SPEC_NOT_READY`        | 15   | spec-readiness gate failed — fix spec, then re-run                |
 | `PLAN_UNAPPROVED`       | 20   | plan loop spent its round budget without `PLAN_READY`             |
 | `PLAN_REJECTED`         | 21   | operator rejected the plan at the plan gate                       |
 | `PLAN_GATE_BLOCKED`     | 22   | plan gate pending in a non-TTY context — resumable via `--resume --approve-plan` |
@@ -405,7 +429,7 @@ aios roadmap-run (--label <name> | --epic AIO-<n> | --project <name>)
 | SHIP_EXIT                                  | Action     |
 | ------------------------------------------ | ---------- |
 | `OK`                                       | continue   |
-| `RECON_FAILED` / `PLAN_UNAPPROVED`         | skip       |
+| `RECON_FAILED` / `SPEC_NOT_READY` / `PLAN_UNAPPROVED` | skip       |
 | `BUILD_FAILED` / `BUILD_NONCONVERGENCE`    | skip       |
 | `REVIEW_NONCONVERGENCE` / `MERGE_BLOCKED`  | skip       |
 | `SAFETY_BLOCKED`                           | skip (the "touches auth/secrets/architecture" escalation) |
