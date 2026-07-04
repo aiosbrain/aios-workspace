@@ -160,6 +160,14 @@ How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep
   it stays a presentation/orchestration shell.
 - **Validators + hooks are fail-closed.** `validation/validate-all.sh` (`set -euo pipefail`) and
   the PreToolUse `hooks/` exit non-zero on any violation; never weaken them to make a change pass.
+- **Timeline is a sibling of the operator loop, not part of it.** `src/timeline/` (TypeScript,
+  compiled to `dist/timeline/` by the same `build:loop` tsc pass) collects cross-repo merged
+  PRs/commits, resolves avatars, captures screenshots, and renders the dual-audience HTML;
+  `cmdTimeline` in `scripts/aios.mjs` orchestrates it. It reuses the loop's `Tier` vocabulary and
+  can project items into the C1 `Signal` shape, but never touches `src/operator-loop/sources/`
+  (the GitHub stub there stays inert/solo-scoped) or the V1 drift-guard docs. Its external render
+  is gated by the same fail-closed leak-sweep posture as C6: no clean `leak-gate.sh` run, no
+  shareable file.
 
 ### Known debt (deferred, post-release)
 
