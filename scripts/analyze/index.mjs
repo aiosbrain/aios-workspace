@@ -8,9 +8,12 @@
  * Phase 1 scope: Claude Code source, local report only (no push). Codex/Cursor
  * parsers register in Phase 2; --push wires in Phase 4.
  *
- * Incremental strategy (Phase 1): skip session files whose mtime predates the
- * window (inactive sessions are never re-read). Byte-offset tail-parsing of
- * append-only logs is a later refinement tracked in the plan.
+ * Incremental strategy: (a) skip session files whose mtime predates the window
+ * (inactive sessions are never re-read); (b) a per-file parse cache (AIO-189,
+ * cache.mjs) — unchanged files reuse their cached NormalizedEvent[], grown
+ * append-only logs are tail-parsed from the stored byte offset. `--no-cache`
+ * forces the old full-parse behavior. Cursor's SQLite DB is exempt (see
+ * cache.mjs).
  *
  * Zero dependencies (Node >= 18).
  */
@@ -20,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DISCOVERERS, fileStat } from "./sources.mjs";
+import { cachedParseFile, defaultCacheDir } from "./cache.mjs";
 import { parseClaude } from "./parse-claude.mjs";
 import { parseCodex } from "./parse-codex.mjs";
 import { parseCursor, sqlite3Available } from "./parse-cursor.mjs";
@@ -42,7 +46,7 @@ const color = {
   yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
 };
 
-function parseArgs(rest) {
+export function parseArgs(rest) {
   const opts = {
     since: "7d",
     tools: [],
@@ -51,6 +55,7 @@ function parseArgs(rest) {
     full: false,
     report: false,
     calibrate: false,
+    noCache: false,
   };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -61,6 +66,7 @@ function parseArgs(rest) {
     else if (a === "--push") opts.push = true;
     else if (a === "--full") opts.full = true;
     else if (a === "--calibrate") opts.calibrate = true;
+    else if (a === "--no-cache") opts.noCache = true;
   }
   return opts;
 }
@@ -88,29 +94,35 @@ function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
 
-export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
-  const opts = parseArgs(rest);
-  const since = await resolveSince(opts.since, (msg) => console.warn(color.yellow(msg)));
-  const until = new Date();
-  const sinceMs = since.getTime();
-  const home = os.homedir();
-
-  const tools = (opts.tools.length ? opts.tools : ALL_TOOLS).filter((t) => ALL_TOOLS.includes(t));
-
+/**
+ * Discover + parse session logs for `tools` into one NormalizedEvent[].
+ * With `cache` on (default), claude/codex JSONL files go through the per-file
+ * parse cache (cache.mjs) — the event stream is byte-for-byte the same as a
+ * cold parse, only cheaper. Exported for the cold-vs-warm identity test.
+ *
+ * @returns {{events: object[], cacheStats: {hits:number, appends:number, misses:number}}}
+ */
+export function collectEvents({
+  tools,
+  home,
+  sinceMs,
+  full = false,
+  cache = true,
+  cacheDir = defaultCacheDir(home),
+  warn = () => {},
+}) {
   const events = [];
+  const cacheStats = { hits: 0, appends: 0, misses: 0 };
   for (const tool of tools) {
     const files = DISCOVERERS[tool] ? DISCOVERERS[tool](home) : [];
 
     // Cursor: SQLite, not line-delimited text. One big DB spanning all history,
     // so we can't mtime-skip it — the per-event timestamp window-filter handles
-    // recency. Capability-gated on the sqlite3 CLI.
+    // recency. Capability-gated on the sqlite3 CLI. Exempt from the parse cache
+    // (WAL sidecar makes mtime/size keying unsafe — see cache.mjs).
     if (tool === "cursor") {
       if (!sqlite3Available()) {
-        console.warn(
-          color.yellow(
-            "  cursor: sqlite3 CLI not found on PATH — skipping (install sqlite3 to enable)"
-          )
-        );
+        warn("  cursor: sqlite3 CLI not found on PATH — skipping (install sqlite3 to enable)");
         continue;
       }
       for (const db of files) {
@@ -121,22 +133,47 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
 
     const parse = PARSERS[tool];
     if (!parse) {
-      console.warn(color.yellow(`  ${tool}: parser not yet available — skipping`));
+      warn(`  ${tool}: parser not yet available — skipping`);
       continue;
     }
     for (const f of files) {
       const st = fileStat(f);
-      if (!opts.full && st && st.mtime_ms < sinceMs) continue; // inactive session
+      if (!full && st && st.mtime_ms < sinceMs) continue; // inactive session
+      const fallbackId = path.basename(f).replace(/\.jsonl$/, "");
+      if (cache && st) {
+        try {
+          for (const ev of cachedParseFile({
+            dir: cacheDir,
+            tool,
+            file: f,
+            st,
+            fallbackId,
+            stats: cacheStats,
+          }))
+            events.push(ev);
+        } catch {
+          /* unreadable file — skip, same as the cold path */
+        }
+        continue;
+      }
       let text;
       try {
         text = readFileSync(f, "utf8");
       } catch {
         continue;
       }
-      const fallbackId = path.basename(f).replace(/\.jsonl$/, "");
       for (const ev of parse(text, fallbackId)) events.push(ev);
     }
   }
+  return { events, cacheStats };
+}
+
+/**
+ * Window-filter + reduce a NormalizedEvent[] into the analyze result object.
+ * Pure given its inputs; exported for the cold-vs-warm identity test.
+ */
+export function buildResult({ events, tools, since, until }) {
+  const sinceMs = since.getTime();
 
   // Window filter by event timestamp (undated events are kept).
   const inWindow = events.filter((ev) => {
@@ -167,6 +204,28 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     placement: placement(overall),
     days,
   };
+  return { result, inWindow };
+}
+
+export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
+  const opts = parseArgs(rest);
+  const since = await resolveSince(opts.since, (msg) => console.warn(color.yellow(msg)));
+  const until = new Date();
+  const sinceMs = since.getTime();
+  const home = os.homedir();
+
+  const tools = (opts.tools.length ? opts.tools : ALL_TOOLS).filter((t) => ALL_TOOLS.includes(t));
+
+  const { events } = collectEvents({
+    tools,
+    home,
+    sinceMs,
+    full: opts.full,
+    cache: !opts.noCache,
+    warn: (msg) => console.warn(color.yellow(msg)),
+  });
+
+  const { result, inWindow } = buildResult({ events, tools, since, until });
 
   // Phase B calibration (AIO-216) is analysis-only and READ-ONLY: it emits a CE
   // shadow-band verdict + a gitignored artifact, then returns BEFORE any side

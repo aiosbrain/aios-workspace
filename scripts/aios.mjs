@@ -4967,7 +4967,7 @@ usage:
                                         that can't shell out; env-first, no workspace needed
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
-    [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+    [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
     [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
   aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
     [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
