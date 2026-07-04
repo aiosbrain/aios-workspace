@@ -215,16 +215,16 @@ export function appendSession(root, session) {
 }
 
 /**
- * Fold NDJSON observations store text → the set of dedupeKeys already present + line count.
- * Dedupe key is `sha256(session_id|prior_hash)` (AIO-229 / AM4a) — a repeat correction of the
- * same assistant tail in the same session is treated as the same observation.
- * @returns {{dedupeKeys: Set<string>, warnings: number, lineCount: number}}
+ * Fold observations store text → dedupe keys + full observation objects (in file order).
+ * Malformed lines are skipped and counted in `warnings`.
+ * @returns {{ dedupeKeys: Set<string>, observations: object[], warnings: number, lineCount: number }}
  */
-export function foldObservations(ndjsonText) {
+export function foldObservationsList(ndjsonText) {
   const dedupeKeys = new Set();
+  const observations = [];
   let warnings = 0;
   let lineCount = 0;
-  if (!ndjsonText) return { dedupeKeys, warnings, lineCount };
+  if (!ndjsonText) return { dedupeKeys, observations, warnings, lineCount };
   for (const line of ndjsonText.split(/\r?\n/)) {
     const s = line.trim();
     if (!s) continue;
@@ -249,7 +249,13 @@ export function foldObservations(ndjsonText) {
       continue;
     }
     dedupeKeys.add(sha256(`${o.obs.session_id}|${o.obs.prior_hash}`));
+    observations.push(o.obs);
   }
+  return { dedupeKeys, observations, warnings, lineCount };
+}
+
+export function foldObservations(ndjsonText) {
+  const { dedupeKeys, warnings, lineCount } = foldObservationsList(ndjsonText);
   return { dedupeKeys, warnings, lineCount };
 }
 
