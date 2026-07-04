@@ -702,6 +702,32 @@ console.log("GPT review capped at GPT_REVIEW_CAP");
   );
 }
 
+// ── AIO-239 R9a: verdict coherence — the computed verdict must see markdown-decorated
+// severities and verdict values, or the narrative and structured verdicts diverge (observed
+// live: `**[High]**` findings + `**[BLOCKED]**` narrative shipped a structured VERDICT=CLEAR).
+console.log("computeVerdict: bold **[High]** finding → BLOCKED (never a decorated-CLEAR split)");
+{
+  const text =
+    "## Findings\n\n**[High]** `scripts/x.mjs`: protected-root bypass\n\n## Verdict\n\n**[BLOCKED]**";
+  check("bold High finding blocks", computeVerdict({ text, forcedBlock: false }) === "BLOCKED");
+  check(
+    "plain CLEAR text with no findings stays CLEAR",
+    computeVerdict({ text: "## Findings\n\n(none)\n\n## Verdict\n\nCLEAR", forcedBlock: false }) ===
+      "CLEAR"
+  );
+}
+
+console.log("postValidate: a bold-decorated verdict/severity is READ, not treated as dropped");
+{
+  // Source had a High; the model kept it (bolded) and said BLOCKED (bolded). Pre-fix, both
+  // reads failed → this looked like a dropped source severity and forced a redundant block.
+  const modelOutput =
+    "## Findings\n\n**[High]** `f.mjs`: real thing\n\n## Verdict\n\n**[BLOCKED]**";
+  const res = postValidate({ modelOutput, sourceMax: "High", ciRed: false, ciPending: false });
+  check("no forced block needed — the output already blocks", res.forcedBlock === false);
+  check("and the final verdict is BLOCKED", computeVerdict(res) === "BLOCKED");
+}
+
 for (const p of cleanups) {
   try {
     rmSync(p, { recursive: true, force: true });
