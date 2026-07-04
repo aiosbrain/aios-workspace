@@ -114,7 +114,10 @@ function nextStepIndex(statePath) {
   let stepIndex = 0;
   try {
     const st = JSON.parse(readFileSync(statePath, "utf8"));
-    if (st && Number.isFinite(Number(st.stepIndex))) stepIndex = Math.floor(Number(st.stepIndex));
+    // Clamp to >= 0: a negative persisted stepIndex would make `stepIndex % steps.length`
+    // negative → steps[negative] === undefined → a "Tip: undefined" leak into the session.
+    if (st && Number.isFinite(Number(st.stepIndex)))
+      stepIndex = Math.max(0, Math.floor(Number(st.stepIndex)));
   } catch {
     stepIndex = 0; // missing / malformed → start at 0
   }

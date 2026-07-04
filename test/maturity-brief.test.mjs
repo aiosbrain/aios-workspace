@@ -280,6 +280,32 @@ test("tip rotation advances across runs + brief-state.json increments", () => {
   }
 });
 
+test("negative stepIndex in brief-state.json is clamped (no 'Tip: undefined')", () => {
+  const dir = ws();
+  try {
+    writeStore(
+      dir,
+      Array.from({ length: 5 }, (_, i) => mkSession({ session_id: `n${i}`, ageDays: i + 1 }))
+    );
+    const statePath = path.join(dir, path.dirname(STORE_REL), "brief-state.json");
+    mkdirSync(path.dirname(statePath), { recursive: true });
+    // A corrupt/negative persisted index must not select steps[-1] === undefined.
+    writeFileSync(statePath, JSON.stringify({ stepIndex: -3 }));
+
+    const { code, stdout } = runHook(dir, defaultPayload());
+    assert.equal(code, 0);
+    const lines = parseBrief(stdout);
+    const m = lines[0].match(/weakest axis: (.+) \d\/4\)\.$/);
+    const steps = AXIS_GUIDE[LABEL_TO_AXIS[m[1]]].steps;
+    assert.doesNotMatch(lines[1], /undefined/, "tip must never be undefined");
+    assert.equal(lines[1], `Tip: ${steps[0]}`, "clamped to step 0");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(state.stepIndex, 1, "persists the clamped index + 1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("kill switch (AIOS_MATURITY_BRIEF=0) → no output on a populated store", () => {
   const dir = ws();
   try {
