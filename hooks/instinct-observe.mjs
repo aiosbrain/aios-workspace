@@ -22,9 +22,13 @@ const SNIPPET_MAX = 280;
 // eslint-disable-next-line no-control-regex -- intentional: collapse control chars in a snippet
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f]+", "g");
 
-// "no" as a whole word, optional punctuation/space, NOT followed by a common benign continuation
-// (excludes "no worries", "nope", "no problem", "no rush", "no need", bare "thanks").
-const NO_BRANCH_RE = /^no\b[,.\-–—:]?\s*(?!worries|problem|rush|thanks|thank you|need)/i;
+// Benign "no …" replies (checked before the correction branch — a lookahead on \s* cannot
+// exclude these because \s* may match zero width, leaving the cursor on the space before
+// "worries"/"problem"/etc.).
+const NO_BENIGN_RE =
+  /^no\b(?:[,.\-–—]\s*|\s+)(?:worries|problem|rush|need|thanks(?:\s+you)?|thank\s+you)\b/i;
+// "no" as a whole word at turn start (includes bare "no", "no - …", "no, …" corrections).
+const NO_BRANCH_RE = /^no\b/i;
 const SAID_AGAIN_RE =
   /\b(i (?:already |just )?(?:said|told you|mentioned)|as i said|like i said|again,? please)\b/i;
 const IMPERATIVE_VERBS =
@@ -44,6 +48,7 @@ function normalizeSnippet(raw) {
 
 function isCorrection(text) {
   if (!text) return false;
+  if (NO_BENIGN_RE.test(text)) return false;
   return NO_BRANCH_RE.test(text) || SAID_AGAIN_RE.test(text) || ACTUALLY_INSTEAD_RE.test(text);
 }
 

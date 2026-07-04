@@ -117,6 +117,14 @@ test("Stop (benign phrasing) → nothing", () => {
     "can you also add tests?",
     "what about the edge case?",
     "thanks next let's move to the other file",
+    "no worries",
+    "no problem",
+    "no rush",
+    "no thanks",
+    "no thank you",
+    "no need",
+    "no, thanks",
+    "nope",
   ];
   for (const phrase of benign) {
     const dir = ws();
@@ -132,6 +140,44 @@ test("Stop (benign phrasing) → nothing", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("Stop (said-again correction) → one observation", () => {
+  const dir = ws();
+  try {
+    const tp = transcript(dir, "I added a custom parser.", "I already told you to use flat-yaml.mjs");
+    const code = runHook(dir, { hook_event_name: "Stop", session_id: "s-said", transcript_path: tp });
+    assert.equal(code, 0);
+    assert.equal(readObs(dir).size, 1);
+    const { obs } = JSON.parse(storeText(dir).trim());
+    assert.match(obs.snippet, /already told you/i);
+    assert.equal(obs.prior_hash, sha256("I added a custom parser."));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Stop (actually/instead correction) → one observation", () => {
+  const dir = ws();
+  try {
+    const tp = transcript(
+      dir,
+      "I'll wire a new YAML loader.",
+      "actually, use the shared utility in flat-yaml.mjs instead"
+    );
+    const code = runHook(dir, {
+      hook_event_name: "Stop",
+      session_id: "s-actually",
+      transcript_path: tp,
+    });
+    assert.equal(code, 0);
+    assert.equal(readObs(dir).size, 1);
+    const { obs } = JSON.parse(storeText(dir).trim());
+    assert.match(obs.snippet, /use the shared utility/i);
+    assert.equal(obs.prior_hash, sha256("I'll wire a new YAML loader."));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
