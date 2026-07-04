@@ -81,7 +81,7 @@ what OpenCode expects. Confirmed in the spike: Claude Code's own tool execution,
 and permission model stay intact end-to-end (`providerExecuted: true`); OpenCode only does
 session bookkeeping and UI rendering.
 
-```
+```text
 OpenCode client (TUI / web / opencode.mjs adapter's existing HTTP+SSE bridge)
    ▼
 opencode serve  (existing adapter, unchanged)

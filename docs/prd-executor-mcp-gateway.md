@@ -72,7 +72,7 @@ explicitly includes an **MCP plugin type** — it can wrap an existing MCP serve
 its aggregated backends, not just OpenAPI/GraphQL specs, which is what makes this a wrap,
 not a rebuild.
 
-```
+```text
 Claude Code (.mcp.json)
    │  one server entry:  "executor"
    ▼
