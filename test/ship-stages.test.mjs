@@ -522,7 +522,10 @@ console.log("plan (cli runner) runs at the read-only PLAN_DISALLOWED tier (F4)")
   });
   check("run reaches OK with plan-tier planner", code === SHIP_EXIT.OK);
   check("plan step observed", planExtra != null);
-  check("plan gets --permission-mode plan", planExtra && planExtra.includes("--permission-mode plan"));
+  check(
+    "plan gets --permission-mode plan",
+    planExtra && planExtra.includes("--permission-mode plan")
+  );
   check("plan gets --disallowedTools", planExtra && planExtra.includes("--disallowedTools"));
   check(
     "plan disallows every exfil/mutate/delegate tool",

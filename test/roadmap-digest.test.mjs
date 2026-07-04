@@ -184,7 +184,10 @@ console.log("resolveDigestCfg — soft resolver never process.exits on a broken 
 
   // No file → baked-in default, no throw.
   const bareRepo = mkdtempSync(path.join(tmpdir(), "roadmap-bare-"));
-  check("missing file → default digest model", resolveDigestCfg(bareRepo).model === DEFAULT_MODELS.digest.model);
+  check(
+    "missing file → default digest model",
+    resolveDigestCfg(bareRepo).model === DEFAULT_MODELS.digest.model
+  );
 
   // A broken config (empty model, diversity-violating, unparseable) that resolveLoopModels would
   // die() on must NOT crash the soft resolver — it falls back to the default.
@@ -195,11 +198,16 @@ console.log("resolveDigestCfg — soft resolver never process.exits on a broken 
     "digest_model:\nbuild_model: gpt-5.5-high\ncode_review_model: gpt-5.5-high\n"
   );
   const badCfg = resolveDigestCfg(badRepo);
-  check("broken config → falls back to default model", badCfg.model === DEFAULT_MODELS.digest.model);
+  check(
+    "broken config → falls back to default model",
+    badCfg.model === DEFAULT_MODELS.digest.model
+  );
   check("broken config → no crash / no exit", typeof badCfg.model === "string");
 }
 
-console.log("cmdRoadmapRun — broken loop-models.yaml still writes the deterministic digest (exit 0)");
+console.log(
+  "cmdRoadmapRun — broken loop-models.yaml still writes the deterministic digest (exit 0)"
+);
 {
   // No resolveModels injected → production path through resolveDigestCfg. A broken config must not
   // process.exit before the digest write (the F6 regression this guards against).
