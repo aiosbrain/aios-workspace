@@ -1612,7 +1612,9 @@ async function stakeholdersMeeting(cfg, title, json) {
   }
   for (const m of found) {
     console.log(c.blue(`attendees of "${m.title}":`));
-    console.log(`  ${m.participants.length ? m.participants.join(", ") : c.dim("(none recorded)")}`);
+    console.log(
+      `  ${m.participants.length ? m.participants.join(", ") : c.dim("(none recorded)")}`
+    );
   }
 }
 

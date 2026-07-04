@@ -165,7 +165,13 @@ function graphClient({ tier = "team", pages } = {}) {
       job_family: "Finance",
       reports_to: "actor-005",
     },
-    { entity_id: "actor-005", name: "Priya Sharma", role: "CFO", job_family: "Finance", reports_to: null },
+    {
+      entity_id: "actor-005",
+      name: "Priya Sharma",
+      role: "CFO",
+      job_family: "Finance",
+      reports_to: null,
+    },
   ];
   const ownership = [
     {
@@ -198,7 +204,12 @@ function graphClient({ tier = "team", pages } = {}) {
       if (route === "/company-graph") return { people, ownership };
       if (route.startsWith("/items")) {
         // Serve one page per call, in order, so pagination is exercised.
-        return itemPages[Math.min(calls.filter((c) => c.route.startsWith("/items")).length - 1, itemPages.length - 1)];
+        return itemPages[
+          Math.min(
+            calls.filter((c) => c.route.startsWith("/items")).length - 1,
+            itemPages.length - 1
+          )
+        ];
       }
       throw new Error(`404 not_found: ${route}`);
     },
@@ -250,13 +261,27 @@ test("brain_stakeholders --meeting derives attendees from meeting items", async 
   const payload = JSON.parse(res.result.content[0].text);
   assert.equal(payload.mode, "meeting");
   assert.deepEqual(payload.meetings[0].participants, ["Nadia", "Priya"]);
-  assert.ok(!client.calls.some((c) => c.route === "/company-graph"), "meeting mode never hits the graph");
+  assert.ok(
+    !client.calls.some((c) => c.route === "/company-graph"),
+    "meeting mode never hits the graph"
+  );
 });
 
 test("brain_stakeholders paginates the full /items cursor loop for --meeting", async () => {
   const pages = [
-    { items: [{ path: "a.md", frontmatter: { meeting: true, title: "Other", participants: "X" } }], next_cursor: "c1" },
-    { items: [{ path: "b.md", frontmatter: { meeting: true, title: "Q3 Review", participants: "Amy, Bo" } }], next_cursor: null },
+    {
+      items: [{ path: "a.md", frontmatter: { meeting: true, title: "Other", participants: "X" } }],
+      next_cursor: "c1",
+    },
+    {
+      items: [
+        {
+          path: "b.md",
+          frontmatter: { meeting: true, title: "Q3 Review", participants: "Amy, Bo" },
+        },
+      ],
+      next_cursor: null,
+    },
   ];
   const client = graphClient({ pages });
   const dispatch = createDispatcher({ client });
