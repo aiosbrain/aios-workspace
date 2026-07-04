@@ -281,18 +281,28 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 ```
 
 - **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
-  **non-TTY** context with a gate still active (no matching auto flag), ship exits with a
-  `*_GATE_BLOCKED` code **rather than hanging** — cron safety.
-- **Driving ship from an agent (or any non-TTY caller).** To pause at the gates and judge them
-  yourself, prefer running **stage-wise**: leave the auto flags off, let ship exit with the gate's
-  `*_GATE_BLOCKED` code, inspect the audit trail (`.aios/loop/<issue>/`), then re-run to continue.
-  Alternative for truly live gates: allocate a **pseudo-terminal** so the prompts behave
-  interactively — e.g.
-  `script -q /tmp/ship-tty.log node scripts/aios.mjs ship AIO-123 < <(tail -f /tmp/ship-stdin.txt)`
-  captures the session in the log file (your eyes) and answers prompts via appends to the stdin
-  file (your hands: `echo y >> /tmp/ship-stdin.txt`). This pattern works and has been used in the
-  field, but it hand-rolls what the flags already provide — use `--auto`/`--auto-merge` when you
-  simply want the gates skipped; they leave an honest audit record instead of a simulated keyboard.
+  **non-TTY** context with a gate still active (no matching flag), ship **runs up to the gate**,
+  persists everything needed to judge it (`GATE-<plan|merge>.pending.md` + `state.json` in the
+  audit dir), prints a machine-greppable `SHIP_GATE <name> pending` marker, and exits with the
+  gate's `*_GATE_BLOCKED` code — **resumable, never hanging**. (Interactive prompts print the same
+  marker before the `[y/N]`.)
+- **Checkpoint + resume.** Every stage checkpoint lands in `.aios/loop/<issue>/state.json`
+  (recon/plan text, gate approvals, branch, PR number, review round). `aios ship AIO-<n> --resume`
+  skips completed stages and re-enters at the first incomplete one — an aborted run costs minutes,
+  not a fresh plan loop. `--resume --approve-plan` / `--resume --approve-merge` satisfy a pending
+  gate after you've inspected it (an honest audit record of who approved what).
+- **Parallel workstreams are safe.** `main` advancing mid-build (other agents merging) does **not**
+  abort a build: the tripwire classifies primary-checkout movement — a HEAD-only move is a benign
+  note; a working-tree change gets a loud warning + log entry (aborting could not undo it and would
+  only discard finished work). Post-merge cleanup is **best-effort**: worktree/branch removal always
+  proceeds; the ff-only of a primary checkout with local changes is skipped with instructions, never
+  a `CLEANUP_FAILED`.
+- **Driving ship from an agent (or any non-TTY caller).** Run gate-wise on the exit codes: run →
+  inspect `GATE-plan.pending.md` → `--resume --approve-plan` → inspect PR at the merge gate →
+  `--resume --approve-merge`. The legacy pseudo-terminal pattern
+  (`script -q /tmp/ship-tty.log node scripts/aios.mjs ship AIO-123 < <(tail -f /tmp/ship-stdin.txt)`)
+  still works for truly live prompts, but the resume flags leave a better audit trail. Use
+  `--auto`/`--auto-merge` when you simply want a gate skipped.
 - **`--dry-run`** prints the resolved step plan (stages, per-step models/efforts, gate states,
   reviewers, and the `SHIP_EXIT` table) with **no side effects and no required network** — it works
   offline and without `LINEAR_API_KEY`. Key resolution follows the normal order
@@ -351,16 +361,16 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 | `RECON_FAILED`          | 10   | issue fetch or recon model step failed                            |
 | `PLAN_UNAPPROVED`       | 20   | plan loop spent its round budget without `PLAN_READY`             |
 | `PLAN_REJECTED`         | 21   | operator rejected the plan at the plan gate                       |
-| `PLAN_GATE_BLOCKED`     | 22   | plan gate active in a non-TTY context without `--auto`            |
+| `PLAN_GATE_BLOCKED`     | 22   | plan gate pending in a non-TTY context — resumable via `--resume --approve-plan` |
 | `BUILD_FAILED`          | 30   | `runBuild` returned a non-recoverable code (NO_DIFF/FATAL/TIMEOUT/GATE) |
 | `BUILD_NONCONVERGENCE`  | 31   | `runBuild` spent its rounds (worktree preserved)                  |
 | `PR_FAILED`             | 40   | `cmdPr` push/create failed                                        |
 | `REVIEW_NONCONVERGENCE` | 50   | fix loop hit `--max-fix-rounds` still BLOCKED (no partial merge)  |
 | `MERGE_BLOCKED`         | 60   | merge gate: CI red/pending/unavailable or unresolved Critical/High |
 | `SAFETY_BLOCKED`        | 61   | path-gated safety review withheld approval                        |
-| `MERGE_GATE_BLOCKED`    | 62   | merge gate active in a non-TTY context without `--auto-merge`     |
+| `MERGE_GATE_BLOCKED`    | 62   | merge gate pending in a non-TTY context — resumable via `--resume --approve-merge` |
 | `MERGE_REJECTED`        | 63   | operator rejected at the merge gate                               |
-| `CLEANUP_FAILED`        | 70   | post-merge ff-only failed / primary checkout dirty (never clobber) |
+| `CLEANUP_FAILED`        | 70   | (rare) cleanup could not run at all — a skipped ff on a busy primary is OK, not this |
 
 **Merge gate never treats a non-zero `gh pr checks` exit as a crash.** `readChecks` captures stdout
 even on non-zero exit (checks pending/failing) and parses it; empty/unparseable stdout → CI

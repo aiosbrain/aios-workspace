@@ -12,12 +12,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { c } from "./relay-core.mjs";
+import { c, callClaudeAgent, NO_TOOLS_ARGS } from "./relay-core.mjs";
 import { SHIP_EXIT } from "./ship.mjs";
-import { resolveLoopModels } from "./loop-models.mjs";
+import { DEFAULT_MODELS } from "./loop-models.mjs";
+import { parseFlatYaml } from "./flat-yaml.mjs";
 import { createLinearClient, resolveLinearApiKey, normalizeBlockedBy } from "./linear-client.mjs";
 
 const DEFAULT_MAX_ISSUES = 3;
@@ -235,6 +236,38 @@ function defaultSpawnShip(repo, id) {
   }
 }
 
+// The digest prose model. Runs at the NO_TOOLS tier: the prompt embeds the deterministic digest,
+// which carries Linear issue titles (untrusted) — a prompt-injection payload must not gain any
+// filesystem access. Wrapped by the caller's try/catch so a failure never blocks the run (the
+// deterministic digest is always the fallback). callClaudeAgent strips ANTHROPIC_API_KEY → Claude
+// Code login auth, matching ship's recon/safety stance.
+function defaultCallDigestAgent(prompt, timeoutMs, opts = {}) {
+  return callClaudeAgent(prompt, timeoutMs, { model: opts.model, extraArgs: NO_TOOLS_ARGS });
+}
+
+// Soft digest-model resolver. The digest MUST never be the reason a run fails, so it cannot go
+// through resolveLoopModels — that calls die()/process.exit(1) on a malformed .aios/loop-models.yaml
+// (empty *_model, diversity violation, unparseable file), which is UNCATCHABLE and would skip the
+// deterministic digest write entirely. This reads only the digest_* keys best-effort and falls back
+// to the baked-in default on any problem; full validation still runs on the real ship path.
+export function resolveDigestCfg(repo) {
+  const fallback = DEFAULT_MODELS.digest;
+  try {
+    const file = path.join(repo, ".aios", "loop-models.yaml");
+    if (!existsSync(file)) return { ...fallback };
+    const cfg = parseFlatYaml(readFileSync(file, "utf8"), { strict: false });
+    const rawModel = cfg.digest_model;
+    const model =
+      typeof rawModel === "string" && rawModel.trim() ? rawModel.trim() : fallback.model;
+    const secs = Number(cfg.digest_timeout_s);
+    const entry = { model };
+    if (Number.isInteger(secs) && secs > 0) entry.timeoutMs = secs * 1000;
+    return entry;
+  } catch {
+    return { ...fallback };
+  }
+}
+
 function defaultWriteDigest(repo, date, text) {
   const dir = path.join(repo, ".aios", "loop");
   mkdirSync(dir, { recursive: true });
@@ -433,18 +466,18 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
   }
 
   // ── digest (deterministic; a model may prepend prose, but never blocks the run) ──
+  // The prose model is a real live seam by default (defaultCallDigestAgent), overridable via deps.
   let digestText = buildDigest(records, { date });
+  const callDigestAgent = deps.callDigestAgent ?? defaultCallDigestAgent;
   try {
-    if (deps.callDigestAgent) {
-      const models = (deps.resolveModels ?? resolveLoopModels)({ repo });
-      const cfg = models.digest;
-      const prose = await deps.callDigestAgent(
-        `Summarize this roadmap run in 2-3 sentences:\n\n${digestText}`,
-        cfg?.timeoutMs ?? 120 * 1000,
-        { model: cfg?.model }
-      );
-      if (prose && prose.trim()) digestText = `${prose.trim()}\n\n${digestText}`;
-    }
+    // Injected resolveModels (tests) wins; production uses the soft resolver that never process.exits.
+    const cfg = deps.resolveModels ? deps.resolveModels({ repo }).digest : resolveDigestCfg(repo);
+    const prose = await callDigestAgent(
+      `Summarize this roadmap run in 2-3 sentences:\n\n${digestText}`,
+      cfg?.timeoutMs ?? 120 * 1000,
+      { model: cfg?.model }
+    );
+    if (prose && prose.trim()) digestText = `${prose.trim()}\n\n${digestText}`;
   } catch (e) {
     console.error(
       c.yellow(`roadmap-run: digest prose failed (${e.message}) — using deterministic digest.`)

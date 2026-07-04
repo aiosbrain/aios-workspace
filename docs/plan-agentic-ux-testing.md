@@ -4,6 +4,13 @@
 > UX testing (an LLM that drives the cockpit by goal and *judges* the experience) to the
 > AIOS workspace. It augments the owner's manual testing — it does not replace it. No code
 > ships in this PR; this is the design + pilot spec.
+>
+> **Drift note:** the empty state examples below (Flow A, the example rubric) describe an
+> earlier design with two separate chips ("Set up your profile" + "draft it from a link").
+> The shipped composer-first empty state has one chip, relabeled "set up my profile" (was
+> "draft from a link"), with no separate Firecrawl-disclosure UI — see
+> `test/ux/flows/onboarding-draft-from-link.mjs` for the actual current flow/rubric this
+> plan produced. Treat the illustrations below as historical design context, not current spec.
 
 ## TL;DR recommendation
 

@@ -19,6 +19,59 @@ import { appendFileSync, writeFileSync, existsSync } from "node:fs";
 export const PLAN_READY_TOKEN = "PLAN_READY";
 export const MERGE_READY_TOKEN = "MERGE_READY";
 
+// ── agent tool-access tiers ──────────────────────────────────────────────────
+// Three tiers of filesystem/exec/network access for `claude`-CLI agent steps, graded by how
+// much the step must be trusted with the untrusted text carried in its prompt. (These live here,
+// not in ship.mjs, so ship AND roadmap-run can share them without a cross-import.)
+//
+//   (1) NO_TOOLS — pure synthesis over content ALREADY injected into the prompt (ship recon &
+//       safety_review read pre-vetted file blobs / the diff; roadmap-run's digest reads Linear
+//       issue titles). The prompt carries external, untrusted text, so a prompt-injection payload
+//       must not be able to make the agent read arbitrary repo files (e.g. `.env`/`.aios/`)
+//       outside the tracked-only allow list. Everything these steps need is already inline, so
+//       removing tool access changes nothing but the injection blast radius.
+//   (2) PLAN_DISALLOWED — the plan stage. It legitimately benefits from READING the repo to ground
+//       the plan, but it is fed the recon output (itself derived from untrusted Linear text), so it
+//       must not execute, mutate, or reach the network: keep Read/Grep/Glob, block everything that
+//       exfiltrates/mutates/delegates.
+//   (3) full tools — build/fix. They MUST write, so they run unrestricted (inside an isolated
+//       worktree). Not represented here.
+//
+// NOTE: `--disallowedTools` is a `claude` CLI flag; it does NOT apply to the `cursor` CLI, so the
+// Cursor plan-review and GPT PR-review steps are unconstrained by these lists (out of scope here).
+export const NO_TOOLS = [
+  "Bash",
+  "Read",
+  "Edit",
+  "Write",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "NotebookEdit",
+];
+// argv fragment for any step that must not touch the filesystem at all. `--disallowedTools` takes
+// one space-separated string (the CLI's documented list form).
+export const NO_TOOLS_ARGS = ["--permission-mode", "plan", "--disallowedTools", NO_TOOLS.join(" ")];
+
+// Plan tier: read-only, no exfiltration / mutation / delegation. Read/Grep/Glob stay ALLOWED.
+export const PLAN_DISALLOWED = [
+  "Bash",
+  "Write",
+  "Edit",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "NotebookEdit",
+];
+export const PLAN_DISALLOWED_ARGS = [
+  "--permission-mode",
+  "plan",
+  "--disallowedTools",
+  PLAN_DISALLOWED.join(" "),
+];
+
 // Allowlist: letters, digits, hyphens, underscores, forward-slash, dots only.
 // Rejects any shell metacharacter before it reaches execFileSync.
 export const VALID_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
@@ -86,11 +139,13 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 
     const timer = setTimeout(() => {
       proc.kill();
-      reject(
-        new Error(
-          `${label} agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
-        )
+      const err = new Error(
+        `${label} agent timed out after ${timeoutMs / 1000}s — increase the timeout and retry`
       );
+      // Carry whatever the agent streamed before the kill: callers persist it as a
+      // <stage>-PARTIAL artifact instead of discarding near-complete work (AIO-239 R4a).
+      err.partial = text;
+      reject(err);
     }, timeoutMs);
 
     const rl = createInterface({ input: proc.stdout });

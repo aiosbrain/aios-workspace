@@ -15,6 +15,7 @@ import {
   buildCodeReviewPrompt,
   buildImplementPrompt,
   snapshotsDiffer,
+  tripwireVerdict,
   EXIT,
 } from "../scripts/build.mjs";
 import { PLAN_READY_TOKEN, MERGE_READY_TOKEN } from "../scripts/relay-core.mjs";
@@ -99,6 +100,16 @@ console.log("extractPlanFromLog");
     threw = true;
   }
   check("throws on empty", threw);
+
+  // AIO-182: a plan body containing its own markdown horizontal rule must not be
+  // truncated at that embedded `---` — only a `---` immediately before the NEXT
+  // `## ` section header is a real section boundary.
+  const embeddedRule =
+    "# h\n\n---\n## Round 1 — Opus plan\n\nDRAFT\n\n---\n## Approved plan (round 2)\n\nSTEP 1\n\n---\n\nSTEP 2 after a horizontal rule\n\n---\n## trailing\n\nz\n";
+  check(
+    "does not truncate at an embedded horizontal rule",
+    extractPlanFromLog(embeddedRule) === "STEP 1\n\n---\n\nSTEP 2 after a horizontal rule"
+  );
 }
 
 console.log("detectMergeToken");
@@ -115,6 +126,20 @@ console.log("detectMergeToken");
     detectMergeToken("x\n" + PLAN_READY_TOKEN) === false
   );
   check("tokens are distinct", PLAN_READY_TOKEN !== MERGE_READY_TOKEN);
+
+  // AIO-182: a streaming artifact can glue the token to trailing prose on the same line.
+  check(
+    "approves when trailing prose is glued to the token",
+    detectMergeToken("findings ok\nMERGE_READY - approved, ship it") === true
+  );
+  check(
+    "approves with no space before glued punctuation",
+    detectMergeToken("MERGE_READY.") === true
+  );
+  check(
+    "still rejects a distinct token sharing the prefix",
+    detectMergeToken("x\nMERGE_READY_STATUS: pending") === false
+  );
 }
 
 console.log("slugify");
@@ -187,6 +212,57 @@ console.log("snapshotsDiffer (tripwire)");
   check("status change trips", snapshotsDiffer(before, { status: " M x", head: "aaa" }));
   check("head change trips", snapshotsDiffer(before, { status: "", head: "bbb" }));
   check("unchanged ok", !snapshotsDiffer(before, before));
+}
+
+console.log("tripwireVerdict (concurrency-aware)");
+{
+  const gitFacts = { originMainSha: "ccc", headIsAncestor: true };
+  const before = { status: "?? old.png", head: "aaa" };
+
+  // benign: ff-only advance to origin/main (concurrent walker synced main)
+  check(
+    "ff to origin/main does not trip",
+    !tripwireVerdict(before, { status: "?? old.png", head: "ccc" }, gitFacts)
+  );
+  // trips: ANY status change — including an untracked file escaping into primary
+  check(
+    "untracked escape still trips",
+    tripwireVerdict(before, { status: "?? old.png\n?? TRIPWIRE_TEST.txt", head: "aaa" }, gitFacts)
+  );
+  check(
+    "tracked modification trips",
+    tripwireVerdict(before, { status: " M scripts/aios.mjs\n?? old.png", head: "aaa" }, gitFacts)
+  );
+  // trips: status change even alongside a benign head ff
+  check(
+    "status change during benign ff still trips",
+    tripwireVerdict(before, { status: "", head: "ccc" }, gitFacts)
+  );
+  // trips: HEAD moved but NOT to origin/main
+  check(
+    "head move off origin/main trips",
+    tripwireVerdict(before, { status: "?? old.png", head: "ddd" }, gitFacts)
+  );
+  // trips: HEAD at origin/main but not a descendant (reset/rewrite)
+  check(
+    "non-ff head move trips",
+    tripwireVerdict(
+      before,
+      { status: "?? old.png", head: "ccc" },
+      { originMainSha: "ccc", headIsAncestor: false }
+    )
+  );
+  // trips: origin/main unresolvable
+  check(
+    "missing origin/main trips on any head move",
+    tripwireVerdict(
+      before,
+      { status: "?? old.png", head: "ccc" },
+      { originMainSha: "", headIsAncestor: true }
+    )
+  );
+  // benign: nothing changed
+  check("unchanged ok", !tripwireVerdict(before, before, gitFacts));
 }
 
 console.log("EXIT codes");

@@ -30,6 +30,7 @@ import {
   realpathSync,
   cpSync,
   renameSync,
+  rmSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
@@ -75,6 +76,9 @@ import { discoverClaude } from "./analyze/sources.mjs";
 import { parseJsonl } from "./analyze/parse-claude.mjs";
 import { extractDecisions, contextTagFor } from "./decision-extract.mjs";
 import { createBrainClient } from "./brain-client.mjs";
+import { foldSessions, storePath } from "./analyze/maturity-store.mjs";
+import { projectSlug, STORE_SIZE_CAP } from "./analyze/maturity-fold.mjs";
+import { buildWeekReport, renderWeekReport, splitWeeks } from "./maturity-week.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -787,6 +791,19 @@ async function cmdOnboard(repo, _args) {
     }
   }
 
+  // 2.5) Profile — the agent doesn't know who you are yet. Point at the workspace-setup
+  // skill rather than invoking it here (this is a plain Node script, not a Claude session).
+  console.log("");
+  if (await yes("Set up your profile now — name, role, working style? [y/N] ")) {
+    console.log(c.green("  Say this once your GUI/CLI session starts:"));
+    console.log(c.dim('    "set me up"'));
+    console.log(
+      c.dim("    (interviews you, or drafts from a link — always confirms before writing)")
+    );
+  } else {
+    console.log(c.dim('  skipped — say "set me up" anytime in the GUI/CLI'));
+  }
+
   // 3) Any other tools the workspace knows about.
   const others = connectors.filter((conn) => conn.id !== "firecrawl" && conn.status !== "wired");
   if (others.length) {
@@ -1430,6 +1447,195 @@ async function cmdWhoami(repo, cfg) {
   requireOnline(cfg);
   const me = await api(cfg, "GET", "/me");
   console.log(JSON.stringify(me));
+}
+
+// aios stakeholders — query the team-brain Company-Graph (AIO-141). Team-tier only:
+// the graph tables carry a team_id but no per-row tier column and there is no RLS
+// backstop, so the boundary is enforced in app code — the endpoint 403s an external
+// key, and this CLI probes GET /me and rejects EVERY mode for a non-team key up front
+// (so --meeting, which reads /items, can't leak a partial answer).
+//
+//   --owns <domain>    people who OWN/TOUCH/PRODUCE a workflow matching <domain>
+//   --who <person>     one person's role, job family, reports-to, and owned workflows
+//   --meeting <title>  attendees of a meeting, derived from items.participants
+async function cmdStakeholders(repo, cfg, rest) {
+  requireOnline(cfg);
+  const owns = flagValue(rest, "--owns");
+  const who = flagValue(rest, "--who");
+  const meeting = flagValue(rest, "--meeting");
+  const json = rest.includes("--json");
+  const modes = [owns, who, meeting].filter((v) => v != null).length;
+  if (modes !== 1) {
+    die("usage: aios stakeholders (--owns <domain> | --who <person> | --meeting <title>) [--json]");
+  }
+
+  // Tier probe FIRST — reject non-team keys on ALL three modes before any data leg runs.
+  let me;
+  try {
+    me = await api(cfg, "GET", "/me");
+  } catch (e) {
+    die(`could not verify identity: ${e?.message ?? e}`);
+  }
+  if (me?.tier !== "team") {
+    die("403 forbidden_tier: the stakeholder map is team-tier only");
+  }
+
+  if (meeting != null) return stakeholdersMeeting(cfg, meeting, json);
+
+  // --owns / --who read the structured graph. Tolerate ONLY a 404 (an older brain that
+  // predates the endpoint) → clean not-available result; surface any other failure
+  // (500/network/auth) as an error rather than masquerading it as an empty graph, mirroring
+  // the MCP tool. Do NOT route this through apiOptional — that helper is for pull writebacks
+  // where swallowing errors is correct; here a hidden failure would look like an empty team.
+  let graph;
+  try {
+    graph = await api(cfg, "GET", "/company-graph");
+  } catch (e) {
+    if (/^404\b/.test(String(e?.message))) {
+      graph = { people: [], ownership: [] };
+    } else {
+      die(`company graph unavailable: ${e?.message ?? e}`);
+    }
+  }
+  const people = Array.isArray(graph.people) ? graph.people : [];
+  const ownership = Array.isArray(graph.ownership) ? graph.ownership : [];
+  if (!people.length && !ownership.length) {
+    if (json) {
+      // Match each mode's found/not-found shape: owns → matches[], who → person.
+      console.log(
+        owns != null
+          ? JSON.stringify({ mode: "owns", query: owns, matches: [] })
+          : JSON.stringify({ mode: "who", query: who, person: null })
+      );
+      return;
+    }
+    console.log(c.dim("company graph not available or empty on this team."));
+    return;
+  }
+  const byId = new Map(people.map((p) => [p.entity_id, p]));
+  const nameOf = (id) => byId.get(id)?.name || id || "unknown";
+
+  if (owns != null) return stakeholdersOwns(owns, ownership, byId, json);
+  return stakeholdersWho(who, people, ownership, nameOf, json);
+}
+
+// --owns: match ownership edges by case-insensitive substring on the resolved workflow
+// name AND its job_family, then map each match's person_id → the actor's name/role.
+function stakeholdersOwns(domain, ownership, byId, json) {
+  const q = domain.toLowerCase();
+  const rows = ownership
+    .filter(
+      (o) =>
+        String(o.target_name || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(o.target_job_family || "")
+          .toLowerCase()
+          .includes(q)
+    )
+    .map((o) => {
+      const p = byId.get(o.person_id);
+      return {
+        person: p?.name || o.person_id,
+        role: p?.role || null,
+        relationship: o.relationship,
+        target: o.target_name,
+        job_family: o.target_job_family || null,
+      };
+    });
+  if (json) {
+    console.log(JSON.stringify({ mode: "owns", query: domain, matches: rows }));
+    return;
+  }
+  if (!rows.length) {
+    console.log(c.dim(`no one owns anything matching "${domain}".`));
+    return;
+  }
+  console.log(c.blue(`owners of "${domain}":`));
+  for (const r of rows) {
+    console.log(
+      `  ${c.bold(r.person)}${r.role ? c.dim(` (${r.role})`) : ""} — ${r.relationship} ${r.target}` +
+        (r.job_family ? c.dim(` · ${r.job_family}`) : "")
+    );
+  }
+}
+
+// --who: first person whose name substring-matches; report role/job_family, reports-to
+// (resolved to a name via people[]), and the workflows they own.
+function stakeholdersWho(person, people, ownership, nameOf, json) {
+  const q = person.toLowerCase();
+  const p = people.find((x) =>
+    String(x.name || "")
+      .toLowerCase()
+      .includes(q)
+  );
+  if (!p) {
+    if (json) {
+      console.log(JSON.stringify({ mode: "who", query: person, person: null }));
+      return;
+    }
+    console.log(c.dim(`no person matching "${person}" in the company graph.`));
+    return;
+  }
+  const owns = ownership.filter((o) => o.person_id === p.entity_id).map((o) => o.target_name);
+  const record = {
+    name: p.name,
+    role: p.role || null,
+    job_family: p.job_family || null,
+    reports_to: p.reports_to ? nameOf(p.reports_to) : null,
+    owns,
+  };
+  if (json) {
+    console.log(JSON.stringify({ mode: "who", query: person, person: record }));
+    return;
+  }
+  console.log(c.blue(record.name));
+  if (record.role) console.log(`  role: ${record.role}`);
+  if (record.job_family) console.log(`  job family: ${record.job_family}`);
+  if (record.reports_to) console.log(`  reports to: ${record.reports_to}`);
+  console.log(`  owns: ${owns.length ? owns.join(", ") : c.dim("—")}`);
+}
+
+// --meeting: attendance is items-derived, not graph-derived. Paginate the FULL /items
+// cursor loop (page size 200) so a team with >200 artifacts doesn't miss the meeting,
+// filtering frontmatter.meeting === true + a case-insensitive title match, then read the
+// comma-joined participants string.
+async function stakeholdersMeeting(cfg, title, json) {
+  const q = title.toLowerCase();
+  let cursor = null;
+  const found = [];
+  do {
+    const qs = new URLSearchParams({ since: "1970-01-01T00:00:00Z", kinds: "artifact" });
+    if (cursor) qs.set("cursor", cursor);
+    const res = await api(cfg, "GET", `/items?${qs}`);
+    for (const item of res.items || []) {
+      const fm = item.frontmatter || {};
+      if (fm.meeting !== true) continue;
+      const t = String(fm.title || item.path || "");
+      if (!t.toLowerCase().includes(q)) continue;
+      const participants = String(fm.participants || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      found.push({ title: t, path: item.path, participants });
+    }
+    cursor = res.next_cursor || null;
+  } while (cursor);
+
+  if (json) {
+    console.log(JSON.stringify({ mode: "meeting", query: title, meetings: found }));
+    return;
+  }
+  if (!found.length) {
+    console.log(c.dim(`no meeting matching "${title}" found.`));
+    return;
+  }
+  for (const m of found) {
+    console.log(c.blue(`attendees of "${m.title}":`));
+    console.log(
+      `  ${m.participants.length ? m.participants.join(", ") : c.dim("(none recorded)")}`
+    );
+  }
 }
 
 async function cmdQuery(repo, cfg, args) {
@@ -4303,6 +4509,396 @@ async function cmdMode(repo, cfg, args) {
   console.log(c.blue("aios mode") + `  ${out.mode}` + c.dim(`  · local ping: ${ping}${note}`));
 }
 
+const MATURITY_WEEK_HELP = `aios maturity-week [--json] [--out <path>] [--project <slug>]
+  Weekly agentic-maturity trajectory: Spine level delta, per-axis gains, and the
+  next-belt criteria (belts: White→Black + Ninja Master at a perfect L5).
+  Reads .aios/loop/maturity/sessions.ndjson (AM1). Needs ≥ 5 sessions this week for
+  the project; the prior week is optional (its absence just leaves deltas blank).
+  Default → 3-log/maturity/week-<ISO-MONDAY>.md (admin tier, never synced).
+  --json → machine shape on stdout · --out <path> → write elsewhere.
+  --project <slug> overrides the project filter (default: this cwd's basename slug).
+  Cadence: run weekly (cron / a Claude routine):  npm run aios -- maturity-week`;
+
+// aios maturity-week — local weekly AEM report + belts (AM6, AIO-231). Read-only
+// consumer of AM1's session store; writes an admin-tier file under 3-log/. The
+// project filter mirrors AM2's brief: sessions are tagged by the SESSION cwd's
+// basename slug, so we filter by projectSlug(process.cwd()) (or --project), NOT by
+// the workspace-root basename (`repo` is only the store + output root).
+function cmdMaturityWeek(repo, rest) {
+  if (rest.includes("-h") || rest.includes("--help")) {
+    console.log(MATURITY_WEEK_HELP);
+    return;
+  }
+  const valOf = (flag) => {
+    const i = rest.indexOf(flag);
+    return i !== -1 ? rest[i + 1] : null;
+  };
+  const project = valOf("--project") || projectSlug(process.cwd());
+  const sp = storePath(repo);
+
+  let text;
+  try {
+    if (statSync(sp).size > STORE_SIZE_CAP) {
+      console.log(
+        c.yellow(
+          `maturity store is oversized (> ${Math.round(STORE_SIZE_CAP / 1024 / 1024)} MB) — skipping. It self-compacts; try again later.`
+        )
+      );
+      return;
+    }
+    text = readFileSync(sp, "utf8");
+  } catch {
+    console.log(
+      c.dim(
+        `no maturity sessions yet at ${path.relative(repo, sp)} — the AM1 capture hook writes them as you work.`
+      )
+    );
+    return;
+  }
+
+  const { sessions } = foldSessions(text);
+  const forProject = [...sessions.values()].filter((s) => s && s.counts && s.project === project);
+  const now = new Date();
+  const { thisWeek, prevWeek } = splitWeeks(forProject, now);
+  const report = buildWeekReport({ sessions: thisWeek, prevWeekSessions: prevWeek, now });
+
+  if (rest.includes("--json")) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  const md = renderWeekReport(report);
+  const out = valOf("--out") || path.join(repo, "3-log", "maturity", `week-${report.weekOf}.md`);
+  mkdirSync(path.dirname(out), { recursive: true });
+  writeFileSync(out, md);
+  console.log(c.green(`Wrote ${path.relative(repo, out)}`));
+  if (!report.sufficient) {
+    console.log(
+      c.dim(
+        `  (${report.insufficient.have} of ${report.insufficient.need} sessions this week for '${project}' — capture more for a trajectory read)`
+      )
+    );
+  }
+}
+
+// ── timeline (AIO-203): screenshot-rich weekly summaries, team + external ────
+// Collector/renderer are TypeScript (dist/timeline), loaded dynamically like the operator
+// loop. The external render is fail-closed: it ships ONLY when scripts/leak-gate.sh actually
+// ran and came back clean — a skipped sweep (no term set) withholds it, mirroring C6's
+// no-manifest/leak-detected posture. Exit codes: 0 ok · 2 leak detected · 3 sweep unavailable.
+
+async function loadTimeline() {
+  const distPath = path.join(SCRIPT_DIR, "..", "dist", "timeline", "index.js");
+  if (!existsSync(distPath)) {
+    die("timeline is not built — run: npm run build:loop");
+  }
+  return import(pathToFileURL(distPath).href);
+}
+
+function loadDesignTokensCss() {
+  // tokens.css ships in @aios-alpha/design (a real dependency — token values are never
+  // vendored into consumers, per aios-design/DESIGN.md).
+  const p = path.join(
+    SCRIPT_DIR,
+    "..",
+    "node_modules",
+    "@aios-alpha",
+    "design",
+    "dist",
+    "tokens.css"
+  );
+  if (!existsSync(p)) die("@aios-alpha/design is not installed — run: npm install");
+  return readFileSync(p, "utf8");
+}
+
+async function fetchImageDataUri(url, timeoutMs = 10000) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+    if (!res.ok) return null;
+    const type = res.headers.get("content-type") || "image/png";
+    if (!type.startsWith("image/")) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0 || buf.length > 4 * 1024 * 1024) return null;
+    return `data:${type.split(";")[0]};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Run scripts/leak-gate.sh over a dir. → { verdict: "clean"|"leak"|"skipped", output } */
+function runLeakGate(dir) {
+  const gate = path.join(SCRIPT_DIR, "leak-gate.sh");
+  let output = "";
+  try {
+    output = execFileSync("bash", [gate, dir], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    return { verdict: "leak", output: `${e.stdout || ""}${e.stderr || ""}` };
+  }
+  if (/SKIPPED/.test(output)) return { verdict: "skipped", output };
+  return { verdict: "clean", output };
+}
+
+function parseTimelineDate(v, flag) {
+  const rel = /^(\d+)d$/.exec(v || "");
+  if (rel) return new Date(Date.now() - Number(rel[1]) * 86400_000).toISOString();
+  const t = Date.parse(v || "");
+  if (!Number.isFinite(t)) die(`${flag} must be an ISO date or <n>d (got '${v}')`);
+  return new Date(t).toISOString();
+}
+
+async function cmdTimeline(repo, cfg, args) {
+  const tl = await loadTimeline();
+
+  // ── flags ──
+  let since = null;
+  let until = null;
+  let audience = "team";
+  let configPath = null;
+  let workspace = repo;
+  const cliRepos = [];
+  let dryRun = false;
+  let noShots = false;
+  let openAfter = false;
+  let json = false;
+  let maxShots = 16; // browser captures are ~10-30s each; the cap keeps a 60-PR week bounded
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--since") since = parseTimelineDate(args[++i], "--since");
+    else if (a === "--until") until = parseTimelineDate(args[++i], "--until");
+    else if (a === "--as") audience = args[++i] || "";
+    else if (a === "--config") configPath = args[++i];
+    else if (a === "--workspace") workspace = path.resolve(args[++i] || ".");
+    else if (a === "--repo") {
+      const v = args[++i];
+      if (!v) die("--repo needs a value: <path>[=liveUrl]");
+      const eq = v.indexOf("=");
+      if (eq > 0) cliRepos.push({ path: v.slice(0, eq), liveUrl: v.slice(eq + 1) });
+      else cliRepos.push({ path: v });
+    } else if (a === "--max-shots") {
+      maxShots = Number(args[++i]);
+      if (!Number.isInteger(maxShots) || maxShots < 0)
+        die("--max-shots must be a non-negative integer");
+    } else if (a === "--dry-run") dryRun = true;
+    else if (a === "--no-shots") noShots = true;
+    else if (a === "--open") openAfter = true;
+    else if (a === "--json") json = true;
+    else die(`unknown timeline flag: ${a}`);
+  }
+  if (!["team", "external", "all"].includes(audience))
+    die(`--as must be team|external|all; got '${audience}'`);
+  const audiences = audience === "all" ? ["team", "external"] : [audience];
+  since = since ?? new Date(Date.now() - 7 * 86400_000).toISOString();
+  until = until ?? new Date().toISOString();
+
+  // ── repos: CLI --repo entries, else everything in .aios/timeline-config.json ──
+  const tlConfig = tl.loadTimelineConfig(workspace, configPath ?? undefined);
+  let repoInputs = cliRepos;
+  if (repoInputs.length === 0) {
+    repoInputs = [...tlConfig.repos.keys()].map((p) => ({ path: p }));
+  }
+  if (repoInputs.length === 0) {
+    die(
+      "no repos: pass --repo <path>[=liveUrl] (repeatable) or configure .aios/timeline-config.json"
+    );
+  }
+  const repos = tl.resolveRepos(repoInputs, tlConfig);
+  for (const r of repos) {
+    if (!existsSync(r.path)) die(`repo path does not exist: ${r.path}`);
+  }
+
+  // ── collect ──
+  const data = tl.collectTimeline(repos, since, until);
+  const teamView = tl.filterForAudience(data, "team");
+  const prCount = teamView.repos.reduce((n, r) => n + r.prs.length, 0);
+  const commitCount = teamView.repos.reduce((n, r) => n + r.commits.length, 0);
+  const adminRepos = repos.filter((r) => r.tier === "admin").map((r) => r.alias);
+
+  if (dryRun) {
+    const plan = {
+      since,
+      until,
+      audiences,
+      repos: repos.map((r) => ({
+        alias: r.alias,
+        path: r.path,
+        tier: r.tier,
+        liveUrl: r.liveUrl ?? null,
+      })),
+      mergedPrs: prCount,
+      commits: commitCount,
+      screenshots: noShots ? 0 : teamView.repos.reduce((n, r) => n + r.prs.length, 0),
+    };
+    if (json) {
+      console.log(JSON.stringify(plan, null, 2));
+      return 0;
+    }
+    console.log(
+      c.blue("aios timeline --dry-run") + c.dim(`  ${since.slice(0, 10)} → ${until.slice(0, 10)}`)
+    );
+    for (const r of repos)
+      console.log(
+        `  ${r.alias}  ${c.dim(`tier=${r.tier}${r.liveUrl ? ` live=${r.liveUrl}` : ""}`)}`
+      );
+    console.log(
+      `  ${prCount} merged PR(s), ${commitCount} commit(s) in window · audiences: ${audiences.join(", ")}`
+    );
+    if (adminRepos.length)
+      console.log(c.yellow(`  admin-tier (never rendered): ${adminRepos.join(", ")}`));
+    console.log(c.dim("  dry-run: no screenshots captured, nothing written"));
+    return 0;
+  }
+
+  const stamp = data.generatedAt.replace(/[:.]/g, "-");
+  const outDir = path.join(workspace, ".aios", "timeline", stamp);
+  const assetsDir = path.join(outDir, "assets");
+  mkdirSync(assetsDir, { recursive: true });
+
+  // ── avatars: brain roster first, GitHub CDN fallback, initials handled by the renderer ──
+  const brain = resolveBrainConfig(workspace, { apiKeyEnv: cfg.api_key_env });
+  const members = await tl.fetchBrainMembers({
+    brainUrl: brain.brain_url,
+    apiKey: brain.api_key,
+    team: brain.team_id,
+  });
+  const avatars = new Map();
+  const subjects = new Map(); // contributorKey → {login,email}
+  for (const r of teamView.repos) {
+    for (const pr of r.prs)
+      if (pr.author) subjects.set(tl.contributorKey({ login: pr.author }), { login: pr.author });
+    for (const commitRow of r.commits) {
+      const s = { login: commitRow.authorLogin, email: commitRow.authorEmail };
+      subjects.set(
+        tl.contributorKey(
+          s.login ? { login: s.login } : { email: s.email, name: commitRow.authorName }
+        ),
+        s
+      );
+    }
+  }
+  for (const [key, s] of subjects) {
+    const url = tl.resolveAvatarUrl(s, members);
+    if (!url) continue;
+    const dataUri = await fetchImageDataUri(url);
+    if (dataUri) avatars.set(key, dataUri);
+  }
+
+  // ── screenshots: Vercel preview → live URL → code-change card ──
+  const shots = new Map();
+  if (!noShots) {
+    const byAlias = new Map(repos.map((r) => [r.alias, r]));
+    // One capture per UNIQUE URL — a repo-level liveUrl fallback shared by N PRs is captured
+    // once and reused, never N times. `null` marks a URL that already failed (no retries).
+    // --max-shots caps capture ATTEMPTS (each is time-bounded, ~80s worst case), so total
+    // browser time is deterministic no matter how many previews turn out to be auth-walled.
+    const shotByUrl = new Map();
+    // Unique session per run: a leftover daemon from a killed earlier run under the same
+    // session name makes every command ETIMEDOUT against its dead socket.
+    const shotSession = `aios-timeline-${process.pid}`;
+    let captured = 0;
+    let attempts = 0;
+    const tryCapture = (pr, url, kind) => {
+      if (shotByUrl.has(url)) {
+        const cached = shotByUrl.get(url);
+        if (cached) shots.set(tl.prKey(pr), cached);
+        return cached !== null;
+      }
+      if (attempts >= maxShots) return false;
+      attempts++;
+      const file = path.join(assetsDir, `${pr.repo.replace(/[^\w-]/g, "_")}-${pr.number}.png`);
+      const res = tl.captureShot(url, file, tl.execRunner, shotSession);
+      if (res.ok && existsSync(file)) {
+        const b64 = readFileSync(file).toString("base64");
+        const uri = `data:image/png;base64,${b64}`;
+        shotByUrl.set(url, uri);
+        shots.set(tl.prKey(pr), uri);
+        captured++;
+        console.log(c.dim(`  shot ${tl.prKey(pr)} ← ${kind} ${url}`));
+        return true;
+      }
+      shotByUrl.set(url, null);
+      console.log(c.dim(`  shot ${tl.prKey(pr)} ${kind} failed (${res.error ?? "no image"})`));
+      return false;
+    };
+    for (const r of teamView.repos) {
+      const repoCfg = byAlias.get(r.repo.alias);
+      for (const pr of r.prs) {
+        const target = tl.resolveShotTarget(pr, repoCfg, tl.execRunner);
+        if (!target.url) continue;
+        const ok = tryCapture(pr, target.url, target.kind);
+        // A dead preview (expired/auth-walled deploy) still deserves a visual when the repo
+        // has a production URL — fall back to one shared live capture.
+        if (!ok && target.kind === "preview" && repoCfg.liveUrl) {
+          tryCapture(pr, repoCfg.liveUrl, "live");
+        }
+      }
+    }
+    tl.closeShotSession(tl.execRunner, shotSession);
+    console.log(
+      c.blue(`aios timeline`) + c.dim(`  ${captured} screenshot(s) from ${attempts} attempt(s)`)
+    );
+  }
+
+  // ── render + fail-closed external sweep ──
+  const assets = { tokensCss: loadDesignTokensCss(), avatars, shots };
+  const files = {};
+  let rc = 0;
+  let withheld = null;
+  for (const aud of audiences) {
+    const html = tl.renderTimeline(data, aud, assets);
+    const outFile = path.join(outDir, `index-${aud}.html`);
+    if (aud === "external") {
+      // Sweep in an isolated dir so the verdict covers exactly this artifact.
+      const sweepDir = path.join(os.tmpdir(), `aios-timeline-sweep-${stamp}`);
+      mkdirSync(sweepDir, { recursive: true });
+      const sweepFile = path.join(sweepDir, "index-external.html");
+      writeFileSync(sweepFile, html);
+      const gate = runLeakGate(sweepDir);
+      if (gate.verdict === "clean") {
+        renameSync(sweepFile, outFile);
+        rmSync(sweepDir, { recursive: true, force: true });
+        files[aud] = outFile;
+      } else if (gate.verdict === "leak") {
+        rmSync(sweepDir, { recursive: true, force: true });
+        withheld = "leak-detected";
+        rc = 2;
+        console.error(c.red("external render WITHHELD — leak-gate found forbidden identifiers:"));
+        console.error(gate.output.trim());
+      } else {
+        rmSync(sweepDir, { recursive: true, force: true });
+        withheld = "sweep-unavailable";
+        rc = 3;
+        console.error(
+          c.red("external render WITHHELD — leak-gate has no term set configured (fail-closed).")
+        );
+        console.error(
+          c.dim(
+            "  configure ~/.config/aios-nda/leak-gate-terms.sh or $AIOS_LEAK_TERMS_FILE, or use --as team"
+          )
+        );
+      }
+    } else {
+      writeFileSync(outFile, html);
+      files[aud] = outFile;
+    }
+  }
+  writeFileSync(path.join(outDir, "data.json"), JSON.stringify(data, null, 2));
+
+  const result = { stamp, outDir, files, withheld, mergedPrs: prCount, commits: commitCount };
+  if (json) console.log(JSON.stringify(result, null, 2));
+  else {
+    for (const [aud, f] of Object.entries(files)) console.log(c.green(`  ${aud}: ${f}`));
+    if (withheld) console.log(c.yellow(`  external: withheld (${withheld})`));
+  }
+  if (openAfter && process.platform === "darwin") {
+    const target = files.team ?? files.external;
+    if (target) execFileSync("open", [target], { stdio: "ignore" });
+  }
+  return rc;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2);
@@ -4310,9 +4906,13 @@ const cmd = argv[0];
 const rest = argv.slice(1);
 
 // `pr` and `consolidate-findings` own their own `--repo` flag — a GitHub owner/repo slug,
-// NOT the workspace path. Don't consume it here, or the command never sees the target-repo
-// override (their local repo root is resolved by the normal cwd walk-up below).
-const repoFlagIdx = cmd === "pr" || cmd === "consolidate-findings" ? -1 : rest.indexOf("--repo");
+// NOT the workspace path. `timeline` owns it too — repeatable TARGET repo paths (its
+// workspace root comes from the cwd walk-up or its own `--workspace`). Don't consume it
+// here, or the command never sees the target-repo override.
+const repoFlagIdx =
+  cmd === "pr" || cmd === "consolidate-findings" || cmd === "timeline"
+    ? -1
+    : rest.indexOf("--repo");
 let repoArg = null;
 if (repoFlagIdx !== -1) {
   repoArg = rest[repoFlagIdx + 1];
@@ -4337,6 +4937,9 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)
+    | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from
+    [--json]                            meeting items; external key → 403 forbidden_tier
   aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
     [--json]                            (.aios/loop/manifests/; offline, never synced)
   aios loop manifest --explain          inspect a manifest's evidence + tiers
@@ -4353,12 +4956,21 @@ usage:
     [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
   aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
     [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
+  aios timeline [--since <date|Nd>]     cross-repo "what we shipped": merged PRs + commits →
+    --repo <path[=liveUrl]> [...]       screenshot-rich, self-contained HTML per audience
+    [--as team|external|all] [--open]   (.aios/timeline/<stamp>/index-<audience>.html);
+    [--until <date>] [--dry-run]        external render is tier-filtered + leak-gate swept,
+    [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);
+    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json
   aios mcp                              run the Team Brain MCP server over stdio, for
                                         GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
                                         that can't shell out; env-first, no workspace needed
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full]                            tools: claude|codex|cursor; billing = Cursor cycle
+    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
+  aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
+    [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
   aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
     [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
   aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
@@ -4508,6 +5120,10 @@ const OFFLINE_CMDS = new Set([
   "mode",
   "rails",
   "council",
+  "maturity-week",
+  // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
+  // (the brain only enriches avatars when configured).
+  "timeline",
 ]);
 
 let repo, cfg;
@@ -4532,6 +5148,7 @@ try {
   else if (cmd === "connect") await cmdConnect(repo, rest);
   else if (cmd === "onboard") await cmdOnboard(repo, rest);
   else if (cmd === "whoami") await cmdWhoami(repo, cfg);
+  else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
@@ -4553,8 +5170,10 @@ try {
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
+  else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);
   else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
   else if (cmd === "council") await runCouncil(repo, rest);
+  else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);

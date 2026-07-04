@@ -1,6 +1,6 @@
 // test/ux/flows/onboarding-draft-from-link.mjs — Flow A.
 //
-// Trust-critical onboarding flow: from the empty chat, use the "draft from a link" chip with the
+// Trust-critical onboarding flow: from the empty chat, use the "set up my profile" chip with the
 // stubbed URL, walk to the drafted profile + the confirm prompt, and NEVER confirm the write.
 //
 // Note: the empty state is composer-first (example chips, no profile-setup form and no inline
@@ -33,11 +33,11 @@ export const POLICY_NAME = "ux-onboarding";
 export const STUB_LINK = "https://example.com/about";
 
 export const intent =
-  `Goal: exercise the onboarding "draft from a link" path WITHOUT ever writing to disk.\n` +
+  `Goal: exercise the onboarding "set up my profile" path WITHOUT ever writing to disk.\n` +
   `Steps:\n` +
   `1. On the empty chat screen you'll see a few faint example chips above the composer ` +
   `(no profile-setup form). Screenshot it.\n` +
-  `2. Click the "draft from a link" chip. It pre-fills the composer with a starter like ` +
+  `2. Click the "set up my profile" chip. It pre-fills the composer with a starter like ` +
   `"Draft my profile from this link:" and focuses it — it does NOT send on its own. Append the ` +
   `URL ${STUB_LINK} to the composer text and send. Screenshot the composer before sending.\n` +
   `3. Let the agent run. It may need to run a Bash command to read the page; the cockpit ` +
