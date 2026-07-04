@@ -72,6 +72,7 @@ test("tools/list exposes every registered tool with a JSON-Schema inputSchema", 
     "brain_list_tasks",
     "brain_pull_items",
     "brain_query",
+    "brain_stakeholders",
     "brain_status",
   ]);
   for (const t of res.result.tools) {
@@ -150,6 +151,177 @@ test("brain_query routes to client.query and returns answer + sources", async ()
   assert.equal(payload.answer, "re: what did we decide?");
   assert.equal(payload.sources[0].id, "S1");
   assert.ok(!res.result.isError);
+});
+
+// ── brain_stakeholders (AIO-141) ─────────────────────────────────────────────
+// A routing client that answers GET /me, /company-graph, and paginated /items from
+// snake_case fixtures — no network. `tier` defaults to team; override to test the gate.
+function graphClient({ tier = "team", pages } = {}) {
+  const people = [
+    {
+      entity_id: "actor-006",
+      name: "Nadia Kovalchuk",
+      role: "Head of Finance",
+      job_family: "Finance",
+      reports_to: "actor-005",
+    },
+    { entity_id: "actor-005", name: "Priya Sharma", role: "CFO", job_family: "Finance", reports_to: null },
+  ];
+  const ownership = [
+    {
+      person_id: "actor-006",
+      relationship: "OWNS",
+      target_id: "wf-001",
+      target_kind: "workflow",
+      target_name: "Month-End Financial Close",
+      target_job_family: "Finance",
+    },
+  ];
+  const itemPages = pages || [
+    {
+      items: [
+        {
+          path: "1-inbox/granola/standup.md",
+          frontmatter: { meeting: true, title: "Weekly Standup", participants: "Nadia, Priya" },
+        },
+      ],
+      next_cursor: null,
+    },
+  ];
+  const calls = [];
+  return {
+    calls,
+    meta: { brain_url: "https://b", team: "acme", member: "alex" },
+    async fetchJson(method, route) {
+      calls.push({ method, route });
+      if (route === "/me") return { role: "member", tier };
+      if (route === "/company-graph") return { people, ownership };
+      if (route.startsWith("/items")) {
+        // Serve one page per call, in order, so pagination is exercised.
+        return itemPages[Math.min(calls.filter((c) => c.route.startsWith("/items")).length - 1, itemPages.length - 1)];
+      }
+      throw new Error(`404 not_found: ${route}`);
+    },
+  };
+}
+
+test("brain_stakeholders --owns matches by name/job_family, probes /me, returns snake_case rows", async () => {
+  const client = graphClient();
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 40,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { owns: "Financial Close" } },
+  });
+  assert.ok(!res.result.isError, res.result.content?.[0]?.text);
+  assert.equal(client.calls[0].route, "/me", "tier probe runs first");
+  const payload = JSON.parse(res.result.content[0].text);
+  assert.equal(payload.mode, "owns");
+  assert.equal(payload.ownership[0].person_id, "actor-006", "snake_case field preserved");
+  assert.equal(payload.ownership[0].target_name, "Month-End Financial Close");
+  assert.equal(payload.people[0].name, "Nadia Kovalchuk", "involved person resolved");
+});
+
+test("brain_stakeholders --who returns the person, owned edges, and resolved reports_to", async () => {
+  const client = graphClient();
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 41,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { who: "Nadia" } },
+  });
+  const payload = JSON.parse(res.result.content[0].text);
+  assert.equal(payload.person.name, "Nadia Kovalchuk");
+  assert.equal(payload.ownership[0].target_name, "Month-End Financial Close");
+  assert.equal(payload.reports_to.name, "Priya Sharma", "reports_to resolved to a person row");
+});
+
+test("brain_stakeholders --meeting derives attendees from meeting items", async () => {
+  const client = graphClient();
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 42,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { meeting: "Standup" } },
+  });
+  const payload = JSON.parse(res.result.content[0].text);
+  assert.equal(payload.mode, "meeting");
+  assert.deepEqual(payload.meetings[0].participants, ["Nadia", "Priya"]);
+  assert.ok(!client.calls.some((c) => c.route === "/company-graph"), "meeting mode never hits the graph");
+});
+
+test("brain_stakeholders paginates the full /items cursor loop for --meeting", async () => {
+  const pages = [
+    { items: [{ path: "a.md", frontmatter: { meeting: true, title: "Other", participants: "X" } }], next_cursor: "c1" },
+    { items: [{ path: "b.md", frontmatter: { meeting: true, title: "Q3 Review", participants: "Amy, Bo" } }], next_cursor: null },
+  ];
+  const client = graphClient({ pages });
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 43,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { meeting: "Q3 Review" } },
+  });
+  const payload = JSON.parse(res.result.content[0].text);
+  assert.deepEqual(payload.meetings[0].participants, ["Amy", "Bo"], "found the meeting on page 2");
+  const itemsCalls = client.calls.filter((c) => c.route.startsWith("/items"));
+  assert.equal(itemsCalls.length, 2, "walked both cursor pages");
+  assert.match(itemsCalls[1].route, /cursor=c1/, "second page passed the cursor");
+});
+
+test("brain_stakeholders rejects a non-team (external) key with 403 forbidden_tier", async () => {
+  const client = graphClient({ tier: "external" });
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 44,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { owns: "Finance" } },
+  });
+  assert.ok(res.result.isError, "external key is refused");
+  assert.match(res.result.content[0].text, /forbidden_tier/);
+  assert.ok(!client.calls.some((c) => c.route === "/company-graph"), "never reaches the graph leg");
+});
+
+test("brain_stakeholders requires exactly one mode", async () => {
+  const client = graphClient();
+  const dispatch = createDispatcher({ client });
+  for (const args of [{}, { owns: "a", who: "b" }]) {
+    const res = await dispatch({
+      jsonrpc: "2.0",
+      id: 45,
+      method: "tools/call",
+      params: { name: "brain_stakeholders", arguments: args },
+    });
+    assert.ok(res.result.isError, `rejects args ${JSON.stringify(args)}`);
+    assert.match(res.result.content[0].text, /exactly one/);
+  }
+});
+
+test("brain_stakeholders tolerates a 404 from an older brain (owns/who)", async () => {
+  const client = {
+    calls: [],
+    meta: {},
+    async fetchJson(method, route) {
+      this.calls.push({ route });
+      if (route === "/me") return { tier: "team" };
+      throw new Error("404 not_found: /company-graph");
+    },
+  };
+  const dispatch = createDispatcher({ client });
+  const res = await dispatch({
+    jsonrpc: "2.0",
+    id: 46,
+    method: "tools/call",
+    params: { name: "brain_stakeholders", arguments: { owns: "anything" } },
+  });
+  assert.ok(!res.result.isError, "a missing endpoint is a clean result, not an error");
+  const payload = JSON.parse(res.result.content[0].text);
+  assert.equal(payload.available, false);
 });
 
 test("brain_status probes via a far-future /items read and reports connected + non-secret meta", async () => {
