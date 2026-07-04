@@ -435,6 +435,7 @@ fi
 
 echo ""
 echo "Next:"
+echo "  • Set up your profile:     say \"set me up\" in the GUI/CLI  (or: aios onboard)"
 echo "  • Connect tools + brain:   aios onboard      (or: aios connect <id>)"
 echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: aios status"
 echo "  • Validate the workspace:  $REPO_ROOT/validation/validate-all.sh $OUTPUT"

@@ -72,5 +72,21 @@ console.log("hasCriticalOrHighFindings — one dialect (bullet, table, bracket)"
   );
 }
 
+// AIO-239: severity matchers must tolerate markdown emphasis — the consolidator model bolds
+// findings (`**[High]**`), and a decoration-blind matcher silently downgraded BLOCKED to CLEAR.
+console.log("hasCriticalOrHighFindings: markdown-decorated severities still match");
+{
+  check("bold bracket **[High]**", hasCriticalOrHighFindings("**[High]** `f.mjs`: bypass"));
+  check("bold bracket **[Critical]**", hasCriticalOrHighFindings("**[Critical]** boom"));
+  check("bold bullet - **High**:", hasCriticalOrHighFindings("- **High**: bad thing"));
+  check("bold table | **High** |", hasCriticalOrHighFindings("| **High** | f | desc |"));
+  check("plain forms still match", hasCriticalOrHighFindings("[High] plain"));
+  check(
+    "prose about severities still does NOT match",
+    !hasCriticalOrHighFindings("There are no Critical or High findings.")
+  );
+  check("bold Medium does NOT match", !hasCriticalOrHighFindings("**[Medium]** meh"));
+}
+
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

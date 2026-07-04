@@ -64,9 +64,13 @@ export function buildBugbotPrompt({ skill, branch, baseSha, diffStat, diff, logO
 // "Output format") emits. Prose such as "no Critical or High findings" matches NONE of
 // these — only an actual listed finding. This is the single severity dialect: both the
 // Cursor review loop and the consolidator gate on the same matcher.
-const CRITICAL_HIGH_BULLET = /^\s*[-*]\s*`?(Critical|High)`?\b/im;
-const CRITICAL_HIGH_ROW = /^\s*\|\s*`?(Critical|High)`?\s*\|/im;
-const CRITICAL_HIGH_BRACKET = /^\s*\[(Critical|High)\]/im;
+// All three tolerate markdown emphasis around the severity (`**[High]**`, `**High**`): the
+// consolidator model bolds findings, and a decoration-blind matcher silently downgraded a
+// BLOCKED round to CLEAR (AIO-239 / observation.md §9 — the verdict must not hinge on `**`).
+const MD = "(?:\\*\\*|__|\\*|_)?"; // optional emphasis opener/closer
+const CRITICAL_HIGH_BULLET = new RegExp(`^\\s*[-*]\\s*${MD}\`?(Critical|High)\`?${MD}\\b`, "im");
+const CRITICAL_HIGH_ROW = new RegExp(`^\\s*\\|\\s*${MD}\`?(Critical|High)\`?${MD}\\s*\\|`, "im");
+const CRITICAL_HIGH_BRACKET = new RegExp(`^\\s*${MD}\\[(Critical|High)\\]`, "im");
 
 // Rank for merging/comparing severities across sources (used by the consolidator).
 export const SEVERITY_RANK = { Critical: 4, High: 3, Medium: 2, Low: 1 };

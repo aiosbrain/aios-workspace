@@ -25,7 +25,7 @@ ahead of one. Do not port these until `/oss-release` is ready to run.
    - Add a top-level `{ label: 'Changelog', slug: 'changelog' }` entry.
 4. **Replace the screenshot placeholders** in `cockpit.mdx` with real captures
    from a verified `npm run gui` run (model picker, Chats sidebar, Settings →
-   Personality, Skills tab, onboarding "draft from a link").
+   Personality, Skills tab, onboarding "set up my profile").
 5. Build the site (`npm run build` / `astro build`) and confirm the new pages
    render and the screenshots resolve.
 6. Re-run `/docs-sync` at the monorepo root to confirm no divergence remains.
