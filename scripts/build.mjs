@@ -577,9 +577,27 @@ export function tripwireTripped(before, repo) {
  */
 export function tripwireReport(before, repo) {
   const after = primarySnapshot(repo);
+  const headMoved = !!before.head && !!after.head && after.head !== before.head;
+  let headIsAncestor = false;
+  if (headMoved) {
+    try {
+      git(["merge-base", "--is-ancestor", before.head, after.head], repo, { capture: false });
+      headIsAncestor = true;
+    } catch {
+      headIsAncestor = false;
+    }
+  }
+  // `suspicious` reuses AIO-241's pure verdict: a status change, or a HEAD move that is NOT the
+  // benign concurrent-walker ff to origin/main (rogue commit / reset / checkout). Suspicious
+  // changes get the LOUD warning; benign ff moves get a note. Nothing aborts either way.
+  const suspicious = tripwireVerdict(before, after, {
+    originMainSha: gitQuiet(["rev-parse", "origin/main"], repo),
+    headIsAncestor,
+  });
   return {
-    headMoved: after.head !== before.head,
+    headMoved,
     statusChanged: after.status !== before.status,
+    suspicious,
     after,
   };
 }
@@ -1009,22 +1027,26 @@ export async function runBuild({ repo, plan, branch, opts }) {
     // would not undo it anyway). The baseline re-arms each round so a single event warns once.
     {
       const trip = tripwireReport(primaryBefore, repo);
-      if (trip.statusChanged) {
+      if (trip.suspicious) {
+        const what = trip.statusChanged
+          ? "working tree changed (possible out-of-worktree write)"
+          : "HEAD moved in a non-fast-forward way (rogue commit / reset / checkout?)";
         console.error(
           c.yellow(
-            `\nWARNING — the primary checkout's working tree at ${repo} changed during this build round. ` +
+            `\nWARNING — the primary checkout at ${repo}: ${what} during this build round. ` +
               `The build itself is worktree-isolated and continues; inspect: git -C ${repo} status`
           )
         );
         log(
           `Build round ${round} — tripwire WARNING`,
-          `primary working tree changed during the round (possible out-of-worktree write).\n` +
-            `before:\n${primaryBefore.status || "(clean)"}\nafter:\n${trip.after.status || "(clean)"}`
+          `${what}\n` +
+            `before: head=${primaryBefore.head}\n${primaryBefore.status || "(clean)"}\n` +
+            `after: head=${trip.after.head}\n${trip.after.status || "(clean)"}`
         );
       } else if (trip.headMoved) {
         console.log(
           c.dim(
-            `note: the primary checkout advanced during this round (parallel merges) — build unaffected.`
+            `note: the primary checkout fast-forwarded during this round (concurrent walkers) — build unaffected.`
           )
         );
       }
