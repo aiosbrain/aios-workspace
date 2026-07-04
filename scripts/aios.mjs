@@ -79,6 +79,7 @@ import { createBrainClient } from "./brain-client.mjs";
 import { foldSessions, storePath } from "./analyze/maturity-store.mjs";
 import { projectSlug, STORE_SIZE_CAP } from "./analyze/maturity-fold.mjs";
 import { buildWeekReport, renderWeekReport, splitWeeks } from "./maturity-week.mjs";
+import { cmdInstincts } from "./instincts.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -4970,6 +4971,7 @@ usage:
     [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
     [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
   aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
+  aios instincts distill [--limit N] [--dry-run] [--json]  batch-distill observations → homunculus instincts
     [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
   aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
     [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
@@ -5121,6 +5123,7 @@ const OFFLINE_CMDS = new Set([
   "rails",
   "council",
   "maturity-week",
+  "instincts",
   // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
   // (the brain only enriches avatars when configured).
   "timeline",
@@ -5174,6 +5177,7 @@ try {
   else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
   else if (cmd === "council") await runCouncil(repo, rest);
   else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
+  else if (cmd === "instincts") await cmdInstincts(repo, rest);
   else {
     console.log(USAGE);
     process.exit(1);
