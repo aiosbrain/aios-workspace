@@ -89,7 +89,11 @@ export function applyTaskEdit(content, rowKey, patch) {
   if (bad.length) {
     throw new TaskEditError(400, `field(s) not editable from the cockpit: ${bad.join(", ")}`);
   }
-  const rows = parseTaskRows(content);
+  // Parse rows from the body only (matching readTasks); mergeTaskWriteback still receives the full
+  // content so it preserves frontmatter. Frontmatter carries no table, so this is equivalent today —
+  // it just keeps the two parse sites consistent and future-proof against a `|` line in frontmatter.
+  const { body } = parseFrontmatter(content);
+  const rows = parseTaskRows(body);
   const row = rows.find((r) => r.row_key === rowKey);
   if (!row) throw new TaskEditError(404, `no task row with id '${rowKey}'`);
   for (const k of keys) row[k] = patch[k];

@@ -457,6 +457,8 @@ export interface TaskRow {
   due: string | null;
   pm_provider?: string;
   pm_external_id?: string;
+  /** Verbatim PM cell for an unrecognized/retired provider, preserved so edits round-trip. */
+  pm_raw?: string;
   pm_url?: string | null;
   parent?: string | null;
   labels?: string[];

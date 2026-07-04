@@ -225,7 +225,10 @@ export function TasksPanel() {
                     </select>
                   </td>
                   <td className="px-2.5 py-1.5">
+                    {/* uncontrolled (commit-on-blur); a derived key remounts it when the server
+                        value changes after a reload, so the field never shows a stale value. */}
                     <input
+                      key={`assignee:${row.assignee}`}
                       className={CELL_INPUT}
                       defaultValue={row.assignee}
                       disabled={saving === row.row_key}
@@ -252,6 +255,7 @@ export function TasksPanel() {
                   </td>
                   <td className="px-2.5 py-1.5">
                     <input
+                      key={`labels:${(row.labels || []).join(",")}`}
                       className={CELL_INPUT}
                       defaultValue={(row.labels || []).join(", ")}
                       placeholder="a, b"
@@ -268,6 +272,7 @@ export function TasksPanel() {
                   </td>
                   <td className="px-2.5 py-1.5">
                     <input
+                      key={`parent:${row.parent || ""}`}
                       className={CELL_INPUT}
                       defaultValue={row.parent || ""}
                       disabled={saving === row.row_key}
@@ -296,7 +301,7 @@ export function TasksPanel() {
         <div className="flex items-center justify-between gap-3">
           <span className="text-[13px] font-semibold text-foreground">Sync to brain</span>
           <span className="flex gap-2">
-            <button className={BTN} onClick={() => push(true)} disabled={busy || !data.rel}>
+            <button className={BTN} onClick={() => push(true)} disabled={pushDisabled}>
               Dry-run
             </button>
             <button className={BTN_PRIMARY} onClick={() => push(false)} disabled={pushDisabled}>

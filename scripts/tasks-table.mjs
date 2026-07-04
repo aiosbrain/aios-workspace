@@ -22,10 +22,12 @@ export function parsePmCell(raw, rowKey) {
   const value = raw.trim();
   if (!value) return {};
   // Linear is the only live PM provider. Plane is retired — we no longer recognize a `plane:`
-  // cell as a projection target (history is kept; existing markdown still round-trips verbatim
-  // through mergeTaskWriteback, which rebuilds any provider string it is handed).
+  // cell as a projection target. History is still kept: an unrecognized cell (e.g. a legacy
+  // `plane:T-01`) is preserved verbatim as `pm_raw` so it round-trips byte-for-byte through
+  // mergeTaskWriteback rather than being blanked. It never becomes a live pm_provider, so it
+  // is not re-projected.
   const m = value.match(/^(linear)(?::|\s+)?(.+)?$/i);
-  if (!m) return {};
+  if (!m) return { pm_raw: value };
   return {
     pm_provider: m[1].toLowerCase(),
     pm_external_id: (m[2] || rowKey).trim(),
@@ -96,11 +98,14 @@ export function mergeTaskWriteback(content, rows) {
       case "priority":
         return row.priority || "";
       case "pm":
+        // Live provider (linear) rebuilds as `provider:id`. Otherwise fall back to the preserved
+        // raw cell (`pm_raw`) so a retired/unrecognized cell survives an edit round-trip instead of
+        // being blanked. Only truly empty cells collapse to "".
         return row.pm_provider
           ? row.pm_external_id
             ? `${row.pm_provider}:${row.pm_external_id}`
             : row.pm_provider
-          : "";
+          : row.pm_raw || "";
       case "pm url":
         return row.pm_url || "";
       default:

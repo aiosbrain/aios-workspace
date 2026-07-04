@@ -94,6 +94,26 @@ test("applyTaskEdit: rejects title/body/description edits (400), never mutates",
   ]);
 });
 
+test("applyTaskEdit: retired plane: PM link survives a status edit (history kept)", () => {
+  const withPm = `---
+access: team
+---
+
+# Tasks
+
+| ID | Task | Assignee | Status | Sprint | Due | PM | PM URL |
+|----|------|----------|--------|--------|-----|----|--------|
+| T-01 | Run survey | Riley | in_progress | s1 |  | plane:T-01 | http://x |
+`;
+  const { content, row } = applyTaskEdit(withPm, "T-01", { status: "done" });
+  assert.equal(row.status, "done");
+  // the retired plane: cell is preserved verbatim (not blanked) and not re-projected as a provider
+  assert.equal(row.pm_provider, undefined);
+  assert.equal(row.pm_raw, "plane:T-01");
+  assert.match(content, /\| plane:T-01 \| http:\/\/x \|/);
+  assert.match(content, /\| T-01 \| Run survey \| Riley \| done \| s1 \|/);
+});
+
 test("applyTaskEdit: unknown row_key throws 404", () => {
   assert.throws(
     () => applyTaskEdit(TASKS, "T-99", { status: "done" }),
