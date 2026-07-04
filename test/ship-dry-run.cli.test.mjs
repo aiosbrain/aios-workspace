@@ -67,8 +67,9 @@ console.log("ship AIO-163 --dry-run (offline, no key)");
 {
   const r = runCli(["ship", "AIO-163", "--dry-run", "--repo", REPO]);
   check("exit 0", r.code === 0);
-  check("prints stages", /Stages \(plan/.test(r.stdout));
+  check("prints stages", /Stages \(spec eval/.test(r.stdout));
   check("prints per-step models (recon)", /recon\s+claude/.test(r.stdout));
+  check("prints spec_eval model", /spec_eval\s+claude/.test(r.stdout));
   check("prints gates", /Gates:/.test(r.stdout));
   check("prints reviewers", /Reviewers:/.test(r.stdout));
   check(
