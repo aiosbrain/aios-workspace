@@ -399,7 +399,10 @@ check("outcomeValue: current metric is axes.verification", OUTCOME_METRIC === "a
     "days" in body &&
     "totals" in body &&
     "window" in body;
-  check("CLI default (no --calibrate) emits the FULL analyze JSON body (not short-circuited)", !!complete);
+  check(
+    "CLI default (no --calibrate) emits the FULL analyze JSON body (not short-circuited)",
+    !!complete
+  );
   check(
     "CLI default (no --calibrate) never prints the calibration verdict line",
     !out.includes("CE calibration verdict:")
