@@ -239,6 +239,37 @@ test("malformed distillFn output is rejected without crashing", async () => {
   assert.equal(summary.written, 0);
   assert.ok(summary.rejected >= 1);
   assert.ok(summary.warnings.length >= 1);
+  assert.equal(summary.watermarkObservations.length, 0);
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(homunculus, { recursive: true, force: true });
+});
+
+test("failed distillFn leaves watermarkObservations empty for retry", async () => {
+  const { dir, homunculus } = ws();
+  const summary = await distillObservations({
+    observations: [mkObs("f1", "ph", "2026-07-03T14:30:00.000Z")],
+    distillFn: async () => {
+      throw new Error("network down");
+    },
+    homunculusDir: homunculus,
+    projectId: "testproj0007",
+  });
+  assert.equal(summary.written, 0);
+  assert.equal(summary.watermarkObservations.length, 0);
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(homunculus, { recursive: true, force: true });
+});
+
+test("all candidates dropped leaves watermarkObservations empty for retry", async () => {
+  const { dir, homunculus } = ws();
+  const summary = await distillObservations({
+    observations: [mkObs("f2", "ph", "2026-07-03T14:31:00.000Z")],
+    distillFn: mockDistillFn({ ...MOCK_CANDIDATE, confidence: 0.1 }),
+    homunculusDir: homunculus,
+    projectId: "testproj0008",
+  });
+  assert.equal(summary.droppedLowConfidence, 1);
+  assert.equal(summary.watermarkObservations.length, 0);
   rmSync(dir, { recursive: true, force: true });
   rmSync(homunculus, { recursive: true, force: true });
 });

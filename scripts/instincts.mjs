@@ -300,6 +300,7 @@ export async function distillObservations({
     rejected: 0,
     warnings: [],
     records: [],
+    watermarkObservations: [],
   };
 
   for (const [, groupObs] of groups) {
@@ -331,6 +332,7 @@ export async function distillObservations({
       continue;
     }
 
+    let groupAccepted = 0;
     for (const candidate of candidates) {
       summary.candidates += 1;
       const v = validateCandidate(candidate);
@@ -386,6 +388,13 @@ export async function distillObservations({
         summary.written += 1;
         summary.records.push({ id, written: true, origin_obs: obsIds });
       }
+      groupAccepted += 1;
+    }
+
+    // Only advance the watermark past groups we successfully distilled (or that
+    // legitimately yielded no candidates). Failed/thrown/rejected groups retry.
+    if (groupAccepted > 0 || candidates.length === 0) {
+      summary.watermarkObservations.push(...groupObs);
     }
   }
 
@@ -496,8 +505,8 @@ export async function cmdInstincts(repo, args) {
     dryRun,
   });
 
-  if (!dryRun && flatObs.length) {
-    const wm = maxWatermark(flatObs);
+  if (!dryRun && summary.watermarkObservations.length) {
+    const wm = maxWatermark(summary.watermarkObservations);
     saveInstinctsState(repo, wm);
   }
 
