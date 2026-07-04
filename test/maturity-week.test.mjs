@@ -19,18 +19,15 @@ import {
   renderWeekReport,
   isoMonday,
   splitWeeks,
-  BELTS,
   MIN_WEEK_SESSIONS,
 } from "../scripts/maturity-week.mjs";
 import {
-  placement,
   spineLevel,
   scoreAxes,
   nextSpineBlockers,
   minForScore,
   maxTokensForScore,
   VERIFICATION_BANDS,
-  CONTEXT_HYGIENE_BANDS,
   AUTONOMY_BANDS,
   LEARNING_BANDS,
   L5_SUBAGENT_MIN,
@@ -92,9 +89,18 @@ const NOW = new Date("2026-07-04T12:00:00Z"); // a Saturday → ISO Monday 2026-
 // ── isoMonday / splitWeeks ──────────────────────────────────────────────────
 
 test("isoMonday: UTC Monday of the containing ISO week", () => {
-  assert.equal(isoMonday(new Date("2026-07-04T23:00:00Z")).toISOString().slice(0, 10), "2026-06-29");
-  assert.equal(isoMonday(new Date("2026-06-29T00:00:00Z")).toISOString().slice(0, 10), "2026-06-29");
-  assert.equal(isoMonday(new Date("2026-06-28T12:00:00Z")).toISOString().slice(0, 10), "2026-06-22");
+  assert.equal(
+    isoMonday(new Date("2026-07-04T23:00:00Z")).toISOString().slice(0, 10),
+    "2026-06-29"
+  );
+  assert.equal(
+    isoMonday(new Date("2026-06-29T00:00:00Z")).toISOString().slice(0, 10),
+    "2026-06-29"
+  );
+  assert.equal(
+    isoMonday(new Date("2026-06-28T12:00:00Z")).toISOString().slice(0, 10),
+    "2026-06-22"
+  );
 });
 
 test("splitWeeks buckets by UTC-Monday window; out-of-range dropped", () => {
@@ -117,7 +123,13 @@ test("splitWeeks buckets by UTC-Monday window; out-of-range dropped", () => {
 // This-week signals → L3: context 2 (sets L3), verification 0 (gate holds at ≤3),
 // cost 4 (L2), autonomy 0. Prev week identical EXCEPT context 1 → L2. So spine +1,
 // context_hygiene +1, all other axes flat.
-const L3_COUNTS = { in_tok: 100, cache_create_tok: 10, cache_read_tok: 90, tasks: 2, tool_use_total: 10 };
+const L3_COUNTS = {
+  in_tok: 100,
+  cache_create_tok: 10,
+  cache_read_tok: 90,
+  tasks: 2,
+  tool_use_total: 10,
+};
 const L2_COUNTS = { ...L3_COUNTS, cache_read_tok: 20 }; // lower cache-hit → context score 1
 const LEARN1 = { tool_diversity: 2 }; // learning score 1
 
@@ -222,7 +234,13 @@ test("next-belt text quotes thresholds computed from the band constants, not lit
 
 test("verification-weak L3 → next-belt lists verification FIRST with the 0.04 threshold", () => {
   // verification 1 (gate), autonomy 0, context 2 → spine L3; L4 needs verification+autonomy.
-  const counts = { in_tok: 100, cache_read_tok: 90, tasks: 2, tool_use_total: 100, verify_tool_uses: 1 };
+  const counts = {
+    in_tok: 100,
+    cache_read_tok: 90,
+    tasks: 2,
+    tool_use_total: 100,
+    verify_tool_uses: 1,
+  };
   const report = buildWeekReport({ sessions: week(5, counts, {}), now: NOW });
   assert.equal(report.spine, "L3", "capped at L3 by the verification gate");
   assert.equal(report.axes.verification, 1);
@@ -283,7 +301,12 @@ test("OR at L1→L2 + L5 subagent floor sourced from the constant", () => {
   assert.deepEqual(l1axes, ["cost_governance", "learning"], "OR over cost + learning");
 
   // L4 with learning 2 + subagent 0 → L5 blockers include the raw subagent floor at L5_SUBAGENT_MIN.
-  const s = sig({ verify_tool_rate: 0.12, delegation_ratio: 0.1, cache_hit_rate: 0.45, tool_diversity: 3 });
+  const s = sig({
+    verify_tool_rate: 0.12,
+    delegation_ratio: 0.1,
+    cache_hit_rate: 0.45,
+    tool_diversity: 3,
+  });
   const l5 = nextSpineBlockers(scoreAxes(s), s);
   assert.equal(l5.target, "L5");
   const sub = l5.blockers.find((b) => b.signal === "subagent_usage");

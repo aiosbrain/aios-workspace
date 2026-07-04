@@ -14,12 +14,7 @@
  * nothing is pushed. Zero dependencies.
  */
 
-import {
-  placement,
-  nextSpineBlockers,
-  AXIS_LABELS,
-  VERIFICATION_GATE,
-} from "./analyze/aem.mjs";
+import { placement, nextSpineBlockers, AXIS_LABELS, VERIFICATION_GATE } from "./analyze/aem.mjs";
 import { AXIS_GUIDE } from "./analyze/guidance.mjs";
 import { foldSignals } from "./analyze/maturity-fold.mjs";
 
@@ -227,7 +222,9 @@ export function renderWeekReport(report) {
   L.push(`**Spine ${report.spine}${fmtDelta(report.spineDelta)}** — ${SPINE_GLOSS[report.spine]}`);
   if (report.spineDelta == null) {
     L.push("");
-    L.push("_No prior-week baseline yet (need ≥ 5 sessions last week too) — deltas start next week._");
+    L.push(
+      "_No prior-week baseline yet (need ≥ 5 sessions last week too) — deltas start next week._"
+    );
   }
   L.push("");
 
@@ -235,7 +232,9 @@ export function renderWeekReport(report) {
   for (const [key, label] of Object.entries(AXIS_LABELS)) {
     const score = report.axes[key];
     const delta = report.axesDeltas ? report.axesDeltas[key] : null;
-    L.push(`- ${label.padEnd(22)} ${bar(score)} ${score}/4${fmtDelta(delta)}  ${AXIS_GUIDE[key].gloss}`);
+    L.push(
+      `- ${label.padEnd(22)} ${bar(score)} ${score}/4${fmtDelta(delta)}  ${AXIS_GUIDE[key].gloss}`
+    );
   }
   L.push("");
 

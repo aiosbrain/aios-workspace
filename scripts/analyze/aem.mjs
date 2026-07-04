@@ -196,11 +196,20 @@ const AXIS_SIGNAL = {
 // anti-drift test in test/maturity-week.test.mjs bumps each reported blocker to
 // its neededValue and asserts spineLevel actually advances — it will fail here first).
 const TARGET_REQS = {
-  2: { mode: "any", reqs: [{ axis: "cost_governance", score: 2 }, { axis: "learning", score: 1 }] },
+  2: {
+    mode: "any",
+    reqs: [
+      { axis: "cost_governance", score: 2 },
+      { axis: "learning", score: 1 },
+    ],
+  },
   3: { mode: "all", reqs: [{ axis: "context_hygiene", score: 2 }] },
   4: {
     mode: "all",
-    reqs: [{ axis: "verification", score: 2 }, { axis: "autonomy", score: 2 }],
+    reqs: [
+      { axis: "verification", score: 2 },
+      { axis: "autonomy", score: 2 },
+    ],
   },
   5: {
     mode: "all",
