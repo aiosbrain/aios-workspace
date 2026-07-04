@@ -23,7 +23,6 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 | `agentic-maturity` | Place the workspace owner on the Agentic Maturity (AM) model and give them a prescribed next step. |
 | `aios-sync` | Sync this workspace with the AIOS Team Brain. |
 | `maturity-report` | Produce an AI-transformation maturity report + roadmap deliverable from the three AM scopes — the individual (workstation), the codebase(s), and the team. |
-| `plane-tasks` | Work AIOS tasks on the Plane board (workspace aios-alpha, project AIOS). |
 | `workspace-setup` | Set up, update, or incrementally extend the owner's profile in this workspace: interview the user (or draft from a link), then write it into the workspace memory files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. |
 
 ## Share a skill

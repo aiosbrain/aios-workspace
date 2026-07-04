@@ -21,7 +21,10 @@ export function parseTableRows(body) {
 export function parsePmCell(raw, rowKey) {
   const value = raw.trim();
   if (!value) return {};
-  const m = value.match(/^(plane|linear)(?::|\s+)?(.+)?$/i);
+  // Linear is the only live PM provider. Plane is retired — we no longer recognize a `plane:`
+  // cell as a projection target (history is kept; existing markdown still round-trips verbatim
+  // through mergeTaskWriteback, which rebuilds any provider string it is handed).
+  const m = value.match(/^(linear)(?::|\s+)?(.+)?$/i);
   if (!m) return {};
   return {
     pm_provider: m[1].toLowerCase(),
