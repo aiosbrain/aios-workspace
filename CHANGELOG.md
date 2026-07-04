@@ -20,6 +20,41 @@ This is the **individual workspace** repo. The Team Brain sync contract
   mode via a `GET /me` probe. Exposed over MCP as `brain_stakeholders`.
   (AIO-141)
 
+## [0.7.0] — 2026-07-04
+
+Cognitive Ergonomics **shadow band** rollout (epic AIO-211): CE and Agentic
+Maturity visible against each other in the CLI, cockpit GUI, and Team Brain —
+always badged **shadow · uncalibrated**; raw attention signals never sync.
+Sync contract stays **v1**; `ce_band` is an additive **v1.3** field on
+`POST /api/v1/metrics`. (AIO-212–AIO-222.)
+
+### Added
+
+- **`aios analyze --push`** — includes optional `ce_band` (`0`–`4` or `null`) on
+  each daily metrics payload; scored client-side vs the operator's own baseline.
+  (AIO-218, #175)
+- **TUI CE line** — Cognitive ergonomics shadow band, 14-day AM/CE dual sparkline,
+  and attention tips in `aios analyze` text output. (AIO-213)
+- **GUI Maturity panel** — cockpit shows AM axes plus CE shadow band and 30-day
+  trend (local-only shadow semantics). (AIO-215)
+- **Session pulse Stop hook** — after each session, a throttled Stop hook reads
+  precomputed `last_summary` (AM + CE + weakest-axis tip); cron recipe in
+  `docs/GUIDE.md` §7 keeps analyze state fresh. (AIO-214, #170)
+- **`aios analyze --calibrate`** — Phase B calibration harness (Spearman rho vs
+  autonomy, MERGE/PROMOTE/HOLD/NOT_ENOUGH_DATA verdict); analysis-only, writes
+  a local verdict artifact under `.aios/`. (AIO-216)
+
+### Changed
+
+- **Display rename** — "Agentic Engineering Maturity (AEM)" → **Agentic Maturity
+  (AM)** in user-facing copy; wire metric id `aem-individual` and axis keys
+  unchanged. (AIO-212)
+
+### Documentation
+
+- **`docs/brain-api.md` v1.3** — documents optional `ce_band` on
+  `POST /api/v1/metrics` (provenance-only; brain persists verbatim). (AIO-217)
+
 ## [0.6.0] — 2026-07-03
 
 The ship pipeline release: the agent build loop grows into a **fully gated,
