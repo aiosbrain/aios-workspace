@@ -27,6 +27,8 @@ export const WEEKLY: WindowConfig = {
   // github is listed (full set) but its source is an inert deferred stub — it emits nothing
   // until a local GitHub-activity source exists (AIO-32 is brain-side). See sources/github.ts.
   // time (AIO-139) feeds the C5 runtime-by-tag roll-up; closeout partitions it out of claims.
+  // maturity (AIO-144) is the C8 telemetry slice — one aggregate AEM placement signal from
+  // the local AM1 session store (admin-tier, never syncs); inert until sessions are captured.
   kinds: [
     "decision",
     "task",
@@ -37,6 +39,7 @@ export const WEEKLY: WindowConfig = {
     "github",
     "time",
     "comms",
+    "maturity",
   ],
 };
 

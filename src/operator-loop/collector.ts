@@ -20,6 +20,7 @@ import { carryoverSource } from "./sources/carryover.js";
 import { githubSource } from "./sources/github.js";
 import { timeSource } from "./sources/time.js";
 import { commsSource } from "./sources/comms.js";
+import { maturitySource } from "./sources/maturity.js";
 
 // Source registry, keyed by signal kind. carryover (C7) and github (AIO-32, no local source
 // yet) are wired but inert stubs — they emit nothing until implemented, so registering them is
@@ -34,6 +35,7 @@ const SOURCES: Record<string, Source> = {
   github: githubSource,
   time: timeSource,
   comms: commsSource,
+  maturity: maturitySource,
 };
 
 export interface CollectOptions {
