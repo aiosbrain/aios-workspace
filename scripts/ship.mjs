@@ -807,7 +807,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
       // Mark truncation instead of silently slicing — the model must know it saw a partial file.
       return body.length > RECON_FILE_CAP
-        ? `### ${rel}\n\n${body.slice(0, RECON_FILE_CAP)}\n\n…[truncated: first ${RECON_FILE_CAP} of ${body.length} bytes]`
+        ? `### ${rel}\n\n${body.slice(0, RECON_FILE_CAP)}\n\n…[truncated: first ${RECON_FILE_CAP} of ${body.length} chars]`
         : `### ${rel}\n\n${body}`;
     });
     const reconPrompt =

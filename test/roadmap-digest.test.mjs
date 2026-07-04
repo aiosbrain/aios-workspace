@@ -4,7 +4,11 @@
 // digest lists merged/blocked/refused/skipped; a throwing digest model → deterministic fallback
 // (the run still succeeds). Run: node test/roadmap-digest.test.mjs
 
-import { buildDigest, cmdRoadmapRun } from "../scripts/roadmap-run.mjs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { buildDigest, cmdRoadmapRun, resolveDigestCfg } from "../scripts/roadmap-run.mjs";
+import { DEFAULT_MODELS } from "../scripts/loop-models.mjs";
 import { SHIP_EXIT } from "../scripts/ship.mjs";
 
 // A minimal eligible candidate: Todo (unstarted), unassigned, unblocked.
@@ -163,6 +167,65 @@ console.log("cmdRoadmapRun — a skip runs the between-issue ff-only refresh, th
     "ff-only ran after the skip",
     gitCalls.some((g) => g.includes("--ff-only"))
   );
+}
+
+console.log("resolveDigestCfg — soft resolver never process.exits on a broken loop-models.yaml");
+{
+  // A valid digest override is honored.
+  const okRepo = mkdtempSync(path.join(tmpdir(), "roadmap-ok-"));
+  mkdirSync(path.join(okRepo, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(okRepo, ".aios", "loop-models.yaml"),
+    "digest_model: claude-opus-4-8\ndigest_timeout_s: 42\n"
+  );
+  const okCfg = resolveDigestCfg(okRepo);
+  check("honors digest_model override", okCfg.model === "claude-opus-4-8");
+  check("honors digest_timeout_s override", okCfg.timeoutMs === 42000);
+
+  // No file → baked-in default, no throw.
+  const bareRepo = mkdtempSync(path.join(tmpdir(), "roadmap-bare-"));
+  check("missing file → default digest model", resolveDigestCfg(bareRepo).model === DEFAULT_MODELS.digest.model);
+
+  // A broken config (empty model, diversity-violating, unparseable) that resolveLoopModels would
+  // die() on must NOT crash the soft resolver — it falls back to the default.
+  const badRepo = mkdtempSync(path.join(tmpdir(), "roadmap-bad-"));
+  mkdirSync(path.join(badRepo, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(badRepo, ".aios", "loop-models.yaml"),
+    "digest_model:\nbuild_model: gpt-5.5-high\ncode_review_model: gpt-5.5-high\n"
+  );
+  const badCfg = resolveDigestCfg(badRepo);
+  check("broken config → falls back to default model", badCfg.model === DEFAULT_MODELS.digest.model);
+  check("broken config → no crash / no exit", typeof badCfg.model === "string");
+}
+
+console.log("cmdRoadmapRun — broken loop-models.yaml still writes the deterministic digest (exit 0)");
+{
+  // No resolveModels injected → production path through resolveDigestCfg. A broken config must not
+  // process.exit before the digest write (the F6 regression this guards against).
+  const badRepo = mkdtempSync(path.join(tmpdir(), "roadmap-run-bad-"));
+  mkdirSync(path.join(badRepo, ".aios"), { recursive: true });
+  writeFileSync(path.join(badRepo, ".aios", "loop-models.yaml"), "digest_model:\n");
+  const writes = [];
+  const deps = {
+    linear: {
+      listIssues: async () => [], // zero issues
+      addComment: async () => ({ ok: true }),
+    },
+    spawnShip: () => 0,
+    gitExec: () => "",
+    // No resolveModels → exercises the soft production resolver reading the broken file above.
+    callDigestAgent: async () => "prose ok",
+    now: () => new Date("2026-07-03T12:00:00Z"),
+    writeDigest: (date, text) => {
+      writes.push({ date, text });
+      return `/tmp/roadmap-digest-${date}.md`;
+    },
+  };
+  const code = await cmdRoadmapRun(badRepo, ["--label", "x"], deps);
+  check("run returns 0 despite broken config", code === 0);
+  check("deterministic digest still written", writes.length === 1);
+  check("digest carries the deterministic body", /# Roadmap run — 2026-07-03/.test(writes[0].text));
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

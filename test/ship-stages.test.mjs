@@ -7,6 +7,7 @@
 // Run: node test/ship-stages.test.mjs
 
 import { runShip, SHIP_EXIT, SHIP_VERIFY_CMD, NO_TOOLS } from "../scripts/ship.mjs";
+import { PLAN_DISALLOWED } from "../scripts/relay-core.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -493,6 +494,44 @@ console.log("recon + safety run with NO filesystem tools (prompt-injection blast
   check("safety gets --permission-mode plan + every tool disallowed", restricted(safety));
   // A read/exec tool must NOT be handed to these steps as allowed.
   check("recon never passes --allowedTools", recon && !recon.extra.includes("--allowedTools"));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("plan (cli runner) runs at the read-only PLAN_DISALLOWED tier (F4)");
+{
+  // The plan prompt embeds recon (derived from untrusted Linear text). The planner may READ the
+  // repo (Read/Grep/Glob stay allowed) but must not Bash/Write/Edit/WebFetch/WebSearch/Task —
+  // stricter than the old bare `--permission-mode plan`. Guard against a silent revert.
+  let planExtra = null;
+  const deps = makeDeps({
+    callClaudeAgent: async (prompt, _timeout, opts = {}) => {
+      if (/recon context pack/.test(prompt)) return "RECON CONTEXT";
+      if (/implementation plan/.test(prompt)) {
+        planExtra = (opts.extraArgs ?? []).join(" ");
+        return PLAN_TEXT;
+      }
+      if (/safety reviewer/.test(prompt)) return "reviewed\nSAFETY_APPROVED";
+      return "generic";
+    },
+  });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ planRunner: "cli" }),
+    deps,
+  });
+  check("run reaches OK with plan-tier planner", code === SHIP_EXIT.OK);
+  check("plan step observed", planExtra != null);
+  check("plan gets --permission-mode plan", planExtra && planExtra.includes("--permission-mode plan"));
+  check("plan gets --disallowedTools", planExtra && planExtra.includes("--disallowedTools"));
+  check(
+    "plan disallows every exfil/mutate/delegate tool",
+    planExtra && PLAN_DISALLOWED.every((t) => planExtra.includes(t))
+  );
+  // Read/Grep/Glob must remain AVAILABLE — they are NOT in the disallow list.
+  for (const allowed of ["Read", "Grep", "Glob"]) {
+    check(`plan keeps ${allowed} available (not disallowed)`, !PLAN_DISALLOWED.includes(allowed));
+  }
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

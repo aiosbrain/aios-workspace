@@ -98,7 +98,7 @@ console.log("runShip recon prompt — carries the omitted-refs note + truncation
   check("recon prompt captured", typeof capturedRecon === "string");
   check(
     "prompt carries the per-file truncation marker",
-    new RegExp(`\\[truncated: first ${RECON_FILE_CAP} of ${bigBody.length} bytes\\]`).test(
+    new RegExp(`\\[truncated: first ${RECON_FILE_CAP} of ${bigBody.length} chars\\]`).test(
       capturedRecon
     )
   );
