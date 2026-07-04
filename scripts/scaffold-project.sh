@@ -380,6 +380,12 @@ mkdir -p "$OUTPUT/hooks" "$OUTPUT/validation"
 cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
 chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
 cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
+
+# Session pulse Stop hook (AIO-214): a dependency-free 2-line post-session read of the
+# last `aios analyze` state — same reasoning as team-ops-guard.sh above, shipped
+# standalone so it runs without the rest of the toolkit present.
+cp "$REPO_ROOT/hooks/session-pulse.mjs" "$OUTPUT/hooks/session-pulse.mjs"
+chmod +x "$OUTPUT/hooks/session-pulse.mjs"
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
 # Generate the skills + integrations catalogs for the new workspace

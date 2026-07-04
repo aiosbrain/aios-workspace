@@ -432,6 +432,20 @@ You're at Spine L5 — Agentic Orchestration — multiple agents, your own evals
   the weakest axis), `--json`, `--push` (share scores + Cursor billing), `--full`.
 - **`aios learn`** prescribes your next AM patterns from `MATURITY.md` (offline).
 
+**Session pulse** — after each session, a Stop hook (`hooks/session-pulse.mjs`) prints a 2-line
+pulse from the last `aios analyze` run: AM Spine/overall, the CE shadow band, your weakest axis +
+its top tip, and a freshness reading — living proof that maturity monitoring runs in the
+background, without running anything by hand. It's throttled to at most once every 45 minutes and
+only ever reads precomputed state (no raw events, no tool names); if the state is stale (> 24h) or
+missing, it says so instead of guessing. Keep the state fresh with a daily cron:
+
+```cron
+0 7 * * * cd /path/to/your/aios-workspace && npm run aios -- analyze --since 30d >> .aios/loop/analyze-$(date +\%F).log 2>&1
+```
+
+The pulse's freshness line ("measured 3h ago") is the proof the cron is alive — if it starts
+reading "stale", the cron stopped running.
+
 **Time tracking** derives agent-runtime work blocks from your `~/.claude` session logs — no manual
 timer:
 

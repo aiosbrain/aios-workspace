@@ -25,7 +25,7 @@ import { parseCodex } from "./parse-codex.mjs";
 import { parseCursor, sqlite3Available } from "./parse-cursor.mjs";
 import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
-import { renderText, renderReport, toJson, buildPushPayload } from "./report.mjs";
+import { renderText, renderReport, toJson, buildPushPayload, buildLastSummary } from "./report.mjs";
 import { saveAnalyzeState, loadAnalyzeState } from "./state.mjs";
 import { gatherCostData, pushProviderCosts } from "./push-costs.mjs";
 import { renderCostSummary } from "./cost-report.mjs";
@@ -218,6 +218,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
 
   // Record the run (push dedup + future tail-parse offsets build on this).
   state.last_run = until.toISOString();
+  state.last_summary = buildLastSummary(result);
   saveAnalyzeState(repo, state);
 
   return result;
