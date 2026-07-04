@@ -76,6 +76,7 @@ export function TasksPanel() {
   // pushState badge reflects the new on-disk state.
   const saveField = useCallback(
     async (row: TaskRow, patch: Record<string, unknown>) => {
+      if (saving !== null) return;
       setSaving(row.row_key);
       try {
         const res = await api.post<TaskEditResponse>("/api/tasks/edit", {
@@ -89,7 +90,7 @@ export function TasksPanel() {
       }
       setSaving(null);
     },
-    [api, load]
+    [api, load, saving]
   );
 
   const push = useCallback(
@@ -211,7 +212,7 @@ export function TasksPanel() {
                     <select
                       className={CELL_INPUT}
                       value={STATUSES.includes(row.status) ? row.status : ""}
-                      disabled={saving === row.row_key}
+                      disabled={saving !== null}
                       onChange={(e) => saveField(row, { status: e.target.value })}
                     >
                       {!STATUSES.includes(row.status) && (
@@ -231,7 +232,7 @@ export function TasksPanel() {
                       key={`assignee:${row.assignee}`}
                       className={CELL_INPUT}
                       defaultValue={row.assignee}
-                      disabled={saving === row.row_key}
+                      disabled={saving !== null}
                       onBlur={(e) =>
                         e.target.value !== row.assignee &&
                         saveField(row, { assignee: e.target.value })
@@ -242,7 +243,7 @@ export function TasksPanel() {
                     <select
                       className={CELL_INPUT}
                       value={PRIORITIES.includes(row.priority || "") ? row.priority || "" : ""}
-                      disabled={saving === row.row_key}
+                      disabled={saving !== null}
                       onChange={(e) => saveField(row, { priority: e.target.value })}
                     >
                       <option value="">—</option>
@@ -259,7 +260,7 @@ export function TasksPanel() {
                       className={CELL_INPUT}
                       defaultValue={(row.labels || []).join(", ")}
                       placeholder="a, b"
-                      disabled={saving === row.row_key}
+                      disabled={saving !== null}
                       onBlur={(e) => {
                         const next = e.target.value
                           .split(",")
@@ -275,7 +276,7 @@ export function TasksPanel() {
                       key={`parent:${row.parent || ""}`}
                       className={CELL_INPUT}
                       defaultValue={row.parent || ""}
-                      disabled={saving === row.row_key}
+                      disabled={saving !== null}
                       onBlur={(e) =>
                         e.target.value !== (row.parent || "") &&
                         saveField(row, { parent: e.target.value || null })

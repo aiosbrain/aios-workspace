@@ -94,6 +94,19 @@ test("applyTaskEdit: rejects title/body/description edits (400), never mutates",
   ]);
 });
 
+test("applyTaskEdit: rejects empty patch (400)", () => {
+  assert.throws(
+    () => applyTaskEdit(TASKS, "T-01", {}),
+    (e) => e instanceof TaskEditError && e.status === 400
+  );
+});
+
+test("applyTaskEdit: no-op patch marks unchanged (skip disk write)", () => {
+  const { content, unchanged } = applyTaskEdit(TASKS, "T-01", { status: "done" });
+  assert.equal(unchanged, true);
+  assert.equal(content, TASKS);
+});
+
 test("applyTaskEdit: retired plane: PM link survives a status edit (history kept)", () => {
   const withPm = `---
 access: team

@@ -511,8 +511,8 @@ const server = http.createServer((req, res) => {
       }
       try {
         const content = readFileSync(file.abs, "utf8");
-        const { content: next, row } = applyTaskEdit(content, rowKey, patch);
-        fsWriteFileSync(file.abs, next);
+        const { content: next, row, unchanged } = applyTaskEdit(content, rowKey, patch);
+        if (!unchanged) fsWriteFileSync(file.abs, next);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, rel: file.rel, row }));
       } catch (e) {

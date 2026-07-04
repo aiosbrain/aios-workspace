@@ -85,6 +85,9 @@ export class TaskEditError extends Error {
  */
 export function applyTaskEdit(content, rowKey, patch) {
   const keys = Object.keys(patch || {});
+  if (!keys.length) {
+    throw new TaskEditError(400, "patch must include at least one editable field");
+  }
   const bad = keys.filter((k) => !EDITABLE_FIELDS.has(k));
   if (bad.length) {
     throw new TaskEditError(400, `field(s) not editable from the cockpit: ${bad.join(", ")}`);
@@ -97,5 +100,6 @@ export function applyTaskEdit(content, rowKey, patch) {
   const row = rows.find((r) => r.row_key === rowKey);
   if (!row) throw new TaskEditError(404, `no task row with id '${rowKey}'`);
   for (const k of keys) row[k] = patch[k];
-  return { content: mergeTaskWriteback(content, [row]), row };
+  const next = mergeTaskWriteback(content, [row]);
+  return { content: next, row, unchanged: next === content };
 }
