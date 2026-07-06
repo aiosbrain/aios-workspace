@@ -15,6 +15,20 @@ Running raw `claude` here? **Read both files** when you need who/what context.
 Update them only when asked (or run **workspace-setup** — say **"set me up"** — to
 fill them from a quick interview or a link). Keep them short; they're not a journal.
 
+## Git & workflow (personal workspace — read this first)
+
+This repo is **your** operating context — notes, deliverables, decisions — **not** the AIOS
+product repo. Full rule: [`.claude/rules/git-workflow.md`](.claude/rules/git-workflow.md).
+
+- **Default:** stay on **`master`**. No feature branches or worktrees here unless you
+  explicitly choose otherwise.
+- **Dogfood here, ship there:** write observations and drafts in the spine (`2-work/`,
+  `3-log/`, …). **Toolkit code** (scaffold, onboarding, GUI, validators) is built and
+  PR'd only in **`aios-workspace`** — the repo you ran `scaffold-project.sh` from. This
+  workspace is **not** a staging area for toolkit PRs.
+- **After upstream merges:** refresh your instance from the toolkit; don't merge product
+  branches into this repo.
+
 ## Start here
 - Decisions → `3-log/decision-log.md`
 - Tasks → `3-log/tasks.md`
