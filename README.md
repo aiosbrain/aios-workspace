@@ -137,6 +137,10 @@ First-run onboarding can **draft your profile from a link** — paste a company 
 profile URL and the agent reads it with Firecrawl, then drafts your
 `.claude/CLAUDE.md` for you to confirm (connect Firecrawl in Integrations first).
 
+Not sure what else is available? `npm run help` lists every script grouped by
+category (Core / Dev / Build / Internal), instead of the undifferentiated dump a
+bare `npm run` prints.
+
 ## The numbered spine
 
 Every workspace uses the same six-folder pipeline, raw → refined. The `0-context`
