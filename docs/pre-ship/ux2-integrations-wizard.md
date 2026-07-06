@@ -13,11 +13,11 @@ Record **flow-2** row in shared UX audit doc.
 
 ## New files to create
 
-- Extend `docs/pre-ship/ux-audit-YYYY-MM-DD.md` with flow-2 row (`pass/fail`, bad-credentials note).
+- Extend `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` with flow-2 row (`pass/fail`, bad-credentials note).
 
 ## Acceptance criteria
 
-- Audit doc flow-2 row: `grep -q 'flow-2' docs/pre-ship/ux-audit-YYYY-MM-DD.md`.
+- Audit doc flow-2 row: `grep -q 'flow-2' docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md`.
 - Bad-credentials path returns expected error from `/api/connectors/:id/validate` (noted in session_note).
 - `npm run aios -- spec eval docs/pre-ship/ux2-integrations-wizard.md` exits **0**.
 

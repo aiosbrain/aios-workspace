@@ -1,5 +1,26 @@
 # Pre-ship spec eval — handover (2026-07-06)
 
+## Final matrix (2026-07-06)
+
+Full matrix at `docs/pre-ship/spec-eval-matrix.md`. Summary:
+
+- **Deterministic gate:** 24/24 clean (exit 3)
+- **Adversarial SPEC_READY:** 8/24
+- **Adversarial NOT_READY:** 16/24 (scores 20–65)
+- **Model:** deepseek-v4-pro
+
+### SPEC_READY (8)
+
+af1 (100), af2 (95), af3 (90), af4 (100), arch1 (92), arch3 (90), epic-agent-first-onboarding (95), sec1 (80)
+
+### NOT_READY (16)
+
+arch2 (55), cq1 (45), cq2 (50), cq3 (50), cq4 (30), epic-pre-release-architecture (45), epic-pre-release-code-quality (30), epic-pre-release-security (55), epic-pre-release-ux (65), sec2 (55), sec3 (20), sec4 (30), sec5 (40), ux1 (35), ux2 (40), ux3 (60)
+
+### Blockers
+
+Common adversarial themes: spec-eval self-reference (6 specs), missing edge-case handling (5 specs), undeclared prerequisites (3 specs), missing interface contracts (2 specs). See matrix for details.
+
 ## What was fixed
 
 1. **Paths:** `test/brain-mcp.test.mjs` → `scripts/brain-mcp.test.mjs` (real location).

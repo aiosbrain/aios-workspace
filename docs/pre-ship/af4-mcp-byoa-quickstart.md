@@ -1,5 +1,6 @@
 # AF4 — MCP/BYOA onboarding quick-start path
 
+Owner: john@john-ellison.com
 Parent epic: Agent-first onboarding. Linear: **AF4 — MCP/BYOA onboarding quick-start path**
 
 ## Why

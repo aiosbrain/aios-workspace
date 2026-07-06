@@ -9,7 +9,7 @@ Modularity/coupling pass before ship — documented smells and fix-or-defer deci
 
 ## What
 
-Aggregate outputs from child specs into `docs/pre-ship/architecture-review-YYYY-MM-DD.md`.
+Aggregate outputs from child specs into `docs/pre-ship/architecture-review-$(date +%Y-%m-%d).md` (the builder substitutes `$(date +%Y-%m-%d)` with the run date at execution time).
 Read-only — no code changes unless trivial doc fix.
 
 | Child | Spec path | Deliverable |
@@ -21,7 +21,7 @@ Read-only — no code changes unless trivial doc fix.
 ## Acceptance criteria
 
 - All three child specs **SPEC_READY**.
-- Review doc `docs/pre-ship/architecture-review-YYYY-MM-DD.md` lists **top 5 coupling smells**
+- Review doc `docs/pre-ship/architecture-review-$(date +%Y-%m-%d).md` lists **top 5 coupling smells**
   (sourced from ARCH2 + ARCH3) with `fix-before-ship` vs `post-ship-debt` labels.
 - `npm run check:docs` exit captured in review doc (ARCH1).
 - `npm run aios -- spec eval docs/pre-ship/epic-pre-release-architecture.md` exits **0**.

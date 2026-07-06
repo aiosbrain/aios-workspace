@@ -9,7 +9,7 @@ Critical cockpit flows untested at intent level before external users.
 
 ## What
 
-Pilot UX on five flows; output `docs/pre-ship/ux-audit-YYYY-MM-DD.md`; three child specs:
+Pilot UX on five flows; output `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` (the builder substitutes `$(date +%Y-%m-%d)` with the run date at execution time); three child specs:
 
 | Child | Spec path | Flow ID |
 |-------|-----------|---------|
@@ -19,7 +19,7 @@ Pilot UX on five flows; output `docs/pre-ship/ux-audit-YYYY-MM-DD.md`; three chi
 
 ### Audit doc schema
 
-`docs/pre-ship/ux-audit-YYYY-MM-DD.md` table columns: `flow_id`, `pass/fail`, `session_note`, `owner`.
+`docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` table columns: `flow_id`, `pass/fail`, `session_note`, `owner`.
 
 Five flows: flow-1 (empty state), flow-2 (connect wizard), flow-3 (CLI onboard help),
 flow-4 (token URL auth), flow-5 (reserved — mark N/A or skip with reason).

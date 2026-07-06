@@ -1,5 +1,6 @@
 # ARCH1 — Sync contract + docs drift check
 
+Owner: john@john-ellison.com
 Parent: Pre-release architecture epic.
 
 ## Why
@@ -37,6 +38,8 @@ check passes.
 
 1. `npm run check:docs` has been run and its **exit code captured** into the review doc as
    `check:docs exit: <N>`.
+   - **If the script cannot execute** (missing dependency, broken file): record `check:docs exit: ERR` and `drift: could-not-run`. This is a builder-logged state, not a false drift positive; escalate to operator.
+   - **If the script runs but exits nonzero:** proceed per criterion 3 (drift branch).
 2. The **version line** (per the definition above) is recorded in the review doc on a line of the
    form `brain-api version line: <verbatim line | VERSION-LINE-ABSENT>`.
 3. Drift branch is handled explicitly and observably:
@@ -64,13 +67,15 @@ the acceptance path — the nonzero exit is an expected, handled state.
 
 ## Integration points (existing files)
 
-- `docs/brain-api.md` — read-only source of the version line.
+- `docs/brain-api.md` — read-only source of the version line. This file exists in the repo
+  (`docs/brain-api.md`); if it were missing (not the case here but documented for completeness),
+  record `VERSION-LINE-ABSENT` and escalate to operator same as zero-match case.
 - `scripts/check-docs-drift.mjs` — invoked via `npm run check:docs`; not modified.
 
 ## New files to create
 
-- `docs/pre-ship/architecture-review-YYYY-MM-DD.md` — the review doc. Parent dir `docs/pre-ship/`
-  exists; `YYYY-MM-DD` is replaced with the run date. This file is created by this task.
+- `docs/pre-ship/architecture-review-$(date +%Y-%m-%d).md` — the review doc. Parent dir `docs/pre-ship/`
+  exists; at execution time, the builder substitutes `$(date +%Y-%m-%d)` with the run date. This file is created by this task.
 
 ## Deps
 
@@ -100,7 +105,7 @@ only mutation path (brain-api bump) is explicitly denied and routed to operator 
 ## Testability
 
 Every deliverable is demonstrable by a named, re-runnable check against the review doc
-(`REVIEW=docs/pre-ship/architecture-review-YYYY-MM-DD.md`):
+(`REVIEW=docs/pre-ship/architecture-review-$(date +%Y-%m-%d).md`):
 
 - **Exit code recorded:** `grep -qE '^check:docs exit: [0-9]+' "$REVIEW"`.
 - **Version line recorded:** `grep -qE '^brain-api version line: (version:.*|VERSION-LINE-ABSENT)$' "$REVIEW"`.

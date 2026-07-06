@@ -8,7 +8,7 @@ Open PRs blocking ship must be merged, closed, or waived.
 
 ## What
 
-Create `docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` listing every open PR with decision.
+Create `docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md` listing every open PR with decision (the builder substitutes `$(date +%Y-%m-%d)` with the run date at execution time).
 
 ### Ship-blocking PR definition
 
@@ -22,7 +22,7 @@ Non-blocking PRs may be deferred with reason `post-ship-debt`.
 
 ## New files to create
 
-- `docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` — markdown table with columns:
+- `docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md` — markdown table with columns:
   `PR #`, `title`, `blocking (yes/no)`, `decision (merge|close|waive|defer)`, `owner`, `notes`.
 
 Populate from `gh pr list --state open --json number,title,labels`.
@@ -58,7 +58,7 @@ Build-with: sonnet / low.
 
 ## Testability
 
-Named acceptance test (`TRIAGE=docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` with actual date):
+Named acceptance test (`TRIAGE=docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md`; the builder substitutes with the run date at execution time):
 
 ```bash
 TRIAGE=docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md

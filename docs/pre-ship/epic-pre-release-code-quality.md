@@ -24,7 +24,7 @@ Execute four child specs:
 - `npm run build:loop && node --test test/operator-loop/*.test.mjs && npm test` exits **0** on `main` (CQ1).
 - `validation/validate-all.sh examples/synthetic-consultant` exits **0** (CQ1).
 - AIO-254 deferral documented per CQ2 (`docs/pre-ship/cq2-aio254-deferral.md` + Linear comment).
-- `docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` lists open PRs with merge/waive decisions (CQ4).
+- `docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md` lists open PRs with merge/waive decisions (CQ4).
 - `npm run aios -- spec eval docs/pre-ship/epic-pre-release-code-quality.md` exits **0**.
 
 ## Builder vs operator closure

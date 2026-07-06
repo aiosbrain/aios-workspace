@@ -16,7 +16,7 @@ Record **flow-3** (CLI help) and **flow-4** (token URL) rows in shared UX audit 
 
 ## New files to create
 
-- Extend `docs/pre-ship/ux-audit-YYYY-MM-DD.md` with flow-3 and flow-4 rows.
+- Extend `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` with flow-3 and flow-4 rows.
 
 ## Acceptance criteria
 

@@ -1,5 +1,6 @@
 # AF3 — Workspace naming (`{handle}-workspace`) + context setup audit
 
+Owner: john@john-ellison.com
 Parent epic: Agent-first onboarding. Linear child: **AF3 — Workspace naming + context setup conventions**
 
 ## Why
@@ -10,7 +11,7 @@ Contributors land in `{handle}-workspace` with a populated `0-context/` — not 
 
 1. Update scaffold hints in `scripts/scaffold-project.sh` so `--help` documents the `{handle}-workspace` naming pattern.
 2. Add a post-scaffold echo (new behavior) to `scripts/scaffold-project.sh`: after a successful scaffold, print exactly one line **to stdout** matching `Recommended location: ~/Projects/<slug>`, where `<slug>` is the value passed to `--slug`. The line MUST be written to stdout (not stderr), because the acceptance check greps piped stdout. This is a new line to add, not existing output to verify.
-3. Ensure the file `scaffold/.claude/skills/workspace-setup/SKILL.md` exists and contains naming guidance that references the `{handle}-workspace` pattern. This file is a **new file to create if absent** (see New files to create). The builder MUST:
+3. Ensure the file `scaffold/.claude/skills/workspace-setup/SKILL.md` exists and contains naming guidance that references the `{handle}-workspace` pattern. This file is a **new file to create if absent** (see New file to create). The builder MUST:
    - If the file already exists but the string `{handle}-workspace` is missing, **edit** the file to add naming guidance containing that literal pattern.
    - If the file does **not** exist, **create** the file (including any missing parent directories under `scaffold/.claude/skills/workspace-setup/`) and add naming guidance containing the literal `{handle}-workspace` pattern.
    In both cases the file ends with the `{handle}-workspace` string present. `SKILL.md` is `employee`-tier and editable within AF3 (see Tier-safety).
@@ -38,7 +39,7 @@ AF3 is closeable when **exactly one** of these two branches is satisfied and rec
 
 The builder must follow these instructions when the escalation branch is taken. No decisions are left to the builder — every field is specified.
 
-- **Project/team:** File the finding under the `aio-sh` project. If the `employee-context-templates` sub-project exists inside `aio-sh`, file it there; otherwise file on the main `aio-sh` board. Apply the label `employee-context` to the issue.
+- **Project/team:** File the finding under the `aio-sh` project. Apply the label `employee-context` to the issue.
 - **Finding template (copy verbatim):**
   ```
   Title: [AF3] Employee context templates: 0-context/ empty after scaffold with --context employee
@@ -84,13 +85,13 @@ Existing files edited:
 
 - `scripts/scaffold-project.sh` — `--help` text and the new post-scaffold stdout echo.
 
-New files to create (if absent):
-
-- `scaffold/.claude/skills/workspace-setup/SKILL.md` — created with naming guidance that contains the literal `{handle}-workspace` pattern. Any missing parent directories must be created as part of item 3.
-
 Existing files invoked as-is (no edits):
 
 - `validation/validate-all.sh` — run against the scaffolded output for verification.
+
+## New file to create
+
+- `scaffold/.claude/skills/workspace-setup/SKILL.md` — created with naming guidance that contains the literal `{handle}-workspace` pattern. Any missing parent directories must be created as part of item 3.
 
 ## Deps
 

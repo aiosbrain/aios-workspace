@@ -1,5 +1,6 @@
 # ARCH2 — Operator loop + ship pipeline coupling review
 
+Owner: john@john-ellison.com
 Parent: Pre-release architecture epic.
 
 ## Why
