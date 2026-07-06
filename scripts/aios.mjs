@@ -1162,13 +1162,25 @@ function safeJoin(base, rel) {
 }
 
 // aios push skill <name> — share a skill (SKILL.md as kind 'skill' + references as artifacts)
+function resolveSkillDir(repo, name) {
+  const direct = path.join(repo, ".claude", "skills", name);
+  if (existsSync(path.join(direct, "SKILL.md"))) return direct;
+  const scaffold = path.join(repo, "scaffold", ".claude", "skills", name);
+  if (existsSync(path.join(scaffold, "SKILL.md"))) return scaffold;
+  die(
+    `no skill '${name}' at .claude/skills/${name}/SKILL.md` +
+      (existsSync(path.join(repo, "scaffold"))
+        ? ` or scaffold/.claude/skills/${name}/SKILL.md`
+        : "")
+  );
+}
+
 async function cmdPushSkill(repo, cfg, patterns, args) {
   const dryRun = args.includes("--dry-run");
   const name = args.find((a) => !a.startsWith("--"));
   if (!name) die("usage: aios push skill <name> [--dry-run]");
-  const skillDir = path.join(repo, ".claude", "skills", name);
+  const skillDir = resolveSkillDir(repo, name);
   const skillMd = path.join(skillDir, "SKILL.md");
-  if (!existsSync(skillMd)) die(`no skill '${name}' at .claude/skills/${name}/SKILL.md`);
 
   const raw = readFileSync(skillMd, "utf8");
   const { frontmatter } = parseFrontmatter(raw);

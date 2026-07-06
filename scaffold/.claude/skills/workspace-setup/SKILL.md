@@ -155,3 +155,9 @@ this skill automatically when a tool is connected.
 
 Tell the user that after connecting a new tool in **Integrations**, they can say
 "update my tooling" (or re-run setup) to fold it in — it won't happen on its own yet.
+
+## Git (do not conflate repos)
+
+This workspace is **personal context** (`master` only by default). Toolkit/scaffold changes
+belong in **`aios-workspace`**, not here — see `.claude/rules/git-workflow.md`. Dogfood
+findings from setup interviews can go in memory files or `2-work/`; product fixes go upstream.

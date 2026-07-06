@@ -110,14 +110,28 @@ for entry in "${PATTERNS[@]}"; do
   fi
 done
 
-# Also check for .env files that shouldn't be committed
+# Also check for .env files that are actually TRACKED by git — not just present on
+# disk. Scaffolded workspaces now auto-create .env from .env.example (so dotenvx
+# never crashes on a missing file) and gitignore it in the same step; a real,
+# gitignored-but-uncommitted .env is expected and safe, not a leak. Only a file git
+# would actually include in a commit is the real OGR03 concern.
 ENV_FILES=$(find "$REPO" -name ".env" -not -name ".env.example" -not -name ".env.template" -not -path "*/.git/*" 2>/dev/null || true)
-if [ -n "$ENV_FILES" ]; then
-  echo -e "  ${RED}✗ .env file committed${NC}"
+TRACKED_ENV_FILES=""
+if [ -n "$ENV_FILES" ] && [ -d "$REPO/.git" ]; then
   while IFS= read -r env_file; do
+    [ -z "$env_file" ] && continue
     rel_path="${env_file#$REPO/}"
-    echo "    $rel_path"
+    if git -C "$REPO" ls-files --error-unmatch -- "$rel_path" >/dev/null 2>&1; then
+      TRACKED_ENV_FILES="${TRACKED_ENV_FILES}${rel_path}"$'\n'
+    fi
   done <<< "$ENV_FILES"
+fi
+if [ -n "$TRACKED_ENV_FILES" ]; then
+  echo -e "  ${RED}✗ .env file committed${NC}"
+  echo "$TRACKED_ENV_FILES" | while IFS= read -r rel_path; do
+    [ -z "$rel_path" ] && continue
+    echo "    $rel_path"
+  done
   ERRORS=$((ERRORS + 1))
 fi
 

@@ -50,8 +50,9 @@ nudges the highest-leverage change, and proves (or disproves) that its own teach
 | AM1 session-close capture | `hooks/maturity-capture.mjs` (SessionEnd) + additive `computeSessionRecord()` in `metrics.mjs` → `sessions.ndjson` |
 | AM2 feed-forward brief | `hooks/maturity-brief.mjs` (SessionStart) → 3-line `additionalContext` |
 | AM4a correction observations | `hooks/instinct-observe.mjs` (Stop) → `observations.ndjson` |
-| AM4b instinct distill | `aios instincts distill` (batch, injectable LLM) → homunculus records |
-| AM6 weekly report + belts | `aios maturity-week` + band-constant export refactor in `aem.mjs` |
+| AM4b instinct distill | **Done (AIO-230)** — `aios instincts distill` (batch, injectable LLM) → homunculus records |
+| AM6 weekly report + belts | **Done (AIO-231)** — `aios maturity-week` + band-constant export refactor in `aem.mjs` |
+| AM6b weekly distill chain | **Backlog (AIO-267)** — unblocked; chains AM4b before AM6 by default — [`maturity-week-distill.md`](./maturity-week-distill.md) |
 | AM5 effectiveness scoring | `aios instincts score` (before/after per learned artifact) |
 | AM3 anti-pattern nudge | `hooks/maturity-nudge.mjs` (UserPromptSubmit), one detector + cooldown |
 | AM7 ergonomics Phase B | `scripts/analyze/ergonomics-calibrate.mjs` (per AIO-190 plan) |
