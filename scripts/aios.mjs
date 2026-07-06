@@ -746,12 +746,35 @@ async function cmdConnect(repo, args) {
 
 const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
 
+/**
+ * The ONE next action for this workspace, computed from real state instead of a static
+ * multi-step list — replaces the "7-step next steps" wall (scaffold-project.sh's own
+ * post-scaffold print, and this file's old cmdOnboard closing lines) with a small
+ * 3-branch state machine reused by both call sites. `scripts/scaffold-project.sh` calls
+ * into this via `aios onboard --print-next-only` so the logic lives in exactly one place.
+ */
+function nextAction(repo) {
+  if (!vaultGet(repo, "AIOS_API_KEY")) {
+    return "Connect the Team Brain: run `aios onboard` (or set AIOS_API_KEY + brain_url/team_id in aios.yaml).";
+  }
+  const state = loadState(repo);
+  if (!Object.keys(state.items || {}).length) {
+    return "Run `aios status` to see what would sync, then `aios push`.";
+  }
+  return "Start the workspace GUI: `npm run gui -- --repo .`";
+}
+
 // aios onboard — guided first-run setup: one multi-select over every connector the
 // workspace knows about (Team Brain pinned + pre-selected at top, already-wired tools
 // pre-selected too), then masked secret entry + live validation feedback per item.
 // Every step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints
 // the same guidance and exits 0 so it never blocks.
-async function cmdOnboard(repo, _args) {
+async function cmdOnboard(repo, args = []) {
+  if (args.includes("--print-next-only")) {
+    console.log(nextAction(repo));
+    return;
+  }
+
   const connectors = listConnectors(repo);
 
   if (!process.stdin.isTTY) {
@@ -828,9 +851,7 @@ async function cmdOnboard(repo, _args) {
     clack.log.message("(interviews you, or drafts from a link — always confirms before writing)");
   }
 
-  clack.outro(
-    "You're set. Start the workspace GUI: npm run gui -- --repo .  ·  Re-run anytime: aios onboard"
-  );
+  clack.outro(nextAction(repo));
 }
 
 // aios review — interactive review-and-push panel for the terminal.

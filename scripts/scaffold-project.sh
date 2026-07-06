@@ -467,16 +467,17 @@ git -c user.email="workspace@aios.local" -c user.name="AIOS Workspace" \
 echo ""
 echo -e "${GREEN}Workspace ready: $OUTPUT${NC}"
 
-# Offer guided onboarding (connect Firecrawl + brain + tools) when we're on a real
-# terminal and node is present. `aios onboard` handles "no" to each step itself, and on a
-# non-TTY it just prints guidance — so nothing here can block CI or a piped run.
+# Offer guided onboarding (connect the brain + your tools, one multi-select) when we're
+# on a real terminal and node is present. `aios onboard` handles "no" to each item itself,
+# and on a non-TTY it just prints guidance — so nothing here can block CI or a piped run.
+ONBOARDING_RAN=false
 if [ -t 0 ] && [ -t 1 ] && command -v node >/dev/null 2>&1; then
   echo ""
-  printf "Run guided setup now — connect Firecrawl, the brain, and your tools? [y/N] "
+  printf "Run guided setup now — connect the brain and your tools? [y/N] "
   read -r ONBOARD_ANS || ONBOARD_ANS=""
   case "$ONBOARD_ANS" in
-    [Yy]*) node "$SCRIPT_DIR/aios.mjs" onboard --repo "$OUTPUT" || true ;;
-    *) echo -e "  skipped — run it anytime: ${GREEN}aios onboard${NC}" ;;
+    [Yy]*) node "$SCRIPT_DIR/aios.mjs" onboard --repo "$OUTPUT" && ONBOARDING_RAN=true ;;
+    *) : ;;
   esac
 fi
 
@@ -489,16 +490,18 @@ if [ -t 0 ] && [ -t 1 ] && [ -f "$REPO_ROOT/scripts/install-aios-shell.sh" ]; th
   printf "Install aios() shell function (~/.zshrc)? [Y/n] "
   read -r SHELL_ANS || SHELL_ANS=""
   case "${SHELL_ANS:-Y}" in
-    [Nn]*) echo -e "  skipped — run: ${GREEN}$REPO_ROOT/scripts/install-aios-shell.sh${NC}" ;;
+    [Nn]*) : ;;
     *) bash "$REPO_ROOT/scripts/install-aios-shell.sh" || true ;;
   esac
 fi
 
-echo ""
-echo "Next:"
-echo "  • Set up your profile:     say \"set me up\" in the GUI/CLI  (or: aios onboard)"
-echo "  • Connect tools + brain:   aios onboard      (or: aios connect <id>)"
-echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: aios status"
-echo "  • Allow direnv (PATH):     cd $OUTPUT && direnv allow ."
-echo "  • Validate the workspace:  $REPO_ROOT/validation/validate-all.sh $OUTPUT"
-echo "  • Start the GUI:           npm run gui -- --repo $OUTPUT"
+# ONE next action, not a wall of steps — cmdOnboard's own outro already gave the wizard
+# path this exact line, so only print it here if onboarding didn't run.
+if [ "$ONBOARDING_RAN" != true ]; then
+  echo ""
+  if command -v node >/dev/null 2>&1; then
+    echo "Next: $(node "$SCRIPT_DIR/aios.mjs" onboard --print-next-only --repo "$OUTPUT")"
+  else
+    echo "Next: run \`aios onboard\` (connects the brain + your tools, one guided step)."
+  fi
+fi
