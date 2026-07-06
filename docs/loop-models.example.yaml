@@ -1,78 +1,49 @@
-# loop-models.example.yaml — per-step model config for the agent relay (plan/build).
+# loop-models.example.yaml — per-step model config for the agent relay (plan/build/ship).
 #
-# Copy to .aios/loop-models.yaml (gitignored) and uncomment the keys you want to tune.
-# Any key you omit falls back to the baked-in default shown alongside it below.
+# Copy to .aios/loop-models.yaml (gitignored) and tune. Flat keys only (see flat-yaml.mjs).
 #
-# Flat keys only (parsed by scripts/flat-yaml.mjs): no nesting, no dots. Each step has
-# up to three keys:
-#   <step>_model       the model id for that step
-#   <step>_effort      reasoning effort (low|medium|high|xhigh|max) — Claude builder + SDK plan
-#   <step>_timeout_s   per-step timeout in seconds (converted to ms for callers)
+# MODEL REF SYNTAX (runtime-agnostic):
+#   <provider>:<modelId>   explicit routing
+#   vendor/model             OpenRouter (when no prefix)
+#   bare id                  inferred (deepseek* → DeepSeek API, claude* → Claude CLI, glm* → OpenCode, …)
 #
-# Precedence (per field): CLI flag > this file > default.
+# Providers:
+#   claude     Claude Code CLI (agentic: plan/build/fix)
+#   cursor     Cursor agent CLI (agentic or prompt)
+#   opencode   OpenCode Go API (prompt) or `opencode run` (agentic)
+#   deepseek   DeepSeek direct API (prompt)
+#   openrouter OpenRouter API (prompt)
 #
-# DIVERSITY GUARD (fail closed): `build` and `code_review` must be different model
-# families, and so must `plan` and `plan_review` — the reviewer has to be an
-# independent model. Families: claude*/fable* = anthropic, gpt* = openai, deepseek* =
-# deepseek. Setting
-# code_review_model to a claude-* model while build stays claude-* aborts the run.
-#
-# RUNNER-FAMILY GUARD (fail closed): the Claude-runner steps — plan (SDK),
-# build/fix/fix_escalated (Claude Code CLI), consolidate (aios consolidate-findings,
-# Claude Code CLI), and recon/safety_review/digest (aios ship + roadmap-run, callClaudeAgent)
-# — must be a Claude-family model. A gpt-* id on any of them aborts, rather than being handed
-# to a Claude runner.
-#
-# VALIDATION (fail loudly): an unknown/misspelled key or step, a non-scalar value, an
-# effort outside low|medium|high|xhigh|max, or a non-numeric/non-positive *_timeout_s
-# aborts with an actionable message. Only a MISSING file falls back to defaults.
+# DIVERSITY GUARD: build≠code_review family, plan≠plan_review family (fail closed).
+# AGENTIC GUARD: plan/build/fix/fix_escalated need claude|cursor|opencode — not openrouter/deepseek alone.
 
-# recon is a Claude-runner step (aios ship, callClaudeAgent) — must stay claude-family.
-# recon_model: claude-haiku-4-5
-
-# plan_model: claude-opus-4-8
+# recon_model: claude:claude-haiku-4-5
+# plan_model: claude:claude-opus-4-8
 # plan_effort: xhigh
+# plan_review_model: opencode:glm-5.2
+# plan_review_model: opencode:kimi-k2.7-code
+# plan_review_model: openrouter:moonshotai/kimi-k2.5
+# plan_review_model: deepseek:deepseek-v4-pro
 
-# plan_review/code_review default to deepseek-v4-pro (DeepSeek's own API, not Cursor) since
-# 2026-07-04 — the Cursor Ultra plan's usage cap blocked gpt-5.5-high and glm-5.2-high alike.
-# gpt-5.5-high (or any Cursor-routed model) still works if you set it explicitly here.
-# plan_review_model: gpt-5.5-high
-
-# build_model: claude-opus-4-8
+# build_model: claude:claude-sonnet-5
 # build_effort: high
-
-# code_review_model: gpt-5.5-high
+# build_model: opencode:glm-5.2
+# code_review_model: deepseek:deepseek-v4-pro
+# code_review_model: openrouter:deepseek/deepseek-chat
 # code_review_timeout_s: 300
 
-# fix_model: claude-opus-4-8
+# fix_model: claude:claude-sonnet-5
 # fix_effort: medium
-
-# fix_escalated_model: claude-opus-4-8
+# fix_escalated_model: claude:claude-opus-4-8
 # fix_escalated_effort: high
 
-# consolidate is a Claude-runner step (aios consolidate-findings) — must stay claude-family.
-# consolidate_model: claude-haiku-4-5
-# consolidate_effort: high
-# consolidate_timeout_s: 300
+# consolidate_model: claude:claude-haiku-4-5
+# consolidate_model: openrouter:openai/gpt-4o-mini
+# safety_review_model: claude:claude-opus-4-8
+# orchestrate_model: claude:fable-5
+# digest_model: claude:claude-haiku-4-5
 
-# safety_review is a Claude-runner step (aios ship, callClaudeAgent) — must stay claude-family.
-# safety_review_model: claude-opus-4-8
-# safety_review_effort: xhigh
-
-# orchestrate_model: fable-5
-
-# digest is a Claude-runner step (aios roadmap-run, callClaudeAgent) — must stay claude-family.
-# digest_model: claude-haiku-4-5
-
-# Spec/plan readiness harness (EE5 / `aios spec eval|fix`). Both run on the Claude SDK; there is
-# no diversity pair (spec eval is a single adversarial pass, not a producer/reviewer loop).
-# spec_eval_model: claude-opus-4-8
-# spec_eval_effort: xhigh
-
-# spec_fix_model: claude-opus-4-8
-# spec_fix_effort: high
-
-# Decision-corpus distillation (EE4 / `aios decisions distill --remote`). Runs through the
-# operator-loop llm.ts seam (Anthropic SDK) — a single summarization pass, no diversity pair.
-# decisions_distill_model: claude-opus-4-8
-# decisions_distill_effort: high
+# spec_eval_model: deepseek:deepseek-v4-pro
+# spec_fix_model: deepseek:deepseek-v4-pro
+# spec_eval_model: claude:claude-opus-4-8   # override to Claude CLI if preferred
+# decisions_distill_model: claude:claude-opus-4-8

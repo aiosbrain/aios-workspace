@@ -42,15 +42,13 @@ import {
   c,
   die,
   checkPrereqs,
-  callCursorAgent,
-  callClaudeAgent,
-  callDeepSeekDirect,
   gitMergeAndDelete,
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
+import { callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
-import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
 import { cmdPr } from "./pr.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
@@ -1000,12 +998,16 @@ export async function runBuild({ repo, plan, branch, opts }) {
       )
     );
     try {
-      const builderOut = await withRetry(callClaudeAgent, fencedPrompt, buildTimeout, {
-        cwd: wt,
-        model: cfg.model,
-        extraArgs,
-        env: builderEnv,
-      });
+      const builderOut = await withRetry(
+        (p, t, o) => callAgentModel({ model: cfg.model, prompt: p, timeoutMs: t, opts: o }),
+        fencedPrompt,
+        buildTimeout,
+        {
+          cwd: wt,
+          extraArgs,
+          env: builderEnv,
+        }
+      );
       log(`Build round ${round} — builder`, builderOut.slice(-4000));
     } catch (e) {
       if (/timed out/.test(e.message)) {
@@ -1131,11 +1133,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
     console.log(c.dim(`[cursor] review timeout ${reviewTimeoutMs / 1000}s — ${why}`));
     log(`Build round ${round} — review timeout`, `${reviewTimeoutMs / 1000}s (${why})`);
     console.log(c.dim(`[cursor] reviewing diff (${skill})...`));
-    // The reviewer resolves to either the Cursor CLI or DeepSeek's own API, by model family.
-    const reviewCallFn =
-      modelFamily(models.code_review.model) === "deepseek"
-        ? (p, t) => callDeepSeekDirect(p, t, { model: models.code_review.model })
-        : callCursorAgent;
+    const reviewCallFn = reviewCallForModel(models.code_review.model);
     // Auto-retry once on timeout (doubled), with transient-drop retries INSIDE each attempt.
     const review = await reviewWithTimeoutRetry(
       (p, t, o) => withRetry(reviewCallFn, p, t, o),
@@ -1143,12 +1141,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
       reviewTimeoutMs,
       {
         cwd: wt,
-        // Thread the resolved code_review model — without it this call runs on the Cursor
-        // account default, silently voiding the loop-models override + diversity guarantee.
-        extraArgs: [
-          ...CURSOR_REVIEW_FLAGS,
-          ...(models.code_review.model ? ["--model", models.code_review.model] : []),
-        ],
+        extraArgs: [...CURSOR_REVIEW_FLAGS],
       },
       { log, logLabel: `Build round ${round} — review timeout retry` }
     );

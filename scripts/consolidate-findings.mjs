@@ -34,7 +34,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { c } from "./relay-core.mjs";
-import { callClaudeAgent } from "./relay-core.mjs";
+import { callPromptModel } from "./model-call.mjs";
 import { detectRepo } from "./pr.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { hasCriticalOrHighFindings, SEVERITY_RANK } from "./review-bugbot.mjs";
@@ -563,7 +563,6 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   const round = Number.isFinite(opts.round) && opts.round > 0 ? opts.round : 1;
 
   const runGh = deps.runGh ?? defaultRunGh;
-  const callAgent = deps.callAgent ?? callClaudeAgent;
   const readReviewerPrompt = deps.readReviewerPrompt ?? (() => defaultReadReviewerPrompt(repo));
 
   const slug = opts.repoSlug ?? detectRepo(repo);
@@ -637,10 +636,28 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   let modelOutput;
   try {
     console.log(c.dim(`[consolidate] ${cfg.model}${cfg.effort ? ` (effort=${cfg.effort})` : ""}…`));
-    modelOutput = await callAgent(prompt, timeoutMs, {
-      model: cfg.model,
-      extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
-    });
+    modelOutput = await (async () => {
+      if (deps.callPromptModel) {
+        return deps.callPromptModel({
+          model: cfg.model,
+          prompt,
+          timeoutMs,
+          opts: { extraArgs: cfg.effort ? ["--effort", cfg.effort] : [] },
+        });
+      }
+      if (deps.callAgent) {
+        return deps.callAgent(prompt, timeoutMs, {
+          model: cfg.model,
+          extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+        });
+      }
+      return callPromptModel({
+        model: cfg.model,
+        prompt,
+        timeoutMs,
+        opts: { extraArgs: cfg.effort ? ["--effort", cfg.effort] : [] },
+      });
+    })();
   } catch (e) {
     console.error(c.red(`error: consolidation model call failed: ${e.message}`));
     return 1;

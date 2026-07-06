@@ -22,8 +22,8 @@ console.log("parseShipArgs defaults");
   check("issue parsed", o.issue === "AIO-163");
   check("gates default on (auto false)", o.auto === false && o.autoMerge === false);
   check(
-    "reviewers default bugbot,gpt-5.5",
-    JSON.stringify(o.reviewers) === JSON.stringify(["bugbot", "gpt-5.5"])
+    "reviewers default gpt-5.5 only (bugbot opt-in)",
+    JSON.stringify(o.reviewers) === JSON.stringify(["gpt-5.5"])
   );
   check("max-fix-rounds default 3", o.maxFixRounds === 3);
   check("plan-runner default cli", o.planRunner === "cli");
