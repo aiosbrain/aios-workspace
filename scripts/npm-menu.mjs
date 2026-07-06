@@ -30,7 +30,14 @@ export const CATEGORIES = {
   },
   "Internal / CI": {
     description: "maintainers and automation — you rarely need these directly",
-    scripts: ["gen:catalog", "build:loop", "check:docs", "check:v1-linear", "pr:backlog"],
+    scripts: [
+      "gen:catalog",
+      "build:loop",
+      "check:docs",
+      "check:v1-linear",
+      "pr:backlog",
+      "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
+    ],
   },
 };
 
