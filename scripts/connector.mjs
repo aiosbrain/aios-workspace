@@ -353,6 +353,20 @@ function envPath(repo) {
   return path.join(repo, ".env");
 }
 
+// dotenvx reads DOTENV_PUBLIC_KEY/DOTENV_PRIVATE_KEY from the environment if present,
+// which take priority over the repo's own .env.keys. An ambient shell that already has
+// one set (e.g. from a different project's dotenvx setup, or an env cascade like
+// Tessera's) silently breaks per-workspace key generation — `set` then encrypts against
+// the WRONG key and `get` can never decrypt it back, with no visible error. Strip both
+// so every vaultSet/vaultGet always uses this repo's own .env.keys, regardless of what's
+// ambient in the caller's shell.
+function dotenvxEnv() {
+  const env = { ...process.env };
+  delete env.DOTENV_PUBLIC_KEY;
+  delete env.DOTENV_PRIVATE_KEY;
+  return env;
+}
+
 // Encrypt+store a secret. dotenvx generates .env.keys + DOTENV_PUBLIC_KEY on first use.
 export function vaultSet(repo, env, value) {
   const ep = envPath(repo);
@@ -361,18 +375,32 @@ export function vaultSet(repo, env, value) {
   if (!existsSync(ep)) writeFileSync(ep, "");
   // Note: value passes as an execFile arg (no shell); on a shared host this is briefly
   // visible via `ps`. Acceptable for a single-user local app; hardening tracked for M5.
-  execFileSync("dotenvx", ["set", env, value, "-f", ep], {
-    cwd: repo,
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  try {
+    execFileSync("dotenvx", ["set", env, value, "-f", ep], {
+      cwd: repo,
+      env: dotenvxEnv(),
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (e) {
+    if (e.code === "ENOENT") {
+      throw new Error(
+        `vault: dotenvx isn't on PATH — install it (npm i -g @dotenvx/dotenvx), or run this from the toolkit repo where it's already a dependency`
+      );
+    }
+    const stderr = (e.stderr || "").toString().trim();
+    throw new Error(`vault: dotenvx failed to set ${env}${stderr ? ` — ${stderr}` : ""}`);
+  }
   // dotenvx returns 0 even on some no-ops; assert the value actually landed encrypted.
   const back = vaultGet(repo, env);
-  if (back !== value) throw new Error(`vault: failed to store ${env}`);
+  if (back !== value) {
+    throw new Error(`vault: ${env} didn't take — check that .env is writable, then retry`);
+  }
 }
 export function vaultGet(repo, env) {
   try {
     return execFileSync("dotenvx", ["get", env, "-f", envPath(repo)], {
       cwd: repo,
+      env: dotenvxEnv(),
       stdio: ["ignore", "pipe", "ignore"],
     })
       .toString()
@@ -393,6 +421,26 @@ export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
       changed = true;
     }
   if (changed) writeFileSync(gi, txt);
+}
+
+/**
+ * Snapshot .env/aios.yaml before an interactive wizard starts mutating them (Hermes
+ * pattern) — so a failed or interrupted run has a way back instead of leaving a
+ * half-written config with no undo. Returns the backup paths written (empty if
+ * neither file exists yet, e.g. a fresh scaffold with no secrets set).
+ */
+export function backupConfig(repo, { now = new Date() } = {}) {
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const written = [];
+  for (const name of [".env", "aios.yaml"]) {
+    const src = path.join(repo, name);
+    if (!existsSync(src)) continue;
+    const dest = path.join(repo, `${name}.bak.${stamp}`);
+    writeFileSync(dest, readFileSync(src));
+    written.push(dest);
+  }
+  if (written.length) ensureGitignore(repo, [".env.bak.*", "aios.yaml.bak.*"]);
+  return written;
 }
 
 // ── store / unwire (transport dispatch) ──────────────────────────────────────

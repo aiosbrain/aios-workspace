@@ -43,11 +43,16 @@ import {
   validateConnector,
   storeConnector,
   vaultSet,
+  vaultGet,
   ensureGitignore,
+  backupConfig,
   startOAuth,
   pollOAuthStatus,
   postBrainToken,
 } from "./connector.mjs";
+// Lazy-loaded only inside cmdOnboard (below the non-TTY early-return) — every other
+// `aios` command (status/push/pull/query/...) must stay fast and dependency-free at
+// import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
@@ -636,8 +641,10 @@ function finishOAuth(repo, d, status) {
 
 // Connect one already-resolved descriptor: print guidance → collect secrets → validate
 // live → store. Returns true on success, false on a skipped/failed attempt (callers decide
-// how to signal that). Pass `ask` to share one readline across several connects (onboard);
-// omit it and connectFlow opens+closes its own for a single standalone connect.
+// how to signal that). Pass `ask` to swap in a different secret-collection prompt — the
+// onboarding wizard (cmdOnboard) and an interactive `aios connect <id>` both pass
+// onboard-ui.mjs's clack-backed askViaClack (masked input); omit it and connectFlow opens
+// its own plain readline question for a single non-interactive-safe standalone connect.
 async function connectFlow(repo, d, { sets = {}, tokenFlag = null, ask } = {}) {
   // OAuth connectors take a separate one-click path (browser → brain), not local secrets.
   if (d.auth_mode === "oauth") return oauthConnectFlow(repo, d, { ask, tokenFlag });
@@ -728,24 +735,30 @@ async function cmdConnect(repo, args) {
     }
   const tokenFlag = args.includes("--token") ? args[args.indexOf("--token") + 1] : null;
 
-  const ok = await connectFlow(repo, d, { sets, tokenFlag });
+  // Interactively prompted secrets (not covered by --set/--token) get masked input too —
+  // this is the same connectFlow the onboarding wizard drives, and the plaintext-echo
+  // fix applies equally to `aios connect <id>` run standalone.
+  const ask = process.stdin.isTTY ? (await import("./onboard-ui.mjs")).askViaClack : undefined;
+
+  const ok = await connectFlow(repo, d, { sets, tokenFlag, ask });
   if (!ok) process.exitCode = 1;
 }
 
-// aios onboard — guided first-run setup: connect Firecrawl (so the GUI's "draft from a
-// link" works), the Team Brain key, and any other tools the workspace knows about. Every
-// step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints the
-// same guidance and exits 0 so it never blocks.
+const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
+
+// aios onboard — guided first-run setup: one multi-select over every connector the
+// workspace knows about (Team Brain pinned + pre-selected at top, already-wired tools
+// pre-selected too), then masked secret entry + live validation feedback per item.
+// Every step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints
+// the same guidance and exits 0 so it never blocks.
 async function cmdOnboard(repo, _args) {
   const connectors = listConnectors(repo);
-  const isWired = (id) => connectors.find((conn) => conn.id === id)?.status === "wired";
 
   if (!process.stdin.isTTY) {
     console.log(c.blue("AIOS onboarding"));
     console.log("  Run these from an interactive terminal:");
-    console.log(c.dim("    aios onboard              # guided setup (Firecrawl, brain, tools)"));
-    console.log(c.dim("    aios connect firecrawl    # read a link to draft your profile"));
-    console.log(c.dim("    aios connect <id>         # any other tool"));
+    console.log(c.dim("    aios onboard              # guided setup (brain + tools)"));
+    console.log(c.dim("    aios connect <id>         # any one tool"));
     console.log(
       c.dim(
         "  Brain: set AIOS_API_KEY in .env, fill brain_url + team_id in aios.yaml, then: aios status"
@@ -754,78 +767,71 @@ async function cmdOnboard(repo, _args) {
     return;
   }
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise((res) => rl.question(q, res));
-  const yes = async (q) => /^y(es)?$/i.test((await ask(q)).trim());
+  const { pickConnectors, askSecret, askViaClack, reportValidation, clack } = await import(
+    "./onboard-ui.mjs"
+  );
 
-  console.log(c.blue("\nWelcome to AIOS. Let's connect a few things — every step is optional.\n"));
+  clack.intro("AIOS onboarding");
+  const backedUp = backupConfig(repo);
+  if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);
 
-  // 1) Firecrawl — powers "draft from a link" in the GUI.
-  try {
-    if (isWired("firecrawl")) {
-      console.log(c.green("✓ Firecrawl already connected."));
-    } else if (await yes("Connect Firecrawl, so you can draft your profile from a link? [y/N] ")) {
-      await connectFlow(repo, getDescriptor(repo, "firecrawl"), { ask });
-    }
-  } catch (e) {
-    console.log(c.dim(`  (skipping Firecrawl — ${e.message})`));
-  }
+  const hasBrainKey = !!vaultGet(repo, "AIOS_API_KEY");
+  const teamBrainOption = {
+    id: TEAM_BRAIN_PSEUDO_ID,
+    name: "AIOS Team Brain",
+    summary: "Powers push/pull/status/query — get your key from your dashboard's profile page",
+    status: hasBrainKey ? "wired" : "available",
+  };
 
-  // 2) Team Brain — store the API key so push/pull/status work (same dotenvx vault).
-  console.log("");
-  if (await yes("Connect the Team Brain now (set AIOS_API_KEY)? [y/N] ")) {
-    const key = (await ask("  AIOS_API_KEY: ")).trim();
+  const selection = await pickConnectors(connectors, { pinned: teamBrainOption });
+
+  if (selection.includes(TEAM_BRAIN_PSEUDO_ID) && !hasBrainKey) {
+    const key = await askSecret("AIOS_API_KEY", {
+      instructions: "Sign in to your Team Brain dashboard → your profile → Generate my API key.",
+    });
     if (!key) {
-      console.log(c.dim("  (no key entered — skipped)"));
+      clack.log.warn("AIOS_API_KEY: no key entered — skipped.");
     } else {
       try {
         vaultSet(repo, "AIOS_API_KEY", key);
         ensureGitignore(repo);
-        console.log(c.green("  ✓ AIOS_API_KEY encrypted into .env (dotenvx)"));
-        console.log(c.dim("    confirm brain_url + team_id in aios.yaml, then run: aios status"));
+        reportValidation([
+          { name: "AIOS_API_KEY", ok: true, detail: "encrypted into .env (dotenvx)" },
+        ]);
       } catch (e) {
-        console.log(c.red(`  could not store the key (${e.message}).`));
-        console.log(
-          c.dim("    install dotenvx, or run: aios connect <a tool> to bootstrap the vault.")
-        );
+        reportValidation([{ name: "AIOS_API_KEY", ok: false, detail: e.message }]);
       }
     }
   }
 
-  // 2.5) Profile — the agent doesn't know who you are yet. Point at the workspace-setup
-  // skill rather than invoking it here (this is a plain Node script, not a Claude session).
-  console.log("");
-  if (await yes("Set up your profile now — name, role, working style? [y/N] ")) {
-    console.log(c.green("  Say this once your GUI/CLI session starts:"));
-    console.log(c.dim('    "set me up"'));
-    console.log(
-      c.dim("    (interviews you, or drafts from a link — always confirms before writing)")
-    );
-  } else {
-    console.log(c.dim('  skipped — say "set me up" anytime in the GUI/CLI'));
-  }
-
-  // 3) Any other tools the workspace knows about.
-  const others = connectors.filter((conn) => conn.id !== "firecrawl" && conn.status !== "wired");
-  if (others.length) {
-    console.log("");
-    if (await yes(`Connect any other tools (${others.map((o) => o.id).join(", ")})? [y/N] `)) {
-      for (const conn of others) {
-        if (await yes(`  Connect ${conn.id}? [y/N] `)) {
-          try {
-            await connectFlow(repo, getDescriptor(repo, conn.id), { ask });
-          } catch (e) {
-            console.log(c.dim(`    (skipping ${conn.id} — ${e.message})`));
-          }
-        }
-      }
+  // Every other selected connector goes through the SAME connect→validate→store engine
+  // as standalone `aios connect <id>` — only the `ask` callback changes (clack's masked
+  // password prompt instead of a plaintext-echoing readline question). connectFlow
+  // already renders its own ✓/✗ check lines and the "connected as … in …" confirmation.
+  for (const id of selection.filter((v) => v !== TEAM_BRAIN_PSEUDO_ID)) {
+    const conn = connectors.find((cn) => cn.id === id);
+    if (conn?.status === "wired") continue; // already connected — nothing to do
+    try {
+      await connectFlow(repo, getDescriptor(repo, id), { ask: askViaClack });
+    } catch (e) {
+      clack.log.error(`${conn?.name || id}: ${e.message}`);
     }
   }
 
-  rl.close();
-  console.log(c.green("\n✓ You're set."));
-  console.log(c.dim("  Start the workspace GUI:  npm run gui -- --repo ."));
-  console.log(c.dim("  Re-run anytime:           aios onboard"));
+  // Profile — the agent doesn't know who you are yet. Point at the workspace-setup skill
+  // rather than invoking it here (this is a plain Node script, not a Claude session). Kept
+  // as its own follow-on question, after the connector list finishes, not interleaved.
+  const wantsProfile = await clack.confirm({
+    message: "Set up your profile now — name, role, working style?",
+  });
+  if (!clack.isCancel(wantsProfile) && wantsProfile) {
+    clack.log.step('Say this once your GUI/CLI session starts: "set me up"');
+    clack.log.message("(interviews you, or drafts from a link — always confirms before writing)");
+  }
+
+  clack.outro(
+    "You're set. Start the workspace GUI: npm run gui -- --repo .  ·  Re-run anytime: aios onboard"
+  );
 }
 
 // aios review — interactive review-and-push panel for the terminal.
@@ -4924,7 +4930,7 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
-  aios onboard                          guided first-run setup (Firecrawl, brain, tools)
+  aios onboard                          guided first-run setup (brain + tools, one multi-select)
   aios connect [<id>]                   connect an integration (guided + live-validated)
     [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
