@@ -1,7 +1,7 @@
 # AIOS onboarding marathon — 2026-07-06
 
-**Handle:** john  
-**Workspace:** `/Users/iamjohndass/Projects/john-workspace`  
+**Handle:** {{HANDLE}}  
+**Workspace:** `{{WORKSPACE_PATH}}`  
 **Agent runtime:** Cursor / Claude  
 **Brain URL:** `https://aios-team-brain-production.up.railway.app`
 
@@ -12,13 +12,13 @@
 | Commands attempted | 60+ (all blocks A–I) |
 | First push | **yes** — 5 items pushed |
 | validate-all | not re-run (pre-existing workspace) |
-| Blockers | 2 fixed upstream (council-models); 4 filed as Linear |
+| Blockers | 1 deferred upstream (model-providers); 4 filed as Linear |
 
 ## Run log
 
 | Step | Command | Result | Notes | Upstream fix? |
 |------|---------|--------|-------|---------------|
-| 0 | package.json + scripts/aios.mjs shim | OK | Added locally; scaffold template in PR | yes |
+| 0 | package.json + scripts/aios.mjs shim | OK | Added locally; scaffold template in PR #179 | yes |
 | 0 | status | OK | new 3, modified 2, blocked 61 | teach one promotion |
 | 0 | asks drain | OK | Cleared 2 stale blockers | |
 | A | loop daily | OK | Changed 0 after drain; 93 excluded | |
@@ -40,8 +40,8 @@
 | C | loop writeback | FRICTION | Needs closeout from loop weekly first | doc |
 | C | loop telemetry | OK | Daily frequency NOT MET (2/11 days) | |
 | D | analyze --since 7d | OK | Spine L4, CE orchestration-heavy | |
-| D | analyze --report | BLOCKER→FIX | council-models.mjs syntax error | fixed in PR |
-| D | analyze --calibrate | OK | HOLD verdict after fix | |
+| D | analyze --report | BLOCKER | Incomplete WIP: council-models imported missing model-providers.mjs | AIO-296 |
+| D | analyze --calibrate | OK | HOLD verdict on main after revert | |
 | D | maturity-week | FRICTION | No sessions.ndjson yet | expected |
 | D | time report | FRICTION | No capture run yet | expected |
 | D | instincts distill --dry-run | OK | 0 observations | |
@@ -76,13 +76,14 @@
 
 | ID | Title | Issue |
 |----|-------|-------|
-| O7 | council-models.mjs syntax corruption | AIO-295 (fixed in this PR) |
+| O7 | Ship model-providers.mjs (shared modelFamily) | AIO-296 |
 | O8 | IC scaffold missing spec-readiness rubric | AIO-292 |
 | O9 | IC scaffold missing capture hooks | AIO-293 |
 | O10 | consolidate-findings needs code-reviewer agent | AIO-294 |
 
 ## Recommended upstream PRs
 
-1. **feat/onboarding-marathon-dogfood** — agent-onboarding.md, smoke runbook, scaffold CLI shim, council-models fix
+1. **#179** — agent-onboarding.md, smoke runbook, scaffold CLI shim (council-models WIP import reverted at merge)
 2. Ship spec-readiness rubric + code-reviewer agent in scaffold (O8/O10)
 3. Wire asks-capture + decision-capture hooks in scaffold settings.json (O9)
+4. **model-providers.mjs** module + tests (O7 / AIO-296) — pre-v1.0
