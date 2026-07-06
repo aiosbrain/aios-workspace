@@ -104,6 +104,8 @@ a deliberate `aios push`.
 - **git**.
 - `npm install` is only needed for the local GUI/cockpit and the test suite, not for
   scaffolding or `aios` sync.
+- Once installed, `npm run help` lists every script grouped by category (Core / Dev /
+  Build / Internal) — a bare `npm run` prints the same ~18 scripts with no grouping.
 
 ---
 
