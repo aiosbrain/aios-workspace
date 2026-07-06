@@ -65,6 +65,17 @@ if (existsSync(ws)) {
     fail("workspace missing validation/secret-patterns.txt");
   else ok("validation/secret-patterns.txt present");
 
+  for (const hook of ["asks-capture.mjs", "decision-capture.mjs", "session-pulse.mjs"]) {
+    const p = path.join(ws, "hooks", hook);
+    if (!existsSync(p)) fail(`workspace missing hooks/${hook}`);
+    else if (!(statSync(p).mode & 0o111)) fail(`hooks/${hook} is not executable`);
+    else ok(`hooks/${hook} present + executable`);
+  }
+
+  const reviewer = path.join(ws, ".claude", "agents", "code-reviewer.md");
+  if (!existsSync(reviewer)) fail("workspace missing .claude/agents/code-reviewer.md");
+  else ok(".claude/agents/code-reviewer.md present");
+
   const settingsPath = path.join(ws, ".claude", "settings.json");
   if (!existsSync(settingsPath)) fail("workspace missing .claude/settings.json");
   else {
@@ -78,6 +89,23 @@ if (existsSync(ws)) {
       else if (!cmd.includes("team-ops-guard.sh"))
         fail(`settings.json hook command not team-ops-guard.sh: '${cmd}'`);
       else ok("settings.json registers PreToolUse(Edit|Write|MultiEdit) → team-ops-guard.sh");
+
+      const notif = s?.hooks?.Notification?.[0]?.hooks?.[0]?.command || "";
+      const stopAsks = s?.hooks?.Stop?.[0]?.hooks?.[0]?.command || "";
+      const postTool = s?.hooks?.PostToolUse?.[0]?.hooks?.[0]?.command || "";
+      const postMatcher = s?.hooks?.PostToolUse?.[0]?.matcher || "";
+      if (!notif.includes("asks-capture.mjs"))
+        fail("settings.json missing Notification → asks-capture.mjs");
+      else if (!stopAsks.includes("asks-capture.mjs"))
+        fail("settings.json missing Stop → asks-capture.mjs");
+      else if (!postTool.includes("decision-capture.mjs"))
+        fail("settings.json missing PostToolUse → decision-capture.mjs");
+      else if (!postMatcher.includes("AskUserQuestion") || !postMatcher.includes("ExitPlanMode"))
+        fail(`settings.json PostToolUse matcher missing AskUserQuestion|ExitPlanMode: '${postMatcher}'`);
+      else
+        ok(
+          "settings.json registers capture hooks (Notification/Stop asks, PostToolUse decisions)"
+        );
     } catch (e) {
       fail(`settings.json not valid JSON: ${e.message}`);
     }
