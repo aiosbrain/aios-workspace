@@ -138,7 +138,7 @@ touch "$OUTPUT/$D_INBOX/transcripts/.gitkeep" "$OUTPUT/$D_INBOX/from-brain/.gitk
 idx() { cat > "$1"; }  # helper: idx <path> <<EOF ... EOF
 
 if [ "$CONTEXT" = consultant ]; then
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team
@@ -149,6 +149,13 @@ What frames this engagement: scope, the client, and roles.
 
 * [Scope Baseline](scope-baseline.md) — contracted deliverable tracks
 * [Scope Ledger](scope-ledger.md) — scope changes and out-of-scope log
+
+## Agent layer
+
+The `.claude/` directory is the canonical, runtime-agnostic agent layer. Despite the name,
+its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. See `AGENTS.md` or `.claude/CLAUDE.md`
+for runtime-specific orientation.
 EOF
   idx "$OUTPUT/$D_CONTEXT/scope-baseline.md" << EOF
 ---
@@ -173,7 +180,7 @@ access: team
 |---|------|--------|--------|------------|
 EOF
 else
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team
@@ -184,6 +191,13 @@ What frames your work: your role, your team, and your goals.
 
 * [Role](role.md) — what you own and how you work
 * [OKRs](okrs.md) — current objectives and key results
+
+## Agent layer
+
+The `.claude/` directory is the canonical, runtime-agnostic agent layer. Despite the name,
+its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. See `AGENTS.md` or `.claude/CLAUDE.md`
+for runtime-specific orientation.
 EOF
   idx "$OUTPUT/$D_CONTEXT/role.md" << EOF
 ---
@@ -343,6 +357,7 @@ process_template() {
 
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
+process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
@@ -368,7 +383,7 @@ sed -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{CONTACTS_YAML}}|  # Add c
 
 # Copy the agent layer (rules, skills, rubrics, memory, personalities)
 cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"
-for d in skills rubrics memory personalities; do
+for d in skills rubrics memory personalities agents; do
   if [ -d "$SCAFFOLD/.claude/$d" ]; then mkdir -p "$OUTPUT/.claude/$d"; cp -R "$SCAFFOLD/.claude/$d/." "$OUTPUT/.claude/$d/"; fi
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"
@@ -379,6 +394,19 @@ mkdir -p "$OUTPUT/.claude/memory/incidents"
 [ -f "$SCAFFOLD/.mcp.json" ] && cp "$SCAFFOLD/.mcp.json" "$OUTPUT/.mcp.json"
 [ -f "$SCAFFOLD/.mcp.example.json" ] && cp "$SCAFFOLD/.mcp.example.json" "$OUTPUT/.mcp.example.json"
 
+# Canonical Claude Code commands + OpenCode export surface
+if [ -d "$SCAFFOLD/.claude/commands" ]; then
+  mkdir -p "$OUTPUT/.claude/commands"
+  cp "$SCAFFOLD/.claude/commands/"*.md "$OUTPUT/.claude/commands/" 2>/dev/null || true
+fi
+if [ -f "$SCAFFOLD/opencode.json" ]; then
+  cp "$SCAFFOLD/opencode.json" "$OUTPUT/opencode.json"
+fi
+if [ -d "$SCAFFOLD/.opencode" ]; then
+  mkdir -p "$OUTPUT/.opencode"
+  cp -R "$SCAFFOLD/.opencode/." "$OUTPUT/.opencode/"
+fi
+
 # Governance guard: ship the PreToolUse hook + its secret patterns + the hook
 # registration so Claude Code's native guard (secrets / tier leaks / frontmatter)
 # fires in this workspace, not just in the toolkit repo. The hook reads stdin
@@ -388,11 +416,12 @@ cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
 chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
 cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
 
-# Session pulse Stop hook (AIO-214): a dependency-free 2-line post-session read of the
-# last `aios analyze` state — same reasoning as team-ops-guard.sh above, shipped
-# standalone so it runs without the rest of the toolkit present.
-cp "$REPO_ROOT/hooks/session-pulse.mjs" "$OUTPUT/hooks/session-pulse.mjs"
-chmod +x "$OUTPUT/hooks/session-pulse.mjs"
+# Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
+# standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.
+for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs; do
+  cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
+  chmod +x "$OUTPUT/hooks/$hook"
+done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
 # Generate the skills + integrations catalogs for the new workspace
