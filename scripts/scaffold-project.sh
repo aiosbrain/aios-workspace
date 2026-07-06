@@ -483,6 +483,9 @@ fi
 # Shell CLI: aios() walks up to aios.yaml — no npm run -- needed.
 if [ -t 0 ] && [ -t 1 ] && [ -f "$REPO_ROOT/scripts/install-aios-shell.sh" ]; then
   echo ""
+  echo "This adds a small 'aios' command to your terminal, so you can type"
+  echo "'aios status' from anywhere instead of 'npm run aios -- status'."
+  echo "It only edits ~/.zshrc — nothing else."
   printf "Install aios() shell function (~/.zshrc)? [Y/n] "
   read -r SHELL_ANS || SHELL_ANS=""
   case "${SHELL_ANS:-Y}" in
