@@ -345,9 +345,12 @@ process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
-mkdir -p "$OUTPUT/scripts"
+mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
 cp "$SCAFFOLD/scripts/aios.mjs" "$OUTPUT/scripts/aios.mjs"
 chmod +x "$OUTPUT/scripts/aios.mjs"
+cp "$SCAFFOLD/bin/aios" "$OUTPUT/bin/aios"
+chmod +x "$OUTPUT/bin/aios"
+cp "$SCAFFOLD/.envrc" "$OUTPUT/.envrc"
 
 sed \
   -e "s|{{SLUG}}|$SLUG|g" -e "s|{{OWNER}}|$OWNER|g" -e "s|{{CONTEXT}}|$CONTEXT|g" \
@@ -443,10 +446,22 @@ if [ -t 0 ] && [ -t 1 ] && command -v node >/dev/null 2>&1; then
   esac
 fi
 
+# Shell CLI: aios() walks up to aios.yaml — no npm run -- needed.
+if [ -t 0 ] && [ -t 1 ] && [ -f "$REPO_ROOT/scripts/install-aios-shell.sh" ]; then
+  echo ""
+  printf "Install aios() shell function (~/.zshrc)? [Y/n] "
+  read -r SHELL_ANS || SHELL_ANS=""
+  case "${SHELL_ANS:-Y}" in
+    [Nn]*) echo -e "  skipped — run: ${GREEN}$REPO_ROOT/scripts/install-aios-shell.sh${NC}" ;;
+    *) bash "$REPO_ROOT/scripts/install-aios-shell.sh" || true ;;
+  esac
+fi
+
 echo ""
 echo "Next:"
 echo "  • Set up your profile:     say \"set me up\" in the GUI/CLI  (or: aios onboard)"
 echo "  • Connect tools + brain:   aios onboard      (or: aios connect <id>)"
-echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: npm run aios -- status"
+echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: aios status"
+echo "  • Allow direnv (PATH):     cd $OUTPUT && direnv allow ."
 echo "  • Validate the workspace:  $REPO_ROOT/validation/validate-all.sh $OUTPUT"
 echo "  • Start the GUI:           npm run gui -- --repo $OUTPUT"

@@ -43,7 +43,7 @@ Walk the owner through EVERY `aios` subcommand in logical order (below). For eac
 
 ## Rules
 - Workspace root: {{WORKSPACE_PATH}} (must contain aios.yaml).
-- CLI: {{AIOS_INVOKE}} — e.g. `npm run aios --` from the workspace root.
+- CLI: {{AIOS_INVOKE}} — after scaffold, run `aios loop daily` (shell function or `bin/aios` on PATH). `npm run aios -- …` also works.
 - Never push secrets. Never add `access:` frontmatter without the owner choosing the tier.
 - Never run `push`, `pull`, `ship`, `build --merge`, or `rails apply` without explicit owner confirmation.
 - Prefer `--dry-run` for push/review/writeback/ship/roadmap-run.
@@ -101,7 +101,7 @@ Rules:
 - Scaffold with --slug {handle}-workspace and --output ~/Projects/{handle}-workspace unless told otherwise.
 - Stop and report a BLOCKER if a step requires human admin action, browser OAuth, or a secret you cannot obtain.
 - Never commit API keys. Put AIOS_API_KEY in .env only.
-- After setup, run: npm run aios -- status (must connect), validation/validate-all.sh . (exit 0).
+- After setup, run: aios status (must connect), validation/validate-all.sh . (exit 0).
 
 Report: workspace path, aios status summary, validate-all exit code, and every BLOCKER step.
 ```
@@ -113,11 +113,23 @@ Report: workspace path, aios status summary, validate-all exit code, and every B
 | Check | Pass criterion |
 |-------|----------------|
 | Workspace | `aios.yaml` at root, spine 0–5 present, `.env` gitignored |
-| CLI | `npm run aios -- loop daily` exits 0 |
-| Brain | `npm run aios -- status` shows connected target URL |
+| CLI | `aios loop daily` exits 0 (or `npm run aios -- loop daily`) |
+| Brain | `aios status` shows connected target URL |
 | First push | At least one team-tier file pushed; `pull` + `query` succeed |
 | Validation | `validation/validate-all.sh <workspace>` exit 0 |
 | Journal | `5-personal/aios-onboarding-run-<date>.md` complete |
+
+---
+
+## Shell CLI (default after scaffold)
+
+| Method | Example | Notes |
+|--------|---------|-------|
+| Shell function | `aios loop daily` | Installed to `~/.zshrc` by scaffold (or `scripts/install-aios-shell.sh`) |
+| PATH + direnv | `direnv allow .` then `aios status` | `bin/aios` copied into each workspace |
+| npm | `npm run aios -- loop daily` | The `--` is **npm’s** separator, not an AIOS flag |
+
+Subcommands look like `aios loop daily` — `loop` is a subcommand, not `--loop`.
 
 ---
 
