@@ -180,9 +180,13 @@ commit. When it finishes it prints:
 Workspace ready: ~/Projects/abe-workspace
 Next:
   1. Connect the brain: set AIOS_API_KEY in .env, fill aios.yaml (brain_url, team_id)
-  2. aios status   # what would sync
+  2. aios status   # what would sync (shell function installed; or: direnv allow .)
   3. Validate: …/validation/validate-all.sh ~/Projects/abe-workspace
 ```
+
+The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to run
+`scripts/install-aios-shell.sh` (adds an `aios()` function to `~/.zshrc` that finds
+`aios.yaml` walking up from cwd — no `npm run --` needed).
 
 ---
 

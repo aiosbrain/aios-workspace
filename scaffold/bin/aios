@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Workspace-local aios — put bin/ on PATH (direnv) or call via the aios() shell function.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec node "$ROOT/scripts/aios.mjs" "$@"
