@@ -23,7 +23,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
-import { parseModelRef } from "./model-providers.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");

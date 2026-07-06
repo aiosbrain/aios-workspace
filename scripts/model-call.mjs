@@ -44,7 +44,7 @@ async function fetchCompletion(url, headers, body, timeoutMs, label) {
     clearTimeout(timer);
   }
   const text = await res.text();
-  if (!res.ok) throw new Error(`${label} exited ${res.status}: ${text.slice(0, 400)}`);
+  if (!res.ok) throw new Error(`${label} exited ${res.status}`);
   const json = JSON.parse(text);
   const content =
     json?.choices?.[0]?.message?.content ??
@@ -168,9 +168,7 @@ export async function callOpencodeAgent(prompt, timeoutMs, opts = {}) {
       else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
         reject(
-          new Error(
-            `opencode agent exited ${code}${errMsg ? ": " + errMsg.slice(0, 400) : ""}`
-          )
+          new Error(`opencode agent exited ${code}${errMsg ? ": " + errMsg.slice(0, 400) : ""}`)
         );
       }
     });
@@ -187,8 +185,12 @@ export function requirePromptModelKey(model, step) {
   if (ref.provider === "openrouter" && !process.env.OPENROUTER_API_KEY?.trim()) {
     throw new Error(`OPENROUTER_API_KEY is not set — required for ${label}`);
   }
-  if (ref.provider === "opencode" && !process.env.OPENCODE_API_KEY?.trim() && !process.env.OPENCODE_GO_API_KEY?.trim()) {
-    throw new Error(`OPENCODE_API_KEY is not set — required for ${label}`);
+  if (
+    ref.provider === "opencode" &&
+    !process.env.OPENCODE_API_KEY?.trim() &&
+    !process.env.OPENCODE_GO_API_KEY?.trim()
+  ) {
+    throw new Error(`OPENCODE_API_KEY (or OPENCODE_GO_API_KEY) is not set — required for ${label}`);
   }
 }
 
@@ -205,10 +207,7 @@ export async function callPromptModel({ model, prompt, timeoutMs, opts = {} }) {
     case "cursor":
       return callCursorAgent(prompt, timeoutMs, {
         ...opts,
-        extraArgs: [
-          ...(opts.extraArgs ?? []),
-          ...(ref.modelId ? ["--model", ref.modelId] : []),
-        ],
+        extraArgs: [...(opts.extraArgs ?? []), ...(ref.modelId ? ["--model", ref.modelId] : [])],
       });
     case "claude":
       return callClaudeAgent(prompt, timeoutMs, {
@@ -238,10 +237,7 @@ export async function callAgentModel({ model, prompt, timeoutMs, opts = {} }) {
     case "cursor":
       return callCursorAgent(prompt, timeoutMs, {
         ...opts,
-        extraArgs: [
-          ...(opts.extraArgs ?? []),
-          ...(ref.modelId ? ["--model", ref.modelId] : []),
-        ],
+        extraArgs: [...(opts.extraArgs ?? []), ...(ref.modelId ? ["--model", ref.modelId] : [])],
       });
     case "opencode":
       return callOpencodeAgent(prompt, timeoutMs, { ...opts, model: ref.modelId, cwd: opts.cwd });

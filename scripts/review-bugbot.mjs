@@ -13,13 +13,9 @@
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import {
-  c,
-  die,
-  checkPrereqs,
-  callCursorAgent,
-} from "./relay-core.mjs";
+import { c, die, checkPrereqs, callCursorAgent } from "./relay-core.mjs";
 import { callPromptModel } from "./model-call.mjs";
+import { parseModelRef } from "./model-providers.mjs";
 
 export const DEFAULT_BUGBOT_SKILL = "/review-bugbot";
 export const BUGBOT_CLEAR_TOKEN = "BUGBOT_CLEAR";
@@ -65,12 +61,22 @@ export function buildSecurityReviewPrompt({ branch, baseSha, diffStat, diff, log
   ].join("\n");
 }
 
-export function buildBugbotPrompt({ skill, branch, baseSha, diffStat, diff, logOneline }) {
+export function buildBugbotPrompt({
+  skill,
+  branch,
+  baseSha,
+  diffStat,
+  diff,
+  logOneline,
+  promptOnly = false,
+}) {
   return [
     skill,
     "",
     `Review branch \`${branch}\` changes (base ${baseSha}..HEAD) per your skill.`,
-    "Run tests/validators in this worktree to gather evidence.",
+    promptOnly
+      ? "You cannot run commands — base findings only on the diff and commit list below."
+      : "Run tests/validators in this worktree to gather evidence.",
     "",
     "## Commits",
     "",
@@ -154,35 +160,18 @@ export function captureBranchDiff(worktree, baseSha) {
   return { diffStat, logOneline, diff };
 }
 
-function resolveReviewBackend(preferred) {
-  const mode = preferred ?? process.env.AIOS_REVIEW_BACKEND ?? "auto";
-  if (mode === "cursor") return "cursor";
-  if (mode === "deepseek") return "deepseek";
-  if (mode === "openrouter") return "openrouter";
-  if (mode === "opencode") return "opencode";
-  if (process.env.DEEPSEEK_API_KEY) return "deepseek";
-  if (process.env.OPENCODE_API_KEY || process.env.OPENCODE_GO_API_KEY) return "opencode";
-  if (process.env.OPENROUTER_API_KEY) return "openrouter";
-  return "cursor";
-}
-
-async function runReviewPrompt({ label, prompt, worktree, timeoutMs, backend, model = "deepseek-v4-pro" }) {
-  if (backend === "deepseek" || backend === "openrouter" || backend === "opencode") {
-    console.log(c.dim(`[${backend}] ${label} (${model})...`));
-    const provider =
-      backend === "deepseek"
-        ? `deepseek:${model}`
-        : backend === "openrouter"
-          ? `openrouter:${model}`
-          : `opencode:${model}`;
-    return callPromptModel({ model: provider, prompt, timeoutMs, opts: { cwd: worktree } });
+async function runReviewPrompt({ label, prompt, worktree, timeoutMs, model = "deepseek-v4-pro" }) {
+  const ref = parseModelRef(model);
+  if (ref.provider === "cursor") {
+    checkPrereqs({ requireAnthropic: false, requireClaude: false, requireCursor: true });
+    console.log(c.dim(`[cursor] ${label} (${model})...`));
+    return callCursorAgent(prompt, timeoutMs, {
+      cwd: worktree,
+      extraArgs: [...CURSOR_REVIEW_FLAGS, ...(ref.modelId ? ["--model", ref.modelId] : [])],
+    });
   }
-  checkPrereqs({ requireAnthropic: false, requireClaude: false, requireCursor: true });
-  console.log(c.dim(`[cursor] ${label}...`));
-  return callCursorAgent(prompt, timeoutMs, {
-    cwd: worktree,
-    extraArgs: CURSOR_REVIEW_FLAGS,
-  });
+  console.log(c.dim(`[${ref.provider}] ${label} (${model})...`));
+  return callPromptModel({ model, prompt, timeoutMs, opts: { cwd: worktree } });
 }
 
 /** Pre-PR local pass: code (/review-bugbot persona) + security, via DeepSeek when keyed. */
@@ -191,7 +180,6 @@ export async function runLocalPrePrReview({
   baseSha,
   branch,
   timeoutMs = DEFAULT_TIMEOUT * 1000,
-  backend,
   model = "deepseek-v4-pro",
   reviewPrompt = runReviewPrompt,
 }) {
@@ -200,20 +188,23 @@ export async function runLocalPrePrReview({
   }
   if (!baseSha) die("baseSha required for pre-PR review");
 
-  const resolvedBackend = resolveReviewBackend(backend);
+  const promptOnly = parseModelRef(model).provider !== "cursor";
   const { diffStat, logOneline, diff } = captureBranchDiff(worktree, baseSha);
   if (!diffStat && !logOneline) {
     return { ok: true, output: "(no diff to review)" };
   }
 
   const shared = { branch, baseSha, diffStat, diff, logOneline };
-  const codePrompt = buildBugbotPrompt({ skill: DEFAULT_BUGBOT_SKILL, ...shared });
+  const codePrompt = buildBugbotPrompt({
+    skill: DEFAULT_BUGBOT_SKILL,
+    promptOnly,
+    ...shared,
+  });
   const codeOut = await reviewPrompt({
     label: "pre-PR code review",
     prompt: codePrompt,
     worktree,
     timeoutMs,
-    backend: resolvedBackend,
     model,
   });
   if (!detectBugbotClear(codeOut)) {
@@ -226,7 +217,6 @@ export async function runLocalPrePrReview({
     prompt: secPrompt,
     worktree,
     timeoutMs,
-    backend: resolvedBackend,
     model,
   });
   const ok = detectBugbotClear(secOut);
@@ -243,26 +233,32 @@ export async function runLocalBugbotReview({
   branch,
   cursorTimeout = DEFAULT_TIMEOUT * 1000,
   skill = DEFAULT_BUGBOT_SKILL,
-  backend,
-  model = "deepseek-v4-pro",
+  model = "cursor:gpt-5.5-high",
   reviewPrompt = runReviewPrompt,
 }) {
   if (!worktree || !existsSync(worktree)) die("worktree path missing for Bugbot review");
   if (!baseSha) die("baseSha required for Bugbot review");
 
-  const resolvedBackend = resolveReviewBackend(backend);
+  const ref = parseModelRef(model);
   const { diffStat, logOneline, diff } = captureBranchDiff(worktree, baseSha);
   if (!diffStat && !logOneline) {
     return { ok: true, output: "(no diff to review)" };
   }
 
-  const prompt = buildBugbotPrompt({ skill, branch, baseSha, diffStat, diff, logOneline });
+  const prompt = buildBugbotPrompt({
+    skill,
+    branch,
+    baseSha,
+    diffStat,
+    diff,
+    logOneline,
+    promptOnly: ref.provider !== "cursor",
+  });
   const out = await reviewPrompt({
     label: `Bugbot review (${skill})`,
     prompt,
     worktree,
     timeoutMs: cursorTimeout,
-    backend: resolvedBackend,
     model,
   });
   const ok = detectBugbotClear(out);

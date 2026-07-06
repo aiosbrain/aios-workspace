@@ -636,19 +636,28 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   let modelOutput;
   try {
     console.log(c.dim(`[consolidate] ${cfg.model}${cfg.effort ? ` (effort=${cfg.effort})` : ""}…`));
-    modelOutput = await (deps.callPromptModel
-      ? deps.callPromptModel({
+    modelOutput = await (async () => {
+      if (deps.callPromptModel) {
+        return deps.callPromptModel({
           model: cfg.model,
           prompt,
           timeoutMs,
           opts: { extraArgs: cfg.effort ? ["--effort", cfg.effort] : [] },
-        })
-      : callPromptModel({
+        });
+      }
+      if (deps.callAgent) {
+        return deps.callAgent(prompt, timeoutMs, {
           model: cfg.model,
-          prompt,
-          timeoutMs,
-          opts: { extraArgs: cfg.effort ? ["--effort", cfg.effort] : [] },
-        }));
+          extraArgs: cfg.effort ? ["--effort", cfg.effort] : [],
+        });
+      }
+      return callPromptModel({
+        model: cfg.model,
+        prompt,
+        timeoutMs,
+        opts: { extraArgs: cfg.effort ? ["--effort", cfg.effort] : [] },
+      });
+    })();
   } catch (e) {
     console.error(c.red(`error: consolidation model call failed: ${e.message}`));
     return 1;

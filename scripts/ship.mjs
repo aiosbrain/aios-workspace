@@ -47,7 +47,7 @@ import {
   defaultOutPath,
 } from "./consolidate-findings.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import { modelFamily } from "./model-providers.mjs";
+import { modelFamily, parseModelRef } from "./model-providers.mjs";
 import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
@@ -861,6 +861,11 @@ const lastNonBlankLine = (text) =>
     .filter(Boolean)
     .at(-1) ?? "";
 
+function cursorCliModelArg(model) {
+  const ref = parseModelRef(model);
+  return ref.provider === "cursor" && ref.modelId ? ref.modelId : model;
+}
+
 // ── orchestration ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -874,7 +879,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     runBuild: runBuildDep,
     cmdPr: cmdPrDep,
     cmdConsolidateFindings: consolidateDep,
-    callClaudeAgent: claude,
     callCursorAgent: cursor,
     callDeepSeekDirect: deepseek,
     waitForBots,
@@ -921,13 +925,15 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const reviewCall = deps.reviewCallForModel
     ? (model) => deps.reviewCallForModel(model)
     : deps.callPromptModel
-      ? (model) => (prompt, timeoutMs, opts = {}) =>
-          deps.callPromptModel({ model, prompt, timeoutMs, opts })
+      ? (model) =>
+          (prompt, timeoutMs, opts = {}) =>
+            deps.callPromptModel({ model, prompt, timeoutMs, opts })
       : deps.callDeepSeekDirect || deps.callCursorAgent
-        ? (model) => (prompt, timeoutMs, opts = {}) =>
-            modelFamily(model) === "deepseek"
-              ? deepseek(prompt, timeoutMs, { model, ...opts })
-              : cursor(prompt, timeoutMs, opts)
+        ? (model) =>
+            (prompt, timeoutMs, opts = {}) =>
+              modelFamily(model) === "deepseek"
+                ? deepseek(prompt, timeoutMs, { model, ...opts })
+                : cursor(prompt, timeoutMs, opts)
         : reviewCallForModel;
   const gates = resolveGates({
     auto: opts.auto,
@@ -1066,7 +1072,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         repo,
         rubric,
         useLlm: true,
-        anthropic: await getAnthropic(),
         evalCfg: models.spec_eval,
         decisions,
       });
@@ -1173,7 +1178,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             extraArgs: [
               "--force",
               "--trust",
-              ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
+              ...(planReviewCfg.model ? ["--model", cursorCliModelArg(planReviewCfg.model)] : []),
             ],
           }
         );
@@ -1484,7 +1489,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             buildGptReviewPrompt(plan, prDiff, prNumber),
             gptCfg.timeoutMs ?? 300 * 1000,
             {
-              extraArgs: ["--force", "--trust", ...(gptCfg.model ? ["--model", gptCfg.model] : [])],
+              extraArgs: [
+                "--force",
+                "--trust",
+                ...(gptCfg.model ? ["--model", cursorCliModelArg(gptCfg.model)] : []),
+              ],
             }
           );
           writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);

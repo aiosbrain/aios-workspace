@@ -127,18 +127,26 @@ console.log("agentic-provider guard (fail closed)");
   const repo = mkdtempSync(path.join(tmpdir(), "lm-runner-"));
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
 
-  // A GPT model on a Claude-runner step (build) via FILE must abort.
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: gpt-5.3-codex\n");
+  // Bare GPT on build resolves to cursor (agentic). Prompt-only providers must abort.
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "build_model: cursor:gpt-5.3-codex\n"
+  );
+  check("cursor build_model via file passes", resolveInChild({ repo }).ok === true);
+
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "build_model: openrouter:openai/gpt-5.3-codex\n"
+  );
   const badFile = resolveInChild({ repo });
-  check("gpt build_model via file aborts", badFile.ok === false);
+  check("openrouter build_model via file aborts", badFile.ok === false);
   check("message names agentic provider requirement", /agentic provider/.test(badFile.stderr));
 
-  // Same via a CLI --model override (no config file needed).
   const badCli = resolveInChild({
     repo: null,
-    cliOverrides: { build: { model: "gpt-5.3-codex" } },
+    cliOverrides: { build: { model: "openrouter:openai/gpt-5.3-codex" } },
   });
-  check("gpt build model via CLI aborts", badCli.ok === false);
+  check("openrouter build model via CLI aborts", badCli.ok === false);
 
   // A Claude-family id is accepted.
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: claude-sonnet-5\n");
@@ -148,14 +156,20 @@ console.log("agentic-provider guard (fail closed)");
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: opencode:glm-5.2\n");
   check("opencode build_model passes", resolveInChild({ repo }).ok === true);
 
-  const badPlan = resolveInChild({ repo: null, cliOverrides: { plan: { model: "deepseek-v4-pro" } } });
+  const badPlan = resolveInChild({
+    repo: null,
+    cliOverrides: { plan: { model: "deepseek-v4-pro" } },
+  });
   check("deepseek plan model aborts (prompt-only provider)", badPlan.ok === false);
 
   writeFileSync(
     path.join(repo, ".aios", "loop-models.yaml"),
     "consolidate_model: openrouter:openai/gpt-4o-mini\n"
   );
-  check("openrouter consolidate_model passes (prompt-only step)", resolveInChild({ repo }).ok === true);
+  check(
+    "openrouter consolidate_model passes (prompt-only step)",
+    resolveInChild({ repo }).ok === true
+  );
 
   const okDefault = resolveInChild({ repo: null });
   check(
@@ -259,14 +273,8 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
 {
   const empty = mkdtempSync(path.join(tmpdir(), "lm-spec-"));
   const r = resolveLoopModels({ repo: empty });
-  check(
-    "spec_eval defaults to deepseek-v4-pro",
-    r.spec_eval.model === "deepseek-v4-pro"
-  );
-  check(
-    "spec_fix defaults to deepseek-v4-pro",
-    r.spec_fix.model === "deepseek-v4-pro"
-  );
+  check("spec_eval defaults to deepseek-v4-pro", r.spec_eval.model === "deepseek-v4-pro");
+  check("spec_fix defaults to deepseek-v4-pro", r.spec_fix.model === "deepseek-v4-pro");
   check("spec_eval is a known step", STEPS.includes("spec_eval"));
   check("spec_fix is a known step", STEPS.includes("spec_fix"));
   rmSync(empty, { recursive: true, force: true });
