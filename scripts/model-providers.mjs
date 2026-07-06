@@ -12,13 +12,7 @@
 /** @typedef {{ provider: string, modelId: string, raw: string }} ModelRef */
 
 export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode"]);
-export const PROMPT_PROVIDERS = new Set([
-  "openrouter",
-  "deepseek",
-  "opencode",
-  "cursor",
-  "claude",
-]);
+export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "cursor", "claude"]);
 
 // Bare open-model ids → OpenRouter vendor/model when OpenCode isn't keyed.
 export const OPENROUTER_ALIASES = {
@@ -77,10 +71,7 @@ export function parseModelRef(raw) {
   }
   if (lower.startsWith("gpt") || lower.startsWith("o1") || lower.startsWith("o3")) {
     return {
-      provider: pickProvider(
-        hasEnv("OPENROUTER_API_KEY") ? "openrouter" : null,
-        "cursor"
-      ),
+      provider: pickProvider(hasEnv("OPENROUTER_API_KEY") ? "openrouter" : null, "cursor"),
       modelId: s,
       raw: s,
     };
