@@ -365,6 +365,11 @@ sed -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{CONTACTS_YAML}}|  # Add c
   "$SCAFFOLD/contacts.yaml.tmpl" > "$OUTPUT/contacts.yaml"
 
 [ -f "$SCAFFOLD/.env.example" ] && cp "$SCAFFOLD/.env.example" "$OUTPUT/.env.example"
+# Also materialize .env itself (not just .env.example) — dotenvx (used by `npm run gui`
+# and the Tauri app) refuses to start at all if .env is missing, even before any real
+# secret is set, which used to crash a scaffold-then-immediately-run-gui flow with
+# MISSING_ENV_FILE. Shared with src-tauri's scaffold path so both stay in sync.
+command -v node >/dev/null 2>&1 && node "$SCRIPT_DIR/ensure-env.mjs" --repo "$OUTPUT"
 
 # Copy the agent layer (rules, skills, rubrics, memory, personalities)
 cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"

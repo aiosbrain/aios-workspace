@@ -173,8 +173,9 @@ Add `--dry-run` to preview the spine without creating anything.
 
 The scaffolder also drops in the `.claude/` agent layer (rules, skills, rubrics), the
 governance hook, `aios.yaml` **(a real, filled-in file at the workspace root — not a
-template, and not inside a `scaffold/` folder)**, `.env.example`, and an initial git
-commit. When it finishes it prints:
+template, and not inside a `scaffold/` folder)**, `.env.example` **and a starter `.env`
+copied from it** (so `npm run gui`/`aios onboard` never crash on a missing `.env` before
+you've set anything), and an initial git commit. When it finishes it prints:
 
 ```
 Workspace ready: ~/Projects/abe-workspace
@@ -195,11 +196,8 @@ The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to 
 `cd ~/Projects/abe-workspace` — you are now inside **folder B**, your real
 workspace, not the toolkit. Wire up two files, both at this folder's top level.
 
-**`.env`** (copy from `.env.example`; gitignored — never commit it):
-
-```bash
-cp .env.example .env
-```
+**`.env`** (gitignored — never commit it) — the scaffolder already created this for
+you (copied from `.env.example`), so just fill in the real values:
 
 ```dotenv
 # .env  — fake values shown; use the real key John issued you
