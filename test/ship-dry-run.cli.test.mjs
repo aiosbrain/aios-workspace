@@ -69,7 +69,7 @@ console.log("ship AIO-163 --dry-run (offline, no key)");
   check("exit 0", r.code === 0);
   check("prints stages", /Stages \(spec eval/.test(r.stdout));
   check("prints per-step models (recon)", /recon\s+claude/.test(r.stdout));
-  check("prints spec_eval model", /spec_eval\s+claude/.test(r.stdout));
+  check("prints spec_eval model", /spec_eval\s+deepseek/.test(r.stdout));
   check("prints gates", /Gates:/.test(r.stdout));
   check("prints reviewers", /Reviewers:/.test(r.stdout));
   check(

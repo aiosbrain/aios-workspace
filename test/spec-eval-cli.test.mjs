@@ -37,6 +37,14 @@ test("eval --no-llm on a clean spec → exit 3 (NOT_EVALUATED)", () => {
   assert.equal(runSpec(["eval", STRONG, "--no-llm"]).code, 3);
 });
 
+test("eval without stub or key → exit 4 (DEEPSEEK_API_KEY required)", () => {
+  const env = { ...process.env, DEEPSEEK_API_KEY: "" };
+  delete env.AIOS_SPEC_EVAL_STUB;
+  const r = runSpec(["eval", STRONG], env);
+  assert.equal(r.code, 4);
+  assert.match(r.stderr, /DEEPSEEK_API_KEY/);
+});
+
 test("eval --no-llm on a spec with a deterministic blocker → exit 1", () => {
   assert.equal(runSpec(["eval", DEMO, "--no-llm"]).code, 1);
 });

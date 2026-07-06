@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { die } from "./relay-core.mjs";
+import { modelFamily, parseModelRef, isAgenticProvider } from "./model-providers.mjs";
 
 // The default per-step matrix. `effort` is omitted for steps whose model/runner does
 // not take a reasoning-effort knob. Keep this in sync with docs/loop-models.example.yaml.
@@ -37,12 +38,11 @@ export const DEFAULT_MODELS = {
   safety_review: { model: "claude-opus-4-8", effort: "xhigh" },
   orchestrate: { model: "fable-5" },
   digest: { model: "claude-haiku-4-5" },
-  // Spec/plan readiness harness (EE5): the adversarial evaluator + the fix-loop reviser. Both
-  // run on the Anthropic SDK, so both are Claude-runner steps. There is NO diversity pair here —
-  // spec eval is a single adversarial pass, not a producer/reviewer loop (prompt-discipline, not
-  // model-family independence, is what makes it trustworthy).
-  spec_eval: { model: "claude-opus-4-8", effort: "xhigh" },
-  spec_fix: { model: "claude-opus-4-8", effort: "high" },
+  // Spec/plan readiness harness (EE5): adversarial evaluator + fix-loop reviser. Prompt-only
+  // single-shot calls — default deepseek-v4-pro (same reviewer backend as plan_review/code_review)
+  // so spec grading does not consume Anthropic API credits.
+  spec_eval: { model: "deepseek-v4-pro" },
+  spec_fix: { model: "deepseek-v4-pro" },
   // Decision-corpus distillation (EE4 / AIO-192): a single summarization pass over the local
   // steering-decision corpus. Like spec_eval it is NOT a producer/reviewer loop — no diversity
   // pair — so it stays out of DIVERSITY_PAIRS; it runs through llm.ts (Anthropic SDK) so it IS a
@@ -50,45 +50,17 @@ export const DEFAULT_MODELS = {
   decisions_distill: { model: "claude-opus-4-8", effort: "high" },
 };
 
+export { modelFamily } from "./model-providers.mjs";
+
 export const STEPS = Object.keys(DEFAULT_MODELS);
 
-// Family for the diversity guard: Anthropic (claude*/fable*), OpenAI (gpt*), DeepSeek
-// (deepseek*), else other.
-export function modelFamily(model) {
-  const m = String(model ?? "").toLowerCase();
-  if (m.startsWith("claude") || m.startsWith("fable")) return "anthropic";
-  if (m.startsWith("gpt")) return "openai";
-  if (m.startsWith("deepseek")) return "deepseek";
-  return "other";
-}
+// Agentic steps run through a tool-capable runner (Claude Code, Cursor, or OpenCode CLI).
+const AGENTIC_STEPS = ["plan", "build", "fix", "fix_escalated"];
 
 // The producer/reviewer pairs that must stay cross-family.
 const DIVERSITY_PAIRS = [
   ["build", "code_review"],
   ["plan", "plan_review"],
-];
-
-// Steps whose model is handed to a Claude runner: the Claude Code CLI (callClaudeAgent —
-// build/fix/fix_escalated) or the Claude Agent SDK (plan), plus the findings consolidator
-// (callClaudeAgent — consolidate), the spec harness (spec_eval/spec_fix), and the
-// ship/roadmap-run steps that also run through callClaudeAgent (recon, safety_review, digest).
-// Their model MUST be Claude-family (anthropic), or a non-Claude id (e.g. gpt-5.3-codex) would
-// be passed straight to a Claude runner and fail obscurely. The reviewer steps run on Cursor
-// and are unconstrained here.
-const CLAUDE_RUNNER_STEPS = [
-  "plan",
-  "build",
-  "fix",
-  "fix_escalated",
-  "consolidate",
-  "spec_eval",
-  "spec_fix",
-  // NEW — executed via callClaudeAgent in ship/roadmap-run.
-  "recon",
-  "safety_review",
-  "digest",
-  // Runs through the operator-loop llm.ts seam (Anthropic Messages API).
-  "decisions_distill",
 ];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
@@ -151,15 +123,14 @@ function validateCliOverrides(cliOverrides) {
   }
 }
 
-// Claude-runner steps must resolve to a Claude-family (anthropic) model.
-function assertRunnerFamilies(resolved) {
-  for (const step of CLAUDE_RUNNER_STEPS) {
-    const fam = modelFamily(resolved[step].model);
-    if (fam !== "anthropic") {
+function assertAgenticProviders(resolved) {
+  for (const step of AGENTIC_STEPS) {
+    const ref = parseModelRef(resolved[step].model);
+    if (!isAgenticProvider(ref.provider)) {
       die(
-        `${step} runs on a Claude runner and needs a Claude-family model, but ` +
-          `'${resolved[step].model}' resolves to '${fam}'. Set ${step}_model to a ` +
-          `claude-*/fable-* model in .aios/loop-models.yaml (or pass --model with a Claude id).`
+        `${step} needs an agentic provider (claude, cursor, or opencode) but ` +
+          `'${resolved[step].model}' resolves to '${ref.provider}'. ` +
+          `Prefix with claude:, cursor:, or opencode: — or use openrouter:/deepseek:/opencode: on review steps only.`
       );
     }
   }
@@ -173,7 +144,7 @@ function assertDiversity(resolved) {
       die(
         `${producer} and ${reviewer} must use different model families (both resolved to '${pf}'); ` +
           `the reviewer must be an independent model — set ${reviewer}_model to a different-family ` +
-          `model (e.g. a gpt-* model) in .aios/loop-models.yaml`
+          `model (e.g. opencode:glm-5.2 or openrouter:openai/gpt-5.5) in .aios/loop-models.yaml`
       );
     }
   }
@@ -234,7 +205,7 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) 
   }
 
   // Fail closed regardless of source — defaults, file, and CLI all pass through here.
-  assertRunnerFamilies(resolved);
+  assertAgenticProviders(resolved);
   assertDiversity(resolved);
   return resolved;
 }

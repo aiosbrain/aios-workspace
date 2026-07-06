@@ -22,10 +22,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
+import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
+import { parseModelRef } from "./model-providers.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 const DEFAULT_FIX_BUDGET = 2;
+const SPEC_PROMPT_TIMEOUT_MS = 300_000;
 
 // The rule ids the deterministic layer can emit. The rubric↔code drift test asserts every
 // deterministic must/conditional row in the rubric appears here (no silent divergence).
@@ -435,26 +438,17 @@ function buildEvalPrompt(specText, rubric, deterministic, decisions) {
   ].join("\n");
 }
 
-/** Default adversarial evaluator: the SDK. Honors the AIOS_SPEC_EVAL_STUB test seam. Returns
- *  the model's raw text (parsed defensively by runAdversarialEval). */
-async function defaultEvalFn({ specText, rubric, deterministic, decisions, anthropic, evalCfg }) {
+/** Default adversarial evaluator. Honors AIOS_SPEC_EVAL_STUB. Routes via callPromptModel. */
+async function defaultEvalFn({ specText, rubric, deterministic, decisions, evalCfg }) {
   const stub = process.env.AIOS_SPEC_EVAL_STUB;
   if (stub != null) return existsSync(stub) ? readFileSync(stub, "utf8") : stub;
-  const model = evalCfg?.model ?? "claude-opus-4-8";
-  const effort = evalCfg?.effort ?? "xhigh";
-  const stream = anthropic.messages.stream({
+  const model = evalCfg?.model ?? "deepseek-v4-pro";
+  const prompt = `${EVAL_SYSTEM}\n\n${buildEvalPrompt(specText, rubric, deterministic, decisions)}`;
+  return callPromptModel({
     model,
-    max_tokens: 16000,
-    thinking: { type: "adaptive" },
-    output_config: { effort },
-    system: EVAL_SYSTEM,
-    messages: [
-      { role: "user", content: buildEvalPrompt(specText, rubric, deterministic, decisions) },
-    ],
+    prompt,
+    timeoutMs: evalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
   });
-  const res = await stream.finalMessage();
-  const block = res.content.find((b) => b.type === "text");
-  return block ? block.text : "";
 }
 
 const VALID_SEVERITY = new Set(["blocker", "major", "minor"]);
@@ -521,14 +515,13 @@ export async function runAdversarialEval({
   specText,
   rubric,
   deterministic = [],
-  anthropic = null,
   evalCfg = null,
   decisions = [],
   evalFn = defaultEvalFn,
 }) {
   let text;
   try {
-    text = await evalFn({ specText, rubric, deterministic, decisions, anthropic, evalCfg });
+    text = await evalFn({ specText, rubric, deterministic, decisions, evalCfg });
   } catch (e) {
     return {
       verdict: "NOT_READY",
@@ -566,7 +559,6 @@ export async function evaluateSpec({
   repo,
   rubric,
   useLlm = true,
-  anthropic = null,
   evalCfg = null,
   evalFn,
   decisions = [],
@@ -583,11 +575,30 @@ export async function evaluateSpec({
       specText,
       rubric,
       deterministic,
-      anthropic,
       evalCfg,
       decisions,
       evalFn,
     });
+    // One retry when the model returns unparseable JSON.
+    if (adversarial.parseError && !evalFn) {
+      const model = evalCfg?.model ?? "deepseek-v4-pro";
+      const retryEvalFn = async (args) => {
+        const prompt = `${EVAL_SYSTEM}\n\nCRITICAL: output ONLY the JSON object. No markdown fences.\n\n${buildEvalPrompt(args.specText, args.rubric, args.deterministic, args.decisions)}`;
+        return callPromptModel({
+          model,
+          prompt,
+          timeoutMs: evalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
+        });
+      };
+      adversarial = await runAdversarialEval({
+        specText,
+        rubric,
+        deterministic,
+        evalCfg,
+        decisions,
+        evalFn: retryEvalFn,
+      });
+    }
     score = adversarial.score;
     if (detBlockers.length) {
       verdict = "NOT_READY";
@@ -638,24 +649,18 @@ function buildFixPrompt(specText, findings, rubric) {
   ].join("\n");
 }
 
-/** Default reviser: the SDK. Honors the AIOS_SPEC_FIX_STUB test seam. Returns the revised spec. */
-async function defaultReviseFn({ specText, findings, rubric, anthropic, fixCfg }) {
+/** Default reviser. Honors AIOS_SPEC_FIX_STUB. Routes via callPromptModel. */
+async function defaultReviseFn({ specText, findings, rubric, fixCfg }) {
   const stub = process.env.AIOS_SPEC_FIX_STUB;
   if (stub != null) return existsSync(stub) ? readFileSync(stub, "utf8") : stub;
-  const model = fixCfg?.model ?? "claude-opus-4-8";
-  const effort = fixCfg?.effort ?? "high";
-  const stream = anthropic.messages.stream({
+  const model = fixCfg?.model ?? "deepseek-v4-pro";
+  const prompt = buildFixPrompt(specText, findings, rubric);
+  const text = await callPromptModel({
     model,
-    max_tokens: 32000,
-    thinking: { type: "adaptive" },
-    output_config: { effort },
-    system:
-      "You are a senior software architect improving a spec so it passes the readiness rubric.",
-    messages: [{ role: "user", content: buildFixPrompt(specText, findings, rubric) }],
+    prompt,
+    timeoutMs: fixCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
   });
-  const res = await stream.finalMessage();
-  const block = res.content.find((b) => b.type === "text");
-  return block ? block.text.trim() : specText;
+  return text.trim() || specText;
 }
 
 /**
@@ -671,7 +676,6 @@ export async function runFixLoop({
   rubric,
   budget,
   useLlm = true,
-  anthropic = null,
   evalCfg = null,
   fixCfg = null,
   evalFn,
@@ -684,7 +688,7 @@ export async function runFixLoop({
       : (rubric?.frontmatter?.budget ?? DEFAULT_FIX_BUDGET);
   let current = specText;
   const evalOnce = (text) =>
-    evaluateSpec({ specText: text, repo, rubric, useLlm, anthropic, evalCfg, evalFn, decisions });
+    evaluateSpec({ specText: text, repo, rubric, useLlm, evalCfg, evalFn, decisions });
 
   const before = await evalOnce(current);
   let result = before;
@@ -697,7 +701,6 @@ export async function runFixLoop({
         specText: current,
         findings: result.findings,
         rubric,
-        anthropic,
         fixCfg,
       });
     } catch (e) {
@@ -853,26 +856,27 @@ export async function cmdSpec(repo, args) {
     process.exit(4);
   }
 
-  // An SDK call is needed only when the LLM layer runs without a stub.
+  // A model call is needed only when the LLM layer runs without a stub.
   const evalStubbed = process.env.AIOS_SPEC_EVAL_STUB != null;
   const fixStubbed = process.env.AIOS_SPEC_FIX_STUB != null;
   // With --no-llm neither the evaluator nor the reviser runs, so no key is ever needed.
   const needsKey =
     (sub === "eval" && !noLlm && !evalStubbed) ||
     (sub === "fix" && !noLlm && (!evalStubbed || !fixStubbed));
-  let anthropic = null;
-  if (needsKey) {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error(
-        c.red("error: ANTHROPIC_API_KEY is not set — run with --no-llm for deterministic-only.")
-      );
-      process.exit(4);
-    }
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    anthropic = new Anthropic();
-  }
 
   const models = resolveLoopModels({ repo });
+  if (needsKey) {
+    try {
+      requirePromptModelKey(models.spec_eval.model, "spec_eval");
+      if (sub === "fix" && !fixStubbed) {
+        requirePromptModelKey(models.spec_fix.model, "spec_fix");
+      }
+    } catch (e) {
+      console.error(c.red(`error: ${e.message}`));
+      process.exit(4);
+    }
+  }
+
   const decisions = await loadRecentDecisions(repo);
 
   if (sub === "eval") {
@@ -881,7 +885,6 @@ export async function cmdSpec(repo, args) {
       repo,
       rubric,
       useLlm: !noLlm,
-      anthropic,
       evalCfg: models.spec_eval,
       decisions,
     });
@@ -917,7 +920,6 @@ export async function cmdSpec(repo, args) {
     rubric,
     budget: Number.isFinite(budget) ? budget : undefined,
     useLlm: !noLlm,
-    anthropic,
     evalCfg: models.spec_eval,
     fixCfg: models.spec_fix,
     decisions,
