@@ -62,12 +62,16 @@ export async function pickConnectors(connectors, { pinned } = {}) {
   return bailOnCancel(selected);
 }
 
-/** Masked secret prompt, with the "how do I get one" instructions shown above it. */
+/**
+ * Masked secret prompt, with the "how do I get one" instructions shown above it.
+ * Trims the result — a pasted secret commonly carries a trailing newline/space that
+ * would otherwise get stored verbatim and silently break auth later.
+ */
 export async function askSecret(label, { instructions, instructionsUrl } = {}) {
   if (instructions) clack.log.info(instructions);
   else if (instructionsUrl) clack.log.info(`Get one: ${instructionsUrl}`);
   const value = await clack.password({ message: `${label}:` });
-  return bailOnCancel(value);
+  return bailOnCancel(value)?.trim() ?? "";
 }
 
 /**
