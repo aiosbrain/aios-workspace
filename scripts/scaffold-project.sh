@@ -383,7 +383,7 @@ sed -e "s|{{STAKEHOLDER_NAME}}|$STAKEHOLDER|g" -e "s|{{CONTACTS_YAML}}|  # Add c
 
 # Copy the agent layer (rules, skills, rubrics, memory, personalities)
 cp "$SCAFFOLD/.claude/rules/"*.md "$OUTPUT/.claude/rules/"
-for d in skills rubrics memory personalities; do
+for d in skills rubrics memory personalities agents; do
   if [ -d "$SCAFFOLD/.claude/$d" ]; then mkdir -p "$OUTPUT/.claude/$d"; cp -R "$SCAFFOLD/.claude/$d/." "$OUTPUT/.claude/$d/"; fi
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"
@@ -416,11 +416,12 @@ cp "$REPO_ROOT/hooks/team-ops-guard.sh" "$OUTPUT/hooks/team-ops-guard.sh"
 chmod +x "$OUTPUT/hooks/team-ops-guard.sh"
 cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patterns.txt"
 
-# Session pulse Stop hook (AIO-214): a dependency-free 2-line post-session read of the
-# last `aios analyze` state — same reasoning as team-ops-guard.sh above, shipped
-# standalone so it runs without the rest of the toolkit present.
-cp "$REPO_ROOT/hooks/session-pulse.mjs" "$OUTPUT/hooks/session-pulse.mjs"
-chmod +x "$OUTPUT/hooks/session-pulse.mjs"
+# Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
+# standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.
+for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs; do
+  cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
+  chmod +x "$OUTPUT/hooks/$hook"
+done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
 # Generate the skills + integrations catalogs for the new workspace
