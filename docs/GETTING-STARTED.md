@@ -178,11 +178,13 @@ commit. When it finishes it prints:
 
 ```
 Workspace ready: ~/Projects/abe-workspace
-Next:
-  1. Connect the brain: set AIOS_API_KEY in .env, fill aios.yaml (brain_url, team_id)
-  2. aios status   # what would sync (shell function installed; or: direnv allow .)
-  3. Validate: …/validation/validate-all.sh ~/Projects/abe-workspace
+
+Next: Connect the Team Brain: run `aios onboard` (or set AIOS_API_KEY + brain_url/team_id in aios.yaml).
 ```
+
+One line, not a checklist — it reflects whatever you actually still need to do next
+(connect the brain, then push something, then start the GUI), computed fresh each time
+you scaffold or run `aios onboard --print-next-only`.
 
 The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to run
 `scripts/install-aios-shell.sh` (adds an `aios()` function to `~/.zshrc` that finds
