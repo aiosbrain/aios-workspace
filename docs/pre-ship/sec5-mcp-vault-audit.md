@@ -1,6 +1,6 @@
 # SEC5 — MCP + integrations vault audit
 
-Parent: Pre-release security epic.
+Parent: Pre-release security epic. Owner: john@john-ellison.com
 
 ## Why
 
@@ -45,4 +45,11 @@ MCP reuses brain server-side tier filtering; admin-tier never returned. Doc row 
 
 ## Testability
 
-- `node scripts/brain-mcp.test.mjs` exit **0**.
+Named acceptance test:
+
+```bash
+node --test scripts/brain-mcp.test.mjs
+grep -q 'MCP.*read-only\|read-only.*MCP' docs/pre-ship/security-audit-checklist.md
+```
+
+Both exit **0**.

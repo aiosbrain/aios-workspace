@@ -141,6 +141,10 @@ noted.
   a doc that documented a wrong flag set (e.g. `--project-slug` while the script accepts `--slug`) fails
   against the script rather than passing tautologically. Both the doc grep and the script cross-check
   must pass.
+- **Tier-safety posture statements present**: `docs/getting-started/agent-onboarding.md` contains these
+  literal substrings (case-sensitive): `Admin-tier content never syncs`, `Default-deny on missing`,
+  and `422`. Verified by `test/af1-agent-onboarding-doc.test.mjs` (grep assertions on the doc body).
+  Pass = `node --test test/af1-agent-onboarding-doc.test.mjs` exits `0`.
 - **Website cross-link (separate deliverable — see Scope)**: after the website PR merges,
   `grep -q "agent-onboarding" aios-website/src/content/docs/getting-started/onboarding-a-contributor.mdx`
   succeeds; if the website ships in a separate repo/PR, a cross-repo handoff note is recorded in the epic
@@ -228,7 +232,9 @@ Automated (named tests, reproducible in a cold environment with no brain access 
   test (full-block equality, not a two-line grep); (c) no bare runnable `aios ` invocations
   (`^\s*aios ` absent); (d) `--slug/--output/--owner/--context` present in the doc **and** each of
   those four flags present in `scripts/scaffold-project.sh`'s argument parsing (script read
-  programmatically — catches a doc that documents flags the script does not accept). This demonstrates
+  programmatically — catches a doc that documents flags the script does not accept); (e) tier-safety
+  posture substrings present (`Admin-tier content never syncs`, `Default-deny on missing`, `422`).
+  This demonstrates
   the core doc-deliverable acceptance without touching the human-gated onboarding flow.
 - `npm run aios -- spec eval docs/pre-ship/af1-agent-onboarding-contract.md --no-llm` — expected exit
   `3` (deterministic-clean, LLM opted out); no secrets required. This is the reproducible cold-CI gate

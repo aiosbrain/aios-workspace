@@ -1,6 +1,6 @@
 # SEC3 — Hooks + PreToolUse guards audit
 
-Parent: Pre-release security epic.
+Parent: Pre-release security epic. Owner: john@john-ellison.com
 
 ## Why
 
@@ -47,5 +47,13 @@ Build-with: sonnet / low.
 
 ## Testability
 
-- `validation/check-frontmatter.sh examples/synthetic-consultant` exit **0**.
-- `validation/check-secrets.sh examples/synthetic-consultant` exit **0**.
+Named acceptance test:
+
+```bash
+validation/check-frontmatter.sh examples/synthetic-consultant
+validation/check-secrets.sh examples/synthetic-consultant
+test -f hooks/team-ops-guard.sh && grep -q team-ops-guard scaffold/.claude/settings.json
+grep -q 'hooks' docs/pre-ship/security-audit-checklist.md
+```
+
+All exit **0**.

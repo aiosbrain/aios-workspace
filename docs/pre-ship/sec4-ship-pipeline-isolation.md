@@ -1,6 +1,6 @@
 # SEC4 — Ship pipeline isolation (AIO-157)
 
-Parent: Pre-release security epic.
+Parent: Pre-release security epic. Owner: john@john-ellison.com
 
 ## Why
 
@@ -43,4 +43,11 @@ Build-with: opus / medium.
 
 ## Testability
 
-- `node --test test/build-fence.test.mjs` exit **0**.
+Named acceptance test:
+
+```bash
+node --test test/build-fence.test.mjs
+grep -q 'build-fence\|AIO-157' docs/pre-ship/security-audit-checklist.md
+```
+
+Both exit **0**.

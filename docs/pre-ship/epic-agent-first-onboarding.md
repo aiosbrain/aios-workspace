@@ -1,6 +1,7 @@
 # EPIC — Agent-first onboarding (copy-paste URL playbook)
 
-Linear epic title: **EPIC: Agent-first onboarding — copy-paste URL playbook**
+Linear epic title: **EPIC: Agent-first onboarding — copy-paste URL playbook**  
+Owner: john@john-ellison.com
 
 ## Why
 
@@ -10,39 +11,35 @@ canonical URL + prompt, scaffold `{handle}-workspace`, wire brain + context, and
 
 ## What
 
-Deliver agent contract (AF1), smoke runbook (AF2), naming conventions (AF3), MCP quick path (AF4).
-Operator runs one fresh-identity dogfood session; builder ships docs + small scaffold hints.
+This epic **coordinates** four child specs (each is a well-bounded slice). The epic itself does not
+implement code — it tracks child closure + one operator dogfood run.
+
+| Child | Spec path | Deliverable |
+|-------|-----------|-------------|
+| AF1 | `docs/pre-ship/af1-agent-onboarding-contract.md` | `docs/getting-started/agent-onboarding.md` |
+| AF2 | `docs/pre-ship/af2-onboarding-smoke-runbook.md` | Operator smoke runbook (phases 0–8) |
+| AF3 | `docs/pre-ship/af3-workspace-naming-context.md` | Scaffold hints + SKILL.md |
+| AF4 | `docs/pre-ship/af4-mcp-byoa-quickstart.md` | MCP quickstart section |
 
 ## Acceptance criteria
 
-- `docs/getting-started/agent-onboarding.md` exists in **this repo** (AF1 deliverable).
-- `npm run aios -- spec eval docs/pre-ship/af1-agent-onboarding-contract.md` exits **0** before AF1 closes.
+- Each child spec reaches **SPEC_READY** (`npm run aios -- spec eval <child>` exit **0**).
+- `docs/getting-started/agent-onboarding.md` exists (AF1 deliverable).
 - `docs/pre-ship/af2-onboarding-smoke-runbook.md` exists with phases 0–8 (AF2).
-- `scripts/scaffold-project.sh` post-scaffold hints document `--slug {handle}-workspace` (AF3).
-- MCP section in playbook links `aios mcp` + `scripts/brain-mcp.test.mjs` green (AF4).
-- `npm run aios -- spec eval docs/pre-ship/epic-agent-first-onboarding.md` exits **0**.
+- `scripts/scaffold-project.sh` documents `{handle}-workspace` naming (AF3).
+- MCP section references `npm run aios -- mcp` + `node --test scripts/brain-mcp.test.mjs` green (AF4).
+- Operator dogfood log at `docs/pre-ship/dogfood/onboarding-run-YYYY-MM-DD.md` with `aios status` exit **0**.
 - Every **BLOCKER** in dogfood log has linked PR or Linear child before epic close.
+- `npm run aios -- spec eval docs/pre-ship/epic-agent-first-onboarding.md` exits **0**.
 
 ## Builder vs operator closure
 
-- **Builder delivers:** AF1 playbook, AF2 runbook + template, AF3 scaffold hints, AF4 MCP doc section;
-  all child specs `SPEC_READY`.
-- **Operator verifies:** one dogfood run in `docs/pre-ship/dogfood/onboarding-run-YYYY-MM-DD.md`;
-  `aios status` exit **0**; `validation/validate-all.sh .` exit **0** on fresh scaffold.
+- **Builder delivers:** AF1–AF4 child PRs; all four child specs `SPEC_READY`.
+- **Operator verifies:** one dogfood run logged; `validation/validate-all.sh .` exit **0** on fresh scaffold.
 
 ## Optional follow-up (not blocking this epic)
 
 - aios-website Aside link to agent playbook — file separate Linear child if not merged with AF1 PR.
-
-## Edit surface (this repo only)
-
-| Path | Action |
-|------|--------|
-| `docs/pre-ship/af1-agent-onboarding-contract.md` | Exists — spec gate |
-| `docs/getting-started/agent-onboarding.md` | Create (AF1) |
-| `docs/pre-ship/af2-onboarding-smoke-runbook.md` | Create (AF2) |
-| `scripts/scaffold-project.sh` | Edit hints only (AF3) |
-| `docs/GUIDE.md`, `scripts/brain-mcp.mjs` | Read-only reference |
 
 ## Integration points
 
@@ -53,11 +50,12 @@ Operator runs one fresh-identity dogfood session; builder ships docs + small sca
 
 ## Deps
 
-Deps: none — builds on shipped onboarding (AIO-195 Done).
+Deps: none — builds on shipped scaffold flow in `scripts/scaffold-project.sh` and `docs/GUIDE.md`
+(Linear **AIO-195** tracks the same work; it is not a repo file path).
 
 ## Scope
 
-**In scope:** agent docs, runbook, naming hints, one dogfood run.
+**In scope:** child spec coordination, dogfood log, naming hints.
 **Deferred:** `npx create-aios-workspace` installer; write MCP; AIO-243 client-surface.
 
 ## Build-with
@@ -71,6 +69,14 @@ Smoke uses synthetic `team`-tier fixtures only.
 
 ## Testability
 
-- `node --test test/spec-eval-cli.test.mjs` exits **0**.
-- `node --test scripts/brain-mcp.test.mjs` exits **0**.
-- Operator: `aios status` exit **0** and `validation/validate-all.sh .` exit **0** logged in dogfood file.
+Named acceptance tests (epic-level):
+
+```bash
+npm run aios -- spec eval docs/pre-ship/af1-agent-onboarding-contract.md
+npm run aios -- spec eval docs/pre-ship/af2-onboarding-smoke-runbook.md
+npm run aios -- spec eval docs/pre-ship/af3-workspace-naming-context.md
+npm run aios -- spec eval docs/pre-ship/af4-mcp-byoa-quickstart.md
+node --test scripts/brain-mcp.test.mjs
+```
+
+All exit **0** before epic close. Operator dogfood log is manual verification.
