@@ -21,7 +21,17 @@ const AIOS_CLI = path.join(ROOT, "scripts", "aios.mjs");
 function scaffold(output) {
   return execFileSync(
     "bash",
-    [SCAFFOLD_SCRIPT, "--context", "employee", "--slug", "test-ws", "--owner", "tester", "--output", output],
+    [
+      SCAFFOLD_SCRIPT,
+      "--context",
+      "employee",
+      "--slug",
+      "test-ws",
+      "--owner",
+      "tester",
+      "--output",
+      output,
+    ],
     { stdio: ["ignore", "pipe", "pipe"] }
   ).toString();
 }
@@ -40,7 +50,11 @@ test("a real (non-interactive) scaffold run prints exactly one Next: line, not a
   try {
     const stdout = scaffold(output);
     const nextLines = stdout.split("\n").filter((l) => l.trim().startsWith("Next:"));
-    assert.equal(nextLines.length, 1, `expected exactly one "Next:" line, got: ${JSON.stringify(nextLines)}`);
+    assert.equal(
+      nextLines.length,
+      1,
+      `expected exactly one "Next:" line, got: ${JSON.stringify(nextLines)}`
+    );
     // The old wall had 6 bulleted "•" items — none should remain.
     assert.equal(stdout.includes("•"), false);
   } finally {
