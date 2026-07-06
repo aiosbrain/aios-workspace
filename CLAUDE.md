@@ -30,7 +30,7 @@ the same spine, two skins.
 
 | Path | What |
 |------|------|
-| `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/`, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`). Editing the product's behavior usually means editing here. |
+| `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/` including **git-workflow**, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`, `AGENTS.md.tmpl`). Editing the product's behavior usually means editing here. |
 | `scripts/` | `scaffold-project.sh` (stamp a workspace), `aios.mjs` (Team Brain sync CLI: `push`/`pull`/`status`), `leak-gate.sh`, GUI/runtime/catalog helpers. |
 | `validation/` | OGR validators (`validate-all.sh`: structure · frontmatter · secrets · aios config · rubrics). Must pass. |
 | `hooks/` | Claude Code PreToolUse guards (secrets, access-tier, frontmatter, sync nudge) shipped into every scaffolded workspace. |
@@ -85,7 +85,9 @@ they don't recognize.
   `aios spec eval` (`SPEC_READY`) before `aios ship` or `aios relay --spec` planning — ship enforces
   this automatically; agents writing specs should self-check first. See `docs/agent-build.md`.
 - **Edit the template, not a stamped copy.** Product behavior lives in `scaffold/`; changing a single
-  user's stamped workspace doesn't change the product.
+  user's stamped workspace doesn't change the product. Stamped workspaces ship
+  `.claude/rules/git-workflow.md` + `AGENTS.md` so owners treat their IC repo as personal
+  context (`master` only) and do toolkit PRs in **this** repo instead.
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.

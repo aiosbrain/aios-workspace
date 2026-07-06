@@ -1,0 +1,77 @@
+---
+access: team
+type: memory
+created: {{START_DATE}}
+updated: {{START_DATE}}
+---
+
+# {{OWNER}}'s AIOS Workspace — agent guide
+
+Portable instructions for **all** agent runtimes (Claude Code, OpenCode, Codex, Cursor).
+The owner-facing overview lives in [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — read it for
+spine layout, access tiers, skills, and Team Brain sync.
+
+## Git & workflow (mandatory)
+
+**This repo is {{OWNER}}'s personal workstation, not the AIOS product repo.** Optimize for
+fast context work — not branch hygiene or merge archaeology.
+
+| Do | Don't |
+|----|-------|
+| Work on `master`; commit when {{OWNER}} asks | Create branches or worktrees here by default |
+| Write notes, drafts, and dogfood findings in the spine | Stage toolkit code here for upstream PRs |
+| Implement toolkit fixes in **`aios-workspace`** | Switch branches or merge without explicit instruction |
+
+**Dogfood notes here; toolkit PRs in `aios-workspace` only.**
+
+- Observations, friction logs, onboarding feedback → `2-work/`, `3-log/`, etc. (this repo, `master`).
+- Scaffold, onboarding, GUI, validators, shared agent contracts → **`aios-workspace`** (branch there if needed; PR upstream; refresh this instance after merge).
+
+Full rule: [`.claude/rules/git-workflow.md`](.claude/rules/git-workflow.md).
+
+## The spine
+
+| Folder | Holds | Default access tier |
+|--------|-------|---------------------|
+| `0-context/` | What frames the work — {{CONTEXT_TITLE}}, {{STAKEHOLDER_LABEL}} | team |
+| `1-inbox/` | Raw inputs — transcripts, notes, brain pulls | private |
+| `2-work/` | Deliverables and drafts in progress | team |
+| `3-log/` | Decisions, tasks, hours | team / private |
+| `4-shared/` | Promoted outward ({{OUTWARD_DESC}}) | {{OUTWARD_TIER}} |
+| `5-personal/` | Private scratch | private (never syncs) |
+| `.claude/` | Skills, rules, rubrics, memory | mixed |
+
+Context: **{{CONTEXT}}** ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
+
+## Start here
+
+- Decisions → `3-log/decision-log.md`
+- Tasks → `3-log/tasks.md`
+- What frames the work → `0-context/`
+- Governance → `.claude/rules/` (includes **git-workflow**)
+- Skills catalog → `.claude/skills/INDEX.md`
+
+## Team Brain
+
+If `aios.yaml` has a `brain_url`, tier-tagged content syncs via `aios status|push|pull|query`.
+`private` and untagged content never leaves this machine.
+
+## Agent layer
+
+The `.claude/` directory is the **canonical, runtime-agnostic agent layer**. Despite the
+name, its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. Skills degrade honestly on
+non-Claude runtimes per BYOA's export contract.
+
+## OpenCode-native tools
+
+When using OpenCode in this workspace:
+
+- **Project config:** `opencode.json` — default agent, governance instructions, permissions
+- **Project agents:** `.opencode/agents/` — `aios-orchestrator` (primary), plus workflow subagents
+- **Commands:** `.opencode/command/` — exported from `.claude/commands/`
+- **Instincts plugin:** `.opencode/plugins/aios-instincts.ts` — access gate and session checks
+
+Install plugin deps once: `cd .opencode && npm install`
+
+Owner: {{OWNER}} · {{STAKEHOLDER_LABEL}}: {{STAKEHOLDER_NAME}} · Team: {{MEMBER_LIST}}

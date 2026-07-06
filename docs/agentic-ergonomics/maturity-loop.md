@@ -48,13 +48,14 @@ listed first.
 
 ### Cadence
 
-There is **no scheduler in this slice** — run it weekly by hand, from a cron job, or from a
-Claude routine, e.g.:
+One weekly command closes the maturity loop — distill (if needed) then report:
 
 ```bash
-# weekly, Monday morning
-npm run aios -- maturity-week
+# weekly, Monday morning — distill runs by default when observations are pending
+npm run aios -- maturity-week --repo <your-workspace>
 ```
 
-Wiring a bundled scheduler (and the instinct-distillation / effectiveness-scoring stages of the
-loop) is later AM work — see the domain spec's roadmap.
+`--no-distill` skips the AM4b step (report only). See
+[`maturity-week-distill.md`](../v1-operator-loop/domains/maturity-week-distill.md) (AM6b).
+
+AM5 scoring (when shipped) slots between distill and report in a later slice.
