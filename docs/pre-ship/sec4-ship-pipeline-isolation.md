@@ -14,10 +14,9 @@ Merge AIO-157 and verify:
 
 ## Acceptance criteria
 
-- AIO-157 merged to `main`.
-- `node --test test/build-fence.test.mjs` exits **0**.
+- AIO-157 merged to `main`. If AIO-157 is not yet merged, the builder cannot run `test/build-fence.test.mjs` (it doesn't exist yet); instead, record `AIO-157 not merged — SEC4 blocked` in the checklist and stop. This is an operator-blocked gate, not a builder failure.
+- `node --test test/build-fence.test.mjs` exits **0** (only after AIO-157 merge).
 - Checklist row pass with PR link.
-- `npm run aios -- spec eval docs/pre-ship/sec4-ship-pipeline-isolation.md` exits **0**.
 
 ## Builder vs operator closure
 

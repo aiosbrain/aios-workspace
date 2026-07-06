@@ -1,4 +1,3 @@
-```markdown
 # CQ2 — Ship review-loop (AIO-254) triage
 
 Parent: Pre-release code quality epic. Owner: john@john-ellison.com
@@ -7,28 +6,30 @@ Parent: Pre-release code quality epic. Owner: john@john-ellison.com
 
 AIO-254 needs explicit deferral before ship — no scope ambiguity.
 
-## Pre-flight checks (builder)
+## Prerequisites
 
-The following must be present before the builder executes the script. If either check fails,
-the builder stops and asks the operator to provide the missing item.
-
-```bash
-# Check that the aios-linear CLI is installed
-test -f ~/.claude/skills/aios-linear/linear.mjs
-
-# Check that the .env file exists and contains LINEAR_API_KEY
-grep -q 'LINEAR_API_KEY=' .env
-```
-
-If `~/.claude/skills/aios-linear/linear.mjs` is missing: the operator must install the
-`aios-linear` skill in the agent’s standard location. The builder cannot invent installation
-instructions; this is an operator-provided dependency.
-
-If `.env` is missing: the builder creates it using a token provided by the operator:
+Before executing, verify these tool dependencies exist. If any check fails, the builder records the missing item and stops — the operator must provide the dependency:
 
 ```bash
-echo 'LINEAR_API_KEY=<operator-provided token>' > .env
+# Required: aios-linear CLI (Node.js script for Linear API access)
+test -f ~/.claude/skills/aios-linear/linear.mjs || echo "aios-linear not installed"
+
+# Required: dotenvx CLI for secure env loading
+command -v dotenvx >/dev/null 2>&1 || echo "dotenvx not found"
+
+# Required: .env file with LINEAR_API_KEY
+test -f .env && grep -q 'LINEAR_API_KEY=' .env || echo "LINEAR_API_KEY not set in .env"
 ```
+
+If `~/.claude/skills/aios-linear/linear.mjs` is missing: the operator must install the `aios-linear` skill. The builder cannot install it.
+
+If `dotenvx` is missing: install via `npm install -g @dotenvx/dotenvx`.
+
+If `.env` is missing or lacks `LINEAR_API_KEY`: the operator provides the token; the builder writes:
+```bash
+echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
+```
+`.env` is gitignored — never commit it.
 
 ## What
 
@@ -91,4 +92,3 @@ grep -q 'AIO-254 deferred' docs/pre-ship/cq2-aio254-deferral.md
 ```
 
 Exit **0** proves deferral record exists. Linear comment posting is verified by the CLI exit **0** and operator confirmation.
-```

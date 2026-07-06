@@ -20,16 +20,17 @@ Read-only — no code changes unless trivial doc fix.
 
 ## Acceptance criteria
 
-- All three child specs **SPEC_READY**.
+- ARCH1: `npm run check:docs` run, version line recorded (per `arch1-sync-contract-drift.md`).
+- ARCH2: `docs/pre-ship/arch2-operator-loop-ship-coupling-review.md` exists with ≥2 labelled smells.
+- ARCH3: `docs/pre-ship/arch3-cross-repo-seams-review.md` exists with seam table.
 - Review doc `docs/pre-ship/architecture-review-$(date +%Y-%m-%d).md` lists **top 5 coupling smells**
   (sourced from ARCH2 + ARCH3) with `fix-before-ship` vs `post-ship-debt` labels.
 - `npm run check:docs` exit captured in review doc (ARCH1).
-- `npm run aios -- spec eval docs/pre-ship/epic-pre-release-architecture.md` exits **0**.
 - AIO-249 deferred — Linear child filed only if non-trivial.
 
 ## Builder vs operator closure
 
-- **Builder delivers:** architecture review doc + ARCH1–3 child PRs all `SPEC_READY`.
+- **Builder delivers:** architecture review doc + ARCH1–3 deliverables confirmed (drift recorded, coupling review doc, seam table doc).
 - **Operator verifies:** smell labels reviewed; fix-before-ship items have Linear children.
 
 ## Integration points

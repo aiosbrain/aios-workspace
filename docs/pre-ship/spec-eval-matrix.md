@@ -33,27 +33,48 @@ Deterministic exit **3** = clean (`--no-llm`). Adversarial exit **0** = SPEC_REA
 ## Pass summary
 
 - **Deterministic:** 24/24 clean (exit 3)
-- **Adversarial SPEC_READY:** 8/24
-- **Adversarial NOT_READY:** 16/24
+- **Adversarial SPEC_READY:** 8/24 (prior run; scores above from pre-hardening adversarial eval)
 
-## Blockers
+## Manual hardening pass (2026-07-06, post matrix)
 
-The adversarial model (deepseek-v4-pro) flags remaining gaps in 16 specs. Scores range from 20–65. Common themes:
+All 16 NOT_READY specs were manually hardened against the adversarial themes:
 
-| Approx count | Theme |
-|--------------|-------|
-| 6 | Acceptance criteria embed spec-eval self-reference (SR2/SR15 — the spec requires `spec eval` to exit 0) |
-| 5 | Missing edge-case handling (file missing, multiple matches, script execution failures) |
-| 3 | Prerequisites or fixtures not declared (SR15 — cold-start builder cannot resolve must-paths) |
-| 2 | Interface/contract not named before implementation steps (SR9) |
+| Pattern fixed | Specs affected |
+|---------------|---------------|
+| Spec-eval self-reference removed from acceptance criteria | cq1, cq3, cq4, epic-pre-release-architecture, epic-pre-release-code-quality, epic-pre-release-security, epic-pre-release-ux, sec2, sec3, sec4, sec5, ux1, ux2, ux3 |
+| ````markdown` wrapper fences removed | cq1, cq2 |
+| Prerequisites / dependency checks added | cq2, cq3, cq4, sec3, sec4, sec5, ux1, ux2, ux3, arch2 |
+| Edge-case handling (missing fixtures, files, brain deploy) | cq1, sec2, sec3, sec4, sec5 |
+| Checklist row schemas defined (table format) | sec2, sec5 |
+| Flow row schemas defined (field-level) | ux2, ux3 |
+| Child spec `SPEC_READY` replaced with concrete deliverables | epic-pre-release-architecture, epic-pre-release-code-quality, epic-pre-release-security, epic-pre-release-ux |
+| Testability sections use concrete commands, not spec-eval | epic-pre-release-code-quality, epic-pre-release-security, epic-pre-release-ux |
 
-### Notable
+### File-by-file hardening detail
 
-- **af1-agent-onboarding-contract.md** (score 100) — fully hardened spec; served as the reference pattern after 144cfc1 hardening pass.
-- **cq4-pr-triage.md** (score 30) — flagged for `gh` CLI prerequisite not declared; low score may include API flake.
-- **sec3-hooks-guards-audit.md** (score 20) — lowest score; spec fix tool degraded it (reverted via git checkout). Needs manual hardening.
-- **ux3-cli-onboard-token-auth.md** (score 60) — closest NOT_READY to green; minor edge-case gaps.
+| File | Fixes applied |
+|------|--------------|
+| arch2 | Added prerequisites for source directories; enhanced operator verification |
+| cq1 | Removed markdown fences; removed spec-eval from AC; fixture handling in prerequisites |
+| cq2 | Removed markdown fences; converted pre-flight checks to prerequisites section; dotenvx install instructions |
+| cq3 | Removed spec-eval from AC; added prerequisites (linear CLI, dotenvx, .env); C1-C8 reference |
+| cq4 | Removed spec-eval from AC; added `gh` CLI prerequisite with authentication check |
+| epic-pre-release-architecture | Removed spec-eval; concrete child deliverables instead of SPEC_READY |
+| epic-pre-release-code-quality | Removed spec-eval (self + children); concrete child deliverables |
+| epic-pre-release-security | Removed spec-eval (self + children); concrete child deliverables; inline AC per child |
+| epic-pre-release-ux | Removed spec-eval (self + children); concrete child deliverables |
+| sec2 | Removed spec-eval; brain deploy edge case; checklist row schema (3 rows) |
+| sec3 | Removed spec-eval; prerequisites for hooks/fixtures/settings with absent handling |
+| sec4 | Removed spec-eval; AIO-157 not-merged branch handling |
+| sec5 | Removed spec-eval; checklist row schema; SEC1 dependency handling |
+| ux1 | Removed spec-eval; test file prerequisite |
+| ux2 | Removed spec-eval; ConnectWizard prerequisite; flow-2 row schema |
+| ux3 | Removed spec-eval; CLI/server prerequisites; flow-3/flow-4 row schemas |
 
-### Note on score variability
+### Note on adversarial scores
 
-The adversarial model (deepseek-v4-pro) produces non-deterministic scores. Several specs showed score ranges of 30+ points between runs (e.g., af1 ranged 40–100, cq1 ranged 35–100). The scores above reflect the most recent stable evaluation. Scores of 0 were treated as API flakes and retried per the handover protocol.
+The scores in the table above are from the pre-hardening adversarial run. A re-run against the hardened specs was not completed due to API availability constraints (deepseek-v4-pro flakiness). The structural fixes address the specific adversarial findings from that run, but scores should be considered baseline estimates pending a fresh adversarial pass.
+
+## Score variability note
+
+The adversarial model (deepseek-v4-pro) produces non-deterministic scores. Several specs showed score ranges of 30+ points between runs (e.g., af1 ranged 40–100, cq1 ranged 35–100). Scores of 0 were treated as API flakes and retried per the handover protocol.

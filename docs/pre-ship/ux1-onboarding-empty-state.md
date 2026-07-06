@@ -6,6 +6,11 @@ Parent: Pre-release UX epic. Owner: john@john-ellison.com
 
 Cockpit empty state must guide contributors to profile setup.
 
+## Prerequisites
+
+- `test/ux/flows/onboarding-draft-from-link.mjs` must exist. If absent, record "test file not found" and stop — this is a repo-tracked file, not something the builder creates.
+- `gui/client/src/App.tsx` must exist (cockpit source).
+
 ## What
 
 1. Run `node --test test/ux/flows/onboarding-draft-from-link.mjs`.
@@ -23,7 +28,6 @@ Cockpit empty state must guide contributors to profile setup.
 
 - `node --test test/ux/flows/onboarding-draft-from-link.mjs` exits **0**.
 - Audit doc flow-1 row present in any dated audit file: `grep -q 'flow-1' docs/pre-ship/ux-audit-*.md`. The builder creates and commits the audit doc with the run date in the filename; the acceptance check globs for its existence.
-- `npm run aios -- spec eval docs/pre-ship/ux1-onboarding-empty-state.md` exits **0**.
 
 ## Builder vs operator closure
 

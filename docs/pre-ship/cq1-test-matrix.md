@@ -1,4 +1,3 @@
-```markdown
 # CQ1 — Full test matrix + CI green
 
 Parent: Pre-release code quality epic. Owner: john@john-ellison.com
@@ -32,7 +31,6 @@ npm run build:loop && node --test test/operator-loop/*.test.mjs && npm test && \
 
 - Prerequisites above completed (document `git rev-parse --abbrev-ref HEAD` = `main` in triage log).
 - The commands above exit **0** on `main`.
-- `npm run aios -- spec eval docs/pre-ship/cq1-test-matrix.md` exits **0**.
 
 ## Builder vs operator closure
 
@@ -66,11 +64,4 @@ Acceptance tests (run from repo root after prerequisites):
    npm run build:loop && node --test test/operator-loop/*.test.mjs && npm test && \
      (if [ -d examples/synthetic-consultant ]; then validation/validate-all.sh examples/synthetic-consultant; else echo "fixture missing" >> docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md; fi)
    ```
-   Exit **0** satisfies first two acceptance criteria.
-
-2. Spec self-evaluation:
-   ```bash
-   npm run aios -- spec eval docs/pre-ship/cq1-test-matrix.md
-   ```
-   Exit **0** satisfies third acceptance criterion.
-```
+   Exit **0** satisfies first two acceptance criteria. Spec conformance (`spec eval`) is a pipeline check, not a builder deliverable.

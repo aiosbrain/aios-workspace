@@ -6,6 +6,13 @@ Parent: Pre-release code quality epic. Owner: john@john-ellison.com
 
 AIO-122 must be closable with C1–C8 Done and no stale blockers.
 
+## Prerequisites
+
+- `npm run check:v1-linear` script exists (wraps `scripts/check-v1-linear-drift.mjs`)
+- `~/.claude/skills/aios-linear/linear.mjs` exists (aios-linear CLI, installed by operator)
+- `dotenvx` available in PATH
+- `.env` file with `LINEAR_API_KEY` present (gitignored, operator-provided)
+
 ## What
 
 1. Run drift check: `npm run check:v1-linear` (wraps `scripts/check-v1-linear-drift.mjs`).
@@ -25,8 +32,7 @@ Record `check:v1-linear exit: <N>` in PR comment or triage log.
 ## Acceptance criteria
 
 - `npm run check:v1-linear` exits **0**.
-- AIO-122 closable in Linear (no stale AIO-130 blocker).
-- `npm run aios -- spec eval docs/pre-ship/cq3-v1-linear-drift.md` exits **0**.
+- AIO-122 closable in Linear (no stale AIO-130 blocker; C1–C8 Done per `docs/v1-operator-loop/README.md`).
 
 ## Builder vs operator closure
 

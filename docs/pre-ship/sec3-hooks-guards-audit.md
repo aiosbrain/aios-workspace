@@ -6,6 +6,14 @@ Parent: Pre-release security epic. Owner: john@john-ellison.com
 
 PreToolUse hooks guard secrets and tier boundaries before writes.
 
+## Prerequisites
+
+Before auditing, verify these exist. For any that don't, record "not found" in the checklist and skip that check (do not fail the task):
+
+- `hooks/` directory exists — if absent all hook checks produce "not found" rows
+- `scaffold/.claude/settings.json` exists — if absent, record "settings.json not found" for the wiring check
+- `examples/synthetic-consultant/` directory exists — if absent, record "fixture missing" in the validation checks and skip them
+
 ## What
 
 Verify:
@@ -19,7 +27,6 @@ Verify:
 - Hook files exist under `hooks/`.
 - `validation/check-frontmatter.sh examples/synthetic-consultant` exits **0**.
 - Checklist row per hook in `docs/pre-ship/security-audit-checklist.md`.
-- `npm run aios -- spec eval docs/pre-ship/sec3-hooks-guards-audit.md` exits **0**.
 
 ## Builder vs operator closure
 

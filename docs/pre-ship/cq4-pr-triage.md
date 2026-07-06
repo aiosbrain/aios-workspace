@@ -2,6 +2,11 @@
 
 Parent: Pre-release code quality epic. Owner: john@john-ellison.com
 
+## Prerequisites
+
+- `gh` CLI installed and authenticated (`gh auth status` exits **0**). If not authenticated, builder records "gh not authenticated" in triage log notes and skips PR enumeration.
+- `.github/workflows/` directory exists (CI configs).
+
 ## Why
 
 Open PRs blocking ship must be merged, closed, or waived.
@@ -32,7 +37,6 @@ Populate from `gh pr list --state open --json number,title,labels`.
 - Triage log lists all open PRs (one row per PR from `gh pr list --state open`).
 - Zero ship-blocking PRs without a `decision` of merge, close, or waive (defer only for non-blocking).
 - Named test below exits **0**.
-- `npm run aios -- spec eval docs/pre-ship/cq4-pr-triage.md` exits **0**.
 
 ## Builder vs operator closure
 
