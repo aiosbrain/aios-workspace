@@ -53,7 +53,7 @@ aios spec fix  <file> [--budget N] [--write | --out <path>] [--no-llm] [--rubric
 | 1 | deterministic must-fail (structural blocker) |
 | 2 | adversarial blocker (LLM refutation) |
 | 3 | `NOT_EVALUATED` — deterministic clean, LLM layer not run (`--no-llm`) |
-| 4 | usage / IO error (missing file, unreadable/malformed rubric, no `ANTHROPIC_API_KEY` without `--no-llm`) |
+| 4 | usage / IO error (missing file, unreadable/malformed rubric, missing provider API key without `--no-llm`) |
 
 A deterministic must-fail (1) takes precedence over an adversarial blocker (2): if the structure is
 broken, that is reported first.
@@ -66,8 +66,8 @@ it never auto-fixes; fix the spec with `aios spec fix <file>` and re-run.
 
 ## Models
 
-The evaluator and reviser are per-step model config (`loop-models.mjs`): `spec_eval`
-(`claude-opus-4-8` / `xhigh`) and `spec_fix` (`claude-opus-4-8` / `high`), tunable via
-`.aios/loop-models.yaml`. Both run on the Claude SDK — there is **no diversity pair**: spec eval is
-a single adversarial pass, and prompt-discipline (refute, quote, per-criterion), not model-family
-independence, is what makes it trustworthy.
+The evaluator and reviser are per-step model config (`loop-models.mjs`): `spec_eval` and
+`spec_fix` (default **`deepseek-v4-pro`**, same prompt-only backend as `plan_review` /
+`code_review`), tunable via `.aios/loop-models.yaml`. Both route through `callPromptModel` —
+there is **no diversity pair**: spec eval is a single adversarial pass, and prompt-discipline
+(refute, quote, per-criterion), not model-family independence, is what makes it trustworthy.
