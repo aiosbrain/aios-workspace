@@ -767,9 +767,8 @@ async function cmdOnboard(repo, _args) {
     return;
   }
 
-  const { pickConnectors, askSecret, askViaClack, reportValidation, clack } = await import(
-    "./onboard-ui.mjs"
-  );
+  const { pickConnectors, askSecret, askViaClack, reportValidation, clack } =
+    await import("./onboard-ui.mjs");
 
   clack.intro("AIOS onboarding");
   const backedUp = backupConfig(repo);

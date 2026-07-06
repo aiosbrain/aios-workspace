@@ -39,7 +39,12 @@ test("already-wired connectors (and an already-connected pinned entry) are pre-s
 
 test("slack vs slack-personal read as distinct lines via name + hint, not bare ids", () => {
   const connectors = [
-    { id: "slack", name: "Slack", summary: "Read channels and threads, post messages.", status: "available" },
+    {
+      id: "slack",
+      name: "Slack",
+      summary: "Read channels and threads, post messages.",
+      status: "available",
+    },
     {
       id: "slack-personal",
       name: "Slack (personal)",
