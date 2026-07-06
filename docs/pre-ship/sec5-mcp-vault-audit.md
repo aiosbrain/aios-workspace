@@ -13,8 +13,6 @@ MCP must stay read-only; connector keys encrypted; Firecrawl/onboarding treated 
 
 ### Checklist row schema
 
-### Checklist row schema
-
 Each audit result is one row in `docs/pre-ship/security-audit-checklist.md`:
 
 | check | command | exit_code | date | owner | notes |

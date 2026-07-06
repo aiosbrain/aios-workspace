@@ -34,7 +34,7 @@ None in the structural layer. The adversarial scores in the matrix reflect pre-h
 4. **af2:** Phase 7 table row de-conflicted (SR3 on `2-work/smoke-test.md`).
 5. **sec1:** Waiver schema + checklist new-file contract.
 6. **epic onboarding:** Fixed runbook path to `af2-onboarding-smoke-runbook.md`.
-7. **Removed:** broken `onboarding-smoke-runbook.md` duplicate.
+7. **Removed:** broken `onboarding-smoke-runbook.md` duplicate (the prior agent removed a stale copy; the current file at that path is a separate operator-facing doc, not a spec).
 8. **spec-eval.mjs:** Collect all text blocks; JSON parse retry once; route eval/fix via `callPromptModel`.
 9. **loop-models.mjs:** `spec_eval` / `spec_fix` default to **`deepseek-v4-pro`** (same backend as plan/code review — no Anthropic credits needed).
 

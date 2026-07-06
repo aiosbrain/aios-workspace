@@ -1,5 +1,6 @@
 # AF2 — Onboarding smoke test runbook + insight log template
 
+Owner: john@john-ellison.com
 Parent epic: Agent-first onboarding. Linear child: **AF2 — Onboarding smoke test runbook (fresh identity)**
 
 ## Why
