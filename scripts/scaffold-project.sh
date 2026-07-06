@@ -138,7 +138,7 @@ touch "$OUTPUT/$D_INBOX/transcripts/.gitkeep" "$OUTPUT/$D_INBOX/from-brain/.gitk
 idx() { cat > "$1"; }  # helper: idx <path> <<EOF ... EOF
 
 if [ "$CONTEXT" = consultant ]; then
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team
@@ -149,6 +149,13 @@ What frames this engagement: scope, the client, and roles.
 
 * [Scope Baseline](scope-baseline.md) — contracted deliverable tracks
 * [Scope Ledger](scope-ledger.md) — scope changes and out-of-scope log
+
+## Agent layer
+
+The `.claude/` directory is the canonical, runtime-agnostic agent layer. Despite the name,
+its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. See `AGENTS.md` or `.claude/CLAUDE.md`
+for runtime-specific orientation.
 EOF
   idx "$OUTPUT/$D_CONTEXT/scope-baseline.md" << EOF
 ---
@@ -173,7 +180,7 @@ access: team
 |---|------|--------|--------|------------|
 EOF
 else
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team
@@ -184,6 +191,13 @@ What frames your work: your role, your team, and your goals.
 
 * [Role](role.md) — what you own and how you work
 * [OKRs](okrs.md) — current objectives and key results
+
+## Agent layer
+
+The `.claude/` directory is the canonical, runtime-agnostic agent layer. Despite the name,
+its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. See `AGENTS.md` or `.claude/CLAUDE.md`
+for runtime-specific orientation.
 EOF
   idx "$OUTPUT/$D_CONTEXT/role.md" << EOF
 ---
@@ -343,6 +357,7 @@ process_template() {
 
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
+process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
@@ -378,6 +393,19 @@ mkdir -p "$OUTPUT/.claude/memory/incidents"
 [ -d "$SCAFFOLD/.claude/descriptors" ] && { mkdir -p "$OUTPUT/.claude/descriptors"; cp -R "$SCAFFOLD/.claude/descriptors/." "$OUTPUT/.claude/descriptors/"; }
 [ -f "$SCAFFOLD/.mcp.json" ] && cp "$SCAFFOLD/.mcp.json" "$OUTPUT/.mcp.json"
 [ -f "$SCAFFOLD/.mcp.example.json" ] && cp "$SCAFFOLD/.mcp.example.json" "$OUTPUT/.mcp.example.json"
+
+# Canonical Claude Code commands + OpenCode export surface
+if [ -d "$SCAFFOLD/.claude/commands" ]; then
+  mkdir -p "$OUTPUT/.claude/commands"
+  cp "$SCAFFOLD/.claude/commands/"*.md "$OUTPUT/.claude/commands/" 2>/dev/null || true
+fi
+if [ -f "$SCAFFOLD/opencode.json" ]; then
+  cp "$SCAFFOLD/opencode.json" "$OUTPUT/opencode.json"
+fi
+if [ -d "$SCAFFOLD/.opencode" ]; then
+  mkdir -p "$OUTPUT/.opencode"
+  cp -R "$SCAFFOLD/.opencode/." "$OUTPUT/.opencode/"
+fi
 
 # Governance guard: ship the PreToolUse hook + its secret patterns + the hook
 # registration so Claude Code's native guard (secrets / tier leaks / frontmatter)
