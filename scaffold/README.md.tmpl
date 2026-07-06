@@ -33,9 +33,10 @@ Sync tier-tagged content to an AIOS Team Brain. Configure `aios.yaml` (right
 here, at the root of *this* workspace — it's a real, already-generated file,
 not a template) + `.env` (see `.env.example`), then:
 ```
-aios status   # what would sync (and what's blocked, and why)
-aios push     # push team/{{OUTWARD_TIER}}-tier content
-aios pull     # fetch team updates into 1-inbox/from-brain/
-aios query "what did we decide about X?"
+npm run aios -- status   # what would sync (and what's blocked, and why)
+npm run aios -- push     # push team/{{OUTWARD_TIER}}-tier content
+npm run aios -- pull     # fetch team updates into 1-inbox/from-brain/
+npm run aios -- query "what did we decide about X?"
 ```
+The shim in `scripts/aios.mjs` forwards to the toolkit clone — set `AIOS_TOOLKIT_CLI` if it is not on a default relative path.
 `private` and untagged content never leave this machine.

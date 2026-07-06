@@ -344,6 +344,10 @@ process_template() {
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
+process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
+mkdir -p "$OUTPUT/scripts"
+cp "$SCAFFOLD/scripts/aios.mjs" "$OUTPUT/scripts/aios.mjs"
+chmod +x "$OUTPUT/scripts/aios.mjs"
 
 sed \
   -e "s|{{SLUG}}|$SLUG|g" -e "s|{{OWNER}}|$OWNER|g" -e "s|{{CONTEXT}}|$CONTEXT|g" \
@@ -443,6 +447,6 @@ echo ""
 echo "Next:"
 echo "  • Set up your profile:     say \"set me up\" in the GUI/CLI  (or: aios onboard)"
 echo "  • Connect tools + brain:   aios onboard      (or: aios connect <id>)"
-echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: aios status"
+echo "  • Brain sync needs:        AIOS_API_KEY in .env + brain_url/team_id in aios.yaml, then: npm run aios -- status"
 echo "  • Validate the workspace:  $REPO_ROOT/validation/validate-all.sh $OUTPUT"
 echo "  • Start the GUI:           npm run gui -- --repo $OUTPUT"
