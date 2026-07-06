@@ -56,4 +56,22 @@ Context: **{{CONTEXT}}** ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
 If `aios.yaml` has a `brain_url`, tier-tagged content syncs via `aios status|push|pull|query`.
 `private` and untagged content never leaves this machine.
 
+## Agent layer
+
+The `.claude/` directory is the **canonical, runtime-agnostic agent layer**. Despite the
+name, its skills, rules, rubrics, and commands are designed for all agent runtimes
+(Claude Code, OpenCode, Codex), not just Claude Code. Skills degrade honestly on
+non-Claude runtimes per BYOA's export contract.
+
+## OpenCode-native tools
+
+When using OpenCode in this workspace:
+
+- **Project config:** `opencode.json` — default agent, governance instructions, permissions
+- **Project agents:** `.opencode/agents/` — `aios-orchestrator` (primary), plus workflow subagents
+- **Commands:** `.opencode/command/` — exported from `.claude/commands/`
+- **Instincts plugin:** `.opencode/plugins/aios-instincts.ts` — access gate and session checks
+
+Install plugin deps once: `cd .opencode && npm install`
+
 Owner: {{OWNER}} · {{STAKEHOLDER_LABEL}}: {{STAKEHOLDER_NAME}} · Team: {{MEMBER_LIST}}
