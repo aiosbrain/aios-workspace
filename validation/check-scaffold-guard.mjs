@@ -101,11 +101,11 @@ if (existsSync(ws)) {
       else if (!postTool.includes("decision-capture.mjs"))
         fail("settings.json missing PostToolUse → decision-capture.mjs");
       else if (!postMatcher.includes("AskUserQuestion") || !postMatcher.includes("ExitPlanMode"))
-        fail(`settings.json PostToolUse matcher missing AskUserQuestion|ExitPlanMode: '${postMatcher}'`);
-      else
-        ok(
-          "settings.json registers capture hooks (Notification/Stop asks, PostToolUse decisions)"
+        fail(
+          `settings.json PostToolUse matcher missing AskUserQuestion|ExitPlanMode: '${postMatcher}'`
         );
+      else
+        ok("settings.json registers capture hooks (Notification/Stop asks, PostToolUse decisions)");
     } catch (e) {
       fail(`settings.json not valid JSON: ${e.message}`);
     }
