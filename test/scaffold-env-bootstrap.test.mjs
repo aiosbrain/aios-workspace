@@ -18,9 +18,23 @@ const SCAFFOLD_SCRIPT = path.join(ROOT, "scripts", "scaffold-project.sh");
 function scaffold(output) {
   // stdin from /dev/null: the script's guided-setup/shell-install prompts read `-t 0`
   // first and skip entirely on a non-TTY, so this never blocks or needs answers.
-  execFileSync("bash", [SCAFFOLD_SCRIPT, "--context", "employee", "--slug", "test-ws", "--owner", "tester", "--output", output], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  execFileSync(
+    "bash",
+    [
+      SCAFFOLD_SCRIPT,
+      "--context",
+      "employee",
+      "--slug",
+      "test-ws",
+      "--owner",
+      "tester",
+      "--output",
+      output,
+    ],
+    {
+      stdio: ["ignore", "ignore", "pipe"],
+    }
+  );
 }
 
 test("a real scaffold run creates .env (not just .env.example)", () => {
