@@ -46,9 +46,12 @@ import {
   parseCheckResults,
   defaultOutPath,
 } from "./consolidate-findings.mjs";
-import { resolveLoopModels, modelFamily } from "./loop-models.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
+import { modelFamily, parseModelRef } from "./model-providers.mjs";
+import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
+import { runLocalPrePrReview } from "./review-bugbot.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
@@ -91,9 +94,10 @@ export const SAFETY_PATHS = [
   "scripts/workspace-parse.mjs",
 ];
 
-const DEFAULT_REVIEWERS = ["bugbot", "gpt-5.5"];
+const DEFAULT_REVIEWERS = ["gpt-5.5"];
 // The gating reviewers ship actually knows how to run. "bugbot" → wait on the cursor[bot]
-// check via wait-for-bots; "gpt-5.5" → run the Cursor GPT PR review. Unknown names are a
+// check via wait-for-bots (opt-in via --reviewers bugbot); "gpt-5.5" → adversarial PR review
+// (routes to models.code_review — default deepseek-v4-pro, not Cursor GPT). Unknown names are a
 // usage error rather than a silently-ignored flag.
 const KNOWN_REVIEWERS = new Set(["bugbot", "gpt-5.5"]);
 const DEFAULT_MAX_FIX_ROUNDS = 3;
@@ -857,6 +861,11 @@ const lastNonBlankLine = (text) =>
     .filter(Boolean)
     .at(-1) ?? "";
 
+function cursorCliModelArg(model) {
+  const ref = parseModelRef(model);
+  return ref.provider === "cursor" && ref.modelId ? ref.modelId : model;
+}
+
 // ── orchestration ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -870,7 +879,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     runBuild: runBuildDep,
     cmdPr: cmdPrDep,
     cmdConsolidateFindings: consolidateDep,
-    callClaudeAgent: claude,
     callCursorAgent: cursor,
     callDeepSeekDirect: deepseek,
     waitForBots,
@@ -899,14 +907,34 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
 
-  // A reviewer model resolves to either the Cursor CLI (cursor-agent --model <x>) or
-  // DeepSeek's own API — the dispatch is by model family, not a hardcoded backend.
-  const reviewCall =
-    (model) =>
-    (prompt, timeoutMs, opts = {}) =>
-      modelFamily(model) === "deepseek"
-        ? deepseek(prompt, timeoutMs, { model })
-        : cursor(prompt, timeoutMs, opts);
+  // Unified model dispatch — tests may inject callPromptModel/callAgentModel or legacy shims.
+  const promptCall = async ({ model, prompt, timeoutMs, opts = {} }) => {
+    if (deps.callPromptModel) return deps.callPromptModel({ model, prompt, timeoutMs, opts });
+    if (deps.callClaudeAgent && !deps.callPromptModel) {
+      return deps.callClaudeAgent(prompt, timeoutMs, { model, ...opts });
+    }
+    return callPromptModel({ model, prompt, timeoutMs, opts });
+  };
+  const agentCall = async ({ model, prompt, timeoutMs, opts = {} }) => {
+    if (deps.callAgentModel) return deps.callAgentModel({ model, prompt, timeoutMs, opts });
+    if (deps.callClaudeAgent && !deps.callAgentModel) {
+      return deps.callClaudeAgent(prompt, timeoutMs, { model, ...opts });
+    }
+    return callAgentModel({ model, prompt, timeoutMs, opts });
+  };
+  const reviewCall = deps.reviewCallForModel
+    ? (model) => deps.reviewCallForModel(model)
+    : deps.callPromptModel
+      ? (model) =>
+          (prompt, timeoutMs, opts = {}) =>
+            deps.callPromptModel({ model, prompt, timeoutMs, opts })
+      : deps.callDeepSeekDirect || deps.callCursorAgent
+        ? (model) =>
+            (prompt, timeoutMs, opts = {}) =>
+              modelFamily(model) === "deepseek"
+                ? deepseek(prompt, timeoutMs, { model, ...opts })
+                : cursor(prompt, timeoutMs, opts)
+        : reviewCallForModel;
   const gates = resolveGates({
     auto: opts.auto,
     autoMerge: opts.autoMerge,
@@ -995,9 +1023,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       // Recon runs with NO tools: the untrusted Linear text is in the prompt, and the only files it
       // may see are the pre-vetted `allowed` blobs already injected above. A prompt-injection payload
       // therefore cannot make recon read anything outside the tracked-only allow list.
-      recon = await claude(reconPrompt, cfg.timeoutMs ?? 300 * 1000, {
+      recon = await promptCall({
         model: cfg.model,
-        extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
+        prompt: reconPrompt,
+        timeoutMs: cfg.timeoutMs ?? 300 * 1000,
+        opts: {
+          extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
+        },
       });
       writeAudit(issueId, "recon.md", recon);
       record("recon", { allowed: allowed.length, skipped: skipped.length });
@@ -1040,7 +1072,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         repo,
         rubric,
         useLlm: true,
-        anthropic: await getAnthropic(),
         evalCfg: models.spec_eval,
         decisions,
       });
@@ -1089,16 +1120,16 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     generatePlan = (prompt) => callOpus(client, [{ role: "user", content: prompt }], planCfg);
   } else {
     generatePlan = (prompt) =>
-      claude(prompt, planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS, {
+      agentCall({
         model: planCfg.model,
-        // Plan tier (§ tool-access tiers, relay-core.mjs): read-only, no exfil/mutation. The plan
-        // prompt embeds `recon` (derived from untrusted Linear text), so the planner may READ the
-        // repo to ground itself but must not Bash/Write/Edit/WebFetch/WebSearch/Task. This is
-        // stricter than the old bare `--permission-mode plan` (which allowed all of those).
-        extraArgs: [
-          ...PLAN_DISALLOWED_ARGS,
-          ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
-        ],
+        prompt,
+        timeoutMs: planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS,
+        opts: {
+          extraArgs: [
+            ...PLAN_DISALLOWED_ARGS,
+            ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
+          ],
+        },
       });
   }
   if (state.plan && state.planReviewed) {
@@ -1147,7 +1178,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             extraArgs: [
               "--force",
               "--trust",
-              ...(planReviewCfg.model ? ["--model", planReviewCfg.model] : []),
+              ...(planReviewCfg.model ? ["--model", cursorCliModelArg(planReviewCfg.model)] : []),
             ],
           }
         );
@@ -1305,6 +1336,49 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     progress("build: done");
   }
 
+  // ── 4b. PRE-PR LOCAL REVIEW ───────────────────────────────────────────────────
+  // Code + security pass on the worktree diff before opening a PR. Uses DeepSeek when
+  // DEEPSEEK_API_KEY is set (default since 2026-07-04) — no Cursor API/Bugbot quota.
+  if (!state.prePrReviewDone) {
+    progress("pre-pr-review: local code + security pass");
+    let baseSha = "origin/main";
+    try {
+      baseSha = (gitExec(["rev-parse", "origin/main"], repo) ?? "").trim() || baseSha;
+    } catch {
+      /* best-effort */
+    }
+    const reviewModel = models.code_review.model ?? "deepseek-v4-pro";
+    const reviewTimeout = models.code_review.timeoutMs ?? 300 * 1000;
+    let prePr;
+    try {
+      prePr = await (deps.runLocalPrePrReview ?? runLocalPrePrReview)({
+        worktree: worktreePath,
+        baseSha,
+        branch,
+        timeoutMs: reviewTimeout,
+        model: reviewModel,
+      });
+    } catch (e) {
+      record("pre-pr-review", { error: e.message });
+      writeAudit(issueId, "pre-pr-review-FAILED.md", failedArtifact("pre-pr-review", e));
+      console.error(c.red(`pre-pr-review: ${e.message} — blocking PR (fail closed).`));
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+    writeAudit(issueId, "pre-pr-review.md", prePr.output ?? "(empty)");
+    if (!prePr.ok && !prePr.skipped) {
+      record("pre-pr-review", { blocked: true, pass: prePr.pass });
+      console.error(
+        c.red(
+          `pre-pr-review: Critical/High findings in ${prePr.pass ?? "review"} pass — PR blocked.`
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+    record("pre-pr-review", { ok: true, skipped: !!prePr.skipped });
+    saveState({ prePrReviewDone: true });
+    progress("pre-pr-review: clear");
+  }
+
   // ── 5. PR ────────────────────────────────────────────────────────────────────
   let prNumber;
   if (state.prNumber) {
@@ -1415,7 +1489,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             buildGptReviewPrompt(plan, prDiff, prNumber),
             gptCfg.timeoutMs ?? 300 * 1000,
             {
-              extraArgs: ["--force", "--trust", ...(gptCfg.model ? ["--model", gptCfg.model] : [])],
+              extraArgs: [
+                "--force",
+                "--trust",
+                ...(gptCfg.model ? ["--model", cursorCliModelArg(gptCfg.model)] : []),
+              ],
             }
           );
           writeAudit(issueId, `review-gpt-r${round}.md`, gptReview);
@@ -1570,16 +1648,14 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
         }
         const cfg = models.safety_review;
-        const safety = await claude(
-          buildSafetyPrompt(diffRes.stdout, changedPaths),
-          cfg.timeoutMs ?? 300 * 1000,
-          {
-            model: cfg.model,
-            // Same no-tools stance as recon: the diff is fully injected, so the safety reviewer
-            // never needs (and must not have) filesystem access over untrusted diff content.
+        const safety = await promptCall({
+          model: cfg.model,
+          prompt: buildSafetyPrompt(diffRes.stdout, changedPaths),
+          timeoutMs: cfg.timeoutMs ?? 300 * 1000,
+          opts: {
             extraArgs: [...NO_TOOLS_ARGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])],
-          }
-        );
+          },
+        });
         writeAudit(issueId, "safety-review.md", safety);
         if (!detectSafetyToken(safety)) {
           record("merge-gate", { safetyBlocked: true });
@@ -1701,7 +1777,7 @@ function usage() {
       "options:",
       "  --auto                 skip the plan gate (plan proceeds without operator OK)",
       "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
-      "  --reviewers <list>     gating reviewers (default: bugbot,gpt-5.5; CodeRabbit advisory)",
+      "  --reviewers <list>     gating reviewers (default: gpt-5.5; add bugbot to wait on Cursor Bot)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
       "  --plan-runner cli|sdk  plan-stage runner (default: cli — Claude Code login auth; sdk drives",
       "                         Opus via the Anthropic SDK and needs a funded ANTHROPIC_API_KEY)",

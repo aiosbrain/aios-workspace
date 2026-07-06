@@ -122,43 +122,55 @@ console.log("diversity guard (fail closed)");
   rmSync(repo, { recursive: true, force: true });
 }
 
-console.log("runner-family guard (fail closed) — M1");
+console.log("agentic-provider guard (fail closed)");
 {
   const repo = mkdtempSync(path.join(tmpdir(), "lm-runner-"));
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
 
-  // A GPT model on a Claude-runner step (build) via FILE must abort.
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: gpt-5.3-codex\n");
-  const badFile = resolveInChild({ repo });
-  check("gpt build_model via file aborts", badFile.ok === false);
-  check("message names the Claude-family requirement", /Claude-family/.test(badFile.stderr));
+  // Bare GPT on build resolves to cursor (agentic). Prompt-only providers must abort.
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "build_model: cursor:gpt-5.3-codex\n"
+  );
+  check("cursor build_model via file passes", resolveInChild({ repo }).ok === true);
 
-  // Same via a CLI --model override (no config file needed).
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "build_model: openrouter:openai/gpt-5.3-codex\n"
+  );
+  const badFile = resolveInChild({ repo });
+  check("openrouter build_model via file aborts", badFile.ok === false);
+  check("message names agentic provider requirement", /agentic provider/.test(badFile.stderr));
+
   const badCli = resolveInChild({
     repo: null,
-    cliOverrides: { build: { model: "gpt-5.3-codex" } },
+    cliOverrides: { build: { model: "openrouter:openai/gpt-5.3-codex" } },
   });
-  check("gpt build model via CLI aborts", badCli.ok === false);
+  check("openrouter build model via CLI aborts", badCli.ok === false);
 
   // A Claude-family id is accepted.
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: claude-sonnet-5\n");
   check("claude build_model passes", resolveInChild({ repo }).ok === true);
 
   // The `plan` step is a Claude runner too (SDK) — a GPT plan model aborts.
-  const badPlan = resolveInChild({ repo: null, cliOverrides: { plan: { model: "gpt-5.5-high" } } });
-  check("gpt plan model aborts", badPlan.ok === false);
+  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: opencode:glm-5.2\n");
+  check("opencode build_model passes", resolveInChild({ repo }).ok === true);
 
-  // `consolidate` is now a Claude-runner step too (Major 5) — a GPT consolidate_model aborts
-  // before it can be handed to callClaudeAgent.
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "consolidate_model: gpt-5.5-high\n");
-  const badConsolidate = resolveInChild({ repo });
-  check("gpt consolidate_model via file aborts", badConsolidate.ok === false);
+  const badPlan = resolveInChild({
+    repo: null,
+    cliOverrides: { plan: { model: "deepseek-v4-pro" } },
+  });
+  check("deepseek plan model aborts (prompt-only provider)", badPlan.ok === false);
+
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "consolidate_model: openrouter:openai/gpt-4o-mini\n"
+  );
   check(
-    "consolidate abort names the Claude-family requirement",
-    /Claude-family/.test(badConsolidate.stderr)
+    "openrouter consolidate_model passes (prompt-only step)",
+    resolveInChild({ repo }).ok === true
   );
 
-  // The default consolidate model still resolves (anthropic) and other guards are unaffected.
   const okDefault = resolveInChild({ repo: null });
   check(
     "default consolidate resolves (anthropic)",
@@ -168,41 +180,20 @@ console.log("runner-family guard (fail closed) — M1");
   rmSync(repo, { recursive: true, force: true });
 }
 
-console.log("ship/roadmap Claude-runner steps (R-Major-6) fail closed on a non-Claude override");
+console.log("prompt-only steps accept any provider");
 {
-  // recon, safety_review, and digest are executed via callClaudeAgent in ship/roadmap-run,
-  // so a non-Claude override for any of them must abort at resolve time, before any run.
-  const badRecon = resolveInChild({
-    repo: null,
-    cliOverrides: { recon: { model: "gpt-5.5-high" } },
-  });
-  check("gpt recon model aborts", badRecon.ok === false);
-  check("recon abort names the Claude-family requirement", /Claude-family/.test(badRecon.stderr));
-
-  const badSafety = resolveInChild({
-    repo: null,
-    cliOverrides: { safety_review: { model: "gpt-5.5-high" } },
-  });
-  check("gpt safety_review model aborts", badSafety.ok === false);
-  check(
-    "safety_review abort names the Claude-family requirement",
-    /Claude-family/.test(badSafety.stderr)
-  );
-
-  const badDigest = resolveInChild({
-    repo: null,
-    cliOverrides: { digest: { model: "gpt-5.3-codex" } },
-  });
-  check("gpt digest model aborts", badDigest.ok === false);
-
-  // A Claude-family override for each is accepted.
   const okRecon = resolveInChild({
     repo: null,
-    cliOverrides: { recon: { model: "claude-sonnet-5" } },
+    cliOverrides: { recon: { model: "openrouter:openai/gpt-4o-mini" } },
   });
-  check("claude recon model passes", okRecon.ok === true);
+  check("openrouter recon model passes", okRecon.ok === true);
 
-  // The diversity pairs are unaffected by the new Claude-runner steps.
+  const okSafety = resolveInChild({
+    repo: null,
+    cliOverrides: { safety_review: { model: "opencode:glm-5.2" } },
+  });
+  check("opencode safety_review model passes", okSafety.ok === true);
+
   const okDefaults = resolveInChild({ repo: null });
   check("defaults still pass all guards", okDefaults.ok === true);
 }
@@ -282,33 +273,23 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
 {
   const empty = mkdtempSync(path.join(tmpdir(), "lm-spec-"));
   const r = resolveLoopModels({ repo: empty });
-  check(
-    "spec_eval resolves to opus/xhigh",
-    r.spec_eval.model === "claude-opus-4-8" && r.spec_eval.effort === "xhigh"
-  );
-  check(
-    "spec_fix resolves to opus/high",
-    r.spec_fix.model === "claude-opus-4-8" && r.spec_fix.effort === "high"
-  );
+  check("spec_eval defaults to deepseek-v4-pro", r.spec_eval.model === "deepseek-v4-pro");
+  check("spec_fix defaults to deepseek-v4-pro", r.spec_fix.model === "deepseek-v4-pro");
   check("spec_eval is a known step", STEPS.includes("spec_eval"));
   check("spec_fix is a known step", STEPS.includes("spec_fix"));
   rmSync(empty, { recursive: true, force: true });
 
-  // spec_eval/spec_fix run on the Claude SDK → a gpt override must abort (runner-family guard).
-  const badEval = resolveInChild({
+  // spec_eval/spec_fix are prompt-only at resolve time (runtime routes via callPromptModel).
+  const okEval = resolveInChild({
     repo: null,
-    cliOverrides: { spec_eval: { model: "gpt-5.5-high" } },
+    cliOverrides: { spec_eval: { model: "openrouter:openai/gpt-4o-mini" } },
   });
-  check("gpt spec_eval model aborts", badEval.ok === false);
-  check(
-    "spec_eval abort names the Claude-family requirement",
-    /Claude-family/.test(badEval.stderr)
-  );
-  const badFix = resolveInChild({
+  check("openrouter spec_eval model passes", okEval.ok === true);
+  const okFix = resolveInChild({
     repo: null,
-    cliOverrides: { spec_fix: { model: "gpt-5.3-codex" } },
+    cliOverrides: { spec_fix: { model: "deepseek:deepseek-v4-pro" } },
   });
-  check("gpt spec_fix model aborts", badFix.ok === false);
+  check("deepseek spec_fix model passes", okFix.ok === true);
 }
 
 console.log("modelFamily");

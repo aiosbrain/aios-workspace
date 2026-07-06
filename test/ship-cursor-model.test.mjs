@@ -160,7 +160,7 @@ console.log("an explicit Cursor-family override still reaches the Cursor argv");
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
   writeFileSync(
     path.join(repo, ".aios", "loop-models.yaml"),
-    "plan_review_model: gpt-5.5-high\ncode_review_model: gpt-5.5-high\n"
+    "plan_review_model: cursor:gpt-5.5-high\ncode_review_model: cursor:gpt-5.5-high\n"
   );
   try {
     const { code } = await runShip({

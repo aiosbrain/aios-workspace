@@ -65,7 +65,10 @@ function freshRepo({ withGate = true } = {}) {
   // fake cursor binary regardless of what the real DEFAULT_MODELS.code_review becomes —
   // this file has no fake for the DeepSeek-direct dispatch path (that's a real fetch call).
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
-  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "code_review_model: gpt-5.5-high\n");
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "code_review_model: cursor:gpt-5.5-high\n"
+  );
   g(["add", "-A"]);
   g(["commit", "-m", "base"]);
   return repo;
