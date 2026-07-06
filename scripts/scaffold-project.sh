@@ -343,6 +343,7 @@ process_template() {
 
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
+process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
