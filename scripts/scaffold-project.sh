@@ -138,7 +138,7 @@ touch "$OUTPUT/$D_INBOX/transcripts/.gitkeep" "$OUTPUT/$D_INBOX/from-brain/.gitk
 idx() { cat > "$1"; }  # helper: idx <path> <<EOF ... EOF
 
 if [ "$CONTEXT" = consultant ]; then
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team
@@ -180,7 +180,7 @@ access: team
 |---|------|--------|--------|------------|
 EOF
 else
-  idx "$OUTPUT/$D_CONTEXT/index.md" << EOF
+  idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
 access: team

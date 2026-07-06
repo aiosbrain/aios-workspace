@@ -56,7 +56,7 @@ try {
       "--org",
       "test-org",
     ],
-    { cwd: REPO, stdio: "pipe", env: { ...process.env, CI: "1" } },
+    { cwd: REPO, stdio: "pipe", env: { ...process.env, CI: "1" } }
   );
 } catch (e) {
   fail(`scaffold-project.sh failed: ${String(e.stderr || e.message).split("\n")[0]}`);

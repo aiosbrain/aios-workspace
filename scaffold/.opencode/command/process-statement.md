@@ -1,5 +1,6 @@
 ---
 description: Process a bank statement through the workspace bookkeeping ledger.
+status: active
 ---
 
 Process a bank statement through the workspace bookkeeping ledger.

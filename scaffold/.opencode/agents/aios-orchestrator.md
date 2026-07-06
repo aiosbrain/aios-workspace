@@ -1,5 +1,6 @@
 ---
 description: Primary AIOS workspace orchestrator — spine, governance, brain sync, skills
+status: active
 mode: all
 temperature: 0.2
 permission:
@@ -7,14 +8,20 @@ permission:
     "aios *": allow
     "git *": allow
     "node scripts/*": allow
+    "node bin/*": allow
     "*": ask
   edit:
     "5-personal/*": deny
+    "engagement-admin/*": deny
     "bookkeeping/*": deny
     "entities/*": deny
-    "engagement-admin/*": deny
     "insurance/*": deny
     "business-administration/*": deny
+    "research/*": deny
+    "portfolio/*": deny
+    "partnerships/*": deny
+    "templates/*": deny
+    "ops/*": deny
     "*": allow
 ---
 

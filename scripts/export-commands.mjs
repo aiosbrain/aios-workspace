@@ -36,7 +36,7 @@ function firstLineSummary(body) {
 
 function wrapCommand(name, sourceBody) {
   const description = firstLineSummary(sourceBody);
-  return `---\ndescription: ${description.replace(/"/g, '\\"')}\n---\n\n${sourceBody.trim()}\n`;
+  return `---\ndescription: ${description.replace(/"/g, '\\"')}\nstatus: active\n---\n\n${sourceBody.trim()}\n`;
 }
 
 function exportCommands({ commandsDir, outDir }) {
@@ -61,7 +61,7 @@ function exportCommands({ commandsDir, outDir }) {
 }
 
 const args = parseArgs(process.argv);
-const base = args.scaffold ? path.join(REPO, "scaffold") : args.repo ?? process.cwd();
+const base = args.scaffold ? path.join(REPO, "scaffold") : (args.repo ?? process.cwd());
 const commandsDir = path.join(base, ".claude", "commands");
 const outDir = path.join(base, ".opencode", "command");
 

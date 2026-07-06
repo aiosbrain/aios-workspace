@@ -42,6 +42,10 @@ function dirHash(dir) {
   const parts = readdirSync(dir)
     .filter((f) => f.endsWith(".md"))
     .sort()
-    .map((f) => createHash("sha256").update(readFileSync(path.join(dir, f))).digest("hex"));
+    .map((f) =>
+      createHash("sha256")
+        .update(readFileSync(path.join(dir, f)))
+        .digest("hex")
+    );
   return createHash("sha256").update(parts.join("")).digest("hex");
 }

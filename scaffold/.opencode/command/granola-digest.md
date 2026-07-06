@@ -1,5 +1,6 @@
 ---
 description: Pull today's Granola meeting transcripts and produce a daily digest.
+status: active
 ---
 
 Pull today's Granola meeting transcripts and produce a daily digest.

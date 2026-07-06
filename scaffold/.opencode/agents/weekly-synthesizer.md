@@ -1,5 +1,6 @@
 ---
 description: Produce weekly synthesis digests with rubric self-correction
+status: active
 mode: subagent
 temperature: 0.2
 permission:

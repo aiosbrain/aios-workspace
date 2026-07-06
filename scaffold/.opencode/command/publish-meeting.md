@@ -1,5 +1,6 @@
 ---
 description: Sanitize private meeting notes and publish a team-safe summary.
+status: active
 ---
 
 Sanitize private meeting notes and publish a team-safe summary.

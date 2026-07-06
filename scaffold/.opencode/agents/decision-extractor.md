@@ -1,5 +1,6 @@
 ---
 description: Extract decisions from meeting transcripts into the decision log
+status: active
 mode: subagent
 temperature: 0.1
 permission:

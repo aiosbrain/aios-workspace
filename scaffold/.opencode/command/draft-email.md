@@ -1,5 +1,6 @@
 ---
 description: Draft an email in the workspace owner's voice. Draft only — never auto-send.
+status: active
 ---
 
 Draft an email in the workspace owner's voice. Draft only — never auto-send.

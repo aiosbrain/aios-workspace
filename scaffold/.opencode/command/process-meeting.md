@@ -1,5 +1,6 @@
 ---
 description: Process a meeting transcript — save, analyze, extract actions.
+status: active
 ---
 
 Process a meeting transcript — save, analyze, extract actions.

@@ -41,7 +41,7 @@ try {
       "--org",
       "test-org",
     ],
-    { cwd: REPO, stdio: "pipe", env: { ...process.env, CI: "1" } },
+    { cwd: REPO, stdio: "pipe", env: { ...process.env, CI: "1" } }
   );
 } catch (e) {
   fail(`scaffold-project.sh failed: ${String(e.stderr || e.message).split("\n")[0]}`);
@@ -54,7 +54,10 @@ if (existsSync(ws)) {
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
     if (cfg.default_agent !== "aios-orchestrator") fail("default_agent must be aios-orchestrator");
     else ok("opencode.json default_agent");
-    if (!Array.isArray(cfg.instructions) || !cfg.instructions.includes(".claude/rules/access-control.md")) {
+    if (
+      !Array.isArray(cfg.instructions) ||
+      !cfg.instructions.includes(".claude/rules/access-control.md")
+    ) {
       fail("opencode.json missing governance instructions");
     } else ok("opencode.json instructions");
     if (!Array.isArray(cfg.plugin) || cfg.plugin.length === 0) fail("opencode.json missing plugin");
@@ -86,7 +89,10 @@ if (existsSync(ws)) {
   else ok("instincts plugin source");
 
   const index = readFileSync(path.join(ws, "0-context", "index.md"), "utf8");
-  if (!index.includes("runtime-agnostic")) fail("0-context/index.md missing runtime-agnostic blurb");
+  if (!index.includes("runtime-agnostic"))
+    fail("0-context/index.md missing runtime-agnostic blurb");
+  else if (!index.includes("`.claude/`"))
+    fail("0-context/index.md missing .claude/ reference (heredoc backtick bug?)");
   else ok("0-context/index.md agent layer");
 
   const agentsMd = readFileSync(path.join(ws, "AGENTS.md"), "utf8");

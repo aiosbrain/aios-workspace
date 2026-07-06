@@ -1,5 +1,6 @@
 ---
 description: Detect scope creep against baseline and ledger
+status: active
 mode: subagent
 temperature: 0.1
 permission:
