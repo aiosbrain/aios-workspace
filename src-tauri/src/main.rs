@@ -204,15 +204,60 @@ fn resolve_repo(app: &tauri::AppHandle) -> Option<PathBuf> {
     }
 }
 
-fn wait_for_port(port: u16, timeout: Duration) -> bool {
+/// Tail up to `max_bytes` of a log file, for embedding in an error dialog. Empty
+/// string (never an error) if the file doesn't exist yet or can't be read.
+fn tail_log(path: &Path, max_bytes: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut buf = String::new();
+    let _ = f.read_to_string(&mut buf);
+    buf.trim().to_string()
+}
+
+/// Waits for the sidecar's port to open, OR stops immediately (instead of waiting out
+/// the full timeout) if the sidecar process has already exited — every past cause of
+/// "the local server didn't come up in time" (missing .env, missing node_modules, a
+/// port conflict, whatever) previously produced that same generic message with no way
+/// to tell them apart. The caller tails gui-server.log into the dialog either way.
+fn wait_for_port_or_exit(port: u16, timeout: Duration, child: &mut Child) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
+            return Ok(());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return Err(format!("the local server exited early ({status})")),
+            Ok(None) => {}
+            Err(e) => return Err(format!("couldn't check the local server's status: {e}")),
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    false
+    Err("the local server didn't come up in time".to_string())
+}
+
+/// Guarantee `.env` exists before deciding whether to launch under dotenvx — mirrors
+/// scaffold-project.sh's own bootstrap (scripts/ensure-env.mjs) so a workspace reached
+/// via "pick an existing folder" (not freshly scaffolded through this app) gets the
+/// same guarantee. Best-effort: node not being found here is no worse than the
+/// pre-existing behavior of just skipping dotenvx.
+fn ensure_env(app: &tauri::AppHandle, repo: &Path) {
+    let script = toolkit_dir(app).join("scripts/ensure-env.mjs");
+    if !script.exists() {
+        return;
+    }
+    let _ = Command::new(find_bin("node"))
+        .arg(&script)
+        .arg("--repo")
+        .arg(repo)
+        .env("PATH", enriched_path())
+        .status();
 }
 
 fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) -> std::io::Result<Child> {
@@ -226,6 +271,7 @@ fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) ->
     let log = std::fs::File::create(logdir.join("gui-server.log"))?;
     let log_err = log.try_clone()?;
 
+    ensure_env(app, repo);
     // Under dotenvx when the workspace has an encrypted .env, so the agent's MCP
     // servers get decrypted provider tokens at spawn.
     let use_dotenvx = repo.join(".env").exists();
@@ -288,10 +334,21 @@ fn main() {
                 }
             }
 
-            if !wait_for_port(port, Duration::from_secs(25)) {
+            let wait_result = {
+                let state = app.state::<Sidecar>();
+                let mut guard = state.0.lock().unwrap();
+                match guard.as_mut() {
+                    Some(child) => wait_for_port_or_exit(port, Duration::from_secs(25), child),
+                    None => Err("the local server isn't running".to_string()),
+                }
+            };
+            if let Err(reason) = wait_result {
+                let log_path = repo.join(".aios").join("gui-server.log");
+                let tail = tail_log(&log_path, 4000);
+                let detail = if tail.is_empty() { reason } else { format!("{reason}\n\n{tail}") };
                 rfd::MessageDialog::new()
                     .set_title("Couldn't start AIOS")
-                    .set_description("The local server didn't come up in time.")
+                    .set_description(&detail)
                     .show();
                 kill_sidecar(&handle);
                 handle.exit(1);
