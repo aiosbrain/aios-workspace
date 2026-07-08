@@ -33,7 +33,8 @@ import {
   readdirSync,
 } from "node:fs";
 import path from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 // ── config ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -45,10 +46,6 @@ const POLL_INTERVAL_SEC = 5;
 const VERSION = 1;
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
-
-function sha256(input) {
-  return createHash("sha256").update(input).digest("hex");
-}
 
 function storePath(root) {
   return path.join(root, STORE_REL);
@@ -195,7 +192,7 @@ function evaluate(ask) {
   // Already resolved in the fold — shouldn't reach here, but defensive
   if (ask.status !== "open") return { action: "skip", note: "already closed" };
 
-  const { severity, kind, title, transcriptPath, sessionId } = ask;
+  const { severity, kind, title, transcriptPath } = ask;
 
   // blocker + idle = agent is waiting at a prompt or input — resolve immediately
   if (severity === "blocker" && kind === "idle") {
@@ -239,28 +236,27 @@ function evaluate(ask) {
 
 // ── one-shot processing ────────────────────────────────────────────────────────────────────────
 
-function processRepo(root, knownIds) {
+function processRepo(root) {
   const asks = readAsks(root);
-  const open = asks.filter((a) => a.status === "open" && !knownIds.has(a.id));
+  const open = asks.filter((a) => a.status === "open");
 
   let resolved = 0;
   let skipped = 0;
 
   for (const ask of open) {
     const { action, note } = evaluate(ask);
-    const prefix = action === "resolve" ? "✓" : "✗";
 
     if (action === "resolve") {
-      const at = appendResolve(root, ask.id);
+      appendResolve(root, ask.id);
       resolved++;
-      console.log(`${prefix} [${ask.severity}] ${ask.title.slice(0, 80)} — ${note}`);
+      console.log(`✓ [${ask.severity}] ${ask.title.slice(0, 80)} — ${note}`);
     } else {
       skipped++;
-      console.log(`${prefix} [${ask.severity}] ${ask.title.slice(0, 80)} — SKIPPED: ${note}`);
+      console.log(`✗ [${ask.severity}] ${ask.title.slice(0, 80)} — SKIPPED: ${note}`);
     }
   }
 
-  return { resolved, skipped, openCount: open.length, knownIds };
+  return { resolved, skipped, openCount: open.length };
 }
 
 // ── find workspace repos ───────────────────────────────────────────────────────────────────────
@@ -268,7 +264,7 @@ function processRepo(root, knownIds) {
 function findWorkspaceRoots() {
   const results = [];
   // Primary workspace
-  const primary = path.resolve(import.meta.dirname, "..");
+  const primary = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   if (existsSync(path.join(primary, ".aios"))) {
     results.push(primary);
   }
@@ -299,8 +295,6 @@ function main() {
     process.exit(1);
   }
 
-  const knownIdsByRoot = new Map(); // root → Set<id>
-
   function tick(iteration) {
     if (iteration !== undefined) {
       process.stdout.write(`\n[${new Date().toISOString()}] poll #${iteration} — `);
@@ -311,9 +305,7 @@ function main() {
     let totalOpen = 0;
 
     for (const root of roots) {
-      const known = knownIdsByRoot.get(root) ?? new Set();
-      const result = processRepo(root, known);
-      knownIdsByRoot.set(root, result.knownIds);
+      const result = processRepo(root);
       totalResolved += result.resolved;
       totalSkipped += result.skipped;
       totalOpen += result.openCount;
@@ -350,7 +342,7 @@ function main() {
     });
   } else {
     const result = tick();
-    process.exit(result.totalResolved > 0 || result.totalSkipped > 0 ? 0 : 0);
+    process.exit(0);
   }
 }
 
