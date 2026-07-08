@@ -29,6 +29,9 @@ import {
   statSync,
   realpathSync,
   cpSync,
+  copyFileSync,
+  chmodSync,
+  unlinkSync,
   renameSync,
   rmSync,
 } from "node:fs";
@@ -3997,11 +4000,73 @@ async function cmdAsks(repo, cfg, args) {
     return;
   }
 
+  if (sub === "auto-approve") {
+    const watch = flags.has("--watch");
+    const intervalIdx = rest.indexOf("--interval");
+    const interval = intervalIdx >= 0 ? parseInt(rest[intervalIdx + 1], 10) || 5 : 5;
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "asks-auto-approve.mjs");
+    if (!existsSync(scriptPath)) die("asks-auto-approve.mjs not found — run from repo root");
+
+    // Reuse the store read/write functions that are already loaded.
+    const knownIds = new Set();
+    const roots = [repo];
+
+    function tick() {
+      let resolved = 0;
+      let skipped = 0;
+      let found = 0;
+      for (const r of roots) {
+        const { asks } = loop.readAsks(r);
+        const open = asks.filter((a) => a.status === "open" && !knownIds.has(a.id));
+        found += open.length;
+        for (const ask of open) {
+          const { severity, kind, title } = ask;
+          let note = "";
+          if (severity === "blocker" && kind === "idle") {
+            note = "auto-approved: agent waiting for input";
+            loop.appendOp(r, "resolve", ask.id);
+            resolved++;
+          } else if (severity === "fyi") {
+            note = "auto-resolved: FYI status update";
+            loop.appendOp(r, "resolve", ask.id);
+            resolved++;
+          } else if (severity === "decision" || severity === "blocker") {
+            note = `auto-approved ${severity}: "${title.slice(0, 80)}"`;
+            loop.appendOp(r, "resolve", ask.id);
+            resolved++;
+          } else {
+            skipped++;
+            note = "unknown type — skipping";
+          }
+          if (resolved + skipped > 0) {
+            console.log(`${c.dim(new Date().toISOString())} ${severity === "blocker" ? "!" : severity === "decision" ? "?" : "i"} [${severity}] ${title.slice(0, 70)} — ${note}`);
+          }
+        }
+      }
+      if (found === 0 && resolved === 0) process.stdout.write(".");
+      return { resolved, skipped, found };
+    }
+
+    if (watch) {
+      console.log(c.blue("aios asks auto-approve") + c.dim(`  watching ${roots.length} root(s), polling every ${interval}s`));
+      tick();
+      const timer = setInterval(tick, interval * 1000);
+      process.on("SIGINT", () => { clearInterval(timer); console.log(c.dim("\nstopped")); process.exit(0); });
+      process.on("SIGTERM", () => { clearInterval(timer); console.log(c.dim("\nstopped")); process.exit(0); });
+      return; // keep alive
+    }
+
+    const result = tick();
+    console.log(c.blue("aios asks auto-approve") + c.dim(`  ${result.resolved} resolved, ${result.skipped} skipped, ${result.found} open`));
+    return;
+  }
+
   die(
     "usage: aios asks list [--status open|resolved|orphaned|all] [--json]\n" +
       "       aios asks show <id> [--json]\n" +
       "       aios asks resolve <id...> [--json]\n" +
       "       aios asks drain [--keep-open] [--json]\n" +
+      "       aios asks auto-approve [--watch] [--interval N]\n" +
       "       aios asks add --kind <k> --severity <blocker|decision|fyi> --title <t> [--body <b>] [--ref <r>] [--json]\n" +
       "       aios asks harvest [--cadence daily|weekly] [--json]\n" +
       "       aios asks wire [--all-worktrees] [--dry-run] [--json]"
@@ -4958,6 +5023,114 @@ if (repoFlagIdx !== -1) {
   rest.splice(repoFlagIdx, 2);
 }
 
+// ── aios worktree — git worktree wrapper with automatic config propagation ────────
+
+async function cmdWorktree(repo, cfg, args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+  const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "link-worktree-env.sh");
+  const hookSrc = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "git", "post-checkout");
+  const hookDest = path.join(repo, ".git", "hooks", "post-checkout");
+
+  function installHook() {
+    if (!existsSync(hookSrc)) {
+      console.log(c.dim("  hook source not found at") + ` ${hookSrc}`);
+      return false;
+    }
+    if (existsSync(hookDest)) {
+      const srcContent = readFileSync(hookSrc, "utf8");
+      const destContent = readFileSync(hookDest, "utf8");
+      if (srcContent === destContent) {
+        console.log(c.dim("  post-checkout hook already installed"));
+        return true;
+      }
+    }
+    copyFileSync(hookSrc, hookDest);
+    chmodSync(hookDest, 0o755);
+    console.log(c.dim("  installed post-checkout hook → auto-hydrates new worktrees"));
+    return true;
+  }
+
+  if (sub === "add") {
+    const branch = rest[0];
+    if (!branch) die("usage: aios worktree add <feat/branch-name> [--base <ref>]");
+
+    const baseIdx = rest.indexOf("--base");
+    const base = baseIdx >= 0 ? rest[baseIdx + 1] : "origin/main";
+    const dirName = path.basename(repo) + "-" + branch.replace(/\//g, "-");
+    const wtPath = path.join(path.dirname(repo), dirName);
+
+    // 0. Ensure the auto-hydration hook is installed in primary
+    installHook();
+
+    // 1. Fetch + create worktree
+    console.log(c.blue(`aios worktree add`) + c.dim(`  ${branch} → ${dirName}`));
+    try {
+      execFileSync("git", ["-C", repo, "fetch", "origin"], { stdio: "pipe" });
+    } catch { /* fetch may fail offline; proceed */ }
+    const out = execFileSync(
+      "git", ["-C", repo, "worktree", "add", "-b", branch, wtPath, base],
+      { encoding: "utf8", stdio: "pipe" }
+    );
+    console.log(c.dim(out.trim()));
+
+    // The post-checkout hook above fires automatically during `git worktree add`
+    // and runs link-worktree-env.sh for us. But also run it synchronously so we
+    // can print the result.
+    if (existsSync(scriptPath) && existsSync(wtPath)) {
+      execFileSync("bash", [scriptPath], { cwd: wtPath, stdio: "inherit" });
+    }
+
+    console.log(`\n${c.green("Ready:")} cd ${wtPath}`);
+    return;
+  }
+
+  if (sub === "init") {
+    const dirIdx = rest.indexOf("--dir");
+    const targetDir = dirIdx >= 0 ? rest[dirIdx + 1] : process.cwd();
+    if (!existsSync(targetDir)) die(`directory not found: ${targetDir}`);
+    if (existsSync(scriptPath)) {
+      execFileSync("bash", [scriptPath], { cwd: targetDir, stdio: "inherit" });
+    } else {
+      console.log(c.dim("link-worktree-env.sh not found — nothing to do"));
+    }
+    return;
+  }
+
+  const flags = new Set(rest);
+
+  if (sub === "install-hook") {
+    installHook();
+    return;
+  }
+
+  if (sub === "uninstall-hook" || flags.has("--uninstall-hook")) {
+    if (existsSync(hookDest)) {
+      unlinkSync(hookDest);
+      console.log(c.dim("removed post-checkout hook"));
+    } else {
+      console.log(c.dim("no post-checkout hook to remove"));
+    }
+    return;
+  }
+
+  // list worktrees
+  if (sub === "list" || !sub) {
+    const out = execFileSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" });
+    console.log(c.blue("aios worktree list") + c.dim(`  (${repo})`));
+    console.log(out.trim());
+    return;
+  }
+
+  die(
+    "usage: aios worktree add <feat/branch-name> [--base <ref>]\n" +
+      "       aios worktree init [--dir <path>]  hydrate config in the given directory\n" +
+      "       aios worktree list                  list all worktrees for this repo\n" +
+      "       aios worktree install-hook          install the auto-hydration post-checkout hook\n" +
+      "       aios worktree uninstall-hook        remove it"
+  );
+}
+
 const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
 
 usage:
@@ -5053,7 +5226,12 @@ usage:
     [--install]                         for hermes: also run hermes skills install on each
   aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
-  aios rails suggest [--repo <path>]    propose a SAFE permissions.allow from the transcript log
+  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
+    [--base <ref>]                     --base defaults to origin/main; links node_modules,
+                                       copies opencode.json/.claude/settings, wires hooks
+  aios worktree init                  hydrate the current worktree dir (idempotent)
+  aios worktree list                  list all worktrees for this repo
+  aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
     [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
   aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)
@@ -5162,6 +5340,7 @@ const OFFLINE_CMDS = new Set([
   "council",
   "maturity-week",
   "instincts",
+  "worktree",
   // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
   // (the brain only enriches avatars when configured).
   "timeline",
@@ -5216,6 +5395,7 @@ try {
   else if (cmd === "council") await runCouncil(repo, rest);
   else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else if (cmd === "instincts") await cmdInstincts(repo, rest);
+  else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

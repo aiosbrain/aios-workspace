@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# post-checkout hook: auto-hydrate a freshly created git worktree with config
+# from the primary checkout. Fires on every checkout, but only hydrates when
+# the previous HEAD is all-zeros (fresh worktree) and opencode.json is missing.
+#
+# Installed by: aios worktree --install-hook
+# Removed by:    aios worktree --uninstall-hook
+#
+# Passes silently when not applicable — never blocks a checkout.
+
+set -euo pipefail
+
+prev_head="$1"
+new_head="$2"
+checkout_flag="$3"
+
+# Only act on branch checkouts (flag=1) with a zero previous HEAD (new worktree)
+if [[ "$checkout_flag" != "1" ]]; then exit 0; fi
+if [[ "$prev_head" != "0000000000000000000000000000000000000000" ]]; then exit 0; fi
+
+# Determine if we're in a worktree (not the primary)
+common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -z "$common_dir" ]]; then exit 0; fi
+
+main_worktree="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd || true)"
+here="$(pwd)"
+
+# Not a worktree? Skip.
+if [[ "$main_worktree" == "$here" ]]; then exit 0; fi
+
+# Already hydrated? Skip.
+if [[ -f "$here/opencode.json" ]]; then exit 0; fi
+
+script="$main_worktree/scripts/link-worktree-env.sh"
+if [[ ! -x "$script" ]]; then
+  echo "[aios] link-worktree-env.sh not found or not executable — skipping auto-hydration"
+  exit 0
+fi
+
+echo "[aios] new worktree detected — auto-hydrating config from $main_worktree ..."
+bash "$script"
