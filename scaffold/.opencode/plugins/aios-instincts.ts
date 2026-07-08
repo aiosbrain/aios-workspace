@@ -16,7 +16,8 @@
  * | M365 email routing    | —                     | Claude-only |
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { existsSync, readFileSync } from "node:fs";
+import type { AssistantMessage } from "@opencode-ai/sdk";
+import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 const TEAM_DIRS = ["0-context/", "1-inbox/", "2-work/", "3-log/", "4-shared/"];
@@ -49,7 +50,17 @@ function extractWritePayload(output: Record<string, unknown>): { filePath: strin
   return { filePath, content };
 }
 
-export const AIOSInstincts: Plugin = async ({ directory }) => {
+function appendCostRecord(root: string, record: Record<string, unknown>) {
+  const dir = path.join(root, ".aios", "loop", "maturity");
+  try {
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(path.join(dir, "opencode-sessions.ndjson"), JSON.stringify(record) + "\n");
+  } catch {
+    /* skip — a missed capture is acceptable */
+  }
+}
+
+export const AIOSInstincts: Plugin = async ({ directory, client }) => {
   const root = directory;
   const secretPatterns = loadSecretPatterns(root);
 
@@ -62,10 +73,57 @@ export const AIOSInstincts: Plugin = async ({ directory }) => {
     },
 
     "session.status": async (input) => {
-      if (input.status !== "idle") return;
-      const inbox = path.join(root, "1-inbox", "transcripts");
-      if (existsSync(inbox)) {
-        console.info("[aios-instincts] tip: new transcripts in 1-inbox/transcripts? run decision-extractor");
+      const status = (input as { status?: string }).status;
+      const sessionID = (input as { sessionID?: string }).sessionID;
+
+      // Cost capture: when a session goes idle, fetch its messages for cost data.
+      if (status === "idle" && sessionID) {
+        try {
+          const result = await client.session.messages({
+            path: { id: sessionID },
+            query: { limit: 200 },
+          }) as { data?: Array<{ info: unknown }> } | Array<{ info: unknown }>;
+          const messages = Array.isArray(result) ? result : (result as { data?: Array<{ info: unknown }> }).data;
+          if (!messages || !messages.length) return;
+
+          let totalCost = 0;
+          let inputTokens = 0;
+          let outputTokens = 0;
+          let model = "";
+
+          for (const { info } of messages) {
+            const msg = info as { role?: string; cost?: number; tokens?: { input?: number; output?: number }; modelID?: string };
+            if (msg.role === "assistant") {
+              totalCost += msg.cost || 0;
+              inputTokens += msg.tokens?.input || 0;
+              outputTokens += msg.tokens?.output || 0;
+              model = msg.modelID || model;
+            }
+          }
+
+          if (totalCost > 0 || inputTokens > 0) {
+            appendCostRecord(root, {
+              tool: "opencode",
+              session_id: sessionID,
+              cost_usd: Math.round(totalCost * 100000) / 100000,
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              cache_read_tokens: 0,
+              model,
+              ts: new Date().toISOString(),
+              project: root,
+            });
+          }
+        } catch {
+          /* session cost capture is best-effort */
+        }
+      }
+
+      if (status === "idle") {
+        const inbox = path.join(root, "1-inbox", "transcripts");
+        if (existsSync(inbox)) {
+          console.info("[aios-instincts] tip: new transcripts in 1-inbox/transcripts? run decision-extractor");
+        }
       }
     },
 

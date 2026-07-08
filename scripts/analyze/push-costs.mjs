@@ -9,6 +9,7 @@ import path from "node:path";
 import { fetchCursorUsage } from "./cursor-api.mjs";
 import {
   buildClaudeCostFromEvents,
+  buildOpencodeCostFromEvents,
   buildCostPushPayloads,
   renderAiSpendMarkdown,
 } from "./cost-report.mjs";
@@ -25,7 +26,11 @@ const color = {
  * Safe to call without brain credentials (display-only).
  */
 export async function gatherCostData({ sinceMs, endMs, events, window }) {
-  const out = { window, claude: buildClaudeCostFromEvents(events, sinceMs) };
+  const out = {
+    window,
+    claude: buildClaudeCostFromEvents(events, sinceMs),
+    opencode: buildOpencodeCostFromEvents(events, sinceMs),
+  };
   try {
     out.cursor = await fetchCursorUsage(sinceMs, endMs);
   } catch (e) {
@@ -114,13 +119,12 @@ export async function pushProviderCosts(
     window: costData.window,
     cursor: costData.cursor ? { days: costData.cursor.days, totals: costData.cursor.totals } : null,
     claude: costData.claude,
+    opencode: costData.opencode,
   };
 
-  const cursorPayloads = buildCostPushPayloads({ cursor: rollup.cursor }, member, project);
-  const claudePayloads = buildCostPushPayloads({ claude: rollup.claude }, member, project);
+  const cursorPayloads = buildCostPushPayloads({ cursor: rollup.cursor, claude: rollup.claude, opencode: rollup.opencode }, member, project);
 
   const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
-  const claudeStats = await pushPayloadRows(repo, cfg, api, claudePayloads, state);
 
   saveCostsState(repo, state);
 
@@ -134,9 +138,8 @@ export async function pushProviderCosts(
   }
 
   logPushSummary("cursor", cursorStats);
-  logPushSummary("claude", claudeStats);
 
-  return { cursor: cursorStats, claude: claudeStats };
+  return { cursor: cursorStats };
 }
 
 function logPushSummary(provider, { sent, skipped, failed }) {

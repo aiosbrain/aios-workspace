@@ -16,22 +16,24 @@ function fmtUsd(n, { estimated = false } = {}) {
 }
 
 /**
- * Claude Code daily spend from local session logs (token estimate, not billing API).
+ * Daily spend for a given tool from its NormalizedEvent[] (session-log cost).
+ * @param {string} tool
  * @param {import("./normalize.mjs").NormalizedEvent[]} events
+ * @param {number} sinceMs
  */
-export function buildClaudeCostFromEvents(events, sinceMs) {
-  const claude = events.filter((ev) => {
-    if (ev.tool !== "claude") return false;
+function buildToolCostFromEvents(tool, events, sinceMs) {
+  const filtered = events.filter((ev) => {
+    if (ev.tool !== tool) return false;
     if (!ev.ts) return true;
     const t = new Date(ev.ts).getTime();
     return Number.isFinite(t) ? t >= sinceMs : true;
   });
-  if (!claude.length) return null;
+  if (!filtered.length) return null;
 
   const days = [];
   let totalCost = 0;
   let totalEvents = 0;
-  for (const [date, evs] of [...bucketByDay(claude).entries()]
+  for (const [date, evs] of [...bucketByDay(filtered).entries()]
     .filter(([d]) => d !== "undated")
     .sort((a, b) => a[0].localeCompare(b[0]))) {
     const sig = computeSignals(evs);
@@ -55,9 +57,27 @@ export function buildClaudeCostFromEvents(events, sinceMs) {
   };
 }
 
+/**
+ * Claude Code daily spend from local session logs (token estimate, not billing API).
+ * @param {import("./normalize.mjs").NormalizedEvent[]} events
+ * @param {number} sinceMs
+ */
+export function buildClaudeCostFromEvents(events, sinceMs) {
+  return buildToolCostFromEvents("claude", events, sinceMs);
+}
+
+/**
+ * Opencode daily spend from local session data (per-message cost from server API).
+ * @param {import("./normalize.mjs").NormalizedEvent[]} events
+ * @param {number} sinceMs
+ */
+export function buildOpencodeCostFromEvents(events, sinceMs) {
+  return buildToolCostFromEvents("opencode", events, sinceMs);
+}
+
 /** Terminal spend block (Cursor authoritative + Claude estimated). */
 export function renderCostSummary(costData, color) {
-  if (!costData?.cursor && !costData?.claude) return "";
+  if (!costData?.cursor && !costData?.claude && !costData?.opencode) return "";
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
   const { window: win } = costData;
   const L = [];
@@ -80,9 +100,17 @@ export function renderCostSummary(costData, color) {
       )
     );
   }
+  if (costData.opencode?.totals) {
+    const t = costData.opencode.totals;
+    L.push(
+      c.dim(
+        `  Opencode (session)   ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} turns`
+      )
+    );
+  }
   L.push(
     c.dim(
-      "  Cursor = dashboard API · Claude = token estimate from session logs · see brain Usage for team totals"
+      "  Cursor = dashboard API · Claude = token estimate · Opencode = session API · see brain Usage for team totals"
     )
   );
   return L.join("\n");
@@ -124,6 +152,21 @@ export function buildCostPushPayloads(result, member, project) {
       cost_usd: roundUsd(day.cost_usd),
       events: day.events || 0,
       meta: { estimated: true },
+    });
+  }
+  for (const day of result.opencode?.days || []) {
+    out.push({
+      member,
+      date: day.date,
+      provider: "opencode",
+      source: "session-api",
+      project: project || "",
+      input_tokens: day.input_tokens || 0,
+      output_tokens: day.output_tokens || 0,
+      cache_read_tokens: day.cache_read_tokens || 0,
+      cost_usd: roundUsd(day.cost_usd),
+      events: day.events || 0,
+      meta: {},
     });
   }
   return out;
@@ -177,10 +220,21 @@ export function renderAiSpendMarkdown(result) {
     lines.push("");
   }
 
+  if (result.opencode?.totals) {
+    lines.push("## Opencode (from session API)", "");
+    lines.push(`| Total | $${result.opencode.totals.cost_usd.toFixed(2)} |`);
+    lines.push("");
+    lines.push("| Date | Cost | Turns |", "|------|------|-------|");
+    for (const d of result.opencode.days || []) {
+      lines.push(`| ${d.date} | $${d.cost_usd.toFixed(2)} | ${d.events} |`);
+    }
+    lines.push("");
+  }
+
   lines.push(
     "---",
     "",
-    "_Auto-updated by `aios analyze --push`. Cursor figures are authoritative; Claude figures are token estimates._",
+    "_Auto-updated by `aios analyze --push`. Cursor figures are authoritative; Claude figures are token estimates; Opencode figures are per-message cost from the server API._",
     ""
   );
   return lines.join("\n");

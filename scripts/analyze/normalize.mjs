@@ -14,7 +14,7 @@
  * Zero dependencies (Node >= 18).
  */
 
-export const TOOLS = ["claude", "codex", "cursor"];
+export const TOOLS = ["claude", "codex", "cursor", "opencode"];
 export const ACTORS = ["user", "assistant", "subagent"];
 export const BLOCK_TYPES = [
   "thinking",
@@ -35,7 +35,7 @@ export const BLOCK_TYPES = [
  * @property {number} cache_create  cache_creation_input_tokens
  *
  * @typedef {Object} NormalizedEvent
- * @property {"claude"|"codex"|"cursor"} tool
+ * @property {"claude"|"codex"|"cursor"|"opencode"} tool
  * @property {string}  session_id
  * @property {string}  ts            ISO8601; coerced to session start when absent
  * @property {"user"|"assistant"|"subagent"} actor

@@ -47,10 +47,18 @@ export function discoverCursor(home = os.homedir()) {
   return walk(root, (name) => name === "state.vscdb");
 }
 
+/** Opencode: .aios/loop/maturity/opencode-sessions.ndjson (cost records from plugin hook). */
+export function discoverOpencode(repo) {
+  if (!repo) return [];
+  const store = path.join(repo, ".aios", "loop", "maturity", "opencode-sessions.ndjson");
+  return existsSync(store) ? [store] : [];
+}
+
 export const DISCOVERERS = {
   claude: discoverClaude,
   codex: discoverCodex,
   cursor: discoverCursor,
+  opencode: discoverOpencode,
 };
 
 /** Stat helper used by incremental state (size + mtime cheap-skip). */
