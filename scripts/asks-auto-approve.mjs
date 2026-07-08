@@ -341,7 +341,7 @@ function main() {
       process.exit(0);
     });
   } else {
-    const result = tick();
+    tick();
     process.exit(0);
   }
 }
