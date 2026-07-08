@@ -132,6 +132,8 @@ console.log("cmdRoadmapRun — a ship halt surfaces its SHIP_EXIT code, no refre
     gitExec: (argv) => (gitCalls.push(argv.join(" ")), ""),
     // Stub the digest agent so the (now live-by-default) prose call stays hermetic.
     callDigestAgent: async () => "",
+    // Stub the orchestrate agent so the (now live-by-default) model selection stays hermetic.
+    callOrchestrateAgent: async () => "",
     now: () => new Date("2026-07-03T12:00:00Z"),
     writeDigest: () => "/tmp/d.md",
   };
@@ -153,6 +155,8 @@ console.log("cmdRoadmapRun — a skip runs the between-issue ff-only refresh, th
     gitExec: (argv) => (gitCalls.push(argv.join(" ")), ""),
     // Stub the digest agent so the (now live-by-default) prose call stays hermetic.
     callDigestAgent: async () => "",
+    // Stub the orchestrate agent so the (now live-by-default) model selection stays hermetic.
+    callOrchestrateAgent: async () => "",
     now: () => new Date("2026-07-03T12:00:00Z"),
     writeDigest: () => "/tmp/d.md",
   };

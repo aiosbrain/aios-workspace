@@ -133,6 +133,59 @@ export function selectNextIssue(candidates, { now } = {}) {
   return rankEligible(candidates)[0] ?? null;
 }
 
+// Model-driven issue selection. On failure (model crash, timeout, unparseable response),
+// falls back to the deterministic selectNextIssue — the orchestrate model improves ranking but
+// never a hard gate. The prompt carries Linear issue titles (untrusted), so this runs at the
+// NO_TOOLS tier (same blast-radius isolation as the digest model).
+async function selectNextIssueOrchestrated(pool, orchestrateCfg, deps) {
+  if (!pool.length) return null;
+  if (!orchestrateCfg || !orchestrateCfg.model) return selectNextIssue(pool);
+
+  const lines = pool.map((i, idx) => {
+    const age = i.createdAt
+      ? `${Math.floor((Date.now() - new Date(i.createdAt).getTime()) / 86400000)}d old`
+      : "no date";
+    return `${idx + 1}. ${i.identifier}  p${i.priority ?? "?"}  ${age}  ${i.title ?? ""}`;
+  });
+  const prompt = [
+    "You are selecting the next Linear issue to ship in a roadmap run.",
+    "Return ONLY the identifier (e.g. AIO-123) of the issue you would ship next.",
+    "Prefer high-priority (lower p number), unblocked issues that create the most value.",
+    "",
+    "Candidates:",
+    ...lines,
+    "",
+    "Selected issue (identifier only):",
+  ].join("\n");
+
+  const callAgent = deps.callOrchestrateAgent ?? defaultCallDigestAgent;
+
+  try {
+    const response = await callAgent(prompt, orchestrateCfg.timeoutMs ?? 60 * 1000, {
+      model: orchestrateCfg.model,
+    });
+    const matches = [...(response ?? "").matchAll(/\b(AIO-\d+)\b/g)];
+    const last = matches.length ? matches[matches.length - 1][1] : null;
+    if (last) {
+      const chosen = pool.find((i) => i.identifier === last);
+      if (chosen) {
+        console.log(c.dim(`orchestrate model selected ${chosen.identifier}`));
+        return chosen;
+      }
+    }
+    console.log(
+      c.yellow(
+        `orchestrate model returned unrecognized result — falling back to deterministic select.`
+      )
+    );
+  } catch (e) {
+    console.log(
+      c.yellow(`orchestrate model failed (${e.message}) — falling back to deterministic select.`)
+    );
+  }
+  return selectNextIssue(pool);
+}
+
 // Classify why a candidate was NOT selected (for the digest's "skipped candidates" section).
 export function skipReason(issue) {
   if (issue?.assignee) return "assigned";
@@ -269,6 +322,27 @@ export function resolveDigestCfg(repo) {
   }
 }
 
+// Soft orchestrate-model resolver. Like resolveDigestCfg, wraps resolveLoopModels safely:
+// resolveLoopModels calls die() on a bad config, which is UNCATCHABLE. This reads only
+// the orchestrate_* keys best-effort and falls back to DEFAULT_MODELS.orchestrate.
+export function resolveOrchestrateCfg(repo) {
+  const fallback = DEFAULT_MODELS.orchestrate;
+  try {
+    const file = path.join(repo, ".aios", "loop-models.yaml");
+    if (!existsSync(file)) return { ...fallback };
+    const cfg = parseFlatYaml(readFileSync(file, "utf8"), { strict: false });
+    const rawModel = cfg.orchestrate_model;
+    const model =
+      typeof rawModel === "string" && rawModel.trim() ? rawModel.trim() : fallback.model;
+    const secs = Number(cfg.orchestrate_timeout_s);
+    const entry = { model };
+    if (Number.isInteger(secs) && secs > 0) entry.timeoutMs = secs * 1000;
+    return entry;
+  } catch {
+    return { ...fallback };
+  }
+}
+
 function defaultWriteDigest(repo, date, text) {
   const dir = path.join(repo, ".aios", "loop");
   mkdirSync(dir, { recursive: true });
@@ -370,6 +444,9 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
 
   const selector = `${opts.sourceType}:${opts.sourceValue}`;
 
+  // Resolve the orchestrate model config early (soft resolver — never process.exits on bad config).
+  const orchestrateCfg = deps.resolveOrchestrateCfg?.(repo) ?? resolveOrchestrateCfg(repo);
+
   // ── dry-run: list ordered candidates + reasoning, then stop. ──
   if (opts.dryRun) {
     let candidates;
@@ -386,12 +463,18 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
         return 1;
       }
     }
-    // Rank via the SAME rankEligible the live run uses — the preview cannot drift from selection.
+    // Rank via rankEligible — the dry-run preview is intentionally deterministic
+    // (orchestrate model selection is live-only; if configured, the live run may
+    // differ from this preview).
     const ordered = rankEligible(candidates);
     const eligible = ordered;
+    const orchestrateDbg =
+      orchestrateCfg?.model !== DEFAULT_MODELS.orchestrate.model
+        ? `orchestrate model: ${orchestrateCfg.model}`
+        : null;
     console.log(c.blue(`\naios roadmap-run — dry-run (${selector})`));
     console.log(
-      `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}\n`
+      `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}${orchestrateDbg ? `\n${orchestrateDbg} (live run may deviate from deterministic order below)` : ""}\n`
     );
     console.log("Ordered eligible (would ship top-down):");
     if (!ordered.length) console.log("  (none eligible)");
@@ -446,7 +529,7 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
     }
     // Never re-pick an issue we already attempted this run (avoids a stuck-issue loop).
     const pool = candidates.filter((i) => !attemptedIds.has(i.identifier));
-    const next = selectNextIssue(pool, { now });
+    const next = await selectNextIssueOrchestrated(pool, orchestrateCfg, deps);
     if (!next) {
       console.log(c.dim("roadmap-run: no eligible issue remaining — stopping."));
       // Record the skipped candidates for the digest.
