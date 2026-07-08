@@ -45,8 +45,12 @@ Build-with: opus / medium.
 Named acceptance test:
 
 ```bash
-node --test test/build-fence.test.mjs
+if [ -f test/build-fence.test.mjs ]; then
+  node --test test/build-fence.test.mjs
+else
+  echo "AIO-157 not merged — SEC4 blocked" && exit 1
+fi
 grep -q 'build-fence\|AIO-157' docs/pre-ship/security-audit-checklist.md
 ```
 
-Both exit **0**.
+The first command exits **0** only after AIO-157 merge (the file doesn't exist before merge, so the named test correctly blocks). The second exits **0** once a checklist row references build-fence or AIO-157.

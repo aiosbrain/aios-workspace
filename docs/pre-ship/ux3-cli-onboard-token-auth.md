@@ -8,8 +8,8 @@ Parent: Pre-release UX epic. Owner: john@john-ellison.com
 
 ## Prerequisites
 
-- `scripts/aios.mjs` must exist (CLI entrypoint).
-- `gui/server/index.mjs` must exist (GUI server for token URL verification).
+- `scripts/aios.mjs` must exist (CLI entrypoint). If absent, record "CLI entrypoint not found" in the audit doc and stop — this is a repo-tracked file, not something the builder creates.
+- `gui/server/index.mjs` must exist (GUI server for token URL verification). If absent, record "GUI server not found" for the flow-4 row and skip the token URL capture (the flow-3 CLI help check can still run).
 
 ## What
 

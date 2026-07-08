@@ -48,6 +48,7 @@ Requires **`DEEPSEEK_API_KEY`** (default model: `deepseek-v4-pro`). Run:
 
 ```bash
 for f in docs/pre-ship/*.md; do
+  [[ $f == */HANDOVER.md || $f == */spec-eval-matrix.md ]] && continue
   npm run aios -- spec eval "$f" || true
 done
 ```

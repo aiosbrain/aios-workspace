@@ -8,10 +8,33 @@ AIO-122 must be closable with C1–C8 Done and no stale blockers.
 
 ## Prerequisites
 
-- `npm run check:v1-linear` script exists (wraps `scripts/check-v1-linear-drift.mjs`)
-- `~/.claude/skills/aios-linear/linear.mjs` exists (aios-linear CLI, installed by operator)
-- `dotenvx` available in PATH
-- `.env` file with `LINEAR_API_KEY` present (gitignored, operator-provided)
+Before executing, verify these tool dependencies exist. If any check fails, the builder records the missing item and stops — the operator must provide the dependency:
+
+```bash
+# Required: check:v1-linear npm script
+npm run check:v1-linear --help >/dev/null 2>&1 || echo "check:v1-linear script not found"
+
+# Required: aios-linear CLI (Node.js script for Linear API access)
+test -f ~/.claude/skills/aios-linear/linear.mjs || echo "aios-linear not installed"
+
+# Required: dotenvx CLI for secure env loading
+command -v dotenvx >/dev/null 2>&1 || echo "dotenvx not found"
+
+# Required: .env file with LINEAR_API_KEY
+test -f .env && grep -q 'LINEAR_API_KEY=' .env || echo "LINEAR_API_KEY not set in .env"
+```
+
+If `npm run check:v1-linear` is not a defined script: the operator must add it to `package.json` before CQ3 can be executed.
+
+If `~/.claude/skills/aios-linear/linear.mjs` is missing: the operator must install the `aios-linear` skill. The builder cannot install it.
+
+If `dotenvx` is missing: install via `npm install -g @dotenvx/dotenvx`.
+
+If `.env` is missing or lacks `LINEAR_API_KEY`: the operator provides the token; the builder writes:
+```bash
+echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
+```
+`.env` is gitignored — never commit it.
 
 ## What
 
