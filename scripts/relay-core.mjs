@@ -148,6 +148,14 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
       reject(err);
     }, timeoutMs);
 
+    // A missing binary (ENOENT) emits an error event that would otherwise be
+    // unhandled, crashing the process. Any caller that wraps spawnAgentStream
+    // in try/catch (e.g. orchestrate fallback) expects a rejection, not a crash.
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new Error(`${label} agent failed to start: ${err.message}`));
+    });
+
     const rl = createInterface({ input: proc.stdout });
     const errBufs = [];
     let text = "";

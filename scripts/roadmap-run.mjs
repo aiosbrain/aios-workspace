@@ -161,14 +161,13 @@ async function selectNextIssueOrchestrated(pool, orchestrateCfg, deps) {
   const callAgent = deps.callOrchestrateAgent ?? defaultCallDigestAgent;
 
   try {
-    const response = await callAgent(
-      prompt,
-      orchestrateCfg.timeoutMs ?? 60 * 1000,
-      { model: orchestrateCfg.model }
-    );
-    const match = (response ?? "").match(/\b(AIO-\d+)\b/);
-    if (match) {
-      const chosen = pool.find((i) => i.identifier === match[1]);
+    const response = await callAgent(prompt, orchestrateCfg.timeoutMs ?? 60 * 1000, {
+      model: orchestrateCfg.model,
+    });
+    const matches = [...(response ?? "").matchAll(/\b(AIO-\d+)\b/g)];
+    const last = matches.length ? matches[matches.length - 1][1] : null;
+    if (last) {
+      const chosen = pool.find((i) => i.identifier === last);
       if (chosen) {
         console.log(c.dim(`orchestrate model selected ${chosen.identifier}`));
         return chosen;
@@ -181,9 +180,7 @@ async function selectNextIssueOrchestrated(pool, orchestrateCfg, deps) {
     );
   } catch (e) {
     console.log(
-      c.yellow(
-        `orchestrate model failed (${e.message}) — falling back to deterministic select.`
-      )
+      c.yellow(`orchestrate model failed (${e.message}) — falling back to deterministic select.`)
     );
   }
   return selectNextIssue(pool);
@@ -447,6 +444,9 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
 
   const selector = `${opts.sourceType}:${opts.sourceValue}`;
 
+  // Resolve the orchestrate model config early (soft resolver — never process.exits on bad config).
+  const orchestrateCfg = deps.resolveOrchestrateCfg?.(repo) ?? resolveOrchestrateCfg(repo);
+
   // ── dry-run: list ordered candidates + reasoning, then stop. ──
   if (opts.dryRun) {
     let candidates;
@@ -463,12 +463,18 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
         return 1;
       }
     }
-    // Rank via the SAME rankEligible the live run uses — the preview cannot drift from selection.
+    // Rank via rankEligible — the dry-run preview is intentionally deterministic
+    // (orchestrate model selection is live-only; if configured, the live run may
+    // differ from this preview).
     const ordered = rankEligible(candidates);
     const eligible = ordered;
+    const orchestrateDbg =
+      orchestrateCfg?.model !== DEFAULT_MODELS.orchestrate.model
+        ? `orchestrate model: ${orchestrateCfg.model}`
+        : null;
     console.log(c.blue(`\naios roadmap-run — dry-run (${selector})`));
     console.log(
-      `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}\n`
+      `Candidates: ${candidates.length}   eligible: ${eligible.length}   max: ${opts.maxIssues}${orchestrateDbg ? `\n${orchestrateDbg} (live run may deviate from deterministic order below)` : ""}\n`
     );
     console.log("Ordered eligible (would ship top-down):");
     if (!ordered.length) console.log("  (none eligible)");
@@ -485,9 +491,6 @@ export async function cmdRoadmapRun(repo, args, deps = {}) {
   // ── real serial run ──
   const spawnShip = deps.spawnShip ?? ((id) => defaultSpawnShip(repo, id));
   const gitExec = deps.gitExec ?? defaultGitExec;
-  // Resolve the orchestrate model config (soft resolver — never process.exits on bad config).
-  const orchestrateCfg =
-    deps.resolveOrchestrateCfg?.(repo) ?? resolveOrchestrateCfg(repo);
 
   const records = {
     source: selector,

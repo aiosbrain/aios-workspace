@@ -128,8 +128,9 @@ the Cursor code-review call in `aios build`. The **reviewer `model` keys** (`pla
 `code_review_model`) are resolved and enforced by the diversity guard but **not yet passed to the
 Cursor runner** (the `cursor` CLI's model selection is not wired here) — set them to keep the guard
 honest; the running review model is Cursor's own default. `consolidate.{model,effort,timeoutMs}` now
-drives `aios consolidate-findings` (below). `orchestrate.{model,timeoutMs}` drives `aios roadmap-run`'s next-issue selection;
-remaining steps (`recon`, `safety_review`, `digest`) are resolved for later consumers and not yet wired.
+drives `aios consolidate-findings` (below).
+`orchestrate.{model,timeoutMs}` drives `aios roadmap-run`'s next-issue selection;
+remaining steps (`recon`, `safety_review`) are resolved for later consumers and not yet wired.
 
 ## The ship pipeline (build → PR → consolidate → fix)
 
