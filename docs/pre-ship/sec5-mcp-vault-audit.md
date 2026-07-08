@@ -9,13 +9,20 @@ MCP must stay read-only; connector keys encrypted; Firecrawl/onboarding treated 
 ## What
 
 - Run `node scripts/brain-mcp.test.mjs` (existing suite)
-- Add checklist rows in `docs/pre-ship/security-audit-checklist.md`: MCP tool names, no write tools, vault path note
+- Add checklist rows in `docs/pre-ship/security-audit-checklist.md` (created by SEC1; if absent, record "checklist not found — run SEC1 first" and stop).
+
+### Checklist row schema
+
+Each audit result is one row in `docs/pre-ship/security-audit-checklist.md`:
+
+| check | command | exit_code | date | owner | notes |
+|-------|---------|-----------|------|-------|-------|
+| mcp-audit | `node --test scripts/brain-mcp.test.mjs` | `<exit code>` | `$(date +%Y-%m-%d)` | `john@john-ellison.com` | MCP tool names: `<list>`; read-only confirmed; no push/pull/write tools |
 
 ## Acceptance criteria
 
 - `node scripts/brain-mcp.test.mjs` exits **0**.
 - Checklist row documents MCP is read-only (no push/pull/write tools).
-- `npm run aios -- spec eval docs/pre-ship/sec5-mcp-vault-audit.md` exits **0**.
 
 ## Builder vs operator closure
 

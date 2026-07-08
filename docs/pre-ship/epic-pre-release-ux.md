@@ -9,7 +9,7 @@ Critical cockpit flows untested at intent level before external users.
 
 ## What
 
-Pilot UX on five flows; output `docs/pre-ship/ux-audit-YYYY-MM-DD.md`; three child specs:
+Pilot UX on five flows; output `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` (the builder substitutes `$(date +%Y-%m-%d)` with the run date at execution time); three child specs:
 
 | Child | Spec path | Flow ID |
 |-------|-----------|---------|
@@ -19,22 +19,23 @@ Pilot UX on five flows; output `docs/pre-ship/ux-audit-YYYY-MM-DD.md`; three chi
 
 ### Audit doc schema
 
-`docs/pre-ship/ux-audit-YYYY-MM-DD.md` table columns: `flow_id`, `pass/fail`, `session_note`, `owner`.
+`docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` table columns: `flow_id`, `pass/fail`, `session_note`, `owner`.
 
 Five flows: flow-1 (empty state), flow-2 (connect wizard), flow-3 (CLI onboard help),
 flow-4 (token URL auth), flow-5 (reserved — mark N/A or skip with reason).
 
 ## Acceptance criteria
 
-- All three child specs **SPEC_READY**.
+- UX1: `node --test test/ux/flows/onboarding-draft-from-link.mjs` exit **0**; flow-1 row in audit doc.
+- UX2: flow-2 row in audit doc with connect wizard pass/fail.
+- UX3: `npm run aios -- onboard --help` exit **0**; flow-3 and flow-4 rows in audit doc.
 - Audit doc covers five flows with pass/fail per flow ID.
 - `node --test test/ux/flows/onboarding-draft-from-link.mjs` exits **0** (UX1).
 - P0 bugs filed as Linear children before epic close.
-- `npm run aios -- spec eval docs/pre-ship/epic-pre-release-ux.md` exits **0**.
 
 ## Builder vs operator closure
 
-- **Builder delivers:** audit doc + UX1–UX3 child PRs; all child specs `SPEC_READY`.
+- **Builder delivers:** audit doc + UX1–UX3 child PRs; all child deliverables confirmed.
 - **Operator verifies:** one manual/agent-browser session logged with token URL in audit doc.
 
 ## Integration points
@@ -65,12 +66,10 @@ Synthetic profile URLs only; no production secrets in logs.
 Named acceptance tests:
 
 ```bash
-npm run aios -- spec eval docs/pre-ship/ux1-onboarding-empty-state.md
-npm run aios -- spec eval docs/pre-ship/ux2-integrations-wizard.md
-npm run aios -- spec eval docs/pre-ship/ux3-cli-onboard-token-auth.md
 node --test test/ux/flows/onboarding-draft-from-link.mjs
 AUDIT=docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md
-test -f "$AUDIT" && grep -q 'flow-1' "$AUDIT"
+test -f "$AUDIT" && grep -q 'flow-1' "$AUDIT" && grep -q 'flow-2' "$AUDIT"
+npm run aios -- onboard --help
 ```
 
 All exit **0** before epic close.

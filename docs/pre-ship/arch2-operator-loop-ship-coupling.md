@@ -1,10 +1,17 @@
 # ARCH2 — Operator loop + ship pipeline coupling review
 
+Owner: john@john-ellison.com
 Parent: Pre-release architecture epic.
 
 ## Why
 
 Operator loop and ship pipeline boundaries must be clear before ship. Coupling that leaks across these boundaries risks shipping instabilities and makes future changes brittle.
+
+## Prerequisites
+
+The source files reviewed must exist before the builder can inspect them:
+- `src/operator-loop/` — if absent, record "operator-loop source not found" in the review doc and stop; this is an operator-provided dependency, not something the builder can create.
+- `scripts/ship.mjs`, `scripts/relay-core.mjs`, `scripts/build.mjs` — if any of these are absent, note the missing file in the review doc and continue reviewing the remaining files.
 
 ## What
 
@@ -46,7 +53,7 @@ The deliverable is a single Markdown file that must satisfy the following contra
 ## Builder vs operator closure
 
 - **Builder delivers:** review document that satisfies the document contract and passes the verification command.
-- **Operator verifies:** `fix-before-ship` smells have linear children or PR links; `post-ship-debt` items are tracked.
+- **Operator verifies:** review the coupling smells; confirm `fix-before-ship` items have Linear children or PR links; `post-ship-debt` items are tracked for later.
 
 ## Integration points (existing code)
 

@@ -1,5 +1,6 @@
 # AF2 — Onboarding smoke test runbook + insight log template
 
+Owner: john@john-ellison.com
 Parent epic: Agent-first onboarding. Linear child: **AF2 — Onboarding smoke test runbook (fresh identity)**
 
 ## Why
@@ -45,7 +46,7 @@ template.
 | `docs/pre-ship/af2-onboarding-smoke-runbook.md` | The runbook (phases 0–8). | Builder |
 | `docs/pre-ship/dogfood/onboarding-run-TEMPLATE.md` | Insight-log template (new `dogfood/` dir). | Builder |
 | `test/onboarding-runbook.test.mjs` | Structural test of the two deliverables (see Testability). | Builder |
-| `docs/pre-ship/dogfood/onboarding-run-YYYY-MM-DD.md` | One dated insight log per operator run (copy of the template). | Operator, at run time |
+| `docs/pre-ship/dogfood/onboarding-run-$(date +%Y-%m-%d).md` | One dated insight log per operator run (copy of the template). `$(date +%Y-%m-%d)` is replaced with the run date at execution time. | Operator, at run time |
 
 ### Runtime artifacts (not repo files, not builder deliverables)
 
@@ -106,7 +107,7 @@ builder-closure gate. See *Scope*.
   is fully deterministic — every gate is a file-presence or `node --test` exit code, with no
   dependency on any LLM verdict.
 - **Operator verifies (out of builder scope):** performs a real fresh-identity run and commits
-  `docs/pre-ship/dogfood/onboarding-run-YYYY-MM-DD.md` with pass/fail recorded per phase 0–8.
+  `docs/pre-ship/dogfood/onboarding-run-$(date +%Y-%m-%d).md` with pass/fail recorded per phase 0–8.
   Deliverable correctness (headings, rows, teardown coverage) is proven by the builder test in
   bullet 3; the operator run proves real-world usability, not builder closure.
 

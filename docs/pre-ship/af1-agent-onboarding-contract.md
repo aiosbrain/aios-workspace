@@ -1,5 +1,8 @@
 # AF1 — Agent-first onboarding contract (spec + playbook)
 
+Owner: john@john-ellison.com
+Parent epic: Agent-first onboarding.
+
 **This document's path in the repo:** `docs/pre-ship/af1-agent-onboarding-contract.md`
 (already present in this checkout — it is the spec you are reading; acceptance criteria that run
 `spec eval` target this exact path).

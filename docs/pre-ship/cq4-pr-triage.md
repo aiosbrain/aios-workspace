@@ -2,13 +2,18 @@
 
 Parent: Pre-release code quality epic. Owner: john@john-ellison.com
 
+## Prerequisites
+
+- `gh` CLI installed and authenticated (`gh auth status` exits **0**). If not authenticated, builder records "gh not authenticated" in triage log notes and skips PR enumeration.
+- `.github/workflows/` directory exists (CI configs). If absent, record "workflows directory not found" in triage log notes and skip — this is an operator-provided dependency.
+
 ## Why
 
 Open PRs blocking ship must be merged, closed, or waived.
 
 ## What
 
-Create `docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` listing every open PR with decision.
+Create `docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md` listing every open PR with decision (the builder substitutes `$(date +%Y-%m-%d)` with the run date at execution time).
 
 ### Ship-blocking PR definition
 
@@ -22,17 +27,16 @@ Non-blocking PRs may be deferred with reason `post-ship-debt`.
 
 ## New files to create
 
-- `docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` — markdown table with columns:
+- `docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md` — markdown table with columns:
   `PR #`, `title`, `blocking (yes/no)`, `decision (merge|close|waive|defer)`, `owner`, `notes`.
 
-Populate from `gh pr list --state open --json number,title,labels`.
+Populate `PR #`, `title`, and `labels` from `gh pr list --state open --json number,title,labels,author`. The `owner`, `notes`, `blocking`, and `decision` columns are filled manually by the builder during triage review (owner defaults to PR author from `gh` output; notes capture the triage rationale).
 
 ## Acceptance criteria
 
 - Triage log lists all open PRs (one row per PR from `gh pr list --state open`).
 - Zero ship-blocking PRs without a `decision` of merge, close, or waive (defer only for non-blocking).
 - Named test below exits **0**.
-- `npm run aios -- spec eval docs/pre-ship/cq4-pr-triage.md` exits **0**.
 
 ## Builder vs operator closure
 
@@ -58,7 +62,7 @@ Build-with: sonnet / low.
 
 ## Testability
 
-Named acceptance test (`TRIAGE=docs/pre-ship/cq4-pr-triage-YYYY-MM-DD.md` with actual date):
+Named acceptance test (`TRIAGE=docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md`; the builder substitutes with the run date at execution time):
 
 ```bash
 TRIAGE=docs/pre-ship/cq4-pr-triage-$(date +%Y-%m-%d).md

@@ -1,5 +1,6 @@
 # ARCH3 — Cross-repo seam review (workspace/brain/website)
 
+Owner: john@john-ellison.com  
 Parent: Pre-release architecture epic.
 
 ## Why
@@ -8,7 +9,7 @@ Three-repo seams must be documented before public ship.
 
 ## What
 
-Produce a review document (`docs/pre-ship/arch3-cross-repo-seams-review.md`) that details the seams between
+Produce a review document `docs/pre-ship/arch3-cross-repo-seams-review.md` that details the seams between
 the aios workspace, brain, and website repositories.
 
 The document **must itself be a valid spec/plan** so that it passes the project’s spec-readiness
@@ -52,20 +53,23 @@ The table must be under a `## Seam table` heading. Columns:
 
 ### Minimum rows
 
-The table **must contain at least one row** for each seam. The builder must fill every column using
-the repository names from the **Repository names** section. The following rows are required (the
-builder must determine the exact file paths and protocol details, but the repository names and
-direction are fixed as shown):
+The table **must contain at least one row** for each seam. The builder must produce the following
+three rows.  Repository names and directions are **fixed** as shown below; cells that can be
+determined from the `aios` workspace alone must be filled with that concrete information.  For
+cells that depend on external repositories (`brain`, `website`) **and** cannot be deduced from
+files already present in `aios`, the builder inserts a clear placeholder of the form
+`[NEEDS brain REPO]` or `[NEEDS website REPO]` (or both as appropriate).  Every cell must be
+non‑empty (placeholders count as non‑empty).
 
 | Seam name | Source (repo / path) | Target (repo / path) | Direction | Protocol / interface | Tier restrictions | Error handling | Notes |
 |-----------|----------------------|----------------------|-----------|----------------------|-------------------|----------------|-------|
-| Workspace ↔ brain sync | `aios` (paths: `scripts/aios.mjs`, `scripts/brain-client.mjs`) | `brain` (the sync API endpoint implementation) | ↔ | HTTP fetch (JSON), client in `scripts/brain-client.mjs` | (to be completed by builder) | (to be completed) | (to be completed) |
-| Docs alignment | `aios` (`docs/brain-api.md`) | `website` (the documentation ingestion pipeline) | → | (to be completed, e.g., CI push or site fetch) | (to be completed) | (to be completed) | (to be completed) |
-| Design tokens | `aios` (the design token source files – builder must identify the exact path, e.g., under `packages/design`) | `brain` and `website` (consume via `@aios-alpha/design` npm package) | → | npm package import, versioned | (to be completed) | (to be completed) | (to be completed) |
+| Workspace ↔ brain sync | `aios` (paths: `scripts/aios.mjs`, `scripts/brain-client.mjs`) | `brain` (the sync API endpoint implementation) | ↔ | HTTP fetch (JSON), client in `scripts/brain-client.mjs` | admin/team tiers allowed; root‑level admin rejected with 422 (per `docs/brain-api.md`) | (builder completes from workspace docs or `[NEEDS brain REPO]`) | (builder completes from workspace docs or placeholder) |
+| Docs alignment | `aios` (`docs/brain-api.md`) | `website` (the documentation ingestion pipeline) | → | (builder fills from workspace knowledge or `[NEEDS website REPO]`) | none (public docs) – builder confirms or placeholders | (builder completes or placeholder) | (notes per builder) |
+| Design tokens | `aios` (the design token source files – builder must identify the exact path, e.g., under `packages/design`) | `brain` and `website` (consume via `@aios-alpha/design` npm package) | → | npm package import, versioned | no tier restrictions – design tokens are public | `[NEEDS brain/website REPO]` for consumer‑side handling | known gap: versioning strategy TBD |
 
-The builder is responsible for filling the remaining columns with accurate, project-specific values
-after inspecting the actual codebases. The repository names, directions, and the fact that the source
-for design tokens lives in `aios` are non-negotiable.
+The builder is responsible for filling columns with accurate values based on the `aios` workspace
+(including `scripts/brain-client.mjs`, `docs/brain-api.md`, design‑token source path) and for
+inserting the specified placeholders where external‑repo knowledge is required.
 
 ## Acceptance criteria
 
@@ -74,20 +78,23 @@ for design tokens lives in `aios` are non-negotiable.
   above.
 - The table has exactly one row for each of the three mandatory seams (workspace ↔ brain sync,
   docs alignment, design tokens) using the canonical repository names (`aios`, `brain`, `website`).
-- All columns in those rows are filled (no blank cells for Tier restrictions, Error handling, Notes,
-  etc.).
+- **Every cell in those rows contains non‑empty text.**  Placeholders like `[NEEDS brain REPO]` are
+  acceptable where the builder cannot obtain information from the `aios` workspace alone.
 - Running `npm run aios -- spec eval docs/pre-ship/arch3-cross-repo-seams-review.md` exits with code **0**,
   indicating the document meets the spec-readiness contract.
 - The table documents tier-safety: admin/team/external tiers, default-deny when `access:` is absent,
-  and the brain’s `422` for admin access at root-level resources.
+  and the brain’s `422` for admin access at root-level resources (this information is present in the
+  workspace and reflected in the relevant row).
 
 ## Builder vs operator closure
 
 - **Builder delivers:** file `docs/pre-ship/arch3-cross-repo-seams-review.md` structured as a spec/plan
-  that passes `spec eval`. The file is committed to the `aios` workspace.
+  that passes `spec eval`. The file is committed to the `aios` workspace.  Placeholders are accepted
+  for information that requires external repositories; the spec-readiness checker treats them as
+  non‑empty.
 - **Operator verifies:** run `npm run aios -- spec eval docs/pre-ship/arch3-cross-repo-seams-review.md` —
-  exit 0 confirms readiness. Optional: review table rows for correctness, and add notes about
-  brain/website checkout steps as non-normative comments.
+  exit 0 confirms readiness. Optional: review table rows for correctness, replace placeholders when
+  external repos become available.
 
 ## Optional follow-up
 
@@ -110,7 +117,8 @@ Deps: none.
 
 ## Scope
 
-Read-only documentation. In scope: producing the seam table file with the three mandatory rows.
+Read-only documentation. In scope: producing the seam table file with the three mandatory rows,
+populated with either workspace‑available data or placeholders for external repos.  
 Out of scope: monorepo merge, cross-repo pull requests, behavior changes to sync or brain.
 
 ## Build-with
@@ -128,7 +136,8 @@ The seam table must record that:
 - The brain API rejects `admin` at root-level resources with HTTP **422**.
 - No tier logic is changed by this code path.
 
-The builder must reflect these facts in the Tier restrictions column of the relevant row.
+The builder must reflect these facts in the Tier restrictions column of the relevant row.  All
+required tier information is available from the `aios` workspace (e.g., `docs/brain-api.md`).
 
 ## New files to create
 
@@ -147,6 +156,6 @@ grep -qE '^\| Docs alignment \|' "$REVIEW" && \
 grep -qE '^\| Design tokens \|' "$REVIEW"
 ```
 
-Exit **0** proves the review doc exists with the mandatory seam rows. Spec conformance:
-`npm run aios -- spec eval docs/pre-ship/arch3-cross-repo-seams-review.md` exits **0**.
-A separate manual review of the table rows for correctness can be done via PR review.
+Exit **0** proves the review doc exists with the mandatory seam rows.  The spec‑conformance check
+(`npm run aios -- spec eval docs/pre-ship/arch3-cross-repo-seams-review.md`) ensures the document
+is a valid spec; the placeholder‑friendly cell completion is verified by manual review of the table.

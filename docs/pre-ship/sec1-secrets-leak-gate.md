@@ -1,5 +1,6 @@
 # SEC1 — Secrets + leak gate sweep
 
+Owner: john@john-ellison.com
 Parent: Pre-release security epic.
 
 ## Why
@@ -18,7 +19,11 @@ Run on aios-workspace (required):
 
 ## Waiver schema (when leak-gate ≠ 0)
 
-One row with: `check=leak-gate`, `exit_code=<actual>`, `owner=john@john-ellison.com`, `date=YYYY-MM-DD`, `notes=<RELEASE-CHECKLIST.md section + reason>`.
+All checklist rows use `owner=john@john-ellison.com`.
+
+- **secrets row:** `check=check-secrets`, `command=validation/check-secrets.sh .`, `exit_code=<actual>`, `date=$(date +%Y-%m-%d)`, `owner=john@john-ellison.com`, `notes=<summary of findings or "clean">`.
+- **leak-gate row (exit 0):** `check=leak-gate`, `command=scripts/leak-gate.sh .`, `exit_code=0`, `date=$(date +%Y-%m-%d)`, `owner=john@john-ellison.com`, `notes=clean`.
+- **leak-gate row (waiver, exit ≠ 0):** One row with: `check=leak-gate`, `exit_code=<actual>`, `owner=john@john-ellison.com`, `date=$(date +%Y-%m-%d)` (substituted with the run date at execution time), `notes=<reason for non-zero exit + reference to RELEASE-CHECKLIST.md § NDA leak gate>`.
 
 ## Acceptance criteria
 

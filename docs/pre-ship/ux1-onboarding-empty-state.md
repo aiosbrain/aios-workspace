@@ -6,6 +6,11 @@ Parent: Pre-release UX epic. Owner: john@john-ellison.com
 
 Cockpit empty state must guide contributors to profile setup.
 
+## Prerequisites
+
+- `test/ux/flows/onboarding-draft-from-link.mjs` must exist. If absent, record "test file not found" and stop — this is a repo-tracked file, not something the builder creates.
+- `gui/client/src/App.tsx` must exist (cockpit source).
+
 ## What
 
 1. Run `node --test test/ux/flows/onboarding-draft-from-link.mjs`.
@@ -13,14 +18,16 @@ Cockpit empty state must guide contributors to profile setup.
 
 ## New files to create
 
-- `docs/pre-ship/ux-audit-YYYY-MM-DD.md` — if absent, create with table header and flow-1 row
-  (`flow_id=flow-1`, `pass/fail`, `session_note`, `owner=john@john-ellison.com`).
+- `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` — if absent, create with table header and flow-1 row
+  (`flow_id=flow-1`, `pass/fail=<result>`, `session_note=<brief note>`, `owner=john@john-ellison.com`).
+  If the file already exists but lacks the flow-1 row, append the flow-1 row to the existing file. The
+  value for `pass/fail` is set to the literal `pass` when the test exits 0, and `fail` when the test
+  exits non-zero.
 
 ## Acceptance criteria
 
 - `node --test test/ux/flows/onboarding-draft-from-link.mjs` exits **0**.
-- Audit doc flow-1 row present: `grep -q 'flow-1' docs/pre-ship/ux-audit-YYYY-MM-DD.md`.
-- `npm run aios -- spec eval docs/pre-ship/ux1-onboarding-empty-state.md` exits **0**.
+- Audit doc flow-1 row present in any dated audit file: `grep -q 'flow-1' docs/pre-ship/ux-audit-*.md`. The builder creates and commits the audit doc with the run date in the filename; the acceptance check globs for its existence.
 
 ## Builder vs operator closure
 

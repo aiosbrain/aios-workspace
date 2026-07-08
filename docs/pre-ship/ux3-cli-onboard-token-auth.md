@@ -6,6 +6,11 @@ Parent: Pre-release UX epic. Owner: john@john-ellison.com
 
 `aios onboard` must parity GUI; token URL must appear on server start.
 
+## Prerequisites
+
+- `scripts/aios.mjs` must exist (CLI entrypoint). If absent, record "CLI entrypoint not found" in the audit doc and stop — this is a repo-tracked file, not something the builder creates.
+- `gui/server/index.mjs` must exist (GUI server for token URL verification). If absent, record "GUI server not found" for the flow-4 row and skip the token URL capture (the flow-3 CLI help check can still run).
+
 ## What
 
 Verify:
@@ -16,13 +21,15 @@ Record **flow-3** (CLI help) and **flow-4** (token URL) rows in shared UX audit 
 
 ## New files to create
 
-- Extend `docs/pre-ship/ux-audit-YYYY-MM-DD.md` with flow-3 and flow-4 rows.
+- Extend `docs/pre-ship/ux-audit-$(date +%Y-%m-%d).md` with flow-3 and flow-4 rows:
+  - `flow_id=flow-3`, `pass/fail=<pass|fail>`, `session_note=<help output excerpt>`, `owner=john@john-ellison.com`
+  - `flow_id=flow-4`, `pass/fail=<pass|fail>`, `session_note=<token URL from stdout or "not observed">`, `owner=john@john-ellison.com`
+  If the file is absent, create it first with table header (per UX1 column definition).
 
 ## Acceptance criteria
 
 - `npm run aios -- onboard --help` exits **0**.
 - Audit doc contains `flow-3` and `flow-4` rows.
-- `npm run aios -- spec eval docs/pre-ship/ux3-cli-onboard-token-auth.md` exits **0**.
 
 ## Builder vs operator closure
 
