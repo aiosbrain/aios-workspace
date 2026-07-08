@@ -4004,7 +4004,10 @@ async function cmdAsks(repo, cfg, args) {
     const watch = flags.has("--watch");
     const intervalIdx = rest.indexOf("--interval");
     const interval = intervalIdx >= 0 ? parseInt(rest[intervalIdx + 1], 10) || 5 : 5;
-    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "asks-auto-approve.mjs");
+    const scriptPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "asks-auto-approve.mjs"
+    );
     if (!existsSync(scriptPath)) die("asks-auto-approve.mjs not found — run from repo root");
 
     // Reuse the store read/write functions that are already loaded.
@@ -4039,7 +4042,9 @@ async function cmdAsks(repo, cfg, args) {
             note = "unknown type — skipping";
           }
           if (resolved + skipped > 0) {
-            console.log(`${c.dim(new Date().toISOString())} ${severity === "blocker" ? "!" : severity === "decision" ? "?" : "i"} [${severity}] ${title.slice(0, 70)} — ${note}`);
+            console.log(
+              `${c.dim(new Date().toISOString())} ${severity === "blocker" ? "!" : severity === "decision" ? "?" : "i"} [${severity}] ${title.slice(0, 70)} — ${note}`
+            );
           }
         }
       }
@@ -4048,16 +4053,30 @@ async function cmdAsks(repo, cfg, args) {
     }
 
     if (watch) {
-      console.log(c.blue("aios asks auto-approve") + c.dim(`  watching ${roots.length} root(s), polling every ${interval}s`));
+      console.log(
+        c.blue("aios asks auto-approve") +
+          c.dim(`  watching ${roots.length} root(s), polling every ${interval}s`)
+      );
       tick();
       const timer = setInterval(tick, interval * 1000);
-      process.on("SIGINT", () => { clearInterval(timer); console.log(c.dim("\nstopped")); process.exit(0); });
-      process.on("SIGTERM", () => { clearInterval(timer); console.log(c.dim("\nstopped")); process.exit(0); });
+      process.on("SIGINT", () => {
+        clearInterval(timer);
+        console.log(c.dim("\nstopped"));
+        process.exit(0);
+      });
+      process.on("SIGTERM", () => {
+        clearInterval(timer);
+        console.log(c.dim("\nstopped"));
+        process.exit(0);
+      });
       return; // keep alive
     }
 
     const result = tick();
-    console.log(c.blue("aios asks auto-approve") + c.dim(`  ${result.resolved} resolved, ${result.skipped} skipped, ${result.found} open`));
+    console.log(
+      c.blue("aios asks auto-approve") +
+        c.dim(`  ${result.resolved} resolved, ${result.skipped} skipped, ${result.found} open`)
+    );
     return;
   }
 
@@ -5028,8 +5047,17 @@ if (repoFlagIdx !== -1) {
 async function cmdWorktree(repo, cfg, args) {
   const sub = args[0];
   const rest = args.slice(1);
-  const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "link-worktree-env.sh");
-  const hookSrc = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks", "git", "post-checkout");
+  const scriptPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "link-worktree-env.sh"
+  );
+  const hookSrc = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "hooks",
+    "git",
+    "post-checkout"
+  );
   const hookDest = path.join(repo, ".git", "hooks", "post-checkout");
 
   function installHook() {
@@ -5067,11 +5095,13 @@ async function cmdWorktree(repo, cfg, args) {
     console.log(c.blue(`aios worktree add`) + c.dim(`  ${branch} → ${dirName}`));
     try {
       execFileSync("git", ["-C", repo, "fetch", "origin"], { stdio: "pipe" });
-    } catch { /* fetch may fail offline; proceed */ }
-    const out = execFileSync(
-      "git", ["-C", repo, "worktree", "add", "-b", branch, wtPath, base],
-      { encoding: "utf8", stdio: "pipe" }
-    );
+    } catch {
+      /* fetch may fail offline; proceed */
+    }
+    const out = execFileSync("git", ["-C", repo, "worktree", "add", "-b", branch, wtPath, base], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
     console.log(c.dim(out.trim()));
 
     // The post-checkout hook above fires automatically during `git worktree add`

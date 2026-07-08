@@ -74,9 +74,15 @@ function withLock(root, fn) {
       let stale = false;
       try {
         stale = Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS;
-      } catch { /* vanished */ }
+      } catch {
+        /* vanished */
+      }
       if (stale) {
-        try { unlinkSync(lockPath); } catch { /* lost race */ }
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          /* lost race */
+        }
         continue;
       }
       if (attempt < LOCK_RETRIES) sleepSync(LOCK_DELAY_MS);
@@ -84,14 +90,26 @@ function withLock(root, fn) {
   }
   if (fd === null) throw new Error(`asks-auto-approve: could not acquire store lock (${lockPath})`);
   const tokenMatches = () => {
-    try { return readFileSync(lockPath, "utf8").includes(token); } catch { return false; }
+    try {
+      return readFileSync(lockPath, "utf8").includes(token);
+    } catch {
+      return false;
+    }
   };
   try {
-    try { writeFileSync(fd, `${process.pid} ${token} ${new Date().toISOString()}\n`); } catch { /* non-fatal */ }
+    try {
+      writeFileSync(fd, `${process.pid} ${token} ${new Date().toISOString()}\n`);
+    } catch {
+      /* non-fatal */
+    }
     closeSync(fd);
     return fn();
   } finally {
-    try { if (tokenMatches()) unlinkSync(lockPath); } catch { /* already gone */ }
+    try {
+      if (tokenMatches()) unlinkSync(lockPath);
+    } catch {
+      /* already gone */
+    }
   }
 }
 
@@ -106,7 +124,11 @@ function readAsks(root) {
   for (const text of lines) {
     if (!text.trim()) continue;
     let parsed;
-    try { parsed = JSON.parse(text); } catch { continue; }
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      continue;
+    }
     if (!parsed || parsed.v !== VERSION) continue;
     if (parsed.op === "create") {
       const ask = parsed.ask;
@@ -150,15 +172,18 @@ function readTranscriptTail(transcriptPath, maxMessages = 4) {
         const evt = JSON.parse(lines[i]);
         const role = evt?.message?.role;
         if (role === "user" || role === "assistant") {
-          const content = typeof evt.message.content === "string"
-            ? evt.message.content
-            : JSON.stringify(evt.message.content);
+          const content =
+            typeof evt.message.content === "string"
+              ? evt.message.content
+              : JSON.stringify(evt.message.content);
           messages.unshift({
             role,
             text: (content ?? "").slice(0, 500),
           });
         }
-      } catch { /* skip unparseable lines */ }
+      } catch {
+        /* skip unparseable lines */
+      }
     }
     return messages.length ? messages : null;
   } catch {
@@ -177,7 +202,8 @@ function extractQuestion(messages) {
   const q = last.text;
   // Heuristic: ends with a question mark or contains "should I" / "want me to" / "ok to"
   if (/[?？]$/.test(q)) return q;
-  if (/\b(should I|want me to|ok to|okay to|shall I|good to|go ahead|ready to)\b/i.test(q)) return q;
+  if (/\b(should I|want me to|ok to|okay to|shall I|good to|go ahead|ready to)\b/i.test(q))
+    return q;
   return null;
 }
 
@@ -277,7 +303,9 @@ function findWorkspaceRoots() {
         if (existsSync(path.join(full, ".aios"))) results.push(full);
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return results;
 }
 
@@ -287,7 +315,8 @@ function main() {
   const args = process.argv.slice(2);
   const watch = args.includes("--watch");
   const intervalIdx = args.indexOf("--interval");
-  const intervalSec = intervalIdx >= 0 ? parseInt(args[intervalIdx + 1], 10) || POLL_INTERVAL_SEC : POLL_INTERVAL_SEC;
+  const intervalSec =
+    intervalIdx >= 0 ? parseInt(args[intervalIdx + 1], 10) || POLL_INTERVAL_SEC : POLL_INTERVAL_SEC;
 
   const roots = findWorkspaceRoots();
   if (roots.length === 0) {
@@ -319,7 +348,9 @@ function main() {
   }
 
   if (watch) {
-    console.log(`asks-auto-approve: watching ${roots.length} workspace(s), polling every ${intervalSec}s`);
+    console.log(
+      `asks-auto-approve: watching ${roots.length} workspace(s), polling every ${intervalSec}s`
+    );
     console.log("Press Ctrl+C to stop.\n");
 
     let iteration = 0;
