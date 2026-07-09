@@ -56,6 +56,14 @@ Context: **{{CONTEXT}}** ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
 If `aios.yaml` has a `brain_url`, tier-tagged content syncs via `aios status|push|pull|query`.
 `private` and untagged content never leaves this machine.
 
+## Memory routing
+
+- Read `.claude/memory/USER.md` and `.claude/memory/WORKSPACE.md` for injected owner and workspace context.
+- Use codebase-memory MCP first for code structure, routes, callers, and impact analysis.
+- Before running any harness, read `.claude/memory/instincts.md` and apply the rules there.
+- Use the `memory-router` skill when a question could belong to file memory, codebase-memory, GBrain, Team Brain, or a comms agent.
+- Do not assume Supermemory MCP exists; scaffolded workspaces must remain useful without it.
+
 ## Agent layer
 
 The `.claude/` directory is the **canonical, runtime-agnostic agent layer**. Despite the
