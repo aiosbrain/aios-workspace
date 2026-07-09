@@ -185,7 +185,7 @@ The harness becomes the atomic product unit: a packaged workflow with source exp
 
 - What is the narrowest weekly source set that still feels magical?
 - Should the weekly loop be the default cockpit home screen?
-- ~~Which PM system should be treated as the reference implementation for writeback: Linear, Plane, or provider-neutral first?~~ Resolved: Linear is the canonical PM tool for writeback; Plane has been retired.
+- ~~Which PM system should be treated as the reference implementation for writeback: Linear, Plane, or provider-neutral first?~~ Resolved: Linear is AIOS's default reference for writeback and the projection path stays provider-neutral; **Plane remains a supported provider** (AIOS itself just runs Linear).
 - How much verifier telemetry can be collected locally without violating AIOS's privacy posture?
 - Should harnesses be distributed as plain workspace files, signed packages, or Team Brain-managed artifacts?
 - What is the pricing/adoption unit later: workspace, team brain seat, harness catalog, or managed harness packs?
