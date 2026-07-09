@@ -16,7 +16,6 @@
  * | M365 email routing    | —                     | Claude-only |
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import type { AssistantMessage } from "@opencode-ai/sdk";
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -84,35 +83,35 @@ export const AIOSInstincts: Plugin = async ({ directory, client }) => {
             query: { limit: 200 },
           }) as { data?: Array<{ info: unknown }> } | Array<{ info: unknown }>;
           const messages = Array.isArray(result) ? result : (result as { data?: Array<{ info: unknown }> }).data;
-          if (!messages || !messages.length) return;
+          if (messages && messages.length) {
+            let totalCost = 0;
+            let inputTokens = 0;
+            let outputTokens = 0;
+            let model = "";
 
-          let totalCost = 0;
-          let inputTokens = 0;
-          let outputTokens = 0;
-          let model = "";
-
-          for (const { info } of messages) {
-            const msg = info as { role?: string; cost?: number; tokens?: { input?: number; output?: number }; modelID?: string };
-            if (msg.role === "assistant") {
-              totalCost += msg.cost || 0;
-              inputTokens += msg.tokens?.input || 0;
-              outputTokens += msg.tokens?.output || 0;
-              model = msg.modelID || model;
+            for (const { info } of messages) {
+              const msg = info as { role?: string; cost?: number; tokens?: { input?: number; output?: number }; modelID?: string };
+              if (msg.role === "assistant") {
+                totalCost += msg.cost || 0;
+                inputTokens += msg.tokens?.input || 0;
+                outputTokens += msg.tokens?.output || 0;
+                model = msg.modelID || model;
+              }
             }
-          }
 
-          if (totalCost > 0 || inputTokens > 0) {
-            appendCostRecord(root, {
-              tool: "opencode",
-              session_id: sessionID,
-              cost_usd: Math.round(totalCost * 100000) / 100000,
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              cache_read_tokens: 0,
-              model,
-              ts: new Date().toISOString(),
-              project: root,
-            });
+            if (totalCost > 0 || inputTokens > 0) {
+              appendCostRecord(root, {
+                tool: "opencode",
+                session_id: sessionID,
+                cost_usd: Math.round(totalCost * 100000) / 100000,
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+                cache_read_tokens: 0,
+                model,
+                ts: new Date().toISOString(),
+                project: root,
+              });
+            }
           }
         } catch {
           /* session cost capture is best-effort */

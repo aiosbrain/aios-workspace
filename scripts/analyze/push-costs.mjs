@@ -122,7 +122,11 @@ export async function pushProviderCosts(
     opencode: costData.opencode,
   };
 
-  const cursorPayloads = buildCostPushPayloads({ cursor: rollup.cursor, claude: rollup.claude, opencode: rollup.opencode }, member, project);
+  const cursorPayloads = buildCostPushPayloads(
+    { cursor: rollup.cursor, claude: rollup.claude, opencode: rollup.opencode },
+    member,
+    project
+  );
 
   const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
 

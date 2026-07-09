@@ -102,11 +102,7 @@ export function renderCostSummary(costData, color) {
   }
   if (costData.opencode?.totals) {
     const t = costData.opencode.totals;
-    L.push(
-      c.dim(
-        `  Opencode (session)   ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} turns`
-      )
-    );
+    L.push(c.dim(`  Opencode (session)   ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} turns`));
   }
   L.push(
     c.dim(
