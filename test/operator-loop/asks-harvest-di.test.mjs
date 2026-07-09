@@ -12,7 +12,12 @@ test("core harvestAsks runs on injected deps (no direct comms reach)", async () 
   const dir = mkdtempSync(path.join(tmpdir(), "asks-di-"));
   try {
     const calls = { loadCommsConfig: 0, detectEvents: 0, dispatchOnEvent: 0 };
-    const stubEvent = { kind: "test", ref: { path: "inbox/x.md", row: "1" }, summary: "s", tier: "team" };
+    const stubEvent = {
+      kind: "test",
+      ref: { path: "inbox/x.md", row: "1" },
+      summary: "s",
+      tier: "team",
+    };
     const deps = {
       loadCommsConfig: () => {
         calls.loadCommsConfig++;
@@ -28,7 +33,11 @@ test("core harvestAsks runs on injected deps (no direct comms reach)", async () 
       },
     };
 
-    const res = await harvestAsks(dir, { cadence: "daily", now: new Date("2026-07-09T12:00:00Z") }, deps);
+    const res = await harvestAsks(
+      dir,
+      { cadence: "daily", now: new Date("2026-07-09T12:00:00Z") },
+      deps
+    );
 
     assert.equal(calls.loadCommsConfig, 1, "injected loadCommsConfig was used");
     assert.equal(calls.detectEvents, 1, "injected detectEvents was used");

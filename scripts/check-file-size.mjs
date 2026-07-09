@@ -32,7 +32,7 @@ if (over.length > 0) {
     console.error(`  ${o.rel}: ${o.lines} lines > cap ${o.cap} (over by ${o.lines - o.cap})`);
   }
   console.error(
-    "\n  Extract to bring it under the cap, or (if intentional) raise the number in scripts/size-caps.json.",
+    "\n  Extract to bring it under the cap, or (if intentional) raise the number in scripts/size-caps.json."
   );
   process.exit(1);
 }

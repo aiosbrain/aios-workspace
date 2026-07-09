@@ -23,11 +23,15 @@ import { hasOpenDuplicate, sha256 } from "./store.js";
  */
 export interface HarvestDeps {
   loadCommsConfig: (root: string, overridePath?: string) => CommsConfig;
-  detectEvents: (signals: readonly Signal[], now: Date, staleInboxDays?: number) => NotificationEvent[];
+  detectEvents: (
+    signals: readonly Signal[],
+    now: Date,
+    staleInboxDays?: number
+  ) => NotificationEvent[];
   dispatchOnEvent: (
     event: NotificationEvent,
     config: CommsConfig,
-    deps: DispatchDeps,
+    deps: DispatchDeps
   ) => Promise<DispatchResult>;
 }
 
@@ -60,7 +64,7 @@ function dedupeKeyFor(event: NotificationEvent): string {
 export async function harvestAsks(
   root: string,
   opts: HarvestOptions,
-  deps: HarvestDeps,
+  deps: HarvestDeps
 ): Promise<HarvestResult> {
   const now = opts.now ?? new Date();
   const config = deps.loadCommsConfig(root, opts.commsConfigPath);

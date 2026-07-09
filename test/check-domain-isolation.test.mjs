@@ -17,8 +17,14 @@ function runIn(asksImport, extraFiles = {}) {
   try {
     mkdirSync(path.join(dir, "src", "operator-loop", "asks"), { recursive: true });
     mkdirSync(path.join(dir, "src", "operator-loop", "comms"), { recursive: true });
-    writeFileSync(path.join(dir, "src", "operator-loop", "asks", "x.ts"), `${asksImport}\nexport const x = 1;\n`);
-    writeFileSync(path.join(dir, "src", "operator-loop", "comms", "y.ts"), `export const v = 1;\nexport type T = number;\n`);
+    writeFileSync(
+      path.join(dir, "src", "operator-loop", "asks", "x.ts"),
+      `${asksImport}\nexport const x = 1;\n`
+    );
+    writeFileSync(
+      path.join(dir, "src", "operator-loop", "comms", "y.ts"),
+      `export const v = 1;\nexport type T = number;\n`
+    );
     for (const [rel, body] of Object.entries(extraFiles)) {
       mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true });
       writeFileSync(path.join(dir, rel), body);

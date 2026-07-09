@@ -61,7 +61,10 @@ function importsAValue({ typeOnly, clause }) {
   if (typeOnly) return false;
   const braced = clause.match(/^\{([\s\S]*)\}$/);
   if (!braced) return true; // default or namespace import → value
-  const names = braced[1].split(",").map((s) => s.trim()).filter(Boolean);
+  const names = braced[1]
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (names.length === 0) return false;
   return names.some((n) => !/^type\s/.test(n));
 }
@@ -98,12 +101,12 @@ if (violations.length > 0) {
   for (const v of violations) {
     console.error(
       `  ${v.file}:${v.line}  [${v.from} → ${v.to}]  value import of ${v.mod}\n` +
-        `      ${v.clause ? `import { ${v.clause} }` : "(default/namespace import)"}`,
+        `      ${v.clause ? `import { ${v.clause} }` : "(default/namespace import)"}`
     );
   }
   console.error(
     "\n  A domain must not value-import another domain. Compose through src/operator-loop/index.ts\n" +
-      "  (inject deps), or make the cross-domain import `import type { … }` if it is only a contract.",
+      "  (inject deps), or make the cross-domain import `import type { … }` if it is only a contract."
   );
   process.exit(1);
 }

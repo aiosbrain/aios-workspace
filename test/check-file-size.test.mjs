@@ -17,7 +17,10 @@ function runWithCap(lineCount, cap) {
   try {
     mkdirSync(path.join(dir, "scripts"), { recursive: true });
     writeFileSync(path.join(dir, "big.txt"), `${"line\n".repeat(lineCount)}`);
-    writeFileSync(path.join(dir, "scripts", "size-caps.json"), JSON.stringify({ caps: { "big.txt": cap } }));
+    writeFileSync(
+      path.join(dir, "scripts", "size-caps.json"),
+      JSON.stringify({ caps: { "big.txt": cap } })
+    );
     try {
       const stdout = execFileSync("node", [SCRIPT], { cwd: dir, encoding: "utf8" });
       return { code: 0, out: stdout };
