@@ -73,7 +73,7 @@ shipped. No schema or brain change is required for this slice.
 
 ## Scope / Deferred
 In scope: the cockpit Tasks tab (read + light edit), local-only save, an explicit push affordance,
-and the residual **Plane** code-path retirement (stop projecting; keep history + the dormant glyph).
+and defaulting AIOS's own PM projection to Linear rather than Plane (Plane stays a **supported provider** — the adapter and admin selector remain; AIOS just no longer projects to it by default, keeping history + the dormant glyph).
 Deferred (out of scope):
 - Loop writeback adapter (C6) — approved weekly next-actions → brain → Linear — AIO-129.
 - Linear⇄brain conflict/divergence UI in the cockpit (brain-internal; no `/api/v1` shape for the
