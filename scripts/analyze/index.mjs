@@ -27,6 +27,7 @@ import { cachedParseFile, defaultCacheDir } from "./cache.mjs";
 import { parseClaude } from "./parse-claude.mjs";
 import { parseCodex } from "./parse-codex.mjs";
 import { parseCursor, sqlite3Available } from "./parse-cursor.mjs";
+import { parseOpencode } from "./parse-opencode.mjs";
 import { computeSignals, bucketByDay } from "./metrics.mjs";
 import { placement } from "./aem.mjs";
 import { renderText, renderReport, toJson, buildPushPayload, buildLastSummary } from "./report.mjs";
@@ -38,8 +39,8 @@ import { cursorBillingStart } from "./cursor-api.mjs";
 import { calibrate, renderVerdict, writeVerdictArtifact } from "./ergonomics-calibrate.mjs";
 
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
-const PARSERS = { claude: parseClaude, codex: parseCodex };
-const ALL_TOOLS = ["claude", "codex", "cursor"];
+const PARSERS = { claude: parseClaude, codex: parseCodex, opencode: parseOpencode };
+const ALL_TOOLS = ["claude", "codex", "cursor", "opencode"];
 
 const color = {
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
@@ -106,6 +107,7 @@ function isoDate(d) {
 export function collectEvents({
   tools,
   home,
+  repo,
   sinceMs,
   full = false,
   cache = true,
@@ -115,7 +117,12 @@ export function collectEvents({
   const events = [];
   const cacheStats = { hits: 0, appends: 0, misses: 0 };
   for (const tool of tools) {
-    const files = DISCOVERERS[tool] ? DISCOVERERS[tool](home) : [];
+    // Opencode: workspace-relative store, pass repo not home.
+    const files = DISCOVERERS[tool]
+      ? tool === "opencode"
+        ? DISCOVERERS[tool](repo)
+        : DISCOVERERS[tool](home)
+      : [];
 
     // Cursor: SQLite, not line-delimited text. One big DB spanning all history,
     // so we can't mtime-skip it — the per-event timestamp window-filter handles
@@ -220,6 +227,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
   const { events } = collectEvents({
     tools,
     home,
+    repo,
     sinceMs,
     full: opts.full,
     cache: !opts.noCache,
