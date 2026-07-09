@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.5** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.6** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -74,6 +74,19 @@ writeback/registration pulls), so a newer client still works against an older br
   meeting Y" is NOT served here** — attendance is derived client-side from existing `GET /items`
   meeting markers (`frontmatter.meeting: true`, `participants`); no new item kind, no who-met-whom
   edges. Section below.*
+- *2026-07-09 — **v1.6**: documents shipped-but-undocumented surfaces found by the 2026-07-09
+  audit; **no wire changes**. Adds: kind **`blueprint`** (team blueprint publish, over the existing
+  `POST`/`GET /api/v1/items`); **`GET /api/v1/me`** (authenticated identity); **`POST
+  /api/v1/actions`** (Organ 4 policy-governed actions); **`POST /api/v1/graph-query`** (Graphiti
+  natural-language search, experiment); **`GET /api/v1/members`** (team roster + cross-tool
+  identities); **`GET /api/v1/conversations`** and **`GET /api/v1/conversations/<id>`** (owned
+  chat-thread history); **`GET /api/v1/identities/resolve`** (external-id → member resolution); and
+  **`GET`/`POST`/`DELETE /api/v1/me/slack-token`** (the owner's personal Slack token, owner-only).
+  Also adds the **`GET /api/v1/tasks` tier-scoping note** (an `external`-tier key sees only
+  `audience: "external"` rows — the same choke-point `/decisions` already documented) and
+  **completes the rate-limit quick-reference table** with every implemented route's actual limit.
+  Every endpoint above was already live in the shipped server before this revision; this closes the
+  doc-vs-code gap, it does not open one.*
 
 ---
 
@@ -95,7 +108,7 @@ Canonical values: **`admin` | `team` | `external`**.
 
 ### Item kinds
 
-`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill`
+`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint`
 
 `decision` and `task` items are markdown files containing the canonical status tables
 (`3-log/decision-log.md`, `3-log/tasks.md`). For these, the client also parses
@@ -131,6 +144,23 @@ with `?path_prefix=.claude/skills/<name>/`. Installation into a workspace's live
 `.claude/skills/` is always an explicit client-side act — pulled skills never
 auto-activate.
 
+### Team blueprint (kind `blueprint`)
+
+A team's selected tool set (which integrations/connectors the team uses, defined in the
+dashboard's Team tab) is published as a single item:
+
+- **`.aios/blueprint.json`** — kind `blueprint`, `frontmatter: { blueprint_version, published_by
+  }`, `body` is the tool-selection JSON verbatim.
+- **Role-gated, not just tier-gated.** `POST /api/v1/items` accepts `kind: "blueprint"` only from a
+  `lead`/`admin`-role member key; a `member`-role key gets `403 forbidden` ("only a team lead or
+  admin can publish the team blueprint"). This is the one item kind with a role check — every other
+  kind is tier-gated only.
+- Pull with `GET /api/v1/items?kinds=blueprint`; the client takes the most recently updated item.
+
+Client commands: `aios push blueprint` (publish `.aios/team-blueprint.json`) and `aios pull
+blueprint` (fetch → `.aios/blueprint.json`, merged locally by `connector.mjs` into each member's
+per-tool config).
+
 ---
 
 ## Authentication
@@ -147,6 +177,27 @@ X-AIOS-Team: <team_id>
 - A key is valid only for its own team; `X-AIOS-Team` must match or the request fails.
 - Failures return `401` and are audit-logged with source IP.
 
+## `GET /api/v1/me` — authenticated identity
+
+Returns the calling key's own member identity, role, and tier — no secrets. Lets a client
+tailor its behavior without keeping a parallel roster: e.g. only `lead`/`admin` roles see the
+team-blueprint publish surface (§ "Team blueprint" above), and `aios stakeholders` probes this
+first and rejects **every** mode up front for a non-`team`-tier key, so a partial answer can
+never leak from a later `/company-graph` or `/items` call.
+
+**Request:** no body.
+
+**Response `200`:**
+
+```json
+{ "actor": "alex", "role": "lead", "tier": "team", "team": "uuid" }
+```
+
+**Client-used:** yes — `aios whoami` and the tier probe in `aios stakeholders` (both in
+`scripts/aios.mjs`), and the MCP surface (`scripts/brain-mcp.mjs`).
+
+**Errors:** `401` invalid key/team. **Rate limit:** none (identity lookup only).
+
 ## Error envelope
 
 All errors:
@@ -161,13 +212,29 @@ Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_pay
 
 ## Rate limits
 
+Complete per-route quick reference (every route below carries its own per-key fixed-window
+limit; `internal` server errors degrade to a bounded in-process fallback rather than opening
+the gate — see `lib/api/rate-limit.ts`):
+
 - `POST /items`: 120/min per key
 - `GET /items`, `GET /tasks`: 60/min per key
+- `GET /decisions`, `GET /projects`: 60/min per key
 - `GET /integrations`: 60/min per key
 - `GET /company-graph`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
 - `POST /work-events`: 60/min per key
+- `POST /costs`: 120/min per key
+- `POST /codebases`: 60/min per key
+- `GET /okf-bundle`: 30/min per key (`include_body=true`: 10/min per key)
+- `GET /me`: none (identity lookup only)
+- `POST /actions`: 60/min per key
+- `POST /graph-query`: 30/min per key
+- `GET /members`: 60/min per key
+- `GET /identities/resolve`: 120/min per key
+- `GET /conversations`, `GET /conversations/<id>`: none (owner-scoped reads)
+- `GET /me/slack-token`: 60/min per key; `POST /me/slack-token`: 20/min per key;
+  `DELETE /me/slack-token`: none
 
 ---
 
@@ -294,7 +361,10 @@ The CLI exposes these over the endpoints above:
 ## `GET /api/v1/tasks?since=<ISO8601>` — task writeback
 
 Returns task rows created or modified **in the dashboard UI** since the cursor, so the
-CLI can merge them into the local `3-log/tasks.md`:
+CLI can merge them into the local `3-log/tasks.md`. **Tier-scoped:** an `external`-tier key
+receives only `audience: "external"` rows — the same choke-point (`visibleTasks`,
+`lib/auth/visibility.ts`) that gates `GET /api/v1/decisions` below, applied to the `tasks`
+table's inherited `audience` column (sourced from the task's originating item's `access`).
 
 ```json
 {
@@ -427,6 +497,12 @@ predates this endpoint (the forward-compat rule).
 > check) before tagging.
 
 ## `GET /api/v1/integrations` — enabled integration selections (non-secret)
+
+> **Server-only; no toolkit client currently calls this.** `aios-workspace` has no caller for
+> this endpoint in `scripts/aios.mjs`, `scripts/brain-mcp.mjs`, or `scripts/connector.mjs` as of
+> the 2026-07-09 audit — team blueprint pull (`.aios/blueprint.json`, kind `blueprint` above)
+> covers the equivalent client need today. Document-or-deprecate is an open question for John,
+> flagged in the PR body rather than decided here.
 
 Returns the authenticated team's **enabled** integration selections for connector
 tooling. This endpoint is intentionally non-secret: it returns selection/config metadata
@@ -855,3 +931,228 @@ This is a standalone analytics endpoint, **not** an `/items` kind.
 **Response:** `201 { "status": "ok", "cost_id": "uuid", "member_id": "uuid" }`
 
 Dashboard: Admin → Usage shows brain spend + external provider spend combined.
+
+---
+
+## Action layer endpoint (Organ 4, extension)
+
+> **Status:** Implemented (brain: `app/api/v1/actions/route.ts`, `lib/actions/`, policy engine
+> `lib/policy/`). **No `aios-workspace` client calls this today** — server-only from this
+> repo's point of view. It is the entry point an agent runtime uses to ask the brain to perform
+> a policy-governed operation on a member's behalf.
+
+### `POST /api/v1/actions` — request a policy-governed action
+
+The principal is always the authenticated key's member, treated as role `member` for policy
+purposes (agents act *on behalf of* a member; privilege is granted by policy matching
+actor/tier, never inherited from the caller's own dashboard role).
+
+```json
+{ "type": "note.create", "resource": "project:northwind-aios/*", "params": { "text": "..." } }
+```
+
+- `type` — the action id, matched against both the handler registry and policy rules (built-in
+  handlers today: `note.create`, `code.run`).
+- `resource` — the policy match target (e.g. `project:<slug>/*`); defaults to `*`.
+- `params` — handler-specific arguments.
+
+**Server semantics (normative):**
+
+1. The request is recorded first (`actions` table, `status: "requested"`), before authorization
+   — every request leaves an audit trail even if denied.
+2. The policy engine (`lib/policy`) authorizes `{ principal, action: type, resource }` and
+   returns one of `allow` / `deny` / `require_approval`.
+3. `deny` → the action is marked `denied` and the response is `403`. `require_approval` → an
+   `approval_requests` row is filed and the response is `202` with `status: "pending_approval"`;
+   a human resolves it out-of-band (dashboard). `allow` → the matching handler executes.
+4. `code.run` executes inside an isolated sandbox (E2B microVM) when `E2B_API_KEY` is
+   configured; with no sandbox wired, `code.run` **fails closed** (`status: "failed"`), it never
+   runs unsandboxed.
+5. Every transition (denied / pending_approval / succeeded / failed) is audit-logged.
+
+**Response:** `200` on `succeeded`, `202` on `pending_approval`, `403` on `denied`, `422` on
+`failed`:
+
+```json
+{
+  "actionId": "uuid",
+  "status": "succeeded",
+  "decision": "allow",
+  "result": { "output": {} }
+}
+```
+
+**Errors:** `401` invalid key/team; `422 invalid_payload` malformed request; `403` denied by
+policy; `429` rate-limited. **Rate limit:** 60/min per key.
+
+---
+
+## Graph-memory query endpoint (extension)
+
+> **Status:** Implemented (brain: `app/api/v1/graph-query/route.ts`, `lib/graph/graphiti-client.ts`).
+> **No `aios-workspace` client calls this today** — server-only from this repo's point of view.
+> An experiment alongside `POST /api/v1/query`: a lower-level, structured-facts NL search
+> against the Graphiti temporal-knowledge-graph memory, versus `/query`'s prose-answer SSE
+> stream over the brain's own item store.
+
+### `POST /api/v1/graph-query` — natural-language search over Graphiti graph memory
+
+```json
+{ "question": "What did we decide about governance review gates?" }
+```
+
+Body accepts `query` (1–2000 chars, required) and `maxFacts` (1–100, optional, default 20).
+
+**Server semantics (normative):**
+
+1. Tier-enforced by scoping to the `group_id`s the caller's tier may see
+   (`visibleGroupIds(teamSlug, memberTier)`) — Graphiti itself has no tier awareness, so this
+   scoping is the **sole** isolation boundary (same posture as `/company-graph`, `/metrics`,
+   `/costs`, `/codebases`, `/projects`: app-code gate, no DB/RLS backstop).
+2. `503 not_configured` if `GRAPHITI_URL` is unset — this is an optional subsystem, not a
+   contract requirement.
+3. Every query is audit-logged (`graph.query`) with tier, group count, and result count.
+
+**Response `200`:**
+
+```json
+{
+  "facts": [
+    {
+      "uuid": "...",
+      "fact": "the governance review gate requires two approvers",
+      "valid_at": "2026-06-18T00:00:00Z",
+      "invalid_at": null,
+      "source_node_name": "...",
+      "target_node_name": "..."
+    }
+  ]
+}
+```
+
+**Errors:** `401` invalid key/team; `422 invalid_payload`; `503 not_configured` (Graphiti not
+wired); `502` on a Graphiti request failure; `429` rate-limited. **Rate limit:** 30/min per key.
+
+---
+
+## Team roster & identity-resolution endpoints (extension)
+
+> **Status:** Implemented (brain: `app/api/v1/members/route.ts`,
+> `app/api/v1/identities/resolve/route.ts`, `lib/identity/`). **No `aios-workspace` client calls
+> either endpoint today** — server-only from this repo's point of view. Both exist so an
+> external tool that needs "how do I reach teammate X" (e.g. a Hermes comms agent, or the
+> `slack` CLI's teammate resolver) can read the single source of truth instead of keeping a
+> parallel contact list.
+
+### `GET /api/v1/members` — team roster with cross-tool identities
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier` (the roster is team
+metadata). Optional query filters: `?email=<addr>` (exact roster email), `?handle=<handle>`
+(exact `actor_handle`), `?provider=<p>` (only members with an identity for that provider,
+narrowing each member's `identities` to that provider).
+
+**Response `200`:**
+
+```json
+{
+  "members": [
+    {
+      "id": "uuid", "email": "alex@…", "display_name": "Alex", "actor_handle": "alex",
+      "github_login": "alexgh", "avatar_url": "https://…", "role": "lead", "tier": "team",
+      "identities": [{ "provider": "slack", "externalId": "U…" }],
+      "email_aliases": []
+    }
+  ]
+}
+```
+
+`github_login`/`avatar_url` are populated by the admin GitHub sync (used by e.g. `aios
+timeline` to resolve avatars from the brain before falling back to GitHub's public CDN).
+
+**Errors:** `401`; `403 forbidden_tier` (non-team key); `429`. **Rate limit:** 60/min per key.
+
+### `GET /api/v1/identities/resolve` — resolve an external identifier to a member
+
+**Team-tier only.** Exactly one resolution input is required:
+`?provider=<p>&external_id=<id>` (a provider user id, e.g. `provider=slack&external_id=U…`),
+`?email=<addr>` (roster email or alias), or `?handle=<handle>` (`actor_handle`).
+
+**Response `200`:**
+
+```json
+{
+  "member": {
+    "id": "uuid", "email": "alex@…", "display_name": "Alex", "actor_handle": "alex",
+    "github_login": "alexgh", "role": "lead", "tier": "team"
+  },
+  "identities": [{ "provider": "slack", "externalId": "U…" }],
+  "email_aliases": [],
+  "slack_id": "U…"
+}
+```
+
+`slack_id` is a convenience field (the Slack identity's `externalId`, or `null`) for the
+`slack` CLI's resolver.
+
+**Errors:** `401`; `403 forbidden_tier` (non-team key); `400 bad_request` (no/ambiguous
+resolution input, or `external_id` without `provider`); `404 not_found` (nothing resolves);
+`429`. **Rate limit:** 120/min per key.
+
+---
+
+## Conversation history endpoints (extension)
+
+> **Status:** Implemented (brain: `app/api/v1/conversations/route.ts`,
+> `app/api/v1/conversations/[id]/route.ts`, `lib/chat/store.ts`). **No `aios-workspace` client
+> calls either endpoint today** — server-only from this repo's point of view. These are the
+> API-key-authed machine twin of the session-authed dashboard chat list: they let a CLI or a
+> Telegram-via-Hermes bot list and resume the same threads a member creates via `POST
+> /api/v1/query`'s optional `conversation_id`.
+
+### `GET /api/v1/conversations` — the caller's own chat threads
+
+Owner-scoped to the authenticated key's member — there is no cross-member listing over this
+endpoint.
+
+**Response `200`:** `{ "conversations": [ { "id": "uuid", "title": "...", "updated_at": "ISO8601", ... } ] }`
+
+### `GET /api/v1/conversations/<id>` — one thread's full message history
+
+Owner-only: `404 not_found` if the conversation isn't owned by the caller's member or doesn't
+exist (never `403` — existence isn't distinguishable from non-ownership).
+
+**Response `200`:** the conversation object with its full message history.
+
+**Errors:** `401`; `404 not_found` (by-id route only). **Rate limit:** none on either route
+(owner-scoped reads, no per-route `rateLimit()` call in the current implementation).
+
+---
+
+## Personal Slack token endpoint (extension)
+
+> **Status:** Implemented (brain: `app/api/v1/me/slack-token/route.ts`,
+> `lib/member-secrets/manage.ts`). **No `aios-workspace` client calls this today** — server-only
+> from this repo's point of view; it exists for an agent runtime (e.g. Hermes) to fetch or set
+> the owning member's own Slack **user** token ("act as me"), the personal counterpart to the
+> team's read-only Slack ingestion (`POST /api/v1/integrations` type `slack`, config-only).
+
+### `GET`/`POST`/`DELETE /api/v1/me/slack-token`
+
+Owner-only **by construction**: the member id is always `auth.memberId` from the authenticated
+key, never a request parameter — a key can only ever read or write its own token. The token is
+stored encrypted at rest (`member_secrets`) and every response carries `Cache-Control: no-store`.
+
+- **`GET`** → `{ connected: true, token, slack_user_id, workspace }`, or `404 { connected: false,
+  error: "not_connected" }` if none is stored. The agent fetches its own token to act as the
+  member.
+- **`POST { token }`** → validates the token is a Slack **user** token (`xoxp-` prefix), calls
+  Slack's `auth.test` to confirm it's live, stores it encrypted, and best-effort captures the
+  member's Slack identity (so `slack dm --member` / `identities/resolve` work afterward). Rejects
+  a non-`xoxp-` token or one Slack's `auth.test` rejects with `422 invalid_token`. This is the
+  manual-paste path; a one-click OAuth path also exists at `/api/auth/slack/start` (session-authed
+  dashboard route, outside this API-key contract).
+- **`DELETE`** → disconnects (`{ ok: true, connected: false }`); always succeeds, no rate limit.
+
+**Errors:** `401`; `400 bad_request` (malformed body / wrong token prefix); `422 invalid_token`
+(Slack rejected it); `429` (`GET`/`POST` only). **Rate limit:** `GET` 60/min per key, `POST`
+20/min per key, `DELETE` none.
