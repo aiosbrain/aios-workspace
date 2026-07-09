@@ -87,7 +87,7 @@ rubric is what makes the output trustworthy.
 
 | Concern | Source of truth |
 |---|---|
-| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.4) |
+| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.5) |
 | Design system | `aios-design/DESIGN.md` |
 | Engineering / workflow layer | **this file** |
 | Conventions & tiers | `scaffold/.claude/rules/` |
