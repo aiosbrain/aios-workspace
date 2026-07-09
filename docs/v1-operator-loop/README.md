@@ -183,7 +183,7 @@ All must hold before V1 can be called done:
 
 - Workspace guard suite: `npm run check:docs`, `npm run build:loop`, and `node --test test/operator-loop/*.test.mjs`.
 - Full repo gate: `npm test` before merge/release.
-- Public-release gate: [`RELEASE-CHECKLIST.md`](../RELEASE-CHECKLIST.md), including strategy-doc removal,
+- Public-release gate: [`RELEASE-CHECKLIST.md`](../../RELEASE-CHECKLIST.md), including strategy-doc removal,
   leak/secret scans, CI, and website doc synchronization.
 - Cross-repo docs gate: the website must not document V1 as shipped until this hub is release-ready
   and the release process confirms workspace/website docs are aligned.
