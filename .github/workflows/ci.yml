@@ -21,6 +21,18 @@ jobs:
           node-version: 20
       - run: npm run check:docs
 
+  constitution:
+    name: Constitution guards (domain isolation + size)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      # §4 domains-are-siblings (no cross-domain value imports) + the aios.mjs size gate (AIO-320).
+      - run: npm run check:domains
+      - run: npm run check:size
+
   guard:
     name: leak-gate + secrets + harness checks
     runs-on: ubuntu-latest
