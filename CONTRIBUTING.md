@@ -1,4 +1,4 @@
-# Contributing to Agentic Team Ops
+# Contributing to AIOS
 
 Thanks for helping build an open operating system for AI consulting teams.
 

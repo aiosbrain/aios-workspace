@@ -10,13 +10,13 @@ two shapes:
   Bash (e.g. `gog-cli` for Gmail/Google).
 
 The catalog of what's connectable lives in
-[`.claude/INTEGRATIONS.md`](../.claude/INTEGRATIONS.md) (generated from
+[`.claude/INTEGRATIONS.md`](../scaffold/.claude/INTEGRATIONS.md) (generated from
 `.claude/integrations.json`). This page is the **how-to-connect** companion.
 
 ## How to wire an MCP integration
 
-1. Open [`.mcp.example.json`](../.mcp.example.json) and copy the server block you want
-   into [`.mcp.json`](../.mcp.json) under `mcpServers`.
+1. Open [`.mcp.example.json`](../scaffold/.mcp.example.json) and copy the server block you want
+   into [`.mcp.json`](../scaffold/.mcp.json) under `mcpServers`.
 2. Provide the env values. **Do not inline real tokens** — `.mcp.json` is committed.
    Reference shell/managed env with `${VAR}` (as in the example), and put the actual
    secrets in your shell profile or a secrets manager. `.env` / `.env.local` are
