@@ -9,12 +9,27 @@
 // never floods the queue.
 
 import { collect } from "../collector.js";
-import type { Cadence } from "../signal.js";
-import { loadCommsConfig } from "../comms/config.js";
-import { detectEvents } from "../comms/detectors.js";
-import { dispatchOnEvent, type NotificationEvent } from "../comms/sender.js";
+import type { Cadence, Signal } from "../signal.js";
+import type { CommsConfig } from "../comms/config.js";
+import type { NotificationEvent, DispatchDeps, DispatchResult } from "../comms/sender.js";
 import { createInboxTransport } from "./transport.js";
 import { hasOpenDuplicate, sha256 } from "./store.js";
+
+/**
+ * Cross-domain composition seam (Engineering Constitution §4 — "domains are siblings, not friends").
+ * The `asks` domain must NOT value-import the `comms` domain; instead the Operator Loop
+ * (`src/operator-loop/index.ts`, the sole composition point) injects the comms-backed
+ * implementations, and tests inject stubs. Type-only imports of comms contracts are the allowed seam.
+ */
+export interface HarvestDeps {
+  loadCommsConfig: (root: string, overridePath?: string) => CommsConfig;
+  detectEvents: (signals: readonly Signal[], now: Date, staleInboxDays?: number) => NotificationEvent[];
+  dispatchOnEvent: (
+    event: NotificationEvent,
+    config: CommsConfig,
+    deps: DispatchDeps,
+  ) => Promise<DispatchResult>;
+}
 
 export interface HarvestOptions {
   cadence: Cadence;
@@ -42,9 +57,13 @@ function dedupeKeyFor(event: NotificationEvent): string {
  * Harvest loop events into the local asks store through the real collect → detect → dispatch →
  * sink path. Returns per-outcome counts (and per-reason tallies for rejected/noop/suppressed).
  */
-export async function harvestAsks(root: string, opts: HarvestOptions): Promise<HarvestResult> {
+export async function harvestAsks(
+  root: string,
+  opts: HarvestOptions,
+  deps: HarvestDeps,
+): Promise<HarvestResult> {
   const now = opts.now ?? new Date();
-  const config = loadCommsConfig(root, opts.commsConfigPath);
+  const config = deps.loadCommsConfig(root, opts.commsConfigPath);
   const manifest = collect({
     root,
     cadence: opts.cadence,
@@ -52,7 +71,7 @@ export async function harvestAsks(root: string, opts: HarvestOptions): Promise<H
     ...(opts.member ? { member: opts.member } : {}),
     ...(opts.project ? { project: opts.project } : {}),
   });
-  const events = detectEvents(manifest.signals, now);
+  const events = deps.detectEvents(manifest.signals, now);
 
   const result: HarvestResult = {
     events: events.length,
@@ -74,7 +93,7 @@ export async function harvestAsks(root: string, opts: HarvestOptions): Promise<H
       continue;
     }
     const transport = createInboxTransport(root, { dedupeKey, now });
-    const res = await dispatchOnEvent(event, config, transport);
+    const res = await deps.dispatchOnEvent(event, config, transport);
     if (res.status === "sent") {
       // The sink re-checks the dedupeKey under the store lock; a null receipt means a concurrent
       // writer won the key and the write was suppressed there (the pre-check above is a fast path).
