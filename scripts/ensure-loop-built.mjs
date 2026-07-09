@@ -11,10 +11,14 @@
 // existsSync(dist/operator-loop/index.js) themselves after invoking it.
 //
 // Usage: node scripts/ensure-loop-built.mjs [repoRoot] [--quiet]
-//   repoRoot  defaults to the parent of this script's own directory, so it
-//             also works when invoked with an explicit worktree path (the
-//             hydration script always passes one, since the copy of this file
-//             living in the *worktree* is the one whose sibling dist/ we want).
+//   repoRoot  defaults to the parent of this script's own directory. Callers
+//             don't need to pass it explicitly as long as they invoke the copy
+//             of this file that lives in the checkout/worktree whose sibling
+//             dist/ they want built — e.g. link-worktree-env.sh runs
+//             `(cd "$here" && node scripts/ensure-loop-built.mjs)`, so the
+//             worktree's own script resolves the worktree's own repoRoot. An
+//             explicit repoRoot is only needed when invoking a *different*
+//             checkout's copy of this script than the one you want built.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
