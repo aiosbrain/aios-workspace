@@ -35,6 +35,8 @@ export const CATEGORIES = {
       "build:loop",
       "check:docs",
       "check:v1-linear",
+      "check:domains",
+      "check:size",
       "pr:backlog",
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],

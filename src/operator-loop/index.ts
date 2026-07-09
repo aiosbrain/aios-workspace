@@ -1,5 +1,19 @@
 // Public API of the operator-loop substrate (C1 collector + manifest, C2 evidence ledger).
 // Consumed by the CLI (`aios loop`) and the MCP `aios_loop_collect` tool via the SAME core.
+//
+// This barrel is the Operator Loop's composition point (Constitution §4): it is the one place
+// permitted to wire domains together — e.g. injecting the `comms` implementations into the `asks`
+// harvester (see `defaultHarvestDeps` / `harvestAsks` below). Domains never compose each other.
+
+import { loadCommsConfig } from "./comms/config.js";
+import { detectEvents } from "./comms/detectors.js";
+import { dispatchOnEvent } from "./comms/sender.js";
+import {
+  harvestAsks as harvestAsksCore,
+  type HarvestOptions,
+  type HarvestResult,
+  type HarvestDeps,
+} from "./asks/harvest.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -259,7 +273,16 @@ export {
   type FoldWarning,
 } from "./asks/store.js";
 export { createInboxTransport, type InboxTransportOptions } from "./asks/transport.js";
-export { harvestAsks, type HarvestOptions, type HarvestResult } from "./asks/harvest.js";
+export type { HarvestOptions, HarvestResult, HarvestDeps } from "./asks/harvest.js";
+
+// Composition (Constitution §4): the loop injects the comms-backed deps into the asks harvester so
+// the `asks` domain never value-imports `comms`. `defaultHarvestDeps` is the production wiring;
+// `harvestAsks(root, opts)` is the convenience surface the CLI (`cmdAsks`) and MCP call unchanged.
+export const defaultHarvestDeps: HarvestDeps = { loadCommsConfig, detectEvents, dispatchOnEvent };
+
+export function harvestAsks(root: string, opts: HarvestOptions): Promise<HarvestResult> {
+  return harvestAsksCore(root, opts, defaultHarvestDeps);
+}
 
 // Decision capture — durable learning/training corpus of human-in-the-loop prompt decisions
 // (AIO-170 / EE4). Append-only local store (writer-honored lock, admin-tier, never synced); the
