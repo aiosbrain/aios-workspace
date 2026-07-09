@@ -102,5 +102,16 @@ if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/aios.mjs" ]]
   node "$main_worktree/scripts/aios.mjs" asks wire --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
 fi
 
+# ── operator-loop build ─────────────────────────────────────────────────────
+# `aios loop`/asks/decisions/time/timeline/mode/maturity-week all require
+# dist/operator-loop (compiled from src/operator-loop, src/timeline — see
+# tsconfig.json). node_modules is symlinked above so tsc is available here;
+# build it now so the worktree is demo-ready without a manual step. Best-effort
+# and never fails the hydration — loadOperatorLoop()'s lazy self-heal is the
+# runtime backstop if this is skipped or the src changes again later.
+if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-loop-built.mjs" ]]; then
+  (cd "$here" && node scripts/ensure-loop-built.mjs) || echo "operator-loop build: skipped (see message above)"
+fi
+
 echo ""
 echo "Worktree $here is ready."
