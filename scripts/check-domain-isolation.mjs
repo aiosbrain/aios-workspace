@@ -14,7 +14,8 @@
  *   - the `sources/` collector-adapter layer — a source reading a domain store to emit C1 signals is
  *     the collection step, not a peer-domain reach (see the contract in src/operator-loop/sources/*).
  *
- * Static parsing only; reports file:line evidence and exits non-zero on any violation.
+ * Static parsing (static `import … from`, plus dynamic `await import("x")` / `require("x")` value
+ * forms); reports file:line evidence and exits non-zero on any violation.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -69,6 +70,18 @@ function importsAValue({ typeOnly, clause }) {
   return names.some((n) => !/^type\s/.test(n));
 }
 
+// Dynamic value imports that the static-`from` parser can't see: `await import("x")` and
+// `require("x")`. These always pull in a runtime value, so they're a potential evasion of the rule.
+// A type-position dynamic import (`type T = import("x").Member`) is never preceded by `await` or
+// `require(`, so it is not matched here — type-only cross-domain references stay allowed.
+function parseDynamicValueImports(content) {
+  const re = /(?:await\s+import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(content)) !== null) out.push({ mod: m[1], index: m.index });
+  return out;
+}
+
 function lineOf(content, index) {
   return content.slice(0, index).split("\n").length;
 }
@@ -78,21 +91,31 @@ for (const file of walkTs(LOOP_DIR)) {
   const own = domainOf(file);
   if (!own) continue; // only peer-domain files are constrained
   const content = readFileSync(file, "utf8");
-  for (const imp of parseImports(content)) {
-    if (!imp.mod.startsWith(".")) continue; // external package
-    const target = path.resolve(path.dirname(file), imp.mod);
+  const record = (mod, index, detail) => {
+    if (!mod.startsWith(".")) return; // external package
+    const target = path.resolve(path.dirname(file), mod);
     const targetDomain = domainOf(target.endsWith(".ts") ? target : `${target}.ts`);
-    if (!targetDomain || targetDomain === own) continue; // same domain or loop-core → fine
+    if (!targetDomain || targetDomain === own) return; // same domain or loop-core → fine
+    violations.push({
+      file: path.relative(ROOT, file),
+      line: lineOf(content, index),
+      from: own,
+      to: targetDomain,
+      mod,
+      detail,
+    });
+  };
+  for (const imp of parseImports(content)) {
     if (importsAValue(imp)) {
-      violations.push({
-        file: path.relative(ROOT, file),
-        line: lineOf(content, imp.index),
-        from: own,
-        to: targetDomain,
-        mod: imp.mod,
-        clause: imp.clause.replace(/\s+/g, " "),
-      });
+      record(
+        imp.mod,
+        imp.index,
+        imp.clause ? `import { ${imp.clause.replace(/\s+/g, " ")} }` : "(default/namespace import)"
+      );
     }
+  }
+  for (const imp of parseDynamicValueImports(content)) {
+    record(imp.mod, imp.index, `dynamic import("${imp.mod}")`);
   }
 }
 
@@ -100,8 +123,7 @@ if (violations.length > 0) {
   console.error("✗ operator-loop domain isolation violated (Constitution §4):\n");
   for (const v of violations) {
     console.error(
-      `  ${v.file}:${v.line}  [${v.from} → ${v.to}]  value import of ${v.mod}\n` +
-        `      ${v.clause ? `import { ${v.clause} }` : "(default/namespace import)"}`
+      `  ${v.file}:${v.line}  [${v.from} → ${v.to}]  value import of ${v.mod}\n      ${v.detail}`
     );
   }
   console.error(

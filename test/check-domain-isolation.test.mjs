@@ -59,6 +59,18 @@ test("flags a mixed value+type import (a value slips in)", () => {
   assert.match(r.out, /asks → comms/);
 });
 
+test("flags a cross-domain dynamic `await import`", () => {
+  const r = runIn(`export async function f() { return await import("../comms/y.js"); }`);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /asks → comms/);
+  assert.match(r.out, /dynamic import/);
+});
+
+test("allows a type-position dynamic import (import().Member)", () => {
+  const r = runIn(`export type Ev = import("../comms/y.js").T;`);
+  assert.equal(r.code, 0, r.out);
+});
+
 test("allows a loop-core value import (../signal.js)", () => {
   const r = runIn(`import { resolveTier } from "../signal.js";`);
   assert.equal(r.code, 0, r.out);
