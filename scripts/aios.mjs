@@ -2548,7 +2548,26 @@ async function cmdWork(repo, cfg, patterns, args) {
 async function loadOperatorLoop() {
   const distPath = path.join(SCRIPT_DIR, "..", "dist", "operator-loop", "index.js");
   if (!existsSync(distPath)) {
-    die("operator-loop is not built — run: npm run build:loop");
+    // Self-heal: fresh clones / worktrees may never have run `npm run build:loop`
+    // (postinstall and worktree hydration both attempt it, but neither is a hard
+    // guarantee — e.g. `npm install --omit=dev`, or hydration ran before this file
+    // existed). Try once, synchronously, before falling back to die().
+    console.log(c.dim("operator-loop is not built — building it now (first run)…"));
+    try {
+      execFileSync(process.execPath, [path.join(SCRIPT_DIR, "ensure-loop-built.mjs")], {
+        cwd: path.join(SCRIPT_DIR, ".."),
+        stdio: "inherit",
+        timeout: 120_000,
+      });
+    } catch {
+      // ensure-loop-built.mjs is itself best-effort and always exits 0; this only
+      // catches a hard failure to spawn node or an execFileSync timeout kill. Fall
+      // through to the existsSync check below either way.
+    }
+    if (!existsSync(distPath)) {
+      die("operator-loop is not built — run: npm run build:loop");
+    }
+    console.log(c.green("✓ operator-loop built."));
   }
   return import(pathToFileURL(distPath).href);
 }
