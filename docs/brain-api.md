@@ -83,7 +83,7 @@ writeback/registration pulls), so a newer client still works against an older br
   chat-thread history); **`GET /api/v1/identities/resolve`** (external-id → member resolution); and
   **`GET`/`POST`/`DELETE /api/v1/me/slack-token`** (the owner's personal Slack token, owner-only).
   Also adds the **`GET /api/v1/tasks` tier-scoping note** (an `external`-tier key sees only
-  `audience: "external"` rows — the same choke-point `/decisions` already documented) and
+  `audience: "external"` rows — the same row filter `/decisions` already documented) and
   **completes the rate-limit quick-reference table** with every implemented route's actual limit.
   Every endpoint above was already live in the shipped server before this revision; this closes the
   doc-vs-code gap, it does not open one.*
@@ -362,9 +362,10 @@ The CLI exposes these over the endpoints above:
 
 Returns task rows created or modified **in the dashboard UI** since the cursor, so the
 CLI can merge them into the local `3-log/tasks.md`. **Tier-scoped:** an `external`-tier key
-receives only `audience: "external"` rows — the same choke-point (`visibleTasks`,
-`lib/auth/visibility.ts`) that gates `GET /api/v1/decisions` below, applied to the `tasks`
-table's inherited `audience` column (sourced from the task's originating item's `access`).
+receives only `audience: "external"` rows — via the `visibleTasks` choke-point in
+`lib/auth/visibility.ts`, the same file and pattern as the `visibleDecisions` choke-point that
+gates `GET /api/v1/decisions` below, applied to the `tasks` table's inherited `audience` column
+(sourced from the task's originating item's `access`).
 
 ```json
 {
@@ -998,7 +999,7 @@ policy; `429` rate-limited. **Rate limit:** 60/min per key.
 ### `POST /api/v1/graph-query` — natural-language search over Graphiti graph memory
 
 ```json
-{ "question": "What did we decide about governance review gates?" }
+{ "query": "What did we decide about governance review gates?" }
 ```
 
 Body accepts `query` (1–2000 chars, required) and `maxFacts` (1–100, optional, default 20).
@@ -1147,10 +1148,11 @@ stored encrypted at rest (`member_secrets`) and every response carries `Cache-Co
   member.
 - **`POST { token }`** → validates the token is a Slack **user** token (`xoxp-` prefix), calls
   Slack's `auth.test` to confirm it's live, stores it encrypted, and best-effort captures the
-  member's Slack identity (so `slack dm --member` / `identities/resolve` work afterward). Rejects
-  a non-`xoxp-` token or one Slack's `auth.test` rejects with `422 invalid_token`. This is the
-  manual-paste path; a one-click OAuth path also exists at `/api/auth/slack/start` (session-authed
-  dashboard route, outside this API-key contract).
+  member's Slack identity (so `slack dm --member` / `identities/resolve` work afterward). A token
+  without the `xoxp-` prefix is rejected `400 bad_request`; a well-formed token that Slack's
+  `auth.test` rejects is `422 invalid_token`. This is the manual-paste path; a one-click OAuth
+  path also exists at `/api/auth/slack/start` (session-authed dashboard route, outside this
+  API-key contract).
 - **`DELETE`** → disconnects (`{ ok: true, connected: false }`); always succeeds, no rate limit.
 
 **Errors:** `401`; `400 bad_request` (malformed body / wrong token prefix); `422 invalid_token`
