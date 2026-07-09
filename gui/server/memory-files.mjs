@@ -18,7 +18,7 @@ export const MEMORY_FILES = [
 // pair isn't in here is dropped — the model can't invent destinations.
 export const SECTIONS = {
   "USER.md": ["role", "goals", "preferences", "comms"],
-  "WORKSPACE.md": ["company", "environment", "tooling"],
+  "WORKSPACE.md": ["company", "environment", "tooling", "explicit", "error-fix"],
 };
 
 // The reviewer's managed block lives below this marker. It is an HTML comment, so
