@@ -94,6 +94,12 @@ writeback/registration pulls), so a newer client still works against an older br
   `aios member invite` CLI client. Additive — newer CLIs tolerate a `404` from an older brain.
   This is the first **role-gated endpoint** (admin-role key required) besides the blueprint
   publish; adds the `forbidden_role` error code. Section below.*
+- *2026-07-10 — **v1.8**: added **`POST /api/v1/subscriptions`** (a member's flat AI-tool
+  subscription — e.g. Claude Max 20× at $200/mo — distinct from per-token spend). The brain's
+  Usage page separates three honest tiers: **subscriptions** (flat), **billed** metered spend
+  (`source` ≠ `session-logs`), and **API-equivalent value** (token estimates, `source =
+  session-logs`). Contract-first; additive — a newer CLI tolerates a `404` from an older brain.
+  Section below.*
 
 ---
 
@@ -941,6 +947,38 @@ This is a standalone analytics endpoint, **not** an `/items` kind.
 **Response:** `201 { "status": "ok", "cost_id": "uuid", "member_id": "uuid" }`
 
 Dashboard: Admin → Usage shows brain spend + external provider spend combined.
+
+---
+
+### `POST /api/v1/subscriptions` — flat AI-tool subscription (v1.8)
+
+**Team-tier only** — an `external`-tier key gets `403 forbidden_tier`. Rate limit: 60/min per key.
+
+A member's **flat** monthly subscription to an AI tool (Claude Max/Pro, Cursor, …). This is the
+real recurring spend, **distinct from per-token usage** (`/costs`): subscription usage is not billed
+per token, so a token estimate is a *value* signal, never the bill. Pushed by `aios analyze --push`
+from the detected plan (or `.aios/cost-config.json` override).
+
+```json
+{
+  "member": "john",
+  "provider": "claude",
+  "plan": "max_20x",
+  "monthly_usd": 200,
+  "source": "config"
+}
+```
+
+- `provider`: `cursor` | `claude` | `anthropic` | `openai` | `codex` | `other`
+- `plan`: free-form plan key (e.g. `max_20x`, `pro`, `custom`)
+- `monthly_usd`: flat recurring cost, `>= 0`
+- `source`: how it was determined — `config` (override) | `keychain` (detected) | `manual`
+- Idempotent on `(team_id, member_id, provider)` — re-push updates the current plan in place.
+
+**Response:** `201 { "status": "ok", "subscription_id": "uuid", "member_id": "uuid" }`
+
+Dashboard: Admin → Usage shows subscriptions (flat) separately from billed spend and API-equivalent
+value.
 
 ---
 
