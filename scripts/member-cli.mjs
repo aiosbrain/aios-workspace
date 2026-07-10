@@ -15,7 +15,8 @@
 import { c, die } from "./cli-common.mjs";
 
 const ROLES = new Set(["member", "lead", "admin"]);
-const TOOLS = new Set(["linear", "slack", "github"]);
+// Exported for the contract-conformance guard: must match the fixture's provisioningTools.
+export const TOOLS = new Set(["linear", "slack", "github"]);
 
 const INVITE_USAGE =
   "usage: aios member invite <email> --name <display name> --handle <handle> " +

@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeTier } from "../scripts/workspace-parse.mjs";
 import { parseSseBlock, splitSseBlocks } from "../scripts/brain-client.mjs";
+import { TOOLS as MEMBER_CLI_TOOLS } from "../scripts/member-cli.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = JSON.parse(
@@ -47,6 +48,16 @@ test("fixture provisioningTools is a non-empty unique string list (v1.7)", () =>
   );
   assert.equal(new Set(tools).size, tools.length, "provisioningTools must be unique");
   for (const t of tools) assert.equal(typeof t, "string", `tool ${t} must be a string`);
+});
+
+test("`aios member` CLI tool vocabulary matches the fixture's provisioningTools (v1.7)", () => {
+  // The brain runs the mirror assertion (ALL_TOOLS + its invite request schema) against its
+  // vendored fixture copy — so a tool added on either side without the other fails that side's build.
+  assert.deepEqual(
+    [...MEMBER_CLI_TOOLS].sort(),
+    [...fixture.provisioningTools].sort(),
+    "scripts/member-cli.mjs TOOLS must equal the contract's provisioningTools"
+  );
 });
 
 test("fixture version tracks docs/brain-api.md", () => {
