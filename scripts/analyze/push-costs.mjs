@@ -155,6 +155,10 @@ export async function pushProviderCosts(
 
   const cursorStats = await pushPayloadRows(repo, cfg, api, payloads, state);
 
+  // Flat subscription (Claude Max/Pro) — the real recurring spend, pushed once and
+  // updated in place. Distinct from the per-token /costs rows above. Dedup-hashed.
+  await pushSubscription(cfg, api, costData.plan, member, state);
+
   saveCostsState(repo, state);
 
   if (writeMarkdown) {
@@ -169,6 +173,35 @@ export async function pushProviderCosts(
   logPushSummary("cursor", cursorStats);
 
   return { cursor: cursorStats };
+}
+
+/**
+ * Push the member's flat subscription (POST /api/v1/subscriptions, v1.8). Only when a
+ * monthly cost is known (detected or config-overridden); dedup-hashed like cost rows.
+ * A 404 (older brain without the endpoint) is tolerated silently.
+ */
+export async function pushSubscription(cfg, api, plan, member, state) {
+  if (!api || !cfg.brain_url || !cfg.api_key) return;
+  if (!plan || plan.monthly_usd == null) return; // unknown plan — nothing to push
+  const payload = {
+    member,
+    provider: plan.provider || "claude",
+    plan: plan.plan || "custom",
+    monthly_usd: plan.monthly_usd,
+    source: plan.source || "keychain",
+  };
+  const key = `sub:${payload.provider}`;
+  const hash = payloadHash(payload);
+  if (state.pushed[key] === hash) return; // unchanged
+  try {
+    await api(cfg, "POST", "/subscriptions", payload);
+    state.pushed[key] = hash;
+    console.log(color.green(`  subscription: ${payload.provider} ${plan.label || payload.plan}`));
+  } catch (e) {
+    if (!String(e.message).includes("404")) {
+      console.warn(color.yellow(`  subscription push failed: ${e.message}`));
+    }
+  }
 }
 
 function logPushSummary(provider, { sent, skipped, failed }) {

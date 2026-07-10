@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { detectClaudePlan, mapPlan, PLAN_PRICES } from "../scripts/analyze/claude-plan.mjs";
 import { fetchAnthropicApiCost } from "../scripts/analyze/anthropic-admin.mjs";
 import { buildCostPushPayloads } from "../scripts/analyze/cost-report.mjs";
+import { pushSubscription } from "../scripts/analyze/push-costs.mjs";
 
 test("mapPlan resolves rateLimitTier and subscriptionType", () => {
   assert.equal(mapPlan("max", "default_claude_max_20x"), "max_20x");
@@ -144,6 +145,39 @@ test("detectClaudePlan: unknown when no override, no creds", () => {
   assert.equal(p.provider, "claude");
   assert.equal(p.billing, "subscription");
   assert.ok(p.source === "keychain" || p.source === "unknown");
+});
+
+test("pushSubscription posts the flat plan once, then dedups; skips unknown", async () => {
+  const cfg = { brain_url: "https://brain", api_key: "k" };
+  const calls = [];
+  const api = async (_cfg, method, path, payload) => calls.push({ method, path, payload });
+  const state = { pushed: {} };
+  const plan = {
+    provider: "claude",
+    plan: "max_20x",
+    label: "Max 20×",
+    monthly_usd: 200,
+    source: "config",
+  };
+
+  await pushSubscription(cfg, api, plan, "john", state);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, "/subscriptions");
+  assert.deepEqual(calls[0].payload, {
+    member: "john",
+    provider: "claude",
+    plan: "max_20x",
+    monthly_usd: 200,
+    source: "config",
+  });
+
+  // Unchanged → deduped (no second POST).
+  await pushSubscription(cfg, api, plan, "john", state);
+  assert.equal(calls.length, 1);
+
+  // Unknown plan (no monthly_usd) → nothing pushed.
+  await pushSubscription(cfg, api, { plan: "unknown", monthly_usd: null }, "john", { pushed: {} });
+  assert.equal(calls.length, 1);
 });
 
 test("buildCostPushPayloads emits a real anthropic row (source=admin-cost, meta.real)", () => {
