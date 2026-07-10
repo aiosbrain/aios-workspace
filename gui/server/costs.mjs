@@ -2,24 +2,27 @@
  * costs.mjs — pure reshaper for the cockpit Cost panel.
  *
  * `buildCostsPayload(stdout)` parses the JSON emitted by `aios analyze --json`
- * (see scripts/analyze/report.mjs `toJson` → `out.costs`) and flattens the four
+ * (see scripts/analyze/report.mjs `toJson` → `out.costs`) and flattens the
  * provider cost blocks into the friendly `CostResponse` contract the client
- * renders: per-provider daily spend, daily token buckets, and a provider rollup.
+ * renders: per-provider daily spend, daily token buckets, a provider rollup,
+ * and the flat subscription plan.
  *
  * Lives in its own module (not index.mjs, which self-boots an http server on
  * import) so it can be unit-tested without side effects — mirroring maturity.mjs.
  *
  * Provider cost provenance (surfaced so the UI never conflates estimate with bill):
- *   cursor   → dashboard billing API   (authoritative USD)
- *   claude   → local session-log token estimate
- *   codex    → local session-log token estimate
- *   opencode → per-message session-API cost
+ *   anthropic → org Admin cost report  (authoritative billed USD, API keys)
+ *   cursor    → dashboard billing API  (authoritative USD)
+ *   claude    → local session-log token estimate
+ *   codex     → local session-log token estimate
+ *   opencode  → per-message session-API cost
  *
  * Zero dependencies.
  */
 
 /** Display order + provenance for the four providers analyze can emit. */
 const PROVIDERS = [
+  { key: "anthropic", label: "Anthropic API", source: "billing", estimated: false },
   { key: "cursor", label: "Cursor", source: "billing", estimated: false },
   { key: "claude", label: "Claude", source: "estimate", estimated: true },
   { key: "codex", label: "Codex", source: "estimate", estimated: true },
@@ -61,7 +64,8 @@ export function buildCostsPayload(stdout) {
     const block = costs[p.key];
     if (!block) continue;
     const days = Array.isArray(block.days) ? block.days : [];
-    if (!days.length && !block.totals) continue;
+    // anthropic reports `total_usd` instead of `totals`; accept either.
+    if (!days.length && !block.totals && block.total_usd == null) continue;
     present.push(p.key);
 
     let providerCost = 0;
@@ -89,7 +93,7 @@ export function buildCostsPayload(stdout) {
       label: p.label,
       source: p.source,
       estimated: p.estimated,
-      cost_usd: Math.round((block.totals?.cost_usd ?? providerCost) * 1e5) / 1e5,
+      cost_usd: Math.round((block.totals?.cost_usd ?? block.total_usd ?? providerCost) * 1e5) / 1e5,
       events: block.totals?.events ?? providerEvents,
     });
   }
@@ -112,6 +116,9 @@ export function buildCostsPayload(stdout) {
     spendByDay,
     tokensByDay,
     totals: { cost_usd: Math.round(totalCost * 1e5) / 1e5 },
+    // Flat subscription (Claude Max/Pro) — real spend, not per-token. See claude-plan.mjs.
+    plan: costs.plan ?? null,
     cursor_error: costs.cursor_error ?? null,
+    anthropic_error: costs.anthropic_error ?? null,
   };
 }

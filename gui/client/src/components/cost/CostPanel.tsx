@@ -177,6 +177,26 @@ export function CostPanel() {
         </button>
       </div>
 
+      {/* flat subscription (real spend, not per-token) */}
+      {data.plan?.monthly_usd != null && (
+        <div className={CARD}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[13px] font-semibold text-foreground">
+              Claude {data.plan.label}
+              <span className="ml-1.5 font-normal text-muted-foreground">subscription</span>
+            </span>
+            <span className="font-mono text-foreground">
+              ${data.plan.monthly_usd.toFixed(0)}/mo
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Flat fee — the estimates below are API-equivalent value, not this bill.
+            {data.plan.source === "keychain" &&
+              " Plan detected from login; override in .aios/cost-config.json if wrong."}
+          </p>
+        </div>
+      )}
+
       {/* per-provider tiles with provenance */}
       {data.by_provider.length === 0 ? (
         <div className="text-xs text-muted-foreground">

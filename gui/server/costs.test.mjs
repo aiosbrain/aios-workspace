@@ -74,6 +74,25 @@ test("buildCostsPayload unifies provider blocks into a dense series", () => {
   assert.equal(p.totals.cost_usd, 44.5);
 });
 
+test("buildCostsPayload surfaces real anthropic spend (total_usd) + subscription plan", () => {
+  const p = buildCostsPayload(
+    JSON.stringify({
+      window: { since: "a", until: "b" },
+      costs: {
+        anthropic: { total_usd: 42.5, days: [{ date: "2026-07-09", cost_usd: 42.5 }] },
+        plan: { label: "Max 20×", monthly_usd: 200, source: "config" },
+        cursor_error: null,
+      },
+    })
+  );
+  assert.ok(p.providers.includes("anthropic"));
+  const a = p.by_provider.find((b) => b.provider === "anthropic");
+  assert.equal(a.cost_usd, 42.5);
+  assert.equal(a.estimated, false); // real billed $, not an estimate
+  assert.equal(p.spendByDay.find((d) => d.date === "2026-07-09").anthropic, 42.5);
+  assert.equal(p.plan.monthly_usd, 200);
+});
+
 test("buildCostsPayload tolerates an empty costs block", () => {
   const p = buildCostsPayload(JSON.stringify({ window: { since: "a", until: "b" }, costs: {} }));
   assert.deepEqual(p.providers, []);

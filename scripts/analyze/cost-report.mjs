@@ -228,6 +228,10 @@ export function buildCostPushPayloads(result, member, project) {
   }
   for (const day of result.anthropic?.days || []) {
     if (day.date === "unknown") continue;
+    // A net-negative day (credit/adjustment) would 422 against the brain's
+    // nonnegative cost schema — skip it rather than push a rejected row.
+    const cost = roundUsd(day.cost_usd);
+    if (cost <= 0) continue;
     out.push({
       member,
       date: day.date,
@@ -237,7 +241,7 @@ export function buildCostPushPayloads(result, member, project) {
       input_tokens: 0,
       output_tokens: 0,
       cache_read_tokens: 0,
-      cost_usd: roundUsd(day.cost_usd),
+      cost_usd: cost,
       events: 0,
       // Authoritative billed $ (API-key usage), not an estimate.
       meta: { real: true },

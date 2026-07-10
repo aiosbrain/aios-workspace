@@ -35,8 +35,15 @@ export async function fetchAnthropicApiCost({
   const key = env.ANTHROPIC_ADMIN_KEY;
   if (!key) return null; // not configured — silent skip
 
-  const startingAt = new Date(sinceMs).toISOString();
-  const endingAt = new Date(endMs).toISOString();
+  // 1d buckets snap to UTC midnight — align the window to whole UTC days so the
+  // report covers the intended range (floor start, ceil end to next midnight).
+  const startDay = new Date(sinceMs);
+  startDay.setUTCHours(0, 0, 0, 0);
+  const endDay = new Date(endMs);
+  endDay.setUTCHours(0, 0, 0, 0);
+  endDay.setUTCDate(endDay.getUTCDate() + 1);
+  const startingAt = startDay.toISOString();
+  const endingAt = endDay.toISOString();
 
   const byDay = new Map();
   const byModel = new Map();
@@ -55,6 +62,8 @@ export async function fetchAnthropicApiCost({
 
       const res = await fetchImpl(url, {
         headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+        // Never let a stalled admin call hang `aios analyze` (runs inside --push).
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         const gated = res.status === 401 || res.status === 403;

@@ -554,6 +554,16 @@ export interface CostProviderRollup {
   cost_usd: number;
   events: number;
 }
+/** Flat subscription plan (Claude Max/Pro) — real spend, not per-token. */
+export interface CostPlan {
+  provider: string;
+  billing: string;
+  plan: string;
+  label: string;
+  monthly_usd: number | null;
+  source: string;
+  note?: string;
+}
 export interface CostResponse {
   window: { since: string; until: string } | null;
   providers: string[];
@@ -561,6 +571,8 @@ export interface CostResponse {
   spendByDay: CostSpendDay[];
   tokensByDay: CostTokenDay[];
   totals: { cost_usd: number };
+  plan: CostPlan | null;
   cursor_error: string | null;
+  anthropic_error?: string | null;
   error?: string;
 }
