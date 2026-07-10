@@ -259,6 +259,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     endMs: until.getTime(),
     events: inWindow,
     window: result.window,
+    repo,
   });
 
   if (opts.json) {

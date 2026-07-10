@@ -531,3 +531,48 @@ export interface MaturityResponse {
   };
   error?: string;
 }
+
+// ── Cost panel (individual, this-workspace spend across all four providers) ──
+/** One calendar day of spend; provider keys hold USD (0-filled), `date` is the label. */
+export interface CostSpendDay {
+  date: string;
+  [provider: string]: number | string;
+}
+/** One calendar day of token totals across all providers. */
+export interface CostTokenDay {
+  date: string;
+  input: number;
+  output: number;
+  cache_read: number;
+}
+/** Per-provider rollup with provenance (billing vs estimate vs session cost). */
+export interface CostProviderRollup {
+  provider: string;
+  label: string;
+  source: "billing" | "estimate" | "session";
+  estimated: boolean;
+  cost_usd: number;
+  events: number;
+}
+/** Flat subscription plan (Claude Max/Pro) — real spend, not per-token. */
+export interface CostPlan {
+  provider: string;
+  billing: string;
+  plan: string;
+  label: string;
+  monthly_usd: number | null;
+  source: string;
+  note?: string;
+}
+export interface CostResponse {
+  window: { since: string; until: string } | null;
+  providers: string[];
+  by_provider: CostProviderRollup[];
+  spendByDay: CostSpendDay[];
+  tokensByDay: CostTokenDay[];
+  totals: { cost_usd: number };
+  plan: CostPlan | null;
+  cursor_error: string | null;
+  anthropic_error?: string | null;
+  error?: string;
+}

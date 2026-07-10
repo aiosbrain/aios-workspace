@@ -10,9 +10,12 @@ import { fetchCursorUsage } from "./cursor-api.mjs";
 import {
   buildClaudeCostFromEvents,
   buildOpencodeCostFromEvents,
+  buildCodexCostFromEvents,
   buildCostPushPayloads,
   renderAiSpendMarkdown,
 } from "./cost-report.mjs";
+import { detectClaudePlan, loadCostConfig } from "./claude-plan.mjs";
+import { fetchAnthropicApiCost } from "./anthropic-admin.mjs";
 import { loadCostsState, saveCostsState, pushKey, payloadHash } from "./costs-state.mjs";
 
 const color = {
@@ -25,16 +28,29 @@ const color = {
  * Fetch Cursor billing + build Claude session-log estimates for the window.
  * Safe to call without brain credentials (display-only).
  */
-export async function gatherCostData({ sinceMs, endMs, events, window }) {
+export async function gatherCostData({ sinceMs, endMs, events, window, repo }) {
   const out = {
     window,
+    // Flat subscription (Claude Code is NOT per-token) — detected from the login
+    // token, overridable in .aios/cost-config.json. See claude-plan.mjs.
+    plan: detectClaudePlan({ config: loadCostConfig(repo) }),
+    // Per-provider token estimates ("API-equivalent value", not real spend).
     claude: buildClaudeCostFromEvents(events, sinceMs),
+    codex: buildCodexCostFromEvents(events, sinceMs),
     opencode: buildOpencodeCostFromEvents(events, sinceMs),
   };
   try {
     out.cursor = await fetchCursorUsage(sinceMs, endMs);
   } catch (e) {
     out.cursor_error = e.message;
+  }
+  // Real Anthropic API-key spend (authoritative $) when an org Admin key is set.
+  try {
+    const api = await fetchAnthropicApiCost({ sinceMs, endMs });
+    if (api?.error) out.anthropic_error = api.error;
+    else if (api) out.anthropic = api;
+  } catch (e) {
+    out.anthropic_error = e.message;
   }
   return out;
 }
@@ -119,16 +135,25 @@ export async function pushProviderCosts(
     window: costData.window,
     cursor: costData.cursor ? { days: costData.cursor.days, totals: costData.cursor.totals } : null,
     claude: costData.claude,
+    codex: costData.codex,
     opencode: costData.opencode,
+    anthropic: costData.anthropic,
+    plan: costData.plan,
   };
 
-  const cursorPayloads = buildCostPushPayloads(
-    { cursor: rollup.cursor, claude: rollup.claude, opencode: rollup.opencode },
+  const payloads = buildCostPushPayloads(
+    {
+      cursor: rollup.cursor,
+      claude: rollup.claude,
+      codex: rollup.codex,
+      opencode: rollup.opencode,
+      anthropic: rollup.anthropic,
+    },
     member,
     project
   );
 
-  const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
+  const cursorStats = await pushPayloadRows(repo, cfg, api, payloads, state);
 
   saveCostsState(repo, state);
 
