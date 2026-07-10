@@ -27,15 +27,26 @@ const canonical = (v) =>
       : v;
 
 test("fixture contentHash is intact (no out-of-band edit)", () => {
-  const { version, tierAliases, sse } = fixture;
+  // v1.7 added provisioningTools (the member-invite tool vocabulary) to the pinned content.
+  const { version, tierAliases, sse, provisioningTools } = fixture;
   const recomputed = createHash("sha256")
-    .update(JSON.stringify(canonical({ version, tierAliases, sse })))
+    .update(JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools })))
     .digest("hex");
   assert.equal(
     recomputed,
     fixture.contentHash,
     "edit the fixture via the generator so contentHash updates"
   );
+});
+
+test("fixture provisioningTools is a non-empty unique string list (v1.7)", () => {
+  const tools = fixture.provisioningTools;
+  assert.ok(
+    Array.isArray(tools) && tools.length > 0,
+    "provisioningTools must be a non-empty array"
+  );
+  assert.equal(new Set(tools).size, tools.length, "provisioningTools must be unique");
+  for (const t of tools) assert.equal(typeof t, "string", `tool ${t} must be a string`);
 });
 
 test("fixture version tracks docs/brain-api.md", () => {

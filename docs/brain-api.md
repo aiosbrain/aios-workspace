@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.6** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.7** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -87,6 +87,13 @@ writeback/registration pulls), so a newer client still works against an older br
   **completes the rate-limit quick-reference table** with every implemented route's actual limit.
   Every endpoint above was already live in the shipped server before this revision; this closes the
   doc-vs-code gap, it does not open one.*
+- *2026-07-10 — **v1.7**: added **`POST /api/v1/members/invite`** (admin-key member onboarding:
+  creates/re-invites a member and best-effort **cascades invitations to the team's configured
+  external tools** — Linear workspace invite, Slack join link, GitHub org invite). Contract-first:
+  this section lands before the matching `aios-team-brain` implementation and the
+  `aios member invite` CLI client. Additive — newer CLIs tolerate a `404` from an older brain.
+  This is the first **role-gated endpoint** (admin-role key required) besides the blueprint
+  publish; adds the `forbidden_role` error code. Section below.*
 
 ---
 
@@ -206,8 +213,9 @@ All errors:
 { "error": { "code": "string", "message": "human-readable", "request_id": "uuid" } }
 ```
 
-Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `invalid_payload`
-(422), `payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
+Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `forbidden_role`
+(403, endpoint requires a higher member role — v1.7), `invalid_payload` (422),
+`payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
 `internal` (500).
 
 ## Rate limits
@@ -231,6 +239,7 @@ the gate — see `lib/api/rate-limit.ts`):
 - `POST /actions`: 60/min per key
 - `POST /graph-query`: 30/min per key
 - `GET /members`: 60/min per key
+- `POST /members/invite`: 10/min per key
 - `GET /identities/resolve`: 120/min per key
 - `GET /conversations`, `GET /conversations/<id>`: none (owner-scoped reads)
 - `GET /me/slack-token`: 60/min per key; `POST /me/slack-token`: 20/min per key;
@@ -1098,6 +1107,96 @@ timeline` to resolve avatars from the brain before falling back to GitHub's publ
 **Errors:** `401`; `403 forbidden_tier` (non-team key); `400 bad_request` (no/ambiguous
 resolution input, or `external_id` without `provider`); `404 not_found` (nothing resolves);
 `429`. **Rate limit:** 120/min per key.
+
+---
+
+## Member invite endpoint (v1.7)
+
+> **Status:** contract-first — this section lands before the matching `aios-team-brain`
+> implementation and the `aios member invite` CLI client. Clients MUST tolerate a `404`
+> from an older brain (the standard forward-compat rule) and degrade to "invite from the
+> dashboard's `/admin/members` page instead."
+
+### `POST /api/v1/members/invite` — invite a member + tool cascade
+
+Creates (or re-invites) a member on the caller's team, issues their Team Brain sign-in
+(magic-link email when mail delivery is configured, otherwise a manual password), and
+**best-effort cascades invitations to the team's configured external tools** — a Linear
+workspace invite, a Slack join link, and a GitHub org invite. One trigger, every tool.
+
+**Admin-key only (role-gated):** the authenticated key's member must have **role `admin`**
+and **tier `team`**; any other key gets `403 forbidden_role`. This is the same trust level
+as the dashboard's `/admin/members` invite surface. Rate limit: **10/min per key**.
+
+**Request:**
+
+```json
+{
+  "email": "riley@example.com",
+  "display_name": "Riley Chen",
+  "actor_handle": "riley",
+  "role": "member",
+  "tools": "all"
+}
+```
+
+- `email`, `display_name`, `actor_handle` — required (`role` defaults to `member`;
+  values `member|lead|admin`).
+- `tools` — optional: an array drawn from `"linear" | "slack" | "github"`, or the strings
+  `"all"` (default) / `"none"`. Unknown tool names are rejected `422 invalid_payload`
+  (the tool vocabulary is versioned here; new tools are additive).
+
+**Response `200`:**
+
+```json
+{
+  "member": { "id": "uuid", "email": "riley@example.com", "status": "invited", "created": true },
+  "invite": { "mode": "magic-link", "email_delivered": true },
+  "provisioning": [
+    { "tool": "linear", "status": "sent",          "detail": "" },
+    { "tool": "slack",  "status": "link_provided", "detail": "standing workspace join link; acceptance is not verified", "invite_link": "https://join.slack.com/t/…" },
+    { "tool": "github", "status": "failed",        "detail": "token needs admin:org scope" }
+  ]
+}
+```
+
+- `invite` is one of:
+  - `{ "mode": "magic-link", "email_delivered": bool, "login_url": "…"? }` — `login_url`
+    (the one-click sign-in link, 7-day TTL) is included **only when `email_delivered` is
+    `false`**, so the admin can share it out-of-band; when the email went through, the
+    credential stays out of the response.
+  - `{ "mode": "manual", "password": "…", "invite_message": "…" }` — mail delivery isn't
+    configured on this brain; `invite_message` is the complete ready-to-paste invite
+    (URL + email + password). Shown once; the brain stores only the hash.
+- `provisioning[]` has one entry per **requested** tool. Statuses:
+  - `sent` — the external service accepted the invite (it emails the invitee itself).
+  - `link_provided` — no invite API exists for this tool/plan (e.g. Slack Free/Pro); the
+    brain returns the team's standing join link in `invite_link` and includes it in the
+    invite email's "Your team tools" section.
+  - `skipped` — nothing to do: the tool isn't configured for the team, or the person is
+    already a member / already invited there. `detail` says which.
+  - `failed` — the attempt errored; `detail` carries the actionable reason verbatim.
+
+**Server semantics (normative):**
+
+1. **Idempotent on `(team_id, email)`.** An existing member returns `created: false`,
+   re-issues the sign-in link (or manual credentials), and re-runs provisioning for the
+   requested tools — safe re-invite, bounded by the rate limit.
+2. **Provisioning is best-effort and never blocks the brain invite.** A tool failure is
+   reported in `provisioning[]`, never as a non-200 response. The brain persists the
+   latest per-tool outcome (surfaced on `/admin/members` with a retry affordance).
+3. Tool credentials/config come from the brain's **Admin → Integrations** settings
+   (Linear API key + default team ids, Slack standing join link, GitHub org + token) and
+   never appear in this response beyond the shareable `invite_link`.
+4. Every invite and per-tool outcome is audit-logged.
+
+**Client:** `aios member invite <email> --name <display name> --handle <handle>
+[--role member|lead|admin] [--tools linear,slack,github|all|none]`, plus `aios member list`
+over the existing `GET /api/v1/members` roster read.
+
+**Errors:** `401`; `403 forbidden_role` (key's member isn't a team-tier admin);
+`422 invalid_payload` (bad email, missing fields, unknown tool); `429`.
+**Rate limit:** 10/min per key.
 
 ---
 
