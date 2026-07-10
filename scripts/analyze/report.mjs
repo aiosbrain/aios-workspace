@@ -250,6 +250,7 @@ export function toJson(result, costData) {
           }
         : null,
       claude: costData.claude,
+      codex: costData.codex || null,
       opencode: costData.opencode || null,
       cursor_error: costData.cursor_error || null,
     };

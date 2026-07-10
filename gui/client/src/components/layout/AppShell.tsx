@@ -4,6 +4,7 @@ import { ChatView } from "../chat/ChatView";
 import { TasksPanel } from "../tasks/TasksPanel";
 import { ReviewPanel } from "../review/ReviewPanel";
 import { MaturityPanel } from "../maturity/MaturityPanel";
+import { CostPanel } from "../cost/CostPanel";
 import { SettingsView } from "../settings/SettingsView";
 
 function ViewRouter() {
@@ -17,6 +18,8 @@ function ViewRouter() {
       return <ReviewPanel />;
     case "maturity":
       return <MaturityPanel />;
+    case "cost":
+      return <CostPanel />;
     case "settings":
       return <SettingsView />;
   }

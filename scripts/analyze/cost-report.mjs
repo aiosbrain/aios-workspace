@@ -75,9 +75,18 @@ export function buildOpencodeCostFromEvents(events, sinceMs) {
   return buildToolCostFromEvents("opencode", events, sinceMs);
 }
 
-/** Terminal spend block (Cursor authoritative + Claude estimated). */
+/**
+ * Codex CLI daily spend from local session logs (token estimate, not billing API).
+ * @param {import("./normalize.mjs").NormalizedEvent[]} events
+ * @param {number} sinceMs
+ */
+export function buildCodexCostFromEvents(events, sinceMs) {
+  return buildToolCostFromEvents("codex", events, sinceMs);
+}
+
+/** Terminal spend block (Cursor authoritative + Claude/Codex estimated + Opencode session). */
 export function renderCostSummary(costData, color) {
-  if (!costData?.cursor && !costData?.claude && !costData?.opencode) return "";
+  if (!costData?.cursor && !costData?.claude && !costData?.opencode && !costData?.codex) return "";
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
   const { window: win } = costData;
   const L = [];
@@ -100,13 +109,21 @@ export function renderCostSummary(costData, color) {
       )
     );
   }
+  if (costData.codex?.totals) {
+    const t = costData.codex.totals;
+    L.push(
+      c.dim(
+        `  Codex (est.)         ${fmtUsd(t.cost_usd, { estimated: true }).padStart(9)}   ${t.events} turns`
+      )
+    );
+  }
   if (costData.opencode?.totals) {
     const t = costData.opencode.totals;
     L.push(c.dim(`  Opencode (session)   ${fmtUsd(t.cost_usd).padStart(8)}   ${t.events} turns`));
   }
   L.push(
     c.dim(
-      "  Cursor = dashboard API · Claude = token estimate · Opencode = session API · see brain Usage for team totals"
+      "  Cursor = dashboard API · Claude/Codex = token estimate · Opencode = session API · see brain Usage for team totals"
     )
   );
   return L.join("\n");
@@ -140,6 +157,21 @@ export function buildCostPushPayloads(result, member, project) {
       member,
       date: day.date,
       provider: "claude",
+      source: "session-logs",
+      project: project || "",
+      input_tokens: day.input_tokens || 0,
+      output_tokens: day.output_tokens || 0,
+      cache_read_tokens: day.cache_read_tokens || 0,
+      cost_usd: roundUsd(day.cost_usd),
+      events: day.events || 0,
+      meta: { estimated: true },
+    });
+  }
+  for (const day of result.codex?.days || []) {
+    out.push({
+      member,
+      date: day.date,
+      provider: "codex",
       source: "session-logs",
       project: project || "",
       input_tokens: day.input_tokens || 0,
@@ -216,6 +248,17 @@ export function renderAiSpendMarkdown(result) {
     lines.push("");
   }
 
+  if (result.codex?.totals) {
+    lines.push("## Codex CLI (estimated from session logs)", "");
+    lines.push(`| Total (est.) | ~$${result.codex.totals.cost_usd.toFixed(2)} |`);
+    lines.push("");
+    lines.push("| Date | Est. cost | Turns |", "|------|-----------|-------|");
+    for (const d of result.codex.days || []) {
+      lines.push(`| ${d.date} | ~$${d.cost_usd.toFixed(2)} | ${d.events} |`);
+    }
+    lines.push("");
+  }
+
   if (result.opencode?.totals) {
     lines.push("## Opencode (from session API)", "");
     lines.push(`| Total | $${result.opencode.totals.cost_usd.toFixed(2)} |`);
@@ -230,7 +273,7 @@ export function renderAiSpendMarkdown(result) {
   lines.push(
     "---",
     "",
-    "_Auto-updated by `aios analyze --push`. Cursor figures are authoritative; Claude figures are token estimates; Opencode figures are per-message cost from the server API._",
+    "_Auto-updated by `aios analyze --push`. Cursor figures are authoritative; Claude/Codex figures are token estimates; Opencode figures are per-message cost from the server API._",
     ""
   );
   return lines.join("\n");

@@ -10,6 +10,7 @@ import { fetchCursorUsage } from "./cursor-api.mjs";
 import {
   buildClaudeCostFromEvents,
   buildOpencodeCostFromEvents,
+  buildCodexCostFromEvents,
   buildCostPushPayloads,
   renderAiSpendMarkdown,
 } from "./cost-report.mjs";
@@ -29,6 +30,7 @@ export async function gatherCostData({ sinceMs, endMs, events, window }) {
   const out = {
     window,
     claude: buildClaudeCostFromEvents(events, sinceMs),
+    codex: buildCodexCostFromEvents(events, sinceMs),
     opencode: buildOpencodeCostFromEvents(events, sinceMs),
   };
   try {
@@ -119,16 +121,22 @@ export async function pushProviderCosts(
     window: costData.window,
     cursor: costData.cursor ? { days: costData.cursor.days, totals: costData.cursor.totals } : null,
     claude: costData.claude,
+    codex: costData.codex,
     opencode: costData.opencode,
   };
 
-  const cursorPayloads = buildCostPushPayloads(
-    { cursor: rollup.cursor, claude: rollup.claude, opencode: rollup.opencode },
+  const payloads = buildCostPushPayloads(
+    {
+      cursor: rollup.cursor,
+      claude: rollup.claude,
+      codex: rollup.codex,
+      opencode: rollup.opencode,
+    },
     member,
     project
   );
 
-  const cursorStats = await pushPayloadRows(repo, cfg, api, cursorPayloads, state);
+  const cursorStats = await pushPayloadRows(repo, cfg, api, payloads, state);
 
   saveCostsState(repo, state);
 
