@@ -9,7 +9,7 @@ name: scan-on-merge
 #   AIOS_BRAIN_URL    — e.g. https://aios-team-brain-production.up.railway.app
 #   AIOS_TEAM         — team slug (e.g. aios)
 #   AIOS_API_KEY      — a TEAM-TIER api key (codebase scans are team-tier; least-privilege)
-#   BRAIN_REPO_TOKEN  — a read-only token (PAT / fine-grained) that can checkout AIOS-alpha/
+#   BRAIN_REPO_TOKEN  — a read-only token (PAT / fine-grained) that can checkout aiosbrain/
 #                       aios-team-brain (to fetch the scanner). The built-in GITHUB_TOKEN can't
 #                       read a sibling private repo.
 
@@ -25,7 +25,7 @@ jobs:
   scan:
     name: codebase readiness scan → brain
     runs-on: ubuntu-latest
-    if: github.repository == 'AIOS-alpha/aios-workspace'
+    if: github.repository == 'aiosbrain/aios-workspace'
     env:
       AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
       BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
@@ -39,7 +39,7 @@ jobs:
         if: env.AIOS_API_KEY != ''
         uses: actions/checkout@v7
         with:
-          repository: AIOS-alpha/aios-team-brain
+          repository: aiosbrain/aios-team-brain
           path: .brain-scanner
           sparse-checkout: ingestion
           token: ${{ secrets.BRAIN_REPO_TOKEN }}
