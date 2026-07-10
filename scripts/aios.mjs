@@ -68,6 +68,7 @@ import { resolveLoopIdentity } from "./loop-config.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import { c, die, sha256, slugify, gitConfig } from "./cli-common.mjs";
+import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
@@ -88,6 +89,7 @@ import { foldSessions, storePath } from "./analyze/maturity-store.mjs";
 import { projectSlug, STORE_SIZE_CAP } from "./analyze/maturity-fold.mjs";
 import { buildWeekReport, renderWeekReport, splitWeeks } from "./maturity-week.mjs";
 import { cmdInstincts } from "./instincts.mjs";
+import { cmdMode } from "./mode.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2508,36 +2510,8 @@ async function cmdWork(repo, cfg, patterns, args) {
 }
 
 // ── operator loop (C1 collector + manifest, C2 evidence ledger) ──────────────
-// The collector is TypeScript (workflow layer, per the Engineering Constitution), compiled
-// to dist/operator-loop. Imported dynamically ONLY here so no other command depends on the
-// build; if it's not built, fail with a clear hint instead of a module-not-found stack.
-
-async function loadOperatorLoop() {
-  const distPath = path.join(SCRIPT_DIR, "..", "dist", "operator-loop", "index.js");
-  if (!existsSync(distPath)) {
-    // Self-heal: fresh clones / worktrees may never have run `npm run build:loop`
-    // (postinstall and worktree hydration both attempt it, but neither is a hard
-    // guarantee — e.g. `npm install --omit=dev`, or hydration ran before this file
-    // existed). Try once, synchronously, before falling back to die().
-    console.log(c.dim("operator-loop is not built — building it now (first run)…"));
-    try {
-      execFileSync(process.execPath, [path.join(SCRIPT_DIR, "ensure-loop-built.mjs")], {
-        cwd: path.join(SCRIPT_DIR, ".."),
-        stdio: "inherit",
-        timeout: 120_000,
-      });
-    } catch {
-      // ensure-loop-built.mjs is itself best-effort and always exits 0; this only
-      // catches a hard failure to spawn node or an execFileSync timeout kill. Fall
-      // through to the existsSync check below either way.
-    }
-    if (!existsSync(distPath)) {
-      die("operator-loop is not built — run: npm run build:loop");
-    }
-    console.log(c.green("✓ operator-loop built."));
-  }
-  return import(pathToFileURL(distPath).href);
-}
+// loadOperatorLoop now lives in ./operator-loop-loader.mjs (shared with the extracted
+// mode/loop/asks/decisions/time handler modules). Imported at the top of this file.
 
 const LOOP_TIERS = ["admin", "team", "external"];
 
@@ -4577,46 +4551,8 @@ async function cmdDecisions(repo, cfg, args) {
   );
 }
 
-// ── aios mode (AIO-168): deep-work / orchestration attention toggle ──────────
-// Flips Claude Code's `preferredNotifChannel` in ~/.claude/settings.json: deep-work silences the
-// local iTerm2 ping; orchestration restores exactly the prior value (including absence, via a
-// sidecar memory). Mobile push (`agentPushNotifEnabled`) is never touched.
-async function cmdMode(repo, cfg, args) {
-  // A leading flag means no subcommand: `aios mode --json` = `aios mode status --json`.
-  const sub = args[0] && !args[0].startsWith("--") ? args[0] : "status";
-  const asJson = args.includes("--json");
-  const loop = await loadOperatorLoop();
-  const settingsArg = (() => {
-    const i = args.indexOf("--settings");
-    return i >= 0 ? args[i + 1] : null;
-  })();
-  // Sidecar is always the sibling `aios-mode.json` of the settings file — the SAME derivation as
-  // defaultModePaths(), so `--settings ~/.claude/settings.json` and the default share one memory.
-  const paths = settingsArg
-    ? {
-        settingsPath: settingsArg,
-        statePath: path.join(path.dirname(path.resolve(settingsArg)), "aios-mode.json"),
-      }
-    : loop.defaultModePaths();
-
-  let out;
-  try {
-    if (sub === "status") out = { ...loop.modeStatus(paths), changed: false };
-    else if (sub === "deep-work") out = loop.enterDeepWork(paths);
-    else if (sub === "orchestration") out = loop.enterOrchestration(paths);
-    else die("usage: aios mode [status|deep-work|orchestration] [--settings <path>] [--json]");
-  } catch (e) {
-    die(String(e?.message ?? e));
-  }
-  if (asJson) {
-    console.log(JSON.stringify(out, null, 2));
-    return;
-  }
-  const ping = out.mode === "deep-work" ? "silenced" : (out.channel ?? "default");
-  // "(no change)" only makes sense on a toggle that was already in that mode — not on status.
-  const note = sub !== "status" && !out.changed ? "  (no change)" : "";
-  console.log(c.blue("aios mode") + `  ${out.mode}` + c.dim(`  · local ping: ${ping}${note}`));
-}
+// aios mode (AIO-168): deep-work / orchestration attention toggle. Extracted to
+// ./mode.mjs (AIO-315); dispatched below as cmdMode(repo, cfg, rest).
 
 const MATURITY_WEEK_HELP = `aios maturity-week [--json] [--out <path>] [--project <slug>]
   Weekly agentic-maturity trajectory: Spine level delta, per-axis gains, and the
