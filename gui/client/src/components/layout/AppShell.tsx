@@ -5,6 +5,7 @@ import { TasksPanel } from "../tasks/TasksPanel";
 import { ReviewPanel } from "../review/ReviewPanel";
 import { MaturityPanel } from "../maturity/MaturityPanel";
 import { CostPanel } from "../cost/CostPanel";
+import { LoopPanel } from "../loop/LoopPanel";
 import { SettingsView } from "../settings/SettingsView";
 
 function ViewRouter() {
@@ -20,6 +21,8 @@ function ViewRouter() {
       return <MaturityPanel />;
     case "cost":
       return <CostPanel />;
+    case "loop":
+      return <LoopPanel />;
     case "settings":
       return <SettingsView />;
   }

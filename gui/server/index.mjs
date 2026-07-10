@@ -62,6 +62,13 @@ import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-
 import { buildMaturityPayload } from "./maturity.mjs";
 import { buildCostsPayload } from "./costs.mjs";
 import {
+  validateCadence,
+  validateWindow,
+  runLoopCli,
+  buildWeeklyCloseoutPayload,
+  loopResponse,
+} from "./loop.mjs";
+import {
   resolveTasksFile,
   readTasks,
   derivePushState,
@@ -465,6 +472,79 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
       }
+    });
+    return;
+  }
+  // ── operator loop panel (token-gated) — AIO-318 ──
+  // Thin wiring only; cadence/window validation, the lenient subprocess wrapper, the exit-code
+  // policy, and the weekly reshape all live in ./loop.mjs. Pass-through routes (daily/collect/
+  // telemetry) emit the CLI's --json verbatim; weekly is reshaped (CLI emits paths only).
+  if (url.pathname === "/api/loop/daily" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    // --no-record: a panel load must not write a C4/C8 owner telemetry event (idempotent read).
+    runLoopCli(repo, ["daily", "--json", "--no-record"]).then((cli) => {
+      const { status, json } = loopResponse(cli);
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
+    });
+    return;
+  }
+  if (url.pathname === "/api/loop/collect" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let cadence;
+    try {
+      cadence = validateCadence(url.searchParams.get("cadence") ?? "weekly");
+    } catch (e) {
+      res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    runLoopCli(repo, ["collect", `--${cadence}`, "--json"]).then((cli) => {
+      const { status, json } = loopResponse(cli);
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
+    });
+    return;
+  }
+  if (url.pathname === "/api/loop/telemetry" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let windowDays;
+    try {
+      windowDays = validateWindow(url.searchParams.get("window"));
+    } catch (e) {
+      res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    const args = ["telemetry", "--json"];
+    if (windowDays != null) args.push("--window", String(windowDays));
+    runLoopCli(repo, args).then((cli) => {
+      const { status, json } = loopResponse(cli);
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
+    });
+    return;
+  }
+  // POST: runs the offline weekly drafter + writes local admin-tier closeout artifacts. NEVER
+  // passes --remote — LLM/egress drafting stays a CLI-only consent action.
+  if (url.pathname === "/api/loop/weekly" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    runLoopCli(repo, ["weekly", "--json"]).then((cli) => {
+      const { status, json } = loopResponse(cli, (stdout) =>
+        buildWeeklyCloseoutPayload(stdout, repo)
+      );
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
     });
     return;
   }

@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, MessageSquarePlus, Settings, SunMoon, UploadCloud } from "lucide-react";
+import {
+  MessageSquare,
+  MessageSquarePlus,
+  Repeat,
+  Settings,
+  SunMoon,
+  UploadCloud,
+} from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -75,6 +82,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       icon: <MessageSquarePlus size={16} />,
       shortcut: "⌘N",
       onRun: () => run(newChat),
+    },
+    {
+      id: "loop",
+      label: "Operator Loop",
+      icon: <Repeat size={16} />,
+      onRun: () => run(() => setView("loop")),
     },
     {
       id: "review",

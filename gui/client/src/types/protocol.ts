@@ -574,5 +574,154 @@ export interface CostResponse {
   plan: CostPlan | null;
   cursor_error: string | null;
   anthropic_error?: string | null;
+  error?: string | null;
+}
+
+/* ---- operator loop (Loop) ---- */
+// Wire contract for the four loop routes served by gui/server/loop.mjs.
+//
+// Pass-through routes emit the CLI's `--json` object VERBATIM (mirroring the compiled
+// src/operator-loop types byte-for-byte):
+//   • GET  /api/loop/collect   → RunManifest         (src/operator-loop/manifest.ts)
+//   • GET  /api/loop/daily      → DailyOrientation    (src/operator-loop/daily.ts)
+//   • GET  /api/loop/telemetry  → LoopMetrics         (src/operator-loop/telemetry.ts)
+// Reshaped route (GUI-contract, like MaturityResponse — the CLI emits paths only, so the
+// server reads the owner brief off disk):
+//   • POST /api/loop/weekly     → WeeklyCloseoutResponse
+//
+// Business exit codes are surfaced as `cliExitCode` (NOT an HTTP error): weekly=1 on a
+// non-shippable audience, telemetry=2 on a shipped tier leak. The panel renders the payload
+// with a warning badge. A 500 (with `error`) is reserved for spawn failure / empty stdout /
+// unparseable JSON. Telemetry defaults to a 14-day window when `?window` is omitted (matches
+// the CLI default), so the client omits the param unless the user picks a window.
+
+export type LoopTier = "admin" | "team" | "external";
+export type LoopCadence = "daily" | "weekly";
+
+export interface LoopEvidenceRef {
+  path: string;
+  row?: string;
+  tier: LoopTier;
+}
+export interface LoopSignal {
+  kind: string;
+  source: string;
+  tier: LoopTier;
+  occurredAt: string;
+  ref: LoopEvidenceRef;
+  summary: string;
+  payload?: Record<string, unknown>;
+}
+export interface LoopExclusion {
+  ref: string;
+  reason: string;
+}
+
+/** C1 collect — the run manifest, emitted verbatim by `aios loop collect --json`. */
+export interface RunManifest {
+  member: string;
+  project: string;
+  window: { cadence: LoopCadence; from: string; to: string };
+  windowed: boolean;
+  generatedAt: string;
+  signals: LoopSignal[];
+  excluded: LoopExclusion[];
+  error?: string;
+}
+
+/** One row in a daily section. */
+export interface DailyItem {
+  kind: string;
+  summary: string;
+  tier: LoopTier;
+  ref: LoopEvidenceRef;
+  due?: string | null;
+  stale?: number;
+  changeType?: "added" | "modified";
+}
+export interface TagTotal {
+  tag: string;
+  durationMin: number;
+}
+/** C4 daily orientation, emitted verbatim by `aios loop daily --json`. `attention`/`queuedAsks`/
+ *  `ranByTag` are parsed but NOT rendered in V1 (see plan Non-goals). */
+export interface DailyOrientation {
+  member: string;
+  window: { cadence: "daily"; from: string; to: string };
+  generatedAt: string;
+  audience: "owner" | "team" | "external";
+  attention: DailyItem[];
+  queuedAsks: DailyItem[];
+  changed: DailyItem[];
+  blocked: DailyItem[];
+  owedToday: DailyItem[];
+  ranByTag: TagTotal[];
+  counts: {
+    attention: number;
+    queuedAsks: number;
+    changed: number;
+    blocked: number;
+    owedToday: number;
+    excluded: number;
+  };
+  excluded: LoopExclusion[];
+  error?: string;
+}
+
+/** C8 telemetry — one exit-criteria metric. */
+export interface MetricResult {
+  label: string;
+  value: number | null;
+  unit: string;
+  threshold: string;
+  met: boolean | null;
+  sampleSize: number;
+  note?: string;
+}
+/** C8 loop metrics, emitted verbatim by `aios loop telemetry --json`; `cliExitCode === 2`
+ *  signals a shipped tier leak. */
+export interface LoopMetrics {
+  tierLeakCount: MetricResult;
+  weeklyWallClock: MetricResult;
+  verifierShippableRate: MetricResult;
+  nextWeekActionAcceptance: MetricResult;
+  dailyRunFrequency: MetricResult;
+  consecutiveCleanWeeklies: MetricResult;
+  breakdown: {
+    weeklyRuns: number;
+    dailyRuns: number;
+    verifier: { pass: number; corrected: number; failed: number };
+    leakWithheldTotal: number;
+    dataQuality: {
+      corruptLines: number;
+      unknownVersionLines: number;
+      missingFieldLines: number;
+      unattributableGaps: number;
+      degradedRunIds: string[];
+    };
+  };
+  warnings: { phase: string; reason: string; line?: number; runId?: string }[];
+  window: { from: string; to: string; days: number | null };
+  cliExitCode?: number;
+  error?: string;
+}
+
+/** C5 weekly closeout — RESHAPED by gui/server/loop.mjs `buildWeeklyCloseoutPayload`. The CLI
+ *  emits `briefPath` only (audience-safe); the server reads the owner-only brief + actions off
+ *  disk. `cliExitCode === 1` means a non-shippable audience (brief still shown). */
+export interface WeeklyAudienceBlock {
+  audience: string;
+  status: string;
+  shippable: boolean;
+  digestPath: string | null;
+  unshippablePath: string | null;
+}
+export interface WeeklyCloseoutResponse {
+  runStamp: string;
+  cadence: "weekly";
+  briefMarkdown: string;
+  ownerNextWeekActions: unknown[];
+  audiences: WeeklyAudienceBlock[];
+  cliExitCode?: number;
   error?: string;
 }
