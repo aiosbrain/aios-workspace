@@ -102,6 +102,17 @@ test("buildWeeklyCloseoutPayload fails closed when the brief file is missing on 
   assert.throws(() => buildWeeklyCloseoutPayload(stdout, repo), /brief not found/);
 });
 
+test("buildWeeklyCloseoutPayload rejects a briefPath that escapes the workspace", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "loop-weekly-"));
+  const stdout = JSON.stringify({
+    runStamp: "s",
+    cadence: "weekly",
+    briefPath: "../../../../etc/passwd",
+    audiences: [],
+  });
+  assert.throws(() => buildWeeklyCloseoutPayload(stdout, repo), /escapes the workspace/);
+});
+
 test("loopResponse: pass-through 200 for a clean run", () => {
   const cli = { exitCode: 0, stdout: '{"ok":true}', stderr: "", err: null };
   const { status, json } = loopResponse(cli);
@@ -145,11 +156,18 @@ test("loopResponse: spawn failure (non-numeric err.code) → 500", () => {
   assert.match(json.error, /ENOENT/);
 });
 
-test("loopResponse: empty stdout → 500", () => {
-  const cli = { exitCode: 1, stdout: "  \n", stderr: "boom", err: { code: 1 } };
+test("loopResponse: empty stdout → 500 with a generic message (stderr not leaked)", () => {
+  const cli = {
+    exitCode: 1,
+    stdout: "  \n",
+    stderr: "/private/tmp/secret path boom",
+    err: { code: 1 },
+  };
   const { status, json } = loopResponse(cli);
   assert.equal(status, 500);
-  assert.match(json.error, /boom/);
+  assert.match(json.error, /no output/);
+  // stderr (which may carry internal paths) must NOT reach the client body.
+  assert.doesNotMatch(json.error, /boom|secret/);
 });
 
 test("loopResponse: unparseable stdout → 500", () => {

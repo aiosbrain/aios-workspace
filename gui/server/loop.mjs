@@ -113,7 +113,13 @@ export function buildWeeklyCloseoutPayload(stdout, repoDir) {
   if (!briefPath) {
     throw new Error("loop weekly: no brief written (dry-run or failed run) — nothing to show");
   }
+  const resolvedRepo = path.resolve(repoDir);
   const briefAbs = path.resolve(repoDir, briefPath);
+  // Defense-in-depth: briefPath comes from the trusted local CLI, but never read outside the
+  // workspace even if that output were somehow crafted (e.g. a "../../etc/passwd" briefPath).
+  if (!briefAbs.startsWith(resolvedRepo + path.sep)) {
+    throw new Error("loop weekly: brief path escapes the workspace");
+  }
   if (!existsSync(briefAbs)) {
     throw new Error(`loop weekly: brief not found at ${briefPath}`);
   }
@@ -164,12 +170,11 @@ export function loopResponse(cli, reshape) {
   }
   const out = (cli.stdout || "").trim();
   if (!out) {
-    return {
-      status: 500,
-      json: {
-        error: (cli.stderr || "").trim() || `loop CLI exited ${cli.exitCode} with no output`,
-      },
-    };
+    // Log CLI stderr server-side (it can carry internal paths / CLI internals) but return a
+    // fixed message — don't surface stderr in the HTTP body.
+    const err = (cli.stderr || "").trim();
+    if (err) console.error("[loop] CLI stderr (exit %d): %s", cli.exitCode, err);
+    return { status: 500, json: { error: `loop CLI produced no output (exit ${cli.exitCode})` } };
   }
   let payload;
   try {
