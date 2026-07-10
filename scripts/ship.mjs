@@ -52,6 +52,7 @@ import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-cal
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 import { runLocalPrePrReview } from "./review-bugbot.mjs";
+import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
@@ -522,7 +523,7 @@ export function buildOmittedRefsNote(skipped) {
   ].join("\n");
 }
 
-export function buildPlanPrompt(issue, contextPack, prevReview) {
+export function buildPlanPrompt(issue, contextPack, prevReview, constitution) {
   const parts = [
     `You are a senior software architect. Produce a clear, numbered implementation plan for`,
     `Linear issue ${issue.identifier}: ${issue.title}`,
@@ -538,6 +539,7 @@ export function buildPlanPrompt(issue, contextPack, prevReview) {
     "The context pack above was built from the live repo minutes ago — treat it as trusted",
     "ground truth. Do NOT re-explore surfaces it already covers; verify beyond it only where",
     "the plan hinges on a detail it does not settle. Budget your time for writing the plan.",
+    ...constitutionPromptLines(constitution),
     DEFERRED_CONTRACT,
   ];
   if (prevReview) {
@@ -586,7 +588,7 @@ export function buildPlanReviewPrompt(plan, round, maxRounds, prevReview = null)
   ].join("\n");
 }
 
-export function buildGptReviewPrompt(plan, prDiff, pr) {
+export function buildGptReviewPrompt(plan, prDiff, pr, constitution) {
   return [
     "/ai-code-review",
     "",
@@ -600,6 +602,10 @@ export function buildGptReviewPrompt(plan, prDiff, pr) {
     "## PR diff",
     "",
     prDiff || "(no diff)",
+    ...constitutionPromptLines(constitution),
+    ...(constitution
+      ? ["", "A diff that violates the constitution above is a finding (severity by impact)."]
+      : []),
   ].join("\n");
 }
 
@@ -828,9 +834,17 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
 }
 
 // ── build opts ─────────────────────────────────────────────────────────────────────────────
-function makeBuildOpts({ branch, issue, logFile, findingsFile, verify = SHIP_VERIFY_CMD }) {
+function makeBuildOpts({
+  branch,
+  issue,
+  logFile,
+  findingsFile,
+  verify = SHIP_VERIFY_CMD,
+  constitution = null,
+}) {
   return {
     planSource: null,
+    constitution,
     branch,
     isTask: false,
     rounds: 4,
@@ -908,6 +922,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const records = { issue: issueId, stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
+  // Loaded once per ship; null (no file / no digest markers) simply omits the section.
+  const constitution = (deps.loadConstitutionDigest ?? loadConstitutionDigest)(repo);
 
   // Unified model dispatch — tests may inject callPromptModel/callAgentModel or legacy shims.
   const promptCall = async ({ model, prompt, timeoutMs, opts = {} }) => {
@@ -1142,7 +1158,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   } else {
     progress("plan: loop started");
     for (let round = 1; round <= PLAN_ROUNDS; round++) {
-      const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+      const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution);
       const planStartedAt = Date.now();
       try {
         plan = await generatePlan(planPrompt);
@@ -1320,7 +1336,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         repo,
         plan,
         branch,
-        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }),
+        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, constitution }),
       });
     } catch (e) {
       record("build", { error: e.message });
@@ -1488,7 +1504,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           }
           const gptCfg = models.code_review;
           const gptReview = await reviewCall(gptCfg.model)(
-            buildGptReviewPrompt(plan, prDiff, prNumber),
+            buildGptReviewPrompt(plan, prDiff, prNumber, constitution),
             gptCfg.timeoutMs ?? 300 * 1000,
             {
               extraArgs: [
@@ -1557,7 +1573,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           repo,
           plan,
           branch,
-          opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }),
+          opts: makeBuildOpts({
+            branch,
+            issue: issueId,
+            logFile: buildLog,
+            findingsFile,
+            constitution,
+          }),
         });
       } catch (e) {
         record("fix", { error: e.message });
