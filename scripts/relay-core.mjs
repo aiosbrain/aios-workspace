@@ -10,6 +10,10 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { appendFileSync, writeFileSync, existsSync } from "node:fs";
+// `c` and `die` are defined once in ./cli-common.mjs; imported for local use and
+// re-exported below so the many modules that import them from relay-core.mjs keep
+// resolving unchanged (AIO-315).
+import { c, die } from "./cli-common.mjs";
 
 // ── approval tokens ─────────────────────────────────────────────────────────
 // PLAN_READY  — the plan loop's reviewer (/review-plan) approves a plan to build.
@@ -76,18 +80,9 @@ export const PLAN_DISALLOWED_ARGS = [
 // Rejects any shell metacharacter before it reaches execFileSync.
 export const VALID_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
 
-export const c = {
-  red: (s) => `\x1b[0;31m${s}\x1b[0m`,
-  green: (s) => `\x1b[0;32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
-  blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
-
-export function die(msg) {
-  console.error(c.red(`error: ${msg}`));
-  process.exit(1);
-}
+// c / die imported at the top of this file; re-exported so relay-core.mjs stays a
+// valid import surface for its existing consumers.
+export { c, die };
 
 // ── prereq checks ───────────────────────────────────────────────────────────
 // The plan loop calls Opus via the SDK (needs ANTHROPIC_API_KEY) and reviews with

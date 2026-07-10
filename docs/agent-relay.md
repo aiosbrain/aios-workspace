@@ -10,7 +10,7 @@ It is wired into the `aios` CLI (`scripts/relay.mjs`, exposed as `aios relay`). 
 npm run aios -- relay "<task>" [branch] [options]
 ```
 
-> **Deprecated:** `node scripts/agent-relay.mjs …` still works but only forwards to `aios relay` and prints a deprecation notice. There is one relay implementation — prefer the CLI form above. The standalone shim will be removed in a future release.
+There is one relay implementation — always use the `aios relay` CLI form above.
 
 ---
 
@@ -224,6 +224,5 @@ npm run aios -- relay "Add a --version flag to aios.mjs" feat/test-relay --merge
 | `scripts/relay.mjs` | The plan loop implementation (`cmdRelay`), exposed as `aios relay` |
 | `scripts/relay-core.mjs` | Primitives shared by the plan and build phases (Cursor driver, git, tokens, `--log`) |
 | `scripts/build.mjs` | The build loop (`cmdBuild`/`runBuild`), exposed as `aios build` — see [`agent-build.md`](./agent-build.md) |
-| `scripts/agent-relay.mjs` | Deprecated shim that forwards to `aios relay` |
 | `~/.cursor/skills/review-plan/SKILL.md` | Cursor's plan-review persona; emits `PLAN_READY` |
 | `~/.cursor/skills/ai-code-review/SKILL.md` | Cursor's code-review persona used by `aios build`; emits `MERGE_READY` |

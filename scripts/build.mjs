@@ -46,6 +46,7 @@ import {
   makeLogger,
   validateBranch,
 } from "./relay-core.mjs";
+import { slugify as slugifyBase } from "./cli-common.mjs";
 import { callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
@@ -214,15 +215,10 @@ export function detectMergeToken(text) {
   return new RegExp(`^${MERGE_READY_TOKEN}\\b`).test(lastLine);
 }
 
-export function slugify(s) {
-  return (
-    String(s)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "task"
-  );
-}
+// Branch/worktree slug: the shared base (./cli-common.mjs) bound with build.mjs's
+// historical options — run-strip, clamp to 40 chars, "task" fallback. Exported so
+// ship.mjs keeps importing it from here (AIO-315).
+export const slugify = (s) => slugifyBase(s, { maxLen: 40, fallback: "task" });
 
 // Reject shell metacharacters (via VALID_BRANCH_RE in validateBranch), and refuse to
 // build on the primary checkout's current branch (worktree isolation is mandatory).

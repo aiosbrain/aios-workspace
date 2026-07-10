@@ -19,7 +19,6 @@
  * Options: --repo <path> (default: walk up from cwd to find aios.yaml)
  */
 
-import { createHash } from "node:crypto";
 import {
   readFileSync,
   writeFileSync,
@@ -68,6 +67,7 @@ import {
 import { resolveLoopIdentity } from "./loop-config.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
+import { c, die, sha256, slugify, gitConfig } from "./cli-common.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
@@ -102,42 +102,9 @@ const FALLBACK_SECRET_PATTERNS = [
 ];
 
 // ── tiny helpers ────────────────────────────────────────────────────────────
-
-const c = {
-  red: (s) => `\x1b[0;31m${s}\x1b[0m`,
-  green: (s) => `\x1b[0;32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
-  blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-};
-
-function die(msg) {
-  console.error(c.red(`error: ${msg}`));
-  process.exit(1);
-}
-
-function sha256(buf) {
-  return createHash("sha256").update(buf).digest("hex");
-}
-
-function slugify(s) {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function gitConfig(repo, key) {
-  try {
-    return execFileSync("git", ["-C", repo, "config", "--get", key], {
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
+// c / die / sha256 / slugify / gitConfig now live in ./cli-common.mjs (the single
+// source of truth, shared with relay-core.mjs, build.mjs, and loop-config.mjs).
+// Imported at the top of this file.
 
 // ── restricted YAML (flat scalars + one level of string lists) ─────────────
 // Deliberately minimal: aios.yaml is constrained to this subset (OGR04

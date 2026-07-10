@@ -6,15 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { parseFlatYaml } from "./flat-yaml.mjs";
-
-function slugify(s) {
-  return (s || "")
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+import { slugify } from "./cli-common.mjs";
 
 function readYaml(file) {
   if (!existsSync(file)) return {};
