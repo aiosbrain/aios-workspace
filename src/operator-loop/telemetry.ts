@@ -307,7 +307,7 @@ function workingDaysBetween(fromMs: number, toMs: number): number {
   const end = new Date(toMs);
   end.setHours(0, 0, 0, 0);
   let count = 0;
-  for (let t = start.getTime(); t <= end.getTime(); ) {
+  for (let t = start.getTime(); t <= end.getTime();) {
     if (isWeekday(t)) count++;
     const nd = new Date(t);
     nd.setDate(nd.getDate() + 1);
