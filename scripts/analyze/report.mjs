@@ -252,7 +252,11 @@ export function toJson(result, costData) {
       claude: costData.claude,
       codex: costData.codex || null,
       opencode: costData.opencode || null,
+      // Real billed API-key $ (admin cost API) + flat subscription plan.
+      anthropic: costData.anthropic || null,
+      plan: costData.plan || null,
       cursor_error: costData.cursor_error || null,
+      anthropic_error: costData.anthropic_error || null,
     };
   }
   return out;

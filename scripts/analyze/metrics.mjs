@@ -14,12 +14,16 @@
 import { totalTokens } from "./normalize.mjs";
 
 // Coarse per-million-token USD price map (estimate only — for cost/task signal).
-// Matched by substring against the model id; cache_read priced at ~0.1× input.
+// Matched by substring against the model id. Anthropic list pricing as of
+// 2026-07: cache_read = 0.1× input; cache_create priced at the 1h-TTL rate
+// (2× input) because Claude Code writes 1h ephemeral cache. NOTE these are the
+// current Opus-4.x rates ($5/$25) — the old $15/$75 Opus-3 numbers overstated
+// spend ~3× since Opus dominates usage (AIO cost-calibration).
 const PRICES = [
-  { match: "opus", in: 15, out: 75, cache_read: 1.5, cache_create: 18.75 },
-  { match: "sonnet", in: 3, out: 15, cache_read: 0.3, cache_create: 3.75 },
-  { match: "haiku", in: 0.8, out: 4, cache_read: 0.08, cache_create: 1.0 },
-  { match: "fable", in: 10, out: 50, cache_read: 1.0, cache_create: 12.5 },
+  { match: "opus", in: 5, out: 25, cache_read: 0.5, cache_create: 10 },
+  { match: "sonnet", in: 3, out: 15, cache_read: 0.3, cache_create: 6 },
+  { match: "haiku", in: 1, out: 5, cache_read: 0.1, cache_create: 2 },
+  { match: "fable", in: 10, out: 50, cache_read: 1.0, cache_create: 20 },
   { match: "gpt-5.5-pro", in: 30, out: 180, cache_read: 30, cache_create: 0 },
   { match: "gpt-5.4-pro", in: 30, out: 180, cache_read: 30, cache_create: 0 },
   { match: "gpt-5.4-nano", in: 0.2, out: 1.25, cache_read: 0.02, cache_create: 0 },
