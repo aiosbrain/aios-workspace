@@ -10,6 +10,14 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # eslint 10 blocked upstream: eslint-plugin-react (latest 7.37.5) peer-caps at
+      # eslint ^9.7 and our flat config uses react.configs.flat.recommended. Revisit
+      # when eslint-plugin-react ships eslint 10 support. (AIO-321)
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/js"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/gui/client"
