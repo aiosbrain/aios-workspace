@@ -1,0 +1,130 @@
+/**
+ * worktree.mjs — `aios worktree`: a git worktree wrapper with automatic config
+ * propagation. `add` creates the worktree off a base ref and hydrates dev config
+ * (via link-worktree-env.sh + a post-checkout hook); `init`/`list`/`install-hook`/
+ * `uninstall-hook` round it out. Extracted from scripts/aios.mjs (AIO-315);
+ * behaviour-preserving.
+ */
+
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, copyFileSync, chmodSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { c, die } from "./cli-common.mjs";
+
+export async function cmdWorktree(repo, cfg, args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+  const scriptPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "link-worktree-env.sh"
+  );
+  const hookSrc = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "hooks",
+    "git",
+    "post-checkout"
+  );
+  const hookDest = path.join(repo, ".git", "hooks", "post-checkout");
+
+  function installHook() {
+    if (!existsSync(hookSrc)) {
+      console.log(c.dim("  hook source not found at") + ` ${hookSrc}`);
+      return false;
+    }
+    if (existsSync(hookDest)) {
+      const srcContent = readFileSync(hookSrc, "utf8");
+      const destContent = readFileSync(hookDest, "utf8");
+      if (srcContent === destContent) {
+        console.log(c.dim("  post-checkout hook already installed"));
+        return true;
+      }
+    }
+    copyFileSync(hookSrc, hookDest);
+    chmodSync(hookDest, 0o755);
+    console.log(c.dim("  installed post-checkout hook → auto-hydrates new worktrees"));
+    return true;
+  }
+
+  if (sub === "add") {
+    const branch = rest[0];
+    if (!branch) die("usage: aios worktree add <feat/branch-name> [--base <ref>]");
+
+    const baseIdx = rest.indexOf("--base");
+    const base = baseIdx >= 0 ? rest[baseIdx + 1] : "origin/main";
+    const dirName = path.basename(repo) + "-" + branch.replace(/\//g, "-");
+    const wtPath = path.join(path.dirname(repo), dirName);
+
+    // 0. Ensure the auto-hydration hook is installed in primary
+    installHook();
+
+    // 1. Fetch + create worktree
+    console.log(c.blue(`aios worktree add`) + c.dim(`  ${branch} → ${dirName}`));
+    try {
+      execFileSync("git", ["-C", repo, "fetch", "origin"], { stdio: "pipe" });
+    } catch {
+      /* fetch may fail offline; proceed */
+    }
+    const out = execFileSync("git", ["-C", repo, "worktree", "add", "-b", branch, wtPath, base], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    console.log(c.dim(out.trim()));
+
+    // The post-checkout hook above fires automatically during `git worktree add`
+    // and runs link-worktree-env.sh for us. But also run it synchronously so we
+    // can print the result.
+    if (existsSync(scriptPath) && existsSync(wtPath)) {
+      execFileSync("bash", [scriptPath], { cwd: wtPath, stdio: "inherit" });
+    }
+
+    console.log(`\n${c.green("Ready:")} cd ${wtPath}`);
+    return;
+  }
+
+  if (sub === "init") {
+    const dirIdx = rest.indexOf("--dir");
+    const targetDir = dirIdx >= 0 ? rest[dirIdx + 1] : process.cwd();
+    if (!existsSync(targetDir)) die(`directory not found: ${targetDir}`);
+    if (existsSync(scriptPath)) {
+      execFileSync("bash", [scriptPath], { cwd: targetDir, stdio: "inherit" });
+    } else {
+      console.log(c.dim("link-worktree-env.sh not found — nothing to do"));
+    }
+    return;
+  }
+
+  const flags = new Set(rest);
+
+  if (sub === "install-hook") {
+    installHook();
+    return;
+  }
+
+  if (sub === "uninstall-hook" || flags.has("--uninstall-hook")) {
+    if (existsSync(hookDest)) {
+      unlinkSync(hookDest);
+      console.log(c.dim("removed post-checkout hook"));
+    } else {
+      console.log(c.dim("no post-checkout hook to remove"));
+    }
+    return;
+  }
+
+  // list worktrees
+  if (sub === "list" || !sub) {
+    const out = execFileSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" });
+    console.log(c.blue("aios worktree list") + c.dim(`  (${repo})`));
+    console.log(out.trim());
+    return;
+  }
+
+  die(
+    "usage: aios worktree add <feat/branch-name> [--base <ref>]\n" +
+      "       aios worktree init [--dir <path>]  hydrate config in the given directory\n" +
+      "       aios worktree list                  list all worktrees for this repo\n" +
+      "       aios worktree install-hook          install the auto-hydration post-checkout hook\n" +
+      "       aios worktree uninstall-hook        remove it"
+  );
+}
