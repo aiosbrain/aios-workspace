@@ -2315,8 +2315,12 @@ async function cmdAssessCodebase(repo, _cfg, _patterns, args = []) {
 
   const result = scoreRepo(target, loadRubric());
 
+  // OGR13 rides along; buildReport is null on machines without the codebase-memory binary.
+  const { buildReport, formatReportLines } = await import("../validation/check-modularity.mjs");
+  const modularity = buildReport(target);
+
   if (asJson) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify(modularity ? { ...result, modularity } : result, null, 2));
     return;
   }
 
@@ -2337,6 +2341,7 @@ async function cmdAssessCodebase(repo, _cfg, _patterns, args = []) {
         .join(", ")}${result.gaps.length > 4 ? ", …" : ""}`
     );
   }
+  if (modularity) for (const line of formatReportLines(modularity)) console.log(line);
 }
 
 // `aios learn` — read the owner's saved AEM placement (.claude/memory/MATURITY.md)
