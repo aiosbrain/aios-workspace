@@ -60,6 +60,7 @@ import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skil
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
 import { buildMaturityPayload } from "./maturity.mjs";
+import { buildCostsPayload } from "./costs.mjs";
 import {
   resolveTasksFile,
   readTasks,
@@ -434,6 +435,30 @@ const server = http.createServer((req, res) => {
       }
       try {
         const payload = buildMaturityPayload(out);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(payload));
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+  // ── cost panel (token-gated; read-only) ──
+  // Runs a fresh `analyze --json` and reshapes its per-provider cost blocks for
+  // the cockpit. Individual (this-workspace) spend across all four providers.
+  if (url.pathname === "/api/costs") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    runAios(["analyze", "--json", "--since", "30d"], (err, out) => {
+      if (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: err.message }));
+      }
+      try {
+        const payload = buildCostsPayload(out);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
       } catch (e) {
