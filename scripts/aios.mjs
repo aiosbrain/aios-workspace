@@ -71,6 +71,11 @@ import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
 import { cmdShip } from "./ship.mjs";
 import { cmdRoadmapRun } from "./roadmap-run.mjs";
 import { cmdRails } from "./rails.mjs";
+import { cmdMember } from "./member-cli.mjs";
+import { resolveLoopModels } from "./loop-models.mjs";
+import { discoverClaude } from "./analyze/sources.mjs";
+import { parseJsonl } from "./analyze/parse-claude.mjs";
+import { extractDecisions, contextTagFor } from "./decision-extract.mjs";
 import { createBrainClient } from "./brain-client.mjs";
 import { cmdInstincts } from "./instincts.mjs";
 import { cmdMode } from "./mode.mjs";
@@ -2568,6 +2573,11 @@ usage:
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
+  aios member invite <email>            create/re-invite a member + cascade tool invites
+    --name <n> --handle <h>              (Linear/Slack/GitHub); admin-key only (brain-api v1.7)
+    [--role member|lead|admin]           role default member; tolerates a pre-v1.7 brain (404)
+    [--tools linear,slack,github|all|none]  tools default "all"
+  aios member list                      team roster (GET /members; team-tier key required)
   aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)
     | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from
     [--json]                            meeting items; external key → 403 forbidden_tier
@@ -2789,6 +2799,8 @@ try {
   else if (cmd === "whoami") await cmdWhoami(repo, cfg);
   else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
+  else if (cmd === "member")
+    await cmdMember(repo, cfg, rest, { api: (m, r, b) => api(cfg, m, r, b) });
   else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
   else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
   else if (cmd === "graph") cmdGraph(repo, cfg, rest);
