@@ -59,8 +59,8 @@ const server = createServer((req, res) => {
           member: { id: "u2", email: body.email, status: "invited", created: true },
           invite: {
             mode: "manual",
-            password: "correct-horse-battery-staple",
-            invite_message: `Sign in at https://brain.example — email ${body.email} / password correct-horse-battery-staple`,
+            password: "pw-demo",
+            invite_message: `Sign in at https://brain.example — email ${body.email} / password pw-demo`,
           },
           provisioning: [{ tool: "linear", status: "skipped", detail: "not configured" }],
         });
@@ -290,7 +290,7 @@ test("manual mode → invite_message printed verbatim", async () => {
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.match(
     r.stdout,
-    /Sign in at https:\/\/brain\.example — email riley@example\.com \/ password correct-horse-battery-staple/
+    /Sign in at https:\/\/brain\.example — email riley@example\.com \/ password pw-demo/
   );
 });
 
