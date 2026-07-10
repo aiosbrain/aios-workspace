@@ -63,6 +63,7 @@ import { c, die, sha256, slugify, gitConfig } from "./cli-common.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
+import { cmdSimplify } from "./simplify.mjs";
 import { cmdSpec } from "./spec-eval.mjs";
 import { runCouncil } from "./council.mjs";
 import { cmdReviewBugbot } from "./review-bugbot.mjs";
@@ -2675,6 +2676,8 @@ usage:
     [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
     [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
+  aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,
+    [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')
   aios spec eval <file> [--json]        score a spec/plan against .claude/rubrics/spec-readiness.md
     [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
   aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
@@ -2747,6 +2750,7 @@ const OFFLINE_CMDS = new Set([
   "analyze",
   "relay",
   "build",
+  "simplify",
   "spec",
   "pr",
   "consolidate-findings",
@@ -2806,6 +2810,7 @@ try {
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay") await cmdRelay(repo, rest);
   else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "simplify") process.exit(await cmdSimplify(repo, rest));
   else if (cmd === "spec") await cmdSpec(repo, rest);
   else if (cmd === "pr") await cmdPr(repo, rest);
   else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));

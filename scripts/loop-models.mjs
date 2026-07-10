@@ -35,6 +35,9 @@ export const DEFAULT_MODELS = {
   fix: { model: "claude-opus-4-8", effort: "medium" },
   fix_escalated: { model: "claude-opus-4-8", effort: "high" },
   consolidate: { model: "claude-haiku-4-5" },
+  // Post-review simplify pass (ship stage 7b / `aios simplify`): deliberately the cheapest
+  // agentic step — one behavior-preserving cleanup round, verify-gated, advisory.
+  simplify: { model: "claude-haiku-4-5", effort: "low" },
   safety_review: { model: "claude-opus-4-8", effort: "xhigh" },
   orchestrate: { model: "fable-5" },
   digest: { model: "claude-haiku-4-5" },
@@ -55,7 +58,7 @@ export { modelFamily } from "./model-providers.mjs";
 export const STEPS = Object.keys(DEFAULT_MODELS);
 
 // Agentic steps run through a tool-capable runner (Claude Code, Cursor, or OpenCode CLI).
-const AGENTIC_STEPS = ["plan", "build", "fix", "fix_escalated"];
+const AGENTIC_STEPS = ["plan", "build", "fix", "fix_escalated", "simplify"];
 
 // The producer/reviewer pairs that must stay cross-family.
 const DIVERSITY_PAIRS = [

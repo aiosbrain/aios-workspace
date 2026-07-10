@@ -162,6 +162,16 @@ console.log("agentic-provider guard (fail closed)");
   });
   check("deepseek plan model aborts (prompt-only provider)", badPlan.ok === false);
 
+  // simplify edits files, so it is an agentic step too: cheap Claude default, and a
+  // prompt-only provider must abort just like build/plan.
+  check("simplify default is cheap claude", DEFAULT_MODELS.simplify.model === "claude-haiku-4-5");
+  check("simplify default effort low", DEFAULT_MODELS.simplify.effort === "low");
+  const badSimplify = resolveInChild({
+    repo: null,
+    cliOverrides: { simplify: { model: "deepseek-v4-pro" } },
+  });
+  check("deepseek simplify model aborts (prompt-only provider)", badSimplify.ok === false);
+
   writeFileSync(
     path.join(repo, ".aios", "loop-models.yaml"),
     "consolidate_model: openrouter:openai/gpt-4o-mini\n"
