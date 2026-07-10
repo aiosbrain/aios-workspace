@@ -73,11 +73,14 @@ function normalizeDocumentedComponents(tokens) {
 }
 
 function deriveLoopCommands() {
-  const src = read("scripts/aios.mjs");
-  // Bound cmdLoop to its OWN body: stop at the first section comment after its closing brace,
-  // so an unrelated function inserted between cmdLoop and `// ── main` (e.g. cmdTime) is not
-  // swallowed into the match and mis-attributed as an `aios loop` subcommand.
-  const cmdLoop = src.match(/async function cmdLoop[\s\S]*?\n}\n\n\/\/ ──/);
+  // cmdLoop lives in scripts/aios.mjs, or scripts/loop.mjs once AIO-315 extracts it.
+  const src = read(
+    existsSync(path.join(ROOT, "scripts", "loop.mjs")) ? "scripts/loop.mjs" : "scripts/aios.mjs"
+  );
+  // Bound cmdLoop to its OWN body by the first column-0 closing brace (`\n}\n`) — the top-level
+  // function close in this prettier-formatted code. Robust to whatever note or section comment
+  // follows it, which the AIO-315 decomposition rewrote from `// ──` headers to plain notes.
+  const cmdLoop = src.match(/(?:export )?async function cmdLoop[\s\S]*?\n}\n/);
   const items = new Set();
   if (!cmdLoop) return items;
   for (const match of cmdLoop[0].matchAll(/if\s*\(\s*sub\s*===\s*"([a-z]+)"\s*\)/g)) {
