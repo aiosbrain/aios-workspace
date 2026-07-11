@@ -570,5 +570,129 @@ console.log("plan (cli runner) runs at the read-only PLAN_DISALLOWED tier (F4)")
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("simplify stage (8b): runs after review CLEAR, before the merge gate");
+{
+  const order = [];
+  const deps = makeDeps({
+    runSimplify: async ({ worktree, verify, constitution }) => {
+      order.push("simplify");
+      check("simplify gets the ship verify chain", verify === SHIP_VERIFY_CMD);
+      check("simplify gets a worktree path", typeof worktree === "string" && worktree.length > 0);
+      void constitution; // may be null in the temp repo (no constitution doc) — that's valid
+      return { changed: false, ok: true, reverted: false, output: "noop" };
+    },
+    cmdConsolidateFindings: async () => (order.push("review"), 0),
+  });
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    if (argv.join(" ").includes("pr merge")) order.push("merge");
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("run reaches OK", code === SHIP_EXIT.OK);
+  check(
+    "order is review → simplify → merge",
+    JSON.stringify(order) === JSON.stringify(["review", "simplify", "merge"])
+  );
+  check("simplify.md audit written", deps.auditFiles.includes("simplify.md"));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("simplify --no-simplify → stage skipped entirely");
+{
+  let called = 0;
+  const deps = makeDeps({
+    runSimplify: async () => (called++, { changed: false, ok: true, reverted: false, output: "" }),
+  });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ noSimplify: true }),
+    deps,
+  });
+  check("run reaches OK", code === SHIP_EXIT.OK);
+  check("runSimplify never called", called === 0);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("simplify kept a cleanup → re-push + reviewHead updated + CI re-polled; still OK");
+{
+  let prCalls = 0;
+  let polls = 0;
+  let sleeps = 0;
+  const states = [];
+  const pendingChecks = JSON.stringify([{ name: "test", state: "PENDING", bucket: "pending" }]);
+  const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
+  const deps = makeDeps({
+    runSimplify: async () => ({ changed: true, ok: true, reverted: false, output: "tidied" }),
+    cmdPr: async () => (prCalls++, 77),
+    writeState: (_issue, st) => states.push(JSON.parse(JSON.stringify(st))),
+    sleep: async () => sleeps++,
+    gitExec: (argv) => (argv[0] === "rev-parse" ? "newhead" : ""),
+  });
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("pr checks")) {
+      polls++;
+      // First two polls pending (post-push), then green.
+      return {
+        code: polls <= 2 ? 8 : 0,
+        stdout: polls <= 2 ? pendingChecks : greenChecks,
+        stderr: "",
+      };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("run reaches OK", code === SHIP_EXIT.OK);
+  check("PR re-pushed after cleanup (pr called twice)", prCalls === 2);
+  check("CI re-polled until green (≥3 checks reads)", polls >= 3);
+  check("poll loop actually slept between pending reads", sleeps >= 1);
+  const last = states.findLast((s) => s.simplifyDone);
+  check("simplifyDone persisted with updated reviewHead", last && last.reviewHead === "newhead");
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("simplify reverted (verify failed downstream) → ship still merges (advisory)");
+{
+  const deps = makeDeps({
+    runSimplify: async () => ({ changed: false, ok: false, reverted: true, output: "bad pass" }),
+  });
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("run reaches OK despite discarded pass", code === SHIP_EXIT.OK);
+  check(
+    "merge still issued",
+    deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("simplify push failure → cleanup dropped, ship proceeds from the reviewed head");
+{
+  let prCalls = 0;
+  const gitCalls = [];
+  const deps = makeDeps({
+    runSimplify: async () => ({ changed: true, ok: true, reverted: false, output: "tidied" }),
+    cmdPr: async () => {
+      prCalls++;
+      if (prCalls >= 2) throw new Error("push rejected");
+      return 77;
+    },
+    gitExec: (argv) => {
+      gitCalls.push(argv.join(" "));
+      if (argv[0] === "rev-parse") return "fakehead";
+      return "";
+    },
+  });
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("run still reaches OK", code === SHIP_EXIT.OK);
+  check(
+    "stranded local cleanup reset to the reviewed head",
+    gitCalls.some((c) => c.startsWith("reset --hard fakehead"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);
