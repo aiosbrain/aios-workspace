@@ -403,5 +403,81 @@ console.log("stale reviewClear (branch moved since checkpoint) → review re-run
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("resume with state.simplifyDone → simplify NOT re-run; ship completes");
+{
+  const ss = makeStateStore();
+  ss.store.state = {
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    reviewClear: true,
+    reviewHead: "fakehead",
+    simplifyDone: true,
+  };
+  let simplifyCalls = 0;
+  const deps = makeDeps({
+    ...ss,
+    runSimplify: async () => (
+      simplifyCalls++,
+      { changed: false, ok: true, reverted: false, output: "" }
+    ),
+  });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true }),
+    deps,
+  });
+  check("exits OK", r.code === SHIP_EXIT.OK);
+  check("simplify skipped on resume (checkpoint honored)", simplifyCalls === 0);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("resume without simplifyDone but reviewClear intact → simplify DOES run");
+{
+  const ss = makeStateStore();
+  ss.store.state = {
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    reviewClear: true,
+    reviewHead: "fakehead",
+  };
+  let simplifyCalls = 0;
+  const deps = makeDeps({
+    ...ss,
+    runSimplify: async () => (
+      simplifyCalls++,
+      { changed: false, ok: true, reverted: false, output: "noop" }
+    ),
+  });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true }),
+    deps,
+  });
+  check("exits OK", r.code === SHIP_EXIT.OK);
+  check("simplify ran once (review not re-run, simplify not skipped)", simplifyCalls === 1);
+  check("simplifyDone checkpointed after the pass", ss.store.state?.simplifyDone === true);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

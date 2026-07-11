@@ -51,6 +51,7 @@ import { callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { cmdPr } from "./pr.mjs";
+import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
 export const BASE_SHA_MARK = ".aios-build-base-sha";
@@ -345,7 +346,7 @@ export function selectBuilderStep({ hasPriorFeedback, fixAttempt, reviewText }) 
   return "fix_escalated";
 }
 
-export function buildImplementPrompt(plan, { review, resumeLog, branch } = {}) {
+export function buildImplementPrompt(plan, { review, resumeLog, branch, constitution } = {}) {
   const parts = [
     `You are implementing an approved plan in THIS git worktree (branch \`${branch ?? "?"}\`).`,
     "You may edit files, run commands, and make git commits. Do ALL work inside this worktree only.",
@@ -360,6 +361,7 @@ export function buildImplementPrompt(plan, { review, resumeLog, branch } = {}) {
     "- NEVER commit secrets, credentials, or absolute machine paths (e.g. /Users/...).",
     "- NEVER weaken files under validation/ or hooks/ to make a check pass.",
     "- Stay within the plan's scope; defer anything the plan marks optional.",
+    ...constitutionPromptLines(constitution),
     "",
     "When done, briefly summarize: files changed, commits made, and the test result.",
   ];
@@ -861,6 +863,11 @@ export async function runBuild({ repo, plan, branch, opts }) {
     bugbot,
   } = opts;
 
+  // Constitution digest for the builder prompt. Ship passes it explicitly (null = the
+  // repo has none — don't reload); standalone `aios build` loads it from the repo here.
+  const constitution =
+    opts.constitution !== undefined ? opts.constitution : loadConstitutionDigest(repo);
+
   // Per-step model/effort/timeout matrix: default → .aios/loop-models.yaml → CLI flags.
   // A --model applies to every builder step; --cursor-timeout (when explicit) overrides
   // the reviewer timeout. The diversity guard (build vs code_review family) runs here
@@ -976,6 +983,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
           ? gitQuiet(["log", "--oneline", `${baseSha}..HEAD`], wt)
           : null,
       branch,
+      constitution,
     });
     // Every builder call carries the git rules (no push/PR, worktree-only) at the prompt
     // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's

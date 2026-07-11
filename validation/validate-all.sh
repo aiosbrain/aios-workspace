@@ -62,6 +62,7 @@ case "$MODE" in
     run_check "OGR12 — OpenCode Scaffold" "$SCRIPT_DIR/check-opencode-scaffold.mjs"
     run_check "OGR09 — Skill Library" "$SCRIPT_DIR/check-skill-library.mjs"
     run_check "OGR10 — Agent Readiness (advisory)" "$SCRIPT_DIR/check-agent-readiness.mjs"
+    run_check "OGR13 — Modularity (advisory)" "$SCRIPT_DIR/check-modularity.mjs"
     ;;
 esac
 

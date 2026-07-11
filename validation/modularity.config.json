@@ -1,0 +1,14 @@
+{
+  "$comment": "OGR13 modularity gate config. mode: 'advisory' reports deltas and always exits 0; flip to 'ratchet' to fail validate-all/CI when a delta exceeds its limit. Thresholds feed the graph queries; ratchet limits gate the delta vs validation/modularity-baseline.json.",
+  "mode": "advisory",
+  "thresholds": {
+    "hotspotMinDegree": 25,
+    "complexityMin": 15
+  },
+  "ratchet": {
+    "maxDeadCodeDelta": 0,
+    "maxHotspotDelta": 0,
+    "maxHighComplexityDelta": 0,
+    "maxMutualRecursionDelta": 0
+  }
+}

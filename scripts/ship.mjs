@@ -52,6 +52,8 @@ import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-cal
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
 import { runLocalPrePrReview } from "./review-bugbot.mjs";
+import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
+import { runSimplify } from "./simplify.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
@@ -237,6 +239,7 @@ export function parseShipArgs(args) {
     maxFixRounds,
     planRunner,
     dryRun: hasFlag("--dry-run"),
+    noSimplify: hasFlag("--no-simplify"),
     resume: hasFlag("--resume"),
     approvePlan: hasFlag("--approve-plan"),
     approveMerge: hasFlag("--approve-merge"),
@@ -410,6 +413,7 @@ export function buildShipDryRunReport({
     "  6. PR            cmdPr push + open PR",
     "  7. review        wait-for-bots (Bugbot) + GPT review + consolidate",
     "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
+    "  8b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
     "  9. merge gate    CI + consolidator + path-gated safety review + operator",
     " 10. cleanup       ff-only main → worktree remove → branch delete",
     "",
@@ -420,6 +424,7 @@ export function buildShipDryRunReport({
     stepLine("plan_review"),
     stepLine("build"),
     stepLine("code_review"),
+    stepLine("simplify"),
     stepLine("consolidate"),
     stepLine("orchestrate"),
     stepLine("safety_review"),
@@ -522,7 +527,7 @@ export function buildOmittedRefsNote(skipped) {
   ].join("\n");
 }
 
-export function buildPlanPrompt(issue, contextPack, prevReview) {
+export function buildPlanPrompt(issue, contextPack, prevReview, constitution) {
   const parts = [
     `You are a senior software architect. Produce a clear, numbered implementation plan for`,
     `Linear issue ${issue.identifier}: ${issue.title}`,
@@ -538,6 +543,7 @@ export function buildPlanPrompt(issue, contextPack, prevReview) {
     "The context pack above was built from the live repo minutes ago — treat it as trusted",
     "ground truth. Do NOT re-explore surfaces it already covers; verify beyond it only where",
     "the plan hinges on a detail it does not settle. Budget your time for writing the plan.",
+    ...constitutionPromptLines(constitution),
     DEFERRED_CONTRACT,
   ];
   if (prevReview) {
@@ -586,7 +592,7 @@ export function buildPlanReviewPrompt(plan, round, maxRounds, prevReview = null)
   ].join("\n");
 }
 
-export function buildGptReviewPrompt(plan, prDiff, pr) {
+export function buildGptReviewPrompt(plan, prDiff, pr, constitution) {
   return [
     "/ai-code-review",
     "",
@@ -600,6 +606,10 @@ export function buildGptReviewPrompt(plan, prDiff, pr) {
     "## PR diff",
     "",
     prDiff || "(no diff)",
+    ...constitutionPromptLines(constitution),
+    ...(constitution
+      ? ["", "A diff that violates the constitution above is a finding (severity by impact)."]
+      : []),
   ].join("\n");
 }
 
@@ -828,9 +838,17 @@ export function runCleanup(deps, { repo, branch, worktreePath }) {
 }
 
 // ── build opts ─────────────────────────────────────────────────────────────────────────────
-function makeBuildOpts({ branch, issue, logFile, findingsFile, verify = SHIP_VERIFY_CMD }) {
+function makeBuildOpts({
+  branch,
+  issue,
+  logFile,
+  findingsFile,
+  verify = SHIP_VERIFY_CMD,
+  constitution = null,
+}) {
   return {
     planSource: null,
+    constitution,
     branch,
     isTask: false,
     rounds: 4,
@@ -908,6 +926,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const records = { issue: issueId, stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
   const models = resolveModels({ repo });
+  // Loaded once per ship; null (no file / no digest markers) simply omits the section.
+  const constitution = (deps.loadConstitutionDigest ?? loadConstitutionDigest)(repo);
 
   // Unified model dispatch — tests may inject callPromptModel/callAgentModel or legacy shims.
   const promptCall = async ({ model, prompt, timeoutMs, opts = {} }) => {
@@ -1142,7 +1162,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   } else {
     progress("plan: loop started");
     for (let round = 1; round <= PLAN_ROUNDS; round++) {
-      const planPrompt = buildPlanPrompt(issue, recon, prevReview);
+      const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution);
       const planStartedAt = Date.now();
       try {
         plan = await generatePlan(planPrompt);
@@ -1320,7 +1340,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         repo,
         plan,
         branch,
-        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog }),
+        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, constitution }),
       });
     } catch (e) {
       record("build", { error: e.message });
@@ -1488,7 +1508,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           }
           const gptCfg = models.code_review;
           const gptReview = await reviewCall(gptCfg.model)(
-            buildGptReviewPrompt(plan, prDiff, prNumber),
+            buildGptReviewPrompt(plan, prDiff, prNumber, constitution),
             gptCfg.timeoutMs ?? 300 * 1000,
             {
               extraArgs: [
@@ -1557,7 +1577,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           repo,
           plan,
           branch,
-          opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, findingsFile }),
+          opts: makeBuildOpts({
+            branch,
+            issue: issueId,
+            logFile: buildLog,
+            findingsFile,
+            constitution,
+          }),
         });
       } catch (e) {
         record("fix", { error: e.message });
@@ -1581,6 +1607,75 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
       round++;
     }
+
+  // ── 7b. SIMPLIFY — post-review, pre-merge cleanup pass (advisory) ───────────────
+  // One cheap-model, behavior-preserving pass over the branch diff after the review
+  // loop clears (runSimplify reverts itself on any failure, so this stage can slow a
+  // ship but never block one). On a kept cleanup we UPDATE reviewHead instead of
+  // re-reviewing: the pass is verify-gated and diff-scoped, and a re-review would
+  // double the token cost of a stage designed to be cheap.
+  if (!opts.noSimplify && !state.simplifyDone && !state.merged) {
+    const simplifyDep = deps.runSimplify ?? runSimplify;
+    const sCfg = models.simplify;
+    progress("simplify: post-review cleanup pass started");
+    const sRes = await simplifyDep({
+      worktree: worktreePath,
+      baseSha: "origin/main",
+      branch,
+      model: sCfg.model,
+      effort: sCfg.effort,
+      timeoutMs: sCfg.timeoutMs ?? 600 * 1000,
+      verify: SHIP_VERIFY_CMD,
+      constitution,
+    });
+    writeAudit(issueId, "simplify.md", sRes.output ?? "(no output)");
+    record("simplify", { changed: sRes.changed, ok: sRes.ok, reverted: sRes.reverted });
+    if (sRes.changed) {
+      let pushed = true;
+      try {
+        await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+          throwOnError: true,
+        });
+      } catch (e) {
+        // A push failure would strand the cleanup commit locally while GitHub merges
+        // the un-simplified head — drop the commit instead (advisory contract).
+        pushed = false;
+        record("simplify", { pushError: e.message });
+        if (state.reviewHead) {
+          try {
+            gitExec(["reset", "--hard", state.reviewHead], worktreePath);
+          } catch {
+            /* worktree cleanup is best-effort; the merge proceeds from the remote head */
+          }
+        }
+      }
+      if (pushed) {
+        let newHead = null;
+        try {
+          newHead = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+        } catch {
+          newHead = null; // unknown head → a resume will conservatively re-review
+        }
+        saveState({ simplifyDone: true, reviewHead: newHead });
+        progress("simplify: cleanup commit pushed — waiting for CI");
+        // The fresh push resets checks to pending and the merge gate fails closed on
+        // pending, so give CI a bounded window to settle before falling through (a
+        // timeout just means MERGE_BLOCKED — resumable, not fatal).
+        const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+        const deadline = Date.now() + (deps.simplifyCiTimeoutMs ?? 10 * 60 * 1000);
+        for (;;) {
+          const checks = readChecks(prNumber, { ghExec, slug });
+          if (checks.ok || checks.red || Date.now() >= deadline) break;
+          await sleep(30 * 1000);
+        }
+      } else {
+        saveState({ simplifyDone: true });
+      }
+    } else {
+      saveState({ simplifyDone: true });
+      progress(sRes.ok ? "simplify: no-op" : "simplify: pass discarded (reverted)");
+    }
+  }
 
   // ── 8. MERGE GATE ──────────────────────────────────────────────────────────────
   // (AIO-239) A dirty primary checkout no longer blocks the merge: the merge happens on GitHub,
@@ -1781,6 +1876,8 @@ function usage() {
       "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
       "  --reviewers <list>     gating reviewers (default: gpt-5.5; add bugbot to wait on Cursor Bot)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
+      "  --no-simplify          skip the post-review simplify pass (stage 8b — cheap-model",
+      "                         cleanup on the reviewed diff; verify-gated, advisory)",
       "  --plan-runner cli|sdk  plan-stage runner (default: cli — Claude Code login auth; sdk drives",
       "                         Opus via the Anthropic SDK and needs a funded ANTHROPIC_API_KEY)",
       "  --dry-run              print the resolved step plan; no side effects (a resolvable",
