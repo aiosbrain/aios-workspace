@@ -155,6 +155,16 @@ export async function cmdUpdate(repo, cfg, args) {
       `${sha}\nsynced-at ${new Date().toISOString()}\nsource ${srcDir}\n`
     );
 
+    // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
+    // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
+    try {
+      execFileSync(process.execPath, [path.join(srcDir, "scripts", "gen-catalog.mjs"), "--repo", repo], {
+        stdio: "inherit",
+      });
+    } catch {
+      console.warn(c.yellow("  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually"));
+    }
+
     // Report exactly which managed files changed (the workspace is a git repo).
     let changed = "";
     try {

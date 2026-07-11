@@ -1,0 +1,30 @@
+# Routing fixtures for this workspace's RESOLVER.md — replayed by the Tessera
+# resolver toolchain (routing-eval) or read manually. A fixture passes when
+# `expected` appears in RESOLVER.md. Add your own as you add skills; keep
+# intents synthetic (no real client/personal content — fixtures travel with
+# the repo).
+fixtures:
+  - intent: "Extract the decisions from yesterday's transcript"
+    expected: "transcript-decisions"
+  - intent: "Audit the decision log before close-out"
+    expected: "decision-audit"
+  - intent: "What happened this week?"
+    expected: "weekly-synthesis"
+  - intent: "Assess my agentic maturity"
+    expected: "agentic-maturity"
+  - intent: "Produce the maturity report deliverable"
+    expected: "maturity-report"
+  - intent: "Push my work to the brain"
+    expected: "aios-sync"
+  - intent: "Who calls this function?"
+    expected: "codebase-memory"
+  - intent: "What do our workspace docs say about the charter?"
+    expected: "okf-traverse"
+  - intent: "Should I make a feature branch for this?"
+    expected: "master only"
+  - intent: "Share this draft with the client"
+    expected: "publishing"
+  - intent: "This content has no access tag"
+    expected: "default-deny"
+  - intent: "The agent claims CI is green — verify"
+    expected: "ai-code-review"

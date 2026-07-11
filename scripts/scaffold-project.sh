@@ -358,6 +358,7 @@ process_template() {
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
 process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
+process_template "$SCAFFOLD/RESOLVER.md.tmpl" "$OUTPUT/RESOLVER.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
 mkdir -p "$OUTPUT/scripts" "$OUTPUT/bin"
@@ -392,6 +393,9 @@ for d in skills rubrics memory personalities agents; do
   if [ -d "$SCAFFOLD/.claude/$d" ]; then mkdir -p "$OUTPUT/.claude/$d"; cp -R "$SCAFFOLD/.claude/$d/." "$OUTPUT/.claude/$d/"; fi
 done
 mkdir -p "$OUTPUT/.claude/memory/incidents"
+
+# Routing fixtures for the stamped RESOLVER.md (personal — never overlaid by aios update)
+[ -f "$SCAFFOLD/.claude/resolver-fixtures.yaml" ] && cp "$SCAFFOLD/.claude/resolver-fixtures.yaml" "$OUTPUT/.claude/resolver-fixtures.yaml"
 
 # Integrations manifest + connector descriptors + MCP stub/example
 [ -f "$SCAFFOLD/.claude/integrations.json" ] && cp "$SCAFFOLD/.claude/integrations.json" "$OUTPUT/.claude/integrations.json"
