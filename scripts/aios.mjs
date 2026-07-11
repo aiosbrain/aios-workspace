@@ -77,6 +77,7 @@ import { createBrainClient } from "./brain-client.mjs";
 import { cmdInstincts } from "./instincts.mjs";
 import { cmdMode } from "./mode.mjs";
 import { cmdWorktree } from "./worktree.mjs";
+import { cmdUpdate } from "./update.mjs";
 import { cmdMaturityWeek } from "./maturity-week-cmd.mjs";
 import { cmdTime } from "./time.mjs";
 import { cmdTimeline } from "./timeline.mjs";
@@ -2662,6 +2663,8 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
+  aios update [--check] [--from <dir>]  re-sync in-place toolkit governance (skills/rules/hooks)
+                                       as an overlay — personal content kept; --check reports drift
   aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
     [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
@@ -2833,6 +2836,7 @@ try {
   else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else if (cmd === "instincts") await cmdInstincts(repo, rest);
   else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
+  else if (cmd === "update") await cmdUpdate(repo, cfg, rest);
   else {
     console.log(USAGE);
     process.exit(1);

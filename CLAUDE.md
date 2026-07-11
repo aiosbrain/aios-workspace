@@ -88,6 +88,20 @@ they don't recognize.
   user's stamped workspace doesn't change the product. Stamped workspaces ship
   `.claude/rules/git-workflow.md` + `AGENTS.md` so owners treat their IC repo as personal
   context (`master` only) and do toolkit PRs in **this** repo instead.
+- **How forks stay in sync (two layers, one command).** Every contributor has an independent
+  scaffolded workspace repo. It stays current WITHOUT re-scaffolding:
+  1. **CLI = a delegating shim.** A workspace's `scripts/aios.mjs` is a thin shim (`scaffold/scripts/aios.mjs`)
+     that forwards every command to the one canonical toolkit checkout (`../aios/aios-workspace`, or
+     `AIOS_TOOLKIT_CLI`). So command code (`push`/`pull`/`analyze`/harnesses) is **always current** — you
+     never vendor the full CLI (it needs `node_modules` deps and would crash in a workspace). Update it by
+     `git pull` in `aios-workspace`.
+  2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
+     (`.claude/{skills,rules,rubrics,commands}`, guardrail `hooks/`, `validation/`) are copies that drift.
+     **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`,
+     kept in lockstep with `scaffold-project.sh`) as an **overlay** — toolkit files overwrite, personal
+     additions (a person's own skills/scripts) are never deleted. `aios update --check` reports drift; a
+     `.aios-toolkit-version` stamp pins the synced sha.
+  Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out.
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
