@@ -81,6 +81,36 @@ parallelism. Every shareable claim is backed by an evidence reference and passes
 verifier before a human is asked to approve. Keep each harness's rubric honest: the
 rubric is what makes the output trustworthy.
 
+## 7. Agent digest
+
+The block below is machine-read by `scripts/constitution.mjs` and injected into every
+`aios ship`/`aios build` plan, build, review, and simplify prompt. Keep it a faithful
+distillation of §1–6 (≤40 lines); when a principle above changes, update the digest in
+the same commit.
+
+<!-- agent-digest:start -->
+- Spec before code: workflow-layer changes follow spec → plan → tasks → implement; the
+  spec's acceptance criteria are the definition of done.
+- Success criteria live in rules + rubrics (`scaffold/.claude/rules|rubrics`,
+  `.claude/rubrics/operator-loop-*.md`). Reuse or extend one — never invent ad-hoc
+  success criteria inline.
+- The workflow layer (5 domains + Operator Loop) is TypeScript with explicit interfaces
+  at module boundaries; CLI tooling stays zero-dep Node ESM in the style of
+  `scripts/aios.mjs`. Never port legacy team-ops code verbatim.
+- Domains are siblings, not friends: one module per domain, narrow public interface,
+  typed tier-tagged signals `{ kind, source, tier, occurredAt, ref, payload }` into the
+  C1 manifest. The Operator Loop is the ONLY cross-domain composition point — no direct
+  cross-domain calls.
+- Tier safety is non-negotiable: default-deny on missing `access:`; `admin` never syncs;
+  never weaken the leak-gate, `team-ops-guard`, validators, or hooks to make something
+  ship.
+- Verification is the value: every shareable claim is rubric-gated and evidence-backed
+  (`ref`) before a human is asked to approve.
+- Simplification bar: prefer deleting code to adding it; no new dependency without a
+  stated reason; no abstraction before the second concrete use (YAGNI); cleanup passes
+  must be behavior-preserving and stay inside the changed hunks.
+<!-- agent-digest:end -->
+
 ---
 
 ## Quick reference
