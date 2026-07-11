@@ -2,18 +2,25 @@
  * update.mjs — `aios update`: re-vendor the toolkit into this workspace.
  *
  * A scaffolded workspace carries a COPY of the toolkit (see toolkit-manifest.mjs).
- * This command re-copies the MANAGED_PATHS from the canonical toolkit and pins the
+ * This command re-syncs the MANAGED_PATHS from the canonical toolkit and pins the
  * version — the one-command way for a forked workspace to stay in sync. It NEVER
  * touches personal content (it only writes MANAGED_PATHS.dest).
  *
- *   aios update            # sync managed paths; print what changed
+ * It is a **3-way merge**, not a blind overlay (see toolkit-merge.mjs): with the
+ * toolkit at the last-synced sha as the base, a file the workspace improved locally is
+ * MERGED with the toolkit's change (or surfaced as a conflict) rather than silently
+ * overwritten — the granola-1.1.0 regression class. Upstream deletions/renames are
+ * propagated only for files the workspace didn't touch.
+ *
+ *   aios update            # 3-way merge managed paths; print what changed
  *   aios update --check    # dry-run: is this workspace behind? (no writes)
  *   aios update --from DIR  # use a specific toolkit checkout as the source
- *   aios update --force    # overwrite even managed files with uncommitted local edits
+ *   aios update --force    # take the toolkit version for everything (overwrite)
  *
- * Safety: managed files with UNCOMMITTED local changes are skipped (not clobbered) so
- * local work with no git object can't be destroyed. Commit them, `git checkout --` to
- * discard, or pass --force to overwrite.
+ * Safety: managed files with UNCOMMITTED local changes are skipped (never clobbered).
+ * Conflicts are NEVER written inline (the files are executed/parsed) — the toolkit
+ * version lands at <file>.aios-incoming and the marked-up merge at <file>.aios-merge;
+ * the stamp stays at the old base until conflicts are resolved.
  *
  * Source resolution: --from DIR → $AIOS_TOOLKIT_DIR → ~/Projects/aios/aios-workspace
  * → `git clone` the canonical repo (aios.yaml `toolkit_repo`, else the default).
@@ -27,17 +34,18 @@ import {
   existsSync,
   mkdtempSync,
   rmSync,
-  cpSync,
   mkdirSync,
   writeFileSync,
   readFileSync,
   chmodSync,
   statSync,
   readdirSync,
+  unlinkSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { c, die } from "./cli-common.mjs";
 import { MANAGED_PATHS, VERSION_FILE } from "./toolkit-manifest.mjs";
+import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 
@@ -111,7 +119,7 @@ function resolveSource(args, cfg, warn) {
  * Managed dest paths (repo-relative, forward-slash) that have UNCOMMITTED changes in the
  * workspace. Overwriting these would destroy local work that has no git object to recover
  * from — so the sync skips them and tells the owner to commit or `git checkout --` first.
- * This is the interim guard; the eventual 3-way merge reconciles committed local edits too.
+ * (Committed local edits are reconciled by the 3-way merge in toolkit-merge.mjs.)
  */
 export function dirtyManagedPaths(repo) {
   try {
@@ -133,58 +141,134 @@ export function dirtyManagedPaths(repo) {
   }
 }
 
-/** Recursively overlay a dir, copying each file unless shouldSkip(destRel) flags it dirty. */
-function overlayDir(srcDir, destDir, destRelBase, shouldSkip, skipped) {
-  mkdirSync(destDir, { recursive: true });
-  for (const name of readdirSync(srcDir)) {
-    const s = path.join(srcDir, name);
-    const rel = destRelBase ? `${destRelBase}/${name}` : name;
-    if (statSync(s).isDirectory()) {
-      overlayDir(s, path.join(destDir, name), rel, shouldSkip, skipped);
-    } else if (shouldSkip(rel)) {
-      skipped.push(rel);
+// ---------------------------------------------------------------------------
+// 3-way merge — reconcile committed local edits instead of overwriting.
+// ---------------------------------------------------------------------------
+
+const readIf = (p) => (existsSync(p) && statSync(p).isFile() ? readFileSync(p, "utf8") : undefined);
+
+/** Every toolkit file under an entry, as { srcRel, destRel } (files only). */
+function entryFiles(srcRoot, entry) {
+  const absSrc = path.join(srcRoot, entry.src);
+  if (!existsSync(absSrc)) return [];
+  if (entry.kind !== "dir") return [{ srcRel: entry.src, destRel: entry.dest }];
+  const out = [];
+  const walk = (dir, sub) => {
+    for (const name of readdirSync(dir)) {
+      const abs = path.join(dir, name);
+      const rel = sub ? `${sub}/${name}` : name;
+      if (statSync(abs).isDirectory()) walk(abs, rel);
+      else out.push({ srcRel: `${entry.src}/${rel}`, destRel: `${entry.dest}/${rel}` });
+    }
+  };
+  walk(absSrc, "");
+  return out;
+}
+
+/** Apply one file's merge decision. Mutates the workspace; records into `r`. */
+function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel, force }, r) {
+  const destAbs = path.join(repo, destRel);
+  const theirs = readIf(path.join(srcRoot, srcRel));
+  const mine = readIf(destAbs);
+  const write = (content) => {
+    mkdirSync(path.dirname(destAbs), { recursive: true });
+    writeFileSync(destAbs, content);
+    if (entry.exec) chmodSync(destAbs, 0o755);
+  };
+
+  if (force) {
+    if (theirs !== undefined && theirs !== mine) {
+      write(theirs);
+      r.updated.push(destRel);
+    }
+    return;
+  }
+
+  const base = gitShow(toolkitDir, baseSha, srcRel);
+  const action = decideMerge({ base, mine, theirs });
+  switch (action) {
+    case "noop":
+    case "keep-mine":
+      return;
+    case "create":
+      write(theirs);
+      r.created.push(destRel);
+      return;
+    case "take-theirs":
+      write(theirs);
+      r.updated.push(destRel);
+      return;
+    case "fallback":
+      // No baseline to reason from — surface rather than silently overwrite.
+      writeFileSync(`${destAbs}.aios-incoming`, theirs);
+      r.conflicts.push({ path: destRel, kind: "no-base" });
+      return;
+    case "merge": {
+      const { clean, content } = threeWayMerge(base, mine, theirs, {
+        mine: `${destRel} (your version)`,
+        base: "last synced (base)",
+        theirs: `${destRel} (toolkit)`,
+      });
+      if (clean) {
+        write(content);
+        r.merged.push(destRel);
+      } else {
+        // Never write markers into the live file — it may be executed/parsed. Leave
+        // `mine` in place; drop the toolkit version + the marked-up merge beside it.
+        writeFileSync(`${destAbs}.aios-incoming`, theirs);
+        writeFileSync(`${destAbs}.aios-merge`, content);
+        r.conflicts.push({ path: destRel, kind: "merge" });
+      }
+      return;
+    }
+  }
+}
+
+/** Propagate upstream deletions/renames for a dir entry (files gone since baseSha). */
+function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r) {
+  const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
+  if (!baseFiles.length) return;
+  const present = new Set(entryFiles(srcRoot, entry).map((f) => f.srcRel));
+  for (const srcRel of baseFiles) {
+    if (present.has(srcRel)) continue; // still shipped — not a deletion
+    const destRel = entry.dest + srcRel.slice(entry.src.length);
+    const destAbs = path.join(repo, destRel);
+    const mine = readIf(destAbs);
+    if (mine === undefined) continue; // already gone locally
+    const base = gitShow(toolkitDir, baseSha, srcRel);
+    if (force || mine === base) {
+      unlinkSync(destAbs); // untouched locally → propagate the removal
+      r.deleted.push(destRel);
     } else {
-      cpSync(s, path.join(destDir, name), { force: true });
+      r.conflicts.push({ path: destRel, kind: "deleted-upstream" }); // modified + removed
     }
   }
 }
 
 /**
- * Copy one managed entry from source→workspace. For directories this is an OVERLAY:
- * toolkit files overwrite matching workspace files, but files the workspace has that
- * the toolkit does NOT (a person's own scripts / skills living in the same dir) are
- * LEFT UNTOUCHED. `scripts/` and `.claude/skills/` are mixed toolkit+personal dirs, so
- * a wholesale replace would delete personal content — never do that. Files with
- * uncommitted local changes (`dirty`) are skipped, not clobbered.
+ * 3-way merge every managed path from `srcRoot` (a toolkit checkout at `toolkitDir`, whose
+ * pinned base is `baseSha`) into `repo`. Committed local edits are merged, not clobbered;
+ * genuine conflicts are surfaced (never written inline). Dirty (uncommitted) files are
+ * skipped up front. `force` overwrites with the toolkit version and propagates deletions.
+ * Returns per-category path lists. Exported for tests.
  */
-function syncEntry(srcRoot, destRoot, entry, dirty, skipped) {
-  const src = path.join(srcRoot, entry.src);
-  const dest = path.join(destRoot, entry.dest);
-  if (!existsSync(src)) return { path: entry.dest, status: "missing-in-source" };
-  const shouldSkip = (rel) => dirty.has(rel);
-  if (entry.kind === "dir") {
-    overlayDir(src, dest, entry.dest, shouldSkip, skipped);
-  } else if (shouldSkip(entry.dest)) {
-    skipped.push(entry.dest);
-    return { path: entry.dest, status: "skipped-dirty" };
-  } else {
-    mkdirSync(path.dirname(dest), { recursive: true });
-    cpSync(src, dest, { force: true });
-    if (entry.exec) chmodSync(dest, 0o755);
-  }
-  return { path: entry.dest, status: "synced" };
-}
-
-/**
- * Overlay every managed path from a toolkit checkout into a workspace. Exported for tests.
- * `opts.dirty` is the set of dest paths with uncommitted changes to skip (default: none).
- * Returns `{ results, skipped }` — per-entry results plus the flat list of skipped files.
- */
-export function syncManaged(srcRoot, destRoot, opts = {}) {
+export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   const dirty = opts.dirty || new Set();
-  const skipped = [];
-  const results = MANAGED_PATHS.map((e) => syncEntry(srcRoot, destRoot, e, dirty, skipped));
-  return { results, skipped };
+  const force = !!opts.force;
+  const r = { created: [], updated: [], merged: [], deleted: [], conflicts: [], skippedDirty: [] };
+  for (const entry of MANAGED_PATHS) {
+    if (!existsSync(path.join(srcRoot, entry.src))) continue;
+    for (const f of entryFiles(srcRoot, entry)) {
+      if (dirty.has(f.destRel)) {
+        r.skippedDirty.push(f.destRel);
+        continue;
+      }
+      applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, ...f, force }, r);
+    }
+    if (entry.kind === "dir")
+      applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r);
+  }
+  return r;
 }
 
 export async function cmdUpdate(repo, cfg, args) {
@@ -222,66 +306,75 @@ export async function cmdUpdate(repo, cfg, args) {
       return;
     }
 
-    // Protect uncommitted local edits to managed files: skip them (don't clobber) unless
-    // the owner opts in with --force. Committed local edits are surfaced by the git-status
-    // diff below (and reconciled properly once the 3-way merge lands).
+    // Protect uncommitted local edits: skip them (don't clobber) unless --force.
     const force = args.includes("--force");
     const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
+    // The merge base = the toolkit sha this workspace last synced from (its stamp).
+    const stampPath = path.join(repo, VERSION_FILE);
+    const baseSha = existsSync(stampPath)
+      ? readFileSync(stampPath, "utf8").split(/\s/)[0]
+      : undefined;
+
     const shortSha = sha.slice(0, 12);
     console.log(color.dim(`  syncing toolkit from ${srcDir} (${shortSha}) …`));
-    const { results, skipped } = syncManaged(srcDir, repo, { dirty });
+    const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force });
 
-    if (skipped.length) {
-      console.warn(
-        color.yellow(
-          `  skipped ${skipped.length} file(s) with uncommitted local changes (not overwritten):`
-        )
-      );
-      for (const p of skipped.slice(0, 20)) console.warn(color.dim(`    ~ ${p}`));
-      if (skipped.length > 20) console.warn(color.dim(`    … and ${skipped.length - 20} more`));
+    const report = (label, arr, tone = color.green) => {
+      if (!arr.length) return;
+      console.log(tone(`  ${label}: ${arr.length}`));
+      for (const p of arr.slice(0, 20)) console.log(color.dim(`    ${p}`));
+      if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
+    };
+    report("created", r.created);
+    report("updated", r.updated);
+    report("merged (local edits + toolkit changes combined)", r.merged);
+    report("removed (deleted upstream)", r.deleted);
+    report("skipped — uncommitted local changes", r.skippedDirty, color.yellow);
+    if (r.skippedDirty.length) {
       console.warn(
         color.dim(
-          "  Commit them (then re-run to see the toolkit diff), `git checkout -- <path>` to " +
-            "discard and take the toolkit version, or re-run with --force to overwrite."
+          "  Commit them (then re-run), `git checkout -- <path>` to take the toolkit version, " +
+            "or re-run with --force to overwrite."
         )
       );
     }
 
-    // Pin the version.
-    writeFileSync(
-      path.join(repo, VERSION_FILE),
-      `${sha}\nsynced-at ${new Date().toISOString()}\nsource ${srcDir}\n`
-    );
-
-    // Report exactly which managed files changed (the workspace is a git repo).
-    let changed = "";
-    try {
-      changed = execFileSync(
-        "git",
-        ["-C", repo, "status", "--short", "--", ...MANAGED_PATHS.map((e) => e.dest), VERSION_FILE],
-        { encoding: "utf8" }
-      ).trim();
-    } catch {
-      /* not a git repo — skip the diff summary */
+    if (r.conflicts.length) {
+      console.warn(color.yellow(`  ${r.conflicts.length} conflict(s) — NOT applied:`));
+      for (const cf of r.conflicts.slice(0, 20)) {
+        const how =
+          cf.kind === "merge"
+            ? "both sides changed — see .aios-merge, take .aios-incoming, or edit in place"
+            : cf.kind === "deleted-upstream"
+              ? "removed upstream but you modified it — delete it or upstream your change"
+              : "no sync baseline — see .aios-incoming, or re-run --force if you have no local edits";
+        console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
+      }
+      if (r.conflicts.length > 20)
+        console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
     }
-    const missing = results.filter((r) => r.status === "missing-in-source");
-    for (const m of missing) console.warn(color.yellow(`  (not in source, skipped: ${m.path})`));
 
-    if (changed) {
-      const n = changed.split("\n").length;
-      console.log(color.green(`  toolkit updated to ${shortSha} — ${n} file(s) changed:`));
-      console.log(
-        changed
-          .split("\n")
-          .slice(0, 40)
-          .map((l) => color.dim("    " + l))
-          .join("\n")
+    const changedCount = r.created.length + r.updated.length + r.merged.length + r.deleted.length;
+    if (r.conflicts.length) {
+      // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
+      console.warn(
+        color.yellow(
+          `  resolve the conflict(s) and re-run \`aios update\` — version stays pinned at ${(
+            baseSha || "(none)"
+          ).slice(0, 12)} until then.`
+        )
       );
-      if (n > 40) console.log(color.dim(`    … and ${n - 40} more`));
-      console.log(color.dim("  Review + commit these on your workspace's master branch."));
     } else {
-      console.log(color.green(`  already up to date (${shortSha}) — nothing changed.`));
+      writeFileSync(stampPath, `${sha}\nsynced-at ${new Date().toISOString()}\nsource ${srcDir}\n`);
+      if (changedCount) {
+        console.log(
+          color.green(`  toolkit synced to ${shortSha} — ${changedCount} file(s) changed.`)
+        );
+        console.log(color.dim("  Review + commit these on your workspace's master branch."));
+      } else {
+        console.log(color.green(`  already up to date (${shortSha}) — nothing changed.`));
+      }
     }
   } finally {
     if (ephemeral) rmSync(srcDir, { recursive: true, force: true });
