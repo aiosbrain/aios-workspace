@@ -1,0 +1,61 @@
+{
+  "updatedFrom": null,
+  "headSha": null,
+  "functions": 2197,
+  "deadCode": 5345,
+  "fanOutHotspots": 61,
+  "highComplexity": 48,
+  "mutualRecursion": 3717,
+  "hotspotTop": [
+    {
+      "name": "ConnectWizard",
+      "file": "gui/client/src/components/integrations/ConnectWizard.tsx",
+      "outDegree": 25
+    },
+    {
+      "name": "a",
+      "file": "gui/client/src/components/chat/messages/AssistantMessage.tsx",
+      "outDegree": 0
+    },
+    {
+      "name": "args",
+      "file": "validation/check-agent-readiness.mjs",
+      "outDegree": 0
+    },
+    {
+      "name": "args",
+      "file": "scripts/export-commands.mjs",
+      "outDegree": 0
+    },
+    {
+      "name": "body",
+      "file": "test/fixtures/consolidate/coderabbit-comments.json",
+      "outDegree": 0
+    },
+    {
+      "name": "buildDailyOrientation",
+      "file": "src/operator-loop/daily.ts",
+      "outDegree": 25
+    },
+    {
+      "name": "cfg",
+      "file": "scripts/aios.mjs",
+      "outDegree": 0
+    },
+    {
+      "name": "cmdAnalyze",
+      "file": "scripts/analyze/index.mjs",
+      "outDegree": 29
+    },
+    {
+      "name": "cmdAsks",
+      "file": "scripts/aios.mjs",
+      "outDegree": 31
+    },
+    {
+      "name": "cmdDecisions",
+      "file": "scripts/aios.mjs",
+      "outDegree": 42
+    }
+  ]
+}
