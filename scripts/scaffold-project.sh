@@ -429,6 +429,17 @@ for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs; do
 done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
+# Pin the toolkit version this workspace was stamped from. `aios update` reads this
+# as the sync baseline; without it the first update has no base and can only blind-
+# overwrite (which is how a locally-improved managed file gets silently regressed).
+# Full sha (not --short) so it survives as a future 3-way merge base.
+TOOLKIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+{
+  echo "$TOOLKIT_SHA"
+  echo "scaffolded-at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "source $REPO_ROOT"
+} > "$OUTPUT/.aios-toolkit-version"
+
 # Generate the skills + integrations catalogs for the new workspace
 if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
   node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true

@@ -20,7 +20,7 @@ const toolkit = candidates.find((p) => existsSync(p));
 if (!toolkit) {
   console.error(
     "aios: toolkit CLI not found.\n" +
-      "  Clone github.com/Pravos-LLC/aios-workspace nearby, or set:\n" +
+      "  Clone github.com/aiosbrain/aios-workspace nearby, or set:\n" +
       "  export AIOS_TOOLKIT_CLI=/path/to/aios-workspace/scripts/aios.mjs"
   );
   process.exit(1);

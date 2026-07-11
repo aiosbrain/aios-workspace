@@ -97,11 +97,15 @@ they don't recognize.
      `git pull` in `aios-workspace`.
   2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
      (`.claude/{skills,rules,rubrics,commands}`, guardrail `hooks/`, `validation/`) are copies that drift.
-     **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`,
-     kept in lockstep with `scaffold-project.sh`) as an **overlay** — toolkit files overwrite, personal
-     additions (a person's own skills/scripts) are never deleted. `aios update --check` reports drift; a
-     `.aios-toolkit-version` stamp pins the synced sha.
-  Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out.
+     **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`, whose
+     three buckets — MANAGED / PERSONAL / SCAFFOLD_UNMANAGED — are held in lockstep with `scaffold-project.sh`
+     by a parity test) as an **overlay**: toolkit files overwrite, personal additions are never deleted, and
+     **managed files with *uncommitted* local edits are skipped, not clobbered** (commit them, `git checkout --`
+     to discard, or `--force` to overwrite). `scaffold-project.sh` writes a full-sha `.aios-toolkit-version`
+     stamp at scaffold time; `aios update --check` reports coarse drift against it.
+  Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out. If
+  you improve a *managed* file locally, upstream it — otherwise the next sync overwrites it (that's the
+  granola-1.1.0 lesson; the eventual 3-way merge will surface committed local edits instead of overwriting).
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
