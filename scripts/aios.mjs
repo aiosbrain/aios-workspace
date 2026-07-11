@@ -2663,11 +2663,8 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
-  aios update [--check] [--from <dir>]  re-sync this workspace's toolkit governance from the
-                                       canonical toolkit (overlay — personal skills/content kept);
-                                       --check reports drift only. The CLI itself is a shim that
-                                       already runs the current toolkit; this updates the in-place
-                                       skills/rules/hooks Claude Code reads
+  aios update [--check] [--from <dir>]  re-sync in-place toolkit governance (skills/rules/hooks)
+                                       as an overlay — personal content kept; --check reports drift
   aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
     [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
