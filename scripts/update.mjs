@@ -46,6 +46,7 @@ import { execFileSync } from "node:child_process";
 import { c, die } from "./cli-common.mjs";
 import { MANAGED_PATHS, VERSION_FILE } from "./toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
+import { toolkitMeta } from "./toolkit-meta.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 
@@ -271,6 +272,14 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   return r;
 }
 
+/** The `.aios-toolkit-version` body. Line 1 is the sha (parsed as the merge base). */
+function stampBody(sha, meta, srcDir) {
+  const lines = [sha, `toolkit-version ${meta.version}`];
+  if (meta.brainApi) lines.push(`brain-api ${meta.brainApi}`);
+  lines.push(`synced-at ${new Date().toISOString()}`, `source ${srcDir}`);
+  return lines.join("\n") + "\n";
+}
+
 export async function cmdUpdate(repo, cfg, args) {
   const color = c;
   // Guard: don't self-update the toolkit repo itself.
@@ -281,11 +290,17 @@ export async function cmdUpdate(repo, cfg, args) {
   const check = args.includes("--check");
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
   const sha = gitSha(srcDir);
+  const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
+  const stampPath = path.join(repo, VERSION_FILE);
+  const stampField = (label) => {
+    if (!existsSync(stampPath)) return undefined;
+    const m = readFileSync(stampPath, "utf8").match(new RegExp(`^${label}\\s+(.+)$`, "m"));
+    return m ? m[1].trim() : undefined;
+  };
 
   try {
     if (check) {
-      // Lightweight drift check: compare the pinned version to the source sha.
-      const stampPath = path.join(repo, VERSION_FILE);
+      // Compare the pinned version to the source sha; also surface the semver delta.
       const have = existsSync(stampPath)
         ? readFileSync(stampPath, "utf8").split(/\s/)[0]
         : "(none)";
@@ -293,12 +308,14 @@ export async function cmdUpdate(repo, cfg, args) {
       // prefix match on either side means up to date.
       const matches = have !== "(none)" && (sha.startsWith(have) || have.startsWith(sha));
       const short = (s) => (s === "(none)" ? s : s.slice(0, 12));
+      const haveVer = stampField("toolkit-version");
       if (matches) {
-        console.log(color.green(`  toolkit up to date (${short(sha)}).`));
+        console.log(color.green(`  toolkit up to date — ${meta.label} (${short(sha)}).`));
       } else {
+        const from = haveVer ? `v${haveVer}` : short(have);
         console.log(
           color.yellow(
-            `  toolkit behind — workspace pinned ${short(have)}, upstream ${short(sha)}. ` +
+            `  toolkit behind — workspace on ${from}, upstream ${meta.label} (${short(sha)}). ` +
               `Run \`aios update\`.`
           )
         );
@@ -311,13 +328,12 @@ export async function cmdUpdate(repo, cfg, args) {
     const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
     // The merge base = the toolkit sha this workspace last synced from (its stamp).
-    const stampPath = path.join(repo, VERSION_FILE);
     const baseSha = existsSync(stampPath)
       ? readFileSync(stampPath, "utf8").split(/\s/)[0]
       : undefined;
 
     const shortSha = sha.slice(0, 12);
-    console.log(color.dim(`  syncing toolkit from ${srcDir} (${shortSha}) …`));
+    console.log(color.dim(`  syncing toolkit ${meta.label} from ${srcDir} (${shortSha}) …`));
     const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force });
 
     const report = (label, arr, tone = color.green) => {
@@ -366,14 +382,16 @@ export async function cmdUpdate(repo, cfg, args) {
         )
       );
     } else {
-      writeFileSync(stampPath, `${sha}\nsynced-at ${new Date().toISOString()}\nsource ${srcDir}\n`);
+      writeFileSync(stampPath, stampBody(sha, meta, srcDir));
       if (changedCount) {
         console.log(
-          color.green(`  toolkit synced to ${shortSha} — ${changedCount} file(s) changed.`)
+          color.green(
+            `  toolkit synced to ${meta.label} (${shortSha}) — ${changedCount} file(s) changed.`
+          )
         );
         console.log(color.dim("  Review + commit these on your workspace's master branch."));
       } else {
-        console.log(color.green(`  already up to date (${shortSha}) — nothing changed.`));
+        console.log(color.green(`  already up to date — ${meta.label} (${shortSha}).`));
       }
     }
   } finally {

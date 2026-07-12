@@ -434,8 +434,12 @@ done
 # overwrite (which is how a locally-improved managed file gets silently regressed).
 # Full sha (not --short) so it survives as a future 3-way merge base.
 TOOLKIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+TOOLKIT_VER="$(sed -nE 's/.*"version"[^"]*"([^"]+)".*/\1/p' "$REPO_ROOT/package.json" | head -1)"
+BRAIN_API_VER="$(grep -m1 -oE '\*\*Version: [0-9]+\.[0-9]+\*\*' "$REPO_ROOT/docs/brain-api.md" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+')"
 {
   echo "$TOOLKIT_SHA"
+  echo "toolkit-version ${TOOLKIT_VER:-0.0.0}"
+  [ -n "$BRAIN_API_VER" ] && echo "brain-api $BRAIN_API_VER"
   echo "scaffolded-at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "source $REPO_ROOT"
 } > "$OUTPUT/.aios-toolkit-version"

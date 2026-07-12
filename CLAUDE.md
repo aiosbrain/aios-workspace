@@ -105,7 +105,9 @@ they don't recognize.
      *uncommitted* edit is **skipped** (`--force` overwrites), personal additions are never deleted, and
      upstream deletions propagate only for files you didn't touch. On conflict the stamp stays at the old base
      until you resolve + re-run. `scaffold-project.sh` writes a full-sha `.aios-toolkit-version` at scaffold
-     time; `aios update --check` reports coarse drift against it.
+     time; the stamp + every `aios update` also record the toolkit **semver** (`package.json`) + the
+     **brain-api** contract version (`docs/brain-api.md` header) so a workspace reasons about "v0.6 → v0.7",
+     not an opaque sha (`scripts/toolkit-meta.mjs`). `aios update --check` reports drift.
   Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out. If
   you improve a *managed* file locally, upstream it — the merge will keep surfacing it as a conflict against
   each toolkit change until it converges (that's the granola-1.1.0 lesson).
