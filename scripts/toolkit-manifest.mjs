@@ -70,6 +70,8 @@ export const PERSONAL_PATHS = [
   "4-shared",
   "5-personal",
   "aios.yaml",
+  "workspace.yaml",
+  "contacts.yaml",
   ".env",
   ".env.keys",
   ".env.example",
@@ -80,6 +82,34 @@ export const PERSONAL_PATHS = [
   ".git",
   ".aios",
   "node_modules",
+];
+
+/**
+ * Toolkit paths that `scaffold-project.sh` writes into a fresh workspace but `aios update`
+ * deliberately does NOT sync — because they are per-machine hydration/config, generated
+ * catalogs, or stamp-time-templated files that can't be blind-overlaid. They are neither
+ * "managed" (synced) nor "personal" (a person's own content). Listed explicitly so the
+ * manifest↔scaffold parity test can prove every scaffold-written path is classified into
+ * exactly one bucket — no silent third category. Update this list when the scaffold
+ * starts (or stops) writing one of these.
+ */
+export const SCAFFOLD_UNMANAGED = [
+  ".envrc", // direnv loader — machine/env hydration
+  ".mcp.json", // MCP wiring — hydrated per machine, gitignored
+  ".mcp.example.json", // MCP example stub
+  "opencode.json", // opencode runtime config — hydration
+  ".opencode", // opencode export surface — hydration
+  ".claude/integrations.json", // generated per-workspace by gen-catalog
+  ".aios-toolkit-version", // the sync stamp itself (workspace state, not content)
+  ".github", // CI/workflows are toolkit-dev-only; not shipped-then-synced
+  ".planning", // scaffolded empty; a person's own planning space
+  "CODEOWNERS", // repo-ownership file, stamped once
+  // Stamp-time TEMPLATED files: toolkit origin, but personalized on scaffold, so they
+  // can't be blind-overlaid (that would clobber the personalization).
+  ".claude/CLAUDE.md",
+  ".gitignore",
+  "package.json",
+  "README.md",
 ];
 
 /** The version stamp a workspace writes to record which toolkit it last synced. */

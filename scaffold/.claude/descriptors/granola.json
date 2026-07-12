@@ -2,21 +2,21 @@
   "id": "granola",
   "name": "Granola",
   "category": "meetings",
-  "descriptor_version": "1.0.0",
+  "descriptor_version": "1.1.0",
   "transport": "skill",
   "auth_mode": "token",
   "status": "available",
-  "summary": "Pull meeting notes + transcripts into 1-inbox/transcripts/ — our own connector (calls the Granola public API directly; does not use the Granola MCP).",
+  "summary": "Pull meeting notes + transcripts into 1-inbox/transcripts/ — our own dual-auth connector (Granola public API, with automatic fallback to the local desktop-app session on any plan; does not use the Granola MCP).",
   "secrets": [
-    { "env": "GRANOLA_API_KEY", "label": "API key", "required": true, "placeholder": "grn_…" }
+    { "env": "GRANOLA_API_KEY", "label": "API key", "required": false, "placeholder": "grn_…", "note": "Optional. Needed only for the portable public API (Business/Enterprise). Without it the connector uses the signed-in Granola desktop app on this machine." }
   ],
   "scopes": ["Personal notes", "Public notes"],
   "scopes_advisory": true,
   "docs": {
     "token_create_url": null,
     "scopes_url": "https://docs.granola.ai/introduction",
-    "instructions": "In the Granola desktop app: Settings → Connectors → API keys → Create new key → tick the 'Personal notes' scope (add 'Public notes' for team/workspace notes) → Generate API Key. Requires a Business or Enterprise plan.",
-    "verified_against_docs": "2026-06-14"
+    "instructions": "Preferred (portable): in the Granola desktop app, Settings → Connectors → API keys → Create new key → tick 'Personal notes' (add 'Public notes' for team notes) → Generate API Key → set GRANOLA_API_KEY. Requires a Business/Enterprise plan. No paid plan? Just sign in to the Granola desktop app — the connector falls back to its local session automatically.",
+    "verified_against_docs": "2026-06-26"
   },
   "skill": {
     "skill_name": "granola-direct",

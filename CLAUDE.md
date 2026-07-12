@@ -103,11 +103,18 @@ they don't recognize.
      `git pull` in `aios-workspace`.
   2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
      (`.claude/{skills,rules,rubrics,commands}`, guardrail `hooks/`, `validation/`) are copies that drift.
-     **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`,
-     kept in lockstep with `scaffold-project.sh`) as an **overlay** — toolkit files overwrite, personal
-     additions (a person's own skills/scripts) are never deleted. `aios update --check` reports drift; a
-     `.aios-toolkit-version` stamp pins the synced sha.
-  Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out.
+     **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`, whose
+     three buckets — MANAGED / PERSONAL / SCAFFOLD_UNMANAGED — are held in lockstep with `scaffold-project.sh`
+     by a parity test) via a **3-way merge** (`scripts/toolkit-merge.mjs`): with the toolkit at the last-synced
+     sha as the base, a *committed* local edit is **merged** with the toolkit's change (or surfaced as a
+     conflict — written to `<file>.aios-incoming`/`.aios-merge`, never inline into the live file), an
+     *uncommitted* edit is **skipped** (`--force` overwrites), personal additions are never deleted, and
+     upstream deletions propagate only for files you didn't touch. On conflict the stamp stays at the old base
+     until you resolve + re-run. `scaffold-project.sh` writes a full-sha `.aios-toolkit-version` at scaffold
+     time; `aios update --check` reports coarse drift against it.
+  Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out. If
+  you improve a *managed* file locally, upstream it — the merge will keep surfacing it as a conflict against
+  each toolkit change until it converges (that's the granola-1.1.0 lesson).
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
