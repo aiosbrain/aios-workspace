@@ -332,7 +332,9 @@ export async function cmdUpdate(repo, cfg, args) {
       );
     } catch {
       console.warn(
-        color.yellow("  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually")
+        color.yellow(
+          "  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually"
+        )
       );
     }
 
