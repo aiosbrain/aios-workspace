@@ -44,6 +44,13 @@ export const MANAGED_PATHS = [
   // Claude Code settings that register the shipped hooks (personal overrides live in
   // .claude/settings.local.json, which stays PERSONAL). Verbatim copy — safe to manage.
   { dest: ".claude/settings.json", src: "scaffold/.claude/settings.json", kind: "file" },
+  // Skill/doc router + routing fixtures — shipped into the workspace, updated on sync.
+  { dest: "RESOLVER.md", src: "scaffold/RESOLVER.md.tmpl", kind: "file" },
+  {
+    dest: ".claude/resolver-fixtures.yaml",
+    src: "scaffold/.claude/resolver-fixtures.yaml",
+    kind: "file",
+  },
   // Standalone guardrail hooks + validator data shipped into the workspace (exact files).
   { dest: "hooks/team-ops-guard.sh", src: "hooks/team-ops-guard.sh", kind: "file", exec: true },
   { dest: "hooks/asks-capture.mjs", src: "hooks/asks-capture.mjs", kind: "file", exec: true },
