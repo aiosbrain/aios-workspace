@@ -1,6 +1,6 @@
 ---
 name: ai-code-review
-description: Review AI-generated code, agent-produced diffs, pull requests, commits, or implementation summaries for security, correctness, maintainability, test coverage, supply-chain risk, and technical best practices. Use when the user asks to review AI-generated code, review an agent wrap-up, audit a PR from an AI coding agent, or validate claims like "CI green", "secrets rotated", "tests added", or "mergeable".
+description: Verify an agent wrap-up's checkable claims — review AI-generated diffs, PRs, commits, or implementation summaries and validate assertions like "CI green", "secrets rotated", "tests added", or "mergeable" against reality, plus security, correctness, and supply-chain risk. Use when the user asks to review an agent's wrap-up, audit a PR from an AI coding agent, or check whether claimed work actually happened. For a plain local diff review with no claims to verify, use the built-in code-review instead.
 version: 1.0.0
 access: team
 compatibility: opencode

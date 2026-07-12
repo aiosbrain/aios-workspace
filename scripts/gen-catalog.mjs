@@ -188,9 +188,41 @@ function generate(repo) {
   }
   writeFileSync(path.join(repo, ".claude", "INTEGRATIONS.md"), ig);
 
+  const resolverUpdated = refreshResolver(repo, skills);
+
   console.log(
-    `catalog: ${skills.length} skill(s) → .claude/skills/INDEX.md · ${integrations.length} integration(s) → .claude/INTEGRATIONS.md`
+    `catalog: ${skills.length} skill(s) → .claude/skills/INDEX.md · ${integrations.length} integration(s) → .claude/INTEGRATIONS.md` +
+      (resolverUpdated ? ` · Functional Areas → RESOLVER.md` : ``)
   );
+}
+
+// ── refresh the marker-delimited Functional Areas block in RESOLVER.md ──
+// Everything outside the markers (gates, agent roles, disambiguation) is
+// hand-owned and never touched. No-op when RESOLVER.md or the markers are absent.
+const RESOLVER_BEGIN = /<!--\s*resolver-gen:begin[^>]*-->/;
+const RESOLVER_END = /<!--\s*resolver-gen:end\s*-->/;
+export function renderResolverBlock(skills) {
+  let out = `| Trigger | Skill |\n|---|---|\n`;
+  for (const s of skills) {
+    const trig = s.triggers.length
+      ? s.triggers.slice(0, 4).join(", ")
+      : firstSentence(s.description).replace(/\|/g, "/");
+    const kind = s.kind === "workflow-harness" ? " (workflow harness)" : "";
+    out += `| ${trig} | \`.claude/skills/${s.id}/SKILL.md\`${kind} |\n`;
+  }
+  return out;
+}
+export function refreshResolver(repo, skills) {
+  const p = path.join(repo, "RESOLVER.md");
+  if (!existsSync(p)) return false;
+  const text = readFileSync(p, "utf8");
+  const begin = text.match(RESOLVER_BEGIN);
+  const end = text.match(RESOLVER_END);
+  if (!begin || !end || end.index < begin.index) return false;
+  const head = text.slice(0, begin.index + begin[0].length);
+  const tail = text.slice(end.index);
+  writeFileSync(p, `${head}\n${renderResolverBlock(skills)}${tail}`);
+  return true;
 }
 
 // ── CLI entry (only when run directly, not when imported) ──

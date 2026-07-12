@@ -5,7 +5,9 @@ description: |
   a rubric-gated self-correction loop: an independent verifier grades the draft
   against .claude/rubrics/weekly-synthesis.md and the harness revises until the
   rubric passes or its budget is spent. Use at sprint boundaries or when someone
-  asks "what happened this week?".
+  asks "what happened this week?". Consumes decision-audit and scope-creep outputs
+  when present — do not re-derive their findings; transcript extraction stays with
+  transcript-decisions.
 version: 1.0.0
 kind: workflow-harness
 workflow: weekly-synthesis.workflow.js

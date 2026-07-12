@@ -336,6 +336,24 @@ export async function cmdUpdate(repo, cfg, args) {
     console.log(color.dim(`  syncing toolkit ${meta.label} from ${srcDir} (${shortSha}) …`));
     const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force });
 
+    // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
+    // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
+    try {
+      execFileSync(
+        process.execPath,
+        [path.join(srcDir, "scripts", "gen-catalog.mjs"), "--repo", repo],
+        {
+          stdio: "inherit",
+        }
+      );
+    } catch {
+      console.warn(
+        color.yellow(
+          "  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually"
+        )
+      );
+    }
+
     const report = (label, arr, tone = color.green) => {
       if (!arr.length) return;
       console.log(tone(`  ${label}: ${arr.length}`));

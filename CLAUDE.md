@@ -1,5 +1,10 @@
 # AIOS Workspace — operating manual
 
+**Skill/doc routing: see `RESOLVER.md`** — gates (worktree, edit-the-template,
+brain-api, tiers, spec-before-build, secrets, rubrics) and the review/audit
+arbitration table. Stamped workspaces get their own resolver from
+`scaffold/RESOLVER.md.tmpl`.
+
 This file is read at the start of every session. It describes **this repo** — the AIOS
 **individual workspace toolkit** — and the conventions for working in it. Follow it over
 generic habits.
@@ -55,10 +60,11 @@ Every scaffolded workspace uses the same six-folder spine, each with a default a
 ```
 
 **Access tiers are the safety boundary.** Canonical values: **`admin`** (never syncs — owner only),
-**`team`** (syncs to the brain), **`external`** (syncs outward to stakeholders). Friendly aliases
-`private`→admin, `client`/`company`→external are normalized on push. **Default-deny:** content with
-no resolvable `access:` frontmatter is **not** pushed. The brain rejects `admin`-tier at the boundary
-(422). Never weaken this.
+**`team`** (syncs to the brain), **`external`** (syncs outward to stakeholders). **Default-deny:**
+content with no resolvable `access:` frontmatter is **not** pushed. The brain rejects `admin`-tier
+at the boundary (422). Never weaken this. Full vocabulary (aliases, spine defaults, isolation
+invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy is
+`scaffold/.claude/rules/frontmatter.md`; change both together.
 
 ---
 

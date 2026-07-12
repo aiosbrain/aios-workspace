@@ -6,7 +6,10 @@ description: |
   placement, scores the relevant repos, folds in the team rollup if a brain is connected,
   and writes a client- or company-ready roadmap into 2-work/. Use when the user says
   "maturity report", "transformation roadmap", "AM report", "assess our agentic maturity",
-  or when preparing an engagement or team readout.
+  or when preparing an engagement or team readout. Hard precondition: requires an
+  agentic-maturity placement in .claude/memory/MATURITY.md — if none exists, run the
+  agentic-maturity skill first (it produces the placement; this skill produces the
+  deliverable).
 kind: skill
 version: 1.0.0
 triggers:
