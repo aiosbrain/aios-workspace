@@ -116,7 +116,10 @@ they don't recognize.
      not an opaque sha (`scripts/toolkit-meta.mjs`). `aios update --check` reports drift.
   Toolkit changes always land **upstream here**, never in a fork; `aios update` is the one-way flow out. If
   you improve a *managed* file locally, upstream it — the merge will keep surfacing it as a conflict against
-  each toolkit change until it converges (that's the granola-1.1.0 lesson).
+  each toolkit change until it converges (that's the granola-1.1.0 lesson). **`aios update --contribute <path>`**
+  (`scripts/toolkit-contribute.mjs`) closes that loop in one command: it maps the workspace file back to its
+  toolkit `src`, drops it into a throwaway toolkit worktree off `origin/main` (never the primary checkout),
+  and opens the PR with `gh`. `--dry-run` prints the plan without writing.
 - **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
   `--context employee`. Test both.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
