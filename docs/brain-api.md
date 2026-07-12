@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.7** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.8** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
