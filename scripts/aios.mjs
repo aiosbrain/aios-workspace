@@ -2663,8 +2663,8 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
-  aios update [--check] [--from <dir>] [--force]  overlay toolkit governance; personal + uncommitted
-                                       edits kept (--force overwrites); --check reports drift only
+  aios update [--check|--force|--contribute <path>]  3-way-merge toolkit governance (personal +
+                                       uncommitted edits kept); --contribute opens a toolkit PR from a file
   aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
     [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything

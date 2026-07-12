@@ -47,6 +47,7 @@ import { c, die } from "./cli-common.mjs";
 import { MANAGED_PATHS, VERSION_FILE } from "./toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
+import { cmdContribute } from "./toolkit-contribute.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 
@@ -289,6 +290,17 @@ export async function cmdUpdate(repo, cfg, args) {
 
   const check = args.includes("--check");
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
+
+  // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
+  if (args.includes("--contribute")) {
+    try {
+      await cmdContribute(repo, { dir: srcDir, ephemeral }, args, argValue(args, "--contribute"));
+    } finally {
+      if (ephemeral) rmSync(srcDir, { recursive: true, force: true });
+    }
+    return;
+  }
+
   const sha = gitSha(srcDir);
   const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
   const stampPath = path.join(repo, VERSION_FILE);
