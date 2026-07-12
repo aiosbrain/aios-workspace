@@ -336,20 +336,6 @@ export async function cmdUpdate(repo, cfg, args) {
       );
     }
 
-    // Report exactly which managed files changed (the workspace is a git repo).
-    let changed = "";
-    try {
-      changed = execFileSync(
-        "git",
-        ["-C", repo, "status", "--short", "--", ...MANAGED_PATHS.map((e) => e.dest), VERSION_FILE],
-        { encoding: "utf8" }
-      ).trim();
-    } catch {
-      /* not a git repo — skip the diff summary */
-    }
-    const missing = results.filter((r) => r.status === "missing-in-source");
-    for (const m of missing) console.warn(color.yellow(`  (not in source, skipped: ${m.path})`));
-
     const report = (label, arr, tone = color.green) => {
       if (!arr.length) return;
       console.log(tone(`  ${label}: ${arr.length}`));
