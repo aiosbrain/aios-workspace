@@ -21,19 +21,21 @@
  *
  * Usage:
  *   node granola-pull.mjs [--since YYYY-MM-DD] [--limit N] [--repo PATH]
- *                         [--match SUBSTR] [--access TIER] [--local] [--dry-run]
+ *                         [--match SUBSTR] [--access TIER] [--local] [--force] [--dry-run]
  *
  *   --match   only write meetings whose title or participants contain SUBSTR (case-insensitive)
  *   --access  frontmatter access tier for written files (default: team; use private for sensitive)
  *   --local   force the local-app-token path (skip the public API)
+ *   --force   explicitly replace an existing transcript with the connector copy
  *   --dry-run list what would be written without touching the filesystem
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { gunzipSync } from "node:zlib";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PUBLIC_API = "https://public-api.granola.ai/v1";
 const APP_API = "https://api.granola.ai/v1";
@@ -50,6 +52,7 @@ const match = (flag("--match") || "").toLowerCase();
 const accessTier = flag("--access", "team");
 const speakerName = flag("--speaker", "Speaker");   // label for the non-microphone party on 1:1 calls
 const forceLocal = has("--local");
+const force = has("--force");
 const dryRun = has("--dry-run");
 
 const slug = (s) => String(s || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -211,6 +214,73 @@ function localTranscriptText(entries, ownerName) {
   return segmentsToTurns(segs, ownerName);
 }
 
+export function frontmatterValue(markdown, key) {
+  const end = markdown.startsWith("---\n") ? markdown.indexOf("\n---\n", 4) : -1;
+  if (end < 0) return null;
+  const match = markdown.slice(4, end).match(new RegExp(`^${key}:\\s*(.*?)\\s*$`, "m"));
+  return match?.[1] ?? null;
+}
+
+export function transcriptBody(markdown) {
+  if (!markdown.startsWith("---\n")) return markdown.trim();
+  const end = markdown.indexOf("\n---\n", 4);
+  return (end < 0 ? markdown : markdown.slice(end + 5)).trim();
+}
+
+export function renderTranscript(note, tier) {
+  const body = note.transcriptText || "(no transcript available)";
+  return [
+    "---",
+    "type: transcript",
+    "source: granola",
+    `granola_id: ${note.id || ""}`,
+    `created: ${note.created}`,
+    note.participants.length
+      ? `participants: [${note.participants.join(", ")}]`
+      : "participants: []",
+    `access: ${tier}`,
+    "status: ingested",
+    "---",
+    "",
+    `# ${note.title}`,
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+export function existingTranscriptsById(destDir) {
+  const found = new Map();
+  if (!existsSync(destDir)) return found;
+  for (const name of readdirSync(destDir)) {
+    if (!name.endsWith(".md")) continue;
+    const file = path.join(destDir, name);
+    const markdown = readFileSync(file, "utf8");
+    const id = frontmatterValue(markdown, "granola_id");
+    if (id && !found.has(id)) found.set(id, { file, markdown });
+  }
+  return found;
+}
+
+export function planTranscriptWrite({ note, destination, existing, accessTier, force = false }) {
+  const requested = renderTranscript(note, accessTier);
+  if (!existing) return { action: "write", file: destination, markdown: requested };
+  if (force) return { action: "overwrite", file: existing.file, markdown: requested };
+
+  const incomingBody = transcriptBody(requested);
+  const currentBody = transcriptBody(existing.markdown);
+  if (incomingBody.length <= currentBody.length) {
+    return { action: "skip", file: existing.file, markdown: existing.markdown };
+  }
+
+  const preservedTier = frontmatterValue(existing.markdown, "access") || accessTier;
+  return {
+    action: "update",
+    file: existing.file,
+    markdown: renderTranscript(note, preservedTier),
+  };
+}
+
 async function pullLocal() {
   const token = await localAccessToken();
   if (!token) return { notes: null };
@@ -241,63 +311,80 @@ async function pullLocal() {
 // ════════════════════════════ DRIVER ════════════════════════════
 // One clear, greppable line at the top of every run stating which auth path is
 // active — the connector is dual-auth and otherwise picks a path silently.
-let result = { notes: null };
-let pathUsed = "";
-const KEY = forceLocal ? null : resolvePublicKey();
+async function main() {
+  let result = { notes: null };
+  let pathUsed = "";
+  const KEY = forceLocal ? null : resolvePublicKey();
 
-if (KEY) {
-  log("granola: using API key");
-  result = await pullPublic(KEY);
-  if (result.authFailed) {
-    log(`granola: API key path failed (HTTP ${result.status}) — falling back to desktop-app session`);
-    result = await pullLocal();
-    if (!result.notes) log("granola: desktop-app session path also failed — see above for details.");
-    pathUsed = "local (public key rejected)";
+  if (KEY) {
+    log("granola: using API key");
+    result = await pullPublic(KEY);
+    if (result.authFailed) {
+      log(
+        `granola: API key path failed (HTTP ${result.status}) — falling back to desktop-app session`
+      );
+      result = await pullLocal();
+      if (!result.notes)
+        log("granola: desktop-app session path also failed — see above for details.");
+      pathUsed = "local (public key rejected)";
+    } else {
+      pathUsed = "public API";
+    }
   } else {
-    pathUsed = "public API";
+    log(
+      forceLocal
+        ? "granola: using desktop-app session (--local)"
+        : "granola: using desktop-app session (no API key set)"
+    );
+    result = await pullLocal();
+    if (!result.notes)
+      log("granola: desktop-app session path failed — see above for details.");
+    pathUsed = "local app token";
   }
-} else {
-  log(
-    forceLocal
-      ? "granola: using desktop-app session (--local)"
-      : "granola: using desktop-app session (no API key set)"
+
+  const notes = result.notes;
+  if (!notes) process.exitCode = 1;
+  if (!notes) return;
+  if (!notes.length) {
+    console.log(`granola-pull: no notes matched (path: ${pathUsed}).`);
+    return;
+  }
+
+  const destDir = path.join(
+    repo,
+    existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake",
+    "transcripts"
   );
-  result = await pullLocal();
-  if (!result.notes) log("granola: desktop-app session path failed — see above for details.");
-  pathUsed = "local app token";
+  if (!dryRun) mkdirSync(destDir, { recursive: true });
+  const existing = existingTranscriptsById(destDir);
+
+  const counts = { write: 0, update: 0, overwrite: 0, skip: 0 };
+  for (const note of notes) {
+    const date = (note.created || "").slice(0, 10) || "undated";
+    const destination = path.join(destDir, `${date}-${slug(note.title)}.md`);
+    const plan = planTranscriptWrite({
+      note,
+      destination,
+      existing: note.id ? existing.get(String(note.id)) : null,
+      accessTier,
+      force,
+    });
+    counts[plan.action]++;
+    const rel = path.relative(repo, plan.file);
+    if (dryRun) console.log(`  would ${plan.action} ${rel}`);
+    else if (plan.action === "skip") console.log(`  = preserved ${rel}`);
+    else {
+      writeFileSync(plan.file, plan.markdown);
+      console.log(`  ✓ ${plan.action}d ${rel}`);
+    }
+  }
+  console.log(
+    `\ngranola-pull: ${dryRun ? "planned" : "finished"} ${notes.length} transcript(s) ` +
+      `(new ${counts.write}, updated ${counts.update}, overwritten ${counts.overwrite}, preserved ${counts.skip}) ` +
+      `→ ${path.relative(repo, destDir)}/  [path: ${pathUsed}, access: ${accessTier}]`
+  );
 }
 
-const notes = result.notes;
-if (!notes) process.exit(1);
-if (!notes.length) { console.log(`granola-pull: no notes matched (path: ${pathUsed}).`); process.exit(0); }
-
-const destDir = path.join(repo, existsSync(path.join(repo, "1-inbox")) ? "1-inbox" : "01-intake", "transcripts");
-if (!dryRun) mkdirSync(destDir, { recursive: true });
-
-let wrote = 0;
-for (const n of notes) {
-  const date = (n.created || "").slice(0, 10) || "undated";
-  const body = n.transcriptText || "(no transcript available)";
-  const fm = [
-    "---",
-    "type: transcript",
-    "source: granola",
-    `granola_id: ${n.id || ""}`,
-    `created: ${n.created}`,
-    n.participants.length ? `participants: [${n.participants.join(", ")}]` : "participants: []",
-    `access: ${accessTier}`,
-    "status: ingested",
-    "---",
-    "",
-    `# ${n.title}`,
-    "",
-    body,
-    "",
-  ].join("\n");
-  const fname = `${date}-${slug(n.title)}.md`;
-  const rel = path.relative(repo, path.join(destDir, fname));
-  if (dryRun) console.log(`  would write ${rel}`);
-  else { writeFileSync(path.join(destDir, fname), fm); console.log(`  ✓ ${rel}`); }
-  wrote++;
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
 }
-console.log(`\ngranola-pull: ${dryRun ? "would write" : "wrote"} ${wrote} transcript(s) → ${path.relative(repo, destDir)}/  [path: ${pathUsed}, access: ${accessTier}]`);

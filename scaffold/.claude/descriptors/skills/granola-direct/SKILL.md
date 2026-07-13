@@ -38,7 +38,7 @@ locally and never printed.
 ```bash
 node .claude/descriptors/skills/granola-direct/granola-pull.mjs \
   [--since YYYY-MM-DD] [--limit N] [--match SUBSTR] \
-  [--access TIER] [--speaker NAME] [--local] [--dry-run]
+  [--access TIER] [--speaker NAME] [--local] [--force] [--dry-run]
 ```
 
 | Flag | Effect |
@@ -49,12 +49,17 @@ node .claude/descriptors/skills/granola-direct/granola-pull.mjs \
 | `--access` | frontmatter `access:` tier for written files (default `team`; use `private` for sensitive/prospect calls) |
 | `--speaker` | label for the non-microphone party on 1:1 calls (default `Speaker`) — e.g. `--speaker "Abdul Bahri"` |
 | `--local` | force the local-app-token path (skip the public API) |
+| `--force` | explicitly replace an existing transcript; without it, local tier edits are preserved |
 | `--dry-run` | list what would be written without touching the filesystem |
 
 Each meeting becomes one Markdown file at `1-inbox/transcripts/<date>-<slug>.md` with
 frontmatter (`type: transcript`, `source: granola`, `granola_id`, `created`,
 `participants`, `access`) and the transcript rendered as readable, speaker-labeled
 turns (consecutive same-speaker fragments are merged).
+
+Re-pulls match existing files by `granola_id`, not filename. They preserve an existing file
+when the fetched transcript did not grow, and preserve its local `access:` tier when new
+transcript text is appended. Use `--force` only for an intentional connector overwrite.
 
 ## After pulling
 
