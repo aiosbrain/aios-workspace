@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/hooks/team-ops-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/hooks/file-governance-guard.mjs"
           }
         ]
       }
