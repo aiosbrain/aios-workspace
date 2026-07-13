@@ -41,13 +41,31 @@ const CLEAN_MANIFEST = {
   excluded: [],
 };
 
-// Leak manifest: an admin distinctive token ("ProjectPhoenix") ALSO appears in a team summary, so
-// the team digest's leak sweep withholds that claim → non-shippable, deterministically, offline.
+// Leak manifest (AIO-363): a genuine residual whole-document collision, offline and
+// deterministic. An admin-only signal's summary contains a distinctive word ("research") that is
+// ALSO the literal tag name the digest's own deterministic "Agent runtime (by tag)" section renders
+// (from an UNRELATED team-tier time signal whose own summary text does NOT say "research" — hand-
+// shaped to isolate the boilerplate collision from the signal's own content). Note this is NOT the
+// pre-AIO-363 pattern (an admin/team pair independently using the same real-world vocabulary, e.g.
+// a project codename or "engineering"/"management" — that was the false-positive dogfooding showed
+// firing on 4/4 real runs, and `aboveAudienceStrings` now excludes it via the differential
+// ≤-audience-visible gate). This scenario survives that fix because the tag name comes from fixed
+// digest boilerplate, not from any visible signal's own text — the one place a residual leak can
+// still legitimately fire, and exactly what the whole-document sweep exists to catch.
 const LEAK_MANIFEST = {
   ...CLEAN_MANIFEST,
   signals: [
-    sig("5-personal/p.md", "1", "admin", "decision", "ProjectPhoenix budget is 40m"),
-    sig("2-work/k.md", "2", "team", "task", "ProjectPhoenix kickoff scheduled"),
+    sig("3-log/decision-log.md", "1", "team", "decision", "Shipped the operator loop"),
+    {
+      kind: "time",
+      source: "session",
+      tier: "team",
+      occurredAt: "2026-06-29T00:00:00.000Z",
+      ref: { path: "3-log/time-log.md", row: "blk1", tier: "team" },
+      summary: "logged time",
+      payload: { tag: "research", durationMin: 20, repo: "acme" },
+    },
+    sig("5-personal/p.md", "1", "admin", "decision", "Personal research direction ZZSECRET"),
   ],
 };
 
@@ -179,10 +197,14 @@ test("a non-shippable (leak-withheld) run gates non-zero and writes NO shippable
     const out = onlyRun(dir);
     assert.ok(!existsSync(path.join(out, "digest-team.md")), "no shippable digest file written");
     assert.ok(existsSync(path.join(out, "digest-team.FAILED.md")), "the FAILED file is written");
-    // the admin token must not leak even into the FAILED (inspection) file
+    // the admin content must not leak even into the FAILED (inspection) file
     assert.ok(
-      !readFileSync(path.join(out, "digest-team.FAILED.md"), "utf8").includes("ProjectPhoenix")
+      !readFileSync(path.join(out, "digest-team.FAILED.md"), "utf8").includes("ZZSECRET")
     );
+    // AIO-363: the FAILED digest points at the leak-report for detail (the owner brief has none).
+    assert.ok(existsSync(path.join(out, "leak-report.json")), "leak-report.json is written");
+    const leakReport = JSON.parse(readFileSync(path.join(out, "leak-report.json"), "utf8"));
+    assert.ok(leakReport.entries.some((e) => e.sourceTier === "admin"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

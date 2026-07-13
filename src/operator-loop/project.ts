@@ -80,51 +80,110 @@ export function withheldByTier(manifest: RunManifest, audience: Audience): Withh
  *
  * Matching primitive — chosen so the sweep is neither a false-negative sieve nor a false-positive
  * brick (both failure modes flagged in review):
- *   - whole MULTI-WORD summaries + whole PATHS (a distinctive phrase/path is unlikely to appear in
- *     lower-tier prose by coincidence);
+ *   - whole MULTI-WORD summaries (a distinctive phrase is unlikely to appear in lower-tier prose by
+ *     coincidence);
  *   - DISTINCTIVE tokens from summaries/paths: words ≥8 chars (sentinels, identifiers, proper
- *     nouns) OR short mixed alphanumerics ≥3 chars like "40m"/"v12" (sensitive ids);
- *   - descriptive (non-numeric) row keys ≥4 chars.
+ *     nouns) OR short mixed alphanumerics ≥3 chars like "40m"/"v12" (sensitive ids).
  * A single short common word ("Funding") is deliberately NOT swept as a whole string — it would
  * brick valid digests on coincidence, and the PRIMARY defense (tier-bounded input) already keeps
  * such content from ever reaching the drafter.
+ *
+ * AIO-363, part 1 — bare paths/row-ids: file paths and row-ids (whole-string, not tokenized) are
+ * deliberately NOT added to this corpus, for the same reason a short common word isn't. A path/
+ * row-id is a STRUCTURAL pointer, not secret content by itself — and real workspace files routinely
+ * mix tiers per-row in one file (e.g. `3-log/time-log.md` is file-tier `admin` but carries `Tier:
+ * team` rows). When that happens, a legitimately ≤-audience claim's own evidence citation (its own
+ * path, appended AFTER the per-claim sweep — see closeout.ts) coincidentally collides with an
+ * unrelated above-audience signal's path in the SAME file, and the whole-document residual sweep
+ * (closeout.ts) would nuke an entirely clean digest. The primary defense against a real path/row
+ * leak is tier-bounded drafter input (`signalVisible`/`projectManifest`) plus ref resolution in the
+ * C3 verifier — never this sweep. A path's SENSITIVE-ID-shaped tokens (mixed alnum, e.g. a real
+ * identifier) are still swept via `addTokens`; its bare ≥8-char WORD tokens are not (see part 2 —
+ * field evidence showed a path is far more often a generic folder name — "reference", "personal",
+ * "engagement" — than a genuine codename, the same over-fire shape as ordinary prose).
+ *
+ * AIO-363, part 2 — the bigger field-verified contributor: a candidate needle is dropped entirely
+ * when it ALSO occurs (case-insensitive substring) somewhere in the manifest's ≤-audience VISIBLE
+ * signals (summary or path). Real dogfood data showed the length/shape heuristics above still
+ * over-fire on ordinary domain vocabulary — "engineering", "management", "Anthropic", "OpenRouter" —
+ * words that recur in EVERY tier of a real AI-transformation workspace (including the digest's own
+ * deterministic tag-name boilerplate, `renderRuntimeByTag`). A word/phrase that already appears
+ * somewhere the audience is allowed to see carries no additional tier-safety signal by sweeping it
+ * again — it's shared vocabulary, not admin-exclusive content. This "differential" gate is what
+ * turned a 0%-shippable-on-4/4-real-runs corpus into one that only flags genuinely admin-exclusive
+ * strings (proper nouns, sentinels, ids that never occur in ≤-audience content this run).
  */
 export function aboveAudienceStrings(manifest: RunManifest, audience: Audience): Set<string> {
+  return collectAboveAudience(manifest, audience).strings;
+}
+
+/**
+ * Same corpus as {@link aboveAudienceStrings}, but paired with the (most-restrictive) tier each
+ * needle came from — used by the C5 leak-report (AIO-363) to explain WHY a claim was withheld
+ * without re-deriving the sweep. Not used by the sweep itself (which only needs the string set).
+ */
+export function aboveAudienceStringTiers(manifest: RunManifest, audience: Audience): Map<string, Tier> {
+  return collectAboveAudience(manifest, audience).tierOf;
+}
+
+function collectAboveAudience(
+  manifest: RunManifest,
+  audience: Audience
+): { strings: Set<string>; tierOf: Map<string, Tier> } {
   const visible = visibleTiers(audience);
   const out = new Set<string>();
+  const tierOf = new Map<string, Tier>();
   const hasLetter = (t: string) => /[A-Za-z]/.test(t);
   const hasDigit = (t: string) => /[0-9]/.test(t);
 
-  const addPhrase = (v: string | undefined) => {
+  // AIO-363 differential gate: the ≤-audience-VISIBLE text, lowercased, from THIS SAME manifest.
+  // A candidate needle that already occurs here is ordinary shared vocabulary the audience is
+  // already allowed to see — sweeping it again only ever bricks a valid digest on coincidence.
+  let visibleBlob = "";
+  for (const s of manifest.signals ?? []) {
+    if (!signalVisible(s, visible)) continue;
+    visibleBlob += ` ${s.summary ?? ""} ${s.ref?.path ?? ""}`;
+  }
+  visibleBlob = visibleBlob.toLowerCase();
+  const alreadyVisible = (v: string) => visibleBlob.includes(v.toLowerCase());
+
+  const record = (v: string, tier: Tier) => {
+    if (alreadyVisible(v)) return;
+    out.add(v);
+    // A needle can theoretically come from more than one above-audience signal at different
+    // tiers; keep the MOST restrictive (admin > team > external) for reporting purposes.
+    const prev = tierOf.get(v);
+    if (!prev || TIER_RANK[tier] > TIER_RANK[prev]) tierOf.set(v, tier);
+  };
+
+  const addPhrase = (v: string | undefined, tier: Tier) => {
     const t = (v ?? "").trim();
     // A whole string is added only if it's a distinctive PHRASE (multi-token) — never a single
     // bare word, which would substring-collide with ordinary lower-tier prose.
-    if (/\s/.test(t) && t.length >= 4) out.add(t);
+    if (/\s/.test(t) && t.length >= 4) record(t, tier);
   };
-  const addPath = (v: string | undefined) => {
-    const t = (v ?? "").trim();
-    if (t.length >= 4 && !/^[0-9]+$/.test(t)) out.add(t);
-  };
-  const addRow = (v: string | undefined) => {
-    const t = (v ?? "").trim();
-    if (t.length >= 4 && !/^[0-9]+$/.test(t)) out.add(t);
-  };
-  const addTokens = (v: string | undefined) => {
+  // `words: true` also sweeps bare ≥8-char alpha tokens (sentinels/identifiers/proper nouns in
+  // authored prose). `words: false` sweeps ONLY the sensitive-id shape (mixed alnum, e.g. "40m").
+  // AIO-363 field evidence: a bare ≥8-char word carved out of a PATH is overwhelmingly a generic
+  // folder/organizational word ("reference", "personal", "engagement") rather than a project
+  // codename — the exact same false-positive shape as part 2, just via paths instead of summaries.
+  // Summaries are authored free text, where a long word is more plausibly a genuine distinctive
+  // term worth protecting; paths get the narrower, still-real sensitive-id check only.
+  const addTokens = (v: string | undefined, tier: Tier, opts: { words: boolean }) => {
     for (const tok of (v ?? "").split(/[^A-Za-z0-9]+/)) {
-      const distinctiveWord = tok.length >= 8 && !/^[0-9]+$/.test(tok);
+      const distinctiveWord = opts.words && tok.length >= 8 && !/^[0-9]+$/.test(tok);
       const sensitiveId = tok.length >= 3 && hasLetter(tok) && hasDigit(tok);
-      if (distinctiveWord || sensitiveId) out.add(tok);
+      if (distinctiveWord || sensitiveId) record(tok, tier);
     }
   };
 
   for (const s of manifest.signals ?? []) {
     if (signalVisible(s, visible)) continue;
     const sig = s as Signal;
-    addPhrase(sig.summary);
-    addTokens(sig.summary);
-    addPath(sig.ref?.path);
-    addTokens(sig.ref?.path);
-    addRow(sig.ref?.row);
+    const tier = effectiveTier(sig);
+    addPhrase(sig.summary, tier);
+    addTokens(sig.summary, tier, { words: true });
+    addTokens(sig.ref?.path, tier, { words: false });
   }
-  return out;
+  return { strings: out, tierOf };
 }

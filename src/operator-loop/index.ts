@@ -60,9 +60,11 @@ export { explainManifest, type ExplainView, type ExplainLine } from "./explain.j
 export {
   runCloseout,
   runShareable,
+  LEAK_REPORT_FILENAME,
   type CloseoutResult,
   type ShareableResult,
   type ShareableAudience,
+  type LeakReportEntry,
 } from "./closeout.js";
 export {
   draftShareable,
@@ -72,7 +74,12 @@ export {
   type NextWeekAction,
   type DraftResult,
 } from "./drafter.js";
-export { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
+export {
+  projectManifest,
+  withheldByTier,
+  aboveAudienceStrings,
+  aboveAudienceStringTiers,
+} from "./project.js";
 export { sweepForLeaks, hasLeak } from "./leak-sweep.js";
 export {
   anthropicCompletion,

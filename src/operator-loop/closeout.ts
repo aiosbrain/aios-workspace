@@ -9,6 +9,7 @@
 // ledger per audience, never shared. The owner brief is composed LOCALLY (no LLM on admin
 // content). The corrected ledger is used in-process only and never serialized to a shareable path.
 
+import { createHash } from "node:crypto";
 import type { RunManifest } from "./manifest.js";
 import type { Tier } from "./signal.js";
 import {
@@ -27,10 +28,46 @@ import {
   type DraftResult,
   type NextWeekAction,
 } from "./drafter.js";
-import { projectManifest, withheldByTier, aboveAudienceStrings } from "./project.js";
+import {
+  projectManifest,
+  withheldByTier,
+  aboveAudienceStrings,
+  aboveAudienceStringTiers,
+} from "./project.js";
 import { sweepForLeaks } from "./leak-sweep.js";
 import { runtimeByTag, formatHours, type TagTotal } from "./time/runtime.js";
 import type { Signal } from "./signal.js";
+
+/** Filename the CLI always writes a non-empty leak report to, sibling to the digests in the same
+ *  closeout dir — referenced by name (not full path, which closeout.ts doesn't know) from the
+ *  FAILED-digest suppression message. AIO-363. */
+export const LEAK_REPORT_FILENAME = "leak-report.json";
+
+/**
+ * One C5 leak-sweep withhold, admin-tier ONLY (never rendered to a shareable digest). Explains a
+ * withhold well enough to debug it: which entry, the exact needle that matched, which tier it came
+ * from, and a stable hash of the withheld snippet (so repeat runs / dedup don't require storing the
+ * raw snippet twice). AIO-363: this is what `digest-<aud>.FAILED.md` and the CLI summary now point
+ * to instead of "review the owner brief" — the brief has no leak detail at all.
+ */
+export interface LeakReportEntry {
+  audience: ShareableAudience;
+  kind: "claim" | "action" | "whole-document";
+  /** e.g. "claim:2", "action:0", "whole-document" — positional within THIS audience's render. */
+  entryId: string;
+  /** The exact above-audience needle (`aboveAudienceStrings`) that matched. Admin-tier content —
+   *  fine here (this report is owner-only, same trust boundary as brief.md), essential for triage. */
+  matchedString: string;
+  /** The tier of the signal the matched needle originated from. */
+  sourceTier: Tier;
+  /** sha256 (first 16 hex chars) of the withheld snippet — a stable fingerprint without duplicating
+   *  a second full copy of the (possibly large) withheld text in the report. */
+  snippetHash: string;
+}
+
+function snippetHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
 
 export type ShareableAudience = "team" | "external";
 
@@ -47,6 +84,10 @@ export interface ShareableResult {
   leakWithheld: number;
   /** Shareable next-week actions (already tier ≤ audience). */
   nextWeekActions: NextWeekAction[];
+  /** Admin-tier detail behind every `leakWithheld` increment (AIO-363) — empty when leakWithheld
+   *  is 0. Never render this into a shareable artifact; it exists to make FAILED digests and the
+   *  CLI summary debuggable, since the owner brief carries no leak information at all. */
+  leakReport: LeakReportEntry[];
 }
 
 export interface CloseoutResult {
@@ -142,7 +183,22 @@ export async function runShareable(opts: {
     signals: fullProjection.signals.filter((s) => s.kind !== "time"),
   };
   const aboveStrings = aboveAudienceStrings(fullManifest, audience);
+  const aboveTiers = aboveAudienceStringTiers(fullManifest, audience);
   const withheld = withheldByTier(fullManifest, audience);
+  const leakReport: LeakReportEntry[] = [];
+  const recordLeak = (kind: LeakReportEntry["kind"], entryId: string, hits: string[], snippet: string) => {
+    const hash = snippetHash(snippet);
+    for (const matched of hits) {
+      leakReport.push({
+        audience,
+        kind,
+        entryId,
+        matchedString: matched,
+        sourceTier: aboveTiers.get(matched) ?? "admin",
+        snippetHash: hash,
+      });
+    }
+  };
 
   const draft: DraftResult = complete
     ? await draftShareable({ projection, audience, complete })
@@ -159,7 +215,9 @@ export async function runShareable(opts: {
   // ── Render the digest from the POST-correction ledger, with a per-claim text-leak sweep. ──
   let leakWithheld = 0;
   const claimLines: string[] = [];
+  let claimIdx = 0;
   for (const entry of corrected.entries ?? []) {
+    const idx = claimIdx++;
     const r = redactForTier(entry, audience);
     if (!r.emit) {
       // Already a content-free placeholder (admin-only evidence) — a normal redaction, not a leak.
@@ -167,8 +225,10 @@ export async function runShareable(opts: {
       continue;
     }
     // The C3 gap: claim text may quote above-audience content even with an allowed ref. Withhold it.
-    if (sweepForLeaks(r.entry.claim, aboveStrings).length > 0) {
+    const claimHits = sweepForLeaks(r.entry.claim, aboveStrings);
+    if (claimHits.length > 0) {
       leakWithheld++;
+      recordLeak("claim", `claim:${idx}`, claimHits, r.entry.claim);
       claimLines.push("- [withheld — claim text referenced above-audience material]");
       continue;
     }
@@ -181,10 +241,14 @@ export async function runShareable(opts: {
   // evidence refs entirely — an audience-facing action carries no ref, so a fabricated/above-
   // audience ref can never reach the digest or the `--json` payload.
   const safeActions = draft.nextWeekActions
-    .filter((a) => {
-      const leaks = sweepForLeaks(`${a.title} ${a.rationale}`, aboveStrings).length > 0;
-      if (leaks) leakWithheld++;
-      return !leaks;
+    .filter((a, idx) => {
+      const text = `${a.title} ${a.rationale}`;
+      const hits = sweepForLeaks(text, aboveStrings);
+      if (hits.length > 0) {
+        leakWithheld++;
+        recordLeak("action", `action:${idx}`, hits, text);
+      }
+      return hits.length === 0;
     })
     .map((a) => ({ title: a.title, tier: a.tier, rationale: a.rationale }));
 
@@ -205,14 +269,16 @@ export async function runShareable(opts: {
   // Belt-and-suspenders: the fully-rendered document must contain NO above-audience string. The
   // per-claim/per-action sweeps above should guarantee this; a residual hit is a "should never
   // happen" rendering bug — fail SAFE (suppress the body + mark non-shippable), never emit it.
-  if (sweepForLeaks(digestMarkdown, aboveStrings).length > 0) {
+  const wholeDocHits = sweepForLeaks(digestMarkdown, aboveStrings);
+  if (wholeDocHits.length > 0) {
     shippable = false;
     leakWithheld++;
+    recordLeak("whole-document", "whole-document", wholeDocHits, digestMarkdown);
     digestMarkdown = [
       `# Weekly digest — ${audience}`,
       `_${fullManifest.window.from.slice(0, 10)} → ${fullManifest.window.to.slice(0, 10)} · NOT SHIPPABLE_`,
       "",
-      "_Digest suppressed: a residual tier-leak guard tripped during rendering. Review the owner brief._",
+      `_Digest suppressed: a residual tier-leak guard tripped during rendering. The owner brief has no leak detail — see ${LEAK_REPORT_FILENAME} in this closeout (entry id, matched string, source tier, snippet hash) to triage._`,
     ].join("\n");
   }
 
@@ -224,6 +290,7 @@ export async function runShareable(opts: {
     shippable,
     leakWithheld,
     nextWeekActions: safeActions,
+    leakReport,
   };
 }
 
