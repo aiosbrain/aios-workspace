@@ -7,15 +7,6 @@
  * (`client` accepted as a legacy alias of `external`). `admin` and untagged
  * files NEVER sync — default-deny before any network call.
  *
- * Commands:
- *   aios status                what would sync: new / modified / blocked / clean
- *   aios push [--dry-run] [paths…]
- *   aios pull                  fetch team updates → 01-intake/from-brain/ (append-only)
- *   aios query "question"      NL query against the Team Brain
- *   aios export-okf [dir]      emit a tier-filtered OKF bundle (offline, no brain needed)
- *   aios pull-bundle           pull OKF link graph from Team Brain → .aios/bundle.json
- *   aios graph [--from <file>] traverse local OKF link graph (offline, no brain needed)
- *
  * Options: --repo <path> (default: walk up from cwd to find aios.yaml)
  */
 
@@ -95,6 +86,7 @@ import { cmdDecisions } from "./decisions.mjs";
 import { cmdLoop } from "./loop.mjs";
 import { cmdPromote } from "./promote.mjs";
 import { cmdTranscripts } from "./transcripts.mjs";
+import { cmdPm, printProjectionHealth } from "./pm.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -413,7 +405,7 @@ async function apiOptional(cfg, route, fallback) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-function cmdStatus(repo, cfg, patterns, args = []) {
+async function cmdStatus(repo, cfg, patterns, args = []) {
   const { plan } = buildPlan(repo, cfg, patterns);
   if (args.includes("--json")) {
     const item = (i) => ({
@@ -486,6 +478,7 @@ function cmdStatus(repo, cfg, patterns, args = []) {
       )
     );
   }
+  await printProjectionHealth(cfg, { optional: true });
 }
 
 // Best-effort: open a URL in the user's default browser. Returns false (caller prints the
@@ -1013,6 +1006,8 @@ async function cmdPush(repo, cfg, patterns, args) {
   console.log(c.green(`pushed ${pushed}/${plan.push.length} item(s).`));
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
+  if (plan.push.some((item) => item.kind === "task" && result.pushed.has(item.rel)))
+    await printProjectionHealth(cfg, { optional: true });
   return result;
 }
 
@@ -2626,6 +2621,7 @@ usage:
     [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
                                          worktrees whose checked-out branch predates the hooks
   aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline
+  aios pm status [--json]               projection health + recent-run observability
   aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges
     [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
   aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
@@ -2793,7 +2789,7 @@ if (OFFLINE_CMDS.has(cmd)) {
 const patterns = loadSecretPatterns();
 
 try {
-  if (cmd === "status") cmdStatus(repo, cfg, patterns, rest);
+  if (cmd === "status") await cmdStatus(repo, cfg, patterns, rest);
   else if (cmd === "review") await cmdReview(repo, cfg, patterns, rest);
   else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
   else if (cmd === "work") await cmdWork(repo, cfg, patterns, rest);
@@ -2826,6 +2822,7 @@ try {
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
   else if (cmd === "transcripts") await cmdTranscripts(repo, cfg, rest);
+  else if (cmd === "pm") await cmdPm(cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);

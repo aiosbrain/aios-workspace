@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.8** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.9** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -100,6 +100,9 @@ writeback/registration pulls), so a newer client still works against an older br
   (`source` ≠ `session-logs`), and **API-equivalent value** (token estimates, `source =
   session-logs`). Contract-first; additive — a newer CLI tolerates a `404` from an older brain.
   Section below.*
+- *2026-07-13 — **v1.9**: added team-tier **`GET /api/v1/pm-sync/health`** projection
+  observability and explicit **`GET /api/v1/tasks?all=1`** full-table reads. Plain `GET /tasks`
+  remains the dashboard writeback feed. Additive — newer CLIs tolerate a `404` health endpoint.*
 
 ---
 
@@ -236,7 +239,7 @@ limit; `internal` server errors degrade to a bounded in-process fallback rather 
 the gate — see `lib/api/rate-limit.ts`):
 
 - `POST /items`: 120/min per key
-- `GET /items`, `GET /tasks`: 60/min per key
+- `GET /items`, `GET /tasks`, `GET /pm-sync/health`: 60/min per key
 - `GET /decisions`, `GET /projects`: 60/min per key
 - `GET /integrations`: 60/min per key
 - `GET /company-graph`: 60/min per key
@@ -388,8 +391,13 @@ receives only `audience: "external"` rows — via the `visibleTasks` choke-point
 gates `GET /api/v1/decisions` below, applied to the `tasks` table's inherited `audience` column
 (sourced from the task's originating item's `access`).
 
+This plain endpoint is the dashboard **writeback feed**, not a complete task-table read. Pass
+`?all=1` for the explicit tier-filtered full read (up to the endpoint's 500-row bound). The
+response declares `mode: "writeback"` or `mode: "table"` so callers cannot confuse the two.
+
 ```json
 {
+  "mode": "writeback",
   "tasks": [
     { "project": "northwind-aios",
       "rows": [ { "row_key": "T-09", "title": "...", "assignee": "riley",
@@ -410,6 +418,20 @@ append unknown rows to the table; never delete local rows. When the brain sends 
 hierarchy fields, the client emits the optional `Parent | Labels | Priority` columns
 (`labels` comma-joined in one cell); a six-column local table is upgraded in place and an
 existing six-column table without these edits is left untouched.
+
+## `GET /api/v1/pm-sync/health?limit=<N>` — projection observability (team-tier only)
+
+Returns derived projection health plus the most recent projection runs. `limit` defaults to 10
+and is clamped to 1–50. The health status is `never_run`, `ok`, `stale`, or `failed`; `lastRun`
+is null only before the first projection. An `external`-tier key gets `403 forbidden`. Rate limit:
+60/min per key. Clients **MUST tolerate `404`** from a pre-v1.9 brain.
+
+```json
+{
+  "health": { "status": "ok", "ageMs": 42000, "lastRun": { "ok": true, "created": 2, "unchanged": 1, "error_count": 0, "finished_at": "2026-07-13T00:00:00Z" } },
+  "runs": []
+}
+```
 
 ## `GET /api/v1/decisions?since=<ISO8601>` — decision writeback
 
