@@ -7,7 +7,7 @@ import path from "node:path";
 import { c } from "./relay-core.mjs";
 import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
 import { parseModelRef } from "./model-providers.mjs";
-import { loadRubric, runDeterministicChecks } from "./spec-eval.mjs";
+import { loadRubric, runDeterministicChecks, SPEC_BATCH_CONCURRENCY_MAX } from "./spec-eval.mjs";
 
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 const TIMEOUT_MS = 300_000;
@@ -115,7 +115,10 @@ export async function cmdSpecAuthor(repo, args, { models }) {
     throw new Error("spec author needs a readable plan and at least one Markdown issue slice");
   const rubric = loadRubric(path.join(repo, DEFAULT_RUBRIC_REL));
   const outputDir = path.resolve(flag("--out") ?? path.join(path.dirname(planPath), "specs"));
-  const concurrency = Math.min(8, Math.max(1, Number(flag("--concurrency") ?? 6) || 6));
+  const concurrency = Math.min(
+    SPEC_BATCH_CONCURRENCY_MAX,
+    Math.max(1, Number(flag("--concurrency") ?? 6) || 6)
+  );
   const authorCfg = {
     ...models.spec_author,
     ...(flag("--model") ? { model: flag("--model") } : {}),
@@ -154,6 +157,10 @@ export async function cmdSpecAuthor(repo, args, { models }) {
   });
   if (!has("--dry-run")) {
     mkdirSync(outputDir, { recursive: true });
+    const names = run.results.map((item) => path.basename(item.file));
+    if (new Set(names).size !== names.length) {
+      throw new Error("spec author output collision: issue slices must have unique filenames");
+    }
     for (const item of run.results)
       writeFileSync(path.join(outputDir, path.basename(item.file)), `${item.specText}\n`);
   }

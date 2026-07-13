@@ -28,6 +28,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 const DEFAULT_FIX_BUDGET = 2;
 const SPEC_PROMPT_TIMEOUT_MS = 300_000;
+export const SPEC_BATCH_CONCURRENCY_MAX = 8;
 
 // The rule ids the deterministic layer can emit. The rubric↔code drift test asserts every
 // deterministic must/conditional row in the rubric appears here (no silent divergence).
@@ -683,8 +684,9 @@ function collectSpecPaths(input) {
   if (existsSync(absolute)) {
     try {
       readdirSync(absolute);
-    } catch {
-      return [absolute];
+    } catch (error) {
+      if (error?.code === "ENOTDIR") return [absolute];
+      throw error;
     }
     const found = [];
     const visit = (dir) => {
@@ -1045,7 +1047,10 @@ export async function cmdSpec(repo, args) {
       }
       return { file: candidate, tier, ...res };
     };
-    const concurrency = Math.min(8, Math.max(1, Number(flag("--concurrency") ?? 6) || 6));
+    const concurrency = Math.min(
+      SPEC_BATCH_CONCURRENCY_MAX,
+      Math.max(1, Number(flag("--concurrency") ?? 6) || 6)
+    );
     const results = [];
     for (let index = 0; index < specPaths.length; index += concurrency) {
       results.push(

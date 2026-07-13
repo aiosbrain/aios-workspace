@@ -64,6 +64,8 @@ const AGENTIC_STEPS = ["plan", "build", "fix", "fix_escalated", "simplify"];
 const DIVERSITY_PAIRS = [
   ["build", "code_review"],
   ["plan", "plan_review"],
+  ["spec_author", "spec_eval"],
+  ["spec_fix", "spec_eval"],
 ];
 
 const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
