@@ -337,7 +337,7 @@ test("live owner daily surfaces seeded asks; --as team gates them out (constitut
   assert.match(rh.stdout, /Attention \(1\)/);
   assert.match(rh.stdout, /Queued asks \(2\)/);
   assert.match(rh.stdout, /Prod is down/);
-  assert.match(rh.stdout, /Manage this queue with `aios asks`/);
+  assert.match(rh.stdout, /Resolve: `aios asks resolve <id>` · list: `aios asks`/);
 
   // --as team: asks never enter the output.
   const rt = run(dir, ["--as", "team", "--json"]);

@@ -230,7 +230,7 @@ function renderDaily(o) {
   // workspace roll-up. Empty for any --as view (buildDailyOrientation gates them out).
   if (o.counts.attention) section("Attention", o.attention ?? [], o.counts.attention);
   if (o.counts.queuedAsks) section("Queued asks", o.queuedAsks ?? [], o.counts.queuedAsks);
-  if (asksTotal) console.log(c.dim("  Manage this queue with `aios asks`."));
+  if (asksTotal) console.log(c.dim("  Resolve: `aios asks resolve <id>` · list: `aios asks`"));
   section("Blocked", o.blocked, o.counts.blocked);
   section("Owed today", o.owedToday, o.counts.owedToday);
   section("Today's calendar", o.calendar ?? [], o.counts.calendar ?? 0);

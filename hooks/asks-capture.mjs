@@ -296,6 +296,33 @@ function handleStop(root, payload) {
   );
 }
 
+// A new prompt from the same session means the owner has returned to the agent. Close only its
+// idle blockers; decisions and all other asks remain explicitly actionable.
+function resolveIdleForSession(root, payload) {
+  const sessionId = typeof payload.session_id === "string" ? payload.session_id : null;
+  if (!sessionId) return;
+  withStoreLock(root, (abs) => {
+    const open = new Map();
+    for (const line of readFileSync(abs, "utf8").split(/\r?\n/)) {
+      try {
+        const op = JSON.parse(line);
+        if (op.op === "create" && op.ask?.id) open.set(op.ask.id, op.ask);
+        else if ((op.op === "resolve" || op.op === "orphan") && op.id) open.delete(op.id);
+      } catch {
+        /* malformed lines stay the store reader's concern */
+      }
+    }
+    const at = new Date().toISOString();
+    for (const ask of open.values()) {
+      if (ask.kind === "idle" && ask.source === "hook:idle" && ask.sessionId === sessionId)
+        appendFileSync(
+          abs,
+          JSON.stringify({ v: SCHEMA_VERSION, op: "resolve", id: ask.id, at }) + "\n"
+        );
+    }
+  });
+}
+
 async function readStdin() {
   if (process.stdin.isTTY) return "";
   const chunks = [];
@@ -325,6 +352,7 @@ async function main() {
   const event = payload.hook_event_name;
   if (event === "Notification") handleNotification(root, payload);
   else if (event === "Stop") handleStop(root, payload);
+  else if (event === "UserPromptSubmit") resolveIdleForSession(root, payload);
 }
 
 main()

@@ -91,6 +91,7 @@ function wireAsksHooksInto(target, { dryRun = false } = {}) {
   const wanted = [
     ["Notification", undefined, "asks-capture.mjs"],
     ["Stop", undefined, "asks-capture.mjs"],
+    ["UserPromptSubmit", undefined, "asks-capture.mjs"],
     ["PostToolUse", "AskUserQuestion|ExitPlanMode", "decision-capture.mjs"],
   ];
   const added = [];

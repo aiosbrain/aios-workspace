@@ -125,6 +125,11 @@ test("wire is idempotent when hooks already present (relative path)", () => {
               hooks: [{ type: "command", command: "${CLAUDE_PROJECT_DIR}/hooks/asks-capture.mjs" }],
             },
           ],
+          UserPromptSubmit: [
+            {
+              hooks: [{ type: "command", command: "${CLAUDE_PROJECT_DIR}/hooks/asks-capture.mjs" }],
+            },
+          ],
           PostToolUse: [
             {
               matcher: "AskUserQuestion|ExitPlanMode",
