@@ -6,7 +6,9 @@ import {
   runShip,
   SHIP_EXIT,
   buildSpecTextFromIssue,
+  buildLightPlanFromSpec,
   formatSpecEvalAudit,
+  specSafetyFlag,
 } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
@@ -131,11 +133,30 @@ function optsFor(o = {}) {
     maxFixRounds: 3,
     reviewers: ["bugbot", "gpt-5.5"],
     planRunner: "cli",
+    loop: "full",
     dryRun: false,
     resume: false,
     skipSpecGate: false,
     ...o,
   };
+}
+
+console.log("light-loop helpers preserve only the approved spec contract");
+{
+  const spec = `---\nsafety: true\n---\n\n## Interfaces\n- public API\n\n## Implementation\n- wire the route\n\n## Acceptance\n- command exits 0\n\n## Notes\nignore me`;
+  const plan = buildLightPlanFromSpec(spec, { issue: "AIO-398" });
+  check("frontmatter safety flag is recognized", specSafetyFlag(spec) === true);
+  check(
+    "safety flag only reads leading frontmatter",
+    specSafetyFlag("# title\n---\nsafety: true\n---") === false
+  );
+  check("includes interfaces", plan.includes("## Interfaces") && plan.includes("public API"));
+  check(
+    "includes implementation",
+    plan.includes("## Implementation") && plan.includes("wire the route")
+  );
+  check("includes acceptance", plan.includes("## Acceptance") && plan.includes("command exits 0"));
+  check("excludes unrelated sections", !plan.includes("ignore me"));
 }
 
 console.log("buildSpecTextFromIssue includes title, description, comments");
@@ -226,6 +247,42 @@ console.log("SPEC_READY proceeds to plan/build");
   });
   check("exit OK", code === SHIP_EXIT.OK);
   check("eval ran once", deps.evalCalls() === 1);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("light loop skips recon + planner and resolves the pinned profile");
+{
+  let agentCalls = 0;
+  let profile = null;
+  const deps = makeDeps({
+    resolveModels: (args) => {
+      profile = args.profile;
+      return resolveLoopModels(args);
+    },
+    callClaudeAgent: async () => {
+      agentCalls++;
+      return "unexpected planner or recon call";
+    },
+  });
+  const { code, records } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-262",
+    opts: optsFor({ loop: "light" }),
+    deps,
+  });
+  check("reaches OK", code === SHIP_EXIT.OK);
+  check("uses the light model profile", profile === "light");
+  check("does not call recon or planner agents", agentCalls === 0);
+  check(
+    "records recon as skipped",
+    records.stages.some((s) => s.stage === "recon" && s.skipped)
+  );
+  check(
+    "records a spec-derived plan",
+    records.stages.some((s) => s.stage === "plan" && s.derived)
+  );
+  const plan = readFileSync(path.join(deps.repo, ".aios", "loop", "AIO-262", "plan.md"), "utf8");
+  check("writes a spec-derived plan artifact", /light loop/.test(plan));
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

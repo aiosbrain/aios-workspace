@@ -357,6 +357,16 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   against the Linear issue body (description + comments). Only `SPEC_READY` proceeds; otherwise ship
   exits `SPEC_NOT_READY` (15) with findings in the audit dir and a hint to
   `aios spec fix .aios/loop/<issue>/spec.md`. Use `--skip-spec-gate` only as a logged escape hatch.
+- **Light loop (AIO-398).** `aios ship AIO-<n> --loop light` keeps the mandatory `SPEC_READY`
+  gate but skips recon, the planner, and the plan gate. It derives the builder contract from the
+  spec's **Interfaces**, **Implementation**, and **Acceptance** sections, then runs the normal
+  build → review → fix → consolidate → merge path. Its pinned profile wins over
+  `.aios/loop-models.yaml` (only an explicit CLI override can win), so a session or local config
+  cannot silently change the deliberate build/reviewer split. `--skip-spec-gate` is rejected for
+  this loop. A light-loop safety review runs only when the raw issue description begins with YAML
+  frontmatter containing `safety: true`; it does not infer that requirement from changed paths.
+  Resume with the same loop shape — a full/light checkpoint mismatch is rejected rather than
+  reusing an incompatible plan.
 
 ### Agent convention — writing Linear specs
 

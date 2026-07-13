@@ -3,7 +3,7 @@
 // mirrors scripts/loop-config.mjs. The default matrix is baked in code; an optional
 // flat-YAML file at .aios/loop-models.yaml tunes it, and CLI flags win over both.
 //
-// Precedence (applied per field): CLI overrides > file > defaults.
+// Precedence (applied per field): CLI overrides > loop profile (LOOP_PROFILES) > file > defaults.
 //
 // Diversity guard (fail closed): the builder and its reviewer — and the planner and
 // its reviewer — MUST be different model families, so the reviewer is a genuinely
@@ -54,6 +54,38 @@ export const DEFAULT_MODELS = {
 };
 
 export { modelFamily } from "./model-providers.mjs";
+
+// ── loop profiles (AIO-398) ──────────────────────────────────────────────────────────────────
+// A profile is a named, fully-pinned variant of the step matrix for an alternative loop shape.
+// Profile pins sit ABOVE the .aios/loop-models.yaml file (CLI > profile > file > defaults):
+// a profile exists precisely so the loop can never inherit the session model — or a stray
+// file override — for a step it routes deliberately.
+//
+// `light` (aios ship --loop light): the plan/plan_review stages are skipped entirely — the
+// SPEC_READY spec IS the plan — so the loop is build → code_review → fix (bounded) →
+// consolidate, with safety_review only on `safety: true` spec frontmatter. Routing
+// (subs only for Claude/Codex; API only for opencode/openrouter):
+//   build / fix / fix_escalated → claude:claude-sonnet-5 (Claude sub via the claude CLI runner)
+//   code_review → GPT-5.6 Sol. The loop has NO codex runner for prompt-only review steps
+//     (scripts/runtimes.mjs's `codex` entry is a GUI driver / skills-export layout only;
+//     model-call.mjs dispatches claude/cursor/opencode/openrouter/deepseek), so Sol routes
+//     through the OpenCode Zen API (`opencode:` — API, per the constraint above).
+//   consolidate → claude:claude-haiku-4-5 (cheap Claude sub).
+// The build↔code_review pair stays cross-family (anthropic vs openai) and is enforced by the
+// SAME assertDiversity guard the plan/plan_review pair uses — profiles resolve through
+// resolveLoopModels, never around it.
+export const LOOP_PROFILES = {
+  light: {
+    skips: ["plan", "plan_review"],
+    overrides: {
+      build: { model: "claude:claude-sonnet-5", effort: "high" },
+      code_review: { model: "opencode:gpt-5.6-sol" },
+      fix: { model: "claude:claude-sonnet-5", effort: "medium" },
+      fix_escalated: { model: "claude:claude-sonnet-5", effort: "high" },
+      consolidate: { model: "claude:claude-haiku-4-5" },
+    },
+  },
+};
 
 export const STEPS = Object.keys(DEFAULT_MODELS);
 
@@ -162,8 +194,19 @@ function assertDiversity(resolved) {
  * @param {string}  [o.configPath]     path to .aios/loop-models.yaml (default: <repo>/.aios/loop-models.yaml)
  * @param {string}  [o.repo]           repo root, used to derive the default configPath
  * @param {object}  [o.cliOverrides]   { [step]: { model?, effort?, timeoutMs? } } — win over file + defaults
+ * @param {string}  [o.profile]        named loop profile (see LOOP_PROFILES) — its pins sit
+ *                                     between CLI overrides and the file (CLI > profile > file)
  */
-export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) {
+export function resolveLoopModels({ configPath, repo, cliOverrides = {}, profile = null } = {}) {
+  let profileCfg = null;
+  if (profile != null) {
+    profileCfg = LOOP_PROFILES[profile];
+    if (!profileCfg) {
+      die(
+        `unknown loop profile '${profile}' — known profiles: ${Object.keys(LOOP_PROFILES).join(", ")}.`
+      );
+    }
+  }
   const file = configPath ?? (repo ? path.join(repo, ".aios", "loop-models.yaml") : null);
   // A MISSING file is fine (defaults). A PRESENT-but-broken file fails loudly, never a
   // silent fall-back to defaults — an unreadable/unparseable/malformed config is a bug.
@@ -190,10 +233,13 @@ export function resolveLoopModels({ configPath, repo, cliOverrides = {} } = {}) 
   for (const step of STEPS) {
     const def = DEFAULT_MODELS[step];
     const over = cliOverrides[step] ?? {};
+    // Profile pins beat the file deliberately: a profile step must never be silently
+    // re-routed by a stray .aios/loop-models.yaml line (the AIO-398 session-model burn).
+    const prof = profileCfg?.overrides?.[step] ?? {};
 
-    const model = over.model ?? fileCfg[`${step}_model`] ?? def.model;
+    const model = over.model ?? prof.model ?? fileCfg[`${step}_model`] ?? def.model;
 
-    const effort = over.effort ?? fileCfg[`${step}_effort`] ?? def.effort;
+    const effort = over.effort ?? prof.effort ?? fileCfg[`${step}_effort`] ?? def.effort;
 
     let timeoutMs;
     if (over.timeoutMs != null) {
