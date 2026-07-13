@@ -373,6 +373,7 @@ blocked files never leave this machine. To sync one: add `access: team` (or `ext
 | `aios push [--dry-run] [paths…]` | Push team- and external-tier content to the brain | You've reviewed status and want to send |
 | `aios pull` | Fetch team updates into `1-inbox/from-brain/` (append-only) | Pulling shared context back down |
 | `aios pull deliverable <path>` | Fetch one item (or a folder prefix) on demand | You need a specific shared artifact |
+| `aios promote <file> [--to 2-work\|4-shared] [--dry-run]` | Anonymize-then-promote: COPY a private file (`5-personal/`, or any dir outside `sync_include`) to `2-work/` (team) or `4-shared/` (client/company), scanning the copy with the same secret + leak-gate checks as `push`, injecting `access:` frontmatter, and logging the promotion | A private draft (case study, portfolio piece, deliverable template) matures to a wider audience |
 | `aios work done <key> [--push]` | Mark a task done; `--push` notifies the brain/PM sync | Closing a task from the CLI |
 | `aios query "question"` | Ask the Team Brain; grounded answer with `[S#]` citations | You have a cross-team question |
 

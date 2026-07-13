@@ -16,6 +16,11 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** ANSI colour helpers. The 6-key superset (includes `bold`, which the old
  *  relay-core copy lacked); the 5 shared keys are byte-identical to both prior copies. */
@@ -70,4 +75,35 @@ export function gitConfig(repo, key) {
   } catch {
     return "";
   }
+}
+
+// ── secret scanning (shared patterns) ───────────────────────────────────────
+// Single source for scripts/aios.mjs (push/review) AND scripts/promote.mjs (AIO-353) so
+// the two never diverge on what counts as a leaked secret. Embedded fallback covers the
+// case validation/secret-patterns.txt is unavailable (e.g. run from outside the toolkit).
+export const FALLBACK_SECRET_PATTERNS = [
+  "AKIA[0-9A-Z]{16}",
+  "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+  "gh[ps]_[A-Za-z0-9_]{36,}",
+  "xox[bporas]-[A-Za-z0-9-]+",
+  "sk-[A-Za-z0-9_-]{40,}",
+];
+
+/** Load the shared secret-pattern list (validation/secret-patterns.txt), compiled to RegExps. */
+export function loadSecretPatterns() {
+  const shared = path.join(SCRIPT_DIR, "..", "validation", "secret-patterns.txt");
+  let lines = FALLBACK_SECRET_PATTERNS;
+  if (existsSync(shared)) {
+    lines = readFileSync(shared, "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+  }
+  return lines.map((l) => new RegExp(l));
+}
+
+/** First matching pattern source in `content`, or null if clean. */
+export function findSecret(content, patterns) {
+  for (const re of patterns) if (re.test(content)) return re.source;
+  return null;
 }
