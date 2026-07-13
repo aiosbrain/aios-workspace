@@ -1,0 +1,23 @@
+{
+  "id": "gog",
+  "name": "GOG (Gmail/Calendar)",
+  "category": "comms",
+  "descriptor_version": "1.0.0",
+  "transport": "skill",
+  "auth_mode": "none",
+  "status": "available",
+  "summary": "Write today's Google Calendar events + unread Gmail inbox threads into 1-inbox/comms/activity.jsonl for the operator loop's comms source — our own connector over the local `gog` CLI (Gmail/Calendar/Drive, OAuth refresh token; does not use any MCP).",
+  "secrets": [],
+  "scopes": ["Calendar read (today's events)", "Gmail read (inbox search)"],
+  "scopes_advisory": true,
+  "docs": {
+    "token_create_url": null,
+    "scopes_url": null,
+    "instructions": "Install and authenticate `gog` first (see the gog-workspace skill: `gog login <email>`). No secret is stored by AIOS — `gog` holds its own OAuth refresh token locally. Once `gog auth status` shows a valid account, run the gog-activity skill to start writing activity.jsonl.",
+    "verified_against_docs": "2026-07-13"
+  },
+  "skill": {
+    "skill_name": "gog-activity",
+    "source": ".claude/descriptors/skills/gog-activity/"
+  }
+}
