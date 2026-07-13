@@ -2624,7 +2624,7 @@ usage:
   aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into
     [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
                                          worktrees whose checked-out branch predates the hooks
-  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences the local ping
+  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges
     [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
   aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
     [--since date] [--json]             AskUserQuestion + plan-approval prompts, newest first
