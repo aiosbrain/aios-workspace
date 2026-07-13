@@ -122,15 +122,10 @@ test("multi-home task lookup: a key living only in 3-log/tasks-private.md is fou
     writeFileSync(
       path.join(dir, "3-log", "tasks-team.md"),
       fm({ access: "team", type: "Task List" }) +
-        taskTable([{ ID: "TT1", Task: "team thing", Status: "Todo" }], [
-          "ID",
-          "Task",
-          "Assignee",
-          "Status",
-          "Sprint",
-          "Due",
-          "Linear",
-        ])
+        taskTable(
+          [{ ID: "TT1", Task: "team thing", Status: "Todo" }],
+          ["ID", "Task", "Assignee", "Status", "Sprint", "Due", "Linear"]
+        )
     );
     writeFileSync(
       path.join(dir, "3-log", "tasks-private.md"),
@@ -165,15 +160,10 @@ test("`aios work done <key> --push` refuses loudly and does NOT fire a work even
     writeFileSync(
       path.join(dir, "3-log", "tasks-team.md"),
       fm({ access: "private", type: "Task List" }) +
-        taskTable([{ ID: "TT1", Task: "blocked thing", Status: "Todo" }], [
-          "ID",
-          "Task",
-          "Assignee",
-          "Status",
-          "Sprint",
-          "Due",
-          "Linear",
-        ])
+        taskTable(
+          [{ ID: "TT1", Task: "blocked thing", Status: "Todo" }],
+          ["ID", "Task", "Assignee", "Status", "Sprint", "Due", "Linear"]
+        )
     );
 
     const r = await runAios(["work", "done", "TT1", "--push"], dir);
@@ -205,23 +195,15 @@ test("headline tier-block warning: a sync_include-whitelisted loop-critical file
   try {
     mkdirSync(path.join(dir, "3-log"), { recursive: true });
     mkdirSync(path.join(dir, "2-work"), { recursive: true });
-    writeFileSync(
-      path.join(dir, "aios.yaml"),
-      baseYaml("", ["3-log/tasks-team.md", "2-work"])
-    );
+    writeFileSync(path.join(dir, "aios.yaml"), baseYaml("", ["3-log/tasks-team.md", "2-work"]));
     // loop-critical + whitelisted + tier-blocked → headline.
     writeFileSync(
       path.join(dir, "3-log", "tasks-team.md"),
       fm({ access: "private", type: "Task List" }) +
-        taskTable([{ ID: "TT1", Task: "x", Status: "Todo" }], [
-          "ID",
-          "Task",
-          "Assignee",
-          "Status",
-          "Sprint",
-          "Due",
-          "Linear",
-        ])
+        taskTable(
+          [{ ID: "TT1", Task: "x", Status: "Todo" }],
+          ["ID", "Task", "Assignee", "Status", "Sprint", "Due", "Linear"]
+        )
     );
     // ordinary blocked file (whitelisted dir, but not loop-critical filename) → no headline.
     writeFileSync(
