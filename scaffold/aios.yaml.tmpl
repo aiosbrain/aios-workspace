@@ -48,6 +48,10 @@ sync_tiers:
 # Paths considered for sync (relative to workspace root). Files still need an
 # `access:` frontmatter tier within sync_tiers to actually push — files with
 # no access tier are blocked by default (default-deny).
+#
+# business-owner context only: `6-business/` (bookkeeping, entities, engagements,
+# insurance, administration, partnerships, portfolio) is intentionally NOT listed
+# here. Never add it — see .claude/rules/access-control.md.
 sync_include:
   - 0-context
   - 2-work

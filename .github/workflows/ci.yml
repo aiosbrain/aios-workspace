@@ -103,6 +103,18 @@ jobs:
             --output /tmp/ci-sample-eng-ops
           bash validation/validate-all.sh /tmp/ci-sample-eng-ops
 
+      - name: Scaffold smoke test + validate (business-owner context)
+        run: |
+          bash scripts/scaffold-project.sh \
+            --context business-owner \
+            --slug ci-sample-bo-ops --stakeholder "Sample Co" --owner alex \
+            --members "alex,sam,jordan" --org your-github-org --currency USD \
+            --output /tmp/ci-sample-bo-ops
+          bash validation/validate-all.sh /tmp/ci-sample-bo-ops
+          # 6-business/ must exist and must never be in sync_include (AIO-351).
+          test -d /tmp/ci-sample-bo-ops/6-business
+          ! grep -A20 '^sync_include:' /tmp/ci-sample-bo-ops/aios.yaml | grep -q '6-business'
+
       - name: Sync client offline smoke (status + dry-run push)
         run: |
           node scripts/aios.mjs status --repo /tmp/ci-sample-team-ops

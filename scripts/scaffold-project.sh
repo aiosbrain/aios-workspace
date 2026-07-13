@@ -9,19 +9,25 @@
 #   ./scripts/scaffold-project.sh \
 #     --slug alex-aios \
 #     --owner alex \
-#     --context consultant|employee \
+#     --context consultant|employee|business-owner \
 #     [--stakeholder "Acme Corp"] [--team "sam,jordan"] \
 #     [--team-id <brain team id>] [--brain-url <url>] \
 #     [--org your-github-org] [--currency USD] [--output ~/Projects/alex-aios] [--dry-run]
 #
-# Onboarding context (the spine skin):
-#   consultant  → you work in a team for a CLIENT.  0-context=engagement+scope,
-#                 4-shared=client-facing, outward tier "client", billable hours.
-#   employee    → you work inside a COMPANY.        0-context=role+OKRs,
-#                 4-shared=company-shared, outward tier "company", lightweight hours.
+# Onboarding context (the spine skin) — three first-class choices, not a bolt-on:
+#   consultant     → you work in a team for a CLIENT.  0-context=engagement+scope,
+#                    4-shared=client-facing, outward tier "client", billable hours.
+#   employee       → you work inside a COMPANY.        0-context=role+OKRs,
+#                    4-shared=company-shared, outward tier "company", lightweight hours.
+#   business-owner → the consultant profile PLUS you also own/run the business.
+#                    Same 0-context=engagement+scope as consultant, plus a sanctioned
+#                    `6-business/` sibling root (engagements, bookkeeping, administration,
+#                    entities, insurance, partnerships, portfolio) for business admin —
+#                    deliberately kept OUTSIDE sync_include (see
+#                    scaffold/.claude/rules/access-control.md).
 #
-# Spine (same folder names in both contexts):
-#   0-context  1-inbox  2-work  3-log  4-shared  5-personal  .claude/
+# Spine (same folder names in all contexts; 6-business/ only in business-owner):
+#   0-context  1-inbox  2-work  3-log  4-shared  5-personal  .claude/  [6-business/]
 #
 # Legacy aliases still accepted: --profile engagement→consultant / project→employee,
 #   --client→--stakeholder, --captain/--lead→--owner.
@@ -71,8 +77,19 @@ case "$CONTEXT" in
   employee)
     CONTEXT_TITLE="Role"; OUTWARD_TIER="company"; OUTWARD_DESC="company-shared"
     STAKEHOLDER_LABEL="company" ;;
-  *) echo -e "${RED}Error: --context must be 'consultant' or 'employee'${NC}"; exit 1 ;;
+  business-owner)
+    # Consultant profile + a sanctioned 6-business/ sibling (business admin, outside sync).
+    CONTEXT_TITLE="Engagement"; OUTWARD_TIER="client"; OUTWARD_DESC="client-facing"
+    STAKEHOLDER_LABEL="client" ;;
+  *) echo -e "${RED}Error: --context must be 'consultant', 'employee', or 'business-owner'${NC}"; exit 1 ;;
 esac
+
+# consultant + business-owner share the same 0-context/hours/client-surface skin; only
+# business-owner additionally gets the 6-business/ sibling root.
+IS_CONSULTANT_LIKE=false
+if [ "$CONTEXT" = consultant ] || [ "$CONTEXT" = business-owner ]; then IS_CONSULTANT_LIKE=true; fi
+IS_BUSINESS_OWNER=false
+if [ "$CONTEXT" = business-owner ]; then IS_BUSINESS_OWNER=true; fi
 
 # Required
 for var in SLUG OWNER; do
@@ -85,7 +102,7 @@ done
 D_CONTEXT="0-context"; D_INBOX="1-inbox"; D_WORK="2-work"
 D_LOG="3-log"; D_SHARED="4-shared"; D_PERSONAL="5-personal"
 
-STAKEHOLDER="${STAKEHOLDER:-$([ "$CONTEXT" = consultant ] && echo 'Your Client' || echo 'Your Company')}"
+STAKEHOLDER="${STAKEHOLDER:-$([ "$IS_CONSULTANT_LIKE" = true ] && echo 'Your Client' || echo 'Your Company')}"
 STAKEHOLDER_FULL="${STAKEHOLDER_FULL:-$STAKEHOLDER}"
 DESC="${DESC:-AIOS $CONTEXT workspace}"
 OUTPUT="${OUTPUT:-$HOME/Projects/$SLUG}"
@@ -115,6 +132,7 @@ echo "================================================"
 if [ "$DRY_RUN" = true ]; then
   echo -e "${YELLOW}DRY RUN — spine that would be created:${NC}"
   printf '  %s/\n' "$D_CONTEXT" "$D_INBOX" "$D_WORK" "$D_LOG" "$D_SHARED" "$D_PERSONAL" ".claude"
+  if [ "$IS_BUSINESS_OWNER" = true ]; then printf '  6-business/  (outside sync_include)\n'; fi
   echo -e "${GREEN}Remove --dry-run to create.${NC}"; exit 0
 fi
 
@@ -137,7 +155,7 @@ touch "$OUTPUT/$D_INBOX/transcripts/.gitkeep" "$OUTPUT/$D_INBOX/from-brain/.gitk
 # ── context skin: 0-context starter files ─────────────────────────────────────
 idx() { cat > "$1"; }  # helper: idx <path> <<EOF ... EOF
 
-if [ "$CONTEXT" = consultant ]; then
+if [ "$IS_CONSULTANT_LIKE" = true ]; then
   idx "$OUTPUT/$D_CONTEXT/index.md" << 'EOF'
 ---
 type: index
@@ -314,14 +332,14 @@ EOF
 idx "$OUTPUT/$D_LOG/hours-log.md" << EOF
 # Hours Log — $OWNER
 
-$([ "$CONTEXT" = consultant ] && echo 'Billable time for this engagement.' || echo 'Lightweight time tracking.')
+$([ "$IS_CONSULTANT_LIKE" = true ] && echo 'Billable time for this engagement.' || echo 'Lightweight time tracking.')
 
 | Date | Activity | Hours | Tag | Ref |
 |------|----------|-------|-----|-----|
 EOF
 
-# client-surface-log only for consultants
-if [ "$CONTEXT" = consultant ]; then
+# client-surface-log only for consultant-like contexts (consultant, business-owner)
+if [ "$IS_CONSULTANT_LIKE" = true ]; then
   idx "$OUTPUT/$D_LOG/client-surface-log.md" << EOF
 ---
 access: team
@@ -341,6 +359,104 @@ Your private scratch: drafts, prep, thinking-in-progress. **Never syncs** to the
 Team Brain (no access tier here). Promote to 2-work/ or 4-shared/ when ready.
 EOF
 
+# ── 6-business: business-owner only — a sanctioned sibling root to the 0-5 spine ──
+# for running the business itself (not client delivery). Deliberately kept OUTSIDE
+# aios.yaml's sync_include — see scaffold/.claude/rules/access-control.md and
+# scaffold/aios.yaml.tmpl. Never added conditionally per-file; the whole tree is a
+# second layer of defense beyond any individual file's access: tag.
+if [ "$IS_BUSINESS_OWNER" = true ]; then
+  D_BUSINESS="6-business"
+  mkdir -p "$OUTPUT/$D_BUSINESS"/{engagements,bookkeeping,administration,entities,insurance,partnerships,portfolio}
+
+  idx "$OUTPUT/$D_BUSINESS/README.md" << 'EOF'
+---
+access: private
+---
+# 6-business
+
+Business administration — for the owner who also runs the business, not client
+delivery (that's `0-context/` and `2-work/`). A sanctioned sibling root to the
+0-5 spine, deliberately kept **outside** `sync_include` (see
+`.claude/rules/access-control.md`). Nothing here ever syncs to the Team Brain,
+regardless of any individual file's `access:` tag.
+
+* [Engagements](engagements/) — contracts, SOWs, per-client business admin
+* [Bookkeeping](bookkeeping/) — ledgers, invoices, financial records
+* [Administration](administration/) — registrations, filings, business paperwork
+* [Entities](entities/) — legal entity records (formation, registers, ownership)
+* [Insurance](insurance/) — policies, coverage, claims
+* [Partnerships](partnerships/) — partner and subcontractor agreements
+* [Portfolio](portfolio/) — case studies and reusable business-dev material
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/engagements/README.md" << 'EOF'
+---
+access: private
+---
+# Engagements — business admin
+
+Contracts, statements of work, and per-engagement business paperwork — the
+admin side of client work, not the delivery content (see `0-context/`, `2-work/`).
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/bookkeeping/README.md" << 'EOF'
+---
+access: private
+---
+# Bookkeeping
+
+Ledgers, invoices, statements, and financial records for the business entity.
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/administration/README.md" << 'EOF'
+---
+access: private
+---
+# Administration
+
+Registrations, filings, and other business admin paperwork not specific to a
+single entity, client, or engagement.
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/entities/README.md" << 'EOF'
+---
+access: private
+---
+# Entities
+
+Legal entity records — formation documents, registers, ownership, and
+per-entity reference data (bank details, registered agent, etc.).
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/insurance/README.md" << 'EOF'
+---
+access: private
+---
+# Insurance
+
+Policies, coverage summaries, certificates, and claims.
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/partnerships/README.md" << 'EOF'
+---
+access: private
+---
+# Partnerships
+
+Agreements and working notes for business partners and subcontractors.
+EOF
+
+  idx "$OUTPUT/$D_BUSINESS/portfolio/README.md" << 'EOF'
+---
+access: private
+---
+# Portfolio
+
+Case studies and reusable deliverables kept for business development —
+not client-facing content (promote to `4-shared/` deliberately if it ever is).
+EOF
+fi
+
 # ── templates (CLAUDE.md, README, aios.yaml, workspace.yaml, contacts) ────────
 echo "Processing templates..."
 process_template() {
@@ -355,9 +471,32 @@ process_template() {
     "$1" > "$2"
 }
 
+# business-owner only: an extra spine line/table-row documenting 6-business/, spliced
+# in via awk (not sed -e, since the table-row form contains literal `|` which would
+# collide with sed's `|` delimiter above).
+SIXBUSINESS_LINE_PLAIN=""
+SIXBUSINESS_LINE_TABLE=""
+if [ "$IS_BUSINESS_OWNER" = true ]; then
+  SIXBUSINESS_LINE_PLAIN=$'\n6-business/   business admin — bookkeeping, entities, insurance, engagements, partnerships, portfolio (private; outside sync_include)'
+  SIXBUSINESS_LINE_TABLE=$'\n| `6-business/` | business admin (bookkeeping, entities, insurance, engagements, partnerships, portfolio) | private — outside sync_include |'
+fi
+splice_sixbusiness() {
+  # $1 = file to patch in place, $2 = plain|table. Passed via the environment (not awk -v):
+  # macOS's /usr/bin/awk (nawk) rejects a -v value containing a literal newline, and this
+  # substitution's value spans two lines (the original line + the new 6-business row).
+  local file="$1"
+  if [ "$2" = table ]; then SIXBUSINESS_SPLICE="$SIXBUSINESS_LINE_TABLE"; else SIXBUSINESS_SPLICE="$SIXBUSINESS_LINE_PLAIN"; fi
+  export SIXBUSINESS_SPLICE
+  awk '{gsub(/\{\{SIXBUSINESS_LINE\}\}/, ENVIRON["SIXBUSINESS_SPLICE"]); print}' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  unset SIXBUSINESS_SPLICE
+}
+
 process_template "$SCAFFOLD/README.md.tmpl" "$OUTPUT/README.md"
+splice_sixbusiness "$OUTPUT/README.md" plain
 process_template "$SCAFFOLD/.claude/CLAUDE.md.tmpl" "$OUTPUT/.claude/CLAUDE.md"
+splice_sixbusiness "$OUTPUT/.claude/CLAUDE.md" table
 process_template "$SCAFFOLD/AGENTS.md.tmpl" "$OUTPUT/AGENTS.md"
+splice_sixbusiness "$OUTPUT/AGENTS.md" table
 process_template "$SCAFFOLD/RESOLVER.md.tmpl" "$OUTPUT/RESOLVER.md"
 process_template "$SCAFFOLD/aios.yaml.tmpl" "$OUTPUT/aios.yaml"
 process_template "$SCAFFOLD/package.json.tmpl" "$OUTPUT/package.json"
@@ -433,6 +572,30 @@ for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs file-governa
   chmod +x "$OUTPUT/hooks/$hook"
 done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
+
+# Slack per-channel tier map (AIO-354) — stamp a commented starter config so a fresh
+# workspace never day-1-blocks the Operator Loop's comms seam. JSON can't carry real
+# comments, so the guidance lives in `_comment`/`_docs` keys (src/operator-loop/comms/
+# config.ts's parser ignores unrecognized top-level keys). `channels: {}` + null
+# destinations is a verified clean no-op (config.ts: missing/empty → safe defaults;
+# sender.ts: no destination channel → "rejected/no-destination-channel", never throws,
+# never sends) until a real admin fills in real channel names.
+mkdir -p "$OUTPUT/.aios"
+idx "$OUTPUT/.aios/comms-config.json" << 'EOF'
+{
+  "_comment": "Slack per-channel tier map for the Operator Loop comms seam. Nothing auto-dispatches until you fill in real channel names under \"channels\" below — an unlisted channel is unresolvable (default-deny). Worked example: docs/v1-operator-loop/domains/comms-config.example.json.",
+  "_docs": "docs/v1-operator-loop/domains/comms-config.example.json",
+  "lookbackHours": 168,
+  "sender": {
+    "channel": null,
+    "on": null
+  },
+  "slack": {
+    "defaultChannel": null
+  },
+  "channels": {}
+}
+EOF
 
 # Pin the toolkit version this workspace was stamped from. `aios update` reads this
 # as the sync baseline; without it the first update has no base and can only blind-

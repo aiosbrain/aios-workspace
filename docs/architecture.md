@@ -62,24 +62,28 @@ lands in `brain-api.md` for product reasons, and both the CLI and the MCP bridge
 
 ## Context-driven spine
 
-At onboarding the individual answers one question — *consultant working in a team
-for a client*, or *employee working inside a company* — and that selects the spine
-skin. Both skins share one skeleton so the harnesses and validators stay generic;
-only `0-context` and `4-shared` (and the tier labels) differ.
+At onboarding the individual answers one question — three first-class choices, not a
+bolt-on: *consultant working in a team for a client*, *employee working inside a
+company*, or *business-owner* (the consultant skin plus a sanctioned `6-business/`
+sibling for running the business itself). All three share one 0-5 skeleton so the
+harnesses and validators stay generic; only `0-context`/`4-shared` (and the tier
+labels) differ, and business-owner adds one extra sibling root.
 
-| # | Folder | Consultant skin | Employee skin | Default audience |
-|---|--------|-----------------|---------------|------------------|
-| 0 | context | charter, scope baseline + ledger | role, OKRs | team |
-| 1 | inbox | raw inputs: transcripts, notes, from-brain | (same) | private |
-| 2 | work | your deliverables and working docs | (same) | team |
-| 3 | log | decision log, tasks, hours | (same) | private |
-| 4 | shared | client-facing artifacts | company-wide artifacts | external |
-| 5 | personal | your private workspace | (same) | private |
+| # | Folder | Consultant skin | Employee skin | Business-owner skin | Default audience |
+|---|--------|-----------------|---------------|----------------------|------------------|
+| 0 | context | charter, scope baseline + ledger | role, OKRs | (same as consultant) | team |
+| 1 | inbox | raw inputs: transcripts, notes, from-brain | (same) | (same) | private |
+| 2 | work | your deliverables and working docs | (same) | (same) | team |
+| 3 | log | decision log, tasks, hours | (same) | (same) | private |
+| 4 | shared | client-facing artifacts | company-wide artifacts | (same as consultant) | external |
+| 5 | personal | your private workspace | (same) | (same) | private |
+| 6 | business | — (not present) | — (not present) | bookkeeping, entities, engagements, insurance, administration, partnerships, portfolio | private — outside `sync_include`, see `scaffold/.claude/rules/access-control.md` |
 
 Numbers encode maturity: content flows from raw capture (low numbers) to refined,
 outward-facing output (high numbers). Promotion is deliberate (see
 `scaffold/.claude/rules/publishing.md`): personal draft → team work → shared, with
-a review or approval at each step. Nothing is auto-promoted.
+a review or approval at each step. Nothing is auto-promoted. `6-business/` never
+promotes — it is structurally outside the sync boundary regardless of any file's tag.
 
 ## Access tiers
 
