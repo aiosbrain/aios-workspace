@@ -1,8 +1,9 @@
 // Asks harvest (AIO-167) — the production caller that wires the inbox transport into the real
 // loop pipeline. Without this the transport would be dead code (the review blocker): `aios asks
 // harvest` loads the comms config, runs the C1 collector for the cadence window, derives loop
-// events with the AIO-140 detectors, and dispatches each through the tier-gated sender into the
-// local asks store.
+// events with the AIO-140 detectors, and dispatches each through the sender's local-sink path
+// into the asks store. Local delivery keeps trigger + evidence-tier validation but never requires
+// an outbound Slack channel.
 //
 // Idempotency: each harvested ask gets a dedupeKey = sha256(kind|ref.path|ref.row); an event whose
 // key already matches an OPEN ask is suppressed (not re-added) so re-harvesting the same window
@@ -11,7 +12,12 @@
 import { collect } from "../collector.js";
 import type { Cadence, Signal } from "../signal.js";
 import type { CommsConfig } from "../comms/config.js";
-import type { NotificationEvent, DispatchDeps, DispatchResult } from "../comms/sender.js";
+import type {
+  NotificationEvent,
+  DispatchDeps,
+  DispatchOptions,
+  DispatchResult,
+} from "../comms/sender.js";
 import { createInboxTransport } from "./transport.js";
 import { hasOpenDuplicate, sha256 } from "./store.js";
 
@@ -31,7 +37,8 @@ export interface HarvestDeps {
   dispatchOnEvent: (
     event: NotificationEvent,
     config: CommsConfig,
-    deps: DispatchDeps
+    deps: DispatchDeps,
+    options?: DispatchOptions
   ) => Promise<DispatchResult>;
 }
 
@@ -97,7 +104,7 @@ export async function harvestAsks(
       continue;
     }
     const transport = createInboxTransport(root, { dedupeKey, now });
-    const res = await deps.dispatchOnEvent(event, config, transport);
+    const res = await deps.dispatchOnEvent(event, config, transport, { outbound: false });
     if (res.status === "sent") {
       // The sink re-checks the dedupeKey under the store lock; a null receipt means a concurrent
       // writer won the key and the write was suppressed there (the pre-check above is a fast path).

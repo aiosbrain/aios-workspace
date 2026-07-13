@@ -87,16 +87,14 @@ test("harvest creates an ask through the full pipeline; re-harvest suppresses th
   }
 });
 
-test("harvest counts a gate rejection (team event, external channel) and writes nothing", () => {
-  // Team content must NOT reach an external-audience channel → audience-not-authorized.
+test("local harvest is independent of outbound channel audience policy", () => {
   const dir = workspace({ audience: "team", channelTier: "external" });
   try {
     const res = harvest(dir);
     assert.equal(res.events, 1);
-    assert.equal(res.delivered, 0);
-    assert.equal(res.rejected, 1);
-    assert.equal(res.byReason["audience-not-authorized"], 1);
-    assert.equal(list(dir).length, 0);
+    assert.equal(res.delivered, 1);
+    assert.equal(res.rejected, 0);
+    assert.equal(list(dir).length, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -116,18 +114,29 @@ test("harvest counts a trigger-gate no-op (sender.on excludes the event) and wri
   }
 });
 
-test("harvest reports the actionable comms-config notice when dispatch has no config", () => {
+test("local harvest needs no outbound comms config", () => {
   const dir = workspace({ withConfig: false });
-  const notice =
-    "0 delivered — `.aios/comms-config.json` missing, see docs/v1-operator-loop/domains/comms-config.example.json";
   try {
     const text = harvestText(dir);
-    assert.match(text, /delivered: 0/);
-    assert.ok(text.includes(notice));
+    assert.match(text, /delivered: 1/);
+    assert.doesNotMatch(text, /comms-config\.json missing/);
 
     const json = harvest(dir);
-    assert.equal(json.delivered, 0);
-    assert.equal(json.notice, notice);
+    assert.equal(json.delivered, 0, "the open duplicate from the text run is suppressed");
+    assert.equal(json.suppressed, 1);
+    assert.equal(json.notice, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("admin-tier events are retained in the local admin asks queue", () => {
+  const dir = workspace({ audience: "admin", withConfig: false });
+  try {
+    const res = harvest(dir);
+    assert.equal(res.delivered, 1);
+    assert.equal(res.rejected, 0);
+    assert.equal(list(dir)[0].tier, "admin");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

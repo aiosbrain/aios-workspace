@@ -27,8 +27,9 @@ test("core harvestAsks runs on injected deps (no direct comms reach)", async () 
         calls.detectEvents++;
         return [stubEvent];
       },
-      dispatchOnEvent: async () => {
+      dispatchOnEvent: async (_event, _config, _transport, options) => {
         calls.dispatchOnEvent++;
+        assert.deepEqual(options, { outbound: false });
         return { status: "sent", receipt: { id: "ask_1" } };
       },
     };

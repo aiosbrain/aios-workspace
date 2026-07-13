@@ -56,6 +56,11 @@ export interface DispatchDeps {
   sendEvent?: SendEventFn;
 }
 
+export interface DispatchOptions {
+  /** Local sinks keep trigger + evidence-tier validation but bypass outbound channel policy. */
+  outbound?: boolean;
+}
+
 export type RejectReason =
   | "tier-spoof"
   | "no-destination-channel"
@@ -98,7 +103,8 @@ export function formatEvent(event: NotificationEvent): string {
 export async function dispatchOnEvent(
   event: NotificationEvent,
   config: CommsConfig,
-  deps: DispatchDeps
+  deps: DispatchDeps,
+  options: DispatchOptions = {}
 ): Promise<DispatchResult> {
   // 0) Trigger gate (FIRST, before any tier/channel resolution): when `sender.on` is configured,
   // only the listed event name(s) dispatch; anything else is a silent no-op (never sent).
@@ -122,6 +128,19 @@ export async function dispatchOnEvent(
       detail: `event tier "${event.tier}" does not match its evidence tier "${messageTier}" (default-deny)`,
       messageTier,
     };
+  }
+
+  // A local admin-tier sink is not an outbound channel. Harvesting into the user's own asks
+  // queue still honors sender.on and the evidence-tier anti-spoof check above, then writes
+  // directly without requiring Slack configuration or applying outbound audience policy.
+  if (options.outbound === false) {
+    const channel = "local:asks";
+    const channelTier: Tier = "admin";
+    const text = formatEvent(event);
+    const receipt = deps.sendEvent
+      ? await deps.sendEvent({ event, channel, messageTier, channelTier, text })
+      : await deps.send({ channel, text });
+    return { status: "sent", channel, messageTier, channelTier, text, receipt };
   }
 
   // Belt-and-suspenders: admin content never goes outward, whatever the channel is configured as.
