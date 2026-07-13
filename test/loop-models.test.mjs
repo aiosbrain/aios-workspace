@@ -3,7 +3,13 @@
 // Zero-dep, no network. The diversity guard calls die() (process.exit(1)); we test it
 // in a child process so the harness survives. Run: node test/loop-models.test.mjs
 
-import { resolveLoopModels, DEFAULT_MODELS, STEPS, modelFamily } from "../scripts/loop-models.mjs";
+import {
+  resolveLoopModels,
+  DEFAULT_MODELS,
+  LOOP_PROFILES,
+  STEPS,
+  modelFamily,
+} from "../scripts/loop-models.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,10 +32,10 @@ function check(label, cond) {
 }
 
 // Resolve the loader in a child so a die()/exit(1) is observable as an exit code.
-function resolveInChild({ repo, configPath, cliOverrides }) {
+function resolveInChild({ repo, configPath, cliOverrides, profile }) {
   const script =
     `import { resolveLoopModels } from ${JSON.stringify(LOADER)};` +
-    `const r = resolveLoopModels(${JSON.stringify({ repo, configPath, cliOverrides })});` +
+    `const r = resolveLoopModels(${JSON.stringify({ repo, configPath, cliOverrides, profile })});` +
     `process.stdout.write(JSON.stringify(r));`;
   try {
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
@@ -92,6 +98,28 @@ console.log("precedence: CLI > file > default");
   // A step with only a file value still takes the file value over the default.
   const r2 = resolveLoopModels({ repo });
   check("file model beats default", r2.build.model === "claude-sonnet-5");
+  rmSync(repo, { recursive: true, force: true });
+}
+
+console.log("light profile: CLI > profile > file > default");
+{
+  const repo = mkdtempSync(path.join(tmpdir(), "lm-light-"));
+  mkdirSync(path.join(repo, ".aios"), { recursive: true });
+  writeFileSync(
+    path.join(repo, ".aios", "loop-models.yaml"),
+    "build_model: claude-haiku-4-5\ncode_review_model: deepseek-v4-pro\n"
+  );
+  const r = resolveLoopModels({ repo, profile: "light" });
+  check("light is a known profile", LOOP_PROFILES.light != null);
+  check("profile build pin beats file", r.build.model === "claude:claude-sonnet-5");
+  check("profile code-review pin beats file", r.code_review.model === "opencode:gpt-5.6-sol");
+  const cli = resolveLoopModels({
+    repo,
+    profile: "light",
+    cliOverrides: { build: { model: "claude:claude-haiku-4-5" } },
+  });
+  check("CLI still beats profile", cli.build.model === "claude:claude-haiku-4-5");
+  check("unknown profile aborts", resolveInChild({ repo, profile: "fastest" }).ok === false);
   rmSync(repo, { recursive: true, force: true });
 }
 

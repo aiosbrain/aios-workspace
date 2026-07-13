@@ -27,6 +27,7 @@ console.log("parseShipArgs defaults");
   );
   check("max-fix-rounds default 3", o.maxFixRounds === 3);
   check("plan-runner default cli", o.planRunner === "cli");
+  check("loop default full", o.loop === "full");
   check("dry-run off", o.dryRun === false);
   check("skip-spec-gate off by default", o.skipSpecGate === false);
 }
@@ -43,6 +44,8 @@ console.log("parseShipArgs overrides");
     "5",
     "--plan-runner",
     "sdk",
+    "--loop",
+    "light",
     "--dry-run",
   ]);
   check("--auto", o.auto === true);
@@ -53,6 +56,7 @@ console.log("parseShipArgs overrides");
   );
   check("--max-fix-rounds 5", o.maxFixRounds === 5);
   check("--plan-runner sdk", o.planRunner === "sdk");
+  check("--loop light", o.loop === "light");
   check("--dry-run", o.dryRun === true);
   check("issue still first positional", o.issue === "AIO-9");
 }
@@ -79,6 +83,18 @@ console.log("validateShipArgs");
   check(
     "sdk plan-runner → null (documented alternative, supported)",
     validateShipArgs(parseShipArgs(["AIO-1", "--plan-runner", "sdk"])) === null
+  );
+  check(
+    "light loop → null",
+    validateShipArgs(parseShipArgs(["AIO-1", "--loop", "light"])) === null
+  );
+  check(
+    "unknown loop → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--loop", "turbo"])) !== null
+  );
+  check(
+    "light loop cannot skip its spec gate",
+    validateShipArgs(parseShipArgs(["AIO-1", "--loop", "light", "--skip-spec-gate"])) !== null
   );
   check(
     "unknown reviewer → error",
