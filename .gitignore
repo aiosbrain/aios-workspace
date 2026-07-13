@@ -10,6 +10,8 @@ __pycache__/
 gui/.sessions/
 gui/client/dist/
 dist/
+coverage/
+gui/client/coverage/
 test/ux/evidence/
 .aios/
 

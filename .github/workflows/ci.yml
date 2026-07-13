@@ -155,3 +155,13 @@ jobs:
         run: npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
       - name: npm test
         run: npm test
+      - name: Coverage report (non-blocking)
+        continue-on-error: true
+        run: npm run test:coverage
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore

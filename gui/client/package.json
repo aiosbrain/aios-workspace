@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json-summary --coverage.reportsDirectory=coverage"
   },
   "dependencies": {
     "@aios-alpha/design": "^0.3.0",
@@ -37,6 +38,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2",
     "vite": "^6.0.0",

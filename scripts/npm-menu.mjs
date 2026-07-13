@@ -22,7 +22,7 @@ export const CATEGORIES = {
   },
   Dev: {
     description: "contributing to this toolkit",
-    scripts: ["lint", "lint:fix", "format", "format:check", "test", "test:ux"],
+    scripts: ["lint", "lint:fix", "format", "format:check", "test", "test:ux", "test:coverage"],
   },
   Build: {
     description: "packaging the desktop app / GUI bundle",
