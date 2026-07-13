@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { execFileSync } from "node:child_process";
 import { MANAGED_PATHS, PERSONAL_PATHS } from "../scripts/toolkit-manifest.mjs";
-import { dirtyManagedPaths } from "../scripts/update.mjs";
+import { dirtyManagedPaths, mergeManaged } from "../scripts/update.mjs";
 
 // The overlay/merge mechanics live in toolkit-merge.test.mjs; this file covers the
 // manifest invariants and the uncommitted-edit guard.
@@ -52,6 +52,94 @@ test("dirtyManagedPaths returns empty set outside a git repo (no guard, no throw
   try {
     assert.equal(dirtyManagedPaths(ws).size, 0);
   } finally {
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+// ---- dir-entry `exclude` (AIO-351 dogfood: .claude/rules/access-control.md) ----
+
+test("mergeManaged: an excluded dir-entry file is never overlaid and never conflicts", () => {
+  const rulesEntry = MANAGED_PATHS.find((e) => e.dest === ".claude/rules");
+  assert.ok(rulesEntry?.exclude?.includes("access-control.md"), "sanity: exclude is configured");
+
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-excl-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-excl-"));
+  const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
+  try {
+    // Toolkit at base: a synced file + the excluded, stamp-templated one.
+    mkdirSync(path.join(tk, "scaffold/.claude/rules"), { recursive: true });
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/synced.md"), "V1\n");
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/access-control.md"), "TEMPLATE v1\n");
+    git("init", "-q");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const baseSha = git("rev-parse", "HEAD").trim();
+
+    // Workspace: synced.md as-shipped; access-control.md personalized at scaffold time
+    // (never came from a sync, so there's no matching baseline in the workspace copy).
+    mkdirSync(path.join(ws, ".claude/rules"), { recursive: true });
+    writeFileSync(path.join(ws, ".claude/rules/synced.md"), "V1\n");
+    writeFileSync(path.join(ws, ".claude/rules/access-control.md"), "PERSONALIZED tier table\n");
+
+    // Toolkit evolves both files upstream.
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/synced.md"), "V2\n");
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/access-control.md"), "TEMPLATE v2\n");
+    git("add", "-A");
+    git("commit", "-qm", "head");
+
+    const r = mergeManaged(tk, tk, ws, baseSha, {});
+
+    // The excluded file is untouched — no overlay, no conflict, no sidecar files.
+    assert.equal(
+      readFileSync(path.join(ws, ".claude/rules/access-control.md"), "utf8"),
+      "PERSONALIZED tier table\n"
+    );
+    assert.ok(!r.conflicts.some((c) => c.path === ".claude/rules/access-control.md"));
+    assert.ok(!r.updated.includes(".claude/rules/access-control.md"));
+    assert.ok(!r.created.includes(".claude/rules/access-control.md"));
+    assert.ok(!r.deleted.includes(".claude/rules/access-control.md"));
+    assert.ok(!existsSync(path.join(ws, ".claude/rules/access-control.md.aios-incoming")));
+    assert.ok(!existsSync(path.join(ws, ".claude/rules/access-control.md.aios-merge")));
+
+    // Meanwhile the non-excluded sibling in the same dir entry syncs normally.
+    assert.ok(r.updated.includes(".claude/rules/synced.md"));
+    assert.equal(readFileSync(path.join(ws, ".claude/rules/synced.md"), "utf8"), "V2\n");
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("mergeManaged: an excluded file present at the base sha is not propagated as deleted", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-excl-del-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-excl-del-"));
+  const git = (...a) => execFileSync("git", ["-C", tk, ...a], { encoding: "utf8" });
+  try {
+    mkdirSync(path.join(tk, "scaffold/.claude/rules"), { recursive: true });
+    writeFileSync(path.join(tk, "scaffold/.claude/rules/access-control.md"), "TEMPLATE v1\n");
+    git("init", "-q");
+    git("config", "user.email", "t@t.t");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const baseSha = git("rev-parse", "HEAD").trim();
+
+    mkdirSync(path.join(ws, ".claude/rules"), { recursive: true });
+    writeFileSync(path.join(ws, ".claude/rules/access-control.md"), "PERSONALIZED\n");
+
+    // Toolkit later removes its own template copy — should still never delete the
+    // workspace's personalized file, because it was never synced in the first place.
+    rmSync(path.join(tk, "scaffold/.claude/rules/access-control.md"));
+    git("add", "-A");
+    git("commit", "-qm", "head");
+
+    const r = mergeManaged(tk, tk, ws, baseSha, {});
+    assert.ok(existsSync(path.join(ws, ".claude/rules/access-control.md")));
+    assert.ok(!r.deleted.includes(".claude/rules/access-control.md"));
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
     rmSync(ws, { recursive: true, force: true });
   }
 });

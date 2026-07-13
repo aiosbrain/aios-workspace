@@ -34,7 +34,16 @@ export const MANAGED_PATHS = [
   { dest: "scripts/aios.mjs", src: "scaffold/scripts/aios.mjs", kind: "file", exec: true },
   { dest: "bin/aios", src: "scaffold/bin/aios", kind: "file", exec: true },
   // Governance read in-place by Claude Code (overlay — personal skills/rules preserved).
-  { dest: ".claude/rules", src: "scaffold/.claude/rules", kind: "dir" },
+  // access-control.md is excluded: it's stamp-time PERSONALIZED (workspaces customize
+  // the tier table, team names, context aliases), so blind-overlaying it clobbers
+  // legitimate per-workspace divergence and pins the stamp forever on a permanent
+  // no-base conflict (AIO-351 dogfood finding on john-workspace).
+  {
+    dest: ".claude/rules",
+    src: "scaffold/.claude/rules",
+    kind: "dir",
+    exclude: ["access-control.md"],
+  },
   { dest: ".claude/skills", src: "scaffold/.claude/skills", kind: "dir" },
   { dest: ".claude/rubrics", src: "scaffold/.claude/rubrics", kind: "dir" },
   { dest: ".claude/commands", src: "scaffold/.claude/commands", kind: "dir" },
@@ -123,6 +132,11 @@ export const SCAFFOLD_UNMANAGED = [
   ".gitignore",
   "package.json",
   "README.md",
+  // scaffold writes this (from scaffold/.claude/rules/access-control.md), but `aios
+  // update` must not touch it — it's personalized per workspace (tier table, team
+  // names, context aliases) at scaffold time. See the exclude on the .claude/rules
+  // MANAGED_PATHS entry above.
+  ".claude/rules/access-control.md",
 ];
 
 /** The version stamp a workspace writes to record which toolkit it last synced. */

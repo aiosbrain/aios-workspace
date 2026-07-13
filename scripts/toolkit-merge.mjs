@@ -76,12 +76,21 @@ export function threeWayMerge(base, mine, theirs, labels = {}) {
   }
 }
 
-/** Toolkit file content at a sha, or undefined if the path/sha isn't retrievable. */
+/**
+ * Toolkit file content at a sha, or undefined if the path/sha isn't retrievable.
+ *
+ * A missing path/sha is the EXPECTED "no-base" case (e.g. a file added after the
+ * workspace's pinned sha) — git writes a `fatal: path ... exists on disk, but not
+ * in <sha>` line straight to stderr for that, which would otherwise leak past the
+ * caller's try/catch onto the user's terminal. `stdio: ["pipe","pipe","pipe"]`
+ * keeps that noise captured (on `e.stderr`) instead of inherited.
+ */
 export function gitShow(toolkitDir, sha, relPath) {
   if (!sha || sha === "unknown") return undefined;
   try {
     return execFileSync("git", ["-C", toolkitDir, "show", `${sha}:${relPath}`], {
       encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
     });
   } catch {
     return undefined; // sha not present (shallow clone) or path didn't exist then
@@ -95,7 +104,7 @@ export function lsTree(toolkitDir, sha, prefix) {
     const out = execFileSync(
       "git",
       ["-C", toolkitDir, "ls-tree", "-r", "--name-only", sha, "--", prefix],
-      { encoding: "utf8" }
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
     return out.split("\n").filter(Boolean);
   } catch {
