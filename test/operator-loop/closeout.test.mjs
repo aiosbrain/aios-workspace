@@ -287,6 +287,85 @@ test("a single common-word admin summary does NOT brick a valid lower-tier diges
   assert.ok(team.digestMarkdown.includes("funding round"));
 });
 
+// ── AIO-363: real-data-shaped regression — one FILE mixing tiers per-row ───────────────
+// Real workspace files routinely mix tiers per-row in a single file (e.g. `3-log/time-log.md` is
+// file-tier `admin` but carries individual `Tier: team` rows). The synthetic fixtures above never
+// exercise this shape — every signal above lives in its OWN distinct path. Before AIO-363, a bare
+// file path/row-id was added to the leak-sweep corpus for EVERY above-audience signal
+// (`aboveAudienceStrings`'s `addPath`/`addRow`). So a fully legitimate team-tier claim, citing its
+// OWN team-tier row in a shared file, collided with an unrelated admin-tier row's path in that SAME
+// file — and the whole-document residual sweep nuked the entire digest as a false positive. This
+// fired on 4/4 real dogfood runs (0% shippable) while never firing on the single-tier-per-file
+// fixtures above.
+test("AIO-363: a shared file mixing admin+team rows does not false-positive the whole digest", async () => {
+  const SHARED_PATH = "3-log/time-log.md";
+  const manifest = {
+    ...FULL_MANIFEST,
+    signals: [
+      sig("4-shared/public.md", "1", "external", "deliverable", "Shipped the public widget"),
+      // Team-tier row in the shared file — this is what the legit claim below cites.
+      sig(SHARED_PATH, "row-12", "team", "task", "Logged engineering hours this week"),
+      // Admin-tier row in the SAME file (file-level admin, per-row team override in real data) —
+      // above-audience for a team digest, so its path/row land in `aboveAudienceStrings`.
+      sig(SHARED_PATH, "row-3", "admin", "decision", `Confidential note ${ADMIN_SENTINEL}`),
+    ],
+  };
+  const complete = async () => ({
+    claims: [
+      {
+        claim: "Logged engineering hours this week",
+        evidence: [{ path: SHARED_PATH, row: "row-12", tier: "team" }],
+      },
+    ],
+    actions: [],
+  });
+  const team = await runShareable({ fullManifest: manifest, audience: "team", complete });
+  assert.equal(team.status, "pass", "the claim itself verifies cleanly");
+  assert.equal(
+    team.shippable,
+    true,
+    "a clean claim citing its OWN row in a mixed-tier file must not be suppressed"
+  );
+  assert.equal(team.leakWithheld, 0, "no false-positive leak withhold");
+  assert.ok(team.digestMarkdown.includes("Logged engineering hours this week"));
+  assert.ok(
+    team.digestMarkdown.includes(SHARED_PATH),
+    "the legitimate own-evidence citation renders"
+  );
+  assert.ok(!team.digestMarkdown.includes(ADMIN_SENTINEL), "still no admin content in the digest");
+  assert.deepEqual(team.leakReport, [], "no leak-report entries for a clean run");
+});
+
+test("AIO-363: the sweep still catches genuine admin content leaking through a shared-file claim", async () => {
+  const SHARED_PATH = "3-log/time-log.md";
+  const manifest = {
+    ...FULL_MANIFEST,
+    signals: [
+      sig("4-shared/public.md", "1", "external", "deliverable", "Shipped the public widget"),
+      sig(SHARED_PATH, "row-12", "team", "task", "Logged engineering hours this week"),
+      sig(SHARED_PATH, "row-3", "admin", "decision", `Confidential note ${ADMIN_SENTINEL}`),
+    ],
+  };
+  const complete = async () => ({
+    claims: [
+      {
+        claim: `Logged hours, also re: ${ADMIN_SENTINEL}`,
+        evidence: [{ path: SHARED_PATH, row: "row-12", tier: "team" }],
+      },
+    ],
+    actions: [],
+  });
+  const team = await runShareable({ fullManifest: manifest, audience: "team", complete });
+  assert.equal(team.shippable, false, "real admin content in claim text is still withheld");
+  assert.ok(!team.digestMarkdown.includes(ADMIN_SENTINEL));
+  assert.ok(team.leakReport.length >= 1, "the leak report explains the withhold");
+  const entry = team.leakReport[0];
+  assert.equal(entry.audience, "team");
+  assert.equal(entry.sourceTier, "admin");
+  assert.equal(entry.matchedString, ADMIN_SENTINEL);
+  assert.match(entry.snippetHash, /^[0-9a-f]{16}$/);
+});
+
 test("shareable action evidence refs are stripped from the result (no ref reaches --json)", async () => {
   const complete = async () => ({
     claims: [

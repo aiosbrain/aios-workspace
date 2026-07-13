@@ -532,6 +532,17 @@ export async function cmdLoop(repo, cfg, args) {
 
     let anyFailed = false;
     const audienceBlocks = [];
+    // AIO-363: admin-tier only (never a shareable artifact) — the CONCRETE reason behind every
+    // leakWithheld across all audiences, since the owner brief itself carries zero leak detail.
+    const leakReport = closeout.shareables.flatMap((s) => s.leakReport);
+    let leakReportPath = null;
+    if (!dryRun && leakReport.length) {
+      leakReportPath = path.join(outDir, loop.LEAK_REPORT_FILENAME ?? "leak-report.json");
+      writeFileSync(
+        leakReportPath,
+        JSON.stringify({ tier: "admin", stamp, entries: leakReport }, null, 2)
+      );
+    }
     for (const s of closeout.shareables) {
       if (!s.shippable) anyFailed = true;
       let digestPath = null;
@@ -558,18 +569,21 @@ export async function cmdLoop(repo, cfg, args) {
         unshippablePath: unshippablePath ? path.relative(repo, unshippablePath) : null,
         verifier: s.result, // audience-safe by the C3 contract
         nextWeekActions: s.nextWeekActions, // already tier <= this audience
+        leakWithheld: s.leakWithheld,
       });
     }
 
     if (asJson) {
       // Audience-safe payload: brief by PATH only (never its content); no raw ledger; no admin
-      // actions; per-audience action filtering already applied by each pipeline.
+      // actions; per-audience action filtering already applied by each pipeline. leakReportPath is
+      // a PATH only — the admin-tier detail behind it never enters this JSON.
       console.log(
         JSON.stringify(
           {
             runStamp: stamp,
             cadence: "weekly",
             briefPath: briefPath ? path.relative(repo, briefPath) : null,
+            leakReportPath: leakReportPath ? path.relative(repo, leakReportPath) : null,
             audiences: audienceBlocks,
           },
           null,
@@ -582,6 +596,12 @@ export async function cmdLoop(repo, cfg, args) {
         const p = b.digestPath || b.unshippablePath;
         if (p) console.log(c.dim(`  digest (${b.audience}) → ${p}`));
       }
+      if (leakReportPath)
+        console.log(
+          c.red(
+            `  leak-report (admin-only, ${leakReport.length} entr${leakReport.length === 1 ? "y" : "ies"}) → ${path.relative(repo, leakReportPath)}`
+          )
+        );
       if (dryRun) console.log(c.dim("  (--dry-run: no files written)"));
     }
     // A non-shippable audience must gate (non-zero) for scripts/CI.

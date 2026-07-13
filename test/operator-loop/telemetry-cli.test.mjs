@@ -41,12 +41,30 @@ const CLEAN_MANIFEST = {
   excluded: [],
 };
 
-// Admin distinctive token ALSO appears in a team summary → C5 withholds it → non-shippable.
+// Leak manifest (AIO-363): a genuine residual whole-document collision, offline and deterministic.
+// An admin-only signal's summary contains a distinctive word ("research") that is ALSO the literal
+// tag name the digest's own deterministic "Agent runtime (by tag)" section renders (from an
+// unrelated team-tier time signal whose own summary text does NOT say "research"). This is
+// deliberately NOT the old pattern this same file used to use — two independent admin/team signals
+// sharing ordinary real-world vocabulary (a project codename, "engineering", "management", ...) —
+// because `aboveAudienceStrings` now drops any needle that ALSO appears in ≤-audience-VISIBLE
+// content (dogfooding showed that pattern firing on 4/4 real runs, 0% shippable). A fixed digest
+// boilerplate word (a tag name) is the one place a residual whole-document leak can still
+// legitimately fire, since it isn't derived from any visible signal's own text.
 const LEAK_MANIFEST = {
   ...CLEAN_MANIFEST,
   signals: [
-    sig("5-personal/p.md", "1", "admin", "decision", "ProjectPhoenix budget is 40m"),
-    sig("2-work/k.md", "2", "team", "task", "ProjectPhoenix kickoff scheduled"),
+    sig("3-log/decision-log.md", "1", "team", "decision", "Shipped the operator loop"),
+    {
+      kind: "time",
+      source: "session",
+      tier: "team",
+      occurredAt: "2026-06-29T00:00:00.000Z",
+      ref: { path: "3-log/time-log.md", row: "blk1", tier: "team" },
+      summary: "logged time",
+      payload: { tag: "research", durationMin: 20, repo: "acme" },
+    },
+    sig("5-personal/p.md", "1", "admin", "decision", "Personal research direction ZZSECRET"),
   ],
 };
 
