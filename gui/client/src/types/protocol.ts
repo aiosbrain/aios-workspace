@@ -643,8 +643,7 @@ export interface TagTotal {
   tag: string;
   durationMin: number;
 }
-/** C4 daily orientation, emitted verbatim by `aios loop daily --json`. `attention`/`queuedAsks`/
- *  `ranByTag` are parsed but NOT rendered in V1 (see plan Non-goals). */
+/** C4 actions-first orientation, emitted verbatim by `aios loop daily --json`. */
 export interface DailyOrientation {
   member: string;
   window: { cadence: "daily"; from: string; to: string };
@@ -655,6 +654,8 @@ export interface DailyOrientation {
   changed: DailyItem[];
   blocked: DailyItem[];
   owedToday: DailyItem[];
+  calendar: DailyItem[];
+  commsNeedingReply: DailyItem[];
   ranByTag: TagTotal[];
   counts: {
     attention: number;
@@ -662,6 +663,9 @@ export interface DailyOrientation {
     changed: number;
     blocked: number;
     owedToday: number;
+    calendar: number;
+    commsNeedingReply: number;
+    withheld: number;
     excluded: number;
   };
   excluded: LoopExclusion[];

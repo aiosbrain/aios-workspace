@@ -41,7 +41,8 @@ render always proceeds from whatever is on disk. Connector output is isolated fr
 `{ kind: "comms", source: "slack|email|calendar", tier, occurredAt, ref: <message/event id>, payload: { channel, direction, summary, waitingOn?, dueAt? } }`
 
 ## Acceptance
-- Daily loop's "what's blocked / waiting on someone" is populated from comms signals.
+- Daily loop renders calendar agenda and inbound email/Slack needing-reply records as distinct
+  typed sections; comms waiting on another person remain blockers and directionless chatter drops.
 - Notification layer fires a tier-safe Slack message on a configured loop event, with the triggering evidence referenced.
 - Zero admin/private content reaches any outbound channel (verifier-enforced).
 

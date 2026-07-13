@@ -1,5 +1,5 @@
-// C4 — the daily light loop. A fast, read-only, local orientation answering exactly three
-// questions: what CHANGED since the last run, what's BLOCKED, and what I OWE today.
+// C4 — the daily light loop. A fast, read-only, local orientation that leads with asks,
+// blockers, owed work, today's calendar, and comms needing reply, then closes with changes.
 //
 // `buildDailyOrientation` is a PURE classifier over a manifest + the prior change-snapshot;
 // `runDaily` is the thin filesystem wrapper the CLI and the cockpit both call. No verifier,
@@ -61,6 +61,10 @@ export interface DailyOrientation {
   changed: DailyItem[]; // capped to SECTION_CAP; counts.changed is the true total
   blocked: DailyItem[];
   owedToday: DailyItem[];
+  /** Calendar comms occurring inside the manifest's daily window, chronological. */
+  calendar: DailyItem[];
+  /** Inbound email/Slack records with explicit needs-reply semantics, newest-first. */
+  commsNeedingReply: DailyItem[];
   /** "What agents ran" in the daily window — aggregate { tag, durationMin } only (no repo/id/path),
    *  audience-filtered like every other section. Empty when time capture hasn't run. */
   ranByTag: TagTotal[];
@@ -70,6 +74,10 @@ export interface DailyOrientation {
     changed: number;
     blocked: number;
     owedToday: number;
+    calendar: number;
+    commsNeedingReply: number;
+    /** Aggregate classifiable items above the requested audience. No refs/content. */
+    withheld: number;
     excluded: number;
   };
   /** Full list only for the owner; [] for a shareable (--as) view — an unresolved-tier ref
@@ -113,15 +121,18 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     scope: DAILY_SCOPE,
   });
 
-  // 2) Audience filter for DISPLAY only (owner is a natural no-op).
+  // 2) Classify the owner-complete manifest first. Audience projection happens after placement,
+  //    which lets a shareable empty state distinguish a quiet day from classifiable items that
+  //    were withheld without exposing their refs, summaries, or tier breakdown.
   const visible = visibleTiers(audience);
-  const signals = opts.manifest.signals.filter((s) => visible.has(s.tier));
 
   const changedE: Array<{ item: DailyItem; changeAt: string }> = [];
   const blockedE: Array<{ item: DailyItem; stale: number }> = [];
   const owedE: Array<{ item: DailyItem; dueDay: string }> = [];
+  const calendarE: Array<{ item: DailyItem; occurredAt: string }> = [];
+  const replyE: Array<{ item: DailyItem; occurredAt: string }> = [];
 
-  for (const sig of signals) {
+  for (const sig of opts.manifest.signals) {
     const p = sig.payload ?? {};
     const change = changes.get(artifactKey(sig));
     const changeType = placementChange(change, sig, hasPrior, win.from, win.to);
@@ -186,10 +197,26 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     }
 
     if (sig.kind === "comms") {
-      // "What's blocked / waiting on someone" — a comms item is a blocker when it names who
-      // it's waiting on, or reads as blocked/waiting in its summary. Non-waiting activity is
-      // not a daily blocker (it's just chatter) → ignored. (AIO-140 acceptance.)
+      // Calendar is agenda, not chatter. Use the manifest window's instants rather than an ISO
+      // date prefix: connector normalization may cross a UTC date boundary for a locally-today
+      // event. Calendar records outside the daily window do not fall through into other sections.
+      if (sig.source === "calendar") {
+        if (inWindow(sig.occurredAt, win.from, win.to)) {
+          calendarE.push({ item: baseItem(sig, {}), occurredAt: sig.occurredAt });
+        }
+        continue;
+      }
+
+      // GOG marks unread inbox records in the summary; Slack uses waitingOn:"me". Both are
+      // actionable only for inbound email/Slack. Directionless activity remains chatter.
       const waitingOn = strOrNull(p.waitingOn);
+      if (needsReply(sig.source, sig.summary, p.direction, waitingOn)) {
+        replyE.push({ item: baseItem(sig, {}), occurredAt: sig.occurredAt });
+        continue;
+      }
+
+      // Preserve the legacy blocker contract for comms waiting on another person or explicitly
+      // described as blocked/waiting.
       if (waitingOn || looksBlocked(sig.summary)) {
         blockedE.push({ item: baseItem(sig, { due: strOrNull(p.dueAt) }), stale: 0 });
       }
@@ -198,9 +225,30 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     // Any other / unknown kind → ignore (forward-compat: consumers ignore kinds they don't know).
   }
 
-  const changedS = finish(changedE, byChanged);
-  const blockedS = finish(blockedE, byBlocked);
-  const owedS = finish(owedE, byOwed);
+  const withheld = [changedE, blockedE, owedE, calendarE, replyE].reduce(
+    (total, entries) => total + entries.filter((entry) => !visible.has(entry.item.tier)).length,
+    0
+  );
+  const changedS = finish(
+    changedE.filter((entry) => visible.has(entry.item.tier)),
+    byChanged
+  );
+  const blockedS = finish(
+    blockedE.filter((entry) => visible.has(entry.item.tier)),
+    byBlocked
+  );
+  const owedS = finish(
+    owedE.filter((entry) => visible.has(entry.item.tier)),
+    byOwed
+  );
+  const calendarS = finish(
+    calendarE.filter((entry) => visible.has(entry.item.tier)),
+    byOccurredAt
+  );
+  const replyS = finish(
+    replyE.filter((entry) => visible.has(entry.item.tier)),
+    byOccurredAtDesc
+  );
 
   // Asks (AIO-169). Admin-tier + local-only: surface ONLY for the owner. For any shareable
   // audience the two sections are empty and the asks never enter the output — they are NOT
@@ -228,7 +276,8 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   const winFromMs = Date.parse(win.from);
   const winToMs = Date.parse(win.to);
   const ranByTag = runtimeByTag(
-    signals
+    opts.manifest.signals
+      .filter((s) => visible.has(s.tier))
       .filter((s) => s.kind === "time")
       .filter((s) => {
         const t = Date.parse(s.occurredAt);
@@ -250,6 +299,8 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     changed: changedS.items,
     blocked: blockedS.items,
     owedToday: owedS.items,
+    calendar: calendarS.items,
+    commsNeedingReply: replyS.items,
     ranByTag,
     counts: {
       attention: attentionS.total,
@@ -257,6 +308,9 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
       changed: changedS.total,
       blocked: blockedS.total,
       owedToday: owedS.total,
+      calendar: calendarS.total,
+      commsNeedingReply: replyS.total,
+      withheld,
       excluded: opts.manifest.excluded.length,
     },
     excluded: audience === "owner" ? opts.manifest.excluded : [],
@@ -387,6 +441,22 @@ function looksBlocked(...fields: unknown[]): boolean {
   return fields.some((f) => typeof f === "string" && BLOCKED_RE.test(f));
 }
 
+const NEEDS_REPLY_RE = /\b(needs?|needing|awaiting)\s+(?:a\s+)?repl(?:y|ies)\b/i;
+
+/** Actionable reply semantics are deliberately narrow so ordinary inbound chat stays chatter. */
+function needsReply(
+  source: string,
+  summary: string,
+  direction: unknown,
+  waitingOn: string | null
+): boolean {
+  if (source !== "email" && source !== "slack") return false;
+  const normalizedWaitingOn = waitingOn?.toLowerCase();
+  const explicitlyMine = normalizedWaitingOn === "me" || normalizedWaitingOn === "owner";
+  if (explicitlyMine) return direction !== "outbound";
+  return direction === "inbound" && NEEDS_REPLY_RE.test(summary);
+}
+
 /** ISO calendar day (YYYY-MM-DD) of a string, or null if it isn't a valid leading ISO date. */
 function dayOf(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null;
@@ -462,4 +532,16 @@ function byOwed(
   b: { item: DailyItem; dueDay: string }
 ): number {
   return cmpStr(a.dueDay, b.dueDay) || byRef(a, b); // soonest/overdue first, undated last
+}
+function byOccurredAt(
+  a: { item: DailyItem; occurredAt: string },
+  b: { item: DailyItem; occurredAt: string }
+): number {
+  return cmpStr(a.occurredAt, b.occurredAt) || byRef(a, b);
+}
+function byOccurredAtDesc(
+  a: { item: DailyItem; occurredAt: string },
+  b: { item: DailyItem; occurredAt: string }
+): number {
+  return -cmpStr(a.occurredAt, b.occurredAt) || byRef(a, b);
 }

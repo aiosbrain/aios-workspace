@@ -17,7 +17,7 @@ import type {
 
 /**
  * Operator Loop panel (AIO-318). Four read/run surfaces over the loop CLI:
- *   • Daily     — C4 orientation: what's blocked / owed / changed today (GET /api/loop/daily)
+ *   • Daily     — C4 orientation: asks / owed / calendar / replies / changes (GET /api/loop/daily)
  *   • Collect   — C1 run manifest for a cadence (GET /api/loop/collect)
  *   • Weekly    — C5 closeout: run the offline drafter, render the owner brief (POST /api/loop/weekly)
  *   • Telemetry — C8 dogfood metrics (GET /api/loop/telemetry)
@@ -96,18 +96,33 @@ function DailyItemRow({ item }: { item: DailyItem }) {
   );
 }
 
-function DailySection({ title, items }: { title: string; items: DailyItem[] }) {
+function DailySection({
+  title,
+  items,
+  total = items.length,
+  expandHint,
+}: {
+  title: string;
+  items: DailyItem[];
+  total?: number;
+  expandHint?: string;
+}) {
   if (!items.length) return null;
   return (
     <div className="flex flex-col gap-0.5">
       <div className="px-2 pt-1 pb-0.5 font-mono text-[11px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-        {title} ({items.length})
+        {title} ({total})
       </div>
       <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
         {items.map((it, i) => (
           <DailyItemRow key={`${it.ref.path}:${it.ref.row ?? i}`} item={it} />
         ))}
       </ul>
+      {total > items.length && expandHint && (
+        <div className="px-2 font-mono text-[11px] text-muted-foreground">
+          +{total - items.length} more — {expandHint}
+        </div>
+      )}
     </div>
   );
 }
@@ -136,8 +151,11 @@ function DailyView() {
 
   const empty =
     !data.attention.length &&
+    !data.queuedAsks.length &&
     !data.blocked.length &&
     !data.owedToday.length &&
+    !data.calendar.length &&
+    !data.commsNeedingReply.length &&
     !data.changed.length;
 
   return (
@@ -152,19 +170,41 @@ function DailyView() {
       </div>
       {empty ? (
         <div className="m-auto max-w-[440px] py-8 text-center text-muted-foreground">
-          Nothing blocked, owed, or changed today.
+          Nothing needs attention, reply, or follow-through today.
         </div>
       ) : (
         <>
-          <DailySection title="Attention" items={data.attention} />
-          <DailySection title="Blocked" items={data.blocked} />
-          <DailySection title="Owed today" items={data.owedToday} />
-          <DailySection title="Changed" items={data.changed} />
+          <DailySection title="Attention" items={data.attention} total={data.counts.attention} />
+          <DailySection
+            title="Queued asks · manage with `aios asks`"
+            items={data.queuedAsks}
+            total={data.counts.queuedAsks}
+          />
+          <DailySection title="Blocked" items={data.blocked} total={data.counts.blocked} />
+          <DailySection title="Owed today" items={data.owedToday} total={data.counts.owedToday} />
+          <DailySection
+            title="Today's calendar"
+            items={data.calendar}
+            total={data.counts.calendar}
+          />
+          <DailySection
+            title="Comms needing reply"
+            items={data.commsNeedingReply}
+            total={data.counts.commsNeedingReply}
+          />
+          <DailySection
+            title="Changed"
+            items={data.changed}
+            total={data.counts.changed}
+            expandHint="run `aios loop manifest --explain --daily` to inspect"
+          />
         </>
       )}
       <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-        counts — attention {data.counts.attention} · blocked {data.counts.blocked} · owed{" "}
-        {data.counts.owedToday} · changed {data.counts.changed} · excluded {data.counts.excluded}
+        counts — attention {data.counts.attention} · asks {data.counts.queuedAsks} · blocked{" "}
+        {data.counts.blocked} · owed {data.counts.owedToday} · calendar {data.counts.calendar} ·
+        replies {data.counts.commsNeedingReply} · changed {data.counts.changed} · withheld{" "}
+        {data.counts.withheld} · excluded {data.counts.excluded}
       </div>
     </div>
   );

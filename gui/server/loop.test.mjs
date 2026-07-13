@@ -232,6 +232,11 @@ test("GET /api/loop/daily: 401 without token, 200 with token", async (t) => {
     const body = await ok.json();
     assert.ok(typeof body.member === "string", "daily payload should carry a member");
     assert.ok(Array.isArray(body.changed), "daily payload should carry sections");
+    assert.ok(Array.isArray(body.calendar), "daily payload should carry calendar");
+    assert.ok(Array.isArray(body.commsNeedingReply), "daily payload should carry reply comms");
+    assert.equal(typeof body.counts.calendar, "number");
+    assert.equal(typeof body.counts.commsNeedingReply, "number");
+    assert.equal(typeof body.counts.withheld, "number");
   });
 });
 

@@ -191,6 +191,75 @@ test("carryover staleness uses calendar days, not elapsed milliseconds", () => {
   assert.equal(orientation.blocked[0].stale, 8);
 });
 
+test("calendar uses manifest-window instants, including a UTC date-prefix crossover", () => {
+  const comms = (id, occurredAt) => ({
+    ...sig(
+      "comms",
+      "admin",
+      { path: ".aios/loop/comms/calendar/admin/_.ndjson", row: id, tier: "admin" },
+      `Meeting: ${id}`,
+      { direction: null },
+      occurredAt
+    ),
+    source: "calendar",
+  });
+  const manifest = mani(
+    [comms("local-today", "2026-07-12T23:00:00.000Z"), comms("old", "2026-07-12T10:00:00.000Z")],
+    {
+      generatedAt: "2026-07-13T12:00:00.000Z",
+      from: "2026-07-12T12:00:00.000Z",
+      to: "2026-07-13T12:00:00.000Z",
+    }
+  );
+  const { orientation } = buildDailyOrientation({ manifest, prior: null });
+  assert.deepEqual(
+    orientation.calendar.map((item) => item.ref.row),
+    ["local-today"]
+  );
+  assert.equal(orientation.counts.calendar, 1);
+  assert.ok(!orientation.blocked.some((item) => item.ref.row === "old"));
+});
+
+test("email/Slack needing reply are actionable; waiting-on-other remains blocked; chatter drops", () => {
+  const comms = (id, source, summary, payload, occurredAt = GEN) => ({
+    ...sig(
+      "comms",
+      "admin",
+      { path: `.aios/loop/comms/${source}/admin/_.ndjson`, row: id, tier: "admin" },
+      summary,
+      payload,
+      occurredAt
+    ),
+    source,
+  });
+  const signals = [
+    comms("email", "email", "Email needing reply: proposal", { direction: "inbound" }),
+    comms("slack", "slack", "Can you review?", { direction: "inbound", waitingOn: "me" }),
+    comms("owner", "email", "Please respond", { waitingOn: "owner" }),
+    comms("other", "slack", "Waiting on Sam", { direction: "inbound", waitingOn: "sam" }),
+    comms("chatter", "slack", "Lunch plans", { direction: "inbound" }),
+    comms("outbound", "email", "Email needing reply: sent", { direction: "outbound" }),
+  ];
+  const { orientation } = buildDailyOrientation({ manifest: mani(signals), prior: null });
+  assert.deepEqual(orientation.commsNeedingReply.map((item) => item.ref.row).sort(), [
+    "email",
+    "owner",
+    "slack",
+  ]);
+  assert.deepEqual(
+    orientation.blocked.map((item) => item.ref.row),
+    ["other"]
+  );
+  assert.ok(
+    ![
+      ...orientation.calendar,
+      ...orientation.commsNeedingReply,
+      ...orientation.blocked,
+      ...orientation.changed,
+    ].some((item) => item.ref.row === "chatter" || item.ref.row === "outbound")
+  );
+});
+
 test("audience filter drops higher tiers; excluded full only for owner", () => {
   const admin = sig(
     "decision",
@@ -217,12 +286,21 @@ test("audience filter drops higher tiers; excluded full only for owner", () => {
   const owner = buildDailyOrientation({ manifest: m, prior: null, audience: "owner" }).orientation;
   assert.equal(owner.excluded.length, 1);
   assert.equal(owner.counts.excluded, 1);
+  assert.equal(owner.counts.withheld, 0);
   assert.ok(new Set(owner.changed.map((i) => i.tier)).has("admin"));
 
   const view = buildDailyOrientation({ manifest: m, prior: null, audience: "team" }).orientation;
   assert.ok(!view.changed.some((i) => i.tier === "admin"));
   assert.equal(view.excluded.length, 0); // withheld from a shareable view
   assert.equal(view.counts.excluded, 1); // count still visible
+  assert.equal(view.counts.withheld, 1); // aggregate-only: the admin decision
+
+  const external = buildDailyOrientation({
+    manifest: m,
+    prior: null,
+    audience: "external",
+  }).orientation;
+  assert.equal(external.counts.withheld, 2); // team + admin; no tier/ref detail is added
 });
 
 test("nextSnapshot is owner-complete regardless of the requested audience", () => {
@@ -273,6 +351,9 @@ test("deterministic ordering with tied timestamps; unknown kind ignored; empty m
     changed: 0,
     blocked: 0,
     owedToday: 0,
+    calendar: 0,
+    commsNeedingReply: 0,
+    withheld: 0,
     excluded: 0,
   });
 });
@@ -331,6 +412,7 @@ test("open blocker ask → Attention section; item shape maps to the asks store 
   assert.equal(it.ref.path, ".aios/loop/asks/asks.ndjson");
   assert.equal(it.ref.row, "blk-1");
   assert.equal(orientation.counts.queuedAsks, 0);
+  assert.equal(orientation.counts.withheld, 0);
 });
 
 test("Attention blockers are oldest-first", () => {

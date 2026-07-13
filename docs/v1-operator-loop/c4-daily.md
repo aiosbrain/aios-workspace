@@ -1,8 +1,11 @@
-The lightweight daily cadence — the habit driver. Reads the current C1 signal set and answers exactly three questions, nothing more:
+The lightweight daily cadence — the habit driver. Reads the current C1 signal set and leads with
+what the operator can act on:
 
-1. **What changed** since the last run (decisions logged, deliverables moved, tasks edited).
-2. **What's blocked** (stale carry-overs, things waiting on someone, blocked tasks/deliverables).
-3. **What I owe today** (open next-actions due today/overdue, carried-over from yesterday via C7).
+1. **Attention / asks and blockers** that need resolution (`aios asks` owns the local ask queue).
+2. **What I owe today** (open next-actions due today/overdue, carried-over from yesterday via C7).
+3. **Today's calendar** and **comms needing reply** from the connector activity stream.
+4. **What changed** since the last run (decisions logged, deliverables moved, tasks edited), capped
+   with an exact manifest-inspection command when more items exist.
 
 **Design rules (friction is the enemy):**
 - Seconds to read, one screen / a few CLI lines. No verbose verification, no approval gate — daily is read-only orientation, not a deliverable.
@@ -36,12 +39,29 @@ diagnostics and the daily still renders current local signals. `--no-connectors`
 preamble. The side-effect-free inspection/projection paths (`--manifest`, `--as`, `--no-record`, and
 bare `--json`) never invoke connector subprocesses. Manual connector scripts remain supported.
 
-### Classification (each signal → at most one section; precedence **Blocked > Owed > Changed**)
+### Classification (each signal → at most one section)
 - **carryover**: stale (`createdAt` older than `staleDays`, default 7) **or** blocked/waiting keyword → **Blocked**; else → **Owed today**.
 - **task** (open status only): blocked/waiting keyword in status/labels/title → **Blocked**; else `due` on/before today → **Owed today**; else if changed since last run → **Changed**; else omit.
 - **deliverable**: blocked status → **Blocked**; else if changed → **Changed**; else omit.
 - **decision**: changed since last run → **Changed**; else omit.
+- **comms / calendar**: `source:"calendar"` + `occurredAt` inside the manifest daily window →
+  **Today's calendar**. Instant-window containment avoids dropping locally-today events whose UTC
+  date prefix differs after connector normalization.
+- **comms / reply**: `source:"email"|"slack"` + `waitingOn:"me"|"owner"` (unless explicitly
+  outbound), or an inbound explicit needs-reply summary → **Comms needing reply**.
+- **other comms**: `waitingOn` another person or blocked/waiting summary → **Blocked**; otherwise
+  directionless chatter is omitted.
 - Unknown kinds are ignored (forward-compat). Dates are compared as ISO calendar strings (TZ-free, inclusive of today); a malformed/absent `due` is never overdue and a malformed `createdAt` is never stale.
+
+### Tier projection and empty states (AIO-368)
+
+Classification runs over the owner-complete manifest, then every section is filtered through the
+requested audience. `counts.withheld` is only the aggregate number of classifiable daily items
+removed by that projection; no above-tier tier/ref/path/summary is emitted. Default-denied records
+remain a separate aggregate `counts.excluded` (full exclusions are owner-only), and admin-only asks
+remain completely absent from shareable views. Consequently, an empty `--as team|external` render
+can distinguish a true zero from withheld/excluded activity and names the matching safe audit
+command: `aios loop manifest --explain --daily --as <tier>`.
 
 ### Change tracking (the reusable primitive) — `src/operator-loop/changes.ts`
 "Changed" is a **content-fingerprint snapshot diff**, not an mtime check: a per-scope snapshot at `.aios/loop/state/changes-<scope>.json` records a sha256 of each artifact's `{kind, tier, summary, payload}` (occurredAt excluded), keyed by `path[#row]`. Run-to-run, added/modified artifacts populate "Changed". This gives real **per-row** task/decision change detection despite the file-level mtime the sources carry, and is generic over any signal kind (weekly/telemetry can reuse it). First run has no baseline, so it bootstraps "Changed" from the 24h window to avoid a day-one flood, then diffs thereafter.
