@@ -44,6 +44,9 @@
 # digest_model: claude:claude-haiku-4-5
 
 # spec_eval_model: deepseek:deepseek-v4-pro
-# spec_fix_model: deepseek:deepseek-v4-pro
+# spec_author_model: claude:claude-opus-4-8
+# spec_author_effort: high
+# spec_fix_model: claude:claude-opus-4-8
+# spec_fix_effort: high
 # spec_eval_model: claude:claude-opus-4-8   # override to Claude CLI if preferred
 # decisions_distill_model: claude:claude-opus-4-8

@@ -284,8 +284,16 @@ console.log("spec harness steps (EE5) resolve + runner-family guard");
   const empty = mkdtempSync(path.join(tmpdir(), "lm-spec-"));
   const r = resolveLoopModels({ repo: empty });
   check("spec_eval defaults to deepseek-v4-pro", r.spec_eval.model === "deepseek-v4-pro");
-  check("spec_fix defaults to deepseek-v4-pro", r.spec_fix.model === "deepseek-v4-pro");
+  check("spec_author defaults to Opus", r.spec_author.model === "claude-opus-4-8");
+  check("spec_author defaults to high effort", r.spec_author.effort === "high");
+  check("spec_fix defaults to Opus", r.spec_fix.model === "claude-opus-4-8");
+  check("spec_fix defaults to high effort", r.spec_fix.effort === "high");
+  check(
+    "spec author and adversarial evaluator use distinct families",
+    modelFamily(r.spec_fix.model) !== modelFamily(r.spec_eval.model)
+  );
   check("spec_eval is a known step", STEPS.includes("spec_eval"));
+  check("spec_author is a known step", STEPS.includes("spec_author"));
   check("spec_fix is a known step", STEPS.includes("spec_fix"));
   rmSync(empty, { recursive: true, force: true });
 

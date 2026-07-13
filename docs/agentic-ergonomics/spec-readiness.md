@@ -33,11 +33,25 @@ as soft context; it never blocks (empty on any error).
 ## Command
 
 ```
-aios spec eval <file> [--json] [--no-llm] [--rubric <path>]
-aios spec fix  <file> [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]
+aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--json] [--no-llm] [--rubric <path>]
+aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]
+aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]
 ```
 
 - **eval** grades the spec. `--no-llm` runs the deterministic layer only (offline, no key).
+- A spec may declare `eval_tier: deterministic` in frontmatter (or receive `--tier deterministic`).
+  Its mandatory deterministic check is the complete evaluation, so a clean result is `SPEC_READY`
+  (exit 0) and never makes a model call. The default tier is `full`.
+- A directory or glob is evaluated concurrently (default 6, bounded to 8) and prints one
+  file/verdict/exit/score table. Every file still runs the deterministic layer.
+- Set `eval_provenance: adversarial-reviewed` (or `parent_plan_reviewed: true`) only when the
+  parent plan received adversarial review. In `spec fix`, that runs the LLM once before revisions,
+  deterministic checks on each revision, and one final LLM confirmation.
+- **author** fans one independent Opus author call per Markdown issue slice (default pool 6,
+  bounded to 8). Each call receives the shared plan, rubric, and only its assigned slice. After
+  fan-out it runs deterministic per-spec gates plus title/path collision checks; semantic drift is
+  deliberately a separate optional review concern, never a substitute for those checks.
+  `--model` and `--effort` override `spec_author_*` for that batch only.
 - **fix** runs the bounded fix loop (`evaluate → revise → re-evaluate`, budget from the rubric,
   default 2) until the spec is ready or the budget is spent. `--write` overwrites in place; `--out`
   writes an explicit path; the default writes `<name>.improved.md` (the original is never touched
@@ -66,8 +80,8 @@ it never auto-fixes; fix the spec with `aios spec fix <file>` and re-run.
 
 ## Models
 
-The evaluator and reviser are per-step model config (`loop-models.mjs`): `spec_eval` and
-`spec_fix` (default **`deepseek-v4-pro`**, same prompt-only backend as `plan_review` /
-`code_review`), tunable via `.aios/loop-models.yaml`. Both route through `callPromptModel` —
-there is **no diversity pair**: spec eval is a single adversarial pass, and prompt-discipline
-(refute, quote, per-criterion), not model-family independence, is what makes it trustworthy.
+The evaluator and reviser are per-step model config (`loop-models.mjs`): `spec_eval` remains
+**`deepseek-v4-pro`** while `spec_fix` defaults to **`claude-opus-4-8`** at high effort. This
+keeps the author/reviser and adversarial refuter in distinct model families.
+It is tunable via `.aios/loop-models.yaml`; keep those two steps cross-family when overriding.
+Both route through `callPromptModel`.

@@ -39,6 +39,10 @@ code. See `docs/agentic-ergonomics/spec-readiness.md` for the command, exit code
 | 3 | `NOT_EVALUATED` — deterministic clean, LLM layer not run (`--no-llm`) |
 | 4 | usage / IO error (missing file, unreadable/malformed rubric) |
 
+`eval_tier: deterministic` is an explicit mechanical-spec exemption from the adversarial layer:
+the deterministic checks remain mandatory and a clean result exits 0. The default `full` tier
+runs both layers; `--no-llm` remains an incomplete (`NOT_EVALUATED`) full-tier check.
+
 ## Criteria
 
 `Check method` names the layer(s): **deterministic**, **llm-read**, or **det+llm**. `Must` is

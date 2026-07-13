@@ -41,11 +41,11 @@ export const DEFAULT_MODELS = {
   safety_review: { model: "claude-opus-4-8", effort: "xhigh" },
   orchestrate: { model: "fable-5" },
   digest: { model: "claude-haiku-4-5" },
-  // Spec/plan readiness harness (EE5): adversarial evaluator + fix-loop reviser. Prompt-only
-  // single-shot calls — default deepseek-v4-pro (same reviewer backend as plan_review/code_review)
-  // so spec grading does not consume Anthropic API credits.
+  // Spec readiness is a deliberate cross-family author/refuter pair: Opus authors/revises the
+  // spec, while DeepSeek adversarially evaluates it. Do not collapse these onto one family.
+  spec_author: { model: "claude-opus-4-8", effort: "high" },
   spec_eval: { model: "deepseek-v4-pro" },
-  spec_fix: { model: "deepseek-v4-pro" },
+  spec_fix: { model: "claude-opus-4-8", effort: "high" },
   // Decision-corpus distillation (EE4 / AIO-192): a single summarization pass over the local
   // steering-decision corpus. Like spec_eval it is NOT a producer/reviewer loop — no diversity
   // pair — so it stays out of DIVERSITY_PAIRS; it runs through llm.ts (Anthropic SDK) so it IS a
