@@ -9,6 +9,18 @@
 
 set -euo pipefail
 
+# Deep-work means no ambient AIOS notifications. This hook is a notifier, unlike the asks
+# capture hook, so it must respect Claude Code's machine-global preference and fail open.
+if node -e '
+  const fs = require("node:fs");
+  try {
+    const s = JSON.parse(fs.readFileSync(process.env.HOME + "/.claude/settings.json", "utf8"));
+    process.exit(s.preferredNotifChannel === "notifications_disabled" ? 0 : 1);
+  } catch { process.exit(1); }
+'; then
+  exit 0
+fi
+
 # Find the repo root (aios.yaml) from cwd
 DIR="$(pwd)"
 while [ "$DIR" != "/" ]; do

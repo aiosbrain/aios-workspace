@@ -33,12 +33,13 @@ function writeSummary(dir, summary) {
   );
 }
 
-function runHook(dir, payload, { rawInput } = {}) {
+function runHook(dir, payload, { rawInput, env } = {}) {
   const input = rawInput !== undefined ? rawInput : JSON.stringify(payload);
   try {
     const out = execFileSync("node", [HOOK], {
       input,
-      env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+      // Isolate the machine-global deep-work preference from the developer's real Claude config.
+      env: { ...process.env, CLAUDE_PROJECT_DIR: dir, HOME: path.join(dir, "home"), ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     return { code: 0, stdout: out.toString("utf8") };
@@ -67,7 +68,7 @@ test("hook file: executable bit set + node shebang", () => {
   assert.equal(readFileSync(HOOK, "utf8").split("\n")[0], "#!/usr/bin/env node");
 });
 
-test("fresh summary → systemMessage matches the pulse format + freshness", () => {
+test("fresh summary → one concise aios tip", () => {
   const dir = ws();
   try {
     writeSummary(dir, summary());
@@ -76,7 +77,7 @@ test("fresh summary → systemMessage matches the pulse format + freshness", () 
     const parsed = JSON.parse(stdout.trim());
     assert.match(
       parsed.systemMessage,
-      /^Session pulse — AM Spine L4 \(2\.8\/4\) · ergonomics 2\/4 \(shadow\) · weakest: Context hygiene\ntip: Cache more of your context\. · measured \d+m ago$/
+      /^aios tip: Cache more of your context\.$/
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -97,7 +98,7 @@ test("immediate rerun → throttled (no output)", () => {
   }
 });
 
-test("summary older than 24h → message contains 'stale'", () => {
+test("summary older than 24h → message names stale data and the analyze action", () => {
   const dir = ws();
   try {
     writeSummary(
@@ -106,7 +107,7 @@ test("summary older than 24h → message contains 'stale'", () => {
     );
     const { code, stdout } = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(code, 0);
-    assert.match(stdout, /stale — run aios analyze or `aios loop install` for a scheduled refresh/);
+    assert.match(stdout, /data 1d ago old — run aios analyze/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -117,10 +118,29 @@ test("missing state → at most one analyze suggestion per 24h", () => {
   try {
     const first = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(first.code, 0);
-    assert.match(first.stdout, /Run `aios analyze`/);
+    assert.match(first.stdout, /^\{"systemMessage":"aios tip: run `aios analyze` once to start maturity tracking\."\}/);
     const second = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(second.code, 0);
     assert.equal(second.stdout.trim(), "", "second suggestion within 24h must be silent");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("deep-work → silent without changing throttle state", () => {
+  const dir = ws();
+  const home = path.join(dir, "home");
+  try {
+    writeSummary(dir, summary());
+    mkdirSync(path.join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      path.join(home, ".claude", "settings.json"),
+      JSON.stringify({ preferredNotifChannel: "notifications_disabled" })
+    );
+    const { code, stdout } = runHook(dir, { hook_event_name: "Stop" }, { env: { HOME: home } });
+    assert.equal(code, 0);
+    assert.equal(stdout.trim(), "");
+    assert.equal(statSync(path.join(dir, ".aios", "session-pulse-state.json"), { throwIfNoEntry: false }), undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
