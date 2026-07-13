@@ -264,7 +264,8 @@ test("daily loop: an external-tier comms blocker is hidden from a team audience 
   ]);
   // Owner sees it; a team-audience view filters admin out.
   const owner = runDaily({ root, now: NOW, record: false, audience: "owner" });
-  assert.equal(owner.blocked.filter((i) => i.kind === "comms").length, 1);
+  assert.equal(owner.commsNeedingReply.filter((i) => i.kind === "comms").length, 1);
   const team = runDaily({ root, now: NOW, record: false, audience: "team" });
-  assert.equal(team.blocked.filter((i) => i.kind === "comms").length, 0);
+  assert.equal(team.commsNeedingReply.filter((i) => i.kind === "comms").length, 0);
+  assert.equal(team.counts.withheld, 1);
 });

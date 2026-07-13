@@ -127,18 +127,20 @@ function jsonWriteback(plan, targets, manifest, loop) {
   return json;
 }
 
-// Human render of a C4 DailyOrientation — three sections, one screen, seconds to read. The
+// Human render of a C4 DailyOrientation — actions first, one screen, seconds to read. The
 // machine surface is `--json` (the full orientation); this is the terse owner-local view.
 function renderDaily(o) {
   const today = o.generatedAt.slice(0, 10);
   const marker = o.audience === "owner" ? "owner-private · local only" : `view: ${o.audience}`;
+  const auditCommand =
+    o.audience === "owner"
+      ? "aios loop manifest --explain --daily"
+      : `aios loop manifest --explain --daily --as ${o.audience}`;
   const printExcludedHint = () => {
     if (!o.counts.excluded) return;
     console.log("");
     console.log(
-      c.dim(
-        `  ${o.counts.excluded} excluded (default-deny) — run \`aios loop manifest --explain --daily\` to inspect`
-      )
+      c.dim(`  ${o.counts.excluded} excluded (default-deny) — run \`${auditCommand}\` to inspect`)
     );
   };
   // "Ran (agent runtime)" — aggregate { tag, durationMin } only; safe at any audience (AIO-139).
@@ -163,21 +165,38 @@ function renderDaily(o) {
     o.counts.changed === 0 &&
     o.counts.blocked === 0 &&
     o.counts.owedToday === 0 &&
+    (o.counts.calendar ?? 0) === 0 &&
+    (o.counts.commsNeedingReply ?? 0) === 0 &&
     asksTotal === 0
   ) {
     console.log("");
-    console.log(
-      `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
-    );
-    console.log(
-      c.green(
-        o.counts.excluded
-          ? "No classifiable daily items. ✓"
-          : "Nothing carried over. You're clear. ✓"
-      )
-    );
+    if (o.audience !== "owner") {
+      const hidden = [];
+      if (o.counts.withheld) hidden.push(`${o.counts.withheld} withheld`);
+      if (o.counts.excluded) hidden.push(`${o.counts.excluded} excluded (default-deny)`);
+      if (hidden.length) {
+        console.log(
+          c.dim(
+            `0 ${o.audience}-visible items (${hidden.join("; ")}) — run \`${auditCommand}\` to audit`
+          )
+        );
+      } else {
+        console.log(c.green(`0 ${o.audience}-visible items. Nothing happened in this view. ✓`));
+      }
+    } else {
+      console.log(
+        `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
+      );
+      console.log(
+        c.green(
+          o.counts.excluded
+            ? "No classifiable daily items. ✓"
+            : "Nothing carried over. You're clear. ✓"
+        )
+      );
+    }
     renderRan();
-    printExcludedHint();
+    if (o.audience === "owner") printExcludedHint();
     return;
   }
 
@@ -191,7 +210,7 @@ function renderDaily(o) {
     }
     return "";
   };
-  const section = (title, items, total) => {
+  const section = (title, items, total, { expand = false } = {}) => {
     console.log("");
     console.log(c.bold(`${title} (${total})`));
     for (const it of items) {
@@ -201,16 +220,22 @@ function renderDaily(o) {
         )}`
       );
     }
-    if (total > items.length) console.log(c.dim(`  +${total - items.length} more`));
+    if (total > items.length) {
+      const hint = expand ? ` — run \`${auditCommand}\` to inspect` : "";
+      console.log(c.dim(`  +${total - items.length} more${hint}`));
+    }
   };
 
   // Asks (owner-only, admin-tier) surface at the TOP — the operator's queue comes before the
   // workspace roll-up. Empty for any --as view (buildDailyOrientation gates them out).
   if (o.counts.attention) section("Attention", o.attention ?? [], o.counts.attention);
   if (o.counts.queuedAsks) section("Queued asks", o.queuedAsks ?? [], o.counts.queuedAsks);
-  section("Changed", o.changed, o.counts.changed);
+  if (asksTotal) console.log(c.dim("  Manage this queue with `aios asks`."));
   section("Blocked", o.blocked, o.counts.blocked);
   section("Owed today", o.owedToday, o.counts.owedToday);
+  section("Today's calendar", o.calendar ?? [], o.counts.calendar ?? 0);
+  section("Comms needing reply", o.commsNeedingReply ?? [], o.counts.commsNeedingReply ?? 0);
+  section("Changed", o.changed, o.counts.changed, { expand: true });
   renderRan();
   printExcludedHint();
 }

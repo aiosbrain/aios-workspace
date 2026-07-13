@@ -185,10 +185,14 @@ test("daily --as external hides admin content and withholds excluded refs", () =
   assert.equal(o.audience, "external");
   assert.equal(o.excluded.length, 0);
   assert.equal(o.counts.excluded, 1);
-  assert.ok(![...o.changed, ...o.blocked, ...o.owedToday].some((i) => i.tier === "admin"));
+  assert.ok(
+    ![...o.changed, ...o.blocked, ...o.owedToday, ...o.calendar, ...o.commsNeedingReply].some(
+      (i) => i.tier === "admin"
+    )
+  );
 });
 
-test("daily human view: owner marker + three sections; empty manifest → friendly empty-state", () => {
+test("daily human view is actions-first and empty manifest has a friendly empty-state", () => {
   const { dir, m } = workspace();
   const r = run(dir, ["--manifest", m]);
   assert.equal(r.code, 0, r.stderr);
@@ -196,6 +200,12 @@ test("daily human view: owner marker + three sections; empty manifest → friend
   assert.match(r.stdout, /Changed \(/);
   assert.match(r.stdout, /Blocked \(/);
   assert.match(r.stdout, /Owed today \(/);
+  assert.match(r.stdout, /Today's calendar \(/);
+  assert.match(r.stdout, /Comms needing reply \(/);
+  assert.ok(r.stdout.indexOf("Blocked (") < r.stdout.indexOf("Owed today ("));
+  assert.ok(r.stdout.indexOf("Owed today (") < r.stdout.indexOf("Today's calendar ("));
+  assert.ok(r.stdout.indexOf("Today's calendar (") < r.stdout.indexOf("Comms needing reply ("));
+  assert.ok(r.stdout.indexOf("Comms needing reply (") < r.stdout.indexOf("Changed ("));
 
   const { dir: d2, m: em } = workspace({ ...MANIFEST, signals: [], excluded: [] });
   const r2 = run(d2, ["--manifest", em]);
@@ -212,6 +222,54 @@ test("daily human view: owner marker + three sections; empty manifest → friend
   assert.match(r3.stdout, /No classifiable daily items/);
   assert.match(r3.stdout, /excluded \(default-deny\)/);
   assert.doesNotMatch(r3.stdout, /You're clear/);
+});
+
+test("truncated Changed section names the exact expansion command", () => {
+  const signals = Array.from({ length: 10 }, (_, i) =>
+    sig(
+      "decision",
+      "team",
+      { path: "3-log/decision-log.md", row: String(i + 1), tier: "team" },
+      `Decision ${i + 1}`
+    )
+  );
+  const { dir, m } = workspace({ ...MANIFEST, signals, excluded: [] });
+  const r = run(dir, ["--manifest", m]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /\+3 more — run `aios loop manifest --explain --daily` to inspect/);
+});
+
+test("empty shareable views distinguish withheld activity from a true zero without details", () => {
+  const privateSummary = "ZZ-PRIVATE-DAILY-SUMMARY";
+  const privatePath = "5-personal/zz-private-daily.md";
+  const admin = sig(
+    "decision",
+    "admin",
+    { path: privatePath, row: "1", tier: "admin" },
+    privateSummary
+  );
+  const { dir, m } = workspace({
+    ...MANIFEST,
+    signals: [admin],
+    excluded: [{ ref: "5-personal/hidden-source.md#2", reason: "no tier" }],
+  });
+  const hidden = run(dir, ["--manifest", m, "--as", "team"]);
+  assert.equal(hidden.code, 0, hidden.stderr);
+  assert.match(hidden.stdout, /0 team-visible items \(1 withheld; 1 excluded \(default-deny\)\)/);
+  assert.match(hidden.stdout, /`aios loop manifest --explain --daily --as team` to audit/);
+  assert.doesNotMatch(hidden.stdout, new RegExp(privateSummary));
+  assert.doesNotMatch(hidden.stdout, new RegExp(privatePath.replaceAll(".", "\\.")));
+  assert.equal((hidden.stdout.match(/excluded \(default-deny\)/g) ?? []).length, 1);
+
+  const { dir: zeroDir, m: zeroManifest } = workspace({
+    ...MANIFEST,
+    signals: [],
+    excluded: [],
+  });
+  const zero = run(zeroDir, ["--manifest", zeroManifest, "--as", "team"]);
+  assert.equal(zero.code, 0, zero.stderr);
+  assert.match(zero.stdout, /0 team-visible items\. Nothing happened in this view/);
+  assert.doesNotMatch(zero.stdout, /withheld|default-deny|to audit/);
 });
 
 test("daily --as bogus exits non-zero with a clear message", () => {
@@ -279,6 +337,7 @@ test("live owner daily surfaces seeded asks; --as team gates them out (constitut
   assert.match(rh.stdout, /Attention \(1\)/);
   assert.match(rh.stdout, /Queued asks \(2\)/);
   assert.match(rh.stdout, /Prod is down/);
+  assert.match(rh.stdout, /Manage this queue with `aios asks`/);
 
   // --as team: asks never enter the output.
   const rt = run(dir, ["--as", "team", "--json"]);
@@ -404,7 +463,7 @@ test("AIO-366: recording owner daily completes all connector pulls before C1 col
   assert.equal(result.code, 0, result.stderr);
   const orientation = JSON.parse(result.stdout);
   assert.equal(invocationCount(dir), 3, "Granola, GOG, and Slack adapters all ran");
-  const refs = orientation.blocked
+  const refs = orientation.commsNeedingReply
     .filter((item) => item.kind === "comms")
     .map((item) => item.ref.row)
     .sort();
