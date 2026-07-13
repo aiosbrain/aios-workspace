@@ -65,7 +65,12 @@ if (existsSync(ws)) {
     fail("workspace missing validation/secret-patterns.txt");
   else ok("validation/secret-patterns.txt present");
 
-  for (const hook of ["asks-capture.mjs", "decision-capture.mjs", "session-pulse.mjs"]) {
+  for (const hook of [
+    "asks-capture.mjs",
+    "decision-capture.mjs",
+    "session-pulse.mjs",
+    "file-governance-guard.mjs",
+  ]) {
     const p = path.join(ws, "hooks", hook);
     if (!existsSync(p)) fail(`workspace missing hooks/${hook}`);
     else if (!(statSync(p).mode & 0o111)) fail(`hooks/${hook} is not executable`);
@@ -89,6 +94,12 @@ if (existsSync(ws)) {
       else if (!cmd.includes("team-ops-guard.sh"))
         fail(`settings.json hook command not team-ops-guard.sh: '${cmd}'`);
       else ok("settings.json registers PreToolUse(Edit|Write|MultiEdit) → team-ops-guard.sh");
+
+      const cmd2 = pre?.hooks?.[1]?.command || "";
+      if (!cmd2.includes("file-governance-guard.mjs"))
+        fail(`settings.json PreToolUse missing file-governance-guard.mjs: '${cmd2}'`);
+      else
+        ok("settings.json registers PreToolUse(Edit|Write|MultiEdit) → file-governance-guard.mjs");
 
       const notif = s?.hooks?.Notification?.[0]?.hooks?.[0]?.command || "";
       const stopAsks = s?.hooks?.Stop?.[0]?.hooks?.[0]?.command || "";

@@ -61,6 +61,12 @@ export const MANAGED_PATHS = [
     exec: true,
   },
   { dest: "hooks/session-pulse.mjs", src: "hooks/session-pulse.mjs", kind: "file", exec: true },
+  {
+    dest: "hooks/file-governance-guard.mjs",
+    src: "hooks/file-governance-guard.mjs",
+    kind: "file",
+    exec: true,
+  },
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 
