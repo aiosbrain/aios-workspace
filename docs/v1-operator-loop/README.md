@@ -65,7 +65,11 @@ MCP tool, source, rubric, or C1-C8 spec changes, update the relevant block in th
 - `aios loop weekly`
 - `aios loop writeback`
 - `aios loop telemetry`
+- `aios loop install`
 <!-- /drift:loop-commands -->
+
+`install` is scheduler plumbing (AIO-367), not a C1-C8 spec component — see
+[`../loop-install.md`](../loop-install.md) for what it installs and the launchd/cron/dotenvx detail.
 
 ### MCP Tool Surface
 

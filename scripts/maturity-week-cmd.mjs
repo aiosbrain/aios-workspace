@@ -21,7 +21,8 @@ const MATURITY_WEEK_HELP = `aios maturity-week [--json] [--out <path>] [--projec
   Default → 3-log/maturity/week-<ISO-MONDAY>.md (admin tier, never synced).
   --json → machine shape on stdout · --out <path> → write elsewhere.
   --project <slug> overrides the project filter (default: this cwd's basename slug).
-  Cadence: run weekly (cron / a Claude routine):  npm run aios -- maturity-week`;
+  Cadence: run weekly — \`aios loop install\` schedules this automatically (bundled into its
+  weekly job), or run by hand:  npm run aios -- maturity-week`;
 
 // aios maturity-week — local weekly AEM report + belts (AM6, AIO-231). Read-only
 // consumer of AM1's session store; writes an admin-tier file under 3-log/. The
