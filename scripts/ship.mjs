@@ -567,7 +567,7 @@ export function buildLightPlanFromSpec(specText, { issue } = {}) {
       "",
       String(specText ?? "").trim(),
       "",
-      "---",
+      "---"
     );
   }
   parts.push("## Deferred (out of scope)", "- none");
