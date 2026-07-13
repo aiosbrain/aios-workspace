@@ -50,7 +50,13 @@ import { resolveLoopModels } from "./loop-models.mjs";
 import { modelFamily, parseModelRef } from "./model-providers.mjs";
 import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
-import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
+import {
+  evaluateSpec,
+  loadRubric,
+  loadRecentDecisions,
+  formatFindings,
+  extractSections,
+} from "./spec-eval.mjs";
 import { runLocalPrePrReview } from "./review-bugbot.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 import { runSimplify } from "./simplify.mjs";
@@ -210,7 +216,7 @@ export function parseShipArgs(args) {
   };
   const hasFlag = (name) => args.includes(name);
 
-  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner"];
+  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner", "--loop"];
   const positional = args.filter(
     (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
   );
@@ -229,6 +235,7 @@ export function parseShipArgs(args) {
     Number.isFinite(maxFixRaw) && maxFixRaw > 0 ? maxFixRaw : DEFAULT_MAX_FIX_ROUNDS;
 
   const planRunner = flag("--plan-runner") ?? "cli";
+  const loop = flag("--loop") ?? "full";
 
   return {
     help: hasFlag("--help") || hasFlag("-h"),
@@ -238,6 +245,7 @@ export function parseShipArgs(args) {
     reviewers,
     maxFixRounds,
     planRunner,
+    loop,
     dryRun: hasFlag("--dry-run"),
     noSimplify: hasFlag("--no-simplify"),
     resume: hasFlag("--resume"),
@@ -258,6 +266,14 @@ export function validateShipArgs(opts) {
   // caveat, and why cli is the default (the operator/Hermes dotenvx key has no API credits).
   if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
     return `unsupported --plan-runner '${opts.planRunner}' — expected 'cli' or 'sdk'.`;
+  // Loop shapes (AIO-398): `full` (default — plan loop + reviews) or `light` (plan/plan_review
+  // skipped for SPEC_READY specs; deterministic spec gate at entry; profile-pinned models).
+  if (opts.loop !== "full" && opts.loop !== "light")
+    return `unsupported --loop '${opts.loop}' — expected 'full' or 'light'.`;
+  // The deterministic spec gate IS the light loop's entry contract ("you did spec right, now
+  // build faster") — skipping it would leave the light loop with no evidence at all.
+  if (opts.loop === "light" && opts.skipSpecGate)
+    return "--skip-spec-gate cannot be combined with --loop light — the deterministic spec gate is the light loop's entry contract.";
   // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
   // silently disable BOTH gating reviewers and wave the PR through — reject it. (A bare
   // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
@@ -390,6 +406,7 @@ export function buildShipDryRunReport({
   gates,
   reviewers,
   planRunner,
+  loop = "full",
   maxFixRounds,
 }) {
   const stepLine = (name) => {
@@ -400,28 +417,44 @@ export function buildShipDryRunReport({
     if (cfg.timeoutMs) bits.push(`timeout=${cfg.timeoutMs / 1000}s`);
     return `  ${name.padEnd(14)} ${bits.join(" · ")}`;
   };
+  const isLightLoop = loop === "light";
   const lines = [
     "",
     c.blue(`aios ship — dry-run for ${issue}${issueTitle ? `: ${issueTitle}` : ""}`),
     "",
-    "Stages (spec eval → plan → build → PR → review → fix → merge → cleanup):",
-    "  1. recon         Linear + git-tracked files → context pack",
-    "  2. spec eval     spec-readiness gate on the Linear issue body (EE5)",
-    "  3. plan          plan loop → operator plan gate",
-    "  4. follow-up     file `## Deferred` items as Linear children",
-    "  5. build         runBuild on an isolated worktree",
-    "  6. PR            cmdPr push + open PR",
-    "  7. review        wait-for-bots (Bugbot) + GPT review + consolidate",
-    "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
-    "  8b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
-    "  9. merge gate    CI + consolidator + path-gated safety review + operator",
-    " 10. cleanup       ff-only main → worktree remove → branch delete",
+    isLightLoop
+      ? "Stages (spec eval → spec-derived build → PR → review → fix → merge → cleanup):"
+      : "Stages (spec eval → plan → build → PR → review → fix → merge → cleanup):",
+    ...(isLightLoop
+      ? [
+          "  1. spec eval     mandatory spec-readiness gate on the Linear issue body (EE5)",
+          "  2. plan          derive build contract from Interfaces / Implementation / Acceptance",
+          "  3. build         runBuild on an isolated worktree",
+          "  4. PR            cmdPr push + open PR",
+          "  5. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+          "  6. fix loop      re-build until CLEAR or --max-fix-rounds",
+          "  6b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
+          "  7. merge gate    CI + consolidator + safety review only when `safety: true`",
+          "  8. cleanup       ff-only main → worktree remove → branch delete",
+        ]
+      : [
+          "  1. recon         Linear + git-tracked files → context pack",
+          "  2. spec eval     spec-readiness gate on the Linear issue body (EE5)",
+          "  3. plan          plan loop → operator plan gate",
+          "  4. follow-up     file `## Deferred` items as Linear children",
+          "  5. build         runBuild on an isolated worktree",
+          "  6. PR            cmdPr push + open PR",
+          "  7. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+          "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
+          "  8b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
+          "  9. merge gate    CI + consolidator + path-gated safety review + operator",
+          " 10. cleanup       ff-only main → worktree remove → branch delete",
+        ]),
     "",
     "Per-step models:",
-    stepLine("recon"),
+    ...(isLightLoop ? [] : [stepLine("recon")]),
     stepLine("spec_eval"),
-    stepLine("plan"),
-    stepLine("plan_review"),
+    ...(isLightLoop ? [] : [stepLine("plan"), stepLine("plan_review")]),
     stepLine("build"),
     stepLine("code_review"),
     stepLine("simplify"),
@@ -430,10 +463,11 @@ export function buildShipDryRunReport({
     stepLine("safety_review"),
     stepLine("digest"),
     "",
+    `Loop:         ${loop}`,
     `Plan runner:  ${planRunner}`,
     `Reviewers:    ${(reviewers ?? []).join(", ")} (CodeRabbit swept, never gated on)`,
     `Max fix rounds: ${maxFixRounds}`,
-    `Gates:        plan=${gates.plan}  merge=${gates.merge}`,
+    `Gates:        plan=${isLightLoop ? "skipped (spec-derived)" : gates.plan}  merge=${gates.merge}`,
     "",
     "SHIP_EXIT codes:",
     ...Object.entries(SHIP_EXIT).map(([k, v]) => `  ${String(v).padStart(3)}  ${k}`),
@@ -485,6 +519,58 @@ export function buildSpecTextFromIssue(issue) {
       parts.push(`### ${who}`, "", String(cm.body).trim(), "");
     }
   }
+  return parts.join("\n");
+}
+
+// ── light loop helpers (AIO-398) ─────────────────────────────────────────────────────────────
+
+/** Does a spec's leading YAML frontmatter carry `safety: true`? Parsed from the RAW spec body
+ *  (the Linear issue description / spec file), whose frontmatter — when present — must open the
+ *  text. A `---` used later as a markdown horizontal rule never matches. */
+export function specSafetyFlag(text) {
+  const m = String(text ?? "").match(/^\s*---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!m) return false;
+  return /^safety:\s*true\s*$/im.test(m[1]);
+}
+
+/** The spec sections that stand in for the plan in the light loop. */
+const LIGHT_PLAN_SECTION_RE = /\b(interfaces?|implementation|acceptance)\b/i;
+
+/** Compose the light loop's plan from a SPEC_READY spec: its Interfaces / Implementation /
+ *  Acceptance sections are fed into the build prompt where the plan output normally goes
+ *  (the spec IS the plan — the plan/plan_review stages are skipped by design). When none of
+ *  the three sections is present the full spec text is included but prefixed with a prominent
+ *  warning so the builder knows the contract is incomplete. Ends with an empty `## Deferred`
+ *  section so follow-up capture (parseDeferredScope) stays a no-op. */
+export function buildLightPlanFromSpec(specText, { issue } = {}) {
+  const picked = extractSections(specText).filter(
+    (s) => s.heading && LIGHT_PLAN_SECTION_RE.test(s.heading)
+  );
+  const parts = [
+    `# Implementation plan${issue ? ` for ${issue}` : ""} (light loop — derived from the SPEC_READY spec)`,
+    "",
+    "This spec already passed `aios spec eval`; the plan/plan_review stages were skipped by",
+    "design (`--loop light`). Treat the sections below as the approved plan, and the Acceptance",
+    "section as the verification contract.",
+    "",
+  ];
+  if (picked.length) {
+    for (const s of picked) parts.push(`## ${s.heading}`, "", s.body.trim(), "");
+  } else {
+    parts.push(
+      "",
+      "**WARNING: Build contract incomplete.** No Interfaces / Implementation / Acceptance",
+      "headings found in the SPEC_READY spec. The full spec text is included below as a",
+      "fallback, but the plan may contain sections the light loop normally excludes.",
+      "",
+      "---",
+      "",
+      String(specText ?? "").trim(),
+      "",
+      "---",
+    );
+  }
+  parts.push("## Deferred (out of scope)", "- none");
   return parts.join("\n");
 }
 
@@ -923,9 +1009,10 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     removeGate = () => {},
   } = deps;
 
-  const records = { issue: issueId, stages: [] };
+  const isLightLoop = opts.loop === "light";
+  const records = { issue: issueId, loop: opts.loop ?? "full", stages: [] };
   const record = (stage, detail) => records.stages.push({ stage, ...detail });
-  const models = resolveModels({ repo });
+  const models = resolveModels({ repo, profile: isLightLoop ? "light" : null });
   // Loaded once per ship; null (no file / no digest markers) simply omits the section.
   const constitution = (deps.loadConstitutionDigest ?? loadConstitutionDigest)(repo);
 
@@ -969,6 +1056,15 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // gate no longer exits before recon — ship runs UP TO the gate, persists everything needed to
   // judge it (audit dir + GATE-<name>.pending.md + state.json), and exits with the gate code.
   const state = (opts.resume ? readState(issueId) : null) ?? {};
+  if (state.loop && state.loop !== (opts.loop ?? "full")) {
+    record("resume", { error: "loop mismatch", checkpointLoop: state.loop });
+    console.error(
+      c.red(
+        `resume: checkpoint was created by --loop ${state.loop}; resume with the same loop shape.`
+      )
+    );
+    return { code: SHIP_EXIT.USAGE, records };
+  }
   const saveState = (patch) => {
     Object.assign(state, patch);
     writeState(issueId, state);
@@ -994,35 +1090,39 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     `# ${issue.identifier}: ${issue.title}\n\n${issue.description || ""}`
   );
 
-  const trackedFiles = gitLsFiles(repo);
-  const commentText = (issue.comments ?? []).map((cm) => cm.body).join("\n");
-  const CONTRACT_CHECKLIST = ["docs/brain-api.md", "docs/ENGINEERING-CONSTITUTION.md"];
-  const issueText = `${issue.description || ""}\n${commentText}\n${CONTRACT_CHECKLIST.map((f) => `\`${f}\``).join(" ")}`;
-  const { allowed, skipped } = extractRepoFileRefs(issueText, {
-    trackedFiles,
-    statFile: (rel) => {
-      try {
-        return statFile(path.join(repo, rel)).size;
-      } catch {
-        return 0;
-      }
-    },
-  });
-  writeAudit(
-    issueId,
-    "recon-skipped.md",
-    `# Skipped file references (path + reason only; contents never read)\n\n` +
-      (skipped.length ? skipped.map((s) => `- \`${s.raw}\` — ${s.reason}`).join("\n") : "(none)")
-  );
+  const specText = buildSpecTextFromIssue(issue);
 
   let recon = "";
-  if (state.recon) {
+  if (isLightLoop) {
+    record("recon", { skipped: true, reason: "--loop light uses the SPEC_READY spec directly" });
+    progress("recon: skipped (--loop light uses the SPEC_READY spec directly)");
+  } else if (state.recon) {
     recon = state.recon;
     record("recon", { resumed: true });
     progress("recon: resumed from checkpoint");
   }
   const reconStartedAt = Date.now();
-  if (!state.recon)
+  if (!isLightLoop && !state.recon) {
+    const trackedFiles = gitLsFiles(repo);
+    const commentText = (issue.comments ?? []).map((cm) => cm.body).join("\n");
+    const CONTRACT_CHECKLIST = ["docs/brain-api.md", "docs/ENGINEERING-CONSTITUTION.md"];
+    const issueText = `${issue.description || ""}\n${commentText}\n${CONTRACT_CHECKLIST.map((f) => `\`${f}\``).join(" ")}`;
+    const { allowed, skipped } = extractRepoFileRefs(issueText, {
+      trackedFiles,
+      statFile: (rel) => {
+        try {
+          return statFile(path.join(repo, rel)).size;
+        } catch {
+          return 0;
+        }
+      },
+    });
+    writeAudit(
+      issueId,
+      "recon-skipped.md",
+      `# Skipped file references (path + reason only; contents never read)\n\n` +
+        (skipped.length ? skipped.map((s) => `- \`${s.raw}\` — ${s.reason}`).join("\n") : "(none)")
+    );
     try {
       // Read ONLY allowed (tracked, non-denied) files — audit the rest by path+reason only.
       const fileBlobs = allowed.map((rel) => {
@@ -1064,6 +1164,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       console.error(c.red(`recon: model step failed: ${e.message}`));
       return { code: SHIP_EXIT.RECON_FAILED, records };
     }
+  }
 
   // ── 1b. SPEC EVAL (EE5) ─────────────────────────────────────────────────────
   // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds.
@@ -1074,7 +1175,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     record("spec-eval", { resumed: true });
     progress("spec eval: resumed from checkpoint (SPEC_READY)");
   } else {
-    const specText = buildSpecTextFromIssue(issue);
     writeAudit(issueId, "spec.md", specText);
     const specStartedAt = Date.now();
     let rubric;
@@ -1125,166 +1225,182 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 2. PLAN ────────────────────────────────────────────────────────────────
-  const PLAN_ROUNDS = 3;
+  // The light loop has no planner or plan gate: the mandatory SPEC_READY spec is the approved
+  // build contract. Its plan is still checkpointed so every later stage consumes the same text.
   let plan = null;
-  let approved = false;
-  let prevReview = null;
-  const planCfg = models.plan;
-  const planReviewCfg = models.plan_review;
-  // Plan-stage runner (§3.4). `cli` (default): callClaudeAgent under --permission-mode plan; it
-  // strips ANTHROPIC_API_KEY so the CLI uses Claude Code login auth. `sdk`: Opus via the Anthropic
-  // SDK (relay.mjs's callOpus), which requires a funded ANTHROPIC_API_KEY. The Cursor plan review
-  // (below) is identical for both runners. The Anthropic client is constructed once, lazily, when
-  // spec eval or the sdk plan runner needs it — the cli plan path never touches the SDK.
-  let generatePlan;
-  if (opts.planRunner === "sdk") {
-    const client = await getAnthropic();
-    generatePlan = (prompt) => callOpus(client, [{ role: "user", content: prompt }], planCfg);
+  if (isLightLoop) {
+    if (state.plan) {
+      plan = state.plan;
+      record("plan", { resumed: true, derived: true });
+      progress("plan: resumed spec-derived contract");
+    } else {
+      plan = buildLightPlanFromSpec(specText, { issue: issue.identifier });
+      writeAudit(issueId, "plan.md", `## Approved spec-derived plan\n\n${plan}`);
+      saveState({ loop: "light", plan, planReviewed: true, planApproved: true });
+      record("plan", { derived: true, source: "SPEC_READY spec" });
+      progress("plan: derived from SPEC_READY spec (--loop light)");
+    }
   } else {
-    generatePlan = (prompt) =>
-      agentCall({
-        model: planCfg.model,
-        prompt,
-        timeoutMs: planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS,
-        opts: {
-          extraArgs: [
-            ...PLAN_DISALLOWED_ARGS,
-            ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
-          ],
-        },
-      });
-  }
-  if (state.plan && state.planReviewed) {
-    plan = state.plan;
-    approved = true;
-    record("plan", { resumed: true });
-    progress("plan: resumed from checkpoint (reviewer-approved)");
-  } else {
-    progress("plan: loop started");
-    for (let round = 1; round <= PLAN_ROUNDS; round++) {
-      const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution);
-      const planStartedAt = Date.now();
-      try {
-        plan = await generatePlan(planPrompt);
-      } catch (e) {
-        record("plan", { error: e.message });
-        writeAudit(issueId, `plan-r${round}-FAILED.md`, failedArtifact("plan", e, planStartedAt));
-        if (e?.partial) writeAudit(issueId, `plan-r${round}-PARTIAL.md`, e.partial); // AIO-239 R4a
-        console.error(c.red(`plan: builder failed: ${e.message}`));
-        return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
-      }
-      // The cli plan runner writes the FULL plan to ~/.claude/plans/<name>.md and only summarizes
-      // on stdout. Capture the full text INLINE so the reviewer, the plan gate, and the builder
-      // all see the real plan instead of chasing a pointer (AIO-239 R5b).
-      const planFilePath = findPlanFilePath(plan);
-      if (planFilePath) {
-        try {
-          const abs = expandHomePath(planFilePath);
-          const full = readFile(abs);
-          if (full && full.trim()) {
-            plan += `\n\n## Full plan (captured from ${planFilePath})\n\n${full}`;
-          }
-        } catch {
-          /* pointer without a readable file — the summary still stands */
-        }
-      }
-      writeAudit(issueId, `plan-r${round}.md`, plan);
-      const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS, prevReview);
-      const reviewStartedAt = Date.now();
-      let review;
-      try {
-        review = await reviewCall(planReviewCfg.model)(
-          reviewPrompt,
-          planReviewCfg.timeoutMs ?? 300 * 1000,
-          {
+    const PLAN_ROUNDS = 3;
+    let approved = false;
+    let prevReview = null;
+    const planCfg = models.plan;
+    const planReviewCfg = models.plan_review;
+    // Plan-stage runner (§3.4). `cli` (default): callClaudeAgent under --permission-mode plan; it
+    // strips ANTHROPIC_API_KEY so the CLI uses Claude Code login auth. `sdk`: Opus via the Anthropic
+    // SDK (relay.mjs's callOpus), which requires a funded ANTHROPIC_API_KEY. The Cursor plan review
+    // (below) is identical for both runners. The Anthropic client is constructed once, lazily, when
+    // spec eval or the sdk plan runner needs it — the cli plan path never touches the SDK.
+    let generatePlan;
+    if (opts.planRunner === "sdk") {
+      const client = await getAnthropic();
+      generatePlan = (prompt) => callOpus(client, [{ role: "user", content: prompt }], planCfg);
+    } else {
+      generatePlan = (prompt) =>
+        agentCall({
+          model: planCfg.model,
+          prompt,
+          timeoutMs: planCfg.timeoutMs ?? DEFAULT_PLAN_TIMEOUT_MS,
+          opts: {
             extraArgs: [
-              "--force",
-              "--trust",
-              ...(planReviewCfg.model ? ["--model", cursorCliModelArg(planReviewCfg.model)] : []),
+              ...PLAN_DISALLOWED_ARGS,
+              ...(planCfg.effort ? ["--effort", planCfg.effort] : []),
             ],
+          },
+        });
+    }
+    if (state.plan && state.planReviewed) {
+      plan = state.plan;
+      approved = true;
+      record("plan", { resumed: true });
+      progress("plan: resumed from checkpoint (reviewer-approved)");
+    } else {
+      progress("plan: loop started");
+      for (let round = 1; round <= PLAN_ROUNDS; round++) {
+        const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution);
+        const planStartedAt = Date.now();
+        try {
+          plan = await generatePlan(planPrompt);
+        } catch (e) {
+          record("plan", { error: e.message });
+          writeAudit(issueId, `plan-r${round}-FAILED.md`, failedArtifact("plan", e, planStartedAt));
+          if (e?.partial) writeAudit(issueId, `plan-r${round}-PARTIAL.md`, e.partial); // AIO-239 R4a
+          console.error(c.red(`plan: builder failed: ${e.message}`));
+          return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+        }
+        // The cli plan runner writes the FULL plan to ~/.claude/plans/<name>.md and only summarizes
+        // on stdout. Capture the full text INLINE so the reviewer, the plan gate, and the builder
+        // all see the real plan instead of chasing a pointer (AIO-239 R5b).
+        const planFilePath = findPlanFilePath(plan);
+        if (planFilePath) {
+          try {
+            const abs = expandHomePath(planFilePath);
+            const full = readFile(abs);
+            if (full && full.trim()) {
+              plan += `\n\n## Full plan (captured from ${planFilePath})\n\n${full}`;
+            }
+          } catch {
+            /* pointer without a readable file — the summary still stands */
           }
-        );
-      } catch (e) {
-        record("plan", { error: e.message });
-        writeAudit(
-          issueId,
-          `plan-review-r${round}-FAILED.md`,
-          failedArtifact("plan review", e, reviewStartedAt)
-        );
-        console.error(c.red(`plan: reviewer failed: ${e.message}`));
+        }
+        writeAudit(issueId, `plan-r${round}.md`, plan);
+        const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS, prevReview);
+        const reviewStartedAt = Date.now();
+        let review;
+        try {
+          review = await reviewCall(planReviewCfg.model)(
+            reviewPrompt,
+            planReviewCfg.timeoutMs ?? 300 * 1000,
+            {
+              extraArgs: [
+                "--force",
+                "--trust",
+                ...(planReviewCfg.model ? ["--model", cursorCliModelArg(planReviewCfg.model)] : []),
+              ],
+            }
+          );
+        } catch (e) {
+          record("plan", { error: e.message });
+          writeAudit(
+            issueId,
+            `plan-review-r${round}-FAILED.md`,
+            failedArtifact("plan review", e, reviewStartedAt)
+          );
+          console.error(c.red(`plan: reviewer failed: ${e.message}`));
+          return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
+        }
+        writeAudit(issueId, `plan-review-r${round}.md`, review);
+        if (lastNonBlankLine(review) === PLAN_READY_TOKEN) {
+          approved = true;
+          break;
+        }
+        prevReview = review;
+      }
+      if (!approved) {
+        record("plan", { unapproved: true });
+        console.error(c.yellow(`plan: spent ${PLAN_ROUNDS} rounds without ${PLAN_READY_TOKEN}.`));
         return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
       }
-      writeAudit(issueId, `plan-review-r${round}.md`, review);
-      if (lastNonBlankLine(review) === PLAN_READY_TOKEN) {
-        approved = true;
-        break;
-      }
-      prevReview = review;
+      writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
+      saveState({ plan, planReviewed: true, planApproved: false });
+      progress("plan: reviewer approved (PLAN_READY)");
     }
-    if (!approved) {
-      record("plan", { unapproved: true });
-      console.error(c.yellow(`plan: spent ${PLAN_ROUNDS} rounds without ${PLAN_READY_TOKEN}.`));
-      return { code: SHIP_EXIT.PLAN_UNAPPROVED, records };
-    }
-    writeAudit(issueId, "plan.md", `## Approved plan\n\n${plan}`);
-    saveState({ plan, planReviewed: true, planApproved: false });
-    progress("plan: reviewer approved (PLAN_READY)");
-  }
 
-  // Plan gate — 'skip' (--auto), 'approved' (--approve-plan on a resumed run), 'prompt'
-  // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
-  if (!state.planApproved) {
-    if (gates.plan === "blocked" || (gates.plan === "approved" && !state.planGatePending)) {
-      // "approved" without a pending gate (fresh run with --approve-plan, or stale state) must
-      // NOT wave the plan through: there was nothing inspected to approve (review r1, Medium).
-      if (gates.plan === "approved") {
+    // Plan gate — 'skip' (--auto), 'approved' (--approve-plan on a resumed run), 'prompt'
+    // (interactive), or 'blocked' (non-TTY: persist the gate + state and exit resumable).
+    if (!state.planApproved) {
+      if (gates.plan === "blocked" || (gates.plan === "approved" && !state.planGatePending)) {
+        // "approved" without a pending gate (fresh run with --approve-plan, or stale state) must
+        // NOT wave the plan through: there was nothing inspected to approve (review r1, Medium).
+        if (gates.plan === "approved") {
+          console.error(
+            c.yellow(
+              "plan gate: --approve-plan given but no pending gate exists — treating as pending; " +
+                "inspect it, then resume with --resume --approve-plan."
+            )
+          );
+        }
+        record("plan-gate", { blocked: true });
+        saveState({ planGatePending: true });
+        console.log("SHIP_GATE plan pending"); // machine-greppable marker (AIO-239 R7c)
+        writeGate(
+          issueId,
+          "plan",
+          [
+            `# PLAN gate pending — ${issueId}`,
+            "",
+            "The reviewer-approved plan is below (also at plan.md in this directory).",
+            "",
+            "To approve and continue:  aios ship " + issueId + " --resume --approve-plan",
+            "To reject: discard the worktree/state or re-run without --resume for a fresh plan.",
+            "",
+            "---",
+            "",
+            plan,
+          ].join("\n")
+        );
         console.error(
           c.yellow(
-            "plan gate: --approve-plan given but no pending gate exists — treating as pending; " +
-              "inspect it, then resume with --resume --approve-plan."
+            `plan gate: pending operator approval — inspect .aios/loop/${issueId}/GATE-plan.pending.md, ` +
+              `then resume with --resume --approve-plan.`
           )
         );
+        return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
       }
-      record("plan-gate", { blocked: true });
-      saveState({ planGatePending: true });
-      console.log("SHIP_GATE plan pending"); // machine-greppable marker (AIO-239 R7c)
-      writeGate(
-        issueId,
-        "plan",
-        [
-          `# PLAN gate pending — ${issueId}`,
-          "",
-          "The reviewer-approved plan is below (also at plan.md in this directory).",
-          "",
-          "To approve and continue:  aios ship " + issueId + " --resume --approve-plan",
-          "To reject: discard the worktree/state or re-run without --resume for a fresh plan.",
-          "",
-          "---",
-          "",
-          plan,
-        ].join("\n")
-      );
-      console.error(
-        c.yellow(
-          `plan gate: pending operator approval — inspect .aios/loop/${issueId}/GATE-plan.pending.md, ` +
-            `then resume with --resume --approve-plan.`
-        )
-      );
-      return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
-    }
-    if (gates.plan === "prompt") {
-      console.log("SHIP_GATE plan pending"); // marker precedes the prompt (AIO-239 R7c)
-      const ok = await confirm("Approve this plan and proceed to build?");
-      if (!ok) {
-        record("plan-gate", { rejected: true });
-        return { code: SHIP_EXIT.PLAN_REJECTED, records };
+      if (gates.plan === "prompt") {
+        console.log("SHIP_GATE plan pending"); // marker precedes the prompt (AIO-239 R7c)
+        const ok = await confirm("Approve this plan and proceed to build?");
+        if (!ok) {
+          record("plan-gate", { rejected: true });
+          return { code: SHIP_EXIT.PLAN_REJECTED, records };
+        }
+      } else if (gates.plan === "approved") {
+        record("plan-gate", { approvedViaFlag: true });
+        progress("plan gate: approved via --approve-plan");
       }
-    } else if (gates.plan === "approved") {
-      record("plan-gate", { approvedViaFlag: true });
-      progress("plan gate: approved via --approve-plan");
+      saveState({ planApproved: true, planGatePending: false });
+      removeGate(issueId, "plan");
     }
-    saveState({ planApproved: true, planGatePending: false });
-    removeGate(issueId, "plan");
   }
 
   // ── 3. FOLLOW-UP CAPTURE ─────────────────────────────────────────────────────
@@ -1699,10 +1815,16 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
 
-    // Path-gated safety review. Changed-path metadata is REQUIRED to decide whether the safety
-    // surface is touched — if `gh pr diff --name-only` fails (non-zero code or empty stdout) we
-    // cannot rule the surface out, so we fail closed rather than treat "no data" as "no safety
-    // surface". ghExec returns {code,stdout,stderr} without throwing; check code explicitly.
+    // Changed-path metadata is REQUIRED to decide whether the safety surface is touched — if
+    // `gh pr diff --name-only` fails (non-zero code or empty stdout) we cannot rule the surface
+    // out, so we fail closed rather than treat "no data" as "no safety surface". ghExec returns
+    // {code,stdout,stderr} without throwing; check code explicitly.
+    //
+    // The full loop uses path-gated inference alone. The light loop uses the SPEC_READY
+    // frontmatter `safety: true` as its primary signal but STILL runs changed-path inference
+    // as a defense-in-depth backstop: if the frontmatter is absent but the PR touches
+    // safety-sensitive files, the safety review still fires (frontmatter OR path-level match).
+    let changedPaths = [];
     let nameRes;
     try {
       nameRes = ghExec([
@@ -1725,11 +1847,14 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       );
       return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
-    const changedPaths = nameStdout
+    changedPaths = nameStdout
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (touchesSafetySurface(changedPaths)) {
+    const safetyRequired = isLightLoop
+      ? specSafetyFlag(specText) || touchesSafetySurface(changedPaths)
+      : touchesSafetySurface(changedPaths);
+    if (safetyRequired) {
       try {
         const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
         // The safety reviewer's ENTIRE input is this diff. If the full `gh pr diff` failed (non-zero)
@@ -1880,6 +2005,7 @@ function usage() {
       "                         cleanup on the reviewed diff; verify-gated, advisory)",
       "  --plan-runner cli|sdk  plan-stage runner (default: cli — Claude Code login auth; sdk drives",
       "                         Opus via the Anthropic SDK and needs a funded ANTHROPIC_API_KEY)",
+      "  --loop full|light      full plan/review loop (default), or SPEC_READY spec-derived light loop",
       "  --dry-run              print the resolved step plan; no side effects (a resolvable",
       "                         LINEAR_API_KEY only enables a best-effort issue-title fetch)",
       "  --resume               re-enter at the first incomplete stage (state.json checkpoint)",
@@ -1912,7 +2038,7 @@ export async function cmdShip(repo, args, deps = {}) {
 
   let models;
   try {
-    models = resolveLoopModels({ repo });
+    models = resolveLoopModels({ repo, profile: opts.loop === "light" ? "light" : null });
   } catch (e) {
     console.error(c.red(`error: ${e.message}`));
     return SHIP_EXIT.USAGE;
@@ -1948,6 +2074,7 @@ export async function cmdShip(repo, args, deps = {}) {
         gates,
         reviewers: opts.reviewers,
         planRunner: opts.planRunner,
+        loop: opts.loop,
         maxFixRounds: opts.maxFixRounds,
       })
     );
