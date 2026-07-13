@@ -151,6 +151,23 @@ export {
   type RunDailyOptions,
 } from "./daily.js";
 
+// Recording-daily connector preamble (AIO-366) — loop-core composition, independently bounded and
+// fail-open. Connector adapters remain manually invokable; this only automates the owner cadence.
+export {
+  pullDailyConnectors,
+  dailyConnectorCommands,
+  DEFAULT_DAILY_CONNECTOR_TIMEOUTS,
+  type DailyConnectorName,
+  type DailyConnectorStatus,
+  type DailyConnectorResult,
+  type DailyConnectorPullResult,
+  type DailyConnectorTimeouts,
+  type DailyConnectorCredentials,
+  type ConnectorCommand,
+  type ConnectorSpawn,
+  type PullDailyConnectorsOptions,
+} from "./connectors.js";
+
 // C8 — loop telemetry + dogfood instrumentation (local-only, admin-tier)
 export {
   TELEMETRY_EVENTS_REL,
