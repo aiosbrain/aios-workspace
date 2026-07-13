@@ -163,6 +163,32 @@ function pathEntryExists(p) {
   }
 }
 
+/** Refuse a seed destination whose existing parent chain escapes through a symlink. */
+function assertSeedParentSafe(repo, destRel) {
+  const root = path.resolve(repo);
+  const destAbs = path.resolve(root, destRel);
+  if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
+    throw new Error(`refusing to seed path outside the workspace: ${destRel}`);
+  }
+  const parentRel = path.relative(root, path.dirname(destAbs));
+  let current = root;
+  for (const part of parentRel.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(
+        `refusing to seed ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
+      );
+    }
+  }
+}
+
 /** Every toolkit file under an entry, as { srcRel, destRel } (files only). */
 function entryFiles(srcRoot, entry) {
   const absSrc = path.join(srcRoot, entry.src);
@@ -189,6 +215,7 @@ export function missingSeedPaths(srcRoot, repo) {
   for (const entry of SEED_IF_ABSENT) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const file of entryFiles(srcRoot, entry)) {
+      assertSeedParentSafe(repo, file.destRel);
       if (!pathEntryExists(path.join(repo, file.destRel))) missing.push(file.destRel);
     }
   }
@@ -203,6 +230,7 @@ function applySeeds(srcRoot, repo, r) {
   for (const entry of SEED_IF_ABSENT) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const file of entryFiles(srcRoot, entry)) {
+      assertSeedParentSafe(repo, file.destRel);
       const destAbs = path.join(repo, file.destRel);
       if (pathEntryExists(destAbs)) continue;
       mkdirSync(path.dirname(destAbs), { recursive: true });
