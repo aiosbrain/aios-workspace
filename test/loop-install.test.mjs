@@ -5,9 +5,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectScheduler,
   resolveAiosInvocation,
@@ -22,6 +24,9 @@ import {
   applyCronInstall,
   applyCronUninstall,
 } from "../scripts/loop-install.mjs";
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CLI = path.join(ROOT, "scripts", "aios.mjs");
 
 function tmpWorkspace() {
   const dir = mkdtempSync(path.join(tmpdir(), "loop-install-"));
@@ -110,7 +115,7 @@ test("buildInstallPlan: --scheduler override wins over platform detection", () =
 
 // ── launchd plist rendering ──────────────────────────────────────────────────────────────────
 
-test("buildLaunchdPlist: contains Label, ProgramArguments, WorkingDirectory, RunAtLoad", () => {
+test("buildLaunchdPlist: contains Label, ProgramArguments, WorkingDirectory, and no eager run", () => {
   const xml = buildLaunchdPlist({
     label: "com.aios.demo.loop-daily",
     programArguments: ["/bin/sh", "-c", "/usr/bin/node /repo/scripts/aios.mjs loop daily"],
@@ -123,7 +128,7 @@ test("buildLaunchdPlist: contains Label, ProgramArguments, WorkingDirectory, Run
   assert.match(xml, /<key>ProgramArguments<\/key>/);
   assert.match(xml, /<string>\/bin\/sh<\/string>/);
   assert.match(xml, /<key>WorkingDirectory<\/key>\s*<string>\/repo<\/string>/);
-  assert.match(xml, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  assert.doesNotMatch(xml, /<key>RunAtLoad<\/key>/);
   // StartCalendarInterval is the catch-up-on-wake mechanism (launchd runs a missed job on wake).
   assert.match(xml, /<key>StartCalendarInterval<\/key>/);
   assert.match(xml, /<key>Hour<\/key>\s*<integer>8<\/integer>/);
@@ -192,6 +197,24 @@ test("applyLaunchdInstall: writes exactly 3 plists, idempotent across two instal
   }
 });
 
+test("applyLaunchdInstall: reports a job that neither launchctl path could load", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const results = applyLaunchdInstall(plan, {
+      exec: () => {
+        throw new Error("launchctl unavailable");
+      },
+    });
+    assert.equal(results.length, 3);
+    assert.ok(results.every((result) => result.loaded === false));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("applyLaunchdUninstall: removes the plist files this plan installed", () => {
   const dir = tmpWorkspace();
   const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
@@ -223,6 +246,8 @@ test("buildCronBlock: one line per job, marker-delimited", () => {
     assert.match(block, /0 8 \* \* \*/); // daily
     assert.match(block, /15 8 \* \* 1/); // weekly (Monday)
     assert.match(block, /0 \* \* \* \*/); // analyze (hourly)
+    const weekly = block.split("\n").find((line) => line.startsWith("15 8 * * 1"));
+    assert.match(weekly, /&& \{ .*loop weekly; .*maturity-week; \} >> .* 2>&1$/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
@@ -293,6 +318,27 @@ test("applyCronInstall + applyCronUninstall: idempotent install (stubbed crontab
     applyCronUninstall(plan, { exec: stubExec });
     assert.equal(stored.split(begin).length - 1, 0);
     assert.match(stored, /pre-existing line/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects a missing --scheduler value and unknown options", () => {
+  const dir = tmpWorkspace();
+  try {
+    const missing = spawnSync(process.execPath, [CLI, "loop", "install", "--scheduler"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /--scheduler requires launchd\|cron/);
+
+    const unknown = spawnSync(process.execPath, [CLI, "loop", "install", "--surprise"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.notEqual(unknown.status, 0);
+    assert.match(unknown.stderr, /unknown loop install option: --surprise/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

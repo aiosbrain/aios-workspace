@@ -35,7 +35,10 @@ aios loop install --uninstall     # remove the installed job(s)
 aios loop install --scheduler cron   # override detection
 ```
 
-Re-running `install` is idempotent: launchd overwrites the same labeled plist in place; cron
+Re-running `install` is idempotent: launchd overwrites and reloads the same labeled plist in place;
+if launchctl cannot load a written plist, the command exits with an actionable error instead of
+claiming the schedule is active. Calendar jobs do not use `RunAtLoad`: launchd's
+`StartCalendarInterval` supplies missed-run catch-up without firing the weekly job at every login. Cron
 strips its own previously-installed block (marked `# >>> aios-loop-install (<slug>) begin/end
 >>>`, the same convention `scripts/install-aios-shell.sh` uses for the `aios()` shell function)
 before appending the current one. Neither path ever duplicates entries or touches a human's other
