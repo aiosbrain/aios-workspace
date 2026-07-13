@@ -20,6 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { readDescriptors } from "./gen-catalog.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,22 @@ export function readBlueprint(repo) {
   } catch {
     return null;
   }
+}
+
+// Granola (AIO-356) is dual-auth: an optional portable API key, falling back to the
+// signed-in local desktop-app session — and it otherwise picks that path silently.
+// Report which one is currently active so connector status output can surface it
+// instead of leaving auth resolution invisible until an ingestion run fails.
+function granolaTokenFile() {
+  return path.join(homedir(), "Library", "Application Support", "Granola", "supabase.json");
+}
+export function granolaAuthPath(repo) {
+  if (vaultGet(repo, "GRANOLA_API_KEY")) return { mode: "api-key", label: "API key" };
+  const signedIn = existsSync(granolaTokenFile());
+  return {
+    mode: "desktop-app",
+    label: signedIn ? "desktop-app session" : "desktop-app session (not signed in)",
+  };
 }
 
 // List connectable tools = descriptors, with live status merged from integrations.json,
@@ -79,6 +96,10 @@ export function listConnectors(repo) {
       status: statuses[d.id] || d.status || "available",
       team_enabled: !!(t && t.enabled),
       verified_against_docs: (d.docs && d.docs.verified_against_docs) || null,
+      // Dual-auth connectors (currently just Granola) report which path is active —
+      // see granolaAuthPath. Other connectors get null; this is not a general auth
+      // resolution mechanism, just observability for the one connector that has it.
+      auth_path: d.id === "granola" ? granolaAuthPath(repo) : null,
     };
   });
 }

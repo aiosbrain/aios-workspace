@@ -239,22 +239,31 @@ async function pullLocal() {
 }
 
 // ════════════════════════════ DRIVER ════════════════════════════
+// One clear, greppable line at the top of every run stating which auth path is
+// active — the connector is dual-auth and otherwise picks a path silently.
 let result = { notes: null };
 let pathUsed = "";
 const KEY = forceLocal ? null : resolvePublicKey();
 
 if (KEY) {
+  log("granola: using API key");
   result = await pullPublic(KEY);
   if (result.authFailed) {
-    log(`granola-pull: public API returned ${result.status} — falling back to local Granola app token.`);
+    log(`granola: API key path failed (HTTP ${result.status}) — falling back to desktop-app session`);
     result = await pullLocal();
+    if (!result.notes) log("granola: desktop-app session path also failed — see above for details.");
     pathUsed = "local (public key rejected)";
   } else {
     pathUsed = "public API";
   }
 } else {
-  if (!forceLocal) log("granola-pull: no GRANOLA_API_KEY — using local Granola app token.");
+  log(
+    forceLocal
+      ? "granola: using desktop-app session (--local)"
+      : "granola: using desktop-app session (no API key set)"
+  );
   result = await pullLocal();
+  if (!result.notes) log("granola: desktop-app session path failed — see above for details.");
   pathUsed = "local app token";
 }
 
