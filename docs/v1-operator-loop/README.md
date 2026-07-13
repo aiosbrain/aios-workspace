@@ -147,20 +147,20 @@ Run this path before calling V1 release-ready:
    `2-work/`, `4-shared/`, and `.aios/loop/continuity/actions.json`.
 3. Run the local loop substrate.
    - `npm run build:loop`
-   - `node scripts/aios.mjs loop collect --daily --repo <workspace>`
-   - `node scripts/aios.mjs loop collect --weekly --repo <workspace>`
-   - `node scripts/aios.mjs loop manifest --explain --as team --repo <workspace>`
+   - `aios loop collect --daily --repo <workspace>`
+   - `aios loop collect --weekly --repo <workspace>`
+   - `aios loop manifest --explain --as team --repo <workspace>`
 4. Run the verified weekly closeout.
-   - `node scripts/aios.mjs loop weekly --repo <workspace>`
+   - `aios loop weekly --repo <workspace>`
    - Inspect `.aios/loop/closeouts/<stamp>/brief.md`, `digest-team.md`, `verifier-team.json`,
      `manifest.json`, and `next-week-actions.json`.
 5. Preview and approve writeback by target.
-   - `node scripts/aios.mjs loop writeback <stamp> --repo <workspace>`
-   - `node scripts/aios.mjs loop writeback <stamp> --local --sync --pm --repo <workspace>`
+   - `aios loop writeback <stamp> --repo <workspace>`
+   - `aios loop writeback <stamp> --local --sync --pm --repo <workspace>`
    - Confirm admin content lands only in local/admin-tier destinations and syncable rows/files are tier-safe.
 6. Sync only after review.
-   - `node scripts/aios.mjs status --repo <workspace>`
-   - `node scripts/aios.mjs push --dry-run --repo <workspace>`
+   - `aios status --repo <workspace>`
+   - `aios push --dry-run --repo <workspace>`
    - Live `aios push` belongs to the dogfood run owner because it moves data to the Team Brain.
 7. Record dogfood evidence for C8.
    - Weekly wall-clock time.

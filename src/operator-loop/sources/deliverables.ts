@@ -10,13 +10,23 @@ import { parseFrontmatter } from "../parsers.js";
 import { resolveTier } from "../signal.js";
 import type { Source, SourceResult } from "./types.js";
 
+const IGNORED_DIRS = new Set([
+  ".git",
+  ".venv",
+  "venv",
+  "node_modules",
+  "site-packages",
+  "__pycache__",
+  ".pytest_cache",
+]);
+
 function walkMarkdown(root: string, dir: string): string[] {
   const out: string[] = [];
   const abs = path.join(root, dir);
   if (!existsSync(abs)) return out;
   for (const entry of readdirSync(abs, { withFileTypes: true })) {
     const rel = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) out.push(...walkMarkdown(root, rel));
+    if (entry.isDirectory() && !IGNORED_DIRS.has(entry.name)) out.push(...walkMarkdown(root, rel));
     else if (entry.isFile() && entry.name.endsWith(".md")) out.push(rel);
   }
   return out;

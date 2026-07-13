@@ -226,7 +226,21 @@ test("no repos anywhere → clear error", () => {
     rmSync(path.join(fx.ws, ".aios", "timeline-config.json"));
     const res = runCli(fx, ["--dry-run"]);
     assert.equal(res.status, 1);
-    assert.match(res.stderr, /no repos/);
+    assert.match(res.stderr, /timeline config not found/);
+    assert.match(res.stderr, /docs\/feature-set\.md/);
+  } finally {
+    rmSync(fx.base, { recursive: true, force: true });
+  }
+});
+
+test("present config with no repos is distinguished from missing config", () => {
+  const fx = makeFixture();
+  try {
+    writeFileSync(path.join(fx.ws, ".aios", "timeline-config.json"), '{"repos":{}}\n');
+    const res = runCli(fx, ["--dry-run"]);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /config contains no repos/);
+    assert.doesNotMatch(res.stderr, /config not found/);
   } finally {
     rmSync(fx.base, { recursive: true, force: true });
   }

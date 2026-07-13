@@ -91,7 +91,11 @@ export async function cmdTime(repo, cfg, args) {
           .map((s) => s.trim())
           .filter(Boolean)
       : [];
-    if (!ids.length) die("aios time reconcile requires --id <id,...>");
+    if (!ids.length)
+      die(
+        "usage: aios time reconcile --id <id,...> [--set-tag <tag>] [--set-tier <tier>] [--confirm] [--dry-run] [--json]\n" +
+          "hint: run `aios time report --json` to list captured row ids"
+      );
     const result = loop.reconcile({
       root: repo,
       ids,
