@@ -1000,16 +1000,19 @@ export async function runBuild({ repo, plan, branch, opts }) {
     // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's
     // accidental upward *discovery* into the primary checkout (an explicit `git -C <path>`
     // is NOT blocked — the primary-checkout tripwire is what catches that). Defense-in-
-    // depth, not containment. --effort is a Claude-CLI knob
-    // (build/fix/fix_escalated only); the relay plan step uses SDK output_config instead.
+    // depth, not containment. Runner-specific flags stay with their runner: Claude receives
+    // its CLI --effort flag, while Codex receives effort through callCodexAgent's validated
+    // model_reasoning_effort config override.
     const fencedPrompt = BUILDER_FENCE + "\n\n" + buildPrompt;
-    const extraArgs = cfg.effort
-      ? [...CLAUDE_BUILD_FLAGS, "--effort", cfg.effort]
-      : CLAUDE_BUILD_FLAGS;
+    const builderProvider = parseModelRef(cfg.model).provider;
+    const extraArgs =
+      builderProvider === "claude"
+        ? [...CLAUDE_BUILD_FLAGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])]
+        : [];
     const builderEnv = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(wt) };
     console.log(
       c.dim(
-        `[claude] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
+        `[${builderProvider}] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
       )
     );
     try {
@@ -1020,6 +1023,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
         {
           cwd: wt,
           extraArgs,
+          effort: cfg.effort,
           env: builderEnv,
         }
       );

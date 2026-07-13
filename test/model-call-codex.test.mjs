@@ -35,14 +35,36 @@ const result = await callAgentModel({
   model: "codex:gpt-5.6-sol",
   prompt: "implement the issue",
   timeoutMs: 30_000,
-  opts: { cwd: worktree },
+  opts: { cwd: worktree, effort: "medium" },
 });
 const args = JSON.parse(readFileSync(argsFile, "utf8"));
 check("returns only Codex final message", result === "Codex final message");
 check("uses codex exec", args[0] === "exec");
 check("forwards the requested model", args[args.indexOf("--model") + 1] === "gpt-5.6-sol");
+check(
+  "passes effort as the Codex config override",
+  JSON.stringify(args.slice(args.indexOf("-c"), args.indexOf("-c") + 2)) ===
+    JSON.stringify(["-c", 'model_reasoning_effort="medium"'])
+);
+check("does not pass Claude's --effort flag", !args.includes("--effort"));
 check("runs in the supplied worktree", args[args.indexOf("--cd") + 1] === worktree);
 check("passes the prompt", args.at(-1) === "implement the issue");
+
+let invalidEffort = null;
+try {
+  await callAgentModel({
+    model: "codex:gpt-5.6-sol",
+    prompt: "should not run",
+    timeoutMs: 30_000,
+    opts: { cwd: worktree, effort: "turbo" },
+  });
+} catch (error) {
+  invalidEffort = error;
+}
+check(
+  "rejects an unsupported Codex effort",
+  /invalid Codex reasoning effort 'turbo'/.test(invalidEffort?.message)
+);
 
 process.env.PATH = oldPath;
 rmSync(dir, { recursive: true, force: true });

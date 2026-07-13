@@ -531,6 +531,7 @@ function usage() {
       "  --round N           build round (default: 1) — output is findings-r<N>.md",
       "  --repo owner/repo   GitHub target slug (default: detected from git remote)",
       "  --gpt-review <path> include a GPT-5.5 review markdown file in the consolidation",
+      "  --loop-profile light select the light loop model profile (forwarded by aios ship --loop light)",
       "  --out <path>        override the output path (default: .aios/loop/<issue>/findings-r<N>.md)",
       "",
       "Prints VERDICT=CLEAR / VERDICT=BLOCKED. Exit codes: 0 CLEAR · 3 BLOCKED · 1 error.",

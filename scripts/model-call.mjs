@@ -28,6 +28,7 @@ import {
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions";
 const OPENCODE_MESSAGES_URL = "https://opencode.ai/zen/go/v1/messages";
+const CODEX_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 
 async function fetchCompletion(url, headers, body, timeoutMs, label) {
   const controller = new AbortController();
@@ -189,11 +190,27 @@ export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
       `Codex tier '${model}' is unavailable — supported tiers: ${[...CODEX_MODEL_TIERS].join(", ")}`
     );
   }
+  const effort = opts.effort;
+  if (effort != null && !CODEX_REASONING_EFFORTS.has(effort)) {
+    throw new Error(
+      `invalid Codex reasoning effort '${effort}' — expected one of ${[...CODEX_REASONING_EFFORTS].join("|")}`
+    );
+  }
 
   const cwd = opts.cwd ?? process.cwd();
   const dir = await mkdtemp(path.join(tmpdir(), "aios-codex-"));
   const outputFile = path.join(dir, "last-message.txt");
-  const args = ["exec", "--model", model, "--cd", cwd, "--output-last-message", outputFile, prompt];
+  const args = [
+    "exec",
+    "--model",
+    model,
+    ...(effort ? ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
+    "--cd",
+    cwd,
+    "--output-last-message",
+    outputFile,
+    prompt,
+  ];
   const readFinal = async () => {
     try {
       return (await readFile(outputFile, "utf8")).trim();
