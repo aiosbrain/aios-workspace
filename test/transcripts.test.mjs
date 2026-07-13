@@ -1,0 +1,121 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  approveTranscriptStage,
+  draftTranscriptReview,
+  enableTranscriptSync,
+} from "../scripts/transcripts.mjs";
+
+function workspace() {
+  const repo = mkdtempSync(path.join(tmpdir(), "transcript-pipeline-"));
+  mkdirSync(path.join(repo, "1-inbox", "transcripts"), { recursive: true });
+  mkdirSync(path.join(repo, "3-log"), { recursive: true });
+  writeFileSync(
+    path.join(repo, "aios.yaml"),
+    "sync_include:\n  - 0-context\nsync_exclude:\n  - 5-personal\n"
+  );
+  writeFileSync(
+    path.join(repo, "3-log", "decision-log.md"),
+    "| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n|---|---|---|---|---|---|---|---|\n"
+  );
+  writeFileSync(
+    path.join(repo, "3-log", "tasks-team.md"),
+    "| ID | Task | Assignee | Status | Sprint | Due | Linear |\n|---|---|---|---|---|---|---|\n"
+  );
+  writeFileSync(
+    path.join(repo, "1-inbox", "transcripts", "meeting.md"),
+    "John: We decided to ship on Friday. Chetan: I will prepare the release notes."
+  );
+  return repo;
+}
+
+const extraction = {
+  decisions: [
+    {
+      date: "2026-07-13",
+      decision: "Ship on Friday",
+      rationale: "Ready",
+      decidedBy: "John",
+      impact: "Release",
+      type: 2,
+      audience: "team",
+      transcript: "1-inbox/transcripts/meeting.md",
+      sourceQuote: "We decided to ship on Friday.",
+    },
+    {
+      decision: "Invented decision",
+      transcript: "1-inbox/transcripts/meeting.md",
+      sourceQuote: "This quote is absent",
+    },
+  ],
+  tasks: [
+    {
+      task: "Prepare the release notes",
+      assignee: "Chetan",
+      transcript: "1-inbox/transcripts/meeting.md",
+      sourceQuote: "I will prepare the release notes.",
+    },
+  ],
+};
+
+test("draft persists only grounded decisions and tasks for one durable review", async () => {
+  const repo = workspace();
+  try {
+    const { file, stage } = await draftTranscriptReview({
+      repo,
+      transcriptPaths: ["1-inbox/transcripts/meeting.md"],
+      extraction,
+      now: "2026-07-13T12:00:00.000Z",
+    });
+    assert.equal(stage.status, "pending_review");
+    assert.equal(stage.decisions.length, 1);
+    assert.equal(stage.tasks.length, 1);
+    assert.ok(file.startsWith(path.join(repo, ".aios", "staging")));
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).access, "admin");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("approve appends both logs once and is idempotent", async () => {
+  const repo = workspace();
+  try {
+    const { file } = await draftTranscriptReview({
+      repo,
+      transcriptPaths: ["1-inbox/transcripts/meeting.md"],
+      extraction,
+      now: "2026-07-13T12:00:00.000Z",
+    });
+    assert.deepEqual(approveTranscriptStage({ repo, stageFile: file }), {
+      decisions: 1,
+      tasks: 1,
+      alreadyApproved: false,
+    });
+    assert.match(
+      readFileSync(path.join(repo, "3-log", "decision-log.md"), "utf8"),
+      /Ship on Friday/
+    );
+    assert.match(
+      readFileSync(path.join(repo, "3-log", "tasks-team.md"), "utf8"),
+      /TT1.*Prepare the release notes/
+    );
+    assert.equal(approveTranscriptStage({ repo, stageFile: file }).alreadyApproved, true);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("enable-sync adds the transcript path once", () => {
+  const repo = workspace();
+  try {
+    assert.equal(enableTranscriptSync(repo), true);
+    assert.equal(enableTranscriptSync(repo), false);
+    const yaml = readFileSync(path.join(repo, "aios.yaml"), "utf8");
+    assert.equal((yaml.match(/1-inbox\/transcripts/g) ?? []).length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
