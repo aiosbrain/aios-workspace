@@ -9,6 +9,15 @@ The loop needs to know what the operator communicated and what's waiting on some
 - Slack one-click OAuth (workspace PR #102, brain PR #107), native TS Slack connector (brain PR #27), per-member token store (brain PR #105).
 - `gog-workspace` skill (Gmail / Calendar / Drive via `gog`), `slack-cli` skill.
 - Brain-side Slack/Gmail/Calendar ingestion readers.
+- **GOG → activity.jsonl writer (AIO-355)**: `.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`
+  (descriptor: `.claude/descriptors/gog.json`). Pulls today's calendar events (`gog calendar events
+  --today --json --results-only`) and unread inbox threads (`gog gmail search "in:inbox is:unread"
+  --json --results-only -z UTC`, query overridable — `gog` has no dedicated "needs reply" flag) and
+  appends them, idempotent by stable `ref` (`cal:<eventId>` / `gmail:<threadId>`), to
+  `<inbox>/comms/activity.jsonl`. Emits `tier: admin` by default (calendar/email is personal-by-default;
+  override `--tier` to deliberately widen). **Invocation is manual/cron, same as `granola-direct`** —
+  `aios loop` never shells out to connectors, it only reads whatever `activity.jsonl` already holds;
+  run the script (or wire a cron entry) before `aios loop daily` to keep signals fresh.
 
 ## Build (net-new clean TS — the keystone gap)
 - **Unified notification layer**: rebuild the prior-build notification-engine *pattern* (a set of detectors → typed events → channel sender) in clean, well-bounded TS. Detectors include: decision-log Type 2/3, scope change, task assignment, stale inbox, deliverable status. **Do not port the legacy code** — rebuild from the pattern only.
