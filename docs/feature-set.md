@@ -272,7 +272,10 @@ never synced unless a command explicitly stages content for `aios push`. See the
   a lightweight **daily brief** (what changed / is blocked / is owed) and a heavy, verified,
   approval-gated **weekly closeout**: collect local signals → private brief + tier-safe digests →
   rubric-gated verifier → explicit writeback that only *stages* for a later push. C1–C8 all ship;
-  specs in [`v1-operator-loop/`](v1-operator-loop/README.md).
+  specs in [`v1-operator-loop/`](v1-operator-loop/README.md). `aios loop install` schedules
+  daily/weekly/an `aios analyze` self-refresh via launchd (macOS) or cron (elsewhere) — see
+  [`loop-install.md`](loop-install.md), which also covers authenticating a scheduled run against
+  a dotenvx-encrypted `.env` with no direnv.
 - **Asks queue** (`aios asks`) — a non-blocking escalation inbox. Session hooks route events into it
   (idle → blocker, an assistant question → decision, a completion → fyi); you drain it on your own
   cadence. Local, admin-tier, never synced.

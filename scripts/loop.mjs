@@ -13,6 +13,7 @@ import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 import { parseFrontmatter } from "./workspace-parse.mjs";
 import { resolveLoopIdentity } from "./loop-config.mjs";
 import { mergeTaskWriteback } from "./tasks-table.mjs";
+import { cmdLoopInstall } from "./loop-install.mjs";
 
 const LOOP_TIERS = ["admin", "team", "external"];
 
@@ -283,6 +284,14 @@ function renderTelemetry(m) {
 
 export async function cmdLoop(repo, cfg, args) {
   const sub = args[0];
+
+  // `install` is pure scheduler plumbing (env detection + plist/crontab generation) — it needs
+  // none of the compiled operator-loop dist, so handle it before loadOperatorLoop() below.
+  if (sub === "install") {
+    cmdLoopInstall(repo, args.slice(1));
+    return;
+  }
+
   const flags = new Set(args.slice(1));
   const loop = await loadOperatorLoop();
   // Identity resolved via the shared helper so CLI + MCP stamp identical member/project.
@@ -1069,6 +1078,7 @@ export async function cmdLoop(repo, cfg, args) {
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
       "       aios loop weekly [--as team|external] [--all] [--remote] [--manifest <path>] [--json] [--dry-run]\n" +
       "       aios loop writeback <stamp> [--local] [--sync] [--pm] [--manifest <path>] [--json] [--dry-run]\n" +
-      "       aios loop telemetry [--window <days>] [--all] [--json]"
+      "       aios loop telemetry [--window <days>] [--all] [--json]\n" +
+      "       aios loop install [--dry-run] [--uninstall] [--status] [--scheduler launchd|cron]"
   );
 }

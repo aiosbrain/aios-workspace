@@ -70,7 +70,7 @@ function buildPulseMessage(summary, now) {
     ` · weakest: ${weakestLabel}`;
   const line2 =
     `tip: ${summary.weakest_tip || "—"} · measured ${freshness}` +
-    (stale ? " (stale — run aios analyze or add the cron)" : "");
+    (stale ? " (stale — run aios analyze or `aios loop install` for a scheduled refresh)" : "");
   return `${line1}\n${line2}`;
 }
 

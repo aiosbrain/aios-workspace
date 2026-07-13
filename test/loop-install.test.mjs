@@ -1,0 +1,299 @@
+// test/loop-install.test.mjs — `aios loop install` (AIO-367): environment detection, launchd
+// plist / crontab-entry generation, and idempotency. Exercises the pure planning/rendering
+// functions directly (mocked platform, temp paths, stubbed exec) — never touches the real
+// ~/Library/LaunchAgents or the real crontab.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  detectScheduler,
+  resolveAiosInvocation,
+  buildInstallPlan,
+  buildLaunchdPlist,
+  renderLaunchdPlan,
+  applyLaunchdInstall,
+  applyLaunchdUninstall,
+  cronMarkers,
+  buildCronBlock,
+  mergeCronBlock,
+  applyCronInstall,
+  applyCronUninstall,
+} from "../scripts/loop-install.mjs";
+
+function tmpWorkspace() {
+  const dir = mkdtempSync(path.join(tmpdir(), "loop-install-"));
+  writeFileSync(path.join(dir, "aios.yaml"), "brain_url: https://brain.example\nteam_id: t\n");
+  return dir;
+}
+
+// ── environment detection ───────────────────────────────────────────────────────────────────
+
+test("detectScheduler: darwin -> launchd", () => {
+  assert.equal(detectScheduler("darwin"), "launchd");
+});
+
+test("detectScheduler: linux -> cron", () => {
+  assert.equal(detectScheduler("linux"), "cron");
+});
+
+test("detectScheduler: anything else (win32, freebsd, ...) -> cron", () => {
+  assert.equal(detectScheduler("win32"), "cron");
+  assert.equal(detectScheduler("freebsd"), "cron");
+});
+
+// ── CLI invocation resolution (reuses bin/aios / scripts/aios.mjs, no new mechanism) ────────
+
+test("resolveAiosInvocation: prefers bin/aios when present", () => {
+  const dir = tmpWorkspace();
+  try {
+    mkdirSync(path.join(dir, "bin"), { recursive: true });
+    writeFileSync(path.join(dir, "bin", "aios"), "#!/bin/sh\nexit 0\n");
+    const { command, baseArgs } = resolveAiosInvocation(dir);
+    assert.equal(command, path.join(dir, "bin", "aios"));
+    assert.deepEqual(baseArgs, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveAiosInvocation: falls back to node + scripts/aios.mjs", () => {
+  const dir = tmpWorkspace();
+  try {
+    const { command, baseArgs } = resolveAiosInvocation(dir, { execPath: "/usr/bin/node" });
+    assert.equal(command, "/usr/bin/node");
+    assert.deepEqual(baseArgs, [path.join(dir, "scripts", "aios.mjs")]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── install plan ─────────────────────────────────────────────────────────────────────────────
+
+test("buildInstallPlan: three jobs (daily/weekly/analyze), scheduler follows platform", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    assert.equal(plan.scheduler, "launchd");
+    assert.deepEqual(
+      plan.jobs.map((j) => j.key),
+      ["daily", "weekly", "analyze"]
+    );
+    const daily = plan.jobs.find((j) => j.key === "daily");
+    assert.match(daily.commandLine, /loop.*daily/);
+    const weekly = plan.jobs.find((j) => j.key === "weekly");
+    // The weekly job bundles the AM6 maturity report so its own "run weekly" nag has a real home.
+    assert.match(weekly.commandLine, /loop.*weekly/);
+    assert.match(weekly.commandLine, /maturity-week/);
+    const analyze = plan.jobs.find((j) => j.key === "analyze");
+    assert.match(analyze.commandLine, /analyze/);
+    assert.equal(analyze.startInterval, 3600);
+    assert.ok(daily.calendar && typeof daily.calendar.Hour === "number");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("buildInstallPlan: --scheduler override wins over platform detection", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", scheduler: "cron" });
+    assert.equal(plan.scheduler, "cron");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── launchd plist rendering ──────────────────────────────────────────────────────────────────
+
+test("buildLaunchdPlist: contains Label, ProgramArguments, WorkingDirectory, RunAtLoad", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.loop-daily",
+    programArguments: ["/bin/sh", "-c", "/usr/bin/node /repo/scripts/aios.mjs loop daily"],
+    workingDirectory: "/repo",
+    startCalendarInterval: { Hour: 8, Minute: 0 },
+    stdoutPath: "/repo/.aios/loop/logs/daily.log",
+    stderrPath: "/repo/.aios/loop/logs/daily.log",
+  });
+  assert.match(xml, /<key>Label<\/key>\s*<string>com\.aios\.demo\.loop-daily<\/string>/);
+  assert.match(xml, /<key>ProgramArguments<\/key>/);
+  assert.match(xml, /<string>\/bin\/sh<\/string>/);
+  assert.match(xml, /<key>WorkingDirectory<\/key>\s*<string>\/repo<\/string>/);
+  assert.match(xml, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  // StartCalendarInterval is the catch-up-on-wake mechanism (launchd runs a missed job on wake).
+  assert.match(xml, /<key>StartCalendarInterval<\/key>/);
+  assert.match(xml, /<key>Hour<\/key>\s*<integer>8<\/integer>/);
+});
+
+test("buildLaunchdPlist: hourly job uses StartInterval (seconds), not StartCalendarInterval", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.analyze",
+    programArguments: ["/bin/sh", "-c", "aios analyze"],
+    workingDirectory: "/repo",
+    startInterval: 3600,
+    stdoutPath: "/repo/.aios/loop/logs/analyze.log",
+    stderrPath: "/repo/.aios/loop/logs/analyze.log",
+  });
+  assert.match(xml, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
+  assert.doesNotMatch(xml, /StartCalendarInterval/);
+});
+
+test("renderLaunchdPlan: one rendered plist per job, all wrapped in valid-looking plist XML", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const rendered = renderLaunchdPlan(plan);
+    assert.equal(rendered.length, 3);
+    for (const r of rendered) {
+      assert.match(r.content, /<!DOCTYPE plist/);
+      assert.match(r.content, /<key>Label<\/key>/);
+      assert.equal(r.path, path.join(home, "Library", "LaunchAgents", `${r.label}.plist`));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ── launchd install/uninstall (idempotent; stubbed launchctl) ───────────────────────────────
+
+test("applyLaunchdInstall: writes exactly 3 plists, idempotent across two installs", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const execCalls = [];
+    const stubExec = (cmd, args) => {
+      execCalls.push([cmd, args]);
+      return "";
+    };
+    const first = applyLaunchdInstall(plan, { exec: stubExec, load: true });
+    assert.equal(first.length, 3);
+    for (const f of first) assert.ok(existsSync(f.path));
+
+    const lagDir = path.join(home, "Library", "LaunchAgents");
+    const filesAfterFirst = existsSync(lagDir) ? readdirSync(lagDir) : [];
+    const second = applyLaunchdInstall(plan, { exec: stubExec, load: true });
+    assert.equal(second.length, 3);
+    // Same 3 labeled plists, not 6 — overwritten in place, no duplication.
+    assert.deepEqual(second.map((r) => r.label).sort(), first.map((r) => r.label).sort());
+    assert.equal(filesAfterFirst.length, 3);
+    // launchctl was invoked (bootout + bootstrap) for each of the 3 jobs, both runs.
+    assert.ok(execCalls.some(([cmd, args]) => cmd === "launchctl" && args[0] === "bootout"));
+    assert.ok(execCalls.some(([cmd, args]) => cmd === "launchctl" && args[0] === "bootstrap"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("applyLaunchdUninstall: removes the plist files this plan installed", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const stubExec = () => "";
+    applyLaunchdInstall(plan, { exec: stubExec, load: false });
+    for (const j of plan.jobs) assert.ok(existsSync(j.plistPath));
+    applyLaunchdUninstall(plan, { exec: stubExec });
+    for (const j of plan.jobs) assert.ok(!existsSync(j.plistPath));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ── cron block generation + idempotent merge ─────────────────────────────────────────────────
+
+test("buildCronBlock: one line per job, marker-delimited", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux", home });
+    const block = buildCronBlock(plan);
+    const { begin, end } = cronMarkers(plan.slug);
+    assert.ok(block.startsWith(begin));
+    assert.ok(block.endsWith(end));
+    assert.equal(block.split("\n").length, 5); // begin + 3 jobs + end
+    assert.match(block, /0 8 \* \* \*/); // daily
+    assert.match(block, /15 8 \* \* 1/); // weekly (Monday)
+    assert.match(block, /0 \* \* \* \*/); // analyze (hourly)
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("mergeCronBlock: appends to an existing crontab, preserving unrelated lines", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux" });
+    const block = buildCronBlock(plan);
+    const existing = "# some other job\n0 0 * * * /usr/bin/backup.sh\n";
+    const merged = mergeCronBlock(existing, block, plan.slug);
+    assert.match(merged, /some other job/);
+    assert.match(merged, /backup\.sh/);
+    const { begin, end } = cronMarkers(plan.slug);
+    assert.ok(merged.includes(begin));
+    assert.ok(merged.includes(end));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("mergeCronBlock: idempotent — merging twice yields exactly one block, no duplicate jobs", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux" });
+    const block = buildCronBlock(plan);
+    const once = mergeCronBlock("# unrelated\n", block, plan.slug);
+    const twice = mergeCronBlock(once, block, plan.slug);
+    const { begin } = cronMarkers(plan.slug);
+    const beginCount = twice.split(begin).length - 1;
+    assert.equal(beginCount, 1, "exactly one aios-loop-install block after merging twice");
+    // Exactly 3 job lines (daily/weekly/analyze), not 6.
+    const jobLineCount = twice
+      .split("\n")
+      .filter((l) => /loop (daily|weekly)|analyze/.test(l)).length;
+    assert.equal(jobLineCount, 3);
+    assert.match(twice, /unrelated/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("applyCronInstall + applyCronUninstall: idempotent install (stubbed crontab)", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux" });
+    let stored = "# pre-existing line\n";
+    const stubExec = (cmd, args, opts) => {
+      assert.equal(cmd, "crontab");
+      if (args[0] === "-l") return stored;
+      if (args[0] === "-") {
+        stored = opts.input;
+        return "";
+      }
+      throw new Error(`unexpected crontab args: ${args}`);
+    };
+    applyCronInstall(plan, { exec: stubExec });
+    const { begin } = cronMarkers(plan.slug);
+    assert.equal(stored.split(begin).length - 1, 1);
+    assert.match(stored, /pre-existing line/);
+
+    // Installing again must not duplicate the block.
+    applyCronInstall(plan, { exec: stubExec });
+    assert.equal(stored.split(begin).length - 1, 1);
+
+    applyCronUninstall(plan, { exec: stubExec });
+    assert.equal(stored.split(begin).length - 1, 0);
+    assert.match(stored, /pre-existing line/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

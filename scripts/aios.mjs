@@ -49,7 +49,7 @@ import {
 // `aios` command (status/push/pull/query/...) must stay fast and dependency-free at
 // import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
-import { loadDotEnv, envGet, resolveBrainConfig } from "./brain-config.mjs";
+import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
 import {
   parseFrontmatter,
@@ -182,6 +182,7 @@ function mergeBrainSecrets(cfg, repo) {
   const resolved = resolveBrainConfig(repo, { apiKeyEnv: cfg.api_key_env || "AIOS_API_KEY" });
   cfg.brain_url = resolved.brain_url || (cfg.brain_url || "").trim();
   cfg.api_key = resolved.api_key;
+  cfg.dotenvx_encrypted = resolved.dotenvx_encrypted;
   if (resolved.team_id) cfg.team_id = resolved.team_id;
   return cfg;
 }
@@ -376,6 +377,7 @@ function requireOnline(cfg) {
     die("aios.yaml has no brain_url (offline/standalone mode). Set brain_url or AIOS_BRAIN_URL.");
   }
   if (!cfg.api_key) {
+    if (cfg.dotenvx_encrypted) die(dotenvxEncryptedHint(cfg));
     die(`no API key found in $${cfg.api_key_env || "AIOS_API_KEY"} (env or .env)`);
   }
 }
@@ -2587,6 +2589,9 @@ usage:
     [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
   aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
     [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
+  aios loop install [--dry-run]         installs the real scheduler for daily+weekly+analyze
+    [--uninstall] [--status]            (launchd on macOS, cron elsewhere); see docs/loop-install.md
+    [--scheduler launchd|cron]
   aios timeline [--since <date|Nd>]     cross-repo "what we shipped": merged PRs + commits →
     --repo <path[=liveUrl]> [...]       screenshot-rich, self-contained HTML per audience
     [--as team|external|all] [--open]   (.aios/timeline/<stamp>/index-<audience>.html);

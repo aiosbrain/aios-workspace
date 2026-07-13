@@ -106,7 +106,7 @@ test("summary older than 24h → message contains 'stale'", () => {
     );
     const { code, stdout } = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(code, 0);
-    assert.match(stdout, /stale — run aios analyze or add the cron/);
+    assert.match(stdout, /stale — run aios analyze or `aios loop install` for a scheduled refresh/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -13,6 +13,7 @@
  */
 
 import { c, die } from "./cli-common.mjs";
+import { dotenvxEncryptedHint } from "./brain-config.mjs";
 
 const ROLES = new Set(["member", "lead", "admin"]);
 // Exported for the contract-conformance guard: must match the fixture's provisioningTools.
@@ -33,14 +34,16 @@ function flagValue(args, name) {
   return i !== -1 ? args[i + 1] : null;
 }
 
-// Mirrors aios.mjs's requireOnline(cfg) exactly (member is an online-only, brain-key
-// command like whoami/query — duplicated here rather than exported across the module
-// boundary since it's two lines and this module has no other coupling to aios.mjs).
+// Mirrors aios.mjs's requireOnline(cfg) exactly — member is an online-only, brain-key command
+// like whoami/query. The gate shape is duplicated here (this module has no other coupling to
+// aios.mjs) but the F-C6 hint text itself is shared via brain-config.mjs's dotenvxEncryptedHint,
+// so the two gates can never drift on wording.
 function requireOnline(cfg) {
   if (!cfg.brain_url) {
     die("aios.yaml has no brain_url (offline/standalone mode). Set brain_url or AIOS_BRAIN_URL.");
   }
   if (!cfg.api_key) {
+    if (cfg.dotenvx_encrypted) die(dotenvxEncryptedHint(cfg));
     die(`no API key found in $${cfg.api_key_env || "AIOS_API_KEY"} (env or .env)`);
   }
 }
