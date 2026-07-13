@@ -38,6 +38,7 @@ export const CATEGORIES = {
       "check:domains",
       "check:size",
       "pr:backlog",
+      "pretest", // npm runs this automatically before `npm test`
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],
   },
