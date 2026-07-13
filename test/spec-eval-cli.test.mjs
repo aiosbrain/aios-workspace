@@ -13,6 +13,7 @@ import {
   existsSync,
   rmSync,
   copyFileSync,
+  mkdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,6 +36,88 @@ function runSpec(args, env = {}) {
 
 test("eval --no-llm on a clean spec → exit 3 (NOT_EVALUATED)", () => {
   assert.equal(runSpec(["eval", STRONG, "--no-llm"]).code, 3);
+});
+
+test("deterministic eval tier is SPEC_READY without a model key", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-tier-"));
+  try {
+    const target = path.join(d, "deterministic.md");
+    writeFileSync(target, `---\neval_tier: deterministic\n---\n\n${readFileSync(STRONG, "utf8")}`);
+    const r = runSpec(["eval", target, "--json"], { DEEPSEEK_API_KEY: "", ANTHROPIC_API_KEY: "" });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).tier, "deterministic");
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("directory eval emits one batch summary and accepts deterministic specs", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-batch-"));
+  try {
+    const text = `---\neval_tier: deterministic\n---\n\n${readFileSync(STRONG, "utf8")}`;
+    writeFileSync(path.join(d, "one.md"), text);
+    writeFileSync(path.join(d, "two.md"), text);
+    const r = runSpec(["eval", d, "--json", "--concurrency", "2"], { DEEPSEEK_API_KEY: "" });
+    assert.equal(r.code, 0, r.stderr);
+    const json = JSON.parse(r.stdout);
+    assert.equal(json.exitCode, 0);
+    assert.equal(json.results.length, 2);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("author fans slices out and honors a per-invocation model override", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-author-cli-"));
+  try {
+    const plan = path.join(d, "plan.md");
+    const slices = path.join(d, "slices");
+    const out = path.join(d, "out");
+    writeFileSync(plan, "# Shared plan\n");
+    mkdirSync(slices);
+    writeFileSync(path.join(slices, "one.md"), "# Issue one\n");
+    writeFileSync(path.join(slices, "two.md"), "# Issue two\n");
+    const r = runSpec(
+      [
+        "author",
+        plan,
+        "--slices",
+        slices,
+        "--out",
+        out,
+        "--model",
+        "claude:claude-sonnet-5",
+        "--effort",
+        "high",
+        "--json",
+      ],
+      { AIOS_SPEC_AUTHOR_STUB: STRONG }
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const json = JSON.parse(r.stdout);
+    assert.equal(json.model, "claude:claude-sonnet-5");
+    assert.equal(json.effort, "high");
+    assert.ok(existsSync(path.join(out, "one.md")));
+    assert.ok(existsSync(path.join(out, "two.md")));
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("author rejects an invalid per-invocation effort", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-author-effort-"));
+  try {
+    const plan = path.join(d, "plan.md");
+    const slices = path.join(d, "slices");
+    writeFileSync(plan, "# Shared plan\n");
+    mkdirSync(slices);
+    writeFileSync(path.join(slices, "one.md"), "# Issue one\n");
+    const r = runSpec(["author", plan, "--slices", slices, "--effort", "turbo"]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /invalid --effort/);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test("eval without stub or key → exit 4 (DEEPSEEK_API_KEY required)", () => {

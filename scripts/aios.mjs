@@ -2678,10 +2678,13 @@ usage:
     [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
   aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,
     [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')
-  aios spec eval <file> [--json]        score a spec/plan against .claude/rubrics/spec-readiness.md
+  aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md
     [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
   aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
     [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
+  aios spec author <plan> --slices <dir> fan out one author per Markdown issue slice, then run
+    [--out <dir>] [--concurrency N]       deterministic cross-spec consistency checks
+    [--model id] [--effort level]          override the configured author for this batch only
   aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
     [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
   aios consolidate-findings --pr <n>    merge CI + Bugbot + CodeRabbit + GPT reviews + the PR

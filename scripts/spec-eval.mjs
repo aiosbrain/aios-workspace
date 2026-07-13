@@ -17,7 +17,7 @@
  *   AIOS_SPEC_FIX_STUB  — revised-spec text (or a file path to it); bypasses the SDK reviser.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
@@ -28,6 +28,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 const DEFAULT_FIX_BUDGET = 2;
 const SPEC_PROMPT_TIMEOUT_MS = 300_000;
+export const SPEC_BATCH_CONCURRENCY_MAX = 8;
 
 // The rule ids the deterministic layer can emit. The rubric↔code drift test asserts every
 // deterministic must/conditional row in the rubric appears here (no silent divergence).
@@ -653,6 +654,82 @@ export async function evaluateSpec({
   return { verdict, exitCode, score, deterministic, adversarial, findings };
 }
 
+/** Read the small, flat frontmatter surface used by the evaluator.  This intentionally accepts
+ * only scalar keys: the spec itself remains Markdown, while evaluator policy stays auditable. */
+export function specEvalHints(specText) {
+  const block = /^---\s*\n([\s\S]*?)\n---(?:\s*\n|$)/.exec(specText)?.[1] ?? "";
+  const values = {};
+  for (const line of block.split("\n")) {
+    const match = /^([A-Za-z_][\w-]*):\s*(.*?)\s*$/.exec(line);
+    if (match) values[match[1]] = match[2].replace(/^['"]|['"]$/g, "").toLowerCase();
+  }
+  const tier = values.eval_tier ?? "full";
+  if (tier !== "full" && tier !== "deterministic") {
+    throw new Error(`invalid eval_tier '${tier}' (expected full|deterministic)`);
+  }
+  const provenance = [
+    values.eval_provenance,
+    values.parent_plan_reviewed,
+    values.plan_reviewed,
+    values.adversarial_parent_plan,
+  ];
+  const planTraceable = provenance.some((value) =>
+    ["true", "yes", "adversarial-reviewed", "adversarially-reviewed", "reviewed"].includes(value)
+  );
+  return { tier, planTraceable };
+}
+
+function collectSpecPaths(input) {
+  const absolute = path.resolve(input);
+  if (existsSync(absolute)) {
+    try {
+      readdirSync(absolute);
+    } catch (error) {
+      if (error?.code === "ENOTDIR") return [absolute];
+      throw error;
+    }
+    const found = [];
+    const visit = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const child = path.join(dir, entry.name);
+        if (entry.isDirectory()) visit(child);
+        else if (entry.isFile() && entry.name.endsWith(".md")) found.push(child);
+      }
+    };
+    visit(absolute);
+    return found.sort();
+  }
+  // Shell glob expansion is not guaranteed for the Node CLI. Support the common ** / * form
+  // without bringing in a dependency, relative to cwd.
+  if (!/[?*[]/.test(input)) return [];
+  const escaped = input
+    .split(/(\*\*|\*|\?)/)
+    .map((part) =>
+      part === "**"
+        ? ".*"
+        : part === "*"
+          ? "[^/]*"
+          : part === "?"
+            ? "[^/]"
+            : part.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    )
+    .join("");
+  const matcher = new RegExp(`^${escaped}$`);
+  const root = process.cwd();
+  const found = [];
+  const visit = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".git") continue;
+      const child = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (entry.isFile() && matcher.test(path.relative(root, child)) && child.endsWith(".md"))
+        found.push(child);
+    }
+  };
+  visit(root);
+  return found.sort();
+}
+
 // ── fix loop ────────────────────────────────────────────────────────────────────────────────
 
 function buildFixPrompt(specText, findings, rubric) {
@@ -712,14 +789,15 @@ export async function runFixLoop({
   evalFn,
   reviseFn = defaultReviseFn,
   decisions = [],
+  provenanceAware = false,
 }) {
   const cap =
     Number.isInteger(budget) && budget >= 0
       ? budget
       : (rubric?.frontmatter?.budget ?? DEFAULT_FIX_BUDGET);
   let current = specText;
-  const evalOnce = (text) =>
-    evaluateSpec({ specText: text, repo, rubric, useLlm, evalCfg, evalFn, decisions });
+  const evalOnce = (text, withLlm = useLlm) =>
+    evaluateSpec({ specText: text, repo, rubric, useLlm: withLlm, evalCfg, evalFn, decisions });
 
   const before = await evalOnce(current);
   let result = before;
@@ -743,8 +821,11 @@ export async function runFixLoop({
     }
     current = revised;
     iterations++;
-    result = await evalOnce(current);
+    // A reviewed parent plan is stable provenance. Revision turns only need the mandatory
+    // deterministic gate; one independent LLM confirmation runs after the loop below.
+    result = await evalOnce(current, provenanceAware ? false : useLlm);
   }
+  if (provenanceAware && useLlm) result = await evalOnce(current, true);
   const status =
     result.verdict === "NOT_READY" ? (reviseError ? "error" : "exhausted") : "converged"; // SPEC_READY | NOT_EVALUATED
   const exitCode = result.verdict === "NOT_READY" ? result.exitCode : 0;
@@ -815,15 +896,16 @@ export async function loadRecentDecisions(repo, limit = 5) {
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────────
 
-const SPEC_VALUE_FLAGS = ["--rubric", "--out", "--budget"];
+const SPEC_VALUE_FLAGS = ["--rubric", "--out", "--budget", "--tier", "--concurrency"];
 
 const HELP = [
   "",
   c.blue("aios spec — spec/plan readiness harness (rubric: .claude/rubrics/spec-readiness.md)"),
   "",
   "usage:",
-  "  aios spec eval <file> [--json] [--no-llm] [--rubric <path>]",
-  "  aios spec fix  <file> [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]",
+  "  aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--json] [--no-llm] [--rubric <path>]",
+  "  aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]",
+  "  aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]",
   "",
   "eval:  score a spec against the rubric (deterministic + adversarial LLM layers).",
   "fix:   iterate the spec through the bounded fix loop until it is ready (budget from rubric).",
@@ -853,9 +935,14 @@ export async function cmdSpec(repo, args) {
   }
   const sub = args[0];
   const rest = args.slice(1);
-  if (sub !== "eval" && sub !== "fix") {
-    console.error(c.red(`error: unknown subcommand '${sub}' (expected eval|fix)`));
+  if (sub !== "eval" && sub !== "fix" && sub !== "author") {
+    console.error(c.red(`error: unknown subcommand '${sub}' (expected eval|fix|author)`));
     process.exit(4);
+  }
+  if (sub === "author") {
+    const models = resolveLoopModels({ repo });
+    const { cmdSpecAuthor } = await import("./spec-author.mjs");
+    process.exit(await cmdSpecAuthor(repo, args.slice(1), { models }));
   }
   const { flag, has, file } = specArgv(rest);
   const asJson = has("--json");
@@ -865,11 +952,16 @@ export async function cmdSpec(repo, args) {
     console.error(c.red("error: a spec file is required"));
     process.exit(4);
   }
-  const specPath = path.resolve(file);
-  if (!existsSync(specPath)) {
-    console.error(c.red(`error: spec file not found: ${file}`));
+  const specPaths = collectSpecPaths(file);
+  if (!specPaths.length) {
+    console.error(c.red(`error: no spec files found: ${file}`));
     process.exit(4);
   }
+  if (sub === "fix" && specPaths.length !== 1) {
+    console.error(c.red("error: spec fix accepts exactly one file"));
+    process.exit(4);
+  }
+  const specPath = specPaths[0];
   let specText;
   try {
     specText = readFileSync(specPath, "utf8");
@@ -887,13 +979,38 @@ export async function cmdSpec(repo, args) {
     process.exit(4);
   }
 
+  let hints;
+  try {
+    hints = specEvalHints(specText);
+  } catch (e) {
+    console.error(c.red(`error: ${e.message}`));
+    process.exit(4);
+  }
+  const requestedTier = flag("--tier") ?? hints.tier;
+  if (!["full", "deterministic"].includes(requestedTier)) {
+    console.error(c.red(`error: invalid --tier '${requestedTier}' (expected full|deterministic)`));
+    process.exit(4);
+  }
+  const deterministicTier = requestedTier === "deterministic";
+  let hasFullTier = !deterministicTier;
+  if (sub === "eval" && !flag("--tier")) {
+    try {
+      hasFullTier = specPaths.some(
+        (candidate) => specEvalHints(readFileSync(candidate, "utf8")).tier === "full"
+      );
+    } catch (e) {
+      console.error(c.red(`error: ${e.message}`));
+      process.exit(4);
+    }
+  }
+
   // A model call is needed only when the LLM layer runs without a stub.
   const evalStubbed = process.env.AIOS_SPEC_EVAL_STUB != null;
   const fixStubbed = process.env.AIOS_SPEC_FIX_STUB != null;
   // With --no-llm neither the evaluator nor the reviser runs, so no key is ever needed.
   const needsKey =
-    (sub === "eval" && !noLlm && !evalStubbed) ||
-    (sub === "fix" && !noLlm && (!evalStubbed || !fixStubbed));
+    (sub === "eval" && !noLlm && hasFullTier && !evalStubbed) ||
+    (sub === "fix" && !noLlm && !deterministicTier && (!evalStubbed || !fixStubbed));
 
   const models = resolveLoopModels({ repo });
   if (needsKey) {
@@ -911,36 +1028,90 @@ export async function cmdSpec(repo, args) {
   const decisions = await loadRecentDecisions(repo);
 
   if (sub === "eval") {
-    const res = await evaluateSpec({
-      specText,
-      repo,
-      rubric,
-      useLlm: !noLlm,
-      evalCfg: models.spec_eval,
-      decisions,
-    });
+    const evaluateOne = async (candidate) => {
+      const text = readFileSync(candidate, "utf8");
+      const candidateHints = specEvalHints(text);
+      const tier = flag("--tier") ?? candidateHints.tier;
+      const res = await evaluateSpec({
+        specText: text,
+        repo,
+        rubric,
+        useLlm: !noLlm && tier !== "deterministic",
+        evalCfg: models.spec_eval,
+        decisions,
+      });
+      // deterministic is a declared tier, not an incomplete evaluation; its clean result passes.
+      if (tier === "deterministic" && res.exitCode === 3) {
+        res.verdict = "SPEC_READY";
+        res.exitCode = 0;
+      }
+      return { file: candidate, tier, ...res };
+    };
+    const concurrency = Math.min(
+      SPEC_BATCH_CONCURRENCY_MAX,
+      Math.max(1, Number(flag("--concurrency") ?? 6) || 6)
+    );
+    const results = [];
+    for (let index = 0; index < specPaths.length; index += concurrency) {
+      results.push(
+        ...(await Promise.all(specPaths.slice(index, index + concurrency).map(evaluateOne)))
+      );
+    }
+    const res = results[0];
+    // Exit codes are categories, not a severity ordinal (3 is an incomplete full-tier eval,
+    // not worse than a deterministic blocker). Preserve the single-spec gate precedence.
+    const exitCode = results.some((item) => item.exitCode === 1)
+      ? 1
+      : results.some((item) => item.exitCode === 2)
+        ? 2
+        : results.some((item) => item.exitCode === 3)
+          ? 3
+          : 0;
     if (asJson) {
       console.log(
         JSON.stringify(
-          {
-            verdict: res.verdict,
-            exitCode: res.exitCode,
-            score: res.score,
-            findings: res.findings,
-          },
+          results.length === 1
+            ? {
+                verdict: res.verdict,
+                exitCode,
+                score: res.score,
+                findings: res.findings,
+                tier: res.tier,
+              }
+            : {
+                exitCode,
+                results: results.map(
+                  ({ file: itemFile, verdict, exitCode: itemExit, score, tier }) => ({
+                    file: itemFile,
+                    verdict,
+                    exitCode: itemExit,
+                    score,
+                    tier,
+                  })
+                ),
+              },
           null,
           2
         )
       );
     } else {
-      console.log(c.blue(`\n── spec eval: ${file} ─────────────────────────────────────`));
-      console.log(formatFindings(res.findings));
-      const verdictColor = res.verdict === "SPEC_READY" ? c.green : c.red;
-      console.log(
-        `\n  verdict: ${verdictColor(res.verdict)}   score: ${res.score == null ? "n/a" : res.score}   exit: ${res.exitCode}`
-      );
+      if (results.length === 1) {
+        console.log(c.blue(`\n── spec eval: ${file} ─────────────────────────────────────`));
+        console.log(formatFindings(res.findings));
+        const verdictColor = res.verdict === "SPEC_READY" ? c.green : c.red;
+        console.log(
+          `\n  verdict: ${verdictColor(res.verdict)}   score: ${res.score == null ? "n/a" : res.score}   exit: ${res.exitCode}`
+        );
+      } else {
+        console.log(c.blue("\n── spec eval batch ─────────────────────────────────────"));
+        console.log("  file\tverdict\texit\tscore");
+        for (const item of results)
+          console.log(
+            `  ${path.relative(process.cwd(), item.file)}\t${item.verdict}\t${item.exitCode}\t${item.score ?? "n/a"}`
+          );
+      }
     }
-    process.exit(res.exitCode);
+    process.exit(exitCode);
   }
 
   // sub === "fix"
@@ -950,10 +1121,11 @@ export async function cmdSpec(repo, args) {
     repo,
     rubric,
     budget: Number.isFinite(budget) ? budget : undefined,
-    useLlm: !noLlm,
+    useLlm: !noLlm && !deterministicTier,
     evalCfg: models.spec_eval,
     fixCfg: models.spec_fix,
     decisions,
+    provenanceAware: hints.planTraceable,
   });
 
   // Resolve the output path: --write (in place) | --out <path> | default <name>.improved.md

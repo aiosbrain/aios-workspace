@@ -119,3 +119,27 @@ test("a reviser that clears the deterministic blocker converges (offline, --no-l
   assert.equal(loop.revisedSpec, STRONG);
   assert.equal(loop.after.verdict, "NOT_EVALUATED"); // clean deterministic, no LLM
 });
+
+test("reviewed-parent provenance uses LLM only before and after deterministic revisions", async () => {
+  let evalCalls = 0;
+  let reviseCalls = 0;
+  const loop = await runFixLoop({
+    specText: STRONG,
+    repo: REPO,
+    rubric: RUBRIC,
+    budget: 3,
+    useLlm: true,
+    provenanceAware: true,
+    evalFn: () => {
+      evalCalls++;
+      return evalCalls === 1 ? NOT_READY : READY;
+    },
+    reviseFn: ({ specText }) => {
+      reviseCalls++;
+      return specText;
+    },
+  });
+  assert.equal(loop.status, "converged");
+  assert.equal(reviseCalls, 1);
+  assert.equal(evalCalls, 2, "initial adversarial pass plus one final confirmation");
+});
