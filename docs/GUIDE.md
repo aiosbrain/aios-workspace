@@ -170,7 +170,11 @@ appear in any audience view but yours.
   change-snapshot so tomorrow's diff is meaningful). *Blocked* = tasks/decisions marked blocked.
   *Owed today* = commitments due. *Attention / Queued asks* = your escalation queue (§4).
 - **Flags:** `--as team|external` (simulate a narrower audience — hides asks), `--no-record` (don't
-  write the change-snapshot), `--json`.
+  write the change-snapshot, text mode only — `--json` already doesn't record by default), `--record`
+  (opt into writing the change-snapshot alongside `--json`), `--json`. **Recording default depends on
+  mode:** text mode records by default (interactive daily check-in); `--json` does NOT record by
+  default (so a repeated poller — dashboard/cron/hook — doesn't self-consume its own "changed" signal
+  on the first call, AIO-365). Pass `--record --json` if you genuinely want both.
 
 ---
 

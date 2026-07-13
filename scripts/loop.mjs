@@ -936,7 +936,20 @@ export async function cmdLoop(repo, cfg, args) {
   if (sub === "daily") {
     // Read-only daily orientation: changed / blocked / owed today. No verifier, no LLM, no sync,
     // no approval gate. The ONLY write is the local change-snapshot under .aios/loop/state/ and
-    // ONLY on an owner run; --as / --manifest / --no-record are fully side-effect-free.
+    // ONLY on an owner run; --as / --manifest are always side-effect-free.
+    //
+    // Recording default depends on mode:
+    //  - text (no --json): records unless --no-record (unchanged, interactive/human path — the
+    //    whole point of a daily check-in is advancing the baseline).
+    //  - --json: does NOT record unless --record is explicitly passed. A bare `--json` used to
+    //    record by default, which meant any repeated poller (dashboard/hook/cron) that called
+    //    `--json` without knowing to pass `--no-record` silently consumed its own signal on the
+    //    very first call — every call after that saw near-zero "changed" (AIO-365). `--manifest`
+    //    mode was already fully side-effect-free; this makes `--json` match it by default, while
+    //    `--record --json` still lets a caller opt into both (e.g. a scheduled baseline-advance
+    //    job that also wants JSON for logging).
+    if (flags.has("--record") && flags.has("--no-record"))
+      die("--record and --no-record are mutually exclusive");
     const asIdx = args.indexOf("--as");
     const asArg = asIdx >= 0 ? args[asIdx + 1] : null;
     let audience = "owner";
@@ -950,6 +963,7 @@ export async function cmdLoop(repo, cfg, args) {
     const manifestPath = hasManifest ? args[manIdx + 1] : null;
     if (hasManifest && (!manifestPath || manifestPath.startsWith("--")))
       die("daily --manifest requires a path");
+    const record = flags.has("--record") ? true : flags.has("--no-record") ? false : !asJson;
 
     let orientation;
     if (hasManifest) {
@@ -968,12 +982,12 @@ export async function cmdLoop(repo, cfg, args) {
         root: repo,
         member,
         audience,
-        record: !flags.has("--no-record"),
+        record,
       });
       // C8 telemetry: the daily-run habit signal. Only a real recording OWNER run counts — an `--as`
-      // projection or `--no-record` run is side-effect-free by C4's contract, so it records nothing
+      // projection or a non-recording run is side-effect-free by C4's contract, so it records nothing
       // (and the `--manifest` inspection path never reaches this branch).
-      if (audience === "owner" && !flags.has("--no-record") && loop.telemetryEnabled()) {
+      if (audience === "owner" && record && loop.telemetryEnabled()) {
         loop.recordEvent(repo, {
           kind: "daily.run",
           runId: orientation.generatedAt.replace(/[:.]/g, "-"),
@@ -1027,7 +1041,9 @@ export async function cmdLoop(repo, cfg, args) {
 
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
-      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--json]\n" +
+      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--record] [--json]\n" +
+      "         (text mode records by default, disable with --no-record; --json does NOT record by\n" +
+      "          default — pass --record to also advance the baseline alongside --json)\n" +
       "       aios loop manifest --explain [--as team|external] [--daily]\n" +
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +
