@@ -38,6 +38,22 @@ test("contributeTarget returns null for a non-managed (personal) path", () => {
   assert.equal(contributeTarget(".claude/memory/USER.md"), null);
 });
 
+test("contributeTarget still maps an excluded dir-entry file (upstreaming is allowed), flagged", () => {
+  // access-control.md is excluded from `aios update`'s sync direction (stamp-time
+  // personalized), but the toolkit → workspace mapping is still valid, so contributing
+  // an improved version of the shared template back upstream must keep working.
+  const t = contributeTarget(".claude/rules/access-control.md");
+  assert.ok(t, "must still resolve — contribute is not half-broken by the exclude");
+  assert.equal(t.destRel, ".claude/rules/access-control.md");
+  assert.equal(t.srcRel, "scaffold/.claude/rules/access-control.md");
+  assert.equal(t.excluded, true);
+});
+
+test("contributeTarget marks a non-excluded sibling in the same dir entry as excluded: false", () => {
+  const t = contributeTarget(".claude/rules/git-workflow.md");
+  assert.equal(t.excluded, false);
+});
+
 test("contributeBranch is a safe, deterministic, content-disambiguated slug", () => {
   const b1 = contributeBranch(".claude/descriptors/granola.json", "A");
   const b2 = contributeBranch(".claude/descriptors/granola.json", "B");

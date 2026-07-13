@@ -154,13 +154,15 @@ function entryFiles(srcRoot, entry) {
   const absSrc = path.join(srcRoot, entry.src);
   if (!existsSync(absSrc)) return [];
   if (entry.kind !== "dir") return [{ srcRel: entry.src, destRel: entry.dest }];
+  const exclude = new Set(entry.exclude || []);
   const out = [];
   const walk = (dir, sub) => {
     for (const name of readdirSync(dir)) {
       const abs = path.join(dir, name);
       const rel = sub ? `${sub}/${name}` : name;
       if (statSync(abs).isDirectory()) walk(abs, rel);
-      else out.push({ srcRel: `${entry.src}/${rel}`, destRel: `${entry.dest}/${rel}` });
+      else if (!exclude.has(rel))
+        out.push({ srcRel: `${entry.src}/${rel}`, destRel: `${entry.dest}/${rel}` });
     }
   };
   walk(absSrc, "");
@@ -230,8 +232,10 @@ function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel,
 function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r) {
   const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
   if (!baseFiles.length) return;
+  const exclude = new Set((entry.exclude || []).map((rel) => `${entry.src}/${rel}`));
   const present = new Set(entryFiles(srcRoot, entry).map((f) => f.srcRel));
   for (const srcRel of baseFiles) {
+    if (exclude.has(srcRel)) continue; // excluded files are never synced — never "deleted" either
     if (present.has(srcRel)) continue; // still shipped — not a deletion
     const destRel = entry.dest + srcRel.slice(entry.src.length);
     const destAbs = path.join(repo, destRel);
@@ -391,10 +395,10 @@ export async function cmdUpdate(repo, cfg, args) {
       for (const cf of r.conflicts.slice(0, 20)) {
         const how =
           cf.kind === "merge"
-            ? "both sides changed — see .aios-merge, take .aios-incoming, or edit in place"
+            ? `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
             : cf.kind === "deleted-upstream"
               ? "removed upstream but you modified it — delete it or upstream your change"
-              : "no sync baseline — see .aios-incoming, or re-run --force if you have no local edits";
+              : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
         console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
       }
       if (r.conflicts.length > 20)

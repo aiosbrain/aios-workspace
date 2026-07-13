@@ -31,11 +31,32 @@ function scaffoldDestinations() {
   return [...dests];
 }
 
-const CLASSIFIED = [...MANAGED_PATHS.map((e) => e.dest), ...PERSONAL_PATHS, ...SCAFFOLD_UNMANAGED];
+/**
+ * Does a MANAGED dir entry actually cover `d` as a synced path? A dir entry's
+ * `exclude`d children (e.g. `.claude/rules/access-control.md`) are scaffold-written
+ * but NOT synced by `aios update` — they must fall through to SCAFFOLD_UNMANAGED
+ * instead, so they're excluded from the managed match here.
+ */
+function managedCovers(entry, d) {
+  if (entry.kind !== "dir") {
+    // A file entry also "covers" a scaffold path that is one of ITS ancestor dirs
+    // (e.g. scaffold destination "scripts" is covered because "scripts/aios.mjs" is
+    // managed) — mirrors the original containment check.
+    return d === entry.dest || entry.dest.startsWith(d + "/");
+  }
+  if (d !== entry.dest && !d.startsWith(entry.dest + "/") && !entry.dest.startsWith(d + "/"))
+    return false;
+  const tail = d.startsWith(entry.dest + "/") ? d.slice(entry.dest.length + 1) : undefined;
+  if (tail && (entry.exclude || []).includes(tail)) return false;
+  return true;
+}
 
 /** D is covered if some classified path equals it, contains it, or is contained by it. */
 function isCovered(d) {
-  return CLASSIFIED.some((c) => c === d || d.startsWith(c + "/") || c.startsWith(d + "/"));
+  if (MANAGED_PATHS.some((e) => managedCovers(e, d))) return true;
+  return [...PERSONAL_PATHS, ...SCAFFOLD_UNMANAGED].some(
+    (c) => c === d || d.startsWith(c + "/") || c.startsWith(d + "/")
+  );
 }
 
 test("every scaffold-written toolkit path is classified (manifest ↔ scaffold parity)", () => {
@@ -51,12 +72,28 @@ test("every scaffold-written toolkit path is classified (manifest ↔ scaffold p
 });
 
 test("the three manifest buckets don't overlap", () => {
-  const managed = new Set(MANAGED_PATHS.map((e) => e.dest));
   for (const p of [...PERSONAL_PATHS, ...SCAFFOLD_UNMANAGED]) {
-    assert.ok(!managed.has(p), `${p} is both managed and personal/unmanaged`);
+    assert.ok(
+      !MANAGED_PATHS.some((e) => managedCovers(e, p)),
+      `${p} is both managed and personal/unmanaged`
+    );
   }
   const personal = new Set(PERSONAL_PATHS);
   for (const p of SCAFFOLD_UNMANAGED) {
     assert.ok(!personal.has(p), `${p} is both personal and scaffold-unmanaged`);
   }
+});
+
+test("a dir entry's excluded child is SCAFFOLD_UNMANAGED, not managed (AIO-351 dogfood)", () => {
+  const rulesEntry = MANAGED_PATHS.find((e) => e.dest === ".claude/rules");
+  assert.ok(rulesEntry?.exclude?.includes("access-control.md"), "exclude is configured");
+  const excludedDest = ".claude/rules/access-control.md";
+  assert.ok(
+    !managedCovers(rulesEntry, excludedDest),
+    "the excluded file must not be covered by the managed dir entry"
+  );
+  assert.ok(
+    SCAFFOLD_UNMANAGED.includes(excludedDest),
+    "the excluded file must be explicitly classified as scaffold-unmanaged"
+  );
 });

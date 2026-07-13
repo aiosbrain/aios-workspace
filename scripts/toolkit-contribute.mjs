@@ -26,16 +26,21 @@ function stripSidecar(p) {
 
 /**
  * Map a workspace-relative managed path → its toolkit `src` location. Returns
- * { destRel, srcRel, entry } or null when the path isn't a toolkit-managed file. Pure.
+ * { destRel, srcRel, entry, excluded } or null when the path isn't a toolkit-managed
+ * file. `excluded` is true for a dir entry's `exclude`d file (e.g. access-control.md):
+ * it's still a legitimate scaffold path (it maps and CAN be contributed), it's just
+ * not synced by `aios update` in the toolkit → workspace direction. Pure.
  */
 export function contributeTarget(rawPath) {
   const destRel = stripSidecar(rawPath.replace(/^\.\//, "").replace(/\/+$/, ""));
   for (const entry of MANAGED_PATHS) {
     if (entry.kind !== "dir" && destRel === entry.dest) {
-      return { destRel, srcRel: entry.src, entry };
+      return { destRel, srcRel: entry.src, entry, excluded: false };
     }
     if (entry.kind === "dir" && destRel.startsWith(entry.dest + "/")) {
-      return { destRel, srcRel: entry.src + destRel.slice(entry.dest.length), entry };
+      const tail = destRel.slice(entry.dest.length + 1); // path within the dir
+      const excluded = (entry.exclude || []).includes(tail);
+      return { destRel, srcRel: entry.src + destRel.slice(entry.dest.length), entry, excluded };
     }
   }
   return null;
@@ -102,12 +107,23 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
     toolkit: toolkitDir,
   };
 
+  if (target.excluded) {
+    console.warn(
+      color.yellow(
+        `  ${target.destRel} is stamp-time PERSONALIZED (excluded from \`aios update\`'s ` +
+          `sync direction) — it likely contains your own tier table/team names/aliases. ` +
+          `Scrub those before contributing it as the shared scaffold default.`
+      )
+    );
+  }
+
   if (dryRun) {
     console.log(color.dim("  contribute plan (dry-run — nothing written):"));
     console.log(color.dim(`    workspace file : ${plan.file}`));
     console.log(color.dim(`    → toolkit path : ${plan.toolkitPath}`));
     console.log(color.dim(`    branch         : ${plan.branch}`));
     console.log(color.dim(`    toolkit repo   : ${plan.toolkit}`));
+    if (target.excluded) console.log(color.dim(`    excluded       : yes (personalized file)`));
     return plan;
   }
 
