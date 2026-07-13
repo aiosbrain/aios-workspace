@@ -6,13 +6,17 @@
 //   deepseek:deepseek-v4-pro
 //   claude:claude-sonnet-5
 //   cursor:gpt-5.5-high
+//   codex:gpt-5.6-sol
 //
 // Bare ids infer a provider from the id shape and available credentials.
 
 /** @typedef {{ provider: string, modelId: string, raw: string }} ModelRef */
 
-export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode"]);
+export const AGENTIC_PROVIDERS = new Set(["claude", "cursor", "opencode", "codex"]);
 export const PROMPT_PROVIDERS = new Set(["openrouter", "deepseek", "opencode", "cursor", "claude"]);
+// These are the approved Codex execution tiers for the AIO-381 delivery lane. Keeping the
+// allowlist here lets `aios ship` reject a typo before it creates a worktree or starts a run.
+export const CODEX_MODEL_TIERS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 
 // Bare open-model ids → OpenRouter vendor/model when OpenCode isn't keyed.
 export const OPENROUTER_ALIASES = {
@@ -96,6 +100,14 @@ export function parseModelRef(raw) {
 
 export function isAgenticProvider(provider) {
   return AGENTIC_PROVIDERS.has(provider);
+}
+
+export function isSupportedCodexModel(modelId) {
+  return CODEX_MODEL_TIERS.has(
+    String(modelId ?? "")
+      .trim()
+      .toLowerCase()
+  );
 }
 
 export function toOpenRouterModelId(modelId) {

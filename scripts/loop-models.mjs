@@ -13,7 +13,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { die } from "./relay-core.mjs";
-import { modelFamily, parseModelRef, isAgenticProvider } from "./model-providers.mjs";
+import {
+  modelFamily,
+  parseModelRef,
+  isAgenticProvider,
+  isSupportedCodexModel,
+  CODEX_MODEL_TIERS,
+} from "./model-providers.mjs";
 
 // The default per-step matrix. `effort` is omitted for steps whose model/runner does
 // not take a reasoning-effort knob. Keep this in sync with docs/loop-models.example.yaml.
@@ -89,7 +95,7 @@ export const LOOP_PROFILES = {
 
 export const STEPS = Object.keys(DEFAULT_MODELS);
 
-// Agentic steps run through a tool-capable runner (Claude Code, Cursor, or OpenCode CLI).
+// Agentic steps run through a tool-capable runner (Claude Code, Cursor, OpenCode, or Codex CLI).
 const AGENTIC_STEPS = ["plan", "build", "fix", "fix_escalated", "simplify"];
 
 // The producer/reviewer pairs that must stay cross-family.
@@ -165,9 +171,15 @@ function assertAgenticProviders(resolved) {
     const ref = parseModelRef(resolved[step].model);
     if (!isAgenticProvider(ref.provider)) {
       die(
-        `${step} needs an agentic provider (claude, cursor, or opencode) but ` +
+        `${step} needs an agentic provider (claude, cursor, opencode, or codex) but ` +
           `'${resolved[step].model}' resolves to '${ref.provider}'. ` +
-          `Prefix with claude:, cursor:, or opencode: — or use openrouter:/deepseek:/opencode: on review steps only.`
+          `Prefix with claude:, cursor:, opencode:, or codex: — or use openrouter:/deepseek:/opencode: on review steps only.`
+      );
+    }
+    if (ref.provider === "codex" && !isSupportedCodexModel(ref.modelId)) {
+      die(
+        `${step} requested unavailable Codex tier '${ref.modelId}' — supported tiers: ` +
+          [...CODEX_MODEL_TIERS].join(", ")
       );
     }
   }

@@ -11,11 +11,12 @@
 #   claude     Claude Code CLI (agentic: plan/build/fix)
 #   cursor     Cursor agent CLI (agentic or prompt)
 #   opencode   OpenCode Go API (prompt) or `opencode run` (agentic)
+#   codex      Codex CLI (agentic; approved tiers: gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna)
 #   deepseek   DeepSeek direct API (prompt)
 #   openrouter OpenRouter API (prompt)
 #
 # DIVERSITY GUARD: build≠code_review family, plan≠plan_review family (fail closed).
-# AGENTIC GUARD: plan/build/fix/fix_escalated need claude|cursor|opencode — not openrouter/deepseek alone.
+# AGENTIC GUARD: plan/build/fix/fix_escalated need claude|cursor|opencode|codex — not openrouter/deepseek alone.
 
 # recon_model: claude:claude-haiku-4-5
 # plan_model: claude:claude-opus-4-8
@@ -28,6 +29,7 @@
 # build_model: claude:claude-sonnet-5
 # build_effort: high
 # build_model: opencode:glm-5.2
+# build_model: codex:gpt-5.6-sol
 # code_review_model: deepseek:deepseek-v4-pro
 # code_review_model: openrouter:deepseek/deepseek-chat
 # code_review_timeout_s: 300
