@@ -229,7 +229,7 @@ sync_include:
   - 0-context
   - 2-work
   - 3-log/decision-log.md
-  - 3-log/tasks.md
+  - 3-log/tasks-team.md   # 3-log/tasks-private.md and 5-personal/tasks.md stay unlisted — never sync
   - 4-shared
   - .claude/memory
 sync_exclude:

@@ -62,7 +62,7 @@ This repo's frontmatter is OKF v0.1-conformant. Field mapping:
 | `2-work/` | `"Deliverable"` |
 | `1-inbox/transcripts/` | `"Transcript"` (lowercase `transcript` also accepted for back-compat) |
 | `3-log/decision-log.md` | `"Decision Log"` |
-| `3-log/tasks.md` | `"Task List"` |
+| `3-log/tasks-team.md`, `3-log/tasks-private.md`, `5-personal/tasks.md` | `"Task List"` (legacy: `3-log/tasks.md`) |
 | `3-log/*-ledger.md` | `"Sprint Ledger"` |
 | `0-context/scope-baseline.md`, `scope-ledger.md` | `"Scope"` |
 | `4-shared/` | `"Deliverable"` |

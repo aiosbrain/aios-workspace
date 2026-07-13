@@ -124,8 +124,13 @@ Canonical values: **`admin` | `team` | `external`**.
 `deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint`
 
 `decision` and `task` items are markdown files containing the canonical status tables
-(`3-log/decision-log.md`, `3-log/tasks.md`). For these, the client also parses
-table rows into `rows[]` so the brain can materialize structured entities.
+(`3-log/decision-log.md`; tasks live in one of `3-log/tasks-team.md`,
+`3-log/tasks-private.md`, `5-personal/tasks.md`, or the legacy `3-log/tasks.md` — the
+client classifies any `tasks*.md` basename as kind `task`). For these, the client also
+parses table rows into `rows[]` so the brain can materialize structured entities. Only
+`tasks-team.md` (or an equivalent `team`/`external`-tier file) is ever eligible to push —
+`tasks-private.md` and `5-personal/tasks.md` are tier-blocked/outside `sync_include` by
+design (AIO-364).
 
 **Forward-compat:** clients MUST ignore item kinds they don't recognize (a v1 client
 that predates `skill` simply skips those items on pull). New kinds are additive.
@@ -277,7 +282,7 @@ One item per request. Idempotent.
   brain side; unknown actors are accepted but flagged in the dashboard provenance).
 - `rows`: present **only** for `kind: decision|task`. Shapes below.
 
-**Task rows** (parsed from `tasks.md` `| ID | Task | Assignee | Status | Sprint | Due |`;
+**Task rows** (parsed from a `tasks*.md` file's `| ID | Task | Assignee | Status | Sprint | Due |`;
 newer CLIs also accept optional `PM`, `PM URL`, and the v1.2 `Parent`, `Labels`, `Priority` columns):
 
 ```json
@@ -376,7 +381,8 @@ The CLI exposes these over the endpoints above:
 ## `GET /api/v1/tasks?since=<ISO8601>` — task writeback
 
 Returns task rows created or modified **in the dashboard UI** since the cursor, so the
-CLI can merge them into the local `3-log/tasks.md`. **Tier-scoped:** an `external`-tier key
+CLI can merge them into the local `3-log/tasks-team.md` (or the legacy `3-log/tasks.md`
+for a workspace that hasn't migrated to the three-home split — AIO-364). **Tier-scoped:** an `external`-tier key
 receives only `audience: "external"` rows — via the `visibleTasks` choke-point in
 `lib/auth/visibility.ts`, the same file and pattern as the `visibleDecisions` choke-point that
 gates `GET /api/v1/decisions` below, applied to the `tasks` table's inherited `audience` column
@@ -430,7 +436,7 @@ it is written back and re-pushed.
 
 > **Reserved key namespace.** Row keys beginning `ui-` are **reserved** for rows created in
 > the dashboard (a `ui-` + random-hex id minted by the brain). Markdown authors must not
-> hand-write `ui-*` keys in `tasks.md` / `decision-log.md`, so a round-tripped UI row keeps a
+> hand-write `ui-*` keys in a `tasks*.md` file / `decision-log.md`, so a round-tripped UI row keeps a
 > stable identity and can't collide with a human-authored row.
 
 ## `GET /api/v1/projects` — team project list (team-tier only)

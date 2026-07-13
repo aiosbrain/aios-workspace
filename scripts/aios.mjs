@@ -58,6 +58,7 @@ import {
   parseDecisionRows,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
+import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
 import {
   c,
@@ -428,6 +429,7 @@ function cmdStatus(repo, cfg, patterns, args = []) {
           blocked: plan.blocked.map((i) => ({ rel: i.rel, reason: i.reason })),
           clean: plan.clean.map((i) => ({ rel: i.rel })),
         },
+        loop_critical_blocked: loopCriticalBlocks(repo, plan, cfg),
       })
     );
     return;
@@ -443,6 +445,8 @@ function cmdStatus(repo, cfg, patterns, args = []) {
   const mode = cfg.brain_url ? cfg.brain_url : c.dim("<offline/standalone>");
   console.log(c.blue(`aios status — project '${cfg.project}' → ${mode}`));
   console.log("");
+
+  printLoopCriticalWarnings(repo, plan, cfg);
 
   const newItems = plan.push.filter((i) => i.isNew);
   const modified = plan.push.filter((i) => !i.isNew);
@@ -924,6 +928,16 @@ async function cmdReview(repo, cfg, patterns, _args) {
   }
 }
 
+// Result contract (AIO-364): every return path reports what actually happened to each
+// requested rel, so a caller like `cmdWork --push` can tell "synced" from "silently
+// blocked" instead of assuming success once `cmdPush` returns. Shape:
+//   { pushed: Set<rel> (this run, POST succeeded), clean: Set<rel> (already synced),
+//     blocked: Map<rel, reason> (tier/secret/frontmatter — never reached the brain),
+//     failed: Map<rel, message> (POST attempted but errored) }
+function emptyPushResult() {
+  return { pushed: new Set(), clean: new Set(), blocked: new Map(), failed: new Map() };
+}
+
 async function cmdPush(repo, cfg, patterns, args) {
   if (args[0] === "skill") return cmdPushSkill(repo, cfg, patterns, args.slice(1));
   if (args[0] === "blueprint") return cmdPushBlueprint(repo, cfg, args.slice(1));
@@ -931,11 +945,17 @@ async function cmdPush(repo, cfg, patterns, args) {
   const paths = args.filter((a) => !a.startsWith("--"));
   const { plan, state } = buildPlan(repo, cfg, patterns, paths);
 
+  const result = emptyPushResult();
+  for (const b of plan.blocked) result.blocked.set(b.rel, b.reason);
+  for (const cln of plan.clean) result.clean.add(cln.rel);
+
+  printLoopCriticalWarnings(repo, plan, cfg);
+
   if (!plan.push.length) {
     console.log(c.green("nothing to push — all eligible files are clean."));
     if (plan.blocked.length)
       console.log(c.dim(`(${plan.blocked.length} blocked — run 'aios status' for reasons)`));
-    return;
+    return result;
   }
 
   if (dryRun) {
@@ -950,7 +970,7 @@ async function cmdPush(repo, cfg, patterns, args) {
       console.log(c.red(`blocked (${plan.blocked.length}):`));
       for (const b of plan.blocked) console.log(`  ${b.rel} — ${b.reason}`);
     }
-    return;
+    return result;
   }
 
   requireOnline(cfg);
@@ -978,8 +998,10 @@ async function cmdPush(repo, cfg, patterns, args) {
         pushed_at: new Date().toISOString(),
       };
       pushed++;
+      result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
+      result.failed.set(item.rel, e.message);
       console.log(`  ${c.red("✗")} ${item.rel} — ${e.message}`);
     }
   }
@@ -988,6 +1010,7 @@ async function cmdPush(repo, cfg, patterns, args) {
   console.log(c.green(`pushed ${pushed}/${plan.push.length} item(s).`));
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
+  return result;
 }
 
 async function cmdPull(repo, cfg, args = []) {
@@ -1032,16 +1055,23 @@ async function cmdPull(repo, cfg, args = []) {
     cursor = res.next_cursor || null;
   } while (cursor);
 
-  // Task writeback: UI-created/modified rows → merge into 03-status/tasks.md
+  // Task writeback: UI-created/modified rows → merge into the workspace's team-synced
+  // tasks file. AIO-364: prefer the new 3-log/tasks-team.md home (what a freshly
+  // scaffolded workspace has); fall back through the legacy single-file spine for
+  // workspaces that haven't migrated. Dashboard-authored rows are always team-tier by
+  // construction (the /tasks endpoint is tier-scoped — see docs/brain-api.md), so they
+  // never belong in tasks-private.md or 5-personal/tasks.md.
   const tasksRes = await api(
     cfg,
     "GET",
     `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
   );
   let merged = 0;
-  const tasksPath = existsSync(path.join(repo, "3-log", "tasks.md"))
-    ? path.join(repo, "3-log", "tasks.md")
-    : path.join(repo, "03-status", "tasks.md");
+  const tasksPath = existsSync(path.join(repo, "3-log", "tasks-team.md"))
+    ? path.join(repo, "3-log", "tasks-team.md")
+    : existsSync(path.join(repo, "3-log", "tasks.md"))
+      ? path.join(repo, "3-log", "tasks.md")
+      : path.join(repo, "03-status", "tasks.md");
   const incomingTaskRows = (tasksRes.tasks || [])
     .filter((g) => g.project === cfg.project)
     .flatMap((g) => g.rows || []);
@@ -2389,53 +2419,6 @@ function cmdLearn(repo, cfg, patterns, _args = []) {
   );
 }
 
-function tasksFile(repo) {
-  const modern = path.join(repo, "3-log", "tasks.md");
-  if (existsSync(modern)) return { abs: modern, rel: "3-log/tasks.md" };
-  const legacy = path.join(repo, "03-status", "tasks.md");
-  if (existsSync(legacy)) return { abs: legacy, rel: "03-status/tasks.md" };
-  die("no tasks.md found at 3-log/tasks.md or 03-status/tasks.md");
-}
-
-function rowCells(line) {
-  return line
-    .split("|")
-    .slice(1, -1)
-    .map((x) => x.trim());
-}
-
-function renderRow(cells) {
-  return `| ${cells.join(" | ")} |`;
-}
-
-function setTaskStatus(repo, key, status) {
-  const file = tasksFile(repo);
-  const lines = readFileSync(file.abs, "utf8").split("\n");
-  const headerIdx = lines.findIndex((line) => {
-    const cells = rowCells(line).map((h) => h.toLowerCase());
-    return cells.includes("id") && cells.includes("task");
-  });
-  if (headerIdx === -1) die("tasks.md has no task table header");
-  const header = rowCells(lines[headerIdx]).map((h) => h.toLowerCase());
-  const idIdx = header.indexOf("id");
-  const statusIdx = header.indexOf("status");
-  if (statusIdx === -1) die("tasks.md task table has no Status column");
-
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (!trimmed.startsWith("|")) continue;
-    const cells = rowCells(lines[i]);
-    if (cells.every((x) => /^[-: ]*$/.test(x))) continue;
-    if (cells[idIdx] !== key) continue;
-    while (cells.length < header.length) cells.push("");
-    cells[statusIdx] = status;
-    lines[i] = renderRow(cells);
-    writeFileSync(file.abs, lines.join("\n"));
-    return file;
-  }
-  die(`task key '${key}' not found in ${file.rel}`);
-}
-
 function gitSha(repo) {
   try {
     return execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -2491,7 +2474,19 @@ async function cmdWork(repo, cfg, patterns, args) {
   }
   requireOnline(cfg);
   const member = resolveMember(repo, cfg, loadDotEnv(repo));
-  await cmdPush(repo, cfg, patterns, [file.rel]);
+  const result = await cmdPush(repo, cfg, patterns, [file.rel]);
+  // AIO-364: cmdPush can silently no-op the requested file (tier-blocked, secret-matched,
+  // or a POST failure) while still returning normally — never fire a PM/brain "work done"
+  // event for a file that never actually reached the brain (part-succeed/drift).
+  const synced = result?.pushed?.has(file.rel) || result?.clean?.has(file.rel);
+  if (!synced) {
+    const reason =
+      result?.blocked?.get(file.rel) || result?.failed?.get(file.rel) || "did not sync";
+    die(
+      `${file.rel} did not reach the Team Brain (${reason}) — refusing to fire a work/PM event for '${key}'. ` +
+        `Fix the tier/secret issue (or the brain connection) and re-run 'aios work done ${key} --push'.`
+    );
+  }
   await postWorkEvent(repo, cfg, key, member);
 }
 

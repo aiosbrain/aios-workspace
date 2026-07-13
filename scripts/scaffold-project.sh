@@ -284,6 +284,12 @@ What you've deliberately promoted outward ($OUTWARD_DESC). Tier: \`$OUTWARD_TIER
 EOF
 
 # ── 3-log: decisions + tasks (synced); hours (local, lightweight) ────────────
+# Tasks are split into three tier-explicit homes (AIO-364) so a workspace never
+# has one ambiguous tasks.md whose access tier can drift out of sync with what
+# sync_include actually whitelists:
+#   3-log/tasks-team.md     access: team    (syncs)   — TT* ids
+#   3-log/tasks-private.md  access: private (never)   — TP* ids
+#   5-personal/tasks.md     no access tag,  outside sync_include entirely — P* ids
 idx "$OUTPUT/$D_LOG/index.md" << EOF
 ---
 type: index
@@ -294,8 +300,12 @@ access: team
 The record — decisions, tasks, and time.
 
 * [Decision Log](decision-log.md) — durable record of choices (syncs)
-* [Tasks](tasks.md) — task register (syncs)
+* [Team Tasks](tasks-team.md) — task register that syncs to the brain
+* [Private Tasks](tasks-private.md) — task register that never syncs
 * [Hours Log](hours-log.md) — time record (stays local)
+
+See also [5-personal/tasks.md](../$D_PERSONAL/tasks.md) for scratch tasks that live
+entirely outside \`sync_include\`.
 EOF
 
 idx "$OUTPUT/$D_LOG/decision-log.md" << EOF
@@ -309,23 +319,45 @@ type: "Decision Log"
 |---|------|----------|-----------|------------|--------|------|----------|
 EOF
 
-idx "$OUTPUT/$D_LOG/tasks.md" << EOF
+idx "$OUTPUT/$D_LOG/tasks-team.md" << EOF
 ---
 access: team
 type: "Task List"
+scope: $SLUG
 ---
-# Tasks — $STAKEHOLDER
+# Team Tasks — $STAKEHOLDER
 
-| ID | Task | Assignee | Status | Sprint | Due |
-|----|------|----------|--------|--------|-----|
+Tasks visible to the team — this file syncs to the Team Brain (\`aios push\`) and
+projects into the connected PM tool. Anything you don't want the team or the
+brain to see belongs in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\` instead.
+
+| ID | Task | Assignee | Status | Sprint | Due | Linear |
+|----|------|----------|--------|--------|-----|--------|
+| TT1 | Example team task | $OWNER | Todo | — | — | — |
 
 <!--
 Optional columns (brain-api v1.2) — add any of these to project a structured board into your
 PM tool (Plane/Linear): \`Parent\` (the epic's ID), \`Labels\` (comma-separated), \`Priority\`
-(none|low|medium|high|urgent), plus \`PM\` / \`PM URL\`. The six columns above stay valid on their
-own. A task's long description/body is edited in the brain dashboard — it does not live in this table.
-e.g.  | ID | Task | Assignee | Status | Sprint | Due | Parent | Labels | Priority |
+(none|low|medium|high|urgent). The columns above stay valid on their own. A task's long
+description/body is edited in the brain dashboard — it does not live in this table.
+e.g.  | ID | Task | Assignee | Status | Sprint | Due | Linear | Parent | Labels | Priority |
 -->
+EOF
+
+idx "$OUTPUT/$D_LOG/tasks-private.md" << EOF
+---
+access: private
+type: "Task List"
+---
+# Private Tasks — $OWNER
+
+Tasks that stay yours — this file is tagged \`access: private\` and **never syncs**
+to the Team Brain, even though \`3-log/\` is otherwise a team-tier folder. Use this
+for task-shaped notes you don't want to project into a PM tool.
+
+| ID | Task | Status | Sprint | Due | Notes |
+|----|------|--------|--------|-----|-------|
+| TP1 | Example private task | Todo | — | — | — |
 EOF
 
 # Hours: billable framing for consultant, lightweight for employee — both stay local (no access tier → never syncs).
@@ -357,6 +389,19 @@ idx "$OUTPUT/$D_PERSONAL/README.md" << EOF
 
 Your private scratch: drafts, prep, thinking-in-progress. **Never syncs** to the
 Team Brain (no access tier here). Promote to 2-work/ or 4-shared/ when ready.
+EOF
+
+idx "$OUTPUT/$D_PERSONAL/tasks.md" << EOF
+# Personal Tasks — $OWNER
+
+Scratch task list with no \`access:\` tag at all — \`5-personal/\` sits in
+\`aios.yaml\`'s \`sync_exclude\` and is never in \`sync_include\`, so this file is
+outside the sync boundary entirely (belt-and-suspenders alongside
+\`3-log/tasks-private.md\`, which stays inside 3-log but is tagged \`access: private\`).
+
+| ID | Task | Status | Due |
+|----|------|--------|-----|
+| P1 | Example personal task | Todo | — |
 EOF
 
 # ── 6-business: business-owner only — a sanctioned sibling root to the 0-5 spine ──

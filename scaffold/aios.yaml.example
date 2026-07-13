@@ -40,11 +40,14 @@ sync_include:
   - 0-context
   - 2-work
   - 3-log/decision-log.md
-  - 3-log/tasks.md
+  - 3-log/tasks-team.md
   - 4-shared
   - .claude/memory
 sync_exclude:
   - 5-personal
+
+# `3-log/tasks-private.md` is deliberately NOT in sync_include — it's tagged
+# `access: private` and must never sync (AIO-364).
 
 # Identity override (optional). Resolution order:
 #   $AIOS_MEMBER → this field → `git config aios.member` → git user.name
