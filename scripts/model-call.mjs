@@ -5,6 +5,9 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   callClaudeAgent,
   callCursorAgent,
@@ -18,6 +21,8 @@ import {
   toOpencodeModelId,
   opencodeUsesMessagesEndpoint,
   resolveOpencodeApiKey,
+  isSupportedCodexModel,
+  CODEX_MODEL_TIERS,
 } from "./model-providers.mjs";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -175,6 +180,73 @@ export async function callOpencodeAgent(prompt, timeoutMs, opts = {}) {
   });
 }
 
+/** Run Codex in its target worktree and return its final response. */
+export async function callCodexAgent(prompt, timeoutMs, opts = {}) {
+  const model = String(opts.model ?? "").trim();
+  if (!model) throw new Error("codex agent requires a model id");
+  if (!isSupportedCodexModel(model)) {
+    throw new Error(
+      `Codex tier '${model}' is unavailable — supported tiers: ${[...CODEX_MODEL_TIERS].join(", ")}`
+    );
+  }
+
+  const cwd = opts.cwd ?? process.cwd();
+  const dir = await mkdtemp(path.join(tmpdir(), "aios-codex-"));
+  const outputFile = path.join(dir, "last-message.txt");
+  const args = ["exec", "--model", model, "--cd", cwd, "--output-last-message", outputFile, prompt];
+  const readFinal = async () => {
+    try {
+      return (await readFile(outputFile, "utf8")).trim();
+    } catch (error) {
+      if (error?.code === "ENOENT") return "";
+      throw error;
+    }
+  };
+
+  try {
+    return await new Promise((resolve, reject) => {
+      let timedOut = false;
+      const proc = spawn("codex", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd,
+        ...(opts.env ? { env: opts.env } : {}),
+      });
+      const errBufs = [];
+      proc.stderr.on("data", (data) => errBufs.push(data));
+      const timer = setTimeout(async () => {
+        timedOut = true;
+        proc.kill();
+        const error = new Error(`codex agent timed out after ${Math.round(timeoutMs / 1000)}s`);
+        // Preserve a late-written final response for ship's partial-artifact handling.
+        error.partial = await readFinal();
+        reject(error);
+      }, timeoutMs);
+      proc.on("error", (error) => {
+        clearTimeout(timer);
+        reject(new Error(`codex agent failed to start: ${error.message}`));
+      });
+      proc.on("close", async (code) => {
+        clearTimeout(timer);
+        if (timedOut) return;
+        try {
+          const final = await readFinal();
+          if ((code === 0 || final) && final) resolve(final);
+          else {
+            const stderr = Buffer.concat(errBufs).toString().trim();
+            reject(
+              new Error(`codex agent exited ${code}${stderr ? `: ${stderr.slice(0, 400)}` : ""}`)
+            );
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** Fail loud when the resolved prompt model's provider env is missing. */
 export function requirePromptModelKey(model, step) {
   const ref = parseModelRef(model);
@@ -228,7 +300,7 @@ export async function callAgentModel({ model, prompt, timeoutMs, opts = {} }) {
   if (!isAgenticProvider(ref.provider)) {
     throw new Error(
       `Model '${model}' resolves to prompt-only provider '${ref.provider}'. ` +
-        `Agentic steps need claude:, cursor:, or opencode: — e.g. opencode:glm-5.2 or claude:claude-sonnet-5`
+        `Agentic steps need claude:, cursor:, opencode:, or codex: — e.g. codex:gpt-5.6-sol`
     );
   }
   switch (ref.provider) {
@@ -241,6 +313,8 @@ export async function callAgentModel({ model, prompt, timeoutMs, opts = {} }) {
       });
     case "opencode":
       return callOpencodeAgent(prompt, timeoutMs, { ...opts, model: ref.modelId, cwd: opts.cwd });
+    case "codex":
+      return callCodexAgent(prompt, timeoutMs, { ...opts, model: ref.modelId, cwd: opts.cwd });
     default:
       throw new Error(`unsupported agent model '${model}'`);
   }

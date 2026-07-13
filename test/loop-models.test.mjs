@@ -162,6 +162,18 @@ console.log("agentic-provider guard (fail closed)");
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: opencode:glm-5.2\n");
   check("opencode build_model passes", resolveInChild({ repo }).ok === true);
 
+  for (const tier of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), `build_model: codex:${tier}\n`);
+    check(`Codex ${tier} build_model passes`, resolveInChild({ repo }).ok === true);
+  }
+  writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "build_model: codex:gpt-5.6-typo\n");
+  const unavailableCodexTier = resolveInChild({ repo });
+  check("unavailable Codex tier aborts before dispatch", unavailableCodexTier.ok === false);
+  check(
+    "unavailable Codex tier names the supported tiers",
+    /gpt-5\.6-sol/.test(unavailableCodexTier.stderr)
+  );
+
   const badPlan = resolveInChild({
     repo: null,
     cliOverrides: { plan: { model: "deepseek-v4-pro" } },
