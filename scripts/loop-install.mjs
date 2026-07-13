@@ -180,8 +180,6 @@ ${argsXml}
   </array>
   <key>WorkingDirectory</key>
   <string>${xmlEscape(workingDirectory)}</string>
-  <key>RunAtLoad</key>
-  <true/>
 ${scheduleXml}  <key>StandardOutPath</key>
   <string>${xmlEscape(stdoutPath)}</string>
   <key>StandardErrorPath</key>
@@ -217,6 +215,7 @@ function launchctlUid() {
 export function applyLaunchdInstall(plan, { fs = nodeFs, exec = execFileSync, load = true } = {}) {
   fs.mkdirSync(plan.logsDir, { recursive: true });
   const rendered = renderLaunchdPlan(plan);
+  const results = [];
   for (const r of rendered) {
     fs.mkdirSync(path.dirname(r.path), { recursive: true });
     if (load) {
@@ -227,20 +226,23 @@ export function applyLaunchdInstall(plan, { fs = nodeFs, exec = execFileSync, lo
       }
     }
     fs.writeFileSync(r.path, r.content);
+    let loaded = !load;
     if (load) {
       try {
         exec("launchctl", ["bootstrap", `gui/${launchctlUid()}`, r.path], { stdio: "ignore" });
+        loaded = true;
       } catch {
         try {
           exec("launchctl", ["load", "-w", r.path], { stdio: "ignore" });
+          loaded = true;
         } catch {
-          /* best-effort — the plist is installed even if the live (re)load fails (e.g. no GUI
-             session on a headless run); it will pick up on next login. */
+          loaded = false;
         }
       }
     }
+    results.push({ label: r.label, path: r.path, loaded });
   }
-  return rendered.map((r) => ({ label: r.label, path: r.path }));
+  return results;
 }
 
 export function applyLaunchdUninstall(plan, { fs = nodeFs, exec = execFileSync } = {}) {
@@ -272,7 +274,7 @@ export function buildCronBlock(plan) {
   const { begin, end } = cronMarkers(plan.slug);
   const lines = plan.jobs.map(
     (j) =>
-      `${j.cronSchedule} cd ${shellQuote(j.workingDirectory)} && ${j.commandLine} >> ${shellQuote(j.logPath)} 2>&1`
+      `${j.cronSchedule} cd ${shellQuote(j.workingDirectory)} && { ${j.commandLine}; } >> ${shellQuote(j.logPath)} 2>&1`
   );
   return [begin, ...lines, end].join("\n");
 }
@@ -399,10 +401,20 @@ export function cmdLoopInstall(repo, args) {
     return;
   }
   const schedIdx = args.indexOf("--scheduler");
+  if (schedIdx >= 0 && (!args[schedIdx + 1] || args[schedIdx + 1].startsWith("--"))) {
+    die("--scheduler requires launchd|cron");
+  }
   const schedulerOverride = schedIdx >= 0 ? args[schedIdx + 1] : null;
   if (schedulerOverride && !["launchd", "cron"].includes(schedulerOverride)) {
     die("--scheduler must be launchd|cron");
   }
+  const consumedSchedulerValue = schedIdx >= 0 ? schedIdx + 1 : -1;
+  const unknown = args.find(
+    (arg, idx) =>
+      idx !== consumedSchedulerValue &&
+      !["--dry-run", "--uninstall", "--status", "--scheduler"].includes(arg)
+  );
+  if (unknown) die(`unknown loop install option: ${unknown}`);
   const dryRun = args.includes("--dry-run");
   const uninstall = args.includes("--uninstall");
   const status = args.includes("--status");
@@ -422,8 +434,16 @@ export function cmdLoopInstall(repo, args) {
     return;
   }
 
-  if (plan.scheduler === "launchd") applyLaunchdInstall(plan);
-  else applyCronInstall(plan);
+  if (plan.scheduler === "launchd") {
+    const results = applyLaunchdInstall(plan);
+    const failed = results.filter((result) => !result.loaded);
+    if (failed.length) {
+      die(
+        `wrote ${failed.length} LaunchAgent plist(s), but launchctl could not load them: ` +
+          failed.map((result) => result.label).join(", ")
+      );
+    }
+  } else applyCronInstall(plan);
   printPlan(plan, { installed: true });
   console.log(
     c.yellow(
