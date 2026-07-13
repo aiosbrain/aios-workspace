@@ -301,7 +301,7 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 - **Driving ship from an agent (or any non-TTY caller).** Run gate-wise on the exit codes: run →
   inspect `GATE-plan.pending.md` → `--resume --approve-plan` → inspect PR at the merge gate →
   `--resume --approve-merge`. The legacy pseudo-terminal pattern
-  (`script -q /tmp/ship-tty.log node scripts/aios.mjs ship AIO-123 < <(tail -f /tmp/ship-stdin.txt)`)
+  (`script -q /tmp/ship-tty.log aios ship AIO-123 < <(tail -f /tmp/ship-stdin.txt)`)
   still works for truly live prompts, but the resume flags leave a better audit trail. Use
   `--auto`/`--auto-merge` when you simply want a gate skipped.
 - **`--dry-run`** prints the resolved step plan (stages, per-step models/efforts, gate states,

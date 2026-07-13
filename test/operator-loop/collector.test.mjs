@@ -84,6 +84,15 @@ test("weekly collects decisions/tasks/hours/deliverables on the CURRENT spine", 
   assert.equal(d2.tier, "team");
 });
 
+test("deliverable discovery skips virtualenv and site-packages trees", () => {
+  const { dir, names } = seed("current");
+  write(dir, `${names.work}/.venv/lib/python3.14/site-packages/pkg/LICENSE.md`, "# Noise\n", NOW);
+  write(dir, `${names.work}/vendor/site-packages/pkg/README.md`, "# More noise\n", NOW);
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.ok(!m.signals.some((s) => s.ref.path.includes("site-packages")));
+  assert.ok(!m.excluded.some((e) => e.ref.includes("site-packages")));
+});
+
 test("admin-tier signals are RETAINED in the manifest (not dropped like sync)", () => {
   const { dir } = seed("current");
   const m = collect({ root: dir, cadence: "weekly", now: NOW });

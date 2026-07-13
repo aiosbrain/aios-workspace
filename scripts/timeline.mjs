@@ -126,15 +126,19 @@ export async function cmdTimeline(repo, cfg, args) {
   until = until ?? new Date().toISOString();
 
   // ── repos: CLI --repo entries, else everything in .aios/timeline-config.json ──
+  const configFile = configPath ?? path.join(workspace, ".aios", "timeline-config.json");
+  const configExists = existsSync(configFile);
   const tlConfig = tl.loadTimelineConfig(workspace, configPath ?? undefined);
   let repoInputs = cliRepos;
   if (repoInputs.length === 0) {
     repoInputs = [...tlConfig.repos.keys()].map((p) => ({ path: p }));
   }
   if (repoInputs.length === 0) {
-    die(
-      "no repos: pass --repo <path>[=liveUrl] (repeatable) or configure .aios/timeline-config.json"
-    );
+    if (!configExists)
+      die(
+        "timeline config not found: .aios/timeline-config.json — pass --repo <path>[=liveUrl] or see docs/feature-set.md to configure repos"
+      );
+    die("timeline config contains no repos — add repos or pass --repo <path>[=liveUrl]");
   }
   const repos = tl.resolveRepos(repoInputs, tlConfig);
   for (const r of repos) {

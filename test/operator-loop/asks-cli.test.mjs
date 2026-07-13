@@ -33,6 +33,17 @@ function run(dir, args) {
   }
 }
 
+test("mistyped subcommand suggests the nearest valid command", () => {
+  const dir = ws();
+  try {
+    const res = run(dir, ["resovle"]);
+    assert.equal(res.code, 1);
+    assert.match(String(res.stderr), /did you mean `aios asks resolve`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("round-trip: add → list → show → resolve → drain (offline, no aios.yaml)", () => {
   const dir = ws();
   try {

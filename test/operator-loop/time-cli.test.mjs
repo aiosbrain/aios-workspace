@@ -65,6 +65,18 @@ const storeId = (root) => {
   return dataRow.split("|")[1].trim();
 };
 
+test("cli: bare reconcile prints actionable usage", () => {
+  const root = workspace();
+  try {
+    const res = run(["time", "reconcile", "--repo", root]);
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /usage: aios time reconcile --id/);
+    assert.match(res.stderr, /aios time report --json/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli: capture → report → reconcile happy path", () => {
   const root = workspace();
   const proj = projects();

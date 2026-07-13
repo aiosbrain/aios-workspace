@@ -47,12 +47,12 @@ the nightly job then reuses the stored auth.
 
 ## 3. Invocation & env
 
-Always invoke through the repo's npm script (or `node scripts/aios.mjs` directly) so the
+Always invoke through the installed `aios` command so the
 dotenvx-injected environment is applied:
 
 ```bash
 cd /home/<user>/<workspace>
-npm run aios -- build plan.md feat/AIO-<n>-x --pr --issue AIO-<n> --log run.md
+aios build plan.md feat/AIO-<n>-x --pr --issue AIO-<n> --log run.md
 ```
 
 Two environment invariants:

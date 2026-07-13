@@ -24,6 +24,36 @@ const TOOLKIT_HOOKS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url))
 const COMMS_CONFIG_REL = ".aios/comms-config.json";
 const COMMS_CONFIG_DOCS = "docs/v1-operator-loop/domains/comms-config.example.json";
 const missingCommsConfigNotice = `0 delivered — \`${COMMS_CONFIG_REL}\` missing, see ${COMMS_CONFIG_DOCS}`;
+const ASKS_SUBCOMMANDS = [
+  "list",
+  "show",
+  "resolve",
+  "drain",
+  "auto-approve",
+  "add",
+  "harvest",
+  "wire",
+];
+
+function editDistance(a, b) {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++)
+      row[j] = Math.min(row[j - 1] + 1, prev[j] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev.splice(0, prev.length, ...row);
+  }
+  return prev[b.length];
+}
+
+function nearestAsksSubcommand(input) {
+  if (!input) return null;
+  const ranked = ASKS_SUBCOMMANDS.map((name) => ({
+    name,
+    distance: editDistance(input, name),
+  })).sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name));
+  return ranked[0].distance <= Math.max(2, Math.floor(input.length / 3)) ? ranked[0].name : null;
+}
 
 // `git worktree list --porcelain` → absolute paths of every worktree of `repo` (including
 // `repo` itself). Best-effort: a repo with no `.git` or git not on PATH returns just `[repo]`.
@@ -414,8 +444,12 @@ export async function cmdAsks(repo, cfg, args) {
     return;
   }
 
+  const suggestion = nearestAsksSubcommand(sub);
   die(
-    "usage: aios asks list [--status open|resolved|orphaned|all] [--json]\n" +
+    (suggestion
+      ? `unknown asks subcommand: ${sub} — did you mean \`aios asks ${suggestion}\`?\n`
+      : "") +
+      "usage: aios asks list [--status open|resolved|orphaned|all] [--json]\n" +
       "       aios asks show <id> [--json]\n" +
       "       aios asks resolve <id...> [--json]\n" +
       "       aios asks drain [--keep-open] [--json]\n" +

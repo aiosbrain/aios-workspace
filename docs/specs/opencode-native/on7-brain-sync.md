@@ -25,9 +25,9 @@ Claude Code — same output, same guards, same blocked/clean buckets.
 
 A verification run — no code changes, just confirmation:
 
-1. Run `node scripts/aios.mjs status` from OpenCode bash — verify blocked/clean buckets
-2. Run `node scripts/aios.mjs push --dry-run` — verify eligible files
-3. Run `node scripts/aios.mjs pull` — verify brain pulls land in `1-inbox/from-brain/`
+1. Run `aios status` from OpenCode bash — verify blocked/clean buckets
+2. Run `aios push --dry-run` — verify eligible files
+3. Run `aios pull` — verify brain pulls land in `1-inbox/from-brain/`
 4. Verify frontmatter guard: create a test file with no `access:` frontmatter in a
    sync-included path, confirm `aios status` shows it as blocked (default-deny)
 5. Verify admin-tier guard: confirm files with `access: admin` never appear as eligible
@@ -36,10 +36,10 @@ A verification run — no code changes, just confirmation:
 
 ## Acceptance criteria
 
-- `node scripts/aios.mjs status` exits 0 and shows expected blocked/clean buckets
-- `node scripts/aios.mjs push --dry-run` exits 0 and shows expected eligible files (or
+- `aios status` exits 0 and shows expected blocked/clean buckets
+- `aios push --dry-run` exits 0 and shows expected eligible files (or
   "nothing to push" if all clean)
-- `node scripts/aios.mjs pull` exits 0 and new items land in `1-inbox/from-brain/`
+- `aios pull` exits 0 and new items land in `1-inbox/from-brain/`
 - A temporary untagged file in `2-work/` appears as "blocked — default-deny" in status
 - A file tagged `access: admin` in `2-work/` appears as "blocked — admin never syncs"
 - No `aios` commands are blocked or flagged by the instincts plugin's access gate
