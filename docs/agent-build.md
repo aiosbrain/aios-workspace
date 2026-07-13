@@ -362,7 +362,9 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   spec's **Interfaces**, **Implementation**, and **Acceptance** sections, then runs the normal
   build → review → fix → consolidate → merge path. Its pinned profile wins over
   `.aios/loop-models.yaml` (only an explicit CLI override can win), so a session or local config
-  cannot silently change the deliberate build/reviewer split. `--skip-spec-gate` is rejected for
+  cannot silently change the deliberate build/reviewer split: Codex Sol builds and routine fixes,
+  Codex Terra handles escalated fixes, DeepSeek V4 Pro reviews, and OpenRouter GPT-4o mini
+  consolidates. Claude Opus remains the independent high-risk safety reviewer. `--skip-spec-gate` is rejected for
   this loop. A light-loop safety review runs only when the raw issue description begins with YAML
   frontmatter containing `safety: true`; it does not infer that requirement from changed paths.
   Resume with the same loop shape — a full/light checkpoint mismatch is rejected rather than

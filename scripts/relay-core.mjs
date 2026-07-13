@@ -93,6 +93,7 @@ export function checkPrereqs({
   requireAnthropic = true,
   requireClaude = false,
   requireCursor = true,
+  requireCodex = false,
 } = {}) {
   if (requireAnthropic && !process.env.ANTHROPIC_API_KEY) {
     die("ANTHROPIC_API_KEY is not set. Add it to your .env or export it in your shell.");
@@ -109,6 +110,13 @@ export function checkPrereqs({
       execFileSync("claude", ["--version"], { stdio: "pipe" });
     } catch {
       die("claude CLI (Claude Code) not found. See https://docs.claude.com/claude-code");
+    }
+  }
+  if (requireCodex) {
+    try {
+      execFileSync("codex", ["--version"], { stdio: "pipe" });
+    } catch {
+      die("codex CLI not found. Install Codex and authenticate before using codex:* build models.");
     }
   }
 }

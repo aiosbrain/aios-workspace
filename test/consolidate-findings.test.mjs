@@ -652,6 +652,26 @@ console.log("config-driven model call");
     "effort from the config file is passed",
     JSON.stringify(recorded.extraArgs) === JSON.stringify(["--effort", "high"])
   );
+
+  let lightRecorded = null;
+  await quiet(() =>
+    cmdConsolidateFindings(
+      repo,
+      ["--pr", "9", "--issue", "AIO-161", "--repo", "a/b", "--loop-profile", "light"],
+      {
+        runGh: makeRunGh({ checks: passChecks() }, []),
+        readReviewerPrompt: () => REVIEWER,
+        callPromptModel: async (call) => {
+          lightRecorded = call;
+          return readFix("agent-clear.md");
+        },
+      }
+    )
+  );
+  check(
+    "light profile routes consolidation through OpenRouter mini",
+    lightRecorded?.model === "openrouter:openai/gpt-4o-mini"
+  );
 }
 
 // ── bad args → returns 1 ─────────────────────────────────────────────────────────

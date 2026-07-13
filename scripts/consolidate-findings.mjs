@@ -105,6 +105,7 @@ export function parseConsolidateArgs(args) {
     repoSlug: flag("--repo"),
     gptReview: flag("--gpt-review"),
     out: flag("--out"),
+    loopProfile: flag("--loop-profile"),
   };
 }
 
@@ -620,11 +621,11 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
     gpt: inputs.gptMarkdown,
   });
 
-  // Model consolidation, driven by the config surface (consolidate is a Claude-runner step,
-  // so a gpt-* consolidate_model already failed loud in resolveLoopModels above/here).
+  // Model consolidation, driven by the config surface. Ship forwards its loop profile so this
+  // prompt-only call cannot silently fall back to the default Claude route.
   let models;
   try {
-    models = resolveLoopModels({ repo });
+    models = resolveLoopModels({ repo, profile: opts.loopProfile ?? null });
   } catch (e) {
     console.error(c.red(`error: ${e.message}`));
     return 1;

@@ -46,6 +46,11 @@ console.log("modelFamily diversity");
     modelFamily("opencode:glm-5.2") !== modelFamily("opencode:kimi-k2.7-code")
   );
   ok("openrouter anthropic", modelFamily("anthropic/claude-sonnet-4") === "anthropic");
+  ok(
+    "Codex OpenAI builder vs DeepSeek reviewer differ",
+    modelFamily("codex:gpt-5.6-sol") === "openai" &&
+      modelFamily("deepseek:deepseek-v4-pro") === "deepseek"
+  );
 }
 
 console.log("toOpenRouterModelId");
