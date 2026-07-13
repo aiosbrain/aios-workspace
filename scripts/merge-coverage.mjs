@@ -26,7 +26,12 @@ function mergeTotals(a, b) {
     const covered = (a[metric]?.covered ?? 0) + (b[metric]?.covered ?? 0);
     const skipped = (a[metric]?.skipped ?? 0) + (b[metric]?.skipped ?? 0);
     const total = (a[metric]?.total ?? 0) + (b[metric]?.total ?? 0);
-    merged[metric] = { total, covered, skipped, pct: total === 0 ? 100 : Number(((covered / total) * 100).toFixed(2)) };
+    merged[metric] = {
+      total,
+      covered,
+      skipped,
+      pct: total === 0 ? 100 : Number(((covered / total) * 100).toFixed(2)),
+    };
   }
   return merged;
 }
@@ -44,7 +49,9 @@ if (existsSync(CLIENT_SUMMARY)) {
   writeFileSync(ROOT_SUMMARY, JSON.stringify(rootReport, null, 2));
   console.log("merge-coverage: merged gui/client coverage into root coverage-summary.json");
 } else {
-  console.warn(`merge-coverage: ${CLIENT_SUMMARY} not found — leaving root summary as-is (root suite only)`);
+  console.warn(
+    `merge-coverage: ${CLIENT_SUMMARY} not found — leaving root summary as-is (root suite only)`
+  );
 }
 
 if (existsSync(CLIENT_LCOV) && existsSync(ROOT_LCOV)) {
