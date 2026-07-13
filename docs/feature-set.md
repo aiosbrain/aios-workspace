@@ -8,9 +8,10 @@ verifiable output — plus a sync client for pushing selected work to a shared
 Team Brain.
 
 It is **clone-per-person, shaped-to-context**: each individual scaffolds their own
-workspace, picking the context (consultant-for-a-client or employee-in-a-company)
-that selects the spine skin, and runs the same conventions, validators, and
-harnesses inside it.
+workspace, picking one of three first-class contexts (consultant-for-a-client,
+employee-in-a-company, or business-owner — the consultant skin plus a sanctioned
+`6-business/` sibling for running the business itself) that selects the spine skin,
+and runs the same conventions, validators, and harnesses inside it.
 
 ---
 
@@ -26,8 +27,11 @@ the content its owner has tagged and chosen. See `architecture.md`.
 Every workspace uses the same six-folder pipeline — `0-context`, `1-inbox`,
 `2-work`, `3-log`, `4-shared`, `5-personal` — encoding maturity from raw capture to
 outward-facing output. The `0-context` and `4-shared` folders take a context skin
-(consultant or employee); the rest are identical. Content is promoted deliberately,
-with a review or approval at each step.
+(consultant, employee, or business-owner — which reuses the consultant skin); the
+rest are identical. business-owner also gets a seventh, sanctioned sibling root,
+`6-business/` (bookkeeping, entities, engagements, insurance, administration,
+partnerships, portfolio), deliberately kept outside the sync boundary. Content is
+promoted deliberately, with a review or approval at each step.
 
 ### Access tiers
 Every file carries a friendly audience tier (`private | team | client`/`company`)
@@ -39,10 +43,11 @@ retrieval on the brain. See `architecture.md`.
 
 ## 2. Scaffolding
 
-`scripts/scaffold-project.sh --context consultant|employee` spawns a complete
-workspace from `scaffold/`: the full numbered spine with the right context skin, the
-personal workspace, starter log files (decision log, hours, tasks), CODEOWNERS, and
-the shipped governance rules and harness skills. One command, a ready-to-run
+`scripts/scaffold-project.sh --context consultant|employee|business-owner` spawns a
+complete workspace from `scaffold/`: the full numbered spine with the right context
+skin, the personal workspace, starter log files (decision log, hours, tasks),
+CODEOWNERS, and the shipped governance rules and harness skills. One command, a
+ready-to-run
 workspace. (`scaffold-engagement.sh` remains as a back-compat shim → consultant.)
 
 The template (`scaffold/.claude/`) ships:

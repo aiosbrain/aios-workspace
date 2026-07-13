@@ -137,6 +137,17 @@ async function cmdMemberInvite(rest, deps) {
   }
 
   printProvisioning(res.provisioning);
+
+  // AIO-354: comms-config.json is stamped by scaffold-project.sh but ships with an
+  // empty `channels` map (default-deny, clean no-op) — a real admin has to fill in
+  // channel names before Slack dispatch does anything. Point at it right where the
+  // Slack invite cascade happened, since that's the natural moment to wire it up.
+  const invitedSlack = tools === "all" || (Array.isArray(tools) && tools.includes("slack"));
+  if (invitedSlack) {
+    console.log("");
+    console.log(`  ${c.dim("Slack dispatch is still off by default — add real channel names to")}`);
+    console.log(`  ${c.dim('.aios/comms-config.json\'s "channels" map to turn it on.')}`);
+  }
 }
 
 async function cmdMemberList(deps) {

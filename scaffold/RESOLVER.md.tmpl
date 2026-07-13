@@ -23,6 +23,7 @@ catalog after adding your own).
 |---|---|
 | Any git operation | `.claude/rules/git-workflow.md` — this is a personal workspace: work on **master only**, no branches/worktrees/PRs, commit when the owner asks. (The AIOS *product* repos have the opposite rule — toolkit work happens there, in worktrees) |
 | Any access/tier/sharing question, or content missing access frontmatter | `.claude/rules/frontmatter.md` — default-deny: untagged content never syncs; **private→admin** never leaves this machine |
+| A `6-business/` question (business-owner context) | `.claude/rules/access-control.md` — path-level exclusion from `sync_include`, a second layer beyond `access:` tags |
 | Anything about to leave the workspace (push, share, promote) | `.claude/rules/publishing.md` — promotion is deliberate; nothing leaves until `aios push` |
 | A decision made in any session | `.claude/rules/decision-log.md` — one row per decision, logged when made |
 | Time/hours logging | `.claude/rules/hours.md` — hours-log (human) vs time-log (agent runtime) are separate lanes |

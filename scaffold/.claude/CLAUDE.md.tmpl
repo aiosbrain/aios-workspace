@@ -3,7 +3,11 @@
 Your individual agentic workspace ({{DESC}}). You work here; you push selected
 work to the shared **Team Brain**. This repo is *yours* — private by default.
 
-**Context:** {{CONTEXT}} ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`.
+**Context:** {{CONTEXT}} ({{CONTEXT_TITLE}}). Outward tier: `{{OUTWARD_TIER}}`. Scaffolded
+from one of three first-class contexts — **consultant** (client engagement),
+**employee** (role/OKRs), or **business-owner** (consultant profile + a `6-business/`
+sibling for running the business itself, kept outside sync — see
+`.claude/rules/access-control.md`).
 
 ## Who you're working with
 Durable context about the owner and their workspace lives in two memory files:
@@ -46,7 +50,7 @@ product repo. Full rule: [`.claude/rules/git-workflow.md`](.claude/rules/git-wor
 | `2-work/` | your deliverables / drafts in progress | team |
 | `3-log/` | the record — decisions, tasks, hours | team / private |
 | `4-shared/` | what you've promoted outward ({{OUTWARD_DESC}}) | {{OUTWARD_TIER}} |
-| `5-personal/` | your private scratch | private (never syncs) |
+| `5-personal/` | your private scratch | private (never syncs) |{{SIXBUSINESS_LINE}}
 | `.claude/` | the agent layer — skills, rules, rubrics, memory | — |
 
 ## Access tiers
@@ -62,6 +66,11 @@ it shareable; untagged and `private` files never sync. Promotion is deliberate.
   tools (Slack, Jira, Notion, Linear, GitHub, Gmail, Granola, …). To wire one, copy its
   server from `.mcp.example.json` into `.mcp.json`, set the env vars, flip its status in
   `.claude/integrations.json`, and re-run the catalog. Setup notes: `docs/integrations.md`.
+- **Slack comms tier map** → `.aios/comms-config.json` (stamped with commented-out
+  starter fields). Until you fill in real channel names under `channels`, the comms
+  source/sender stay a clean no-op — no automatic Slack dispatch happens. Fill it in
+  when you're ready to wire the Operator Loop to a real Slack channel; see
+  `docs/v1-operator-loop/domains/comms-config.example.json` for a worked example.
 - **Share/pull skills** → push a skill to the brain (`aios push skill <name>`), pull one
   (`aios pull skill <name>`), install it (`aios install-skill <name>`). Pulled skills are
   code — install is deliberate; they never auto-activate.
