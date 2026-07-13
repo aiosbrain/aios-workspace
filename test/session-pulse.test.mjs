@@ -75,10 +75,7 @@ test("fresh summary → one concise aios tip", () => {
     const { code, stdout } = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(code, 0);
     const parsed = JSON.parse(stdout.trim());
-    assert.match(
-      parsed.systemMessage,
-      /^aios tip: Cache more of your context\.$/
-    );
+    assert.match(parsed.systemMessage, /^aios tip: Cache more of your context\.$/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -118,7 +115,10 @@ test("missing state → at most one analyze suggestion per 24h", () => {
   try {
     const first = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(first.code, 0);
-    assert.match(first.stdout, /^\{"systemMessage":"aios tip: run `aios analyze` once to start maturity tracking\."\}/);
+    assert.match(
+      first.stdout,
+      /^\{"systemMessage":"aios tip: run `aios analyze` once to start maturity tracking\."\}/
+    );
     const second = runHook(dir, { hook_event_name: "Stop" });
     assert.equal(second.code, 0);
     assert.equal(second.stdout.trim(), "", "second suggestion within 24h must be silent");
@@ -140,7 +140,10 @@ test("deep-work → silent without changing throttle state", () => {
     const { code, stdout } = runHook(dir, { hook_event_name: "Stop" }, { env: { HOME: home } });
     assert.equal(code, 0);
     assert.equal(stdout.trim(), "");
-    assert.equal(statSync(path.join(dir, ".aios", "session-pulse-state.json"), { throwIfNoEntry: false }), undefined);
+    assert.equal(
+      statSync(path.join(dir, ".aios", "session-pulse-state.json"), { throwIfNoEntry: false }),
+      undefined
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
