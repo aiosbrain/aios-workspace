@@ -23,7 +23,7 @@ const dlog = (rows) =>
 
 // A workspace with a decision-log (the detectable loop events) + a comms config (the sender's
 // destination gate). `audience` on each row is the event tier; the channel tier authorizes it.
-function workspace({ audience = "team", channelTier = "team", on = null } = {}) {
+function workspace({ audience = "team", channelTier = "team", on = null, withConfig = true } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "asks-harvest-"));
   mkdirSync(path.join(dir, "3-log"), { recursive: true });
   mkdirSync(path.join(dir, ".aios"), { recursive: true });
@@ -31,10 +31,12 @@ function workspace({ audience = "team", channelTier = "team", on = null } = {}) 
     path.join(dir, "3-log", "decision-log.md"),
     dlog([`1 | 2026-07-01 | Adopt new arch | r | alex | i | 3 | ${audience}`])
   );
-  writeFileSync(
-    path.join(dir, ".aios", "comms-config.json"),
-    JSON.stringify({ sender: { channel: "#loop", on }, channels: { "#loop": channelTier } })
-  );
+  if (withConfig) {
+    writeFileSync(
+      path.join(dir, ".aios", "comms-config.json"),
+      JSON.stringify({ sender: { channel: "#loop", on }, channels: { "#loop": channelTier } })
+    );
+  }
   return dir;
 }
 
@@ -45,6 +47,13 @@ function harvest(dir, extra = []) {
     { cwd: ROOT, encoding: "utf8" }
   );
   return JSON.parse(out);
+}
+function harvestText(dir) {
+  return execFileSync(
+    "node",
+    [CLI, "asks", "harvest", "--cadence", "daily", "--now", NOW, "--repo", dir],
+    { cwd: ROOT, encoding: "utf8" }
+  );
 }
 function list(dir) {
   const out = execFileSync("node", [CLI, "asks", "list", "--json", "--repo", dir], {
@@ -102,6 +111,23 @@ test("harvest counts a trigger-gate no-op (sender.on excludes the event) and wri
     assert.equal(res.noop, 1);
     assert.equal(res.byReason["not-triggered"], 1);
     assert.equal(list(dir).length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("harvest reports the actionable comms-config notice when dispatch has no config", () => {
+  const dir = workspace({ withConfig: false });
+  const notice =
+    "0 delivered — `.aios/comms-config.json` missing, see docs/v1-operator-loop/domains/comms-config.example.json";
+  try {
+    const text = harvestText(dir);
+    assert.match(text, /delivered: 0/);
+    assert.ok(text.includes(notice));
+
+    const json = harvest(dir);
+    assert.equal(json.delivered, 0);
+    assert.equal(json.notice, notice);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -21,6 +21,9 @@ import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 // the same pattern already used to wire capture into john-workspace (a repo with no copy of
 // these hooks at all).
 const TOOLKIT_HOOKS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "hooks");
+const COMMS_CONFIG_REL = ".aios/comms-config.json";
+const COMMS_CONFIG_DOCS = "docs/v1-operator-loop/domains/comms-config.example.json";
+const missingCommsConfigNotice = `0 delivered — \`${COMMS_CONFIG_REL}\` missing, see ${COMMS_CONFIG_DOCS}`;
 
 // `git worktree list --porcelain` → absolute paths of every worktree of `repo` (including
 // `repo` itself). Best-effort: a repo with no `.git` or git not on PATH returns just `[repo]`.
@@ -311,18 +314,22 @@ export async function cmdAsks(repo, cfg, args) {
     const nowArg = argVal("--now");
     const now = nowArg ? new Date(nowArg) : null;
     if (now && Number.isNaN(now.getTime())) die(`--now is not a valid date: ${nowArg}`);
+    const configMissing = !existsSync(path.join(repo, COMMS_CONFIG_REL));
     const res = await loop.harvestAsks(repo, {
       cadence,
       ...(now ? { now } : {}),
     });
     if (asJson) {
-      console.log(JSON.stringify(res, null, 2));
+      console.log(
+        JSON.stringify(configMissing ? { ...res, notice: missingCommsConfigNotice } : res, null, 2)
+      );
       return;
     }
     console.log(c.blue("aios asks harvest") + c.dim(`  ${cadence}`));
     console.log(
       `  events: ${res.events}   delivered: ${res.delivered}   rejected: ${res.rejected}   noop: ${res.noop}   suppressed: ${res.suppressed}`
     );
+    if (configMissing) console.log(`  ${missingCommsConfigNotice}`);
     return;
   }
 

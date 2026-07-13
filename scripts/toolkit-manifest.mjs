@@ -1,6 +1,7 @@
 /**
  * toolkit-manifest.mjs — the single source of truth for what is TOOLKIT (managed,
- * synced from upstream) vs PERSONAL (owned by the workspace, never touched).
+ * synced from upstream) vs SEED_IF_ABSENT (create-only starter files) vs
+ * PERSONAL (owned by the workspace, never overwritten) vs SCAFFOLD_UNMANAGED.
  *
  * A scaffolded workspace VENDORS the toolkit — it carries its own copy so it is
  * self-contained, offline-capable, and version-pinned. `aios update` re-vendors
@@ -80,9 +81,27 @@ export const MANAGED_PATHS = [
 ];
 
 /**
+ * Create-only starter files. `aios update` copies these into an existing workspace
+ * only when the destination does not exist. An existing destination is never read,
+ * merged, overwritten, or deleted — including with `--force`.
+ *
+ * Seeds may live beneath a PERSONAL directory such as `.aios`: this bucket is the
+ * narrow, explicit exception that can fill a missing starter without taking ownership
+ * of the surrounding personal state. Add future create-if-absent files here.
+ */
+export const SEED_IF_ABSENT = [
+  {
+    dest: ".aios/comms-config.json",
+    src: "scaffold/comms-config.json",
+    kind: "file",
+  },
+];
+
+/**
  * Personal paths — a workspace's own content + identity + local state. `aios update`
- * MUST NOT read or write these. Listed for the guard/tests and for documentation;
- * the updater is safe by construction (it only ever writes MANAGED_PATHS.dest).
+ * MUST NOT merge or overwrite existing content here. Listed for the guard/tests and
+ * documentation; the narrower SEED_IF_ABSENT entries may only fill a missing child
+ * destination, never take ownership of the surrounding personal state.
  */
 export const PERSONAL_PATHS = [
   "0-context",
@@ -112,7 +131,7 @@ export const PERSONAL_PATHS = [
  * catalogs, or stamp-time-templated files that can't be blind-overlaid. They are neither
  * "managed" (synced) nor "personal" (a person's own content). Listed explicitly so the
  * manifest↔scaffold parity test can prove every scaffold-written path is classified into
- * exactly one bucket — no silent third category. Update this list when the scaffold
+ * exactly one effective bucket — no silent category. Update this list when the scaffold
  * starts (or stops) writing one of these.
  */
 export const SCAFFOLD_UNMANAGED = [

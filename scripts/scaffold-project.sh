@@ -618,29 +618,16 @@ for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs file-governa
 done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
-# Slack per-channel tier map (AIO-354) — stamp a commented starter config so a fresh
-# workspace never day-1-blocks the Operator Loop's comms seam. JSON can't carry real
-# comments, so the guidance lives in `_comment`/`_docs` keys (src/operator-loop/comms/
+# Slack per-channel tier map (AIO-354/AIO-369) — stamp the same starter config that
+# `aios update` seeds into older workspaces, so fresh and upgraded workspaces cannot drift.
+# JSON can't carry real comments, so the guidance lives in `_comment`/`_docs` keys
+# (src/operator-loop/comms/
 # config.ts's parser ignores unrecognized top-level keys). `channels: {}` + null
 # destinations is a verified clean no-op (config.ts: missing/empty → safe defaults;
 # sender.ts: no destination channel → "rejected/no-destination-channel", never throws,
 # never sends) until a real admin fills in real channel names.
 mkdir -p "$OUTPUT/.aios"
-idx "$OUTPUT/.aios/comms-config.json" << 'EOF'
-{
-  "_comment": "Slack per-channel tier map for the Operator Loop comms seam. Nothing auto-dispatches until you fill in real channel names under \"channels\" below — an unlisted channel is unresolvable (default-deny). Worked example: docs/v1-operator-loop/domains/comms-config.example.json.",
-  "_docs": "docs/v1-operator-loop/domains/comms-config.example.json",
-  "lookbackHours": 168,
-  "sender": {
-    "channel": null,
-    "on": null
-  },
-  "slack": {
-    "defaultChannel": null
-  },
-  "channels": {}
-}
-EOF
+command cp -f "$SCAFFOLD/comms-config.json" "$OUTPUT/.aios/comms-config.json"
 
 # Pin the toolkit version this workspace was stamped from. `aios update` reads this
 # as the sync baseline; without it the first update has no base and can only blind-
