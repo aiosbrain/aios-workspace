@@ -56,12 +56,16 @@ sync_include:
   - 0-context
   - 2-work
   - 3-log/decision-log.md
-  - 3-log/tasks.md
+  - 3-log/tasks-team.md
   - 3-log/ai-spend.md
   - 4-shared
   - .claude/memory
 sync_exclude:
   - 5-personal
+
+# `3-log/tasks-private.md` is deliberately NOT in sync_include — it's tagged
+# `access: private` and must never sync. Don't add it here (AIO-364): the tier
+# split only holds if the private home stays outside the whitelist too.
 
 # Identity override (optional). Resolution order:
 #   $AIOS_MEMBER → this field → `git config aios.member` → git user.name

@@ -32,7 +32,10 @@ export function classifyKind(rel, frontmatter) {
   // (03-status, 02-deliverables) spines both classify correctly.
   const base = rel.split("/").pop();
   if (base === "decision-log.md") return "decision";
-  if (base === "tasks.md") return "task";
+  // AIO-364: tasks now live in tier-explicit homes (tasks-team.md, tasks-private.md),
+  // not just the legacy single tasks.md — match any of them so the brain-api "task"
+  // kind (and its row parsing) still applies to the split files.
+  if (/^tasks(-.*)?\.md$/.test(base)) return "task";
   if (frontmatter?.type === "transcript" || rel.includes("/transcripts/")) return "transcript";
   if (/^(2-work|02-deliverables)[/\\]/.test(rel)) return "deliverable";
   return "artifact";
