@@ -5,7 +5,7 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.5**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.8**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
 ## [Unreleased]
