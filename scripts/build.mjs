@@ -47,9 +47,10 @@ import {
   validateBranch,
 } from "./relay-core.mjs";
 import { slugify as slugifyBase } from "./cli-common.mjs";
-import { callAgentModel, reviewCallForModel } from "./model-call.mjs";
+import { callAgentModel, requirePromptModelKey, reviewCallForModel } from "./model-call.mjs";
 import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
+import { parseModelRef } from "./model-providers.mjs";
 import { cmdPr } from "./pr.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 
@@ -833,10 +834,6 @@ export async function reviewWithTimeoutRetry(
 // ── core loop ─────────────────────────────────────────────────────────────────
 
 export async function runBuild({ repo, plan, branch, opts }) {
-  // Builder = Claude Code (Opus); reviewer = Cursor. Claude Code uses its own auth,
-  // so ANTHROPIC_API_KEY is not required here.
-  checkPrereqs({ requireAnthropic: false, requireClaude: true, requireCursor: true });
-
   if (!plan || !plan.trim()) die("no plan to build — pass a plan file or task.");
   if (!branch) {
     branch = `feat/aios-build-${slugify(plan.split("\n")[0] || "task")}`;
@@ -878,7 +875,21 @@ export async function runBuild({ repo, plan, branch, opts }) {
       cliOverrides[step] = { model: modelOverride };
   }
   if (cursorTimeoutSet) cliOverrides.code_review = { timeoutMs: cursorTimeout };
-  const models = resolveLoopModels({ repo, cliOverrides });
+  const models = resolveLoopModels({ repo, cliOverrides, profile: opts.profile ?? null });
+  const builderProviders = ["build", "fix", "fix_escalated"].map(
+    (step) => parseModelRef(models[step].model).provider
+  );
+  const reviewerProvider = parseModelRef(models.code_review.model).provider;
+  // Validate only the binaries/credentials the resolved route actually needs. This keeps the
+  // default Claude/Cursor loop unchanged while allowing the light Codex/DeepSeek profile to run
+  // without an incidental Claude or Cursor dependency.
+  checkPrereqs({
+    requireAnthropic: false,
+    requireClaude: builderProviders.includes("claude"),
+    requireCursor: builderProviders.includes("cursor") || reviewerProvider === "cursor",
+    requireCodex: builderProviders.includes("codex"),
+  });
+  requirePromptModelKey(models.code_review.model, "code_review");
   // Explicit wins, never scale: models.code_review.timeoutMs is non-null iff the operator set
   // --cursor-timeout OR code_review_timeout_s. When it's null we adapt per round off the real
   // review payload size (§ adaptiveReviewTimeout); when set, adaptation is bypassed entirely.
@@ -989,16 +1000,19 @@ export async function runBuild({ repo, plan, branch, opts }) {
     // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's
     // accidental upward *discovery* into the primary checkout (an explicit `git -C <path>`
     // is NOT blocked — the primary-checkout tripwire is what catches that). Defense-in-
-    // depth, not containment. --effort is a Claude-CLI knob
-    // (build/fix/fix_escalated only); the relay plan step uses SDK output_config instead.
+    // depth, not containment. Runner-specific flags stay with their runner: Claude receives
+    // its CLI --effort flag, while Codex receives effort through callCodexAgent's validated
+    // model_reasoning_effort config override.
     const fencedPrompt = BUILDER_FENCE + "\n\n" + buildPrompt;
-    const extraArgs = cfg.effort
-      ? [...CLAUDE_BUILD_FLAGS, "--effort", cfg.effort]
-      : CLAUDE_BUILD_FLAGS;
+    const builderProvider = parseModelRef(cfg.model).provider;
+    const extraArgs =
+      builderProvider === "claude"
+        ? [...CLAUDE_BUILD_FLAGS, ...(cfg.effort ? ["--effort", cfg.effort] : [])]
+        : [];
     const builderEnv = { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(wt) };
     console.log(
       c.dim(
-        `[claude] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
+        `[${builderProvider}] building (${cfg.model}, step=${step}${cfg.effort ? `, effort=${cfg.effort}` : ""})...`
       )
     );
     try {
@@ -1009,6 +1023,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
         {
           cwd: wt,
           extraArgs,
+          effort: cfg.effort,
           env: builderEnv,
         }
       );

@@ -931,10 +931,12 @@ function makeBuildOpts({
   findingsFile,
   verify = SHIP_VERIFY_CMD,
   constitution = null,
+  profile = null,
 }) {
   return {
     planSource: null,
     constitution,
+    profile,
     branch,
     isTask: false,
     rounds: 4,
@@ -1456,7 +1458,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         repo,
         plan,
         branch,
-        opts: makeBuildOpts({ branch, issue: issueId, logFile: buildLog, constitution }),
+        opts: makeBuildOpts({
+          branch,
+          issue: issueId,
+          logFile: buildLog,
+          constitution,
+          profile: isLightLoop ? "light" : null,
+        }),
       });
     } catch (e) {
       record("build", { error: e.message });
@@ -1655,6 +1663,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         "--round",
         String(round),
       ];
+      if (isLightLoop) consolidateArgs.push("--loop-profile", "light");
       if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
       if (slug) consolidateArgs.push("--repo", slug);
       const verdictCode = await consolidateDep(repo, consolidateArgs);
@@ -1699,6 +1708,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             logFile: buildLog,
             findingsFile,
             constitution,
+            profile: isLightLoop ? "light" : null,
           }),
         });
       } catch (e) {

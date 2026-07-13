@@ -72,15 +72,22 @@ than silently reverting to defaults (see "Config validation" below).
 |------|-------|--------|
 | recon | claude-haiku-4-5 | — |
 | plan | claude-opus-4-8 | xhigh |
-| plan_review | gpt-5.5-high | — |
+| plan_review | deepseek-v4-pro | — |
 | build | claude-opus-4-8 | high |
-| code_review | gpt-5.5-high | — |
+| code_review | deepseek-v4-pro | — |
 | fix | claude-opus-4-8 | medium |
 | fix_escalated | claude-opus-4-8 | high |
 | consolidate | claude-haiku-4-5 | — |
 | safety_review | claude-opus-4-8 | xhigh |
 | orchestrate | fable-5 | — |
 | digest | claude-haiku-4-5 | — |
+
+**Light profile.** `aios ship --loop light` pins routine `build` and `fix` to
+`codex:gpt-5.6-sol`, `fix_escalated` to `codex:gpt-5.6-terra`, `code_review` to
+`deepseek:deepseek-v4-pro`, `consolidate` to
+`openrouter:openai/gpt-4o-mini`, and optional `simplify` to `codex:gpt-5.6-luna`.
+Its `safety_review` remains the default `claude:claude-opus-4-8` independent high-risk
+gate. CLI overrides can replace a pin, but `.aios/loop-models.yaml` cannot.
 
 **Config file** — `.aios/loop-models.yaml` (gitignored), flat keys only (parsed by
 `scripts/flat-yaml.mjs`; no nesting, no dots): `<step>_model`, `<step>_effort`,
@@ -92,11 +99,11 @@ model. Families: `claude*`/`fable*` = anthropic, `gpt*` = openai. A same-family 
 aborts the run with an actionable message. The defaults pass (anthropic producer vs openai
 reviewer on both pairs).
 
-**Runner-family guard (fail closed).** The Claude-runner steps — `plan` (Claude Agent SDK),
-`build`/`fix`/`fix_escalated` (Claude Code CLI), and `consolidate` (`aios consolidate-findings`,
-Claude Code CLI) — must resolve to a **Claude-family** model. Setting e.g. `build_model:
-gpt-5.3-codex` (or `--model` with a GPT id) aborts with an actionable message, rather than
-handing a non-Claude id straight to a Claude runner.
+**Provider guard (fail closed).** Agentic `plan`, `build`, `fix`, `fix_escalated`, and
+`simplify` steps must resolve to an agent runner (`claude:`, `cursor:`, `opencode:`, or
+`codex:`); prompt-only providers cannot edit the worktree. The build loop checks only the
+selected runner binaries and prompt-provider credentials, so the light Codex/DeepSeek route
+does not require Claude Code or Cursor to be installed.
 
 **Config validation (fail loudly).** A present `.aios/loop-models.yaml` is validated: unknown
 or misspelled keys / step names, non-scalar values, an effort outside `low|medium|high|xhigh|max`,
@@ -117,20 +124,18 @@ attempt. **Gate-feedback note:** when the fed-back text is a verify/secrets gate
 (not a Cursor review), the structural matcher is virtually always false, so a first
 gate-retry resolves to **fix** and later attempts to **fix_escalated**.
 
-**Effort split.** The Claude *builder* steps (`build`/`fix`/`fix_escalated`) pass effort via
-the Claude Code CLI `--effort` flag. The relay *plan* step passes effort via the SDK's
-`output_config.effort` instead — the CLI flag is not used there.
+**Effort split.** Builder effort is carried with the resolved step; Claude Code receives its
+`--effort` flag and Codex receives the selected tier. The relay *plan* step passes effort via
+the SDK's `output_config.effort` instead — the CLI flag is not used there.
 
-**What's consumed today.** `plan.{model,effort}` drives the Opus planner; `plan_review.timeoutMs`
-drives the Cursor plan-review call in `aios relay` (with `--cursor-timeout` taking precedence);
-`build`/`fix`/`fix_escalated`'s `{model,effort}` drive the builder; `code_review.timeoutMs` drives
-the Cursor code-review call in `aios build`. The **reviewer `model` keys** (`plan_review_model`,
-`code_review_model`) are resolved and enforced by the diversity guard but **not yet passed to the
-Cursor runner** (the `cursor` CLI's model selection is not wired here) — set them to keep the guard
-honest; the running review model is Cursor's own default. `consolidate.{model,effort,timeoutMs}` now
-drives `aios consolidate-findings` (below).
-`orchestrate.{model,timeoutMs}` drives `aios roadmap-run`'s next-issue selection;
-remaining steps (`recon`, `safety_review`) are resolved for later consumers and not yet wired.
+**What's consumed today.** `plan.{model,effort}` drives the planner and
+`plan_review.{model,timeoutMs}` drives its prompt review. `build`/`fix`/`fix_escalated`'s
+`{model,effort}` drive the selected agent runner; `code_review.{model,timeoutMs}` drives the
+selected prompt reviewer. `consolidate.{model,effort,timeoutMs}` drives
+`aios consolidate-findings`; `aios ship --loop light` forwards its profile to both nested build
+and consolidate calls so those dispatches retain their pins. `orchestrate.{model,timeoutMs}`
+drives `aios roadmap-run`; remaining steps (`recon`, `safety_review`) are resolved for later
+consumers and not yet wired.
 
 ## The ship pipeline (build → PR → consolidate → fix)
 

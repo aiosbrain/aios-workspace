@@ -105,6 +105,7 @@ export function parseConsolidateArgs(args) {
     repoSlug: flag("--repo"),
     gptReview: flag("--gpt-review"),
     out: flag("--out"),
+    loopProfile: flag("--loop-profile"),
   };
 }
 
@@ -530,6 +531,7 @@ function usage() {
       "  --round N           build round (default: 1) — output is findings-r<N>.md",
       "  --repo owner/repo   GitHub target slug (default: detected from git remote)",
       "  --gpt-review <path> include a GPT-5.5 review markdown file in the consolidation",
+      "  --loop-profile light select the light loop model profile (forwarded by aios ship --loop light)",
       "  --out <path>        override the output path (default: .aios/loop/<issue>/findings-r<N>.md)",
       "",
       "Prints VERDICT=CLEAR / VERDICT=BLOCKED. Exit codes: 0 CLEAR · 3 BLOCKED · 1 error.",
@@ -620,11 +622,11 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
     gpt: inputs.gptMarkdown,
   });
 
-  // Model consolidation, driven by the config surface (consolidate is a Claude-runner step,
-  // so a gpt-* consolidate_model already failed loud in resolveLoopModels above/here).
+  // Model consolidation, driven by the config surface. Ship forwards its loop profile so this
+  // prompt-only call cannot silently fall back to the default Claude route.
   let models;
   try {
-    models = resolveLoopModels({ repo });
+    models = resolveLoopModels({ repo, profile: opts.loopProfile ?? null });
   } catch (e) {
     console.error(c.red(`error: ${e.message}`));
     return 1;

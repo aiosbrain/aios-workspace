@@ -111,14 +111,35 @@ console.log("light profile: CLI > profile > file > default");
   );
   const r = resolveLoopModels({ repo, profile: "light" });
   check("light is a known profile", LOOP_PROFILES.light != null);
-  check("profile build pin beats file", r.build.model === "claude:claude-sonnet-5");
-  check("profile code-review pin beats file", r.code_review.model === "opencode:gpt-5.6-sol");
+  check("profile build pin beats file", r.build.model === "codex:gpt-5.6-sol");
+  check("profile fix pin resolves to Codex Sol", r.fix.model === "codex:gpt-5.6-sol");
+  check(
+    "profile escalated fix pin resolves to Codex Terra",
+    r.fix_escalated.model === "codex:gpt-5.6-terra"
+  );
+  check(
+    "profile code-review pin resolves to DeepSeek",
+    r.code_review.model === "deepseek:deepseek-v4-pro"
+  );
+  check(
+    "profile consolidate pin resolves to OpenRouter mini",
+    r.consolidate.model === "openrouter:openai/gpt-4o-mini"
+  );
+  check(
+    "profile optional simplify pin resolves to Codex Luna",
+    r.simplify.model === "codex:gpt-5.6-luna"
+  );
+  check("profile preserves Claude Opus safety review", r.safety_review.model === "claude-opus-4-8");
+  check(
+    "Codex builder and DeepSeek reviewer stay cross-family",
+    modelFamily(r.build.model) !== modelFamily(r.code_review.model)
+  );
   const cli = resolveLoopModels({
     repo,
     profile: "light",
-    cliOverrides: { build: { model: "claude:claude-haiku-4-5" } },
+    cliOverrides: { build: { model: "codex:gpt-5.6-luna" } },
   });
-  check("CLI still beats profile", cli.build.model === "claude:claude-haiku-4-5");
+  check("CLI still beats profile", cli.build.model === "codex:gpt-5.6-luna");
   check("unknown profile aborts", resolveInChild({ repo, profile: "fastest" }).ok === false);
   rmSync(repo, { recursive: true, force: true });
 }

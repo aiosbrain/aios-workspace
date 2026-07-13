@@ -70,25 +70,25 @@ export { modelFamily } from "./model-providers.mjs";
 // `light` (aios ship --loop light): the plan/plan_review stages are skipped entirely — the
 // SPEC_READY spec IS the plan — so the loop is build → code_review → fix (bounded) →
 // consolidate, with safety_review only on `safety: true` spec frontmatter. Routing
-// (subs only for Claude/Codex; API only for opencode/openrouter):
-//   build / fix / fix_escalated → claude:claude-sonnet-5 (Claude sub via the claude CLI runner)
-//   code_review → GPT-5.6 Sol. The loop has NO codex runner for prompt-only review steps
-//     (scripts/runtimes.mjs's `codex` entry is a GUI driver / skills-export layout only;
-//     model-call.mjs dispatches claude/cursor/opencode/openrouter/deepseek), so Sol routes
-//     through the OpenCode Zen API (`opencode:` — API, per the constraint above).
-//   consolidate → claude:claude-haiku-4-5 (cheap Claude sub).
-// The build↔code_review pair stays cross-family (anthropic vs openai) and is enforced by the
+// (Codex for agentic edits; direct APIs for prompt-only steps):
+//   build / fix → codex:gpt-5.6-sol; fix_escalated → codex:gpt-5.6-terra.
+//   code_review → deepseek:deepseek-v4-pro, preserving an independent reviewer family.
+//   consolidate → openrouter:openai/gpt-4o-mini (the documented cheap prompt route).
+//   simplify (optional) → codex:gpt-5.6-luna.
+// safety_review deliberately remains the default Claude Opus high-risk gate.
+// The build↔code_review pair stays cross-family (openai vs deepseek) and is enforced by the
 // SAME assertDiversity guard the plan/plan_review pair uses — profiles resolve through
 // resolveLoopModels, never around it.
 export const LOOP_PROFILES = {
   light: {
     skips: ["plan", "plan_review"],
     overrides: {
-      build: { model: "claude:claude-sonnet-5", effort: "high" },
-      code_review: { model: "opencode:gpt-5.6-sol" },
-      fix: { model: "claude:claude-sonnet-5", effort: "medium" },
-      fix_escalated: { model: "claude:claude-sonnet-5", effort: "high" },
-      consolidate: { model: "claude:claude-haiku-4-5" },
+      build: { model: "codex:gpt-5.6-sol", effort: "high" },
+      code_review: { model: "deepseek:deepseek-v4-pro" },
+      fix: { model: "codex:gpt-5.6-sol", effort: "medium" },
+      fix_escalated: { model: "codex:gpt-5.6-terra", effort: "high" },
+      consolidate: { model: "openrouter:openai/gpt-4o-mini" },
+      simplify: { model: "codex:gpt-5.6-luna", effort: "low" },
     },
   },
 };

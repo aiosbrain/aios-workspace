@@ -254,6 +254,8 @@ console.log("light loop skips recon + planner and resolves the pinned profile");
 {
   let agentCalls = 0;
   let profile = null;
+  let buildProfile = null;
+  let consolidateArgs = null;
   const deps = makeDeps({
     resolveModels: (args) => {
       profile = args.profile;
@@ -262,6 +264,14 @@ console.log("light loop skips recon + planner and resolves the pinned profile");
     callClaudeAgent: async () => {
       agentCalls++;
       return "unexpected planner or recon call";
+    },
+    runBuild: async ({ opts }) => {
+      buildProfile = opts.profile;
+      return BUILD_EXIT.OK;
+    },
+    cmdConsolidateFindings: async (_repo, args) => {
+      consolidateArgs = args;
+      return 0;
     },
   });
   const { code, records } = await runShip({
@@ -272,6 +282,11 @@ console.log("light loop skips recon + planner and resolves the pinned profile");
   });
   check("reaches OK", code === SHIP_EXIT.OK);
   check("uses the light model profile", profile === "light");
+  check("forwards the light profile to nested build dispatch", buildProfile === "light");
+  check(
+    "forwards --loop-profile light to consolidation",
+    consolidateArgs?.[consolidateArgs.indexOf("--loop-profile") + 1] === "light"
+  );
   check("does not call recon or planner agents", agentCalls === 0);
   check(
     "records recon as skipped",
