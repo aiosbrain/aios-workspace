@@ -59,7 +59,15 @@ import {
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
-import { c, die, sha256, slugify, gitConfig } from "./cli-common.mjs";
+import {
+  c,
+  die,
+  sha256,
+  slugify,
+  gitConfig,
+  loadSecretPatterns,
+  findSecret,
+} from "./cli-common.mjs";
 import { cmdAnalyze } from "./analyze/index.mjs";
 import { cmdRelay } from "./relay.mjs";
 import { cmdBuild } from "./build.mjs";
@@ -84,18 +92,10 @@ import { cmdTimeline } from "./timeline.mjs";
 import { cmdAsks } from "./asks.mjs";
 import { cmdDecisions } from "./decisions.mjs";
 import { cmdLoop } from "./loop.mjs";
+import { cmdPromote } from "./promote.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
-
-// Embedded fallback if validation/secret-patterns.txt is unavailable
-const FALLBACK_SECRET_PATTERNS = [
-  "AKIA[0-9A-Z]{16}",
-  "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
-  "gh[ps]_[A-Za-z0-9_]{36,}",
-  "xox[bporas]-[A-Za-z0-9-]+",
-  "sk-[A-Za-z0-9_-]{40,}",
-];
 
 // ── tiny helpers ────────────────────────────────────────────────────────────
 // c / die / sha256 / slugify / gitConfig now live in ./cli-common.mjs (the single
@@ -249,24 +249,9 @@ function resolveMember(repo, cfg, dotenv) {
   return candidate;
 }
 
-// ── secret scanning (shared patterns) ──────────────────────────────────────
-
-function loadSecretPatterns() {
-  const shared = path.join(SCRIPT_DIR, "..", "validation", "secret-patterns.txt");
-  let lines = FALLBACK_SECRET_PATTERNS;
-  if (existsSync(shared)) {
-    lines = readFileSync(shared, "utf8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#"));
-  }
-  return lines.map((l) => new RegExp(l));
-}
-
-function findSecret(content, patterns) {
-  for (const re of patterns) if (re.test(content)) return re.source;
-  return null;
-}
+// loadSecretPatterns + findSecret now live in ./cli-common.mjs (shared with
+// scripts/promote.mjs — AIO-353 — so the secret-leak check never diverges).
+// Imported at the top of this file.
 
 // ── file walking + classification ───────────────────────────────────────────
 
@@ -2576,6 +2561,11 @@ usage:
   aios pull                             fetch team updates → 1-inbox/from-brain/
   aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/
   aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
+  aios promote <file>                   anonymize-then-promote reusable IP: COPY a private
+    [--to 2-work|4-shared] [--dry-run]  file (5-personal/, or any dir outside sync_include)
+                                         to 2-work/ (team) or 4-shared/ (client|company); scans
+                                         the copy (secrets + leak-gate), sets access frontmatter,
+                                         logs the promotion; omit --to to be prompted
   aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
   aios query "question"                 ask the Team Brain
   aios member invite <email>            create/re-invite a member + cascade tool invites
@@ -2839,6 +2829,10 @@ try {
   else if (cmd === "instincts") await cmdInstincts(repo, rest);
   else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
   else if (cmd === "update") await cmdUpdate(repo, cfg, rest);
+  else if (cmd === "promote")
+    await cmdPromote(repo, cfg, rest, {
+      resolveMember: () => resolveMember(repo, cfg, loadDotEnv(repo)),
+    });
   else {
     console.log(USAGE);
     process.exit(1);
