@@ -678,8 +678,10 @@ async function cmdConnect(repo, args) {
     console.log(c.blue("connectable integrations:"));
     for (const conn of listConnectors(repo)) {
       const badge = conn.status === "wired" ? c.green("✓ wired") : c.dim("○ available");
+      // AIO-356: dual-auth connectors (Granola) report which auth path is active.
+      const authNote = conn.auth_path ? c.dim(` (auth: ${conn.auth_path.label})`) : "";
       console.log(
-        `  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}`
+        `  ${conn.id.padEnd(12)} ${badge}  ${c.dim(`[${conn.transport}] ${conn.summary}`)}${authNote}`
       );
     }
     console.log(c.dim("\nrun: aios connect <id>"));

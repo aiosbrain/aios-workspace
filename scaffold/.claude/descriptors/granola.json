@@ -2,11 +2,11 @@
   "id": "granola",
   "name": "Granola",
   "category": "meetings",
-  "descriptor_version": "1.1.0",
+  "descriptor_version": "1.2.0",
   "transport": "skill",
   "auth_mode": "token",
   "status": "available",
-  "summary": "Pull meeting notes + transcripts into 1-inbox/transcripts/ — our own dual-auth connector (Granola public API, with automatic fallback to the local desktop-app session on any plan; does not use the Granola MCP).",
+  "summary": "Pull meeting notes + transcripts into 1-inbox/transcripts/ — our own dual-auth connector (Granola public API, with automatic fallback to the local desktop-app session on any plan; does not use the Granola MCP). AIO-356: which auth path is active is now logged at ingestion time and surfaced in `aios connect`.",
   "secrets": [
     { "env": "GRANOLA_API_KEY", "label": "API key", "required": false, "placeholder": "grn_…", "note": "Optional. Needed only for the portable public API (Business/Enterprise). Without it the connector uses the signed-in Granola desktop app on this machine." }
   ],
