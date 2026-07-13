@@ -6,7 +6,7 @@ description: |
   the existing decision log, an adversarial grounding pass, then synthesis into
   log-ready rows. Use when processing a batch of transcripts or catching a decision
   log up after several meetings.
-version: 1.0.0
+version: 1.1.0
 kind: workflow-harness
 workflow: transcript-decisions.workflow.js
 triggers:
@@ -35,22 +35,22 @@ See `docs/workflows.md`.
 
 ## How to run
 
-A **template** — read `transcript-decisions.workflow.js`, then invoke the **Workflow tool**:
+A durable CLI pipeline is available in every scaffolded workspace:
 
-```
-Workflow({
-  scriptPath: ".claude/skills/transcript-decisions/transcript-decisions.workflow.js",
-  args: {
-    repoPath: "<absolute path to this team-ops repo>",
-    transcriptPaths: ["01-intake/transcripts/2026-03-13-sprint-planning.md", "..."],
-    decisionLog: "03-status/decision-log.md",   // optional; default
-    runDate: "YYYY-MM-DD"
-  }
-})
+```bash
+aios transcripts enable-sync
+aios transcripts draft --transcripts 1-inbox/transcripts/meeting-a.md,1-inbox/transcripts/meeting-b.md
+aios transcripts list
+aios transcripts approve .aios/staging/transcript-decisions/<run>.json
 ```
 
-> **Gotcha:** `args` arrives as a JSON *string*; the script calls `JSON.parse(args)`.
-> Read-only — it returns rows; you review and append them to the log.
+`draft` writes grounded, deduplicated decision rows and task proposals to a durable local
+admin-tier staging file. Edit or reject items there, then `approve` is the **one human gate**:
+it appends approved rows to `3-log/decision-log.md` and `3-log/tasks-team.md`, then runs
+`aios push`. Use `--no-push` only when deliberately staging the sync for later.
+
+The legacy workflow template remains for runtimes that provide a Workflow tool, but the CLI is
+the portable entrypoint for Claude Code, Codex, cron, and ordinary shells.
 
 Returns `{ candidates, novel, verified, decisions, rows_markdown }`.
 

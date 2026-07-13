@@ -38,6 +38,7 @@ sync_tiers:
 # sync_tiers to actually push — untagged files are blocked by default (default-deny).
 sync_include:
   - 0-context
+  - 1-inbox/transcripts
   - 2-work
   - 3-log/decision-log.md
   - 3-log/tasks-team.md

@@ -94,6 +94,7 @@ import { cmdAsks } from "./asks.mjs";
 import { cmdDecisions } from "./decisions.mjs";
 import { cmdLoop } from "./loop.mjs";
 import { cmdPromote } from "./promote.mjs";
+import { cmdTranscripts } from "./transcripts.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2624,6 +2625,7 @@ usage:
   aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into
     [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
                                          worktrees whose checked-out branch predates the hooks
+  aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline
   aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges
     [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
   aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
@@ -2823,6 +2825,7 @@ try {
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
+  else if (cmd === "transcripts") await cmdTranscripts(repo, cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
   else if (cmd === "mode") await cmdMode(repo, cfg, rest);
   else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);
