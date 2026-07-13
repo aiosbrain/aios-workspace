@@ -1,8 +1,10 @@
 // `aios loop daily` CLI tests. Drives the real CLI as a child process against a temp workspace.
 // Proves: --manifest --json is deterministic and parseable; --manifest writes NOTHING (the
 // key C4-vs-weekly property); --as external hides admin content + excluded refs; the human view
-// renders three sections + owner marker + empty-state; --as bogus gates non-zero; and a real
-// owner run records ONLY the local snapshot, leaving the continuity store untouched.
+// renders three sections + owner marker + empty-state; --as bogus gates non-zero; a real owner
+// run in TEXT mode records ONLY the local snapshot, leaving the continuity store untouched; and
+// (AIO-365) `--json` does NOT record by default — only text mode and `--record --json` do — so a
+// repeated `--json` poller never self-consumes its own "changed" signal.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -239,7 +241,80 @@ test("live owner daily surfaces seeded asks; --as team gates them out (constitut
   assert.ok(!rt.stdout.includes("Prod is down"));
 });
 
-test("owner run records ONLY the local snapshot; continuity store byte-unchanged; nothing outside .aios", () => {
+// Shared fixture for the record-default tests below: seeds a real (non-carryover) "changed"-
+// eligible signal — a decision-log row — since `changed` classification only applies to
+// decision/task/deliverable kinds, not carryover (which is owed/blocked). Dated "today" so the
+// first run's 24h bootstrap window picks it up as Changed.
+function liveDecisionWorkspace() {
+  const dir = mkdtempSync(path.join(tmpdir(), "c4-live-"));
+  writeFileSync(path.join(dir, "aios.yaml"), "member: alex\n");
+  mkdirSync(path.join(dir, "3-log"), { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  writeFileSync(
+    path.join(dir, "3-log", "decision-log.md"),
+    "---\naccess: team\n---\n\n| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |\n|---|---|---|---|---|---|---|---|\n" +
+      `| 1 | ${today} | Ship the daily fix | keep signal alive | alex | i | 1 | team |\n`
+  );
+  return dir;
+}
+
+test("AIO-365 regression: repeated `--json` (no --record) calls do NOT self-consume the changed signal", () => {
+  const dir = liveDecisionWorkspace();
+
+  const r1 = run(dir, ["--json"]);
+  assert.equal(r1.code, 0, r1.stderr);
+  const o1 = JSON.parse(r1.stdout);
+  assert.ok(o1.counts.changed >= 1, "first call sees the seeded decision as changed");
+  assert.ok(
+    !existsSync(path.join(dir, ".aios", "loop", "state", "changes-daily.json")),
+    "a bare --json call must NOT record a snapshot (new default)"
+  );
+
+  const r2 = run(dir, ["--json"]);
+  assert.equal(r2.code, 0, r2.stderr);
+  const o2 = JSON.parse(r2.stdout);
+  // Before the fix, `--json` recorded by default same as text mode: the first call above would
+  // have advanced the baseline, so this second call would see the decision as unchanged
+  // (counts.changed === 0) — exactly the AIO-365 symptom (a poller hitting `--json` on every tick
+  // silently sees zero "changed" from the second call onward). With the fix, the baseline never
+  // advanced, so the second call still sees the same real signal.
+  assert.equal(
+    o2.counts.changed,
+    o1.counts.changed,
+    "second --json call must still see the real changed signal, not a silently emptied one"
+  );
+  assert.ok(o2.changed.some((i) => i.ref.path === "3-log/decision-log.md"));
+  assert.ok(
+    !existsSync(path.join(dir, ".aios", "loop", "state", "changes-daily.json")),
+    "still no snapshot after a second bare --json call"
+  );
+});
+
+test("daily --record --json DOES advance the snapshot (opt-in recording alongside --json)", () => {
+  const dir = liveDecisionWorkspace();
+
+  const r1 = run(dir, ["--record", "--json"]);
+  assert.equal(r1.code, 0, r1.stderr);
+  const o1 = JSON.parse(r1.stdout);
+  assert.ok(o1.counts.changed >= 1, "first call sees the seeded decision as changed");
+  assert.ok(
+    existsSync(path.join(dir, ".aios", "loop", "state", "changes-daily.json")),
+    "--record --json must write the snapshot"
+  );
+
+  // Baseline now reflects the decision as seen, so a follow-up call (even a bare --json, which
+  // itself never records) correctly sees nothing NEW since the --record call above.
+  const r2 = run(dir, ["--json"]);
+  assert.equal(r2.code, 0, r2.stderr);
+  const o2 = JSON.parse(r2.stdout);
+  assert.equal(
+    o2.counts.changed,
+    0,
+    "second call sees nothing new since the --record call already advanced the baseline"
+  );
+});
+
+test("plain text mode (no --json) still records by default — unchanged behavior", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "c4-rec-"));
   writeFileSync(path.join(dir, "aios.yaml"), "member: alex\n");
   mkdirSync(path.join(dir, ".aios", "loop", "continuity"), { recursive: true });
@@ -263,11 +338,10 @@ test("owner run records ONLY the local snapshot; continuity store byte-unchanged
   writeFileSync(actionsPath, actions);
 
   const topBefore = readdirSync(dir).sort();
-  const r = run(dir, ["--json"]); // owner → records
+  const r = run(dir, []); // owner, text mode, no flags → records by default (unchanged)
   assert.equal(r.code, 0, r.stderr);
-  const o = JSON.parse(r.stdout);
   // Carryover is visible somewhere (owed if fresh, blocked if the wall clock makes it stale).
-  assert.ok([...o.owedToday, ...o.blocked].some((i) => i.ref.row === "c1"));
+  assert.match(r.stdout, /Follow up/);
 
   assert.deepEqual(readdirSync(dir).sort(), topBefore); // no new top-level entries
   assert.ok(existsSync(path.join(dir, ".aios", "loop", "state", "changes-daily.json")));

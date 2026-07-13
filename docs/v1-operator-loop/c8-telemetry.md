@@ -52,7 +52,7 @@ natural points (all skipped under `--dry-run`, gated by the opt-out):
 
 | Kind | Emitted by | Feeds |
 |------|------------|-------|
-| `daily.run` | `aios loop daily` (real recording owner run only; not `--manifest` / `--no-record`) | daily-run frequency |
+| `daily.run` | `aios loop daily` (real recording owner run only — text mode by default, or `--record` with `--json`; not `--manifest` / `--no-record` / a bare `--json`) | daily-run frequency |
 | `weekly.run` | `aios loop weekly` (CLI span + requested audiences) | wall-clock (CLI fallback) |
 | `weekly.verify` | `aios loop weekly`, per shareable | verifier pass/corrected/fail rate |
 | `weekly.shipped` | `aios loop weekly`, per shippable digest (independent post-ship leak re-check) | tier-leak count |
