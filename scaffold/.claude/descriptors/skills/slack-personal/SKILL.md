@@ -45,10 +45,12 @@ slack status                     # check connection   ·   slack disconnect   to
 ```
 
 Get a user token: api.slack.com/apps → create an app → OAuth & Permissions → add User
-Token Scopes (`chat:write`, `im:write`, `users:read`, `users:read.email`, `reactions:write`,
-`channels:read`, and the relevant `channels|groups|im|mpim:read|history` scopes for the unread
-scan) → Install → copy the **User** OAuth Token. (A one-click `aios connect slack` OAuth flow is
-coming — it removes the manual app step.)
+Token Scopes (`chat:write`, `im:write`, `im:read`, `im:history`, `channels:read`,
+`channels:history`, `groups:read`, `groups:history`, `mpim:read`, `mpim:history`,
+`users:read`, `users:read.email`, `reactions:write`) → Install → copy the **User** OAuth
+Token. The `*:history`/`*:read` scopes are required for `slack read` — without them every
+read call fails with `missing_scope` even though the token otherwise authenticates fine.
+(A one-click `aios connect slack` OAuth flow is coming — it removes the manual app step.)
 
 ## Invocation
 
