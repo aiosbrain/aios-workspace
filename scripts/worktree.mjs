@@ -8,9 +8,30 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, readFileSync, copyFileSync, chmodSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, copyFileSync, chmodSync, unlinkSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { c, die } from "./cli-common.mjs";
+
+/**
+ * Compute the worktree path for a repo + branch under the per-repo container
+ * convention: `<dirname(repo)>/<basename(repo)>-worktrees/<task>`, where
+ * `<task>` is the branch with slashes turned into dashes, and a leading
+ * `<basename(repo)>-` prefix is dropped from the task if the branch already
+ * started with it (avoids e.g. `aios-team-brain-worktrees/aios-team-brain-foo`).
+ *
+ * Example: repo `aios-team-brain` + branch `chore/resolver-routing` →
+ * `aios/aios-team-brain-worktrees/chore-resolver-routing`.
+ */
+export function computeWorktreePath(repo, branch) {
+  const repoName = path.basename(repo);
+  const containerDir = path.join(path.dirname(repo), `${repoName}-worktrees`);
+  let task = branch.replace(/\//g, "-");
+  const redundantPrefix = `${repoName}-`;
+  if (task.startsWith(redundantPrefix)) {
+    task = task.slice(redundantPrefix.length);
+  }
+  return path.join(containerDir, task);
+}
 
 export async function cmdWorktree(repo, cfg, args) {
   const sub = args[0];
@@ -53,14 +74,24 @@ export async function cmdWorktree(repo, cfg, args) {
 
     const baseIdx = rest.indexOf("--base");
     const base = baseIdx >= 0 ? rest[baseIdx + 1] : "origin/main";
-    const dirName = path.basename(repo) + "-" + branch.replace(/\//g, "-");
-    const wtPath = path.join(path.dirname(repo), dirName);
+    const wtPath = computeWorktreePath(repo, branch);
+    const containerDir = path.dirname(wtPath);
 
     // 0. Ensure the auto-hydration hook is installed in primary
     installHook();
 
+    // 0b. Ensure the container dir exists — `git worktree add` does not
+    // reliably mkdir -p intermediate directories on every platform/git
+    // version, so create it ourselves first.
+    if (!existsSync(containerDir)) {
+      mkdirSync(containerDir, { recursive: true });
+    }
+
     // 1. Fetch + create worktree
-    console.log(c.blue(`aios worktree add`) + c.dim(`  ${branch} → ${dirName}`));
+    console.log(
+      c.blue(`aios worktree add`) +
+        c.dim(`  ${branch} → ${path.relative(path.dirname(repo), wtPath)}`)
+    );
     try {
       execFileSync("git", ["-C", repo, "fetch", "origin"], { stdio: "pipe" });
     } catch {

@@ -2,9 +2,14 @@
 set -euo pipefail
 
 # Hydrate a fresh git worktree with config from the primary checkout.
-# Run from INSIDE the worktree after `git worktree add`:
-#   ../aios-workspace/scripts/link-worktree-env.sh
-
+# Run from INSIDE the worktree after `git worktree add` — worktrees live in a
+# per-repo container dir one level deeper than a plain sibling, e.g.:
+#   <repo>-worktrees/<task>/  ->  ../../<repo>/scripts/link-worktree-env.sh
+#
+# `main_worktree` below is resolved via `git rev-parse --git-common-dir` (never
+# a hardcoded relative path), so every symlink source built from it
+# ("$main_worktree/$name") is an absolute path and this script works at any
+# worktree depth.
 common_dir="$(git rev-parse --git-common-dir)"
 main_worktree="$(cd "$(dirname "$common_dir")" && pwd)"
 here="$(pwd)"
