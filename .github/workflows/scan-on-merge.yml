@@ -35,6 +35,22 @@ jobs:
         with:
           fetch-depth: 0 # full history — the scanner reads the commit window
 
+      # Produce coverage/coverage-summary.json + lcov.info for the scanner's _read_coverage()
+      # to pick up — otherwise test_coverage_pct lands null and the Codebases dashboard shows
+      # "no reports" even though the suite exists and runs. `|| true`: this is a metrics
+      # source, not a gate — never block the scan on coverage (the real gate lives in ci.yml).
+      - uses: actions/setup-node@v6
+        if: env.AIOS_API_KEY != ''
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: npm ci
+        if: env.AIOS_API_KEY != ''
+        run: npm ci
+      - name: Generate coverage report (metrics source for the scanner)
+        if: env.AIOS_API_KEY != ''
+        run: npm run test:coverage || true
+
       - name: Fetch the ingestion scanner from aios-team-brain
         if: env.AIOS_API_KEY != ''
         uses: actions/checkout@v7
