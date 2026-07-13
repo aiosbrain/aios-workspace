@@ -186,7 +186,12 @@ export async function runShareable(opts: {
   const aboveTiers = aboveAudienceStringTiers(fullManifest, audience);
   const withheld = withheldByTier(fullManifest, audience);
   const leakReport: LeakReportEntry[] = [];
-  const recordLeak = (kind: LeakReportEntry["kind"], entryId: string, hits: string[], snippet: string) => {
+  const recordLeak = (
+    kind: LeakReportEntry["kind"],
+    entryId: string,
+    hits: string[],
+    snippet: string
+  ) => {
     const hash = snippetHash(snippet);
     for (const matched of hits) {
       leakReport.push({

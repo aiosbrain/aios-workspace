@@ -198,9 +198,7 @@ test("a non-shippable (leak-withheld) run gates non-zero and writes NO shippable
     assert.ok(!existsSync(path.join(out, "digest-team.md")), "no shippable digest file written");
     assert.ok(existsSync(path.join(out, "digest-team.FAILED.md")), "the FAILED file is written");
     // the admin content must not leak even into the FAILED (inspection) file
-    assert.ok(
-      !readFileSync(path.join(out, "digest-team.FAILED.md"), "utf8").includes("ZZSECRET")
-    );
+    assert.ok(!readFileSync(path.join(out, "digest-team.FAILED.md"), "utf8").includes("ZZSECRET"));
     // AIO-363: the FAILED digest points at the leak-report for detail (the owner brief has none).
     assert.ok(existsSync(path.join(out, "leak-report.json")), "leak-report.json is written");
     const leakReport = JSON.parse(readFileSync(path.join(out, "leak-report.json"), "utf8"));

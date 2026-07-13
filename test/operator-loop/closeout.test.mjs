@@ -328,7 +328,10 @@ test("AIO-363: a shared file mixing admin+team rows does not false-positive the 
   );
   assert.equal(team.leakWithheld, 0, "no false-positive leak withhold");
   assert.ok(team.digestMarkdown.includes("Logged engineering hours this week"));
-  assert.ok(team.digestMarkdown.includes(SHARED_PATH), "the legitimate own-evidence citation renders");
+  assert.ok(
+    team.digestMarkdown.includes(SHARED_PATH),
+    "the legitimate own-evidence citation renders"
+  );
   assert.ok(!team.digestMarkdown.includes(ADMIN_SENTINEL), "still no admin content in the digest");
   assert.deepEqual(team.leakReport, [], "no leak-report entries for a clean run");
 });

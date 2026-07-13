@@ -122,7 +122,10 @@ export function aboveAudienceStrings(manifest: RunManifest, audience: Audience):
  * needle came from — used by the C5 leak-report (AIO-363) to explain WHY a claim was withheld
  * without re-deriving the sweep. Not used by the sweep itself (which only needs the string set).
  */
-export function aboveAudienceStringTiers(manifest: RunManifest, audience: Audience): Map<string, Tier> {
+export function aboveAudienceStringTiers(
+  manifest: RunManifest,
+  audience: Audience
+): Map<string, Tier> {
   return collectAboveAudience(manifest, audience).tierOf;
 }
 
