@@ -116,6 +116,28 @@ test("Notification idle repeated → deduped to a single open ask", () => {
   }
 });
 
+test("UserPromptSubmit resolves only the matching session's idle ask", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "Notification",
+      session_id: "a",
+      message: "waiting for your input",
+    });
+    runHook(dir, {
+      hook_event_name: "Notification",
+      session_id: "b",
+      message: "waiting for your input",
+    });
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "a" });
+    const asks = readAsks(dir).asks;
+    assert.equal(asks.find((a) => a.sessionId === "a").status, "resolved");
+    assert.equal(asks.find((a) => a.sessionId === "b").status, "open");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Stop (interrogative tail, array content w/ tool_use) → decision ask", () => {
   const dir = ws();
   try {
