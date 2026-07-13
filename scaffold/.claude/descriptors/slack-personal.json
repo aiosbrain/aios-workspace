@@ -16,7 +16,14 @@
     "users:read",
     "users:read.email",
     "reactions:write",
-    "channels:read"
+    "channels:read",
+    "groups:read",
+    "im:read",
+    "mpim:read",
+    "channels:history",
+    "groups:history",
+    "im:history",
+    "mpim:history"
   ],
   "scopes_advisory": false,
   "oauth": {
@@ -31,8 +38,8 @@
   "docs": {
     "token_create_url": "https://api.slack.com/apps",
     "scopes_url": "https://docs.slack.dev/reference/scopes",
-    "instructions": "One click: authorize AIOS in your browser and your Slack user token is stored securely in the team brain (never on this machine). Manual fallback: paste an existing Slack user token (xoxp-…) and it is sent straight to the brain.",
-    "verified_against_docs": "2026-06-28"
+    "instructions": "One click: authorize AIOS in your browser and your Slack user token is stored securely in the team brain (never on this machine). Manual fallback: paste an existing Slack user token (xoxp-…) and it is sent straight to the brain. The daily unread scan also needs the relevant conversations read/history scopes listed above.",
+    "verified_against_docs": "2026-07-13"
   },
   "skill": {
     "skill_name": "slack-personal",

@@ -15,9 +15,22 @@ The loop needs to know what the operator communicated and what's waiting on some
   --json --results-only -z UTC`, query overridable — `gog` has no dedicated "needs reply" flag) and
   appends them, idempotent by stable `ref` (`cal:<eventId>` / `gmail:<threadId>`), to
   `<inbox>/comms/activity.jsonl`. Emits `tier: admin` by default (calendar/email is personal-by-default;
-  override `--tier` to deliberately widen). **Invocation is manual/cron, same as `granola-direct`** —
-  `aios loop` never shells out to connectors, it only reads whatever `activity.jsonl` already holds;
-  run the script (or wire a cron entry) before `aios loop daily` to keep signals fresh.
+  override `--tier` to deliberately widen). The script remains manually invokable, and AIO-366 now
+  runs it automatically before a recording owner `aios loop daily` collect.
+- **Slack → activity.jsonl writer (AIO-366)**:
+  `.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs` reuses the personal Slack
+  connector credential, scans only conversation objects with an authoritative `last_read` marker,
+  and appends inbound unread messages as admin-tier `source:"slack"` records, idempotent by
+  `slack:<conversation-id>:<message-ts>`. Slack does not expose unread markers on every returned
+  conversation type; missing state is skipped rather than guessed. The manual script remains
+  available, while recording owner daily runs invoke it automatically.
+
+### Automatic recording-daily preamble (AIO-366)
+
+Before C1 collection, a recording owner daily runs Granola, GOG, and Slack concurrently through
+`src/operator-loop/connectors.ts`. Each subprocess has its own deadline and fail-open result, so
+render always proceeds from whatever is on disk. Connector output is isolated from stdout.
+`--manifest`, `--as`, `--no-record`, bare `--json`, and `--no-connectors` do not pull.
 
 ## Build (net-new clean TS — the keystone gap)
 - **Unified notification layer**: rebuild the prior-build notification-engine *pattern* (a set of detectors → typed events → channel sender) in clean, well-bounded TS. Detectors include: decision-log Type 2/3, scope change, task assignment, stale inbox, deliverable status. **Do not port the legacy code** — rebuild from the pattern only.

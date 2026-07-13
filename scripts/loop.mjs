@@ -1006,6 +1006,29 @@ export async function cmdLoop(repo, cfg, args) {
       const prior = loop.readSnapshot(repo, loop.DAILY_SCOPE);
       orientation = loop.buildDailyOrientation({ manifest, prior, audience }).orientation;
     } else {
+      // AIO-366: a real recording owner cadence refreshes connected inputs BEFORE C1 collects.
+      // Inspection/projection paths stay side-effect-free (`--manifest`, `--as`, `--no-record`, and
+      // bare `--json`); `--no-connectors` is an explicit operator escape hatch. Each connector has
+      // its own timeout and returns failure as data, so none can prevent the daily render.
+      if (audience === "owner" && record && !flags.has("--no-connectors")) {
+        const pull = await loop.pullDailyConnectors({
+          root: repo,
+          credentials: {
+            brainUrl: cfg.brain_url,
+            apiKey: cfg.api_key,
+            teamId: cfg.team_id,
+          },
+        });
+        for (const connector of pull.connectors) {
+          if (connector.status === "failed" || connector.status === "timed_out") {
+            console.error(
+              c.yellow(
+                `aios loop daily: ${connector.name} pull ${connector.status.replace("_", " ")}${connector.detail ? ` (${connector.detail})` : ""}; rendering current local signals`
+              )
+            );
+          }
+        }
+      }
       const dStart = Date.now();
       orientation = loop.runDaily({
         root: repo,
@@ -1070,9 +1093,10 @@ export async function cmdLoop(repo, cfg, args) {
 
   die(
     "usage: aios loop collect [--daily|--weekly] [--json]\n" +
-      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--record] [--json]\n" +
+      "       aios loop daily [--as team|external] [--manifest <path>] [--no-record] [--record] [--no-connectors] [--json]\n" +
       "         (text mode records by default, disable with --no-record; --json does NOT record by\n" +
-      "          default — pass --record to also advance the baseline alongside --json)\n" +
+      "          default — pass --record to also advance the baseline alongside --json; recording\n" +
+      "          owner runs pull connected Granola/GOG/Slack inputs unless --no-connectors)\n" +
       "       aios loop manifest --explain [--as team|external] [--daily]\n" +
       "       aios loop verify --manifest <path> --ledger <path> [--as owner|team|external] [--json]\n" +
       "       aios loop verify --smoke [--manifest <path>] [--as ...] [--json]\n" +

@@ -77,17 +77,67 @@ function workspace(manifest = MANIFEST) {
   return { dir, m };
 }
 
-function run(cwd, args) {
+function run(cwd, args, env = {}) {
   try {
     const stdout = execFileSync("node", [CLI, "loop", "daily", ...args], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
     });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
   }
+}
+
+const CONNECTOR_PATHS = {
+  granola: ["granola-direct", "granola-pull.mjs"],
+  gog: ["gog-activity", "gog-activity-pull.mjs"],
+  slack: ["slack-personal", "slack-activity-pull.mjs"],
+};
+
+function seedConnectorStubs(dir, bodies = {}) {
+  for (const [name, parts] of Object.entries(CONNECTOR_PATHS)) {
+    const file = path.join(dir, ".claude", "descriptors", "skills", ...parts);
+    mkdirSync(path.dirname(file), { recursive: true });
+    const body =
+      bodies[name] ??
+      `
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2);
+const root = args[args.indexOf("--repo") + 1];
+const activity = path.join(root, "1-inbox", "comms", "activity.jsonl");
+mkdirSync(path.dirname(activity), { recursive: true });
+appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(name + "\n")});
+appendFileSync(activity, JSON.stringify({
+  source: "slack",
+  tier: "admin",
+  occurredAt: new Date().toISOString(),
+  ref: ${JSON.stringify("stub:" + name)},
+  channel: null,
+  direction: "inbound",
+  summary: ${JSON.stringify("Slack needing reply from " + name)},
+  waitingOn: "me"
+}) + "\\n");
+`;
+    writeFileSync(file, body);
+  }
+}
+
+function liveConnectorWorkspace(bodies) {
+  const dir = mkdtempSync(path.join(tmpdir(), "c4-connectors-"));
+  writeFileSync(path.join(dir, "aios.yaml"), "member: alex\n");
+  seedConnectorStubs(dir, bodies);
+  return dir;
+}
+
+function invocationCount(dir) {
+  const file = path.join(dir, "connector-invocations.log");
+  return existsSync(file)
+    ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).length
+    : 0;
 }
 
 test("daily --manifest --json emits a parseable, deterministic DailyOrientation", () => {
@@ -346,4 +396,85 @@ test("plain text mode (no --json) still records by default — unchanged behavio
   assert.deepEqual(readdirSync(dir).sort(), topBefore); // no new top-level entries
   assert.ok(existsSync(path.join(dir, ".aios", "loop", "state", "changes-daily.json")));
   assert.equal(readFileSync(actionsPath, "utf8"), actions); // continuity untouched
+});
+
+test("AIO-366: recording owner daily completes all connector pulls before C1 collect", () => {
+  const dir = liveConnectorWorkspace();
+  const result = run(dir, ["--record", "--json"]);
+  assert.equal(result.code, 0, result.stderr);
+  const orientation = JSON.parse(result.stdout);
+  assert.equal(invocationCount(dir), 3, "Granola, GOG, and Slack adapters all ran");
+  const refs = orientation.blocked
+    .filter((item) => item.kind === "comms")
+    .map((item) => item.ref.row)
+    .sort();
+  assert.deepEqual(
+    refs,
+    ["stub:gog", "stub:granola", "stub:slack"],
+    "activity written by every connector was present when runDaily collected"
+  );
+});
+
+test("AIO-366: connector non-zero exit + timeout fail open and daily JSON still renders", () => {
+  const markerScript = (name) => `
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2);
+const root = args[args.indexOf("--repo") + 1];
+appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(name + "\n")});
+`;
+  const dir = liveConnectorWorkspace({
+    granola: `${markerScript("granola")}process.exit(9);\n`,
+    gog: `${markerScript("gog")}setInterval(() => {}, 1000);\n`,
+    slack: markerScript("slack"),
+  });
+  const result = run(dir, ["--record", "--json"], { AIOS_LOOP_CONNECTOR_TIMEOUT_MS: "300" });
+  assert.equal(result.code, 0, result.stderr);
+  const orientation = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(orientation.changed));
+  assert.ok(Array.isArray(orientation.blocked));
+  assert.ok(Array.isArray(orientation.owedToday));
+  assert.equal(
+    invocationCount(dir),
+    3,
+    "a failed/slow adapter never prevents the others from running"
+  );
+});
+
+test("AIO-366: inspection/projection/opt-out paths never invoke connectors", () => {
+  const dir = liveConnectorWorkspace({ granola: "", gog: "", slack: "" });
+  const manifestPath = path.join(dir, "manifest.json");
+  writeFileSync(manifestPath, JSON.stringify({ ...MANIFEST, signals: [], excluded: [] }));
+  const noPullCases = [
+    ["--manifest", manifestPath, "--json"],
+    ["--as", "team"],
+    ["--no-record"],
+    ["--json"],
+    ["--no-connectors"],
+  ];
+  for (const args of noPullCases) {
+    const before = invocationCount(dir);
+    const result = run(dir, args);
+    assert.equal(result.code, 0, `${args.join(" ")}: ${result.stderr}`);
+    assert.equal(invocationCount(dir), before, `${args.join(" ")} must stay pull-free`);
+  }
+
+  // Replace the empty adapters with marker-only scripts and prove the explicit recording JSON path
+  // opts into the connector preamble while retaining clean parseable stdout.
+  const marker = (name) => `
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2);
+const root = args[args.indexOf("--repo") + 1];
+appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(name + "\n")});
+`;
+  seedConnectorStubs(dir, {
+    granola: marker("granola"),
+    gog: marker("gog"),
+    slack: marker("slack"),
+  });
+  const recording = run(dir, ["--record", "--json"]);
+  assert.equal(recording.code, 0, recording.stderr);
+  JSON.parse(recording.stdout);
+  assert.equal(invocationCount(dir), 3);
 });
