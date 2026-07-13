@@ -1,0 +1,61 @@
+name: Linear merge nudge (advisory)
+
+# Reconciliation nudge, not a gate: aios-work-sync.yml already posts a merged work-event to the
+# brain, but nothing checks whether the Linear issue the PR referenced actually moved to a
+# resolved state. This workflow closes that gap — on every merged PR, extract AIO-<n> ids from
+# the title + branch, look up each issue's Linear state, and comment on the PR if any referenced
+# issue is still open. Fail-open: if LINEAR_API_KEY isn't configured, or the Linear API errors,
+# the job logs and exits 0 — it must never turn a merge red.
+#
+# Required repo secret:
+#   LINEAR_API_KEY — a Linear personal/API key with read access to the AIO team.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  nudge:
+    name: check referenced Linear issue is resolved
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+    steps:
+      - name: Skip note
+        if: env.LINEAR_API_KEY == ''
+        run: echo "LINEAR_API_KEY not configured — skipping Linear merge-nudge."
+
+      - uses: actions/checkout@v7
+        if: env.LINEAR_API_KEY != ''
+        with:
+          sparse-checkout: |
+            scripts/linear-merge-nudge.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Compute nudge
+        if: env.LINEAR_API_KEY != ''
+        id: nudge
+        run: node scripts/linear-merge-nudge.mjs
+
+      - name: Comment on the PR
+        if: env.LINEAR_API_KEY != '' && steps.nudge.outputs.should_comment == 'true'
+        uses: actions/github-script@v7
+        env:
+          NUDGE_BODY: ${{ steps.nudge.outputs.comment_body }}
+        with:
+          script: |
+            // NUDGE_BODY comes in via env (not interpolated into the script string) so it can't
+            // break out of the JS context even if it contained backticks/${} sequences.
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: process.env.NUDGE_BODY,
+            });
