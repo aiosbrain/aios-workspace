@@ -35,6 +35,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/hooks/session-pulse.mjs"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/hooks/aios-sync-nudge.sh"
           }
         ]
       }

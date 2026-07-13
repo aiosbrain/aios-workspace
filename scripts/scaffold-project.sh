@@ -612,7 +612,7 @@ cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patter
 # Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
 # standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.
 # file-governance-guard.mjs (AIO-352) is the anti-sprawl write-time ratchet — layer 1.
-for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs file-governance-guard.mjs; do
+for hook in asks-capture.mjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs; do
   cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
   chmod +x "$OUTPUT/hooks/$hook"
 done
