@@ -104,8 +104,9 @@ they don't recognize.
   2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
      (`.claude/{skills,rules,rubrics,commands}`, guardrail `hooks/`, `validation/`) are copies that drift.
      **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`, whose
-     three buckets — MANAGED / PERSONAL / SCAFFOLD_UNMANAGED — are held in lockstep with `scaffold-project.sh`
-     by a parity test) via a **3-way merge** (`scripts/toolkit-merge.mjs`): with the toolkit at the last-synced
+     four buckets — MANAGED / SEED_IF_ABSENT / PERSONAL / SCAFFOLD_UNMANAGED — are held in lockstep with `scaffold-project.sh`
+     by a parity test). Managed files use a **3-way merge** (`scripts/toolkit-merge.mjs`); create-only seeds fill
+     a missing starter but never read, merge, overwrite, or delete an existing personal file. With the toolkit at the last-synced
      sha as the base, a *committed* local edit is **merged** with the toolkit's change (or surfaced as a
      conflict — written to `<file>.aios-incoming`/`.aios-merge`, never inline into the live file), an
      *uncommitted* edit is **skipped** (`--force` overwrites), personal additions are never deleted, and

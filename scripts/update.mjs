@@ -2,9 +2,9 @@
  * update.mjs — `aios update`: re-vendor the toolkit into this workspace.
  *
  * A scaffolded workspace carries a COPY of the toolkit (see toolkit-manifest.mjs).
- * This command re-syncs the MANAGED_PATHS from the canonical toolkit and pins the
- * version — the one-command way for a forked workspace to stay in sync. It NEVER
- * touches personal content (it only writes MANAGED_PATHS.dest).
+ * This command re-syncs MANAGED_PATHS and fills missing SEED_IF_ABSENT starter files
+ * from the canonical toolkit, then pins the version. Seeds are create-only: an existing
+ * personal file is never read, merged, overwritten, or deleted, even with `--force`.
  *
  * It is a **3-way merge**, not a blind overlay (see toolkit-merge.mjs): with the
  * toolkit at the last-synced sha as the base, a file the workspace improved locally is
@@ -41,10 +41,13 @@ import {
   statSync,
   readdirSync,
   unlinkSync,
+  copyFileSync,
+  lstatSync,
+  constants as fsConstants,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { c, die } from "./cli-common.mjs";
-import { MANAGED_PATHS, VERSION_FILE } from "./toolkit-manifest.mjs";
+import { MANAGED_PATHS, SEED_IF_ABSENT, VERSION_FILE } from "./toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
@@ -149,6 +152,43 @@ export function dirtyManagedPaths(repo) {
 
 const readIf = (p) => (existsSync(p) && statSync(p).isFile() ? readFileSync(p, "utf8") : undefined);
 
+/** Like `existsSync`, but a dangling symlink still counts as an occupied personal path. */
+function pathEntryExists(p) {
+  try {
+    lstatSync(p);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** Refuse a seed destination whose existing parent chain escapes through a symlink. */
+function assertSeedParentSafe(repo, destRel) {
+  const root = path.resolve(repo);
+  const destAbs = path.resolve(root, destRel);
+  if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
+    throw new Error(`refusing to seed path outside the workspace: ${destRel}`);
+  }
+  const parentRel = path.relative(root, path.dirname(destAbs));
+  let current = root;
+  for (const part of parentRel.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(
+        `refusing to seed ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
+      );
+    }
+  }
+}
+
 /** Every toolkit file under an entry, as { srcRel, destRel } (files only). */
 function entryFiles(srcRoot, entry) {
   const absSrc = path.join(srcRoot, entry.src);
@@ -167,6 +207,45 @@ function entryFiles(srcRoot, entry) {
   };
   walk(absSrc, "");
   return out;
+}
+
+/** Seed destinations that the toolkit can supply and the workspace does not have. */
+export function missingSeedPaths(srcRoot, repo) {
+  const missing = [];
+  for (const entry of SEED_IF_ABSENT) {
+    if (!existsSync(path.join(srcRoot, entry.src))) continue;
+    for (const file of entryFiles(srcRoot, entry)) {
+      assertSeedParentSafe(repo, file.destRel);
+      if (!pathEntryExists(path.join(repo, file.destRel))) missing.push(file.destRel);
+    }
+  }
+  return missing;
+}
+
+/**
+ * Copy seed files only into absent destinations. Deliberately does not accept `force`
+ * or a merge base: once a personal destination exists, update has no authority over it.
+ */
+function applySeeds(srcRoot, repo, r) {
+  for (const entry of SEED_IF_ABSENT) {
+    if (!existsSync(path.join(srcRoot, entry.src))) continue;
+    for (const file of entryFiles(srcRoot, entry)) {
+      assertSeedParentSafe(repo, file.destRel);
+      const destAbs = path.join(repo, file.destRel);
+      if (pathEntryExists(destAbs)) continue;
+      mkdirSync(path.dirname(destAbs), { recursive: true });
+      // COPYFILE_EXCL closes the check/copy race: a concurrently-created personal
+      // file makes update fail safely instead of being overwritten.
+      try {
+        copyFileSync(path.join(srcRoot, file.srcRel), destAbs, fsConstants.COPYFILE_EXCL);
+      } catch (error) {
+        if (error?.code === "EEXIST") continue;
+        throw error;
+      }
+      if (entry.exec) chmodSync(destAbs, 0o755);
+      r.seeded.push(file.destRel);
+    }
+  }
 }
 
 /** Apply one file's merge decision. Mutates the workspace; records into `r`. */
@@ -261,7 +340,15 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r)
 export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   const dirty = opts.dirty || new Set();
   const force = !!opts.force;
-  const r = { created: [], updated: [], merged: [], deleted: [], conflicts: [], skippedDirty: [] };
+  const r = {
+    created: [],
+    seeded: [],
+    updated: [],
+    merged: [],
+    deleted: [],
+    conflicts: [],
+    skippedDirty: [],
+  };
   for (const entry of MANAGED_PATHS) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const f of entryFiles(srcRoot, entry)) {
@@ -274,6 +361,7 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
     if (entry.kind === "dir")
       applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r);
   }
+  applySeeds(srcRoot, repo, r);
   return r;
 }
 
@@ -325,8 +413,16 @@ export async function cmdUpdate(repo, cfg, args) {
       const matches = have !== "(none)" && (sha.startsWith(have) || have.startsWith(sha));
       const short = (s) => (s === "(none)" ? s : s.slice(0, 12));
       const haveVer = stampField("toolkit-version");
-      if (matches) {
+      const missingSeeds = missingSeedPaths(srcDir, repo);
+      if (matches && !missingSeeds.length) {
         console.log(color.green(`  toolkit up to date — ${meta.label} (${short(sha)}).`));
+      } else if (matches) {
+        console.log(
+          color.yellow(
+            `  toolkit seed${missingSeeds.length === 1 ? "" : "s"} missing — ${missingSeeds.join(", ")}. ` +
+              `Run \`aios update\`.`
+          )
+        );
       } else {
         const from = haveVer ? `v${haveVer}` : short(have);
         console.log(
@@ -377,6 +473,7 @@ export async function cmdUpdate(repo, cfg, args) {
       if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
     };
     report("created", r.created);
+    report("seeded (missing starter files)", r.seeded);
     report("updated", r.updated);
     report("merged (local edits + toolkit changes combined)", r.merged);
     report("removed (deleted upstream)", r.deleted);
@@ -405,7 +502,8 @@ export async function cmdUpdate(repo, cfg, args) {
         console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
     }
 
-    const changedCount = r.created.length + r.updated.length + r.merged.length + r.deleted.length;
+    const changedCount =
+      r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
     if (r.conflicts.length) {
       // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
       console.warn(

@@ -1,12 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { execFileSync } from "node:child_process";
-import { MANAGED_PATHS, PERSONAL_PATHS } from "../scripts/toolkit-manifest.mjs";
-import { dirtyManagedPaths, mergeManaged } from "../scripts/update.mjs";
+import { MANAGED_PATHS, PERSONAL_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
+import { dirtyManagedPaths, mergeManaged, missingSeedPaths } from "../scripts/update.mjs";
 
 // The overlay/merge mechanics live in toolkit-merge.test.mjs; this file covers the
 // manifest invariants and the uncommitted-edit guard.
@@ -53,6 +61,79 @@ test("dirtyManagedPaths returns empty set outside a git repo (no guard, no throw
     assert.equal(dirtyManagedPaths(ws).size, 0);
   } finally {
     rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("mergeManaged creates a SEED_IF_ABSENT file when the personal destination is absent", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-seed-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-seed-"));
+  const seed = SEED_IF_ABSENT.find((e) => e.dest === ".aios/comms-config.json");
+  assert.ok(seed, "comms config seed is declared");
+  try {
+    const starter = '{"channels":{},"sender":{"channel":null}}\n';
+    mkdirSync(path.dirname(path.join(tk, seed.src)), { recursive: true });
+    writeFileSync(path.join(tk, seed.src), starter);
+
+    assert.deepEqual(missingSeedPaths(tk, ws), [seed.dest]);
+    const result = mergeManaged(tk, tk, ws, undefined, {});
+
+    assert.deepEqual(result.seeded, [seed.dest]);
+    assert.equal(readFileSync(path.join(ws, seed.dest), "utf8"), starter);
+    assert.deepEqual(missingSeedPaths(tk, ws), []);
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("mergeManaged never reads, merges, or overwrites an existing seed destination, even with --force", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-seed-existing-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-seed-existing-"));
+  const seed = SEED_IF_ABSENT.find((e) => e.dest === ".aios/comms-config.json");
+  assert.ok(seed, "comms config seed is declared");
+  try {
+    mkdirSync(path.dirname(path.join(tk, seed.src)), { recursive: true });
+    mkdirSync(path.dirname(path.join(ws, seed.dest)), { recursive: true });
+    writeFileSync(path.join(tk, seed.src), '{"channels":{}}\n');
+    const personal = '{"channels":{"#private":"admin"}}\n';
+    writeFileSync(path.join(ws, seed.dest), personal);
+
+    const result = mergeManaged(tk, tk, ws, undefined, { force: true });
+
+    assert.deepEqual(result.seeded, []);
+    assert.equal(readFileSync(path.join(ws, seed.dest), "utf8"), personal);
+    assert.ok(!existsSync(path.join(ws, `${seed.dest}.aios-incoming`)));
+    assert.ok(!existsSync(path.join(ws, `${seed.dest}.aios-merge`)));
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("mergeManaged refuses a seed whose personal parent is a symlink outside the workspace", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-seed-symlink-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-seed-symlink-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "aios-seed-outside-"));
+  const seed = SEED_IF_ABSENT.find((e) => e.dest === ".aios/comms-config.json");
+  assert.ok(seed, "comms config seed is declared");
+  try {
+    mkdirSync(path.dirname(path.join(tk, seed.src)), { recursive: true });
+    writeFileSync(path.join(tk, seed.src), '{"channels":{}}\n');
+    symlinkSync(outside, path.join(ws, ".aios"), "dir");
+
+    assert.throws(
+      () => missingSeedPaths(tk, ws),
+      /parent path is not a real workspace directory \(\.aios\)/
+    );
+    assert.throws(
+      () => mergeManaged(tk, tk, ws, undefined, {}),
+      /refusing to seed \.aios\/comms-config\.json/
+    );
+    assert.ok(!existsSync(path.join(outside, "comms-config.json")));
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

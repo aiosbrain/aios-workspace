@@ -19,6 +19,7 @@ import { dispatchOnEvent } from "../dist/operator-loop/comms/sender.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAFFOLD_SCRIPT = path.join(ROOT, "scripts", "scaffold-project.sh");
+const STARTER_CONFIG = path.join(ROOT, "scaffold", "comms-config.json");
 
 function scaffold(output) {
   execFileSync(
@@ -52,6 +53,7 @@ test("scaffold stamps .aios/comms-config.json by default, valid JSON", () => {
     assert.ok(existsSync(file), ".aios/comms-config.json must be stamped by default");
     const raw = readFileSync(file, "utf8");
     assert.doesNotThrow(() => JSON.parse(raw), "stamped comms-config.json must be valid JSON");
+    assert.equal(raw, readFileSync(STARTER_CONFIG, "utf8"), "scaffold uses the updater's seed");
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
