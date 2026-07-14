@@ -5,6 +5,8 @@
 // permitted to wire domains together — e.g. injecting the `comms` implementations into the `asks`
 // harvester (see `defaultHarvestDeps` / `harvestAsks` below). Domains never compose each other.
 
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { loadCommsConfig } from "./comms/config.js";
 import { detectEvents } from "./comms/detectors.js";
 import { dispatchOnEvent } from "./comms/sender.js";
@@ -14,6 +16,9 @@ import {
   type HarvestResult,
   type HarvestDeps,
 } from "./asks/harvest.js";
+import { readAsks, type Ask } from "./asks/store.js";
+import { readObservations, type LegacyActivityRecord } from "./inbox/observations.js";
+import { assembleFromObservations, type InboxView, type Ranker } from "./inbox/cli.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -431,6 +436,83 @@ export {
   type ProjectedItem,
   type ProjectInput,
 } from "./inbox/observations.js";
+// Unified inbox read-only CLI projection (I-09 / AIO-390, the G4 gate). One ranked queue over asks
+// (agent-events) ∪ enriched observations ∪ legacy activity (thread-states), with a protected
+// partition and a raw chronological escape hatch. Read-only + admin-tier local; NEVER synced. The
+// per-item v1 ask fields pass through byte-identical to `aios asks --json` (dual-read parity).
+export {
+  INBOX_RANKER_VERSION_FALLBACK,
+  RECENCY_WHY,
+  FRESHNESS_SLO_MS,
+  PARTITION_SEPARATOR,
+  askToItem,
+  threadToItem,
+  rankItems,
+  rawOrder,
+  assembleInboxView,
+  assembleFromObservations,
+  renderInboxText,
+  type InboxItem,
+  type InboxBucket,
+  type InboxOrigin,
+  type InboxView,
+  type Staleness,
+  type Ranker,
+  type AssembleInput,
+  type RenderColors,
+} from "./inbox/cli.js";
+
+/**
+ * Loop composition point (Constitution §4) for `aios inbox`: read the asks store + the enriched
+ * observation log + the legacy `activity.jsonl` stream(s), then assemble the unified read-only
+ * view. The `inbox` domain never value-imports the `asks` domain — that seam is composed HERE.
+ * Read-only: no store is mutated. `activityPaths` mirrors the read-model's advisory join inputs.
+ */
+export function buildInbox(
+  root: string,
+  opts: {
+    now?: Date;
+    sloMs?: number;
+    ranker?: Ranker;
+    asksOverride?: readonly Ask[];
+    activityPaths?: string[];
+    observationsPath?: string;
+  } = {}
+): InboxView {
+  const asks = opts.asksOverride ?? readAsks(root).asks;
+  const { observations } = readObservations(root, opts.observationsPath);
+  const activityPaths = opts.activityPaths ?? [
+    path.join(root, "1-inbox", "comms", "activity.jsonl"),
+    path.join(root, ".aios", "loop", "comms", "activity.jsonl"),
+  ];
+  const legacy: LegacyActivityRecord[] = [];
+  for (const ap of activityPaths) {
+    if (!existsSync(ap)) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(ap, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        legacy.push(JSON.parse(line) as LegacyActivityRecord);
+      } catch {
+        /* advisory join input — a malformed activity line is skipped, never fatal */
+      }
+    }
+  }
+  return assembleFromObservations({
+    asks,
+    enriched: observations,
+    legacy,
+    now: opts.now,
+    sloMs: opts.sloMs,
+    ranker: opts.ranker,
+  });
+}
+
 export {
   MACHINES,
   ATTENTION_STATES,
