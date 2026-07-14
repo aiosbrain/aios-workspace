@@ -26,6 +26,8 @@ import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
+// The canonical rubric shipped inside this toolkit checkout (…/aios-workspace/.claude/rubrics/…).
+const TOOLKIT_RUBRIC_PATH = path.join(SCRIPT_DIR, "..", DEFAULT_RUBRIC_REL);
 const DEFAULT_FIX_BUDGET = 2;
 const SPEC_PROMPT_TIMEOUT_MS = 300_000;
 export const SPEC_BATCH_CONCURRENCY_MAX = 8;
@@ -102,6 +104,21 @@ export function loadRubric(rubricPath) {
     throw new Error(`malformed rubric ${rubricPath}: no SR criteria rows found`);
   }
   return { frontmatter, rows, raw, path: rubricPath };
+}
+
+/**
+ * Resolve which rubric file to grade against, in precedence order:
+ *   1. an explicit `--rubric <path>` (caller override, honored verbatim),
+ *   2. the target repo's own `.claude/rubrics/spec-readiness.md` (scaffolded workspaces vendor it),
+ *   3. the canonical rubric shipped inside this toolkit checkout.
+ * The fallback (3) is what lets the spec gate run in a NON-workspace repo — the Team Brain, or any
+ * bare repo — that doesn't vendor a rubric, instead of hard-failing with "rubric not found" (exit 4).
+ */
+export function resolveRubricPath(repo, explicit = null) {
+  if (explicit) return explicit;
+  const local = path.join(repo, DEFAULT_RUBRIC_REL);
+  if (existsSync(local)) return local;
+  return TOOLKIT_RUBRIC_PATH;
 }
 
 // ── text helpers ────────────────────────────────────────────────────────────────────────────
@@ -1101,7 +1118,7 @@ export async function cmdSpec(repo, args) {
     process.exit(4);
   }
 
-  const rubricPath = flag("--rubric") ?? path.join(repo, DEFAULT_RUBRIC_REL);
+  const rubricPath = resolveRubricPath(repo, flag("--rubric"));
   let rubric;
   try {
     rubric = loadRubric(rubricPath);
