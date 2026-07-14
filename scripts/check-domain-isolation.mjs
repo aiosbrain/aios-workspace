@@ -25,7 +25,7 @@ const LOOP_DIR = path.join(ROOT, "src", "operator-loop");
 
 // The five workflow domains that feed the loop (docs/v1-operator-loop/domains/*). `sources` is the
 // collector's adapter layer (loop-core), NOT a peer domain, so it is deliberately absent here.
-const DOMAIN_DIRS = new Set(["asks", "comms", "decisions", "time", "maturity"]);
+const DOMAIN_DIRS = new Set(["asks", "comms", "decisions", "time", "maturity", "inbox"]);
 
 function walkTs(dir) {
   const out = [];
