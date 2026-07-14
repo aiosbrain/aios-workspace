@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -33,5 +34,11 @@ export default defineConfig({
       "/ws": { target: "ws://127.0.0.1:8790", ws: true },
       "/api": "http://127.0.0.1:8790",
     },
+  },
+  test: {
+    // The published @aios-alpha/ui dist uses extensionless internal ESM imports (bundled at build time),
+    // so it must be transformed by Vite rather than externalized — otherwise Node can't resolve them in
+    // the component tests (I-14 comms.test.tsx renders TerminalFrame-based cards).
+    server: { deps: { inline: [/@aios-alpha\/ui/] } },
   },
 });

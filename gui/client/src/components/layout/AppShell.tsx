@@ -1,6 +1,7 @@
 import { useSession } from "../../state/cockpit";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "../chat/ChatView";
+import { CommsView } from "../comms/CommsView";
 import { TasksPanel } from "../tasks/TasksPanel";
 import { ReviewPanel } from "../review/ReviewPanel";
 import { MaturityPanel } from "../maturity/MaturityPanel";
@@ -13,6 +14,8 @@ function ViewRouter() {
   switch (view) {
     case "chat":
       return <ChatView />;
+    case "comms":
+      return <CommsView />;
     case "tasks":
       return <TasksPanel />;
     case "review":
