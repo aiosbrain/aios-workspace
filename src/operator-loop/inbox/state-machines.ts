@@ -25,7 +25,12 @@ export type MachineName = "attention_state" | "action_state" | "source_state";
 // ── attention_state: does this item need the human's attention right now? ─────────────────────────
 
 export type AttentionState =
-  "unseen" | "surfaced" | "acknowledged" | "snoozed" | "resolved" | "archived";
+  | "unseen"
+  | "surfaced"
+  | "acknowledged"
+  | "snoozed"
+  | "resolved"
+  | "archived";
 
 export const ATTENTION_INITIAL: AttentionState = "unseen";
 
