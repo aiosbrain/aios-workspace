@@ -125,7 +125,9 @@ export function buildRegistry(raw: unknown): Registry {
       : [];
     if (ids.length === 0) continue;
     const tier =
-      o.tier === 1 || o.tier === 2 || o.tier === 3 || o.tier === 4 ? (o.tier as 1 | 2 | 3 | 4) : undefined;
+      o.tier === 1 || o.tier === 2 || o.tier === 3 || o.tier === 4
+        ? (o.tier as 1 | 2 | 3 | 4)
+        : undefined;
     const projectWeight =
       typeof o.projectWeight === "number" && Number.isFinite(o.projectWeight)
         ? clamp01(o.projectWeight)
@@ -326,7 +328,9 @@ export function rankItem(input: RankInput, registry: Registry = EMPTY_REGISTRY):
     why = "from-me-last → AWARENESS";
   } else if (noise) {
     bucket = "AWARENESS";
-    why = emailMuted ? "email stage-0 mute (auto-reply/bulk sender) → AWARENESS" : "noise gate → AWARENESS";
+    why = emailMuted
+      ? "email stage-0 mute (auto-reply/bulk sender) → AWARENESS"
+      : "noise gate → AWARENESS";
   } else if (input.threadKind === "group") {
     // Groups: IMPORTANT iff actionability ≥ 0.5 and not vendorish, else AWARENESS.
     if (act >= 0.5 && !vendorish) {
@@ -346,7 +350,8 @@ export function rankItem(input: RankInput, registry: Registry = EMPTY_REGISTRY):
       (importance >= 0.6 && act >= 0.25) ||
       (tierEQ(1) && act > 0);
     if (needs && !vendorish) {
-      const urgent = ageDays !== null && ageDays <= 2 && act >= 0.5 && (tierLE(2) || importance >= 0.6);
+      const urgent =
+        ageDays !== null && ageDays <= 2 && act >= 0.5 && (tierLE(2) || importance >= 0.6);
       if (urgent) {
         bucket = "URGENT";
         why = `DM needs-reply; age ${ageDays!.toFixed(1)}d ≤ 2, act ${act.toFixed(2)} ≥ 0.5, tier${
@@ -384,7 +389,14 @@ export function rankItem(input: RankInput, registry: Registry = EMPTY_REGISTRY):
     bucket_rank: BUCKET_RANK[bucket],
   };
 
-  return { bucket, protected: isProtected, signal: round4(signal), why, ranker_version: RANKER_VERSION, features };
+  return {
+    bucket,
+    protected: isProtected,
+    signal: round4(signal),
+    why,
+    ranker_version: RANKER_VERSION,
+    features,
+  };
 }
 
 function round4(n: number): number {
@@ -404,7 +416,10 @@ export interface RankedRow {
  * then signal desc when the projects map exists (recency desc otherwise — the Phase-1 degradation),
  * with a stable index tiebreak so the order is fully deterministic.
  */
-export function rankCorpus(items: readonly RankInput[], registry: Registry = EMPTY_REGISTRY): RankedRow[] {
+export function rankCorpus(
+  items: readonly RankInput[],
+  registry: Registry = EMPTY_REGISTRY
+): RankedRow[] {
   const projectsMap = registry.projectsMap;
   const rows = items.map((input, idx) => ({ input, result: rankItem(input, registry), idx }));
   rows.sort((a, b) => {
