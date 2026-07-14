@@ -233,6 +233,11 @@ export function foldEvents(
 
   for (const ev of events) {
     if (ev.seq > maxSeq) maxSeq = ev.seq;
+    // I-05 (AIO-386) notify-lane events carry NO read-model state effect and populate no projection
+    // table — they are the recovery view's evidence, folded directly from the journal by recovery.ts.
+    // Skip them BEFORE `ensureItem` so a merely-notified ask never materializes a phantom bare
+    // `ItemState` here; the I-02 projection + its byte-equivalence digest stay untouched by this lane.
+    if (ev.kind === "delivery-attempted" || ev.kind === "human-ack") continue;
     const p = ev.payload;
     const item = ensureItem(ev.correlation_id, ev.seq);
 

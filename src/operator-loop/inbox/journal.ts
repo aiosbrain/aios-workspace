@@ -60,6 +60,13 @@ export const INBOX_EVENT_KINDS = [
   "outcome",
   "native-receipt",
   "audit-checkpoint-link",
+  // I-05 (AIO-386) notify-lane events — the interrupt lane's two honest ack states. Named per this
+  // journal's hyphenated `kind` convention (the domain spec's prose form is `delivery_attempted` /
+  // `human_ack`). Content-free by construction (payload carries ids/labels only, never bodies). The
+  // read-model fold assigns them no ItemState effect, so they are RETAINED (never compacted) — they
+  // ARE the recovery-view evidence that an interrupt was attempted but not acknowledged.
+  "delivery-attempted",
+  "human-ack",
 ] as const;
 export type InboxEventKind = (typeof INBOX_EVENT_KINDS)[number];
 const KIND_SET: ReadonlySet<string> = new Set(INBOX_EVENT_KINDS);
