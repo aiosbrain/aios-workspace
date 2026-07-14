@@ -625,15 +625,23 @@ export async function cmdInbox(repo, cfg, args) {
       );
     }
 
-    // Mutating paths — a SINGLE explicit per-item confirmation each. No bulk-accept exists.
+    // Mutating paths — a SINGLE explicit per-item confirmation each. No bulk-accept exists. The
+    // proposed-status gate is authoritative INSIDE the lock, so a SeedConflictError here means a
+    // concurrent merge/reject already won — report it deterministically, never a raw stack.
     if (mergeId || rejectId) {
       const id = mergeId || rejectId;
       const suggestion = loop.readSuggestions(repo, history).find((s) => s.id === id);
       if (!suggestion)
         die(`no suggestion '${id}' in the current history — run \`aios inbox seed --review\``);
-      const r = mergeId
-        ? loop.mergeSuggestion(repo, suggestion)
-        : loop.rejectSuggestion(repo, suggestion);
+      let r;
+      try {
+        r = mergeId
+          ? loop.mergeSuggestion(repo, suggestion)
+          : loop.rejectSuggestion(repo, suggestion);
+      } catch (e) {
+        if (e && e.name === "SeedConflictError") die(e.message);
+        throw e;
+      }
       if (asJson) return void console.log(JSON.stringify(r, null, 2));
       return void console.log(
         c.blue("aios inbox seed") +

@@ -16,11 +16,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   buildObservation,
   appendObservations,
@@ -31,6 +31,8 @@ import {
   rejectSuggestion,
   unmergeSuggestion,
   evaluateSuggestions,
+  readSeedJournal,
+  foldSeedStatus,
   seedRegistryPath,
   seedEntitiesDir,
   listEntityFiles,
@@ -39,6 +41,7 @@ import {
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = path.join(ROOT, "scripts", "aios.mjs");
+const DIST_INDEX = pathToFileURL(path.join(ROOT, "dist", "operator-loop", "index.js")).href;
 const REGISTRY_FIXTURE = path.join(
   ROOT,
   "test",
@@ -197,17 +200,41 @@ test("review-only: generate + reject NEVER write a registry/entity file; merge i
     assert.equal(existsSync(seedRegistryPath(root)), false, "reject does not create the registry");
     assert.equal(existsSync(seedEntitiesDir(root)), false, "reject does not create entity files");
 
-    // Only after an explicit merge do the files appear — and the status transitions to `merged`.
-    const fresh = generateSuggestions(root, history); // fresh proposed objects (bypass folded reject status)
-    const target = fresh.find((s) => s.kind === "person");
-    const res = mergeSuggestion(root, target);
+    // Only after an explicit merge do the files appear — and the status transitions to `merged`. Use
+    // a FRESH workspace: rejecting a suggestion is now durable (authoritative in the journal), so the
+    // same id cannot later be merged without an unmerge — merging a rejected id is a conflict.
+    const root2 = ws();
+    const history2 = seedHistory(root2);
+    const target = generateSuggestions(root2, history2).find((s) => s.kind === "person");
+    const res = mergeSuggestion(root2, target);
     assert.equal(res.status, "merged");
     assert.equal(target.status, "merged", "merge performs the proposed→merged transition");
-    assert.equal(existsSync(seedRegistryPath(root)), true, "merge is the writer of the registry");
-    assert.equal(listEntityFiles(root).length, 1, "merge wrote exactly one entity file");
+    assert.equal(existsSync(seedRegistryPath(root2)), true, "merge is the writer of the registry");
+    assert.equal(listEntityFiles(root2).length, 1, "merge wrote exactly one entity file");
 
-    // A second merge of an already-merged suggestion is refused (no silent double-write).
-    assert.throws(() => mergeSuggestion(root, target), /can only merge a proposed suggestion/);
+    // A rejected id cannot be merged (durable reject wins) — a distinct, deterministic conflict.
+    const rejectedPerson = readSuggestions(root, history).find(
+      (s) => s.kind === "person" && s.status === "rejected"
+    );
+    assert.throws(
+      () => mergeSuggestion(root, { ...rejectedPerson, status: "proposed" }),
+      (e) => e.name === "SeedConflictError" && e.currentStatus === "rejected",
+      "merging a durably-rejected id conflicts"
+    );
+
+    // A second merge of an already-merged suggestion is refused (no silent double-write) — the gate
+    // is authoritative from the journal, so even a fresh `proposed`-looking object cannot re-merge.
+    assert.throws(
+      () => mergeSuggestion(root2, target),
+      (e) => e.name === "SeedConflictError" && /already merged/.test(e.message)
+    );
+    const stale = { ...target, status: "proposed" };
+    assert.throws(
+      () => mergeSuggestion(root2, stale),
+      (e) => e.name === "SeedConflictError" && e.currentStatus === "merged",
+      "a stale proposed snapshot cannot bypass the authoritative in-lock gate"
+    );
+    rmSync(root2, { recursive: true, force: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -388,5 +415,145 @@ test("CLI: explicit per-item --merge writes the registry; --unmerge reverses it;
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── concurrency: merge vs reject race, in SEPARATE processes, on the SAME suggestion ────────────────
+//
+// The review flagged that the proposed-status gate used to sit OUTSIDE the lock, so two racing
+// callers could both pass the check and leave the registry/filesystem contradicting the journal.
+// The gate is now re-checked from the authoritative journal INSIDE `withInboxLock`. This test proves
+// the invariant end-to-end by racing a `merge` child against a `reject` child on the same id.
+
+// A child that generates the (deterministic) suggestions, finds one by id, and runs merge|reject.
+// Prints one JSON line: {winner:true,status} on success, or {winner:false,conflict,currentStatus}
+// on SeedConflictError. Any other failure exits non-zero.
+function writeRaceChild(root) {
+  const file = path.join(root, "seed-race-child.mjs");
+  writeFileSync(
+    file,
+    `const dist = await import(${JSON.stringify(DIST_INDEX)});
+const [root, action, id, owner] = process.argv.slice(2);
+const { observations } = dist.readObservations(root);
+const history = dist.observationsToHistory(observations, { ownerIds: [owner] });
+const s = dist.generateSuggestions(root, history).find((x) => x.id === id);
+if (!s) { console.log(JSON.stringify({ error: "no-suggestion" })); process.exit(2); }
+try {
+  const r = action === "merge" ? dist.mergeSuggestion(root, s) : dist.rejectSuggestion(root, s);
+  console.log(JSON.stringify({ winner: true, action, status: r.status }));
+} catch (e) {
+  if (e && e.name === "SeedConflictError")
+    console.log(JSON.stringify({ winner: false, action, conflict: true, currentStatus: e.currentStatus }));
+  else { console.log(JSON.stringify({ error: String((e && e.message) || e) })); process.exit(1); }
+}
+`
+  );
+  return file;
+}
+
+function runRaceChild(childFile, root, action, id, owner) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("node", [childFile, root, action, id, owner], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.stderr.on("data", (d) => (err += d));
+    p.on("error", reject);
+    p.on("close", (code) => {
+      if (code !== 0 && code !== null)
+        return reject(new Error(`child ${action} exited ${code}: ${err}${out}`));
+      try {
+        resolve(JSON.parse(out.trim().split("\n").pop()));
+      } catch {
+        reject(new Error(`child ${action} bad output: ${out} / ${err}`));
+      }
+    });
+  });
+}
+
+test("concurrency: racing merge vs reject — exactly one wins; registry, journal, and replay agree", async () => {
+  // Repeat the race several times so scheduling can land either order (merge-first or reject-first).
+  for (let round = 0; round < 6; round++) {
+    const root = ws();
+    try {
+      const history = seedHistory(root);
+      const target = generateSuggestions(root, history).find((s) => s.kind === "person");
+      const child = writeRaceChild(root);
+
+      // Fire both children concurrently on the SAME suggestion id.
+      const [a, b] = await Promise.all([
+        runRaceChild(child, root, "merge", target.id, OWNER),
+        runRaceChild(child, root, "reject", target.id, OWNER),
+      ]);
+      const results = [a, b];
+      assert.ok(
+        !results.some((r) => r.error),
+        `no unexpected child error (round ${round}): ${JSON.stringify(results)}`
+      );
+
+      // EXACTLY ONE transition won; the other observed a deterministic conflict.
+      const winners = results.filter((r) => r.winner === true);
+      const losers = results.filter((r) => r.winner === false && r.conflict === true);
+      assert.equal(
+        winners.length,
+        1,
+        `exactly one winner (round ${round}): ${JSON.stringify(results)}`
+      );
+      assert.equal(losers.length, 1, `exactly one conflicted loser (round ${round})`);
+      const winner = winners[0];
+
+      // The seed journal holds EXACTLY ONE terminal event for the id (the loser appended nothing).
+      const events = readSeedJournal(root);
+      const terminal = events.filter(
+        (e) => e.suggestion_id === target.id && (e.op === "merge" || e.op === "reject")
+      );
+      assert.equal(terminal.length, 1, `one terminal journal event (round ${round})`);
+      assert.equal(terminal[0].op, winner.action, "the journal event is the winner's op");
+
+      // The loser correctly saw the winner's status as the current authoritative status.
+      assert.equal(losers[0].currentStatus, winner.status, "loser saw the winner's status");
+
+      // Registry ⇄ journal agreement: merge-win ⇒ registry present + folds `merged`; reject-win ⇒
+      // registry ABSENT + folds `rejected`. The two never contradict.
+      const folded = foldSeedStatus(events).get(target.id);
+      if (winner.action === "merge") {
+        assert.equal(folded, "merged");
+        assert.equal(existsSync(seedRegistryPath(root)), true, "merge winner wrote the registry");
+        const reg = JSON.parse(readFileSync(seedRegistryPath(root), "utf8"));
+        assert.ok(
+          reg.people.some((p) => p.ids.some((idv) => target.proposed_entry.ids.includes(idv))),
+          "the registry contains the merged person"
+        );
+      } else {
+        assert.equal(folded, "rejected");
+        assert.equal(existsSync(seedRegistryPath(root)), false, "reject winner wrote no registry");
+      }
+
+      // Replay is deterministic + idempotent: re-folding is stable, and re-running the LOSER's op
+      // again still conflicts and appends nothing (no second terminal event). Run this in-process
+      // against the RETAINED `target` — after a merge win the person is filtered from generation
+      // (cold-start skip), so re-deriving her by id is intentionally impossible.
+      assert.equal(
+        foldSeedStatus(readSeedJournal(root)).get(target.id),
+        folded,
+        "fold is stable on replay"
+      );
+      assert.throws(
+        () =>
+          winner.action === "merge"
+            ? rejectSuggestion(root, { ...target, status: "proposed" })
+            : mergeSuggestion(root, { ...target, status: "proposed" }),
+        (e) => e.name === "SeedConflictError" && e.currentStatus === winner.status,
+        "re-running the loser still conflicts (idempotent)"
+      );
+      const eventsAfter = readSeedJournal(root).filter(
+        (e) => e.suggestion_id === target.id && (e.op === "merge" || e.op === "reject")
+      );
+      assert.equal(eventsAfter.length, 1, "no new terminal event on idempotent replay");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

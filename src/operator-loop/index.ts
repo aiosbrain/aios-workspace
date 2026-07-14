@@ -928,6 +928,7 @@ export {
   THREAD_BREADTH_SATURATION,
   RECENCY_TAU_DAYS,
   SeedValidationError,
+  SeedConflictError,
   registryPath as seedRegistryPath,
   seedJournalPath,
   entitiesDir as seedEntitiesDir,

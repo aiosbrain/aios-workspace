@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { INBOX_DIR_REL, withInboxLock } from "./journal.js";
 import type { EnrichedObservation } from "./observations.js";
 import type { RegistryPerson } from "./ranker.js";
@@ -144,6 +144,38 @@ export class SeedValidationError extends Error {
     super(`inbox seed: ${message}`);
     this.name = "SeedValidationError";
   }
+}
+
+/**
+ * A deterministic optimistic-concurrency conflict: the authoritative status of `suggestionId`
+ * (folded from the seed journal INSIDE the inbox lock) was no longer `proposed` when a merge/reject
+ * tried to transition it. Thrown by the LOSER of a concurrent merge-vs-reject race — the winner
+ * already wrote its terminal event, so this attempt is a no-op that leaves no partial state. The
+ * fields make the outcome machine-checkable (winner vs loser) rather than a bare Error.
+ */
+export class SeedConflictError extends Error {
+  readonly suggestionId: string;
+  readonly currentStatus: SeedStatus;
+  readonly attempted: "merge" | "reject";
+  constructor(suggestionId: string, currentStatus: SeedStatus, attempted: "merge" | "reject") {
+    super(
+      `inbox seed: cannot ${attempted} "${suggestionId}" — it is already ${currentStatus} ` +
+        `(a concurrent transition won; only a proposed suggestion can be ${attempted}d)`
+    );
+    this.name = "SeedConflictError";
+    this.suggestionId = suggestionId;
+    this.currentStatus = currentStatus;
+    this.attempted = attempted;
+  }
+}
+
+/**
+ * The authoritative status of a suggestion, folded from the seed journal. MUST be called INSIDE the
+ * inbox lock by a mutating op so a stale `suggestion.status` snapshot can never gate a transition —
+ * the journal, not the passed-in object, is the source of truth.
+ */
+function authoritativeStatus(root: string, suggestionId: string): SeedStatus {
+  return foldSeedStatus(readSeedJournal(root)).get(suggestionId) ?? "proposed";
 }
 
 // ── path helpers ─────────────────────────────────────────────────────────────────────────────────
@@ -515,9 +547,18 @@ function readBytesOrNull(abs: string): string | null {
 }
 function writeAtomic(abs: string, bytes: string): void {
   mkdirSync(path.dirname(abs), { recursive: true });
-  const tmp = abs + `.tmp-${process.pid}`;
-  writeFileSync(tmp, bytes);
-  renameSync(tmp, abs);
+  // Crypto-random temp suffix (not just pid): two writers in the SAME process — or a pid that was
+  // reused — must never collide on the temp path and clobber each other mid-rename. `renameSync`
+  // moves the temp into place, so the successful path leaves no temp behind; a throw before the
+  // rename leaves at most this uniquely-named temp, never the live file.
+  const tmp = `${abs}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, bytes);
+    renameSync(tmp, abs);
+  } catch (e) {
+    removeIfExists(tmp); // best-effort cleanup of our own temp on failure
+    throw e;
+  }
 }
 function removeIfExists(abs: string): void {
   try {
@@ -568,17 +609,20 @@ export interface MergeResult {
  * Merge one suggestion — the SOLE writer of the registry/entity files. Captures the prior file bytes
  * as the inverse operation, writes the registry patch (and, for a `person` suggestion with
  * `entityFile: true`, a per-person entity file), records a `merge` seed-journal event, and returns
- * the merged status. Throws unless the suggestion is `proposed` (no double-merge, no merging a
- * rejected one). All work happens under the inbox lock.
+ * the merged status.
+ *
+ * The proposed-status gate is re-checked from the AUTHORITATIVE journal INSIDE the inbox lock (the
+ * passed-in `suggestion.status` is only a stale snapshot). So a concurrent merge-vs-reject race
+ * resolves deterministically: whoever takes the lock first writes its terminal event; the loser
+ * takes the lock, folds a non-`proposed` status, and throws `SeedConflictError` WITHOUT touching the
+ * registry/filesystem — the registry and the seed journal can never end up contradicting each other.
  */
 export function merge(root: string, suggestion: SeedSuggestion): MergeResult {
   if (!suggestion || typeof suggestion.id !== "string")
     throw new SeedValidationError("not a suggestion");
-  if (suggestion.status !== "proposed")
-    throw new SeedValidationError(
-      `can only merge a proposed suggestion (got "${suggestion.status}")`
-    );
   return withInboxLock(root, () => {
+    const current = authoritativeStatus(root, suggestion.id);
+    if (current !== "proposed") throw new SeedConflictError(suggestion.id, current, "merge");
     const regAbs = registryPath(root);
     const registryPrior = readBytesOrNull(regAbs);
     const registry: { people: RegistryPerson[] } = registryPrior
@@ -617,14 +661,9 @@ export function merge(root: string, suggestion: SeedSuggestion): MergeResult {
 
     writeAtomic(regAbs, serializeRegistry(registry));
 
-    const eventId =
-      "sm_" +
-      createHash("sha256")
-        .update(suggestion.id)
-        .update("|merge|")
-        .update(String(registryPrior ?? ""))
-        .digest("hex")
-        .slice(0, 12);
+    // Unique per event (not a content hash): a merge→unmerge→merge cycle must not reuse an id, or
+    // `unmerge`'s "not-yet-reversed merge" match would treat the fresh merge as already reversed.
+    const eventId = "sm_" + randomUUID();
     appendSeedEvent(root, {
       v: SEED_JOURNAL_VERSION,
       op: "merge",
@@ -647,18 +686,18 @@ export interface RejectResult {
   eventId: string;
 }
 
-/** Reject one suggestion. Writes NO registry/entity file — only a `reject` seed-journal event. */
+/**
+ * Reject one suggestion. Writes NO registry/entity file — only a `reject` seed-journal event. Like
+ * `merge`, the proposed-status gate is re-checked from the authoritative journal INSIDE the lock, so
+ * a reject that lost a race to a concurrent merge throws `SeedConflictError` and appends nothing.
+ */
 export function reject(root: string, suggestion: SeedSuggestion): RejectResult {
   if (!suggestion || typeof suggestion.id !== "string")
     throw new SeedValidationError("not a suggestion");
-  if (suggestion.status !== "proposed")
-    throw new SeedValidationError(
-      `can only reject a proposed suggestion (got "${suggestion.status}")`
-    );
   return withInboxLock(root, () => {
-    const eventId =
-      "sr_" +
-      createHash("sha256").update(suggestion.id).update("|reject").digest("hex").slice(0, 12);
+    const current = authoritativeStatus(root, suggestion.id);
+    if (current !== "proposed") throw new SeedConflictError(suggestion.id, current, "reject");
+    const eventId = "sr_" + randomUUID();
     appendSeedEvent(root, {
       v: SEED_JOURNAL_VERSION,
       op: "reject",
@@ -707,9 +746,7 @@ export function unmerge(root: string, suggestionId: string): UnmergeResult {
     appendSeedEvent(root, {
       v: SEED_JOURNAL_VERSION,
       op: "unmerge",
-      id:
-        "su_" +
-        createHash("sha256").update(target.id).update("|unmerge").digest("hex").slice(0, 12),
+      id: "su_" + randomUUID(),
       at: new Date().toISOString(),
       suggestion_id: suggestionId,
       kind: target.kind,
