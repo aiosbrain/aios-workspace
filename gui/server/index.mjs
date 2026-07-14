@@ -85,6 +85,8 @@ import {
   TaskEditError,
 } from "./tasks.mjs";
 import { searchSessions } from "./sessions-search.mjs";
+// Unified Inbox comms section (I-14 / AIO-395): the local read-model queue + the scoped-confirm broker.
+import { getInboxView, getInboxDetail, decideInbox } from "./inbox-api.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -513,6 +515,78 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+  // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
+  // GET /api/inbox → the I-09 read-only unified queue, the exact `aios inbox --json` shape, served from
+  // the same compiled read model so the GUI and CLI never diverge. `?raw=1` mirrors `aios inbox --raw`.
+  // Admin-tier local state — nothing here syncs to the Team Brain.
+  if (url.pathname === "/api/inbox" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    const raw = /^(1|true|raw)$/i.test(url.searchParams.get("raw") || "");
+    getInboxView(repo, { raw })
+      .then((view) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(view));
+      })
+      .catch((e) => {
+        res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      });
+    return;
+  }
+  // POST /api/inbox/:id/decision → the ONLY mutating call: scoped-confirmation over an I-03 capability
+  // handle. Body carries ONLY { handle, digest, decision }; the owning runtime validates + consumes.
+  // Matched BEFORE the generic detail route ([^/]+ can't span the trailing "/decision").
+  const inboxDecision = url.pathname.match(/^\/api\/inbox\/([^/]+)\/decision$/);
+  if (inboxDecision && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on("end", () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        /* bad body → decideInbox returns a 400 */
+      }
+      decideInbox(repo, decodeURIComponent(inboxDecision[1]), payload)
+        .then(({ status, ...rest }) => {
+          res.writeHead(status || 200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(rest));
+        })
+        .catch((e) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        });
+    });
+    return;
+  }
+  // GET /api/inbox/:id → one item's detail + any pending capability approvals to scoped-confirm from it.
+  const inboxDetail = url.pathname.match(/^\/api\/inbox\/([^/]+)$/);
+  if (inboxDetail && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    getInboxDetail(repo, decodeURIComponent(inboxDetail[1]))
+      .then((detail) => {
+        res.writeHead(detail.item ? 200 : 404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(detail));
+      })
+      .catch((e) => {
+        res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      });
     return;
   }
   // ── operator loop panel (token-gated) — AIO-318 ──
