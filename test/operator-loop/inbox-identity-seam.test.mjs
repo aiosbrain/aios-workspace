@@ -116,7 +116,10 @@ test("projection yields two distinct items for the same address in two account/t
 
 test("same address in the reply's own scope is a verified participant → ALLOW", () => {
   const recipient = identityFromItem(itemA, SHARED);
-  const { decision, sink } = run(replyRequest(itemA, [recipient]), threadCtxFromItem(itemA, SHARED));
+  const { decision, sink } = run(
+    replyRequest(itemA, [recipient]),
+    threadCtxFromItem(itemA, SHARED)
+  );
   assert.equal(decision.verdict, "allow");
   assert.equal(decision.rule_id, REPLY_RULE_IDS.ALLOW_ORIGIN_CONFINED);
   assert.equal(sink.events.length, 1);
@@ -126,7 +129,11 @@ test("same address, WRONG account/tenant scope is NOT a thread participant → n
   // Roster is scope A; the recipient is the SAME address resolved in scope B. Distinct identity.
   const recipientB = identityFromItem(itemB, SHARED);
   const { decision } = run(replyRequest(itemA, [recipientB]), threadCtxFromItem(itemA, SHARED));
-  assert.notEqual(decision.verdict, "allow", "a cross-scope same-address recipient must never allow");
+  assert.notEqual(
+    decision.verdict,
+    "allow",
+    "a cross-scope same-address recipient must never allow"
+  );
   assert.equal(decision.verdict, "needs_promotion");
   assert.equal(decision.rule_id, REPLY_RULE_IDS.DENY_RECIPIENT_EXPANSION);
 });
@@ -176,6 +183,67 @@ test("an unresolved participant in the thread roster never becomes a verified ta
   const { decision } = run(replyRequest(itemA, [recipient]), unresolvedThread);
   assert.notEqual(decision.verdict, "allow", "a legacy roster entry never authorizes a reply");
   assert.equal(decision.rule_id, REPLY_RULE_IDS.DENY_RECIPIENT_EXPANSION);
+});
+
+// --- isResolvedIdentityScope boundary table (comprehensive-review Low) ------------------------
+//
+// The shared predicate is PRESENCE-based, not content-parsing: it accepts only an object whose
+// `account` AND `tenant` are non-empty strings. It never trims, so a whitespace-only scope is
+// "resolved" AT THE PREDICATE — deliberately, because `buildObservation`'s `requireStr` already
+// rejects whitespace at ingest, and the reply PDP's exact-string roster match (not this predicate)
+// is the real allow gate, so a whitespace/degenerate scope can never be exploited into an allow
+// (asserted end-to-end below). This table pins the boundary; it does NOT change any deny semantics.
+
+test("isResolvedIdentityScope: unresolved shapes (null/undefined/{}/missing/empty/non-string) → false", () => {
+  const unresolved = [
+    null,
+    undefined,
+    {},
+    { account: "acct-A" }, // missing tenant
+    { tenant: "tenant-A" }, // missing account
+    { account: "", tenant: "" }, // empty strings
+    { account: "acct-A", tenant: "" }, // one empty
+    { account: "", tenant: "tenant-A" }, // the other empty
+    { account: 1, tenant: "tenant-A" }, // non-string account
+    { account: "acct-A", tenant: 2 }, // non-string tenant
+  ];
+  for (const v of unresolved) {
+    assert.equal(isResolvedIdentityScope(v), false, `must be unresolved: ${JSON.stringify(v)}`);
+  }
+});
+
+test("isResolvedIdentityScope: a fully account/tenant-resolved scope → true", () => {
+  assert.equal(isResolvedIdentityScope({ account: "acct-A", tenant: "tenant-A" }), true);
+});
+
+test("isResolvedIdentityScope: whitespace-only scope is presence-resolved (documented), but the PDP still denies it", () => {
+  // Predicate is presence-not-content: a whitespace scope has length > 0 → true here…
+  assert.equal(isResolvedIdentityScope({ account: " ", tenant: " " }), true);
+  assert.equal(isResolvedIdentityScope({ account: "\t", tenant: "\n" }), true);
+  // …but a whitespace-scoped recipient is NOT a roster member, so the PDP never allows it: the
+  // exact-string roster match is the true gate. Deny semantics are intact.
+  const wsRecipient = { account: " ", tenant: " ", address: SHARED, verified: true };
+  const { decision } = run(replyRequest(itemA, [wsRecipient]), threadCtxFromItem(itemA, SHARED));
+  assert.notEqual(decision.verdict, "allow", "a whitespace scope must never resolve to an allow");
+  assert.equal(decision.rule_id, REPLY_RULE_IDS.DENY_RECIPIENT_EXPANSION);
+});
+
+test("degenerate-scope recipients (missing/empty/null scope) all default-deny at the PDP", () => {
+  const degenerate = [
+    { address: SHARED, verified: true }, // no scope at all
+    { account: "", tenant: "", address: SHARED, verified: true }, // empty scope
+    { account: null, tenant: null, address: SHARED, verified: true }, // null scope
+    { account: "acct-A", address: SHARED, verified: true }, // missing tenant
+  ];
+  for (const bad of degenerate) {
+    const { decision } = run(replyRequest(itemA, [bad]), threadCtxFromItem(itemA, SHARED));
+    assert.notEqual(decision.verdict, "allow", `must not allow: ${JSON.stringify(bad)}`);
+    assert.equal(
+      decision.rule_id,
+      REPLY_RULE_IDS.DENY_UNKNOWN_PARTICIPANT,
+      `unresolved scope → unknown participant: ${JSON.stringify(bad)}`
+    );
+  }
 });
 
 // --- determinism holds through the seam -------------------------------------------------------
