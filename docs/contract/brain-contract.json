@@ -83,5 +83,10 @@
     "slack",
     "github"
   ],
-  "contentHash": "2dc42e6475e6a8bf2b888c65a5e192bdd0e08ba1ea0de6d33b7e1442aca77291"
+  "gatewayContract": {
+    "path": "gateway-v1.10.json",
+    "version": "1.10",
+    "sha256": "4ddd6495fa505b76118080865d60255bfba94a9ccda249defe428babb3d0c205"
+  },
+  "contentHash": "1c967b9147411b614bcd298ee2447779815be569f52433b30465c0b728b0fa5f"
 }

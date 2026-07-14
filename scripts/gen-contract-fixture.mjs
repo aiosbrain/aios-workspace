@@ -4,7 +4,7 @@
  *
  * The pinned conformance fixture (docs/contract/brain-contract.json) is the canonical
  * workspace<->brain seam (AIO-314); the brain vendors a byte-identical copy. Its
- * `contentHash` pins {version, tierAliases, sse, provisioningTools} so the two copies
+ * `contentHash` pins {version, tierAliases, sse, provisioningTools, gatewayContract} so the two copies
  * can't drift silently. When you edit the fixture (e.g. bump `version` for a contract
  * release), run this to recompute the hash — the exact canonicalization + hashed field
  * set that test/contract-conformance.test.mjs (and the brain's mirror guard) verify.
@@ -39,9 +39,11 @@ const canonical = (v) =>
       : v;
 
 const fixture = JSON.parse(readFileSync(target, "utf8"));
-const { version, tierAliases, sse, provisioningTools } = fixture;
+const { version, tierAliases, sse, provisioningTools, gatewayContract } = fixture;
 const contentHash = createHash("sha256")
-  .update(JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools })))
+  .update(
+    JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools, gatewayContract }))
+  )
   .digest("hex");
 
 fixture.contentHash = contentHash;

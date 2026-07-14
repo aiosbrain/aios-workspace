@@ -113,7 +113,8 @@ Policy is deterministic and default-deny:
 
 1. hard boundary checks: service identity, team/member/subject/connection, tier, registry, GET-only;
 2. revocation, expiry, stale policy/version, and replay checks;
-3. most-specific matching rule (member > role > team; exact tool > toolkit wildcard), then priority;
+3. most-specific matching rule (actor > role > tier > team; exact tool > toolkit wildcard; exact
+   repository > wildcard), then highest numeric priority;
 4. `block` wins a same-specificity/priority conflict;
 5. `require_approval` wins over `allow`;
 6. absence of a matching allow is block.
@@ -121,11 +122,10 @@ Policy is deterministic and default-deny:
 Executor's `ToolPolicyProvider` is defense in depth and can only make the result stricter. Brain's
 exact-call decision is authoritative.
 
-Approval persists the encrypted normalized request envelope in Brain, never in Executor. It lasts
-15 minutes. `aios_gateway.resume` claims the execution in Brain and reconstructs the call from the
-Brain-owned envelope after a full Executor restart. An exclusive transactional claim plus the
-execution/idempotency key makes concurrent resumes single-winner. Losers receive a safe settled
-result; they do not redeem or call GitHub.
+Approval administration and `aios_gateway.resume` are owned by AIO-407. AIO-401 persists an
+approval-required decision but does not expose decision or resume routes. An initial allow is not
+replayable: if its response is lost, the caller starts a new read with a new lease and idempotency
+key; the old execution is never decrypted or sealed a second time.
 
 ## Strict audit
 
