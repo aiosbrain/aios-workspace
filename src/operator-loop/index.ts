@@ -399,6 +399,38 @@ export {
   type CompactReport,
   type SourceRead,
 } from "./inbox/read-model.js";
+// Enriched adapter-observation record + dual-read projection (I-06 / AIO-387). The versioned
+// record carries account/tenant identity so the corrected dedup key
+// `(connection/account/tenant, object_kind, native_id)` keeps two accounts observing one native
+// object as two items; the legacy `activity.jsonl` stream stays byte-identical (dual emission).
+export {
+  OBSERVATIONS_SCHEMA_VERSION,
+  OBSERVATIONS_BASENAME,
+  ObservationValidationError,
+  observationDedupKey,
+  observationObjectKey,
+  observationLineKey,
+  buildObservation,
+  parseObservationLine,
+  observationsPath,
+  readObservations,
+  readCursor,
+  appendObservations,
+  writeObservation,
+  legacyToObjectRef,
+  projectObservations,
+  type ObjectKind,
+  type RevisionOp,
+  type ObservationParticipant,
+  type ObservationRevision,
+  type EnrichedObservation,
+  type ObservationInput,
+  type ObservationReadWarning,
+  type ObservationReadResult,
+  type LegacyActivityRecord,
+  type ProjectedItem,
+  type ProjectInput,
+} from "./inbox/observations.js";
 export {
   MACHINES,
   ATTENTION_STATES,

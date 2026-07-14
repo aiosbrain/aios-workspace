@@ -25,6 +25,25 @@ The loop needs to know what the operator communicated and what's waiting on some
   conversation type; missing state is skipped rather than guessed. The manual script remains
   available, while recording owner daily runs invoke it automatically.
 
+### Enriched adapter-observation record (AIO-387)
+
+Alongside the legacy `activity.jsonl` line, the gog writer now **dual-emits** a versioned
+**enriched adapter-observation** record to `.aios/loop/inbox/observations.ndjson`
+(`src/operator-loop/inbox/observations.ts`, part of the unified-inbox domain). The legacy stream
+stays **byte-identical** — existing readers (`sources/comms.ts`, the I-02 read-model advisory join)
+are untouched; no flag turns the legacy stream off in this slice.
+
+The enriched record carries what `CommsActivityRecord` lacks: **account/tenant identity**, **object
+kind** (`email` | `calendar-event` | `message` | …), **thread id**, **participants**, and
+**edit/delete revisions**. Its dedup key is the corrected
+**`(connection/account/tenant, object_kind, native_id)`** — account/tenant are part of identity, so
+two Gmail accounts observing the same native message project to **two items, not one**. Cursors ride
+on each record (no cursor-ahead-of-data crash window), and bodies are never stored (snippet +
+metadata only, on-demand fetch under retention). Same admin-tier posture as the journal: local
+state under `.aios/loop/inbox/`, never added to `sync_include`, never pushed to the Team Brain. The
+dual-read projection (`projectObservations`) folds the enriched log and legacy `activity.jsonl` into
+one keyed item set; see `test/operator-loop/inbox-observations-dualread.test.mjs`.
+
 ### Automatic recording-daily preamble (AIO-366)
 
 Before C1 collection, a recording owner daily runs Granola, GOG, and Slack concurrently through
