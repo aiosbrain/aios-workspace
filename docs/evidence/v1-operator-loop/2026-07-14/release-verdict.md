@@ -7,8 +7,8 @@
 
 - `1.0.0`: **no-go**. AIO-122 lacks three consecutive human weekly runs and a multi-day daily
   window; Unified Inbox AIO-381 remains In Progress; cockpit parity is only partial.
-- `1.0.0-beta`: **no-go today, next plausible tag**. It becomes defensible after the current build
-  is green and every open `v1.0-demo` item is completed or explicitly re-scoped by John.
+- `1.0.0-beta`: **code gates are green; board decision remains**. Tag after every open
+  `v1.0-demo` item is completed or explicitly re-scoped by John.
 
 ## Proven
 
@@ -20,11 +20,11 @@
 - Linear drift pagination is fixed; AIO-130 no longer blocks AIO-122.
 - CQ3 is mechanically verifiable and its spec evaluation is `SPEC_READY` (100/100).
 - Operator Loop tests pass 512/512; docs, secret, and leak gates pass.
+- The merged `main` branch passes `npm run build:loop` and the full `npm test` suite.
 
 ## Blocking
 
 - Longitudinal AIO-122 criteria: one clean weekly instead of three, and one synthetic daily day.
-- `npm run build:loop`: duplicate Inbox event type exports on current `origin/main`.
 - Open demo-critical Operator Loop issues: AIO-358, AIO-359, AIO-360, AIO-361, AIO-399, AIO-406.
 - Open release work: AIO-398 and Unified Inbox AIO-381 plus its active seam issues.
 - Public-release checklist items outside this close-out remain unchecked.

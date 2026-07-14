@@ -12,8 +12,8 @@ an OSS release.
 | Docs drift guard | `npm run check:docs` | **Pass** — 2026-07-14 |
 | Linear reconciliation | `npm run check:v1-linear` | **Pass** — C1–C8 Done; stale AIO-130 blocker absent |
 | Operator-loop tests | `node --test test/operator-loop/*.test.mjs` | **Pass** — 512/512 |
-| TypeScript build | `npm run build:loop` | **Blocker** — duplicate Inbox event type exports |
-| Full repo tests | `npm test` | **Blocked** at the same TypeScript compilation error |
+| TypeScript build | `npm run build:loop` | **Pass** — Inbox export collision repaired on `main` (`41da9e8`) |
+| Full repo tests | `npm test` | **Pass** — 2026-07-14 on merged `main` |
 | Scaffold validators | `validation/validate-all.sh <workspace>` | **Pass** on fresh synthetic workspace; optional warnings only |
 | Secret/leak gates | `validation/check-secrets.sh .` and `scripts/leak-gate.sh .` | **Pass** — 2026-07-14 |
 | Website alignment | Cross-repo docs sync/review | Required before website says V1 is shipped |
