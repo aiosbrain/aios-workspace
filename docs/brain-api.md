@@ -803,11 +803,37 @@ normal not-connected state.
 These routes are not workspace/sync endpoints. They are authenticated with a rotated, hashed
 `GatewayServiceIdentity`, bind one deployment environment, and are never callable with a member
 API key. Requests and responses use JSON over TLS. Every route rejects an Executor/companion/
-contract version mismatch before lease or credential work.
+contract version mismatch before subject, connection, lease, or credential work. The canonical,
+machine-readable contract is [`contract/gateway-v1.10.json`](./contract/gateway-v1.10.json); it is
+independently versioned and content-addressed from the general Brain fixture.
 
 The server-only types are `GatewayServiceIdentity`, `ExecutorSubjectBinding`,
 `GatewayConnectionRef`, `ResolutionLease`, `GatewayPolicyRule`, `GatewayExecution`,
 `GatewayApproval`, `AuthorizeDecision`, and `ExecutionOutcome`.
+
+Service authentication is `Authorization: Bearer aios_gw_<credential-id>_<secret>` where the ID
+is exactly 22 base64url characters encoding 16 bytes and the secret is exactly 43 base64url
+characters encoding 32 bytes. Brain stores lowercase SHA-256 of the decoded secret bytes only,
+strictly decodes both components, compares equal-length digest buffers in constant time, and
+returns the same `401 gateway_unauthorized` response for every malformed or invalid credential.
+Authentication precedes exact version-header validation:
+
+```http
+X-AIOS-Executor-Version: 1.5.33
+X-AIOS-Companion-Version: 0.1.0
+X-AIOS-Contract-Version: 1.10
+```
+
+Multiple independently active credential rows may overlap during rotation; an allow response is
+sealed to the row that authenticated that request. Existing service rows that predate this grammar
+must be explicitly rotated because a plaintext secret cannot be recovered from its digest.
+
+Only `AIOS_GATEWAY_INTERNAL_ENABLED=true` enables these routes. Disabled routes return a
+non-enumerating, no-store `404` before authentication or body parsing. Enabled routes reject any
+content encoding except absent/`identity` and count raw request bytes before JSON parsing, accepting
+at most 65,536 bytes. Errors are always
+`{error:{code,message,request_id,correlation_id}}` with an allowlisted message and
+`Cache-Control: no-store`.
 
 ### `POST /api/internal/executor-gateway/v1/resolve-lease`
 
@@ -879,6 +905,29 @@ companion may open it immediately before the one permitted GitHub request; it de
 request-local plaintext and envelope reference immediately afterward. Neither form may enter the
 sandbox, persistence, logs, MCP, errors, or outcome.
 
+The seven tool argument objects, and no others, are pinned in the machine fixture. Unknown fields
+are rejected. Strings trim surrounding ASCII whitespace while preserving case and Unicode bytes;
+list defaults are `state: "open"`, `page: 1`, and `perPage: 30`; numeric inputs must be JSON
+integers in their declared ranges. `requestHash` is lowercase SHA-256 of RFC 8785/JCS canonical
+UTF-8 JSON for the normalized object. The fixture includes a fixed vector for each tool plus
+negative vectors for unknown fields, fractional integers, and unsafe paths.
+
+Enabled policy rows map to exact action `gateway.aios-github-readonly.<tool>` or wildcard
+`gateway.aios-github-readonly.*`, and exact resource `github.repository:<owner>/<repo>` or
+`github.repository:*`. Precedence is actor over role over tier over team, exact tool over wildcard,
+exact repository over wildcard, highest numeric priority, then `block` over `require_approval` over
+`allow`; no match blocks. The policy version is SHA-256 over the JCS array of active rows sorted by
+ID. It is recomputed while consuming the lease; a changed version returns `409
+gateway_policy_stale` without consuming it.
+
+The credential envelope uses HKDF-SHA-256 over the authenticated service-secret bytes. Salt is
+SHA-256 of ASCII `aios-gateway-sealed-credential:v1`; info is credential ID, NUL, then decimal
+credential version; output is 32 bytes. Wire form is
+`v1.<base64url(protected-header-jcs)>.<base64url(12-byte-nonce)>.<base64url(ciphertext||16-byte-tag)>`.
+The protected header contains exactly `{v,kid,sid,eid,provider,iat,exp}`, the decoded header bytes
+are AES-256-GCM AAD, plaintext is raw PAT bytes only, and `exp - iat` is at most 15 seconds.
+The PAT remains sourced solely from `gateway_connections.credential_ciphertext`.
+
 ### `POST /api/internal/executor-gateway/v1/record-outcome`
 
 ```json
@@ -895,55 +944,18 @@ The classification is one of `success`, `blocked`, `approval_required`, `credent
 `upstream`, `response_too_large`, or `internal`. No result body, raw arguments, headers, lease, or
 credential is accepted. Outcome recording never authorizes a call.
 
-### `POST /api/internal/executor-gateway/v1/approvals/{approvalId}/decision`
+Settlement identity is authenticated service identity plus `executionId`; `correlationId` is audit
+metadata, not replay equality. Canonical replay fields are classification, upstream status class,
+and response byte count. `claimed + success` becomes `succeeded`; the other claimed failure
+classifications become `failed`; `blocked` accepts only `blocked`; `approval_required` accepts only
+`approval_required`. The first compare-and-swap inserts exactly one outcome audit row in the same
+transaction. An identical replay returns `204`; a different or incompatible replay returns `409`.
 
-Admin-authorized request:
-
-```json
-{ "decision": "approved", "approverMemberId": "uuid", "correlationId": "uuid" }
-```
-
-`decision` is `approved` or `denied`. The transition is append-only/audited and fails for settled,
-expired, wrong-team, or stale-policy approvals. Approval expiry is 15 minutes.
-
-### `POST /api/internal/executor-gateway/v1/executions/{executionId}/resume-claim`
-
-```json
-{
-  "executorTenantId": "opaque-tenant",
-  "executorSubjectId": "opaque-subject",
-  "toolkit": "aios-github-readonly",
-  "correlationId": "uuid",
-  "idempotencyKey": "opaque"
-}
-```
-
-The transaction rebinds identity/policy, takes the writer-honored exclusive claim, and returns one
-of:
-
-```json
-{
-  "status": "claimed",
-  "executionId": "uuid",
-  "tool": "github.repository.get",
-  "normalizedArgs": { "owner": "owner", "repo": "repo" },
-  "sealedCredential": "v1.<opaque-aead-envelope>"
-}
-```
-
-```json
-{ "status": "settled", "executionId": "uuid", "result": "already_claimed" }
-```
-
-```json
-{ "status": "blocked", "executionId": "uuid", "code": "expired_or_revoked" }
-```
-
-Only `claimed` can contain `sealedCredential`, and only after strict audit. It has the same
-execution-and-service AEAD binding and companion-only request-local open/destruction contract as an
-initial allow. Concurrent claims produce one `claimed`; every loser is safely `settled`. The
-encrypted request envelope and approval state are Brain-owned, so `aios_gateway.resume` works after
-a full Executor restart.
+Approval decisions and approved-execution resume claims are owned by AIO-407 and are intentionally
+not routes in the AIO-401 gateway contract. A lost initial allow response is never recovered by a
+resume: retrying the same lease or idempotency key returns `409 gateway_allow_already_committed`
+without decrypting or sealing again. Reusing an idempotency key with a different binding, toolkit,
+tool, or request hash returns `409 gateway_idempotency_conflict`.
 
 ### Internal failure and audit rules
 

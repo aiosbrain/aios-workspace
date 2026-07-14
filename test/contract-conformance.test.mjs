@@ -29,15 +29,29 @@ const canonical = (v) =>
 
 test("fixture contentHash is intact (no out-of-band edit)", () => {
   // v1.7 added provisioningTools (the member-invite tool vocabulary) to the pinned content.
-  const { version, tierAliases, sse, provisioningTools } = fixture;
+  const { version, tierAliases, sse, provisioningTools, gatewayContract } = fixture;
   const recomputed = createHash("sha256")
-    .update(JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools })))
+    .update(
+      JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools, gatewayContract }))
+    )
     .digest("hex");
   assert.equal(
     recomputed,
     fixture.contentHash,
     "edit the fixture via the generator so contentHash updates"
   );
+});
+
+test("gateway contract reference is content-addressed and independently versioned", () => {
+  const gatewayPath = path.join(ROOT, "docs/contract", fixture.gatewayContract.path);
+  const bytes = readFileSync(gatewayPath);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), fixture.gatewayContract.sha256);
+  const gateway = JSON.parse(bytes.toString("utf8"));
+  assert.equal(gateway.version, fixture.gatewayContract.version);
+  assert.equal(gateway.version, "1.10");
+  assert.equal(Object.keys(gateway.tools.definitions).length, 7);
+  assert.equal(gateway.tools.hashVectors.length, 7);
+  assert.equal(Object.keys(gateway.routes).length, 3);
 });
 
 test("fixture provisioningTools is a non-empty unique string list (v1.7)", () => {
