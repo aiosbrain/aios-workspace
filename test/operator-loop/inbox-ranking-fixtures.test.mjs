@@ -101,8 +101,15 @@ test("protected partition precedes unprotected in the ranked order (regardless o
 test("every ranked row carries a non-empty why and the current ranker_version", () => {
   for (const it of ITEMS) {
     const r = rankItem(it.input, registry);
-    assert.ok(typeof r.why === "string" && r.why.trim().length > 0, `empty why for ${it.input.correlationId}`);
-    assert.equal(r.ranker_version, RANKER_VERSION, `ranker_version stamped on ${it.input.correlationId}`);
+    assert.ok(
+      typeof r.why === "string" && r.why.trim().length > 0,
+      `empty why for ${it.input.correlationId}`
+    );
+    assert.equal(
+      r.ranker_version,
+      RANKER_VERSION,
+      `ranker_version stamped on ${it.input.correlationId}`
+    );
     assert.ok(["URGENT", "IMPORTANT", "FYI", "AWARENESS"].includes(r.bucket));
     assert.equal(typeof r.features, "object");
   }
@@ -115,8 +122,14 @@ test("determinism — two runs over the corpus produce identical RankResult sets
   const b = ITEMS.map((it) => rankItem(it.input, registry));
   assert.deepEqual(a, b, "identical inputs must yield identical RankResults");
   // rankCorpus ordering is stable too.
-  const o1 = rankCorpus(ITEMS.map((it) => it.input), registry).map((r) => r.input.correlationId);
-  const o2 = rankCorpus(ITEMS.map((it) => it.input), registry).map((r) => r.input.correlationId);
+  const o1 = rankCorpus(
+    ITEMS.map((it) => it.input),
+    registry
+  ).map((r) => r.input.correlationId);
+  const o2 = rankCorpus(
+    ITEMS.map((it) => it.input),
+    registry
+  ).map((r) => r.input.correlationId);
   assert.deepEqual(o1, o2, "ranked order is deterministic");
 });
 
@@ -127,10 +140,18 @@ test("golden bucket lock — the frozen corpus reproduces its expected_bucket as
   for (const it of ITEMS) {
     const r = rankItem(it.input, registry);
     if (r.bucket !== it.label.expected_bucket) {
-      mismatches.push({ id: it.input.correlationId, got: r.bucket, want: it.label.expected_bucket });
+      mismatches.push({
+        id: it.input.correlationId,
+        got: r.bucket,
+        want: it.label.expected_bucket,
+      });
     }
   }
-  assert.equal(mismatches.length, 0, `golden bucket lock drift: ${JSON.stringify(mismatches.slice(0, 8))}`);
+  assert.equal(
+    mismatches.length,
+    0,
+    `golden bucket lock drift: ${JSON.stringify(mismatches.slice(0, 8))}`
+  );
 });
 
 // ── Appendix-A parity: hand-derived buckets from the digest rules ──────────────────────────────────
@@ -165,7 +186,11 @@ function mk(overrides) {
 
 const PARITY_CASES = [
   // from-me-last → AWARENESS
-  ["from-me", mk({ sender: { account: "p1" }, fromMe: true, body: "Can you approve this by tomorrow?" }), "AWARENESS"],
+  [
+    "from-me",
+    mk({ sender: { account: "p1" }, fromMe: true, body: "Can you approve this by tomorrow?" }),
+    "AWARENESS",
+  ],
   // noise gate → AWARENESS
   ["empty body", mk({ sender: { account: "p1" }, body: "" }), "AWARENESS"],
   ["system line", mk({ sender: { account: "p1" }, body: "Missed video call" }), "AWARENESS"],
@@ -173,31 +198,129 @@ const PARITY_CASES = [
   ["one-word ack thanks", mk({ sender: { account: "p1" }, body: "thanks so much" }), "AWARENESS"],
   ["emoji-only", mk({ sender: { account: "p1" }, body: "👍🎉" }), "AWARENESS"],
   // groups
-  ["group high-actionability", mk({ threadKind: "group", chatName: "Team", sender: { account: "p1" }, body: "Can you review this by tomorrow?" }), "IMPORTANT"],
-  ["group low-actionability", mk({ threadKind: "group", chatName: "Team", sender: { account: "p1" }, body: "I finished the report." }), "AWARENESS"],
-  ["group vendorish", mk({ threadKind: "group", chatName: "Resort", sender: { account: "p2" }, body: "How can we help? Please confirm your reservation." }), "AWARENESS"],
+  [
+    "group high-actionability",
+    mk({
+      threadKind: "group",
+      chatName: "Team",
+      sender: { account: "p1" },
+      body: "Can you review this by tomorrow?",
+    }),
+    "IMPORTANT",
+  ],
+  [
+    "group low-actionability",
+    mk({
+      threadKind: "group",
+      chatName: "Team",
+      sender: { account: "p1" },
+      body: "I finished the report.",
+    }),
+    "AWARENESS",
+  ],
+  [
+    "group vendorish",
+    mk({
+      threadKind: "group",
+      chatName: "Resort",
+      sender: { account: "p2" },
+      body: "How can we help? Please confirm your reservation.",
+    }),
+    "AWARENESS",
+  ],
   // DMs — URGENT / IMPORTANT / FYI / AWARENESS cascade
-  ["dm tier1 recent urgent", mk({ sender: { account: "p1" }, body: "Can you approve this by tomorrow? Urgent.", sentAt: daysAgo(0.5) }), "URGENT"],
-  ["dm tier1 needs but old", mk({ sender: { account: "p1" }, body: "Can you approve this by tomorrow? Urgent.", sentAt: daysAgo(5) }), "IMPORTANT"],
-  ["dm tier1 needs age-unknown coarser", mk({ sender: { account: "p1" }, body: "Can you approve this by tomorrow? Urgent.", sentAt: null }), "IMPORTANT"],
-  ["dm tier2 moderate-actionability needs", mk({ sender: { account: "p2" }, body: "what about it" }), "IMPORTANT"],
-  ["dm unknown sender low-act", mk({ sender: { handle: "stranger" }, body: "Just sharing an update here." }), "AWARENESS"],
-  ["dm tier3 low-act fyi", mk({ sender: { account: "p3" }, body: "Just sharing an update here." }), "FYI"],
-  ["dm vendorish", mk({ sender: { account: "p2" }, body: "Your booking is confirmed, thank you for choosing us." }), "AWARENESS"],
+  [
+    "dm tier1 recent urgent",
+    mk({
+      sender: { account: "p1" },
+      body: "Can you approve this by tomorrow? Urgent.",
+      sentAt: daysAgo(0.5),
+    }),
+    "URGENT",
+  ],
+  [
+    "dm tier1 needs but old",
+    mk({
+      sender: { account: "p1" },
+      body: "Can you approve this by tomorrow? Urgent.",
+      sentAt: daysAgo(5),
+    }),
+    "IMPORTANT",
+  ],
+  [
+    "dm tier1 needs age-unknown coarser",
+    mk({
+      sender: { account: "p1" },
+      body: "Can you approve this by tomorrow? Urgent.",
+      sentAt: null,
+    }),
+    "IMPORTANT",
+  ],
+  [
+    "dm tier2 moderate-actionability needs",
+    mk({ sender: { account: "p2" }, body: "what about it" }),
+    "IMPORTANT",
+  ],
+  [
+    "dm unknown sender low-act",
+    mk({ sender: { handle: "stranger" }, body: "Just sharing an update here." }),
+    "AWARENESS",
+  ],
+  [
+    "dm tier3 low-act fyi",
+    mk({ sender: { account: "p3" }, body: "Just sharing an update here." }),
+    "FYI",
+  ],
+  [
+    "dm vendorish",
+    mk({
+      sender: { account: "p2" },
+      body: "Your booking is confirmed, thank you for choosing us.",
+    }),
+    "AWARENESS",
+  ],
   // email stage-0 mutes
-  ["email auto-reply subject", mk({ channel: "gmail", threadKind: "email-thread", sender: { account: "p1" }, subject: "Out of office", body: "I am away until Monday." }), "AWARENESS"],
-  ["email bulk sender", mk({ channel: "gmail", threadKind: "email-thread", sender: { email: "x@y.com" }, fromAddress: "no-reply@list.com", subject: "News", body: "Weekly digest." }), "AWARENESS"],
+  [
+    "email auto-reply subject",
+    mk({
+      channel: "gmail",
+      threadKind: "email-thread",
+      sender: { account: "p1" },
+      subject: "Out of office",
+      body: "I am away until Monday.",
+    }),
+    "AWARENESS",
+  ],
+  [
+    "email bulk sender",
+    mk({
+      channel: "gmail",
+      threadKind: "email-thread",
+      sender: { email: "x@y.com" },
+      fromAddress: "no-reply@list.com",
+      subject: "News",
+      body: "Weekly digest.",
+    }),
+    "AWARENESS",
+  ],
 ];
 
 test("Appendix-A parity — hand-derived bucket assignments reproduce exactly", () => {
   for (const [name, input, expected] of PARITY_CASES) {
     const r = rankItem(input, PARITY_REGISTRY);
-    assert.equal(r.bucket, expected, `parity[${name}] expected ${expected}, got ${r.bucket} (why: ${r.why})`);
+    assert.equal(
+      r.bucket,
+      expected,
+      `parity[${name}] expected ${expected}, got ${r.bucket} (why: ${r.why})`
+    );
   }
 });
 
 test("Appendix-A parity — signal formula = importance^0.5 · (0.3 + 0.7·actionability)", () => {
-  const r = rankItem(mk({ sender: { account: "p1" }, body: "Can you approve this by tomorrow? Urgent." }), PARITY_REGISTRY);
+  const r = rankItem(
+    mk({ sender: { account: "p1" }, body: "Can you approve this by tomorrow? Urgent." }),
+    PARITY_REGISTRY
+  );
   const imp = r.features.importance;
   const act = r.features.actionability;
   const expected = Math.round(Math.sqrt(imp) * (0.3 + 0.7 * act) * 1e4) / 1e4;
@@ -211,20 +334,38 @@ test("shadow-mode zero-byte-change — ranking + recording leaves the I-02 read-
   try {
     // Build a non-trivial read model from the journal (I-02 canonical projection).
     const cid = "corr-shadow";
-    appendInboxEvent(root, { kind: "observation-correlation", correlation_id: cid, payload: { source: "email", native_id: "n1", thread_id: "t1" } });
-    appendInboxEvent(root, { kind: "user-intent", correlation_id: cid, payload: { intent: "surface" } });
-    appendInboxEvent(root, { kind: "user-intent", correlation_id: cid, payload: { intent: "acknowledge" } });
+    appendInboxEvent(root, {
+      kind: "observation-correlation",
+      correlation_id: cid,
+      payload: { source: "email", native_id: "n1", thread_id: "t1" },
+    });
+    appendInboxEvent(root, {
+      kind: "user-intent",
+      correlation_id: cid,
+      payload: { intent: "surface" },
+    });
+    appendInboxEvent(root, {
+      kind: "user-intent",
+      correlation_id: cid,
+      payload: { intent: "acknowledge" },
+    });
     const before = rebuildReadModel(root);
 
     // Run the ranker over the corpus and RECORD shadow rows (the shadow harness).
-    const ranked = rankCorpus(ITEMS.map((it) => it.input), registry);
+    const ranked = rankCorpus(
+      ITEMS.map((it) => it.input),
+      registry
+    );
     const written = recordShadowRanking(root, ranked);
     assert.equal(written.length, ITEMS.length, "every ranked row recorded");
 
     // The shadow sidecar lives in the admin-tier LOCAL inbox dir — NOT the canonical projection.
     const sidecar = shadowLogPath(root);
     assert.ok(existsSync(sidecar), "shadow sidecar written");
-    assert.ok(sidecar.includes(path.join(INBOX_DIR_REL)), "sidecar is under admin-tier local .aios/loop/inbox");
+    assert.ok(
+      sidecar.includes(path.join(INBOX_DIR_REL)),
+      "sidecar is under admin-tier local .aios/loop/inbox"
+    );
     assert.equal(path.basename(sidecar), SHADOW_LOG_BASENAME);
     assert.ok(statSync(sidecar).size > 0, "sidecar non-empty");
 
@@ -240,7 +381,11 @@ test("shadow-mode zero-byte-change — ranking + recording leaves the I-02 read-
 
     // ZERO byte-change: rebuild the read model and assert the canonical digest is byte-identical.
     const after = rebuildReadModel(root);
-    assert.equal(after.digest, before.digest, "shadow ranking must NOT perturb the I-02 read-model digest");
+    assert.equal(
+      after.digest,
+      before.digest,
+      "shadow ranking must NOT perturb the I-02 read-model digest"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
