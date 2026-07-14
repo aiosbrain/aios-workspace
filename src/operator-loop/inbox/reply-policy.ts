@@ -51,12 +51,7 @@ export interface ParticipantIdentity {
 /** Where a piece of evidence originated. Only `thread-message` from the reply's own thread is
  *  origin-confined; every other kind is unrelated workspace/admin context. */
 export type EvidenceKind =
-  | "thread-message"
-  | "workspace-attachment"
-  | "ledger"
-  | "entity"
-  | "other-thread"
-  | "unknown";
+  "thread-message" | "workspace-attachment" | "ledger" | "entity" | "other-thread" | "unknown";
 
 /** A structured pointer to a piece of evidence backing the draft. The PDP reads these fields only —
  *  never the evidence body. */
