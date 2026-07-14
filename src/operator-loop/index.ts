@@ -428,6 +428,25 @@ export {
   type TransitionOptions,
 } from "./inbox/state-machines.js";
 
+// Unified Inbox — capability-handle broker (I-03 / AIO-384, G2b). Coordinator-side public API; the
+// owning-runtime durable store lives beside the Claude Code adapter (capability-store.mjs). Provisional
+// module home per I-01 (`src/operator-loop/inbox/`); admin-tier local state, never synced.
+export {
+  brokerDecision,
+  notifyDeepLink,
+  createInMemoryJournal,
+  type ApprovalDecision,
+  type DisplayProjection,
+  type BrokeredDecision,
+  type InboxEventKind,
+  type InboxEvent,
+  type AppendInboxEvent,
+  type BrokerOptions,
+  type DeepLinkAsk,
+  type NotifyDeepLink,
+  type NotifyDeepLinkOptions,
+} from "./inbox/capability.js";
+
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
   NOTIF_CHANNEL_KEY,

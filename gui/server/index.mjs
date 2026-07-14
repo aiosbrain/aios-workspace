@@ -36,6 +36,15 @@ import {
   redactSecrets,
 } from "./memory-reviewer.mjs";
 import { ALLOWED_MODELS, MODEL_OPTIONS } from "./runtime-adapters/claude-code.mjs";
+// I-03 (AIO-384): runtime-issued capability handle. The owning-runtime durable store is plain ESM
+// (no dist dependency, safe to load at server start); the coordinator-side broker/fallback lives in
+// the compiled operator-loop and is loaded lazily + guarded so `npm run gui` never hard-depends on a
+// built dist. Admin-tier local state — never synced.
+import {
+  issueHandle,
+  consumeAndExecute,
+  capabilityTargets,
+} from "./runtime-adapters/capability-store.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
 import { GUI_RUNTIMES, runtimeCapabilities } from "../../scripts/runtimes.mjs";
 import {
@@ -117,6 +126,33 @@ function flag(name, dflt) {
 }
 const repo = path.resolve(flag("--repo", process.cwd()));
 const port = parseInt(flag("--port", "8790"), 10);
+
+// I-03 (AIO-384): lazily load the coordinator-side broker (brokerDecision / notifyDeepLink) from the
+// compiled operator-loop. Guarded so a missing/unbuilt dist degrades to an inline envelope broker —
+// the server must start even before `npm run build:loop`. The AUTHORITY that matters (validate +
+// durable consume) is the runtime store, which is already statically imported above.
+let _coordinatorPromise;
+function loadCoordinator() {
+  if (!_coordinatorPromise) {
+    _coordinatorPromise = import("../../dist/operator-loop/index.js").catch(() => ({
+      // Inline fallback broker: the coordinator never authorizes — it only echoes the digest the
+      // human saw into the envelope. Journalling is a no-op until the compiled loop (+ I-02) is present.
+      brokerDecision: (projection, decision) => ({
+        handle: projection.handle,
+        decision,
+        digest: projection.digest,
+        brokeredAt: new Date().toISOString(),
+      }),
+      notifyDeepLink: (ask) => ({
+        handle: ask.handle,
+        deepLink: ask.deepLink,
+        at: new Date().toISOString(),
+        lane: "notify-deep-link",
+      }),
+    }));
+  }
+  return _coordinatorPromise;
+}
 
 if (
   !existsSync(path.join(repo, "aios.yaml")) &&
@@ -1180,7 +1216,52 @@ wss.on("connection", (ws, req) => {
       };
     }
     const id = nextPermId++;
-    send({ type: "permission_request", id, tool: toolName, input: toolInput });
+    // I-03 (AIO-384): the OWNING RUNTIME issues a durable, opaque capability handle for this approval
+    // and persists its authoritative pending record BEFORE prompting. The coordinator (this gateway)
+    // brokers the human decision, then the runtime validates its own record and atomically consumes
+    // it — a durable tombstone that blocks any replay of the same approval (even across a restart).
+    // Best-effort + additive: any store error falls through to the pre-existing allow/deny behavior,
+    // so the prompt UX and the 5-min auto-deny are never weakened.
+    let cap = null;
+    try {
+      cap = issueHandle(repo, {
+        operation: toolName,
+        normalizedArgs: toolInput,
+        targetResources: capabilityTargets(toolName, toolInput),
+        repoWorktreeIdentity: repo,
+      });
+    } catch {
+      cap = null;
+    }
+    // Fallback lane (KILL-path, content-free): notify + deep-link to the runtime's own prompt instead
+    // of the brokered round-trip. Opt-in via env; the primary design is the default.
+    if (
+      cap &&
+      /^(1|true|on)$/i.test(String(process.env.AIOS_INBOX_APPROVAL_FALLBACK || "").trim())
+    ) {
+      try {
+        const { notifyDeepLink } = await loadCoordinator();
+        const note = notifyDeepLink({
+          handle: cap.handle,
+          deepLink: `aios://approve/${cap.handle}`,
+        });
+        send({
+          type: "notify_deeplink",
+          handle: note.handle,
+          deepLink: note.deepLink,
+          lane: note.lane,
+        });
+      } catch {
+        /* fallback notification is best-effort */
+      }
+    }
+    send({
+      type: "permission_request",
+      id,
+      tool: toolName,
+      input: toolInput,
+      ...(cap ? { handle: cap.handle } : {}),
+    });
     const allow = await new Promise((resolve) => {
       pending.set(id, resolve);
       // auto-deny after 5 minutes so a closed tab can't wedge the run
@@ -1194,6 +1275,25 @@ wss.on("connection", (ws, req) => {
         5 * 60 * 1000
       ).unref?.();
     });
+    // Broker + durable consume. On the happy path this is the audit + one-time tombstone; if the
+    // runtime rejects (a replayed/tampered handle), deny for safety. Guarded so a store/broker
+    // failure never blocks a legitimate decision — it just falls back to the raw allow/deny.
+    if (cap) {
+      try {
+        const { brokerDecision } = await loadCoordinator();
+        const brokered = brokerDecision(cap.displayProjection, allow ? "approve" : "deny");
+        const result = consumeAndExecute(repo, cap.handle, brokered, {
+          identity: repo,
+          execute: () => true,
+        });
+        if (result.kind === "rejected" && result.reason !== "denied") {
+          send({ type: "capability_rejected", handle: cap.handle, reason: result.reason });
+          return { behavior: "deny", message: `Approval rejected: ${result.reason}` };
+        }
+      } catch {
+        /* best-effort: fall through to the raw decision below */
+      }
+    }
     return allow
       ? { behavior: "allow", updatedInput: toolInput }
       : { behavior: "deny", message: "Denied in the GUI" };
