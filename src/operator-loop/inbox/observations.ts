@@ -45,6 +45,40 @@ export const OBSERVATIONS_BASENAME = "observations.ndjson";
 export type ObjectKind = "email" | "calendar-event" | "message" | (string & {});
 export type RevisionOp = "create" | "edit" | "delete";
 
+/**
+ * The account/tenant-resolved identity base — the single-sourced identity contract for the whole
+ * inbox seam. Every enriched observation resolves its connection into THIS scope, and the reply PDP
+ * (I-10, `reply-policy.ts`) EXTENDS it with the channel address + verification bit. Distinctness
+ * derives from `(account, tenant)`: the SAME address seen in two distinct account/tenant scopes is
+ * two DISTINCT identities — the same rule that keeps `observationDedupKey` from collapsing two
+ * accounts observing one native object. A resolved identity has both scope fields non-empty;
+ * anything short of that is a legacy/unresolved participant that downstream policy default-denies.
+ */
+export interface AccountTenantIdentity {
+  /** Connection/account the identity was resolved on (e.g. a Gmail account). */
+  account: string;
+  /** Tenant/workspace the identity belongs to. */
+  tenant: string;
+}
+
+/**
+ * True iff both scope fields are present — a fully account/tenant-resolved identity. A legacy or
+ * unresolved participant (missing either scope field) is NOT resolved, and the reply PDP treats it
+ * as an unknown participant (default-deny). Pure/deterministic and address-agnostic — the shared
+ * root of the observation dedup key and the reply-policy roster.
+ */
+export function isResolvedIdentityScope(
+  id: Partial<AccountTenantIdentity> | null | undefined
+): boolean {
+  return (
+    !!id &&
+    typeof id.account === "string" &&
+    id.account.length > 0 &&
+    typeof id.tenant === "string" &&
+    id.tenant.length > 0
+  );
+}
+
 export interface ObservationParticipant {
   /** Stable identity within the account/tenant (usually an email or handle). */
   id: string;
@@ -67,11 +101,9 @@ export interface ObservationRevision {
  * adapters — they form the corrected dedup key. Bodies are never stored; `snippet` + `metadata`
  * carry the light context, with on-demand fetch under retention.
  */
-export interface EnrichedObservation {
+export interface EnrichedObservation extends AccountTenantIdentity {
   schema_version: number;
   connection_id: string;
-  account: string;
-  tenant: string;
   object_kind: ObjectKind;
   native_id: string;
   thread_id: string | null;
@@ -85,10 +117,8 @@ export interface EnrichedObservation {
 }
 
 /** Caller shape for `buildObservation`; `schema_version`/`ts`/`revision` are defaulted/stamped. */
-export interface ObservationInput {
+export interface ObservationInput extends AccountTenantIdentity {
   connection_id: string;
-  account: string;
-  tenant: string;
   object_kind: ObjectKind;
   native_id: string;
   thread_id?: string | null;

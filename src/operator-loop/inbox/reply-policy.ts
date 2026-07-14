@@ -22,26 +22,30 @@
 //     event carries refs/counts/verdict/rule only — never comms plaintext — and stays admin-tier
 //     local (nothing here syncs to the Team Brain).
 //
-// Participant identity is account/tenant-resolved (I-06). Until I-06 merges, `ParticipantIdentity`
-// is a fixture-backed local stub of the enriched observation identity fields; this module consumes
-// I-06's type once it lands (no code dependency today).
+// Participant identity is account/tenant-resolved (I-06). `ParticipantIdentity` now EXTENDS I-06's
+// single-sourced `AccountTenantIdentity` base (from `observations.ts`) — the local stub is gone;
+// the `(account, tenant)` scope, its distinctness rule, and the "resolved scope" predicate all come
+// from the merged enriched-observation contract, and the PDP adds only its own `address`/`verified`
+// fields on top. Same-domain (inbox) import; no cross-domain value import.
 
 import type { Tier } from "../signal.js";
+import { isResolvedIdentityScope, type AccountTenantIdentity } from "./observations.js";
 
 /** PDP verdict. `needs_promotion` = denied-but-promotable via an explicit scoped authorization of
  *  this same request; `deny` = structurally disallowed, must be reformulated. Never a silent block. */
 export type ReplyVerdict = "allow" | "deny" | "needs_promotion";
 
 /**
- * Account/tenant-resolved participant identity (I-06 stub — never the word "internal").
- * A recipient is a VERIFIED identity only when account, tenant and address are all present and
- * `verified === true`; anything short of that is an unknown participant (default-deny).
+ * Account/tenant-resolved participant identity (I-06). Extends the enriched-observation
+ * `AccountTenantIdentity` base (account/tenant scope, never the word "internal") with the two
+ * PDP-specific fields the observation record does not carry: the channel `address` and the adapter's
+ * `verified` bit. A recipient is a VERIFIED identity only when its account/tenant scope is resolved
+ * (`isResolvedIdentityScope`) AND the address is present AND `verified === true`; anything short of
+ * that — including a legacy/unresolved participant with an empty scope — is an unknown participant
+ * (default-deny). The SAME address in two distinct account/tenant scopes stays two distinct
+ * identities (the I-06 distinctness rule), so a forged address can never match a roster member.
  */
-export interface ParticipantIdentity {
-  /** Connection/account id the identity was resolved on (e.g. a Gmail account). */
-  account: string;
-  /** Tenant/workspace the identity belongs to. */
-  tenant: string;
+export interface ParticipantIdentity extends AccountTenantIdentity {
   /** Channel address (email / handle) — an opaque id, never trusted as free text. */
   address: string;
   /** Whether the adapter verified this identity as a real participant. */
@@ -179,13 +183,13 @@ function identityKey(p: ParticipantIdentity): string {
   return `${p.account} ${p.tenant} ${p.address}`;
 }
 
-/** A fully account/tenant-resolved, verified identity. Anything less is an unknown participant. */
+/** A fully account/tenant-resolved, verified identity. The `(account, tenant)` scope check is the
+ *  shared I-06 predicate (`isResolvedIdentityScope`); the PDP adds the address + verified bit on
+ *  top. Anything less — an unresolved scope, a missing address, or an unverified bit — is an unknown
+ *  participant (default-deny). */
 function isVerifiedIdentity(p: ParticipantIdentity): boolean {
   return (
-    typeof p.account === "string" &&
-    p.account.length > 0 &&
-    typeof p.tenant === "string" &&
-    p.tenant.length > 0 &&
+    isResolvedIdentityScope(p) &&
     typeof p.address === "string" &&
     p.address.length > 0 &&
     p.verified === true
