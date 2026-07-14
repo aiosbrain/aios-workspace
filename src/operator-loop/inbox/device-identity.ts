@@ -53,7 +53,8 @@ export type DeviceVerifyReason =
   | "revoked"
   | "scope-not-granted"
   | "replayed"
-  | "nonce-store-full";
+  | "nonce-store-full"
+  | "nonce-unavailable";
 
 export type DeviceVerifyResult =
   | { ok: true; deviceId: string; scope: DeviceScope; expiresAt: number }
@@ -67,8 +68,9 @@ export interface DeviceStore {
 
 // ── nonce (single-use) store ─────────────────────────────────────────────────────────────────────────
 
-/** Result of an atomic nonce consumption. */
-export type NonceConsumeResult = "fresh" | "replay" | "store-full";
+/** Result of an atomic nonce consumption. `unavailable` = the store could not be locked (a durable
+ *  store under contention/corruption) — callers MUST treat it as fail-closed (deny), never accept. */
+export type NonceConsumeResult = "fresh" | "replay" | "store-full" | "unavailable";
 
 /**
  * Durable, bounded store of consumed token nonces — the replay-protection spine. `consume` MUST be
@@ -230,6 +232,9 @@ export function createDeviceRegistry(
       const consumed = nonceStore.consume(`${dEnc}.${nEnc}`, exp, now);
       if (consumed === "replay") return { ok: false, reason: "replayed" };
       if (consumed === "store-full") return { ok: false, reason: "nonce-store-full" };
+      // Fail closed: if the durable nonce store could not be locked we cannot rule out a replay, so
+      // we must DENY rather than accept an unverifiable token.
+      if (consumed === "unavailable") return { ok: false, reason: "nonce-unavailable" };
       return { ok: true, deviceId, scope: scope as DeviceScope, expiresAt: exp };
     },
   };
@@ -312,6 +317,15 @@ function nonceStorePath(root: string): string {
   return path.join(root, INBOX_DIR_REL, NONCE_STORE_BASENAME);
 }
 
+/** Thrown when the nonce lock cannot be acquired within the bounded retry budget. Callers in the
+ *  verify path translate this to the fail-closed `unavailable` result (deny), never to acceptance. */
+class NonceLockError extends Error {
+  constructor() {
+    super("device-identity: could not acquire nonce lock");
+    this.name = "NonceLockError";
+  }
+}
+
 // A minimal exclusive-lock discipline (asks-store style) so a cross-process consume is atomic.
 function withNonceLock<T>(lockPath: string, fn: () => T): T {
   mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -341,7 +355,7 @@ function withNonceLock<T>(lockPath: string, fn: () => T): T {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
     }
   }
-  if (fd === null) throw new Error("device-identity: could not acquire nonce lock");
+  if (fd === null) throw new NonceLockError();
   try {
     return fn();
   } finally {
@@ -386,29 +400,40 @@ export function fileNonceStore(root: string, maxEntries: number = DEFAULT_MAX_NO
   };
   return {
     consume(key, expiresAt, now) {
-      return withNonceLock(lock, () => {
-        const map = read();
-        pruneExpired(map, now);
-        if (map.has(key)) {
-          write(map); // persist the prune even on a replay
-          return "replay";
-        }
-        if (map.size >= maxEntries) {
+      try {
+        return withNonceLock(lock, () => {
+          const map = read();
+          pruneExpired(map, now);
+          if (map.has(key)) {
+            write(map); // persist the prune even on a replay
+            return "replay";
+          }
+          if (map.size >= maxEntries) {
+            write(map);
+            return "store-full";
+          }
+          map.set(key, expiresAt);
           write(map);
-          return "store-full";
-        }
-        map.set(key, expiresAt);
-        write(map);
-        return "fresh";
-      });
+          return "fresh";
+        });
+      } catch (e) {
+        // Fail closed: an un-lockable durable store means we cannot prove single-use → deny.
+        if (e instanceof NonceLockError) return "unavailable";
+        throw e;
+      }
     },
     size(now) {
-      return withNonceLock(lock, () => {
-        const map = read();
-        const n = pruneExpired(map, now);
-        write(map);
-        return n;
-      });
+      try {
+        return withNonceLock(lock, () => {
+          const map = read();
+          const n = pruneExpired(map, now);
+          write(map);
+          return n;
+        });
+      } catch (e) {
+        if (e instanceof NonceLockError) return -1; // unknown (contended) — caller decides
+        throw e;
+      }
     },
   };
 }

@@ -74,15 +74,22 @@ per its own docs; **no code reused**):
   per-token nonce is consumed atomically on first verify (durable `fileNonceStore`), so a captured
   token cannot be **replayed** — including across a coordinator restart. The nonce store is pruned +
   hard-bounded (DoS). Crypto/enrollment/revocation checks run **before** consumption, so a bad token
-  never burns a nonce slot.
+  never burns a nonce slot, and if the durable store can't be locked the verify **fails closed**
+  (`nonce-unavailable`, deny) rather than accept an unverifiable token.
 - **Untrusted state, validated.** The host-health file is read through `sanitizeAdapterHealth` — every
   field is type-coerced, `detail` is stripped content-free + length-capped, unknown states / bad ids
   are dropped fail-closed, and `healthy` is re-derived from `state` (a record can't lie). A corrupt or
   hostile file can never crash a read or inject content into the inbox render path.
-- **Real daemon, internal healthz.** The image entrypoint is `scripts/inbox-coordinator.mjs`: it runs
-  the supervision loop, persists admin-local state each tick, serves a **content-free** `/healthz`
-  (internal bind; optional `AIOS_HEALTHZ_TOKEN` bearer) on port 8081, serves **no other route**, and
-  shuts down cleanly on SIGTERM. No unauthenticated external surface.
+- **Real daemon, INTERNAL AUTHENTICATED healthz.** The image entrypoint is `scripts/inbox-coordinator.mjs`:
+  it runs the supervision loop, persists admin-local state each tick, and serves a **content-free**
+  `/healthz` on port 8081, **no other route**, clean SIGTERM. On a **non-loopback bind (Fly = 0.0.0.0)
+  it refuses to start** unless `AIOS_HEALTHZ_TOKEN` is present and strong (≥24 chars), and every
+  `/healthz` request then **requires** that bearer token — so there is never an unauthenticated
+  external surface. Fly's platform check is **TCP** (an http check can't safely carry the secret);
+  operators query the authenticated `/healthz` directly.
+- **Bounded event log.** The daemon reads only the **tail** of `supervisor-events.ndjson` and
+  **rotates** it to a single `.1` generation past a size cap, so the observed-events log can neither
+  grow nor be read unbounded.
 
 ---
 
@@ -118,8 +125,11 @@ the same image** (Fly access unavailable). Per the acceptance criteria this make
    ```bash
    fly apps create aios-inbox-<user>
    fly volumes create <volume> --region <region> --size 1     # holds journal + read model + registry
-   fly secrets set AIOS_HOST_SECRET=<32B random>  \           # device-token signing key (host-only)
-                   GMAIL_OAUTH_TOKEN=... WHATSAPP_SESSION_KEY=...   # per-adapter, scoped by the broker
+   # AIOS_HEALTHZ_TOKEN is REQUIRED on Fly (bind is 0.0.0.0): the daemon refuses to start on a
+   # non-loopback bind without a STRONG token (≥32 chars). Generate one and set it as a secret.
+   fly secrets set AIOS_HOST_SECRET="$(openssl rand -base64 32)"   \    # device-token signing key
+                   AIOS_HEALTHZ_TOKEN="$(openssl rand -base64 32)" \    # REQUIRED healthz bearer token
+                   GMAIL_OAUTH_TOKEN=... TELEGRAM_BOT_TOKEN=...          # per-adapter, scoped by the broker
    ```
 4. **Build + deploy the image** (the Dockerfile fails the build unless better-sqlite3 opens WAL — the
    D5 proof):
@@ -140,8 +150,8 @@ AIOS_HOST_URL=https://aios-inbox-<user>.internal AIOS_HOST_SECRET=<secret> \
 node --test test/operator-loop/inbox-remote-contract.test.mjs -- --live   # deep-equal, exit 0
 
 # 3. Live kill: kill an adapter process on the machine, then confirm the AttentionItem appears.
-fly ssh console -C "pkill -f adapter:whatsapp"
-aios inbox --json | jq '.items[] | select(.origin=="agent-event" and .health.adapter=="whatsapp")'
+fly ssh console -C "pkill -f adapter:telegram"
+aios inbox --json | jq '.items[] | select(.origin=="agent-event" and .health.adapter=="telegram")'
 aios inbox status                                     # coordinator: degraded until the adapter recovers
 ```
 

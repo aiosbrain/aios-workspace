@@ -96,9 +96,9 @@ test("the killed-adapter AttentionItem surfaces end-to-end in `aios inbox --json
     // write directly (the supervisor is faked locally) and prove the CLI merges + protects it.
     const health = foldSupervisor(
       [
-        { adapter: "whatsapp", kind: "start", at: at(0) },
-        { adapter: "whatsapp", kind: "ready", at: at(1) },
-        { adapter: "whatsapp", kind: "kill", at: at(10) },
+        { adapter: "telegram", kind: "start", at: at(0) },
+        { adapter: "telegram", kind: "ready", at: at(1) },
+        { adapter: "telegram", kind: "kill", at: at(10) },
       ],
       DEFAULT_SUPERVISOR_POLICY,
       at(11)
@@ -109,11 +109,11 @@ test("the killed-adapter AttentionItem surfaces end-to-end in `aios inbox --json
     assert.equal(res.code, 0, res.stderr);
     const view = JSON.parse(res.stdout);
     const row = view.items.find(
-      (i) => i.origin === "agent-event" && i.health?.adapter === "whatsapp"
+      (i) => i.origin === "agent-event" && i.health?.adapter === "telegram"
     );
     assert.ok(
       row,
-      "the killed whatsapp adapter appears as an agent-event AttentionItem in the queue"
+      "the killed telegram adapter appears as an agent-event AttentionItem in the queue"
     );
     assert.equal(row.protected, true);
     // Protected rows render above the fold — it is first in the ranked order.
@@ -317,7 +317,7 @@ test("readHostHealth keeps valid records, drops invalid ones, and reports the dr
         { adapter: "gmail", state: "healthy", healthy: true },
         { adapter: "telegram", state: "backoff", healthy: true }, // healthy LIE → re-derived false
         { adapter: "", state: "healthy" }, // dropped (no id)
-        { adapter: "whatsapp", state: "bogus" }, // dropped (unknown state)
+        { adapter: "adapter-b", state: "bogus" }, // dropped (unknown state)
         "garbage", // dropped (not an object)
       ],
     });

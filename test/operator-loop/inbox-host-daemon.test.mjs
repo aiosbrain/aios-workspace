@@ -3,21 +3,25 @@
 // Spawns the REAL coordinator daemon (`scripts/inbox-coordinator.mjs`) as a child process and drives
 // it end-to-end: healthz is 200 while healthy, flips to 503 within a supervision tick after an
 // observed adapter kill, persists the admin-tier host-health state, refuses non-GET / unknown routes,
-// enforces the optional bearer token, and shuts down CLEANLY on SIGTERM (exit 0). No Fly, no network
-// beyond loopback.
+// FAILS CLOSED on a non-loopback bind without a strong token (and requires the token when bound
+// externally), bounds+rotates its event log, and shuts down CLEANLY on SIGTERM (exit 0).
 //
 // Requires the built loop (`npm run build:loop`) — the daemon loads dist/operator-loop.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, appendFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSupervisorEvents, isLoopbackBind } from "../../scripts/inbox-coordinator.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DAEMON = path.join(ROOT, "scripts", "inbox-coordinator.mjs");
+
+// A strong (≥24-char) healthz token for the non-loopback tests.
+const STRONG_TOKEN = "sBqv8t2R-strong-health-token-0123456789";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,6 +78,24 @@ function stopDaemon(child) {
     if (child.exitCode !== null || child.signalCode !== null) return resolve(child.exitCode);
     child.once("exit", (code, signal) => resolve(code ?? signal));
     child.kill("SIGTERM");
+  });
+}
+
+/** Spawn the daemon EXPECTING it to exit on its own (e.g. a fail-closed startup refusal). */
+function spawnExpectExit(root, extraEnv = {}) {
+  const child = spawn("node", [DAEMON], {
+    cwd: ROOT,
+    env: { ...process.env, AIOS_INBOX_DATA_DIR: root, AIOS_HEALTHZ_PORT: "0", ...extraEnv },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (b) => (stderr += b.toString()));
+  return new Promise((resolve) => {
+    child.once("exit", (code) => resolve({ code, stderr }));
+    setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve({ code: null, stderr: stderr + "\n[timeout]" });
+    }, 8000);
   });
 }
 
@@ -152,6 +174,94 @@ test("daemon: with AIOS_HEALTHZ_TOKEN set, /healthz requires the bearer token", 
   } finally {
     await stopDaemon(child);
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("daemon: FAIL CLOSED — a non-loopback bind with NO token refuses to start", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "inbox-daemon-"));
+  try {
+    const { code, stderr } = await spawnExpectExit(root, { AIOS_HOST_BIND: "0.0.0.0" });
+    assert.equal(code, 1, "non-loopback without a token must not start");
+    assert.match(stderr, /refusing to start/);
+    assert.match(stderr, /AIOS_HEALTHZ_TOKEN/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("daemon: FAIL CLOSED — a non-loopback bind with a WEAK token refuses to start", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "inbox-daemon-"));
+  try {
+    const { code, stderr } = await spawnExpectExit(root, {
+      AIOS_HOST_BIND: "0.0.0.0",
+      AIOS_HEALTHZ_TOKEN: "short",
+    });
+    assert.equal(code, 1, "a weak token on a non-loopback bind must not start");
+    assert.match(stderr, /too weak/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("daemon: a non-loopback bind WITH a strong token starts and requires the token on /healthz", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "inbox-daemon-"));
+  const { child, ready } = startDaemon(root, {
+    AIOS_HOST_BIND: "0.0.0.0",
+    AIOS_HEALTHZ_TOKEN: STRONG_TOKEN,
+  });
+  try {
+    const { port } = await ready;
+    const base = `http://127.0.0.1:${port}`; // 0.0.0.0 listens on all → reach via loopback
+    assert.equal((await get(base, "/healthz")).status, 401, "external bind → token required");
+    assert.equal(
+      (await get(base, "/healthz", { authorization: "Bearer wrong-but-long-enough-token-xxxxx" }))
+        .status,
+      401,
+      "wrong token → 401"
+    );
+    const ok = await get(base, "/healthz", { authorization: `Bearer ${STRONG_TOKEN}` });
+    assert.equal(ok.status, 200, "correct token → 200");
+    assert.equal(ok.body.ok, true);
+  } finally {
+    await stopDaemon(child);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readSupervisorEvents bounds the read and rotates the log so it can't grow/read unbounded", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "inbox-daemon-"));
+  try {
+    const dir = path.join(root, ".aios", "loop", "inbox");
+    mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "supervisor-events.ndjson");
+    const lines = [];
+    for (let i = 0; i < 200; i++) {
+      lines.push(JSON.stringify({ adapter: "gmail", kind: "heartbeat", at: 1000 + i }));
+    }
+    writeFileSync(file, lines.join("\n") + "\n"); // well over the tiny rotate cap below
+
+    const evs = readSupervisorEvents(root, {
+      rotateBytes: 500,
+      maxReadBytes: 100000,
+      maxEvents: 10,
+    });
+    assert.ok(evs.length <= 10, "event count is capped (bounded read)");
+    assert.ok(
+      evs.every((e) => e.adapter === "gmail" && e.kind === "heartbeat"),
+      "still parses valid events"
+    );
+    assert.ok(existsSync(file + ".1"), "the active log was ROTATED to a single .1 generation");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("isLoopbackBind classifies loopback vs external correctly", () => {
+  for (const h of ["127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"]) {
+    assert.equal(isLoopbackBind(h), true, `${h} is loopback`);
+  }
+  for (const h of ["0.0.0.0", "::", "10.0.0.5", "fly-local-6pn", "example.com"]) {
+    assert.equal(isLoopbackBind(h), false, `${h} is external`);
   }
 });
 

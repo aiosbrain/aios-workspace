@@ -21,13 +21,14 @@ primary_region = "{{FLY_REGION}}"      # keep near the operator; single region (
   # The read-model + journal live on the persistent volume — admin-tier, never synced to the brain.
   AIOS_INBOX_DATA_DIR = "/data/inbox"
   # The coordinator daemon serves /healthz on this bind:port. Binding 0.0.0.0 makes it reachable by
-  # the Fly private-network [checks] probe ONLY — there is deliberately NO [[services]] block, so the
-  # port is never published to the public internet (no unauthenticated external surface). The
-  # read-model API is a separate, device-token-gated surface (see device-identity.ts).
+  # the Fly private-network probe ONLY — there is deliberately NO [[services]] block, so the port is
+  # never published to the public internet. On a non-loopback bind the daemon REFUSES TO START unless
+  # AIOS_HEALTHZ_TOKEN is present and strong (≥24 chars), and every /healthz request then requires
+  # that bearer token — so there is no unauthenticated external surface. The read-model API is a
+  # separate, device-token-gated surface (see device-identity.ts).
   AIOS_HOST_BIND = "0.0.0.0"
   AIOS_HEALTHZ_PORT = "8081"
-  # Optional: set a healthz bearer token via `fly secrets set AIOS_HEALTHZ_TOKEN=...` to require auth
-  # even from inside the private network (the [checks] probe would then send the matching header).
+  # AIOS_HEALTHZ_TOKEN is REQUIRED here (see the runbook §Provision) — set it as a secret, not in env.
 
 # Persistent volume for the append-only journal (inbox-events.ndjson segments) + SQLite read model +
 # the device registry. The D5 backup unit is this volume's journal; the restore drill re-projects it.
@@ -44,12 +45,13 @@ primary_region = "{{FLY_REGION}}"      # keep near the operator; single region (
   memory = "512mb"
 
 [checks.coordinator]
-  # Fly-level liveness: the coordinator exposes an internal health endpoint that returns 200 only
-  # while every adapter is within its supervision window. A degraded adapter still surfaces as an
-  # AttentionItem in-app (it does NOT flap the machine); this check catches a fully-wedged host.
-  type = "http"
+  # Fly-level liveness is a TCP check, NOT http: /healthz requires the AIOS_HEALTHZ_TOKEN bearer, and
+  # a Fly http check cannot safely carry that secret (fly.toml is not a secret store — a header here
+  # would commit the token to the repo). A TCP connect proves the daemon is up and listening (a
+  # fully-wedged host stops accepting); degraded adapters surface as in-app AttentionItems, not by
+  # flapping the machine. Operators query the authenticated /healthz directly with the token.
+  type = "tcp"
   port = 8081
-  path = "/healthz"
   interval = "30s"
   timeout = "5s"
   grace_period = "20s"

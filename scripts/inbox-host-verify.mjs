@@ -30,11 +30,11 @@ import { c } from "./cli-common.mjs";
 /** Two adapters, each scoped to ONLY its own credential key. This is the isolation invariant. */
 const FIXTURE_SCOPES = {
   gmail: ["gmail.oauth-token"],
-  whatsapp: ["whatsapp.session-key"],
+  telegram: ["telegram.bot-token"],
 };
 const FIXTURE_SECRETS = {
   "gmail.oauth-token": "fixture-gmail-token",
-  "whatsapp.session-key": "fixture-wa-session",
+  "telegram.bot-token": "fixture-telegram-token",
 };
 const FIXTURE_SANDBOXES = {
   gmail: {
@@ -43,11 +43,11 @@ const FIXTURE_SANDBOXES = {
     allowedPathPrefixes: ["/data/adapters/gmail"],
     allowedEgressHosts: ["gmail.googleapis.com", "oauth2.googleapis.com"],
   },
-  whatsapp: {
-    adapter: "whatsapp",
+  telegram: {
+    adapter: "telegram",
     uid: 10002,
-    allowedPathPrefixes: ["/data/adapters/whatsapp"],
-    allowedEgressHosts: ["web.whatsapp.com"],
+    allowedPathPrefixes: ["/data/adapters/telegram"],
+    allowedEgressHosts: ["api.telegram.org"],
   },
 };
 
@@ -67,7 +67,7 @@ function selfTest(loop) {
   const broker = loop.createCredentialBroker(FIXTURE_SCOPES, (k) => FIXTURE_SECRETS[k]);
   let crossDenied = false;
   try {
-    broker.read("whatsapp", "gmail.oauth-token");
+    broker.read("telegram", "gmail.oauth-token");
   } catch (e) {
     crossDenied = e instanceof loop.CredentialScopeError;
   }
@@ -77,12 +77,12 @@ function selfTest(loop) {
     "isolation:cross-adapter-credential-denied",
     crossDenied && ownAllowed,
     crossDenied
-      ? "whatsapp→gmail token read rejected; gmail→own token allowed"
+      ? "telegram→gmail token read rejected; gmail→own token allowed"
       : "cross-read was NOT denied"
   );
 
   // ISOLATION 3 — the fs fence: adapter A cannot read adapter B's credential PATH.
-  const bPath = "/data/adapters/whatsapp/session.key";
+  const bPath = "/data/adapters/telegram/session.key";
   const aReadsB = loop.checkPathAccess(FIXTURE_SANDBOXES.gmail, bPath);
   const aReadsOwn = loop.checkPathAccess(
     FIXTURE_SANDBOXES.gmail,
@@ -90,12 +90,12 @@ function selfTest(loop) {
   );
   const escapeBlocked = !loop.checkPathAccess(
     FIXTURE_SANDBOXES.gmail,
-    "/data/adapters/gmail/../whatsapp/session.key"
+    "/data/adapters/gmail/../telegram/session.key"
   );
   check(
     "isolation:cross-adapter-path-denied",
     !aReadsB && aReadsOwn && escapeBlocked,
-    `gmail→whatsapp path ${aReadsB ? "READABLE (BAD)" : "denied"}; own path ${aReadsOwn ? "ok" : "BAD"}; traversal ${escapeBlocked ? "blocked" : "ESCAPED (BAD)"}`
+    `gmail→telegram path ${aReadsB ? "READABLE (BAD)" : "denied"}; own path ${aReadsOwn ? "ok" : "BAD"}; traversal ${escapeBlocked ? "blocked" : "ESCAPED (BAD)"}`
   );
 
   // ENROLLMENT — an enrolled device reaches the read-model API with a scoped token.

@@ -31,18 +31,18 @@ import {
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VERIFY = path.join(ROOT, "scripts", "inbox-host-verify.mjs");
 
-const SCOPES = { gmail: ["gmail.token"], whatsapp: ["whatsapp.session"] };
-const SECRETS = { "gmail.token": "g-secret", "whatsapp.session": "w-secret" };
+const SCOPES = { gmail: ["gmail.token"], telegram: ["telegram.session"] };
+const SECRETS = { "gmail.token": "g-secret", "telegram.session": "t-secret" };
 
 // ── credential broker ────────────────────────────────────────────────────────────────────────────
 
 test("ISOLATION: an adapter reads ONLY its own credential; a cross-adapter read is denied", () => {
   const broker = createCredentialBroker(SCOPES, (k) => SECRETS[k]);
   assert.equal(broker.read("gmail", "gmail.token"), "g-secret");
-  assert.throws(() => broker.read("whatsapp", "gmail.token"), CredentialScopeError);
-  assert.throws(() => broker.read("gmail", "whatsapp.session"), CredentialScopeError);
+  assert.throws(() => broker.read("telegram", "gmail.token"), CredentialScopeError);
+  assert.throws(() => broker.read("gmail", "telegram.session"), CredentialScopeError);
   assert.equal(broker.canAccess("gmail", "gmail.token"), true);
-  assert.equal(broker.canAccess("gmail", "whatsapp.session"), false);
+  assert.equal(broker.canAccess("gmail", "telegram.session"), false);
 });
 
 test("ISOLATION: an unknown adapter and a scoped-but-unresolved credential both throw (default-deny)", () => {
@@ -68,11 +68,11 @@ test("ISOLATION: the read-model store keys are reserved and never brokerable", (
 
 test("ISOLATION: crossScopeLeaks flags any credential granted to two adapters", () => {
   assert.deepEqual(crossScopeLeaks(SCOPES), [], "well-formed scopes have no shared credentials");
-  const shared = { gmail: ["shared.key"], whatsapp: ["shared.key"] };
+  const shared = { gmail: ["shared.key"], telegram: ["shared.key"] };
   const leaks = crossScopeLeaks(shared);
   assert.equal(leaks.length, 1);
   assert.equal(leaks[0].key, "shared.key");
-  assert.deepEqual(leaks[0].adapters, ["gmail", "whatsapp"]);
+  assert.deepEqual(leaks[0].adapters, ["gmail", "telegram"]);
 });
 
 test("ISOLATION: the fs sandbox denies cross-adapter paths + directory-traversal escapes", () => {
@@ -83,9 +83,9 @@ test("ISOLATION: the fs sandbox denies cross-adapter paths + directory-traversal
     allowedEgressHosts: ["gmail.googleapis.com"],
   };
   assert.equal(checkPathAccess(gmail, "/data/adapters/gmail/token.json"), true);
-  assert.equal(checkPathAccess(gmail, "/data/adapters/whatsapp/session.key"), false);
+  assert.equal(checkPathAccess(gmail, "/data/adapters/telegram/session.key"), false);
   assert.equal(
-    checkPathAccess(gmail, "/data/adapters/gmail/../whatsapp/session.key"),
+    checkPathAccess(gmail, "/data/adapters/gmail/../telegram/session.key"),
     false,
     "traversal blocked"
   );

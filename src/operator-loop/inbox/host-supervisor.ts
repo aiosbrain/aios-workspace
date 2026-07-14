@@ -1,6 +1,6 @@
 // Unified inbox — adapter supervision (I-15 / AIO-396, the G6b Fly-coordinator gate).
 //
-// The coordinator hosts N channel adapters (gog/Gmail, WhatsApp, Telegram, …). On the remote Fly
+// The coordinator hosts N channel adapters (gog/Gmail, Telegram, …). On the remote Fly
 // machine each adapter runs SUPERVISED: a restart policy, exponential backoff, and crash-loop
 // detection. This module is the PURE, deterministic core of that supervision — a fold over a
 // stream of `SupervisorEvent`s (start/ready/heartbeat/exit/kill) into a per-adapter `AdapterHealth`

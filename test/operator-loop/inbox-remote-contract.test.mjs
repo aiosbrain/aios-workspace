@@ -22,7 +22,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildObservation, appendObservations } from "../../dist/operator-loop/index.js";
+import {
+  buildObservation,
+  appendObservations,
+  RANKER_VERSION,
+} from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = path.join(ROOT, "scripts", "aios.mjs");
@@ -119,8 +123,10 @@ test("dual-run: `aios inbox --json` deep-equals the recorded remote response for
       "local `aios inbox --json` must deep-equal the recorded remote response"
     );
 
-    // Belt-and-braces on the fixture invariants the diff is protecting.
-    assert.equal(local.ranker_version, "recency-fallback");
+    // Belt-and-braces on the fixture invariants the diff is protecting. The read model runs the REAL
+    // I-04 ranker (AIO-429) by default — the same ranker the live remote would run — so the contract
+    // is pinned to `RANKER_VERSION`, not the recency fallback.
+    assert.equal(local.ranker_version, RANKER_VERSION);
     assert.equal(local.staleness.stale, true, "far-past fixtures are deterministically stale");
     const threads = local.items.filter((i) => i.origin === "thread-state");
     const collision = threads.filter((i) => i.observation.native_id === "msg-1");

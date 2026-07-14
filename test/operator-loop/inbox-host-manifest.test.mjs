@@ -40,8 +40,16 @@ test("healthz port is consistent across the daemon default, the Dockerfile, and 
   // fly.toml health check + env.
   assert.match(FLY, /\[checks\.coordinator\]/);
   assert.match(FLY, /port = 8081/);
-  assert.match(FLY, /path = "\/healthz"/);
   assert.match(FLY, /AIOS_HEALTHZ_PORT = "8081"/);
+});
+
+test("the Fly health check is TCP (never an http check carrying the secret) + token is required", () => {
+  // /healthz requires the bearer token; an http check cannot safely carry a secret in fly.toml, so
+  // the platform check is a TCP connect and there is NO committed `path = "/healthz"` / http header.
+  assert.match(FLY, /type = "tcp"/, "the Fly check is a TCP connect");
+  assert.ok(!/type = "http"/.test(FLY), "no http check that would leak/omit the healthz token");
+  assert.ok(!/path = "\/healthz"/.test(FLY), "no committed http path (the token would be needed)");
+  assert.match(FLY, /AIOS_HEALTHZ_TOKEN is REQUIRED/i, "the token requirement is documented");
 });
 
 test("the Dockerfile enforces the D5 WAL proof at build time (better-sqlite3 opens WAL)", () => {
@@ -66,12 +74,18 @@ test("NO public [[services]] block — the coordinator opens no unauthenticated 
   assert.match(FLY, /no unauthenticated external surface/i);
 });
 
-test("the daemon serves ONLY /healthz and gates it behind an optional bearer token", () => {
+test("the daemon serves ONLY /healthz, refuses a non-loopback bind without a strong token, and bounds its event log", () => {
   assert.match(DAEMON, /const HEALTHZ_PATH = "\/healthz"/);
   assert.match(DAEMON, /AIOS_HEALTHZ_TOKEN/);
   // Non-GET and unknown routes are refused (405 / 404) — no other route is served.
   assert.match(DAEMON, /405/);
   assert.match(DAEMON, /404/);
+  // Fail-closed startup on a non-loopback bind without a present + strong token.
+  assert.match(DAEMON, /refusing to start/);
+  assert.match(DAEMON, /MIN_HEALTHZ_TOKEN_LEN/);
+  // Bounded + rotated supervisor-events log (no unbounded read/growth).
+  assert.match(DAEMON, /SUPERVISOR_EVENTS_ROTATE_BYTES/);
+  assert.match(DAEMON, /readTail/);
   // SIGTERM handling for clean shutdown.
   assert.match(DAEMON, /SIGTERM/);
 });

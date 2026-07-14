@@ -9,7 +9,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, openSync, closeSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -186,6 +186,46 @@ test("durable file nonce store: size() prunes expired and reports the live count
       "an expired-and-pruned nonce can be reused later"
     );
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FAIL CLOSED: an un-lockable durable nonce store yields `unavailable` / `nonce-unavailable` (never accept)", () => {
+  const dir = tmp();
+  const inbox = path.join(dir, ".aios", "loop", "inbox");
+  mkdirSync(inbox, { recursive: true });
+  const lockPath = path.join(inbox, "device-nonces.json.lock");
+  const fd = openSync(lockPath, "wx"); // hold the lock fresh → withNonceLock cannot acquire it
+  try {
+    const ns = fileNonceStore(dir);
+    assert.equal(
+      ns.consume("k", 9999, 1),
+      "unavailable",
+      "consume fails closed when it can't lock"
+    );
+
+    const reg = createDeviceRegistry(memoryDeviceStore(), "secret", { nonceStore: ns });
+    reg.enroll("d1", ["read-model"], "2026-07-14T00:00:00.000Z");
+    const tok = reg.mintToken({
+      deviceId: "d1",
+      scope: "read-model",
+      expiresAt: 9999,
+      nonce: "n1",
+    });
+    const v = reg.verifyToken(tok, 1);
+    assert.equal(
+      v.ok,
+      false,
+      "an otherwise-valid token is DENIED when the nonce store is unavailable"
+    );
+    assert.equal(v.reason, "nonce-unavailable");
+  } finally {
+    closeSync(fd);
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* released */
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });
