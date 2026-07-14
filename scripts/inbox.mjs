@@ -1,18 +1,27 @@
 /**
- * inbox.mjs — `aios inbox` (I-02 / AIO-383): the unified inbox journal + SQLite read model.
+ * inbox.mjs — `aios inbox` (I-09 / AIO-390 read view + I-02 / AIO-383 journal maintenance).
  *
- * Offline + local-first. The append-only `inbox-events.ndjson` journal and its SQLite read model
- * live under `.aios/loop/inbox/` — admin-tier, NEVER synced to the Team Brain. This CLI is the dev
- * surface over the compiled operator loop: `rebuild` deterministically re-projects the read model
- * from asks.ndjson ∪ activity.jsonl ∪ inbox-events.ndjson; `compact` collapses superseded transition
- * events into a snapshot while keeping consumed-tombstones + receipts. All journal/read-model logic
- * lives in the compiled operator loop (src/operator-loop/inbox/*).
+ * Offline + local-first + READ-ONLY. The append-only `inbox-events.ndjson` journal and its SQLite
+ * read model live under `.aios/loop/inbox/` — admin-tier, NEVER synced to the Team Brain.
+ *
+ *   • `aios inbox` (default / `list`) — I-09: the unified ranked queue over asks (agent-events) ∪
+ *     enriched observations ∪ legacy activity (thread-states). Protected items render above a
+ *     separator; `--raw` is the pure-chronological escape hatch; `--json` is the stable machine
+ *     surface `{ items, ranker_version, generated_at, staleness }` (a LOCAL artifact, not a sync
+ *     surface). The per-item v1 ask fields pass through byte-identical to `aios asks --json`.
+ *   • `aios inbox rebuild` — I-02: deterministically re-projects the read model from
+ *     asks.ndjson ∪ activity.jsonl ∪ inbox-events.ndjson.
+ *   • `aios inbox compact` — I-02: collapses superseded transition events into a snapshot while
+ *     keeping consumed-tombstones + receipts.
+ *
+ * No mutation of asks/journal happens here; all logic lives in the compiled operator loop
+ * (src/operator-loop/inbox/*).
  */
 
 import { c, die } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 
-const INBOX_SUBCOMMANDS = ["rebuild", "compact"];
+const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact"];
 
 function editDistance(a, b) {
   const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -44,6 +53,32 @@ export async function cmdInbox(repo, cfg, args) {
   };
 
   const loop = await loadOperatorLoop();
+
+  // ── default / `list` — the I-09 read-only unified queue ────────────────────────────────────────
+  // Triggered by `aios inbox`, `aios inbox list`, or a bare-flag form (`aios inbox --json`).
+  if (!sub || sub === "list" || sub.startsWith("--")) {
+    const allFlags = new Set(args);
+    const raw = allFlags.has("--raw");
+    const view = loop.buildInbox(repo);
+    if (allFlags.has("--json")) {
+      const items = raw ? loop.rawOrder(view.items) : view.items;
+      console.log(
+        JSON.stringify(
+          {
+            items,
+            ranker_version: view.ranker_version,
+            generated_at: view.generated_at,
+            staleness: view.staleness,
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
+    console.log(loop.renderInboxText(view, { raw, colors: c }));
+    return;
+  }
 
   if (sub === "rebuild") {
     const dbPath = argVal("--db") ?? undefined;
@@ -104,7 +139,8 @@ export async function cmdInbox(repo, cfg, args) {
     (suggestion
       ? `unknown inbox subcommand: ${sub} — did you mean \`aios inbox ${suggestion}\`?\n`
       : "") +
-      "usage: aios inbox rebuild [--db <path>] [--json]\n" +
+      "usage: aios inbox [list] [--raw] [--json]\n" +
+      "       aios inbox rebuild [--db <path>] [--json]\n" +
       "       aios inbox compact [--boundary-seq <n>] [--json]"
   );
 }
