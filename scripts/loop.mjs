@@ -94,7 +94,7 @@ function smokeLedgerFrom(manifest) {
 // Audience-safe serialization of a C6 writeback plan: whitelisted fields only (paths repo-relative,
 // never file content, never the admin brief body). A final leak sweep on the serialized string is a
 // belt-and-suspenders guard — if it ever trips, we refuse to emit rather than risk a leak.
-function jsonWriteback(plan, targets, manifest, loop) {
+export function jsonWriteback(plan, targets, manifest, loop) {
   const payload = {
     stamp: plan.stamp,
     targets,
@@ -104,9 +104,10 @@ function jsonWriteback(plan, targets, manifest, loop) {
       destRel: f.destRel,
       syncable: f.syncable,
     })),
-    taskRows: plan.taskWrite
-      ? plan.taskWrite.rows.map((r) => ({ row_key: r.row_key, title: r.title }))
-      : [],
+    // Titles can be team-tier and may repeat a manifest summary. The machine payload is
+    // audience-safe, so expose only the opaque idempotency key; the approved title remains in
+    // tasks-team.md and is visible through the normal tier-aware workspace surface.
+    taskRows: plan.taskWrite ? plan.taskWrite.rows.map((r) => ({ row_key: r.row_key })) : [],
     skips: plan.skips,
     tierSafetyWithheld: plan.tierSafetyWithheld,
   };
@@ -125,6 +126,17 @@ function jsonWriteback(plan, targets, manifest, loop) {
     process.exit(2);
   }
   return json;
+}
+
+// AIO-364 compatibility: fresh workspaces split team/private tasks. C6 may promote only the
+// team-tier file; legacy workspaces retain the single tasks.md fallback.
+export function resolveLoopTasksPath(repo, logDir) {
+  const candidates = [
+    logDir && path.join(logDir, "tasks-team.md"),
+    logDir && path.join(logDir, "tasks.md"),
+    path.join(repo, "03-status", "tasks.md"),
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 // Human render of a C4 DailyOrientation — actions first, one screen, seconds to read. The
@@ -798,8 +810,8 @@ export async function cmdLoop(repo, cfg, args) {
       die(
         "no log spine folder (3-log/) — cannot place the owner brief; is this an AIOS workspace?"
       );
-    const tasksPath = path.join(spinePaths.log, "tasks.md");
-    const tasksExists = existsSync(tasksPath);
+    const tasksPath = resolveLoopTasksPath(repo, spinePaths.log);
+    const tasksExists = tasksPath !== null;
     let tasksFileTier = "team";
     if (tasksExists) {
       const { frontmatter } = parseFrontmatter(readFileSync(tasksPath, "utf8"));
@@ -856,7 +868,7 @@ export async function cmdLoop(repo, cfg, args) {
       ownerNextWeekActions,
       shareables,
       spinePaths,
-      tasksPath: tasksExists ? tasksPath : null,
+      tasksPath,
       tasksFileTier,
       manifest,
     });

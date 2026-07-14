@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "audience": "team",
+  "cadence": "weekly",
+  "findings": [],
+  "advisory": [],
+  "checkedClaims": 5,
+  "loopsUsed": 0,
+  "budget": 2
+}

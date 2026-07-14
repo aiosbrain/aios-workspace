@@ -6,7 +6,8 @@
 > docs drift checks, and public-release readiness for Linear epic **AIO-122**.
 > Engineering approach is governed by [`docs/ENGINEERING-CONSTITUTION.md`](../ENGINEERING-CONSTITUTION.md).
 
-Last reconciled with Linear/code: 2026-07-01.
+Last reconciled with Linear/code: 2026-07-14. Synthetic close-out evidence:
+[`docs/evidence/v1-operator-loop/2026-07-14`](../evidence/v1-operator-loop/2026-07-14/README.md).
 
 ## What V1 Is
 

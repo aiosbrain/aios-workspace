@@ -1,0 +1,27 @@
+{
+  "stamp": "2026-07-14T11-18-55-199Z",
+  "targets": ["local", "sync", "pm"],
+  "files": [
+    {
+      "id": "brief",
+      "tier": "admin",
+      "destRel": "3-log/loop-brief-2026-07-14T11-18-55-199Z.md",
+      "syncable": false
+    },
+    {
+      "id": "digest-team",
+      "tier": "team",
+      "destRel": "2-work/weekly-digest-team-2026-07-14T11-18-55-199Z.md",
+      "syncable": true
+    },
+    {
+      "id": "digest-external",
+      "tier": "external",
+      "destRel": "4-shared/weekly-digest-external-2026-07-14T11-18-55-199Z.md",
+      "syncable": true
+    }
+  ],
+  "taskRows": [{ "row_key": "nw-c880fd09" }],
+  "skips": [],
+  "tierSafetyWithheld": false
+}

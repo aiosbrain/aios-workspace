@@ -6,38 +6,18 @@
  * board. This is intentionally NOT required in public CI because Linear credentials are
  * private. With no LINEAR_API_KEY it exits 0 with a clear skip message.
  */
-import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  blockedByIdentifiers,
+  documentedComponents,
+  fetchAllTeamIssues,
+  normalizeStatus,
+} from "./v1-linear-reconciliation.mjs";
 
 const ROOT = process.cwd();
 const DOC = path.join(ROOT, "docs", "v1-operator-loop", "README.md");
 const API = "https://api.linear.app/graphql";
 const TEAM_KEY = "AIO";
-
-function documentedComponents() {
-  const doc = readFileSync(DOC, "utf8");
-  const block = doc.match(
-    /<!--\s*drift:operator-components\s*-->([\s\S]*?)<!--\s*\/drift:operator-components\s*-->/
-  );
-  if (!block) throw new Error("missing drift:operator-components block");
-  const rows = [];
-  for (const match of block[1].matchAll(/`([^`]+)`/g)) {
-    const [component, identifier, status, spec] = match[1].split("|");
-    if (!component || !identifier || !status || !spec) {
-      throw new Error(`malformed component token: ${match[1]}`);
-    }
-    rows.push({ component, identifier, status, spec });
-  }
-  return rows;
-}
-
-function normalizeStatus(name) {
-  return String(name || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
 
 async function gql(apiKey, query, variables) {
   const response = await fetch(API, {
@@ -59,17 +39,12 @@ if (!apiKey) {
   process.exit(0);
 }
 
-const documented = documentedComponents();
-const data = await gql(
-  apiKey,
-  `query($key:String!){
-    issues(first:250, filter:{ team:{ key:{ eq:$key } } }){
-      nodes{ identifier title state{ name } url }
-    }
-  }`,
-  { key: TEAM_KEY }
+const documented = documentedComponents(DOC);
+const issues = await fetchAllTeamIssues(
+  (query, variables) => gql(apiKey, query, variables),
+  TEAM_KEY
 );
-const byIdentifier = new Map(data.issues.nodes.map((issue) => [issue.identifier, issue]));
+const byIdentifier = new Map(issues.map((issue) => [issue.identifier, issue]));
 let failed = false;
 
 for (const row of documented) {
@@ -87,6 +62,20 @@ for (const row of documented) {
     failed = true;
   } else {
     console.log(`ok ${row.component}: ${row.identifier} ${row.status}`);
+  }
+}
+
+const parent = byIdentifier.get("AIO-122");
+if (!parent) {
+  console.error("x closeout: AIO-122 not found in Linear");
+  failed = true;
+} else {
+  const blockers = blockedByIdentifiers(parent);
+  if (blockers.includes("AIO-130")) {
+    console.error("x closeout: stale AIO-130 blocker is still attached to AIO-122");
+    failed = true;
+  } else {
+    console.log("ok closeout: AIO-122 has no stale AIO-130 blocker");
   }
 }
 

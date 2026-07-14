@@ -1,0 +1,28 @@
+{
+  "tierLeakCount": { "value": 0, "met": true, "sampleSize": 2 },
+  "weeklyWallClock": { "value": 0.1, "unit": "min", "met": true, "sampleSize": 1 },
+  "verifierShippableRate": { "value": 1, "met": true, "sampleSize": 1 },
+  "nextWeekActionAcceptance": { "value": 1, "met": true, "sampleSize": 1 },
+  "dailyRunFrequency": {
+    "value": 1,
+    "unit": "days",
+    "met": true,
+    "sampleSize": 1,
+    "note": "1/1 synthetic working days; not longitudinal evidence"
+  },
+  "consecutiveCleanWeeklies": { "value": 1, "met": false, "sampleSize": 1 },
+  "breakdown": {
+    "weeklyRuns": 1,
+    "dailyRuns": 1,
+    "verifier": { "pass": 2, "corrected": 0, "failed": 0 },
+    "leakWithheldTotal": 0,
+    "dataQuality": {
+      "corruptLines": 0,
+      "unknownVersionLines": 0,
+      "missingFieldLines": 0,
+      "unattributableGaps": 0,
+      "degradedRunIds": []
+    }
+  },
+  "warnings": []
+}

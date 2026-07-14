@@ -9,24 +9,29 @@ an OSS release.
 
 | Gate | Command / Evidence | Status |
 |---|---|---|
-| Docs drift guard | `npm run check:docs` | Required on every PR and release |
-| Linear reconciliation | `npm run check:v1-linear` | Optional in public CI; required locally when credentials are available |
-| Operator-loop tests | `npm run build:loop` + `node --test test/operator-loop/*.test.mjs` | Required before V1 release |
-| Full repo tests | `npm test` | Required before merge/release |
-| Scaffold validators | `validation/validate-all.sh <workspace>` | Required when scaffold or stamped workspace behavior changes |
-| Secret/leak gates | `validation/check-secrets.sh .` and `scripts/leak-gate.sh .` | Required before public release |
+| Docs drift guard | `npm run check:docs` | **Pass** — 2026-07-14 |
+| Linear reconciliation | `npm run check:v1-linear` | **Pass** — C1–C8 Done; stale AIO-130 blocker absent |
+| Operator-loop tests | `node --test test/operator-loop/*.test.mjs` | **Pass** — 512/512 |
+| TypeScript build | `npm run build:loop` | **Blocker** — duplicate Inbox event type exports |
+| Full repo tests | `npm test` | **Blocked** at the same TypeScript compilation error |
+| Scaffold validators | `validation/validate-all.sh <workspace>` | **Pass** on fresh synthetic workspace; optional warnings only |
+| Secret/leak gates | `validation/check-secrets.sh .` and `scripts/leak-gate.sh .` | **Pass** — 2026-07-14 |
 | Website alignment | Cross-repo docs sync/review | Required before website says V1 is shipped |
 
 ## AIO-122 Exit Criteria Evidence
 
 | Exit criterion | Evidence source | Release state |
 |---|---|---|
-| Three consecutive weekly dogfood runs per active user with zero admin/private-tier leaks | `.aios/loop/closeouts/<stamp>/verifier-*.json`, leak-withheld counts, dogfood notes | Not yet fully recorded |
-| Daily loop run on majority of working days | C8 telemetry or local dogfood log | Blocked on C8 |
-| Median weekly closeout under 20 minutes after setup | Dogfood timing log | Not yet fully recorded |
-| Shareable digest passes must-pass verifier criteria in at least 90% of accepted runs | `verifier-*.json` statuses across accepted runs | Not yet fully recorded |
-| At least 70% of accepted weekly runs produce approved next-week actions | `next-week-actions.json`, `aios loop writeback` approval notes | Not yet fully recorded |
-| CLI and cockpit parity against same plan/review/approve model | CLI commands are present; MCP currently exposes `aios_loop_collect` only | Cockpit parity remains a release-scoping decision |
+| Three consecutive weekly dogfood runs per active user with zero admin/private-tier leaks | [2026-07-14 synthetic pack](./evidence/v1-operator-loop/2026-07-14/README.md) | **Gap:** 1 clean synthetic weekly, 0 shipped leaks; longitudinal 3-run criterion not met |
+| Daily loop run on majority of working days | [`telemetry.json`](./evidence/v1-operator-loop/2026-07-14/telemetry.json) | **Gap:** 1/1 synthetic day only; not a multi-day adoption window |
+| Median weekly closeout under 20 minutes after setup | Synthetic command timing + C8 telemetry | **Pass mechanically:** 0.1 min, n=1; insufficient longitudinal sample |
+| Shareable digest passes must-pass verifier criteria in at least 90% of accepted runs | [`verifier-team.json`](./evidence/v1-operator-loop/2026-07-14/verifier-team.json) | **Pass mechanically:** 100%, n=1; team and external passed |
+| At least 70% of accepted weekly runs produce approved next-week actions | [`writeback-approved.json`](./evidence/v1-operator-loop/2026-07-14/writeback-approved.json) | **Pass mechanically:** 100%, n=1 after C6 split-task compatibility fix |
+| CLI and cockpit parity against same plan/review/approve model | CLI commands plus cockpit loop/task handlers | **Partial:** shared closeout payload exists; MCP still exposes collect only |
+
+The synthetic run is evidence of mechanics, tier enforcement, and writeback behavior. It is not
+evidence of human habit adoption. AIO-122 remains In Progress until the longitudinal and cockpit
+scope criteria are satisfied or explicitly removed from the public V1 claim.
 
 ## Ordered V1 Release Prep
 

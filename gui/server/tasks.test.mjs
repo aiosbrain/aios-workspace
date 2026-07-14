@@ -34,11 +34,13 @@ function makeRepo(spine = "03-status", content = TASKS) {
   return repo;
 }
 
-test("resolveTasksFile: modern 3-log wins, legacy 03-status is the fallback, else null", () => {
+test("resolveTasksFile: team split wins, then modern and legacy task files", () => {
   const legacy = makeRepo("03-status");
   assert.equal(resolveTasksFile(legacy).rel, "03-status/tasks.md");
   const modern = makeRepo("3-log");
   assert.equal(resolveTasksFile(modern).rel, "3-log/tasks.md");
+  writeFileSync(path.join(modern, "3-log", "tasks-team.md"), TASKS);
+  assert.equal(resolveTasksFile(modern).rel, "3-log/tasks-team.md");
   const empty = mkdtempSync(path.join(tmpdir(), "aios-tasks-empty-"));
   assert.equal(resolveTasksFile(empty), null);
   for (const r of [legacy, modern, empty]) rmSync(r, { recursive: true, force: true });

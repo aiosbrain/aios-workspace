@@ -1,6 +1,6 @@
 # CQ3 — V1 Linear drift + AIO-122 close-out
 
-Parent: Pre-release code quality epic. Owner: john@john-ellison.com
+Linear task: AIO-287. Parent: Pre-release code quality epic. Owner: john@john-ellison.com
 
 ## Why
 
@@ -40,7 +40,8 @@ echo 'LINEAR_API_KEY=<operator-provided token>' >> .env
 
 1. Run drift check: `npm run check:v1-linear` (wraps `scripts/check-v1-linear-drift.mjs`).
 2. Update Linear via aios-linear CLI so C1–C8 in `docs/v1-operator-loop/README.md` are marked **Done**.
-3. Remove stale `blocked by AIO-130` relation on AIO-122.
+3. Remove stale `blocked by AIO-130` relation on AIO-122. The drift command queries Linear's
+   inverse `blocks` relations and fails if that relation remains.
 
 ```bash
 LIN="dotenvx run --quiet -f .env -- node ~/.claude/skills/aios-linear/linear.mjs"
@@ -55,12 +56,15 @@ Record `check:v1-linear exit: <N>` in PR comment or triage log.
 ## Acceptance criteria
 
 - `npm run check:v1-linear` exits **0**.
-- AIO-122 closable in Linear (no stale AIO-130 blocker; C1–C8 Done per `docs/v1-operator-loop/README.md`).
+- Output contains eight `ok C<N>: AIO-<id> done` lines matching the component tokens in
+  `docs/v1-operator-loop/README.md`.
+- Output contains `ok closeout: AIO-122 has no stale AIO-130 blocker`.
 
 ## Builder vs operator closure
 
-- **Builder delivers:** `check:v1-linear` exit **0** logged; Linear C1–C8 states updated via CLI.
-- **Operator verifies:** AIO-122 state and blocker relations in Linear UI.
+- **Builder delivers:** `check:v1-linear` exit **0** logged; C1–C8 Done and stale-blocker absence
+  proven by the same credentialed command.
+- **Operator verifies:** evidence is linked from AIO-287 before changing its state to Done.
 
 ## Integration points
 
@@ -88,4 +92,6 @@ Named acceptance test:
 npm run check:v1-linear
 ```
 
-Exit **0** proves README ↔ Linear alignment. Linear UI state is operator-verified.
+Exit **0** plus the `ok closeout` output proves README ↔ Linear alignment and absence of the stale
+AIO-130 blocker. The command exits **1** when a component drifts, AIO-122 is missing, or that blocker
+is present.

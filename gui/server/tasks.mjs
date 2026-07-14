@@ -27,6 +27,8 @@ export const EDITABLE_FIELDS = new Set(["status", "assignee", "priority", "label
  * @returns {{ abs: string, rel: string } | null}
  */
 export function resolveTasksFile(repo) {
+  const team = path.join(repo, "3-log", "tasks-team.md");
+  if (existsSync(team)) return { abs: team, rel: "3-log/tasks-team.md" };
   const modern = path.join(repo, "3-log", "tasks.md");
   if (existsSync(modern)) return { abs: modern, rel: "3-log/tasks.md" };
   const legacy = path.join(repo, "03-status", "tasks.md");
