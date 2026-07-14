@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.9** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.10** (`/api/v1`). This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -103,6 +103,11 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-07-13 — **v1.9**: added team-tier **`GET /api/v1/pm-sync/health`** projection
   observability and explicit **`GET /api/v1/tasks?all=1`** full-table reads. Plain `GET /tasks`
   remains the dashboard writeback feed. Additive — newer CLIs tolerate a `404` health endpoint.*
+- *2026-07-14 — **v1.10**: added the contract-first AIOS-managed, read-only GitHub gateway:
+  member connect/validate/status/disconnect/repository-discovery endpoints plus the server-only
+  Executor lease, exact-call authorize/redeem, outcome, approval, and durable resume-claim
+  contract. Additive — a newer workspace treats `404` as `managed_gateway_unavailable`, never
+  falls back to a local/environment PAT, and leaves direct connector state unchanged.*
 
 ---
 
@@ -227,10 +232,15 @@ All errors:
 { "error": { "code": "string", "message": "human-readable", "request_id": "uuid" } }
 ```
 
-Codes: `unauthorized` (401), `forbidden_tier` (422, admin content), `forbidden_role`
+Codes: `unauthorized` (401), `forbidden_tier` (422, admin content or managed-gateway tier
+violation), `forbidden_role`
 (403, endpoint requires a higher member role — v1.7), `invalid_payload` (422),
 `payload_too_large` (413, >1 MB), `rate_limited` (429, with `Retry-After`),
-`internal` (500).
+`managed_gateway_unavailable` (client classification for an older Brain's 404),
+`github_invalid_token`, `github_insufficient_permissions`, `github_connection_exists`,
+`github_connection_not_found`,
+`github_upstream`, `gateway_version_mismatch`, `gateway_blocked`, `gateway_approval_required`,
+and `internal` (500).
 
 ## Rate limits
 
@@ -242,6 +252,8 @@ the gate — see `lib/api/rate-limit.ts`):
 - `GET /items`, `GET /tasks`, `GET /pm-sync/health`: 60/min per key
 - `GET /decisions`, `GET /projects`: 60/min per key
 - `GET /integrations`: 60/min per key
+- managed GitHub `connect`: 10/min per member; `validate`: 20/min; `status`: 60/min;
+  `disconnect`: 10/min; repository discovery: 30/min
 - `GET /company-graph`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
@@ -584,6 +596,364 @@ X-AIOS-Team: <slug-or-id>
 - Results are team-scoped to the key's team. Disabled integrations are omitted.
 
 **Errors:** `401` invalid key/team; `429` rate-limited (60/min/key).
+
+## Managed GitHub gateway (v1.10, contract-first)
+
+These endpoints are the workspace-facing lifecycle for the AIOS-managed, read-only GitHub pilot.
+They are additive and may not be deployed yet. The exact seven-tool registry and trust boundaries
+are pinned in
+[`prd-executor-mcp-gateway.md`](./prd-executor-mcp-gateway.md) and
+[`architecture/executor-credential-gateway.md`](./architecture/executor-credential-gateway.md).
+
+### Common authorization and tier behavior
+
+All member-facing endpoints use the normal bearer key and `X-AIOS-Team`. The authenticated key
+must resolve to an active member in that team and the request tier must be exactly `team`.
+`external`, `admin`, a missing tier, cross-team/member identity, or tier elevation returns:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{"error":{"code":"forbidden_tier","message":"Managed GitHub requires team tier","request_id":"uuid"}}
+```
+
+That rejection occurs before connection or credential lookup. Its body and logs contain no
+credential existence hint. The PAT is admin-secret material despite the member-scoped operation:
+it is accepted only into Brain's credential boundary, encrypted server-side, and never returned,
+logged, synchronized, or included in an error.
+
+### `POST /api/v1/integrations/github/connect`
+
+Creates the authenticated member's managed connection. A member has at most one active managed
+GitHub connection per team in the pilot.
+
+```json
+{
+  "access": "team",
+  "credential": "<write-only-fine-grained-token>",
+  "repository_selection": "selected",
+  "repositories": ["owner/repo"],
+  "correlation_id": "uuid"
+}
+```
+
+- `credential` is required, write-only, and never echoed. Classic PAT prefixes are rejected.
+- `repository_selection` is `selected` or `all_accessible`; `repositories` is required and
+  non-empty only for `selected`, with at most 100 unique `owner/repo` values.
+- The server validates the current GitHub identity, selected repositories, and the four read-only
+  permission labels before activating the connection. Validation cannot invoke a write endpoint.
+- The request does not accept Executor tenant, subject, owner, member, or connection identifiers.
+  Brain resolves the active member's self-host Executor member-key/subject binding server-side and
+  attests it against the authenticated gateway service/environment before persisting the managed
+  connection. Missing, ambiguous, stale, or mismatched attestation fails closed before PAT
+  validation or persistence; a member-supplied identifier can never establish ownership.
+
+**Response `201`:**
+
+```json
+{
+  "connection": {
+    "id": "opaque-connection-ref",
+    "mode": "managed",
+    "status": "connected",
+    "github_login": "octocat",
+    "repository_selection": "selected",
+    "repositories": ["owner/repo"],
+    "permissions": {
+      "metadata": "read",
+      "contents": "read",
+      "issues": "read",
+      "pull_requests": "read"
+    },
+    "validated_at": "2026-07-14T00:00:00.000Z",
+    "credential_expires_at": null
+  }
+}
+```
+
+The response has no credential, ciphertext, secret reference, lease, or header. A duplicate active
+connection is `409 github_connection_exists`; callers validate or disconnect rather than overwrite.
+
+**Errors:** `401 unauthorized`; `409 github_connection_exists`; `422 forbidden_tier`,
+`invalid_payload`, `github_invalid_token`, or `github_insufficient_permissions`; `429`; `502
+github_upstream`; `503 gateway_version_mismatch`. Validation failure deletes or revokes the
+unactivated encrypted candidate and returns only a non-secret classification.
+
+### `POST /api/v1/integrations/github/validate`
+
+Revalidates the active member connection without accepting or returning a PAT.
+
+```json
+{ "access": "team", "correlation_id": "uuid" }
+```
+
+**Response `200`:** the same non-secret `connection` object as connect, with refreshed
+`status`, `github_login`, repository selection, permission labels, `validated_at`, and optional
+credential expiry. `status` is `connected`, `degraded`, `revoked`, or `disabled`.
+
+**Errors:** `401`; `404 github_connection_not_found`; `422 forbidden_tier`; `429`; `502
+github_upstream`; `503 gateway_version_mismatch`. An expired/revoked credential returns `200` with
+`status: "revoked"` when GitHub provides a conclusive auth result; transport ambiguity returns the
+typed upstream error and does not change a previously connected status to revoked.
+
+### `GET /api/v1/integrations/github/status?access=team`
+
+Returns only non-secret lifecycle state and the last validation summary.
+
+**Response `200`:**
+
+```json
+{
+  "connection": {
+    "id": "opaque-connection-ref",
+    "mode": "managed",
+    "status": "connected",
+    "github_login": "octocat",
+    "repository_selection": "selected",
+    "repositories": ["owner/repo"],
+    "permissions": {
+      "metadata": "read",
+      "contents": "read",
+      "issues": "read",
+      "pull_requests": "read"
+    },
+    "validated_at": "2026-07-14T00:00:00.000Z",
+    "credential_expires_at": null,
+    "gateway": {
+      "executor_version": "1.5.33",
+      "companion_version": "semver",
+      "contract_version": "1.10"
+    }
+  }
+}
+```
+
+**Errors:** `401`; `404 github_connection_not_found`; `422 forbidden_tier`; `429`.
+
+### `DELETE /api/v1/integrations/github`
+
+Idempotently disconnects the authenticated member. Request body:
+
+```json
+{ "access": "team", "correlation_id": "uuid" }
+```
+
+Brain revokes the connection and secret reference, invalidates unconsumed leases, denies pending
+approvals, and settles resumable executions before responding. Immutable audit/execution records
+remain. No PAT is exported.
+
+**Response `200`:**
+
+```json
+{
+  "disconnected": true,
+  "connection_id": "opaque-connection-ref-or-null",
+  "revoked_leases": 2,
+  "settled_approvals": 1,
+  "settled_executions": 1
+}
+```
+
+An already-absent connection returns `200` with `connection_id: null` and zero counts.
+
+**Errors:** `401`; `422 forbidden_tier`; `429`; `500 internal`. An internal failure is
+transactional: the endpoint never reports success after only partial revocation.
+
+### `GET /api/v1/integrations/github/repositories?access=team&cursor=<opaque>&limit=<N>`
+
+Discovers repositories visible through the active member credential. `limit` defaults to 30 and is
+capped at 100. The server uses fixed GitHub repository-list endpoints; arbitrary URLs, methods,
+queries, and search are not accepted.
+
+**Response `200`:**
+
+```json
+{
+  "repositories": [
+    {
+      "full_name": "owner/repo",
+      "private": true,
+      "default_branch": "main",
+      "archived": false
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+No repository content, PAT, lease, upstream Authorization header, or GitHub response headers are
+returned.
+
+**Errors:** `401`; `404 github_connection_not_found`; `422 forbidden_tier` or
+`invalid_payload`; `429` (including a bounded translation of GitHub rate limiting); `502
+github_upstream`; `503 gateway_version_mismatch`.
+
+### Older-Brain compatibility
+
+A v1.10 workspace **must tolerate `404`** for each managed endpoint. It classifies an endpoint-level
+404 as `managed_gateway_unavailable`, tells the member the Team Brain must be upgraded, and makes no
+state change. It must not reinterpret that 404 as a missing connection, fall back to a workspace
+`.env`/environment/file PAT, register a direct GitHub connector, or overwrite an existing direct
+connector. A route that exists and returns the typed `github_connection_not_found` remains the
+normal not-connected state.
+
+## Executor gateway server contract (v1.10, server-only)
+
+These routes are not workspace/sync endpoints. They are authenticated with a rotated, hashed
+`GatewayServiceIdentity`, bind one deployment environment, and are never callable with a member
+API key. Requests and responses use JSON over TLS. Every route rejects an Executor/companion/
+contract version mismatch before lease or credential work.
+
+The server-only types are `GatewayServiceIdentity`, `ExecutorSubjectBinding`,
+`GatewayConnectionRef`, `ResolutionLease`, `GatewayPolicyRule`, `GatewayExecution`,
+`GatewayApproval`, `AuthorizeDecision`, and `ExecutionOutcome`.
+
+### `POST /api/internal/executor-gateway/v1/resolve-lease`
+
+```json
+{
+  "executorTenantId": "opaque-tenant",
+  "executorSubjectId": "opaque-subject",
+  "connectionRef": "opaque-connection-ref",
+  "correlationId": "uuid"
+}
+```
+
+**Response `200`:**
+
+```json
+{
+  "lease": "opaque-one-use-value",
+  "expiresAt": "2026-07-14T00:00:30.000Z"
+}
+```
+
+The public Executor `CredentialProvider.get(id)` returns this envelope. The stored lease is hashed,
+one-use, audience-bound, and expires after 30 seconds. Neither request nor response contains a PAT.
+Identity/tier/revocation failures return a typed non-secret error before credential lookup.
+
+### `POST /api/internal/executor-gateway/v1/authorize-and-redeem`
+
+```json
+{
+  "lease": "opaque-one-use-value",
+  "toolkit": "aios-github-readonly",
+  "tool": "github.repository.get",
+  "normalizedArgs": { "owner": "owner", "repo": "repo" },
+  "requestHash": "sha256-hex",
+  "correlationId": "uuid",
+  "idempotencyKey": "opaque"
+}
+```
+
+Brain rebinds active service/team/member/Executor subject/connection/provider and verifies the
+server-computed normalized arguments hash. The response is exactly one tagged union:
+
+```json
+{ "decision": "block", "code": "policy_denied", "executionId": "uuid" }
+```
+
+```json
+{
+  "decision": "require_approval",
+  "executionId": "uuid",
+  "approvalId": "uuid",
+  "expiresAt": "2026-07-14T00:15:00.000Z"
+}
+```
+
+```json
+{
+  "decision": "allow",
+  "executionId": "uuid",
+  "sealedCredential": "v1.<opaque-aead-envelope>",
+  "credentialExpiresAt": null
+}
+```
+
+Block and approval contain no credential. Allow is returned only after the immutable decision
+audit insert commits and consumes the lease. `sealedCredential` is an opaque authenticated AEAD
+envelope bound to both `executionId` and the authenticated gateway service identity. Only the host
+companion may open it immediately before the one permitted GitHub request; it destroys the
+request-local plaintext and envelope reference immediately afterward. Neither form may enter the
+sandbox, persistence, logs, MCP, errors, or outcome.
+
+### `POST /api/internal/executor-gateway/v1/record-outcome`
+
+```json
+{
+  "executionId": "uuid",
+  "correlationId": "uuid",
+  "classification": "success",
+  "upstreamStatusClass": "2xx",
+  "responseBytes": 1234
+}
+```
+
+The classification is one of `success`, `blocked`, `approval_required`, `credential`, `network`,
+`upstream`, `response_too_large`, or `internal`. No result body, raw arguments, headers, lease, or
+credential is accepted. Outcome recording never authorizes a call.
+
+### `POST /api/internal/executor-gateway/v1/approvals/{approvalId}/decision`
+
+Admin-authorized request:
+
+```json
+{ "decision": "approved", "approverMemberId": "uuid", "correlationId": "uuid" }
+```
+
+`decision` is `approved` or `denied`. The transition is append-only/audited and fails for settled,
+expired, wrong-team, or stale-policy approvals. Approval expiry is 15 minutes.
+
+### `POST /api/internal/executor-gateway/v1/executions/{executionId}/resume-claim`
+
+```json
+{
+  "executorTenantId": "opaque-tenant",
+  "executorSubjectId": "opaque-subject",
+  "toolkit": "aios-github-readonly",
+  "correlationId": "uuid",
+  "idempotencyKey": "opaque"
+}
+```
+
+The transaction rebinds identity/policy, takes the writer-honored exclusive claim, and returns one
+of:
+
+```json
+{
+  "status": "claimed",
+  "executionId": "uuid",
+  "tool": "github.repository.get",
+  "normalizedArgs": { "owner": "owner", "repo": "repo" },
+  "sealedCredential": "v1.<opaque-aead-envelope>"
+}
+```
+
+```json
+{ "status": "settled", "executionId": "uuid", "result": "already_claimed" }
+```
+
+```json
+{ "status": "blocked", "executionId": "uuid", "code": "expired_or_revoked" }
+```
+
+Only `claimed` can contain `sealedCredential`, and only after strict audit. It has the same
+execution-and-service AEAD binding and companion-only request-local open/destruction contract as an
+initial allow. Concurrent claims produce one `claimed`; every loser is safely `settled`. The
+encrypted request envelope and approval state are Brain-owned, so `aios_gateway.resume` works after
+a full Executor restart.
+
+### Internal failure and audit rules
+
+Resolver, authorization, strict-audit, credential decryption, stale policy/version, revoke/expiry,
+and replay failures are distinct and fail closed. `external`/`admin`, cross-team/member/subject, or
+tier elevation returns HTTP `422 forbidden_tier` before credential lookup and makes zero GitHub
+requests. Audit metadata is allowlisted to IDs, bindings, toolkit/tool, argument hash, policy and
+decision references, correlation/idempotency, timing, upstream status class/byte count, and a
+non-secret outcome classification. It excludes the PAT, `sealedCredential`, lease, headers, raw
+normalized arguments, request envelope plaintext, GitHub body, and repository/issue/PR content.
 
 ## `POST /api/v1/work-events` — merged-work completion event
 

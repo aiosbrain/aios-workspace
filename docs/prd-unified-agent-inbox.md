@@ -50,7 +50,7 @@ vision:
 | **AIO-140** — Communication domain (unified notification layer) | Done | Detectors that already normalize Slack/email/calendar activity into tier-tagged `comms` signals, feeding the same dispatch path EE1 reuses (`comms/sender.ts`). |
 | **AIO-166 EE12/EE13/EE14** — two-way reply, cockpit/menubar surface, principles-trained triage agent | Backlog (deferred, "documented as complete, pick-up-able") | Exactly the two-way-reply, visual-surface, and learned-autonomy pieces of this vision — already scoped by title, just not fleshed out or prioritized. |
 | **AIO-226** — Agentic Maturity Loop (instinct distillation) | In Progress | `aios instincts distill` (AM4b) already turns operator correction events into homunculus records via an injectable LLM call. This is the training substrate the triage agent needs — a second one should not be built. |
-| **`prd-executor-mcp-gateway.md`** (AIO-242) | Done | Tool-aggregation layer so connecting more channels/tools doesn't blow up context cost per turn. |
+| **`prd-executor-mcp-gateway.md`** (AIO-399; replaces AIO-242) | Pilot proposed; predecessors AIO-400/AIO-409 in progress | AIOS-managed, read-only GitHub gateway only: pinned self-hosted Executor, Brain-owned member credentials/policy/audit, and exactly seven GET-backed GitHub tools. It is not a shipped generic channel aggregation layer. |
 | **CLI channel access** (gog, slack-cli, wacli/whatsapp, bird/X, OpenClaw's Telegram) | Shipped, per-channel | Read/search/send already works per channel today — this PRD does not reimplement any of them. |
 
 **What this PRD actually adds on top:** (a) one aggregation layer that reads from *both*
@@ -154,10 +154,11 @@ External channels                    Agent / loop asks
                 (it does not get a side channel that bypasses the audit trail)
 ```
 
-Every tool call the inbox or (later) the triage agent makes — reading a channel, searching
-a decision corpus, calling an LLM to distill an answer — is expected to route through the
-Executor gateway (`prd-executor-mcp-gateway.md`) once more channels are wired in, so
-context cost per turn stays flat as the inbox grows sources. The council harness
+The managed Executor pilot (`prd-executor-mcp-gateway.md`) is intentionally narrower than this
+inbox: it can serve only the seven declared read-only GitHub operations when an inbox workflow
+explicitly needs them. Slack, email, calendar, WhatsApp, Telegram, X, decision search, and LLM
+calls do not route through that pilot, and no future connector is implied without its own contract
+and security review. The council harness
 (`prd-council-harness.md`) is a possible-but-optional future arbiter for genuinely ambiguous
 items that warrant more than one model's opinion before escalating — noted as an idea, not
 committed to any phase below.
@@ -218,7 +219,7 @@ committed to any phase below.
 - [`docs/v1-operator-loop/domains/asks-queue.md`](./v1-operator-loop/domains/asks-queue.md) — the v1 asks contract this PRD builds on
 - [`docs/v1-operator-loop/domains/communication.md`](./v1-operator-loop/domains/communication.md) — the comms detector pattern to extend
 - [`docs/v1-operator-loop/domains/maturity-loop.md`](./v1-operator-loop/domains/maturity-loop.md) — the instinct-distillation substrate (AM4b)
-- [`docs/prd-executor-mcp-gateway.md`](./prd-executor-mcp-gateway.md) — tool-aggregation layer for channel/tool growth
+- [`docs/prd-executor-mcp-gateway.md`](./prd-executor-mcp-gateway.md) — proposed managed, read-only GitHub pilot; not a shipped generic channel gateway
 - [`docs/prd-council-harness.md`](./prd-council-harness.md) — optional cross-model arbiter for ambiguous inbox items
 - AIO-166 (Agentic Ergonomics epic), AIO-167/178/179/180 (EE1/EE12/EE13/EE14), AIO-140, AIO-226
 - `voice-and-rules` skill — the draft-vs-send approval gate that governs any outbound action regardless of who composes it
