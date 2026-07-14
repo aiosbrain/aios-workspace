@@ -26,6 +26,8 @@ import type { AppendCapabilityEvent } from "./inbox/capability.js";
 // Composition-point wiring for the ranker seam → I-04 deterministic ranker (AIO-429).
 import { loadRegistry } from "./inbox/ranker.js";
 import { createInboxRanker } from "./inbox/ranker-adapter.js";
+// Composition-point wiring for the outbox seam → durable I-02 journal (AIO-392).
+import type { AppendOutboxEvent } from "./inbox/outbox.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -690,6 +692,68 @@ export {
   type ReplyContext,
   type PdpDecision,
 } from "./inbox/reply-policy.js";
+
+// Unified inbox — Outbox + Gmail send (I-11 / AIO-392, the G5 gate). The first real ACTION: send a
+// Gmail reply through the I-10 reply PDP with an idempotent, reconcile-first outbox and native
+// receipts. Pre-send checks run on the EXACT outbound bytes (recipient-set equality, header/quoted
+// injection, admin-context leak markers); at-most-once actual sends per command_id. The gog send
+// surface + the durable journal are INJECTED (no cross-domain value imports). Outbox records +
+// receipts are admin-tier LOCAL I-02 journal state — content-free, NEVER synced. Claim scope: "the
+// inbox code path is gated" at G5 (the ambient gog CLI still exists; G6b/I-15 owns cannot-bypass).
+// `src/operator-loop/comms/sender.ts` stays byte-for-byte untouched.
+export {
+  ADMIN_CONTEXT_MARKERS,
+  OutboxRejectedError,
+  OutboxTimeoutError,
+  OutboxSendError,
+  approvedRecipientSet,
+  outboundRecipientSet,
+  checkPreSend,
+  foldOutboxState,
+  createOutbox,
+  createInMemoryOutboxJournal,
+  type OutboxState,
+  type OutboxCommand,
+  type OutboxRejectReason,
+  type OutboxSendResult,
+  type SentQuery,
+  type OutboxSendClient,
+  type OutboxEventKind,
+  type OutboxEvent,
+  type AppendOutboxEvent,
+  type SendAuthority,
+  type EnqueueInput,
+  type OutboxDeps,
+  type Outbox,
+} from "./inbox/outbox.js";
+// Outbox credential wrapper (I-11 "where cheap"): assert the gog send token is gateway-private
+// (0600, gateway uid) before wrapping a send client; skipped-with-reason on unsupported platforms.
+export {
+  assertGatewayTokenSecurity,
+  type TokenSecurityResult,
+  type TokenSecurityOptions,
+} from "./inbox/outbox-credential.js";
+
+/**
+ * Composition point (Constitution §4) for AIO-392: bridge the outbox seam's content-free,
+ * command-keyed `OutboxEvent` onto the durable I-02 `inbox-events.ndjson` journal. Returns an
+ * `AppendOutboxEvent` sink bound to `root` so action-attempt / outcome / native-receipt events are
+ * durably written (and re-read / rebuilt) as canonical lifecycle events. The `inbox` outbox module
+ * never value-imports the journal — that seam is wired HERE. Mapping: `command_id → correlation_id`,
+ * `at → ts`, `data → payload`. `appendInboxEvent` validates the kind against the real I-02
+ * vocabulary and rejects an unknown kind before writing. The payload stays content-free (state /
+ * reason / counts / native ids) — no body bytes, recipient addresses, or subject text ever cross.
+ */
+export function createDurableOutboxJournal(root: string): AppendOutboxEvent {
+  return (event) => {
+    appendInboxEvent(root, {
+      kind: event.kind,
+      correlation_id: event.command_id,
+      payload: event.data ?? {},
+      ...(event.at ? { ts: event.at } : {}),
+    });
+  };
+}
 
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
