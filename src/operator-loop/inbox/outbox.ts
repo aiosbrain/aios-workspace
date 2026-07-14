@@ -96,6 +96,20 @@ export class OutboxSendError extends Error {
   }
 }
 
+/**
+ * The reconcile-first Sent query itself failed (search outage / transport error) so we DO NOT KNOW
+ * whether a prior send landed. This MUST fail closed: `attempt` catches it, journals a
+ * `reconcile-unavailable` outcome, and leaves the command `outcome_unknown` (retryable) — it NEVER
+ * falls through to a blind (re)send. A real `querySent` throws THIS on any exec/parse error rather
+ * than returning `{ found: false }`, which would be indistinguishable from "confirmed not sent".
+ */
+export class OutboxReconcileError extends Error {
+  constructor(message = "reconcile-first Sent query failed (outcome unknown)") {
+    super(message);
+    this.name = "OutboxReconcileError";
+  }
+}
+
 // -- injected transport (gog faked at the process boundary in CI) ----------------------------------
 
 /** The result of one native send. `rejected_recipients` is non-empty on a multi-recipient partial
@@ -119,7 +133,9 @@ export interface SentQuery {
  * `OutboxTimeoutError` on an unknown-outcome timeout and `OutboxSendError` on a definitive failure.
  */
 export interface OutboxSendClient {
-  /** Reconcile-first: is a message carrying this command's marker already in Sent? */
+  /** Reconcile-first: is a message carrying this command's stable marker already in Sent? MUST throw
+   *  `OutboxReconcileError` on a search outage / transport error (NEVER return `{ found: false }` on
+   *  error — that is indistinguishable from a confirmed "not sent" and would risk a duplicate send). */
   querySent(commandId: string): SentQuery;
   /** Send the EXACT bytes. Throws `OutboxTimeoutError` / `OutboxSendError` per above. */
   send(exactOutboundBytes: string): OutboxSendResult;
@@ -284,6 +300,46 @@ export function outboundRecipientSet(bytes: string): Set<string> {
     }
   }
   return set;
+}
+
+/** The structured fields a transport actually sends, parsed FROM the exact checked bytes. */
+export interface OutboundMessage {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+}
+
+/**
+ * Parse the exact outbound bytes into the structured fields a field-based transport (gog gmail send)
+ * hands to the provider. This is the alignment seam (spec §scope, "exact bytes vs sent"): a caller
+ * that cannot send raw RFC822 sends EXACTLY these parsed fields, so the bytes that `checkPreSend`
+ * validated are the bytes that go out — no separate message object can diverge. Recipients preserve
+ * their first-seen order + original case (addresses are opaque ids). Header folding is honored.
+ */
+export function parseOutboundMessage(bytes: string): OutboundMessage {
+  const { values, body } = parseHeaderBlock(bytes);
+  const addrs = (h: string): string[] => {
+    const out: string[] = [];
+    for (const v of values.get(h) ?? []) {
+      for (const a of v.split(",")) {
+        const m = a.match(/<([^>]+)>/);
+        const addr = (m ? (m[1] as string) : a).trim();
+        if (addr) out.push(addr);
+      }
+    }
+    return out;
+  };
+  const subjectVals = values.get("subject") ?? [];
+  return {
+    to: addrs("to"),
+    cc: addrs("cc"),
+    bcc: addrs("bcc"),
+    subject: subjectVals[0] ?? "",
+    // Drop a single trailing newline the serializer adds; preserve the rest byte-for-byte.
+    body: body.endsWith("\n") ? body.slice(0, -1) : body,
+  };
 }
 
 // eslint-disable-next-line no-control-regex
@@ -459,7 +515,9 @@ export function foldOutboxState(events: readonly OutboxEvent[]): Map<string, Fol
       if (status === "sent") cur.state = "sent";
       else if (status === "reconciled") cur.state = "reconciled";
       else if (status === "failed" || status === "rejected") cur.state = "failed";
-      else if (status === "outcome_unknown") cur.state = "outcome_unknown";
+      // `reconcile_unavailable` (a Sent-query outage) is retryable, same as an unknown outcome.
+      else if (status === "outcome_unknown" || status === "reconcile_unavailable")
+        cur.state = "outcome_unknown";
     }
     out.set(ev.command_id, cur);
   }
@@ -559,7 +617,20 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     }
 
     // Reconcile-first: query Sent BEFORE any (re)send. Closes timeout/crash/retry duplicates.
-    const q = deps.client.querySent(commandId);
+    // FAIL CLOSED: if the Sent query itself errors we do NOT know whether a prior send landed, so we
+    // must never fall through to a (re)send. Journal a `reconcile-unavailable` outcome and leave the
+    // command `outcome_unknown` (retryable) — no send happens this pass.
+    let q: SentQuery;
+    try {
+      q = deps.client.querySent(commandId);
+    } catch (err) {
+      if (err instanceof OutboxReconcileError) {
+        cmd.state = "outcome_unknown";
+        emit("outcome", commandId, { status: "reconcile_unavailable" });
+        return cmd;
+      }
+      throw err;
+    }
     if (q.found) {
       if (q.message_id) cmd.native_message_id = q.message_id;
       if (q.thread_id) cmd.native_thread_id = q.thread_id;
@@ -623,7 +694,14 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     const entry = requireEntry(commandId);
     const cmd = entry.command;
     if (cmd.state === "reconciled") return cmd; // duplicate reconcile is idempotent
-    const q = deps.client.querySent(commandId);
+    // Fail closed: a Sent-query outage leaves the command unchanged (never a spurious reconcile).
+    let q: SentQuery;
+    try {
+      q = deps.client.querySent(commandId);
+    } catch (err) {
+      if (err instanceof OutboxReconcileError) return cmd;
+      throw err;
+    }
     if (!q.found) return cmd; // nothing to reconcile yet
     // Duplicate native receipt: if we already hold this message id, do not re-journal it.
     const already = Boolean(

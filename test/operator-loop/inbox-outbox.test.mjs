@@ -26,10 +26,12 @@ import {
   checkPreSend,
   approvedRecipientSet,
   outboundRecipientSet,
+  parseOutboundMessage,
   assertGatewayTokenSecurity,
   OutboxRejectedError,
   OutboxTimeoutError,
   OutboxSendError,
+  OutboxReconcileError,
   ADMIN_CONTEXT_MARKERS,
 } from "../../dist/operator-loop/index.js";
 
@@ -405,6 +407,88 @@ test("native receipt reconciliation: sent fixture reaches reconciled with the Gm
   // Read the journal fixture back: a native-receipt event carries the Gmail message id.
   const recovered = foldOutboxState(journal.events);
   assert.equal(recovered.get("cmd-1").native_message_id, "mid-cmd-1");
+});
+
+// -- reconcile-first FAIL CLOSED on a Sent-query outage (never a blind resend) ----------------------
+
+test("reconcile-first search outage fails closed: outcome_unknown, ZERO sends", () => {
+  const journal = createInMemoryOutboxJournal();
+  let sends = 0;
+  const client = {
+    querySent() {
+      throw new OutboxReconcileError("simulated Sent-search outage");
+    },
+    send() {
+      sends += 1;
+      return { message_id: "x", thread_id: "x" };
+    },
+  };
+  const ob = createOutbox({ client, journal: journal.append, now });
+  const cmd = ob.sendApproved(enqueueInput());
+  assert.equal(cmd.state, "outcome_unknown");
+  assert.equal(sends, 0, "a Sent-query outage must NEVER fall through to a send");
+  // Only a content-free reconcile_unavailable outcome is journaled — no action-attempt, no receipt.
+  assert.deepEqual(
+    journal.events.map((e) => e.kind),
+    ["outcome"]
+  );
+  assert.equal(journal.events[0].data.status, "reconcile_unavailable");
+});
+
+test("outage during retry never duplicates: timeout -> search-down (no resend) -> search-up reconciles", () => {
+  const journal = createInMemoryOutboxJournal();
+  let sends = 0;
+  let searchState = "ok-empty"; // ok-empty | down | found
+  const client = {
+    querySent() {
+      if (searchState === "down") throw new OutboxReconcileError("search down");
+      if (searchState === "found") return { found: true, message_id: "mid-1", thread_id: "tid-1" };
+      return { found: false };
+    },
+    send() {
+      sends += 1;
+      // The send lands at Gmail but times out on our side (outcome unknown).
+      searchState = "found";
+      throw new OutboxTimeoutError();
+    },
+  };
+  const ob = createOutbox({ client, journal: journal.append, now });
+  // Attempt 1: search empty -> send -> timeout (message actually landed). counter=1.
+  const c1 = ob.sendApproved(enqueueInput());
+  assert.equal(c1.state, "outcome_unknown");
+  assert.equal(sends, 1);
+  // Attempt 2: the Sent search is temporarily DOWN -> fail closed, NO resend.
+  searchState = "down";
+  const c2 = ob.attempt("cmd-1");
+  assert.equal(c2.state, "outcome_unknown");
+  assert.equal(sends, 1, "must not resend while the Sent query is unavailable");
+  // Attempt 3: search recovers and finds the landed message -> reconciled, still one send.
+  searchState = "found";
+  const c3 = ob.attempt("cmd-1");
+  assert.equal(c3.state, "reconciled");
+  assert.equal(c3.native_message_id, "mid-1");
+  assert.equal(sends, 1, "at-most-once across the whole outage sequence");
+});
+
+// -- exact-bytes alignment: what is checked is parsed back into what is sent ------------------------
+
+test("parseOutboundMessage returns exactly the fields a field-based transport sends", () => {
+  const body = "Hi there.\n\n-- \naios-outbox-cmd:cmd-42";
+  const bytes =
+    ["To: a@x.test, b@x.test", "Cc: c@x.test", "Subject: Re: hello"].join("\n") +
+    "\n\n" +
+    body +
+    "\n";
+  const msg = parseOutboundMessage(bytes);
+  assert.deepEqual(msg.to, ["a@x.test", "b@x.test"]);
+  assert.deepEqual(msg.cc, ["c@x.test"]);
+  assert.deepEqual(msg.bcc, []);
+  assert.equal(msg.subject, "Re: hello");
+  assert.equal(msg.body, body);
+  // The stable reconcile marker rides in the BODY (robust to subject edits), so it is sent verbatim.
+  assert.ok(msg.body.includes("aios-outbox-cmd:cmd-42"));
+  // The parsed recipient set equals what checkPreSend validated (alignment guarantee).
+  assert.deepEqual([...outboundRecipientSet(bytes)].sort(), ["a@x.test", "b@x.test", "c@x.test"]);
 });
 
 // -- delegation capability scoping -----------------------------------------------------------------
