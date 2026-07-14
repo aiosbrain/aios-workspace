@@ -50,7 +50,7 @@ value. A spec passing all must-criteria gets 100 regardless of advisory findings
 | SR8 | Well-bounded module — one narrow surface, no sibling-domain reach? | must |
 | SR9 | Interface-first — contracts/types named before implementation steps? | must |
 | SR11 | Testability — demonstrable by named tests with complete commands? | must |
-| SR15 | Refutation — every must-path specified? Cold-start builder can complete all AC without unrecoverable decisions? Prerequisites have "what if missing" branches? | must |
+| SR15 | Decidability — every must-path decidable? Bounded design latitude whose output is human-reviewed before merge is a PASS (a reviewed PR is recoverable); a blocker is only a decision with no downstream catch (unstated perf/SLA target, prerequisite with no "what if missing" branch, ambiguous external contract) | must |
 | SR12 | Spec → plan → tasks traceability? Linear/epic links clear? | advisory |
 | SR13 | Structural signals captured zero-LLM before model steps? | advisory |
 | SR14 | Durable-state discipline stated? Append-only, writer-honored locks? | advisory |
@@ -65,6 +65,20 @@ value. A spec passing all must-criteria gets 100 regardless of advisory findings
 3. **Score is mechanical** — derived from pass/fail ratio, not model opinion.
 4. **Checklist format** — the model follows a table of criteria instead of free-form refutation.
    This reduces the model's tendency to hallucinate novel criticisms.
+5. **Pinned sampling** — the evaluator call sends `temperature: 0` / `top_p: 1` (`EVAL_SAMPLING`),
+   so the per-criterion PASS/FAIL judgments are as reproducible as the provider allows. Only the
+   evaluator is pinned; agentic build/plan/fix calls keep provider defaults.
+6. **Quorum vote (confirm-before-fail)** — the per-criterion judgments are still LLM outputs, and no
+   provider is perfectly deterministic even at temp 0. So a blocking first pass escalates to `K`
+   independent samples (default 3) and the verdict is a **majority vote**: NOT_READY only if
+   ≥⌈K/2⌉ samples block, and a blocker finding gates only if its rule recurs in ≥⌈K/2⌉ samples. A
+   lone stochastic FAIL is outvoted; a persistent one still blocks. The **ready path stays one call**
+   (a passing first sample returns immediately) — only the boundary case pays for K samples. Cost
+   note: a spec fixed in a tight loop runs up to K evaluator calls per attempt (all DeepSeek, off the
+   Claude allowance). Set `K=1` to disable quorum (single pass) for CI/mocked runs.
+
+If a spec's verdict still flips after this, the signal is that the **SR15 wording or the spec itself
+is genuinely ambiguous** — fix the criterion or the spec, don't raise K.
 
 ## Comparing prompts
 
