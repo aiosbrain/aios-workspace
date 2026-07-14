@@ -18,6 +18,8 @@ import {
   buildObservation,
   appendObservations,
   PARTITION_SEPARATOR,
+  RANKER_VERSION,
+  RECENCY_WHY,
 } from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -159,7 +161,86 @@ test("protected partition renders above the separator; the rest below it", () =>
   }
 });
 
-test("--json round-trips (parse → re-serialize → deep-equal) and carries ranker_version + staleness", () => {
+test("registry-configured protected sender is promoted into the partition (real ranker, end-to-end)", () => {
+  const dir = ws();
+  try {
+    // Admin-local default registry: one protected counterparty (entity file + active engagement).
+    const regDir = path.join(dir, ".aios", "loop", "inbox");
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(
+      path.join(regDir, "ranking-registry.json"),
+      JSON.stringify({
+        people: [
+          {
+            ids: ["vip@client.com"],
+            tier: 1,
+            projectWeight: 0.9,
+            entityFile: true,
+            engagement: "active",
+          },
+        ],
+      })
+    );
+    // A thread observation whose counterparty (role:"from") is the protected sender.
+    appendObservations(dir, [
+      buildObservation({
+        connection_id: "gmail-a",
+        account: "me@acme.com",
+        tenant: "acme.com",
+        object_kind: "email",
+        native_id: "vip-msg",
+        ts: new Date().toISOString(),
+        snippet: "Can you review the contract today?",
+        participants: [{ id: "vip@client.com", display: "VIP", role: "from" }],
+      }),
+    ]);
+    // A plain unprotected fyi ask to sit below the fold.
+    addAsk(dir, "status", "fyi", "nightly ran");
+
+    const view = JSON.parse(run(dir, "inbox", ["--json"]).stdout);
+    assert.equal(view.ranker_version, RANKER_VERSION, "real ranker version stamped");
+    const vip = view.items.find(
+      (i) => i.origin === "thread-state" && i.observation.native_id === "vip-msg"
+    );
+    assert.ok(vip, "vip observation present");
+    assert.equal(vip.protected, true, "registry-protected sender is protected by the real ranker");
+    assert.notEqual(vip.why, RECENCY_WHY, "carries a real ranker why");
+
+    const out = run(dir, "inbox", []).stdout;
+    const sepAt = out.indexOf(PARTITION_SEPARATOR);
+    assert.ok(sepAt > -1, "separator rendered");
+    assert.ok(
+      out.indexOf(vip.id) > -1 && out.indexOf(vip.id) < sepAt,
+      "registry-protected sender renders above the separator"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("broken registry fails open — still the real ranker/version, no crash, nothing wrongly protected", () => {
+  const dir = ws();
+  try {
+    const regDir = path.join(dir, ".aios", "loop", "inbox");
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(path.join(regDir, "ranking-registry.json"), "{ not valid json ][");
+    addAsk(dir, "status", "fyi", "just an fyi");
+    seedObservations(dir);
+
+    const res = run(dir, "inbox", ["--json"]);
+    assert.equal(res.code, 0, "broken registry never crashes the CLI");
+    const view = JSON.parse(res.stdout);
+    assert.equal(view.ranker_version, RANKER_VERSION, "still the real ranker/version on fail-open");
+    // No registry entries resolve → no thread item is registry-protected.
+    for (const it of view.items.filter((i) => i.origin === "thread-state")) {
+      assert.equal(it.protected, false, "fail-open never claims protected for a thread");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--json round-trips (parse → re-serialize → deep-equal) and carries the REAL ranker_version + staleness", () => {
   const dir = ws();
   try {
     addAsk(dir, "idle", "blocker", "one");
@@ -168,10 +249,20 @@ test("--json round-trips (parse → re-serialize → deep-equal) and carries ran
     const parsed = JSON.parse(raw);
     assert.deepEqual(JSON.parse(JSON.stringify(parsed)), parsed, "round-trips");
     assert.equal(typeof parsed.ranker_version, "string");
-    assert.equal(parsed.ranker_version, "recency-fallback", "I-04 absent → recency fallback");
+    // AIO-429: buildInbox now injects I-04's real deterministic ranker by default (no registry
+    // configured in this fixture → fail-open, tier-only, but STILL the real ranker + version).
+    assert.equal(parsed.ranker_version, RANKER_VERSION, "real I-04 ranker injected by default");
+    assert.notEqual(parsed.ranker_version, "recency-fallback", "not the recency fallback");
     assert.ok(parsed.staleness && typeof parsed.staleness.stale === "boolean", "carries staleness");
     assert.ok("generated_at" in parsed, "carries generated_at");
-    for (const it of parsed.items) assert.equal(it.why, "recency", "recency why on every row");
+    // Every row carries a real, non-empty ranker `why` (never the recency-fallback string).
+    for (const it of parsed.items) {
+      assert.ok(
+        typeof it.why === "string" && it.why.trim().length > 0,
+        "non-empty why on every row"
+      );
+      assert.notEqual(it.why, RECENCY_WHY, "real ranker why, not the recency fallback");
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

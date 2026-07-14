@@ -21,8 +21,11 @@ import { readObservations, type LegacyActivityRecord } from "./inbox/observation
 import { assembleFromObservations, type InboxView, type Ranker } from "./inbox/cli.js";
 // Composition-point wiring for the capability seam → durable I-02 journal (AIO-427). Local bindings
 // (a `export … from` re-export does NOT bring a symbol into local scope) for `createDurableCapabilityJournal`.
-import { appendInboxEvent } from "./inbox/journal.js";
+import { appendInboxEvent, INBOX_DIR_REL } from "./inbox/journal.js";
 import type { AppendCapabilityEvent } from "./inbox/capability.js";
+// Composition-point wiring for the ranker seam → I-04 deterministic ranker (AIO-429).
+import { loadRegistry } from "./inbox/ranker.js";
+import { createInboxRanker } from "./inbox/ranker-adapter.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -468,11 +471,29 @@ export {
   type RenderColors,
 } from "./inbox/cli.js";
 
+/** Admin-tier LOCAL default for I-04's relationship/project registry, read by `buildInbox` to build
+ *  the deterministic ranker (AIO-429). Absent/broken → fail-open (tier-only, everything unprotected)
+ *  but STILL the real ranker + `RANKER_VERSION`. NEVER synced; not a sync surface. */
+export const INBOX_RANKING_REGISTRY_BASENAME = "ranking-registry.json";
+
+/** Absolute path to the admin-local default ranking registry under `.aios/loop/inbox/`. */
+export function inboxRankingRegistryPath(root: string): string {
+  return path.join(root, INBOX_DIR_REL, INBOX_RANKING_REGISTRY_BASENAME);
+}
+
+export { createInboxRanker, toRankInput } from "./inbox/ranker-adapter.js";
+
 /**
  * Loop composition point (Constitution §4) for `aios inbox`: read the asks store + the enriched
  * observation log + the legacy `activity.jsonl` stream(s), then assemble the unified read-only
  * view. The `inbox` domain never value-imports the `asks` domain — that seam is composed HERE.
  * Read-only: no store is mutated. `activityPaths` mirrors the read-model's advisory join inputs.
+ *
+ * Ranking (AIO-429): by default this injects I-04's REAL deterministic ranker via the adapter,
+ * loading the relationship/project registry from `registryPath` (explicit override) or the
+ * admin-local default `.aios/loop/inbox/ranking-registry.json`. A missing/broken registry fails
+ * open (tier-only, everything unprotected) without crashing but still uses the real ranker/version.
+ * An explicit `ranker` still wins (the test-injection seam), and `--raw` remains ranking-free.
  */
 export function buildInbox(
   root: string,
@@ -480,11 +501,17 @@ export function buildInbox(
     now?: Date;
     sloMs?: number;
     ranker?: Ranker;
+    registryPath?: string;
     asksOverride?: readonly Ask[];
     activityPaths?: string[];
     observationsPath?: string;
   } = {}
 ): InboxView {
+  const ranker =
+    opts.ranker ??
+    createInboxRanker(loadRegistry(opts.registryPath ?? inboxRankingRegistryPath(root)), {
+      now: opts.now,
+    });
   const asks = opts.asksOverride ?? readAsks(root).asks;
   const { observations } = readObservations(root, opts.observationsPath);
   const activityPaths = opts.activityPaths ?? [
@@ -515,7 +542,7 @@ export function buildInbox(
     legacy,
     now: opts.now,
     sloMs: opts.sloMs,
-    ranker: opts.ranker,
+    ranker,
   });
 }
 
