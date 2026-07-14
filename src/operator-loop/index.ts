@@ -19,6 +19,10 @@ import {
 import { readAsks, type Ask } from "./asks/store.js";
 import { readObservations, type LegacyActivityRecord } from "./inbox/observations.js";
 import { assembleFromObservations, type InboxView, type Ranker } from "./inbox/cli.js";
+// Composition-point wiring for the capability seam → durable I-02 journal (AIO-427). Local bindings
+// (a `export … from` re-export does NOT bring a symbol into local scope) for `createDurableCapabilityJournal`.
+import { appendInboxEvent } from "./inbox/journal.js";
+import type { AppendCapabilityEvent } from "./inbox/capability.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -552,14 +556,53 @@ export {
   type ApprovalDecision,
   type DisplayProjection,
   type BrokeredDecision,
-  type InboxEventKind as CapabilityInboxEventKind,
-  type InboxEvent as CapabilityInboxEvent,
-  type AppendInboxEvent,
+  type CapabilityEventKind,
+  type CapabilityEvent,
+  type AppendCapabilityEvent,
   type BrokerOptions,
   type DeepLinkAsk,
   type NotifyDeepLink,
   type NotifyDeepLinkOptions,
 } from "./inbox/capability.js";
+
+/**
+ * Composition point (Constitution §4) for AIO-427: bridge the capability seam's content-free,
+ * handle-keyed `CapabilityEvent` onto the durable I-02 `inbox-events.ndjson` journal. Returns an
+ * `AppendCapabilityEvent` sink bound to `root` that the GUI gateway injects into `brokerDecision`,
+ * `consumeAndExecute`, and `notifyDeepLink` so user-intent / pdp-decision / capability-consumption /
+ * outcome / native-receipt events are durably written (and re-read / rebuilt) as canonical lifecycle
+ * events. The `inbox` capability module never value-imports the journal — that seam is wired HERE.
+ * Mapping: `handle → correlation_id`, `at → ts`, `data → payload`. `appendInboxEvent` validates the
+ * kind against the real I-02 vocabulary and rejects an unknown kind before writing.
+ *
+ * NON-FATAL by contract (AIO-427 review): the sink NEVER throws. A validation error (unknown kind,
+ * empty correlation id) or a filesystem/lock error from `appendInboxEvent` is caught here and reduced
+ * to a CONTENT-FREE warning (the event kind + the error's class name only — never the payload/args),
+ * then swallowed. This is what lets the runtime write the journal BEFORE its authoritative store line
+ * without a journal fault ever stranding the store lock or crashing the gateway: the caller's store
+ * write proceeds regardless, and a dropped line is recoverable by a later `rebuildReadModel`.
+ */
+export function createDurableCapabilityJournal(root: string): AppendCapabilityEvent {
+  return (event) => {
+    try {
+      appendInboxEvent(root, {
+        kind: event.kind,
+        correlation_id: event.handle,
+        payload: event.data ?? {},
+        ...(event.at ? { ts: event.at } : {}),
+      });
+    } catch (err) {
+      const name =
+        err && typeof err === "object" && "name" in err ? String((err as Error).name) : "Error";
+      try {
+        // Content-free: kind is a fixed enum; `name` is an error class — no payload is ever logged.
+        console.warn(`inbox journal: dropped a ${event?.kind ?? "?"} event (${name}); continuing`);
+      } catch {
+        /* never let logging itself throw */
+      }
+    }
+  };
+}
 
 // Unified inbox — deterministic ranking in SHADOW mode (I-04 / AIO-385). Ports the hermes-aluna
 // digest's zero-LLM classification rules + the entity/project importance signal + the protected

@@ -14,7 +14,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,9 @@ import {
   brokerDecision,
   notifyDeepLink,
   createInMemoryJournal,
+  createDurableCapabilityJournal,
+  readJournalSegments,
+  rebuildReadModel,
 } from "../../dist/operator-loop/index.js";
 import {
   issueHandle,
@@ -88,10 +91,11 @@ test("round-trip: approve → consume → execute once → native-receipt journa
     assert.equal(receipt.kind, "native-receipt");
     assert.equal(receipt.ok, true);
     assert.equal(c.n, 1, "executed exactly once");
-    // journal saw user-intent, pdp-decision, and native-receipt.
+    // journal saw the full lifecycle: broker (user-intent, pdp-decision) then owning runtime
+    // (capability-consumption tombstone, native-receipt) — AIO-427.
     assert.deepEqual(
       journal.events.map((e) => e.kind),
-      ["user-intent", "pdp-decision", "native-receipt"]
+      ["user-intent", "pdp-decision", "capability-consumption", "native-receipt"]
     );
     // durable tombstone on disk
     assert.equal(readCapabilities(root).get(handle).state, "consumed");
@@ -300,6 +304,299 @@ test("KILL fallback: notifyDeepLink is content-free and demoable standalone", ()
   }
   // No capability store is touched by the fallback lane — it needs no durable consume.
   assert.equal(existsSync(path.join(tmpdir(), CAPABILITY_STORE_REL)), false);
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// AIO-427 — capability events wired to the durable I-02 journal.
+//
+// The prior spike stubbed `appendInboxEvent` (no-op / in-memory). This section proves the seam is now
+// wired to the REAL durable `inbox-events.ndjson` journal via `createDurableCapabilityJournal(root)`
+// (the loop composition bridge): the coordinator (user-intent / pdp-decision) and the owning runtime
+// (capability-consumption / outcome / native-receipt) both emit through the injected sink, and the
+// events survive a reread (readJournalSegments) and a deterministic SQLite rebuild (rebuildReadModel).
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+test("AIO-427: approve round-trip is durably journalled — reread + rebuild sees consumption + receipt", () => {
+  const root = ws();
+  try {
+    const append = createDurableCapabilityJournal(root);
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    const brokered = brokerDecision(displayProjection, "approve", { appendInboxEvent: append });
+    const { c, execute } = counter();
+    const receipt = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      execute,
+      appendEvent: append,
+    });
+    assert.equal(receipt.kind, "native-receipt");
+    assert.equal(c.n, 1);
+
+    // REREAD: the durable journal on disk carries the full lifecycle, every event keyed by the handle
+    // as its correlation_id, in seq order.
+    const { events, tornTail } = readJournalSegments(root);
+    assert.equal(tornTail, false);
+    assert.deepEqual(
+      events.map((e) => e.kind),
+      ["user-intent", "pdp-decision", "capability-consumption", "native-receipt"]
+    );
+    for (const e of events) assert.equal(e.correlation_id, handle);
+    // The broker decision is durably seen on reread.
+    assert.equal(events.find((e) => e.kind === "pdp-decision").payload.decision, "approve");
+    // Content-free: no request args ever reach the durable payloads.
+    assert.equal(JSON.stringify(events).includes("git status"), false);
+
+    // REBUILD: the SQLite projection sees the consumption tombstone + the native receipt, plus an item
+    // row for the correlation id.
+    const report = rebuildReadModel(root);
+    assert.equal(report.counts.tombstones, 1, "consumption is a durable tombstone");
+    assert.equal(report.counts.receipts, 1, "native receipt is projected");
+    assert.ok(report.counts.items >= 1, "an item row exists for the handle");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427: deny round-trip is durably journalled — reread sees the denial, rebuild sees the tombstone", () => {
+  const root = ws();
+  try {
+    const append = createDurableCapabilityJournal(root);
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    const brokered = brokerDecision(displayProjection, "deny", { appendInboxEvent: append });
+    const { c, execute } = counter();
+    const rej = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      execute,
+      appendEvent: append,
+    });
+    assert.equal(rej.reason, "denied");
+    assert.equal(c.n, 0);
+
+    const { events } = readJournalSegments(root);
+    assert.deepEqual(
+      events.map((e) => e.kind),
+      ["user-intent", "pdp-decision", "capability-consumption"]
+    );
+    assert.equal(
+      events.find((e) => e.kind === "pdp-decision").payload.decision,
+      "deny",
+      "the durable journal records the denial verdict"
+    );
+
+    const report = rebuildReadModel(root);
+    assert.equal(report.counts.tombstones, 1, "a denial also durably consumes the handle");
+    assert.equal(report.counts.receipts, 0, "a denied handle never produces a native receipt");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427: an outcome_unknown crash window durably writes a valid outcome event; rebuild is deterministic", () => {
+  const root = ws();
+  try {
+    const append = createDurableCapabilityJournal(root);
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    const brokered = brokerDecision(displayProjection, "approve", { appendInboxEvent: append });
+    const boom = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      appendEvent: append,
+      execute: () => {
+        throw new Error("side effect failed");
+      },
+    });
+    assert.equal(boom.outcome, "outcome_unknown");
+
+    // The consume tombstone is written BEFORE execute; a failed execute then writes the outcome event.
+    const { events } = readJournalSegments(root);
+    assert.deepEqual(
+      events.map((e) => e.kind),
+      ["user-intent", "pdp-decision", "capability-consumption", "outcome"]
+    );
+    assert.equal(events.find((e) => e.kind === "outcome").payload.result, "outcome_unknown");
+
+    // Rebuild is byte-equivalent for identical journal inputs (deterministic projection digest).
+    const d1 = rebuildReadModel(root).digest;
+    const d2 = rebuildReadModel(root).digest;
+    assert.equal(d1, d2, "rebuild is byte-equivalent for identical journal inputs");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427: notifyDeepLink fallback durably writes a content-free surface event, no capability store", () => {
+  const root = ws();
+  try {
+    const append = createDurableCapabilityJournal(root);
+    notifyDeepLink(
+      { handle: "h-427", deepLink: "aios://approve/h-427" },
+      { appendInboxEvent: append }
+    );
+    const { events } = readJournalSegments(root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, "user-intent");
+    assert.equal(events[0].correlation_id, "h-427");
+    assert.equal(events[0].payload.intent, "surface");
+    // The fallback lane needs no durable consume — it never touches the capability store.
+    assert.equal(existsSync(path.join(root, CAPABILITY_STORE_REL)), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// AIO-427 review — journal-before-store ordering + non-fatal journal errors (crash/error injection).
+//
+// The review required removing the divergence crash window where the authoritative capability store
+// advanced past an unwritten journal event. These tests pin the reconciliation:
+//   • ORDERING — the journal event fires BEFORE the store tombstone commits (proven by inspecting the
+//     store state from inside the injected sink).
+//   • REPLAY/AT-MOST-ONCE — a crash between the journal write and the store write leaves the handle
+//     PENDING (action never ran) → a safe single retry executes exactly once, and the read-model dedups
+//     the orphaned journal consumption into one tombstone.
+//   • NON-FATAL — a throwing / failing journal sink never aborts the authoritative store, strands the
+//     store lock, or crashes; the store stays the source of truth and replay still holds.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+test("AIO-427 ordering: the journal consumption event fires BEFORE the authoritative store tombstone", () => {
+  const root = ws();
+  try {
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    const brokered = brokerDecision(displayProjection, "approve");
+    let stateAtJournal = "unset";
+    // The sink observes the on-disk store state at the instant the consumption event is emitted.
+    const append = (ev) => {
+      if (ev.kind === "capability-consumption")
+        stateAtJournal = loadRecord(root, handle)?.state ?? null;
+    };
+    const { c, execute } = counter();
+    const r = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      execute,
+      appendEvent: append,
+    });
+    assert.equal(r.kind, "native-receipt");
+    assert.equal(
+      stateAtJournal,
+      "pending",
+      "journal-before-store: the tombstone must NOT be committed when the journal event fires"
+    );
+    assert.equal(loadRecord(root, handle).state, "consumed");
+    assert.equal(c.n, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427 crash after journal, before store tombstone (approve): retry executes exactly once; read-model dedups", () => {
+  const root = ws();
+  try {
+    const journal = createDurableCapabilityJournal(root);
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    // Simulate a crash: the journal consumption event was durably written, then the process died
+    // BEFORE the authoritative store tombstone committed (journal AHEAD of store — the safe direction).
+    journal({
+      kind: "capability-consumption",
+      handle,
+      at: new Date().toISOString(),
+      data: { capability_id: handle, operation: "Bash", request_digest: "d", decision: "approve" },
+    });
+    assert.equal(loadRecord(root, handle).state, "pending", "the store tombstone never committed");
+
+    // Restart + retry: the handle is safely re-consumable and executes EXACTLY once — the action never
+    // ran before the crash, so at-most-once is preserved by the STORE tombstone, not the journal.
+    const brokered = brokerDecision(displayProjection, "approve", { appendInboxEvent: journal });
+    const { c, execute } = counter();
+    const r = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      execute,
+      appendEvent: journal,
+    });
+    assert.equal(r.kind, "native-receipt");
+    assert.equal(c.n, 1, "exactly-once despite the pre-crash orphaned journal event");
+
+    // The read-model folds the orphaned + real consumption into ONE tombstone (idempotent replay).
+    const report = rebuildReadModel(root);
+    assert.equal(
+      report.counts.tombstones,
+      1,
+      "duplicate consumption events dedup to one tombstone"
+    );
+    assert.equal(report.counts.receipts, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427 non-fatal journal error: a throwing sink never aborts the store, strands the lock, or crashes; replay holds", () => {
+  const root = ws();
+  try {
+    const { handle, displayProjection } = issueHandle(root, sampleRequest());
+    const brokered = brokerDecision(displayProjection, "approve");
+    const boom = () => {
+      throw new Error("journal disk full");
+    };
+    const { c, execute } = counter();
+    // The journal sink throws on EVERY event, yet the authoritative consume + execute still succeeds.
+    const r = consumeAndExecute(root, handle, brokered, {
+      identity: IDENTITY,
+      execute,
+      appendEvent: boom,
+    });
+    assert.equal(r.kind, "native-receipt");
+    assert.equal(c.n, 1, "authoritative execution proceeds despite the journal failure");
+    assert.equal(loadRecord(root, handle).state, "consumed", "durable tombstone committed");
+
+    // The store lock was released (not stranded): a fresh consume acquires it and the replay guard fires.
+    const replay = consumeAndExecute(root, handle, brokered, { identity: IDENTITY, execute });
+    assert.equal(replay.reason, "replay-consumed");
+    assert.equal(c.n, 1, "no re-execution on replay");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-427 createDurableCapabilityJournal swallows validation + filesystem errors (content-free), never throws", () => {
+  const root = ws();
+  try {
+    const journal = createDurableCapabilityJournal(root);
+    // Invalid kind → appendInboxEvent would throw InboxValidationError; the sink must swallow it.
+    assert.doesNotThrow(() =>
+      journal({ kind: "not-a-real-kind", handle: "h", at: new Date().toISOString(), data: {} })
+    );
+    // Empty correlation id (handle) → validation error; swallowed.
+    assert.doesNotThrow(() =>
+      journal({
+        kind: "outcome",
+        handle: "",
+        at: new Date().toISOString(),
+        data: { result: "succeeded" },
+      })
+    );
+    // Filesystem error: a root that is a FILE makes the journal's mkdir throw — still swallowed.
+    const asFile = path.join(root, "not-a-dir");
+    writeFileSync(asFile, "x");
+    const badJournal = createDurableCapabilityJournal(asFile);
+    assert.doesNotThrow(() =>
+      badJournal({
+        kind: "outcome",
+        handle: "h",
+        at: new Date().toISOString(),
+        data: { result: "succeeded" },
+      })
+    );
+
+    // A valid event still writes — the swallow path only drops the bad ones.
+    journal({
+      kind: "outcome",
+      handle: "h-ok",
+      at: new Date().toISOString(),
+      data: { result: "succeeded" },
+    });
+    const { events } = readJournalSegments(root);
+    assert.equal(events.length, 1, "only the valid event was written; invalid ones were dropped");
+    assert.equal(events[0].correlation_id, "h-ok");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

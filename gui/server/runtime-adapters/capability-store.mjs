@@ -373,6 +373,43 @@ function rejection(handle, reason, extra = {}) {
 }
 
 /**
+ * Emit one journal event through the injected sink, NON-FATALLY, honouring the journal-BEFORE-store
+ * ordering contract (AIO-427 review). Two properties, reconciled deliberately:
+ *
+ *   1. ORDERING — every caller invokes this IMMEDIATELY BEFORE the authoritative capability-store
+ *      append for the same transition. So on the happy path the durable journal is never BEHIND the
+ *      store: a crash between the two leaves the journal at-or-ahead of the store (the recoverable
+ *      direction — the read-model dedups a duplicate/early event; the store, still authoritative,
+ *      re-derives true state on restart). This removes the divergence crash window where the store
+ *      advanced past an unwritten journal event.
+ *
+ *   2. NON-FATAL — a journal failure (validation / filesystem / lock error from the sink) must NEVER
+ *      strand the store lock, abort the authoritative mutation, or crash the gateway. Any throw is
+ *      swallowed here with a CONTENT-FREE warning (the event KIND only — never the payload/args), and
+ *      the caller's store write then proceeds. The authoritative store stays the source of truth; a
+ *      dropped journal line is recoverable by a later `rebuildReadModel`.
+ *
+ * These do not conflict: (1) is about SEQUENCE (attempt the journal first), (2) is about ERROR
+ * HANDLING (never let that attempt block the authoritative store). At-most-once/replay are unaffected
+ * because execution is gated on the STORE tombstone, which every caller still writes before `execute`.
+ */
+function emitJournal(appendEvent, event) {
+  if (!appendEvent) return;
+  try {
+    appendEvent(event);
+  } catch {
+    try {
+      // Content-free: the event KIND is a fixed enum string; the payload is never logged.
+      console.warn(
+        `capability: journal append failed (kind=${event?.kind ?? "?"}); authoritative store write proceeds`
+      );
+    } catch {
+      /* never let logging itself throw */
+    }
+  }
+}
+
+/**
  * Validate the runtime's OWN record for `handle`, then — only if the brokered decision approves and
  * every check passes — atomically flip pending→consumed (durable tombstone) and execute EXACTLY once.
  *
@@ -462,29 +499,53 @@ export function consumeAndExecute(
     }
 
     if (brokered.decision !== "approve") {
-      // A denial spends the handle (durable tombstone + outcome) so it can never be re-brokered to approve.
-      appendFileSync(
-        storePath(root),
-        consumeLine(handle, "deny", new Date(now).toISOString(), brokered.digest) + "\n"
-      );
-      appendFileSync(
-        storePath(root),
-        receiptLine(handle, "denied", new Date(now).toISOString()) + "\n"
-      );
-      appendEvent?.({
-        kind: "outcome",
+      const at = new Date(now).toISOString();
+      // Journal-BEFORE-store (AIO-427): record the consumption in the durable journal FIRST, then
+      // commit the authoritative deny tombstone. A denial executes nothing, so at-most-once is moot;
+      // replay is unweakened because replay-rejection only guards a STORE-committed consume — a crash
+      // between these two writes leaves the handle un-committed (safely re-decidable), and the read
+      // model dedups the orphaned journal event. The denial VERDICT is the coordinator's
+      // pdp-decision(deny) event; here we only record that the handle is consumed.
+      emitJournal(appendEvent, {
+        kind: "capability-consumption",
         handle,
-        at: new Date(now).toISOString(),
-        data: { outcome: "denied" },
+        at,
+        data: {
+          capability_id: handle,
+          operation: rec.operation,
+          request_digest: rec.requestDigest,
+          decision: "deny",
+        },
       });
+      // A denial spends the handle (durable tombstone + outcome) so it can never be re-brokered to approve.
+      appendFileSync(storePath(root), consumeLine(handle, "deny", at, brokered.digest) + "\n");
+      appendFileSync(storePath(root), receiptLine(handle, "denied", at) + "\n");
       return rejection(handle, "denied", { decision: "deny" });
     }
 
+    const consumedAt = new Date(now).toISOString();
+    // Journal-BEFORE-store (AIO-427): emit the durable I-02 consumption event FIRST, then commit the
+    // authoritative store tombstone. `capability_id` keys the read-model tombstone table;
+    // `operation`/`request_digest` are content-free (tool name + canonical hash).
+    emitJournal(appendEvent, {
+      kind: "capability-consumption",
+      handle,
+      at: consumedAt,
+      data: {
+        capability_id: handle,
+        operation: rec.operation,
+        request_digest: rec.requestDigest,
+        decision: "approve",
+      },
+    });
     // Atomic flip pending→consumed BEFORE executing: the tombstone is durable first, so a crash
     // mid-execute can never re-run on restart (it folds to consumed → replay-rejected / crash-window).
+    // Ordering safety: because the journal event above is written BEFORE this line, a crash between
+    // them leaves the handle PENDING (this line never landed) → the action never ran → a safe single
+    // retry executes exactly once. At-most-once is preserved by THIS tombstone, not by the journal.
     appendFileSync(
       storePath(root),
-      consumeLine(handle, "approve", new Date(now).toISOString(), brokered.digest) + "\n"
+      consumeLine(handle, "approve", consumedAt, brokered.digest) + "\n"
     );
 
     let output;
@@ -493,11 +554,19 @@ export function consumeAndExecute(
     } catch (e) {
       // Consumed, side effect threw: record a DURABLE outcome_unknown line so a retry replays the KNOWN
       // outcome rather than re-running. Retry eligibility is the record's idempotency class, not a guess.
-      appendFileSync(
-        storePath(root),
-        receiptLine(handle, "outcome_unknown", new Date(now).toISOString()) + "\n"
-      );
-      const receipt = {
+      const outcomeAt = rec.consumedAt ?? new Date(now).toISOString();
+      // Journal-BEFORE-store (AIO-427): the read-model reads `result` (∈ succeeded | failed |
+      // outcome_unknown). Emit it before committing the store outcome line; a crash between leaves the
+      // store in a crash-window (surfaced as outcome_unknown on restart, never silently re-run), while
+      // the journal already carries the outcome — the recoverable direction.
+      emitJournal(appendEvent, {
+        kind: "outcome",
+        handle,
+        at: outcomeAt,
+        data: { result: "outcome_unknown" },
+      });
+      appendFileSync(storePath(root), receiptLine(handle, "outcome_unknown", outcomeAt) + "\n");
+      return {
         kind: "outcome",
         ok: true,
         handle,
@@ -506,38 +575,34 @@ export function consumeAndExecute(
         error: String(e?.message ?? e),
         idempotency: rec.idempotency,
         retry: retryEligibility(rec.idempotency),
-        consumedAt: rec.consumedAt ?? new Date(now).toISOString(),
+        consumedAt: outcomeAt,
       };
-      appendEvent?.({
-        kind: "outcome",
-        handle,
-        at: receipt.consumedAt,
-        data: { outcome: "outcome_unknown" },
-      });
-      return receipt;
     }
 
+    const executedAt = new Date(now).toISOString();
+    // Journal-BEFORE-store (AIO-427): emit the native-receipt event FIRST, then commit the durable
+    // store receipt line that turns this into a completed round-trip (replay-rejected thereafter). The
+    // read-model keys the receipt table by `receipt_id` (the handle — one receipt per round-trip);
+    // `native_ref` is null for a local execute; `operation` is content-free. A crash between the two
+    // leaves the store in a crash-window (outcome_unknown on restart — never re-executed, the tombstone
+    // is already durable) while the journal already records the receipt.
+    emitJournal(appendEvent, {
+      kind: "native-receipt",
+      handle,
+      at: executedAt,
+      data: { receipt_id: handle, native_ref: null, operation: rec.operation },
+    });
     // Durable native receipt: the outcome line that turns this from a crash window into a completed
     // round-trip, so any later replay (even after restart) is rejected rather than re-run.
-    appendFileSync(
-      storePath(root),
-      receiptLine(handle, "native-receipt", new Date(now).toISOString()) + "\n"
-    );
-    const receipt = {
+    appendFileSync(storePath(root), receiptLine(handle, "native-receipt", executedAt) + "\n");
+    return {
       kind: "native-receipt",
       ok: true,
       handle,
       operation: rec.operation,
       output,
-      executedAt: new Date(now).toISOString(),
+      executedAt,
     };
-    appendEvent?.({
-      kind: "native-receipt",
-      handle,
-      at: receipt.executedAt,
-      data: { operation: rec.operation },
-    });
-    return receipt;
   });
 }
 
@@ -573,19 +638,25 @@ export function reconcile(
     const at = new Date(now).toISOString();
     const cls = normalizeIdempotency(rec.idempotency);
     // The crash window is ALWAYS surfaced as outcome_unknown first — the journal records that we did not
-    // know the action's fate before we resolved it.
-    appendEvent?.({
+    // know the action's fate before we resolved it (non-fatal; no paired store write to order against).
+    emitJournal(appendEvent, {
       kind: "outcome",
       handle,
       at,
-      data: { outcome: "outcome_unknown", idempotency: cls },
+      data: { result: "outcome_unknown", idempotency: cls },
     });
 
     if (cls === "reconcile-first") {
       const native = queryNativeReceipt ? queryNativeReceipt(rec) : null;
       if (native) {
+        // Journal-BEFORE-store (AIO-427): record the resolving receipt, then commit the store line.
+        emitJournal(appendEvent, {
+          kind: "native-receipt",
+          handle,
+          at,
+          data: { receipt_id: handle, native_ref: null, via: "reconcile" },
+        });
         appendFileSync(storePath(root), receiptLine(handle, "resolved-native", at) + "\n");
-        appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "reconcile" } });
         return {
           kind: "outcome",
           ok: true,
@@ -618,8 +689,15 @@ export function reconcile(
           error: String(e?.message ?? e),
         };
       }
+      // Journal-BEFORE-store (AIO-427): the action re-executed above (the one and only execution for a
+      // safe-retry crash window); record its receipt, then commit the durable store line.
+      emitJournal(appendEvent, {
+        kind: "native-receipt",
+        handle,
+        at,
+        data: { receipt_id: handle, native_ref: null, via: "safe-retry" },
+      });
       appendFileSync(storePath(root), receiptLine(handle, "re-executed", at) + "\n");
-      appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "safe-retry" } });
       return { kind: "outcome", ok: true, handle, outcome: "re-executed", output };
     }
 
