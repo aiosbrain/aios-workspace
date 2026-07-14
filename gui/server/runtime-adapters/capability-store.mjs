@@ -471,11 +471,19 @@ export function consumeAndExecute(
         storePath(root),
         receiptLine(handle, "denied", new Date(now).toISOString()) + "\n"
       );
+      // capability-consumption: a denial also spends (consumes) the handle — a durable tombstone in the
+      // I-02 read model. The denial VERDICT itself is the coordinator's pdp-decision(deny) event; here
+      // we only record that the handle is consumed (capability_id keys the tombstone table).
       appendEvent?.({
-        kind: "outcome",
+        kind: "capability-consumption",
         handle,
         at: new Date(now).toISOString(),
-        data: { outcome: "denied" },
+        data: {
+          capability_id: handle,
+          operation: rec.operation,
+          request_digest: rec.requestDigest,
+          decision: "deny",
+        },
       });
       return rejection(handle, "denied", { decision: "deny" });
     }
@@ -486,6 +494,19 @@ export function consumeAndExecute(
       storePath(root),
       consumeLine(handle, "approve", new Date(now).toISOString(), brokered.digest) + "\n"
     );
+    // capability-consumption: the durable I-02 tombstone. `capability_id` keys the read-model
+    // tombstone table; `operation`/`request_digest` are content-free (tool name + canonical hash).
+    appendEvent?.({
+      kind: "capability-consumption",
+      handle,
+      at: new Date(now).toISOString(),
+      data: {
+        capability_id: handle,
+        operation: rec.operation,
+        request_digest: rec.requestDigest,
+        decision: "approve",
+      },
+    });
 
     let output;
     try {
@@ -508,11 +529,12 @@ export function consumeAndExecute(
         retry: retryEligibility(rec.idempotency),
         consumedAt: rec.consumedAt ?? new Date(now).toISOString(),
       };
+      // outcome: the read-model reads `result` (∈ succeeded | failed | outcome_unknown).
       appendEvent?.({
         kind: "outcome",
         handle,
         at: receipt.consumedAt,
-        data: { outcome: "outcome_unknown" },
+        data: { result: "outcome_unknown" },
       });
       return receipt;
     }
@@ -531,11 +553,13 @@ export function consumeAndExecute(
       output,
       executedAt: new Date(now).toISOString(),
     };
+    // native-receipt: the read-model keys the receipt table by `receipt_id` (the handle — one receipt
+    // per round-trip). `native_ref` is null for a local execute; `operation` is content-free.
     appendEvent?.({
       kind: "native-receipt",
       handle,
       at: receipt.executedAt,
-      data: { operation: rec.operation },
+      data: { receipt_id: handle, native_ref: null, operation: rec.operation },
     });
     return receipt;
   });
@@ -578,14 +602,19 @@ export function reconcile(
       kind: "outcome",
       handle,
       at,
-      data: { outcome: "outcome_unknown", idempotency: cls },
+      data: { result: "outcome_unknown", idempotency: cls },
     });
 
     if (cls === "reconcile-first") {
       const native = queryNativeReceipt ? queryNativeReceipt(rec) : null;
       if (native) {
         appendFileSync(storePath(root), receiptLine(handle, "resolved-native", at) + "\n");
-        appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "reconcile" } });
+        appendEvent?.({
+          kind: "native-receipt",
+          handle,
+          at,
+          data: { receipt_id: handle, native_ref: null, via: "reconcile" },
+        });
         return {
           kind: "outcome",
           ok: true,
@@ -619,7 +648,12 @@ export function reconcile(
         };
       }
       appendFileSync(storePath(root), receiptLine(handle, "re-executed", at) + "\n");
-      appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "safe-retry" } });
+      appendEvent?.({
+        kind: "native-receipt",
+        handle,
+        at,
+        data: { receipt_id: handle, native_ref: null, via: "safe-retry" },
+      });
       return { kind: "outcome", ok: true, handle, outcome: "re-executed", output };
     }
 

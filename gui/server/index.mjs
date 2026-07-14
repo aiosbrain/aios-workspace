@@ -127,10 +127,12 @@ function flag(name, dflt) {
 const repo = path.resolve(flag("--repo", process.cwd()));
 const port = parseInt(flag("--port", "8790"), 10);
 
-// I-03 (AIO-384): lazily load the coordinator-side broker (brokerDecision / notifyDeepLink) from the
-// compiled operator-loop. Guarded so a missing/unbuilt dist degrades to an inline envelope broker —
-// the server must start even before `npm run build:loop`. The AUTHORITY that matters (validate +
-// durable consume) is the runtime store, which is already statically imported above.
+// I-03/I-07 + AIO-427: lazily load the coordinator-side broker (brokerDecision / notifyDeepLink) and
+// the durable-journal composition bridge (createDurableCapabilityJournal) from the compiled
+// operator-loop. Guarded so a missing/unbuilt dist degrades to an inline envelope broker with NO
+// journalling — the server must start even before `npm run build:loop`. The AUTHORITY that matters
+// (validate + durable consume) is the runtime store, which is already statically imported above; the
+// durable I-02 journal is additive and only wired when the compiled loop is present.
 let _coordinatorPromise;
 function loadCoordinator() {
   if (!_coordinatorPromise) {
@@ -149,6 +151,8 @@ function loadCoordinator() {
         at: new Date().toISOString(),
         lane: "notify-deep-link",
       }),
+      // No compiled journal writer available → no durable journal sink (uniform call sites below).
+      createDurableCapabilityJournal: () => undefined,
     }));
   }
   return _coordinatorPromise;
@@ -1240,11 +1244,12 @@ wss.on("connection", (ws, req) => {
       /^(1|true|on)$/i.test(String(process.env.AIOS_INBOX_APPROVAL_FALLBACK || "").trim())
     ) {
       try {
-        const { notifyDeepLink } = await loadCoordinator();
-        const note = notifyDeepLink({
-          handle: cap.handle,
-          deepLink: `aios://approve/${cap.handle}`,
-        });
+        const { notifyDeepLink, createDurableCapabilityJournal } = await loadCoordinator();
+        const journal = createDurableCapabilityJournal?.(repo);
+        const note = notifyDeepLink(
+          { handle: cap.handle, deepLink: `aios://approve/${cap.handle}` },
+          journal ? { appendInboxEvent: journal } : {}
+        );
         send({
           type: "notify_deeplink",
           handle: note.handle,
@@ -1280,11 +1285,21 @@ wss.on("connection", (ws, req) => {
     // failure never blocks a legitimate decision — it just falls back to the raw allow/deny.
     if (cap) {
       try {
-        const { brokerDecision } = await loadCoordinator();
-        const brokered = brokerDecision(cap.displayProjection, allow ? "approve" : "deny");
+        const { brokerDecision, createDurableCapabilityJournal } = await loadCoordinator();
+        // Durable I-02 journal sink (AIO-427): the composition point binds it to this repo root; both
+        // the coordinator (user-intent / pdp-decision) and the owning runtime (capability-consumption /
+        // outcome / native-receipt) emit their content-free lifecycle events through it. Undefined when
+        // the compiled loop is absent — every append is then a guarded no-op.
+        const journal = createDurableCapabilityJournal?.(repo);
+        const brokered = brokerDecision(
+          cap.displayProjection,
+          allow ? "approve" : "deny",
+          journal ? { appendInboxEvent: journal } : {}
+        );
         const result = consumeAndExecute(repo, cap.handle, brokered, {
           identity: repo,
           execute: () => true,
+          appendEvent: journal,
         });
         if (result.kind === "rejected" && result.reason !== "denied") {
           send({ type: "capability_rejected", handle: cap.handle, reason: result.reason });

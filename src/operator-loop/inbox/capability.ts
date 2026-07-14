@@ -13,9 +13,12 @@
 // Provisional module home per I-01 (`src/operator-loop/inbox/`); no cross-domain value imports.
 // Admin-tier local state — never synced to the Team Brain.
 //
-// I-02 STUB: the journal writer (`appendInboxEvent`) is injected. I-02 (the inbox-events.ndjson
-// journal) lands in parallel; until it merges, callers pass `createInMemoryJournal().append` (or omit
-// it). Do NOT hard-depend on I-02 code — swap the injected writer for the real one when I-02 ships.
+// I-02 WIRING (AIO-427): the journal writer is injected as a content-free callback. Production wires
+// it to the durable `inbox-events.ndjson` journal via `createDurableCapabilityJournal(root)` (the loop
+// composition point in ../index.ts, which maps this seam's `{ kind, handle, at, data }` event onto the
+// real `appendInboxEvent(root, { kind, correlation_id, payload, ts })`). Domains never value-import
+// each other, so this module stays free of a hard journal dependency and the sink is injected. The
+// in-memory helper below is retained ONLY as a test utility — production never defaults to it.
 
 export type ApprovalDecision = "approve" | "deny";
 
@@ -45,33 +48,44 @@ export interface BrokeredDecision {
   brokeredAt: string;
 }
 
-/** Inbox journal event kinds this seam emits (subset of the I-02 vocabulary). */
-export type InboxEventKind = "user-intent" | "pdp-decision" | "native-receipt" | "outcome";
+// Journal event kinds this coordinator seam emits (a subset of the I-02 `INBOX_EVENT_KINDS`). Named
+// `Capability*` to avoid colliding with journal.ts's canonical `InboxEvent` / `InboxEventKind` (both
+// are re-exported from ../index.ts). The composition bridge validates these against the real I-02
+// vocabulary before the durable append.
+export type CapabilityEventKind =
+  "user-intent" | "pdp-decision" | "capability-consumption" | "native-receipt" | "outcome";
 
-export interface InboxEvent {
-  kind: InboxEventKind;
+/**
+ * The lightweight, handle-keyed event the seam emits. The composition bridge maps it onto a real I-02
+ * `AppendEventInput`: `handle → correlation_id`, `at → ts`, `data → payload`. `data` MUST stay
+ * content-free (operation names, digests, decisions — never message bodies or args).
+ */
+export interface CapabilityEvent {
+  kind: CapabilityEventKind;
   handle: string;
   at: string;
   data?: Record<string, unknown>;
 }
 
-/** The I-02 journal-append seam. Stubbed until I-02 merges — see `createInMemoryJournal`. */
-export type AppendInboxEvent = (event: InboxEvent) => void;
+/** The injected journal-append seam. Production supplies `createDurableCapabilityJournal(root)`. */
+export type AppendCapabilityEvent = (event: CapabilityEvent) => void;
 
 export interface BrokerOptions {
-  /** I-02 journal writer (stubbed). Omit for a no-op. */
-  appendInboxEvent?: AppendInboxEvent;
+  /** Injected journal writer. Omit for a no-op (e.g. before the compiled loop is present). */
+  appendInboxEvent?: AppendCapabilityEvent;
   now?: number;
-  /** Free-text human note captured with the decision (kept content-free at the journal seam). */
-  intent?: string;
 }
 
 /**
- * STUB for I-02: an in-memory journal so the spike is testable and the gateway is wireable before the
- * durable `inbox-events.ndjson` writer merges. Replace `.append` with the real writer when I-02 ships.
+ * TEST UTILITY ONLY: an in-memory journal that records the seam's events. Handy for asserting the
+ * emitted lifecycle without touching disk. Production must NOT default to this — it wires the durable
+ * `createDurableCapabilityJournal(root)` sink instead.
  */
-export function createInMemoryJournal(): { events: InboxEvent[]; append: AppendInboxEvent } {
-  const events: InboxEvent[] = [];
+export function createInMemoryJournal(): {
+  events: CapabilityEvent[];
+  append: AppendCapabilityEvent;
+} {
+  const events: CapabilityEvent[] = [];
   return { events, append: (e) => void events.push(e) };
 }
 
@@ -89,18 +103,17 @@ export function brokerDecision(
   const now = opts.now ?? Date.now();
   const at = new Date(now).toISOString();
   const append = opts.appendInboxEvent;
-  // user-intent: the human engaged this handle (what they were shown, by digest — never the payload).
+  // user-intent: the handle was surfaced to the human for a decision. `intent: "surface"` is the
+  // read-model's legal `unseen → surfaced` attention edge; `operation`/`digest` are content-free
+  // (tool name + canonical hash) — never the request payload.
   append?.({
     kind: "user-intent",
     handle: projection.handle,
     at,
-    data: {
-      operation: projection.operation,
-      digest: projection.digest,
-      intent: opts.intent ?? null,
-    },
+    data: { intent: "surface", operation: projection.operation, digest: projection.digest },
   });
-  // pdp-decision: the brokered verdict. The digest binds the decision to exactly what the human saw.
+  // pdp-decision: the brokered verdict. `decision` is the read-model's action verdict; the digest
+  // binds the decision to exactly what the human saw.
   append?.({
     kind: "pdp-decision",
     handle: projection.handle,
@@ -128,7 +141,7 @@ export interface NotifyDeepLink {
 }
 
 export interface NotifyDeepLinkOptions {
-  appendInboxEvent?: AppendInboxEvent;
+  appendInboxEvent?: AppendCapabilityEvent;
   now?: number;
 }
 
@@ -150,11 +163,13 @@ export function notifyDeepLink(ask: DeepLinkAsk, opts: NotifyDeepLinkOptions = {
     at,
     lane: "notify-deep-link",
   };
+  // Journal the surface (content-free): the ask was surfaced to the human via the fallback lane.
+  // `intent: "surface"` is the read-model's legal `unseen → surfaced` edge; no payload crosses.
   opts.appendInboxEvent?.({
-    kind: "outcome",
+    kind: "user-intent",
     handle: ask.handle,
     at,
-    data: { lane: "notify-deep-link" },
+    data: { intent: "surface", lane: "notify-deep-link" },
   });
   return notification;
 }
