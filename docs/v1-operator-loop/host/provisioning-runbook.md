@@ -35,15 +35,19 @@ product instead of a workstation.
 | Adapter supervision (restart / backoff / crash-loop) | `src/operator-loop/inbox/host-supervisor.ts` |
 | AdapterHealth → Signal + AttentionItem projection, `aios inbox status` state | `src/operator-loop/inbox/host-health.ts` |
 | Per-adapter credential broker + fs/egress sandbox | `src/operator-loop/inbox/credential-broker.ts` |
-| Device identity / enrollment / revocation / scoped tokens | `src/operator-loop/inbox/device-identity.ts` |
+| Device identity / enrollment / revocation / **single-use tokens (nonce replay protection)** | `src/operator-loop/inbox/device-identity.ts` |
+| **Coordinator daemon** (supervision loop + internal healthz + SIGTERM) | `scripts/inbox-coordinator.mjs` |
 | Fly app template (one app per user) | `deploy/fly/fly.toml.template` |
-| Coordinator image (D5 WAL proof at build time) | `deploy/fly/Dockerfile` |
+| Coordinator image (D5 WAL proof at build time; CMD = the daemon) | `deploy/fly/Dockerfile` |
 | Backup/restore **drill** (runnable, exits 0 = restore trustworthy) | `scripts/inbox-host-restore-drill.mjs` |
-| Deploy **verification** (isolation · enrollment · revocation) | `scripts/inbox-host-verify.mjs` |
+| Deploy **verification** (isolation · enrollment · replay · revocation) | `scripts/inbox-host-verify.mjs` |
 | `aios inbox status` (coordinator + adapter health) | `scripts/inbox.mjs` |
 | Dual-run contract test (local fixture vs recorded remote) | `test/operator-loop/inbox-remote-contract.test.mjs` |
-| Kill-adapter → AttentionItem (faked supervisor) | `test/operator-loop/inbox-host-health.test.mjs` |
+| Kill-adapter → AttentionItem + **corrupt-file validation** | `test/operator-loop/inbox-host-health.test.mjs` |
 | Isolation / enrollment / revocation logic | `test/operator-loop/inbox-host-isolation.test.mjs` |
+| **Nonce replay / restart / concurrency / DoS-bound** | `test/operator-loop/inbox-host-nonce.test.mjs` |
+| **Daemon lifecycle + healthz + token auth + SIGTERM** | `test/operator-loop/inbox-host-daemon.test.mjs` |
+| **Fly manifest + Docker image contract** | `test/operator-loop/inbox-host-manifest.test.mjs` |
 
 `src/operator-loop/comms/sender.ts` is **untouched**. Nothing here syncs to the Team Brain: the
 journal, read model, host-health state, and device registry are **admin-tier local** and default-
@@ -66,7 +70,19 @@ per its own docs; **no code reused**):
   (`host-supervisor.ts`), health surfaced as first-class `AttentionItem`s (`origin: agent-event`).
 - **Remote access, device-gated.** No bare port exposure (`fly.toml` publishes no public service).
   The GUI/CLI reach the read-model API only with a **scoped token** minted for an **enrolled** device;
-  a **revoked** device is rejected even with a still-valid signature.
+  a **revoked** device is rejected even with a still-valid signature. Tokens are **single-use**: the
+  per-token nonce is consumed atomically on first verify (durable `fileNonceStore`), so a captured
+  token cannot be **replayed** — including across a coordinator restart. The nonce store is pruned +
+  hard-bounded (DoS). Crypto/enrollment/revocation checks run **before** consumption, so a bad token
+  never burns a nonce slot.
+- **Untrusted state, validated.** The host-health file is read through `sanitizeAdapterHealth` — every
+  field is type-coerced, `detail` is stripped content-free + length-capped, unknown states / bad ids
+  are dropped fail-closed, and `healthy` is re-derived from `state` (a record can't lie). A corrupt or
+  hostile file can never crash a read or inject content into the inbox render path.
+- **Real daemon, internal healthz.** The image entrypoint is `scripts/inbox-coordinator.mjs`: it runs
+  the supervision loop, persists admin-local state each tick, serves a **content-free** `/healthz`
+  (internal bind; optional `AIOS_HEALTHZ_TOKEN` bearer) on port 8081, serves **no other route**, and
+  shuts down cleanly on SIGTERM. No unauthenticated external surface.
 
 ---
 
@@ -74,11 +90,17 @@ per its own docs; **no code reused**):
 
 ```bash
 npm run build:loop                                             # compile the coordinator + inbox modules
-node scripts/inbox-host-verify.mjs                             # isolation · enrollment · revocation (self-test) → exit 0
+node scripts/inbox-host-verify.mjs                             # isolation · enrollment · replay · revocation (self-test) → 0
 node scripts/inbox-host-restore-drill.mjs                      # backup/restore drill → exit 0, drill notes emitted
 node --test test/operator-loop/inbox-remote-contract.test.mjs  # dual-run contract → exit 0
-node --test test/operator-loop/inbox-host-health.test.mjs      # kill adapter → AttentionItem → exit 0
+node --test test/operator-loop/inbox-host-health.test.mjs      # kill adapter → AttentionItem + corrupt-file validation
 node --test test/operator-loop/inbox-host-isolation.test.mjs   # isolation/enrollment/revocation → exit 0
+node --test test/operator-loop/inbox-host-nonce.test.mjs       # token replay / restart / concurrency / DoS → exit 0
+node --test test/operator-loop/inbox-host-daemon.test.mjs      # daemon lifecycle + healthz + SIGTERM → exit 0
+node --test test/operator-loop/inbox-host-manifest.test.mjs    # Fly manifest + Docker image contract → exit 0
+
+# Optionally run the daemon locally (loopback healthz; Ctrl-C / SIGTERM to stop cleanly):
+AIOS_INBOX_DATA_DIR=$(mktemp -d) AIOS_HEALTHZ_PORT=8081 node scripts/inbox-coordinator.mjs
 ```
 
 The dual-run contract test's **recorded remote response** is currently generated from a **local run of

@@ -68,6 +68,16 @@ export interface SupervisorEvent {
 export type AdapterHealthState =
   "starting" | "healthy" | "unhealthy" | "backoff" | "crash-looping" | "stopped";
 
+/** The runtime-checkable set of every legal `AdapterHealthState` (used to validate on-disk records). */
+export const ADAPTER_HEALTH_STATES: readonly AdapterHealthState[] = [
+  "starting",
+  "healthy",
+  "unhealthy",
+  "backoff",
+  "crash-looping",
+  "stopped",
+];
+
 export interface AdapterHealth {
   adapter: string;
   state: AdapterHealthState;

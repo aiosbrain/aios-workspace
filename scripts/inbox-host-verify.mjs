@@ -118,6 +118,14 @@ function selfTest(loop) {
       : `rejected: ${enrolledVerify.reason}`
   );
 
+  // REPLAY — the SAME token, already consumed above, is rejected on a second use (single-use nonce).
+  const replayVerify = registry.verifyToken(token, now + 1_500);
+  check(
+    "enrollment:replay-rejected",
+    replayVerify.ok === false && replayVerify.reason === "replayed",
+    replayVerify.ok ? "replayed token STILL accepted (BAD)" : `rejected: ${replayVerify.reason}`
+  );
+
   // ENROLLMENT (negative) — a token for a scope the device wasn't enrolled for is refused at mint.
   let scopeRefused = false;
   try {

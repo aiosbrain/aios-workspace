@@ -558,6 +558,7 @@ export { createInboxRanker, toRankInput } from "./inbox/ranker-adapter.js";
 // stays byte-for-byte untouched. Deploy to Fly is merge-gated on I-11 (see the provisioning runbook).
 export {
   DEFAULT_SUPERVISOR_POLICY,
+  ADAPTER_HEALTH_STATES,
   backoffFor,
   isUnhealthy,
   foldSupervisor,
@@ -572,6 +573,9 @@ export {
   HOST_HEALTH_REL,
   HOST_HEALTH_SOURCE,
   HOST_HEALTH_STATE_VERSION,
+  MAX_ADAPTER_ID_LEN,
+  MAX_DETAIL_LEN,
+  sanitizeAdapterHealth,
   adapterHealthSignal,
   healthToInboxItem,
   unhealthyInboxItems,
@@ -580,6 +584,7 @@ export {
   writeHostHealth,
   readHostHealth,
   type CoordinatorHealth,
+  type HostHealthRead,
 } from "./inbox/host-health.js";
 export {
   STORE_RESERVED_KEYS,
@@ -599,16 +604,25 @@ export {
   DEVICE_REGISTRY_BASENAME,
   DEVICE_REGISTRY_REL,
   DEVICE_REGISTRY_VERSION,
+  DEFAULT_MAX_NONCES,
+  NONCE_STORE_BASENAME,
+  NONCE_STORE_REL,
   createDeviceRegistry,
+  createHostDeviceRegistry,
   fileDeviceStore,
   memoryDeviceStore,
+  memoryNonceStore,
+  fileNonceStore,
   deviceRegistryPath,
   type DeviceScope,
   type DeviceRecord,
   type DeviceStore,
   type DeviceRegistry,
+  type DeviceRegistryOptions,
   type DeviceVerifyReason,
   type DeviceVerifyResult,
+  type NonceStore,
+  type NonceConsumeResult,
 } from "./inbox/device-identity.js";
 
 /**

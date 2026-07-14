@@ -11,7 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,8 +22,11 @@ import {
   healthToInboxItem,
   unhealthyInboxItems,
   coordinatorHealthSummary,
+  sanitizeAdapterHealth,
   writeHostHealth,
   readHostHealth,
+  hostHealthPath,
+  MAX_DETAIL_LEN,
 } from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -227,6 +230,135 @@ test("maxRestarts exceeded parks the adapter as stopped (no auto-retry)", () => 
   assert.equal(g.state, "stopped");
   assert.equal(g.restarts, 3);
   assert.equal(isUnhealthy(g), true);
+});
+
+// ── defensive validation of the (untrusted) host-health state file ─────────────────────────────────
+
+function writeRawHostHealth(dir, obj) {
+  mkdirSync(path.dirname(hostHealthPath(dir)), { recursive: true });
+  writeFileSync(hostHealthPath(dir), typeof obj === "string" ? obj : JSON.stringify(obj), "utf8");
+}
+
+test("sanitizeAdapterHealth drops records with a missing id or an unknown state (fail closed)", () => {
+  assert.equal(sanitizeAdapterHealth(null), null);
+  assert.equal(sanitizeAdapterHealth("not-an-object"), null);
+  assert.equal(sanitizeAdapterHealth({ state: "healthy" }), null, "no adapter id → dropped");
+  assert.equal(
+    sanitizeAdapterHealth({ adapter: "gmail", state: "totally-bogus" }),
+    null,
+    "unknown state → dropped"
+  );
+  assert.equal(
+    sanitizeAdapterHealth({ adapter: "!!!", state: "healthy" }),
+    null,
+    "id with no safe chars → dropped"
+  );
+});
+
+test("sanitizeAdapterHealth coerces field types and re-derives `healthy` from state (never trusts it)", () => {
+  const clean = sanitizeAdapterHealth({
+    adapter: "gmail",
+    state: "crash-looping",
+    healthy: true, // a LIE — must be overridden to false
+    restarts: -5, // invalid → 0
+    recentExits: "9", // wrong type → 0
+    lastExitCode: 137.9, // floored
+    lastHeartbeatAt: "nope", // → null
+    backoffUntil: 1234,
+  });
+  assert.ok(clean);
+  assert.equal(clean.healthy, false, "healthy is derived from state, not trusted");
+  assert.equal(clean.restarts, 0);
+  assert.equal(clean.recentExits, 0);
+  assert.equal(clean.lastExitCode, 137);
+  assert.equal(clean.lastHeartbeatAt, null);
+  assert.equal(clean.backoffUntil, 1234);
+});
+
+test("sanitizeAdapterHealth strips control chars/newlines from detail and caps its length (content-free)", () => {
+  const clean = sanitizeAdapterHealth({
+    adapter: "gmail",
+    state: "unhealthy",
+    detail: "line1\nline2\u001b[31mANSI" + "x".repeat(500),
+  });
+  assert.ok(clean);
+  assert.ok(!clean.detail.includes("\n"), "newlines stripped");
+  assert.ok(!clean.detail.includes("\u001b"), "ANSI escape stripped");
+  assert.ok(clean.detail.length <= MAX_DETAIL_LEN + 1, "detail is length-capped");
+});
+
+test("sanitizeAdapterHealth strips unsafe characters from the adapter id", () => {
+  const clean = sanitizeAdapterHealth({ adapter: "gmail\n<script>:evil ok", state: "healthy" });
+  assert.ok(clean);
+  assert.equal(clean.adapter, "gmailscript:evilok", "only [A-Za-z0-9._:@-] survive");
+});
+
+test("readHostHealth on a corrupt / non-JSON / wrong-shape file returns null (never throws)", () => {
+  for (const bad of ["{ not json", "[]", '{"adapters": "nope"}', '{"foo":1}']) {
+    const dir = ws();
+    try {
+      writeRawHostHealth(dir, bad);
+      const res = readHostHealth(dir);
+      // "[]" and missing adapters → null; a valid object with a non-array adapters → null.
+      assert.ok(res === null, `corrupt file (${bad}) → null`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("readHostHealth keeps valid records, drops invalid ones, and reports the dropped count", () => {
+  const dir = ws();
+  try {
+    writeRawHostHealth(dir, {
+      state_version: 1,
+      generated_at: "2026-07-14T12:00:00.000Z",
+      adapters: [
+        { adapter: "gmail", state: "healthy", healthy: true },
+        { adapter: "telegram", state: "backoff", healthy: true }, // healthy LIE → re-derived false
+        { adapter: "", state: "healthy" }, // dropped (no id)
+        { adapter: "whatsapp", state: "bogus" }, // dropped (unknown state)
+        "garbage", // dropped (not an object)
+      ],
+    });
+    const res = readHostHealth(dir);
+    assert.ok(res);
+    assert.equal(res.dropped, 3, "three unusable records dropped");
+    assert.deepEqual(
+      res.adapters.map((a) => a.adapter),
+      ["gmail", "telegram"]
+    );
+    assert.equal(res.adapters.find((a) => a.adapter === "telegram").healthy, false);
+    // The degraded (backoff) record still surfaces as an AttentionItem via the normal path.
+    assert.equal(coordinatorHealthSummary(res.adapters).ok, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a corrupt host-health file cannot inject content into `aios inbox --json`", () => {
+  const dir = ws();
+  try {
+    writeRawHostHealth(dir, {
+      adapters: [
+        { adapter: "gmail", state: "backoff", detail: "evil\nInjected: secret-body\u001b[0m" },
+        { adapter: "x".repeat(200), state: "not-a-state" }, // dropped
+      ],
+    });
+    const res = runInbox(dir, ["--json"]);
+    assert.equal(res.code, 0, res.stderr);
+    const view = JSON.parse(res.stdout);
+    const row = view.items.find((i) => i.origin === "agent-event" && i.health?.adapter === "gmail");
+    assert.ok(row, "the valid degraded record still surfaces");
+    assert.ok(!row.health.detail.includes("\n"), "no injected newline reaches the render surface");
+    assert.ok(!row.health.detail.includes("\u001b"), "no ANSI escape reaches the render surface");
+    assert.ok(
+      !JSON.stringify(view).includes("not-a-state"),
+      "the invalid record was dropped entirely"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("coordinatorHealthSummary rolls up ok/degraded correctly", () => {

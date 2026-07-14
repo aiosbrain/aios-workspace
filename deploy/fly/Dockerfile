@@ -38,7 +38,14 @@ ENV AIOS_INBOX_DATA_DIR=/data/inbox
 # Run as an unprivileged user; per-adapter uids are layered on top by the supervisor (isolation bar).
 USER node
 
-# The coordinator entrypoint is provisioned by the runbook (it wires the supervisor + read-model API);
-# this image ships the built loop + CLIs. `aios inbox status` / the restore drill / the verify script
-# all run from here.
-CMD ["node", "scripts/aios.mjs", "inbox", "status"]
+# healthz bind + port (loopback default is overridden on Fly to the internal address so the private
+# [checks] probe can reach it; there is NO [[services]] block, so the port is never publicly exposed).
+ENV AIOS_HOST_BIND=0.0.0.0
+ENV AIOS_HEALTHZ_PORT=8081
+EXPOSE 8081
+
+# The REAL entrypoint: the long-running coordinator daemon. It runs the supervision loop, persists the
+# admin-tier host-health state, serves the internal /healthz liveness endpoint (port 8081, matching
+# fly.toml [checks]), and shuts down cleanly on SIGTERM. `aios inbox status` / the restore drill / the
+# verify script remain runnable from this image for ops.
+CMD ["node", "scripts/inbox-coordinator.mjs"]

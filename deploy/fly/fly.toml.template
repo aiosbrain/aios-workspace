@@ -20,9 +20,14 @@ primary_region = "{{FLY_REGION}}"      # keep near the operator; single region (
   NODE_ENV = "production"
   # The read-model + journal live on the persistent volume — admin-tier, never synced to the brain.
   AIOS_INBOX_DATA_DIR = "/data/inbox"
-  # The read-model API binds loopback+internal only; the device-identity workstream gates all access.
-  # NO bare port exposure: there is deliberately no [[services]] block publishing a public port.
-  AIOS_HOST_BIND = "fly-local-6pn"
+  # The coordinator daemon serves /healthz on this bind:port. Binding 0.0.0.0 makes it reachable by
+  # the Fly private-network [checks] probe ONLY — there is deliberately NO [[services]] block, so the
+  # port is never published to the public internet (no unauthenticated external surface). The
+  # read-model API is a separate, device-token-gated surface (see device-identity.ts).
+  AIOS_HOST_BIND = "0.0.0.0"
+  AIOS_HEALTHZ_PORT = "8081"
+  # Optional: set a healthz bearer token via `fly secrets set AIOS_HEALTHZ_TOKEN=...` to require auth
+  # even from inside the private network (the [checks] probe would then send the matching header).
 
 # Persistent volume for the append-only journal (inbox-events.ndjson segments) + SQLite read model +
 # the device registry. The D5 backup unit is this volume's journal; the restore drill re-projects it.
