@@ -73,7 +73,15 @@ export async function callOpenRouter(prompt, timeoutMs, opts = {}) {
       "HTTP-Referer": "https://github.com/aios-alpha",
       "X-Title": "aios ship loop",
     },
-    { model, messages: [{ role: "user", content: prompt }], max_tokens: opts.maxTokens ?? 8000 },
+    {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: opts.maxTokens ?? 8000,
+      // Pinned sampling flows through for deterministic callers (e.g. the spec evaluator); omitted
+      // otherwise so agentic build/plan calls keep provider defaults.
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+      ...(opts.top_p != null && { top_p: opts.top_p }),
+    },
     timeoutMs,
     `openrouter (${model})`
   );

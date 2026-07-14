@@ -23,6 +23,17 @@ test("loadRubric parses frontmatter + all SR rows", () => {
   for (let i = 1; i <= 16; i++) assert.ok(ids.includes(`SR${i}`), `SR${i}`);
 });
 
+test("SR15 keeps its sharpened, recoverability-aware wording (locks the rubric↔prompt pair)", () => {
+  // SR15 was miscalibrated: it read "the builder must design X" as an unrecoverable decision and
+  // failed doc/contract-authoring specs by construction. The sharpened criterion must keep treating
+  // bounded, human-reviewed design latitude as recoverable — assert it so it can't silently regress
+  // (the in-prompt checklist copy in scripts/spec-eval.mjs must be updated in lockstep with this).
+  const sr15 = loadRubric(RUBRIC).rows.find((row) => row.id === "SR15");
+  assert.ok(sr15, "SR15 row present");
+  assert.match(sr15.criterion, /bounded/i);
+  assert.match(sr15.criterion, /review/i);
+});
+
 test("malformed rubric fails loudly (die)", () => {
   const d = mkdtempSync(path.join(tmpdir(), "sr-rubric-"));
   assert.throws(() => loadRubric(path.join(d, "missing.md")), /not found/);

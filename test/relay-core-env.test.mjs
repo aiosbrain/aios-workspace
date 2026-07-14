@@ -5,7 +5,7 @@
 // Zero-dep, no network: the "agent" is a tiny inline Node script that reports whether
 // ANTHROPIC_API_KEY is present in ITS env as an assistant NDJSON line.
 
-import { callClaudeAgent, callCursorAgent } from "../scripts/relay-core.mjs";
+import { callClaudeAgent, callCursorAgent, callDeepSeekDirect } from "../scripts/relay-core.mjs";
 import { writeFileSync, mkdtempSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -80,6 +80,38 @@ console.log("callCursorAgent (no env override) inherits the parent env");
 
 rmSync(dir, { recursive: true, force: true });
 rmSync(shimDir, { recursive: true, force: true });
+
+// callDeepSeekDirect — pinned sampling is threaded into the request body only when provided, so the
+// spec evaluator can run deterministically (temperature 0) without changing any other DeepSeek call.
+console.log("callDeepSeekDirect threads temperature/top_p only when the caller pins them");
+{
+  const realFetch = globalThis.fetch;
+  const realKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  const okResponse = () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ choices: [{ message: { content: "hi" } }] }),
+  });
+  try {
+    let captured;
+    globalThis.fetch = async (_url, init) => {
+      captured = JSON.parse(init.body);
+      return okResponse();
+    };
+    await callDeepSeekDirect("prompt", 30000, { temperature: 0, top_p: 1 });
+    check("pinned call sends temperature 0", captured.temperature === 0);
+    check("pinned call sends top_p 1", captured.top_p === 1);
+
+    await callDeepSeekDirect("prompt", 30000, {});
+    check("unpinned call omits temperature", !("temperature" in captured));
+    check("unpinned call omits top_p", !("top_p" in captured));
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = realKey;
+  }
+}
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

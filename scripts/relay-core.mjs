@@ -242,7 +242,15 @@ export async function callDeepSeekDirect(prompt, timeoutMs, opts = {}) {
     res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], stream: false }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        // DeepSeek defaults temperature to 1.0. Deterministic callers (the spec evaluator) pass
+        // temperature:0 / top_p:1 to pin sampling; other callers keep the provider default.
+        ...(opts.temperature != null && { temperature: opts.temperature }),
+        ...(opts.top_p != null && { top_p: opts.top_p }),
+      }),
       signal: controller.signal,
     });
   } catch (e) {

@@ -51,6 +51,12 @@ export const DETERMINISTIC_CHECK_IDS = new Set([
 export const SPEC_GATE_POLICIES = new Set(["block", "advisory", "off"]);
 export const DEFAULT_SPEC_GATE = "block";
 
+// Adversarial-eval quorum: how many independent samples vote on the verdict. The evaluator is a
+// stochastic LLM judge; a single roll can flip the gate. 3 samples + majority vote (with
+// confirm-before-fail escalation) removes the flip while keeping the common ready path at one call.
+// K=1 disables quorum (single pass — the semantics mocked/CI tests rely on).
+export const DEFAULT_QUORUM = 3;
+
 // ── rubric loading ──────────────────────────────────────────────────────────────────────────
 
 /**
@@ -423,6 +429,10 @@ const EVAL_SYSTEM = [
   "- A criterion marked `conditional` with trigger not fired → `trigger:false`, no finding",
   "",
   "A blocker finding on any `must` or triggered `conditional` criterion forces NOT_READY.",
+  "Recoverability principle: a choice the builder makes whose output is human-reviewed before merge",
+  "is RECOVERABLE — do not FAIL a criterion merely because the builder must design something. Reserve",
+  "blockers for gaps with no downstream catch (unstated targets, missing prerequisites, ambiguous",
+  "external contracts).",
   "Deterministic findings are given in-context — do NOT repeat those rule IDs.",
   "",
   "Return a SINGLE JSON object and nothing else (no prose, no code fence):",
@@ -453,7 +463,7 @@ function buildEvalPrompt(specText, rubric, deterministic, decisions) {
     "| SR8 | Is the spec well-bounded — one narrow public surface, no reach into sibling domains? Are the integration points the right ones, or does the spec pull in unrelated concerns? | yes |",
     "| SR9 | Are contracts/types named before implementation steps? Does the spec declare interfaces (file paths, schemas, table columns, API shapes) before describing how to build them? | yes |",
     "| SR11 | Is acceptance demonstrable by named tests? Can a builder run a specific command and get exit 0? Are the test commands complete (no missing variables, date substitutions explained)? | yes |",
-    "| SR15 | Is every must-path specified? Can a cold-start builder complete every acceptance criterion without making an unrecoverable decision? Are all prerequisites declared with 'what if missing' branches? | yes |",
+    "| SR15 | Are all must-paths decidable? A cold-start builder MAY exercise bounded design latitude — choosing a structure, schema, or name whose output is human-reviewed before merge — and that is a PASS, because a reviewed PR is recoverable. FAIL (blocker) ONLY for a decision with no downstream catch: an unstated performance/SLA target, a prerequisite with no 'what if missing' branch, or an ambiguous EXTERNAL contract a reviewer could not detect from the diff. Designing the deliverable is not itself an unrecoverable decision. | yes |",
     "| SR12 | Is there spec → plan → tasks traceability? Is the relationship to Linear issues or parent epics clear? | advisory |",
     "| SR13 | Are structural signals captured with zero-LLM code before model-driven steps? | advisory |",
     "| SR14 | Is durable-state discipline stated where state persists? Append-only stores, writer-honored locks? | advisory |",
@@ -477,6 +487,11 @@ function buildEvalPrompt(specText, rubric, deterministic, decisions) {
   ].join("\n");
 }
 
+// Pinned sampling for the adversarial evaluator. A grading judge must be as reproducible as the
+// provider allows: temperature 0 + top_p 1 removes the run-to-run PASS/FAIL drift that let one spec
+// score 86 → 100 → 0. Only the evaluator uses this; agentic build/plan/fix calls keep defaults.
+export const EVAL_SAMPLING = Object.freeze({ temperature: 0, top_p: 1 });
+
 /** Default adversarial evaluator. Honors AIOS_SPEC_EVAL_STUB. Routes via callPromptModel. */
 async function defaultEvalFn({ specText, rubric, deterministic, decisions, evalCfg }) {
   const stub = process.env.AIOS_SPEC_EVAL_STUB;
@@ -487,6 +502,7 @@ async function defaultEvalFn({ specText, rubric, deterministic, decisions, evalC
     model,
     prompt,
     timeoutMs: evalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
+    opts: { ...EVAL_SAMPLING },
   });
 }
 
@@ -586,6 +602,86 @@ export async function runAdversarialEval({
   return parsed;
 }
 
+// ── quorum (confirm-before-fail) ──────────────────────────────────────────────────────────────
+
+/** Normalize a requested quorum to an odd integer ≥ 1. Even counts round up so a strict majority
+ *  always exists; 1 (or less) disables quorum entirely (single pass). */
+export function normalizeQuorum(k) {
+  const n = Number.isFinite(Number(k)) ? Math.floor(Number(k)) : DEFAULT_QUORUM;
+  if (n <= 1) return 1;
+  return n % 2 === 0 ? n + 1 : n;
+}
+
+/**
+ * Fold K independent adversarial samples into one verdict by majority vote. A stochastic judge can
+ * flip on a single unlucky roll; quorum keeps only signal that recurs.
+ *   - verdict is NOT_READY iff ≥⌈K/2⌉ samples voted NOT_READY. parseError/thrown samples already
+ *     carry a NOT_READY verdict, so a persistently broken evaluator still fails CLOSED, while a lone
+ *     bad roll is outvoted.
+ *   - a blocker finding is GATING only if its ruleId recurs in ≥⌈K/2⌉ samples; a non-recurring
+ *     blocker is demoted to `minor` (kept for the report, but it no longer blocks).
+ *   - score is the median of sample scores (advisory only).
+ */
+export function aggregateQuorum(samples) {
+  const k = samples.length;
+  const majority = Math.ceil(k / 2);
+  const notReadyVotes = samples.filter((s) => s.verdict === "NOT_READY").length;
+  const verdict = notReadyVotes >= majority ? "NOT_READY" : "SPEC_READY";
+
+  // Count blocker occurrences per ruleId across samples (once per sample); keep the richest instance.
+  const blockerCounts = new Map();
+  const bestBlocker = new Map();
+  for (const s of samples) {
+    const seen = new Set();
+    for (const f of s.findings ?? []) {
+      if (f.severity !== "blocker" || seen.has(f.ruleId)) continue;
+      seen.add(f.ruleId);
+      blockerCounts.set(f.ruleId, (blockerCounts.get(f.ruleId) ?? 0) + 1);
+      const prev = bestBlocker.get(f.ruleId);
+      if (!prev || (f.why?.length ?? 0) > (prev.why?.length ?? 0)) bestBlocker.set(f.ruleId, f);
+    }
+  }
+  const findings = [];
+  for (const [ruleId, count] of blockerCounts) {
+    const f = bestBlocker.get(ruleId);
+    if (count >= majority) findings.push(f);
+    else
+      findings.push({
+        ...f,
+        severity: "minor",
+        why: `${f.why} (non-recurring: ${count}/${k} samples — not gated)`,
+      });
+  }
+  // Non-blocker findings never gate; keep one per ruleId for the report.
+  const nonBlockers = new Map();
+  for (const s of samples) {
+    for (const f of s.findings ?? []) {
+      if (f.severity !== "blocker" && !nonBlockers.has(f.ruleId)) nonBlockers.set(f.ruleId, f);
+    }
+  }
+  for (const f of nonBlockers.values()) findings.push(f);
+
+  const scores = samples.map((s) => (Number.isFinite(s.score) ? s.score : 0)).sort((a, b) => a - b);
+  const mid = Math.floor(scores.length / 2);
+  const score = scores.length % 2 ? scores[mid] : Math.round((scores[mid - 1] + scores[mid]) / 2);
+
+  return { verdict, score, findings, samples: k, notReadyVotes };
+}
+
+/**
+ * Confirm-before-fail quorum around runAdversarialEval. The common (ready) path costs ONE call — a
+ * first SPEC_READY sample returns immediately. Only a first sample that would BLOCK escalates to K
+ * total samples + a majority vote, so cost lands on the boundary case where variance actually bites.
+ */
+export async function runAdversarialQuorum(args) {
+  const quorum = normalizeQuorum(args.quorum ?? args.evalCfg?.quorum ?? DEFAULT_QUORUM);
+  const first = await runAdversarialEval(args);
+  if (quorum <= 1 || first.verdict === "SPEC_READY") return first;
+  const samples = [first];
+  for (let i = 1; i < quorum; i++) samples.push(await runAdversarialEval(args));
+  return { ...aggregateQuorum(samples), parseError: false };
+}
+
 // ── composite evaluation ────────────────────────────────────────────────────────────────────
 
 /**
@@ -610,15 +706,19 @@ export async function evaluateSpec({
   let score = null;
 
   if (useLlm) {
-    adversarial = await runAdversarialEval({
+    const quorum = normalizeQuorum(evalCfg?.quorum ?? DEFAULT_QUORUM);
+    adversarial = await runAdversarialQuorum({
       specText,
       rubric,
       deterministic,
       evalCfg,
       decisions,
       evalFn,
+      quorum,
     });
-    // One retry when the model returns unparseable JSON.
+    // One "output ONLY JSON" retry for the single-pass path (quorum disabled or a lone parseError
+    // with no injected evalFn). Quorum ≥ 3 already tolerates a minority parseError by majority vote,
+    // so runAdversarialQuorum clears parseError on the aggregated path and this retry stays dormant.
     if (adversarial.parseError && !evalFn) {
       const model = evalCfg?.model ?? "deepseek-v4-pro";
       const retryEvalFn = async (args) => {
@@ -627,15 +727,17 @@ export async function evaluateSpec({
           model,
           prompt,
           timeoutMs: evalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
+          opts: { ...EVAL_SAMPLING },
         });
       };
-      adversarial = await runAdversarialEval({
+      adversarial = await runAdversarialQuorum({
         specText,
         rubric,
         deterministic,
         evalCfg,
         decisions,
         evalFn: retryEvalFn,
+        quorum,
       });
     }
     score = adversarial.score;
@@ -812,8 +914,21 @@ export async function runFixLoop({
       ? budget
       : (rubric?.frontmatter?.budget ?? DEFAULT_FIX_BUDGET);
   let current = specText;
+  // The fix loop is an iterative revision aid, not the authoritative gate: it re-evaluates after
+  // every revision, so per-iteration quorum would triple cost for no added signal. Run its internal
+  // evals single-pass (quorum=1); the real quorum-stable verdict comes from the downstream
+  // `aios spec eval` / ship gate that runs on the revised spec.
+  const singlePassCfg = { ...(evalCfg ?? {}), quorum: 1 };
   const evalOnce = (text, withLlm = useLlm) =>
-    evaluateSpec({ specText: text, repo, rubric, useLlm: withLlm, evalCfg, evalFn, decisions });
+    evaluateSpec({
+      specText: text,
+      repo,
+      rubric,
+      useLlm: withLlm,
+      evalCfg: singlePassCfg,
+      evalFn,
+      decisions,
+    });
 
   const before = await evalOnce(current);
   let result = before;

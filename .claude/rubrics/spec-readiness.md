@@ -66,5 +66,5 @@ by the rubric↔code drift test).
 | SR12 | spec → plan → tasks traceability | llm-read | advisory |
 | SR13 | Deterministic-before-model-driven — structural signals captured with zero-LLM code | llm-read | advisory |
 | SR14 | Durable-state discipline — append-only stores, writer-honored locks where state persists | llm-read | advisory |
-| SR15 | Refutation — no underspecified must-path; an unresolved decision on a must-path is a blocker | llm-read | yes |
+| SR15 | Decidability — every must-path is decidable. Bounded design latitude whose output is human-reviewed before merge is a PASS (a reviewed PR is recoverable); a blocker is only a decision with no downstream catch (unstated perf/SLA target, prerequisite with no "what if missing" branch, ambiguous external contract) | llm-read | yes |
 | SR16 | No ungrounded architecture claims — "reuses X / extends Y / builds on Z" resolves to real files (path resolution deterministic; claim adequacy llm-read) | det+llm | yes |
