@@ -18,7 +18,14 @@ export interface EvidenceRef {
 export interface Signal {
   /** Known kinds plus forward-compat: consumers MUST ignore kinds they don't recognize. */
   kind:
-    "decision" | "task" | "hours" | "deliverable" | "inbox" | "carryover" | "time" | (string & {});
+    | "decision"
+    | "task"
+    | "hours"
+    | "deliverable"
+    | "inbox"
+    | "carryover"
+    | "time"
+    | (string & {});
   source: string; // 'decision-log' | 'tasks' | 'hours-log' | 'deliverable' | 'inbox'
   tier: Tier; // mandatory; missing/unresolvable signals are excluded upstream, never emitted
   occurredAt: string; // ISO date/time: the row's date, or the file mtime
