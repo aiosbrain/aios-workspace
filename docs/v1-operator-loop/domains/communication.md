@@ -56,6 +56,20 @@ render always proceeds from whatever is on disk. Connector output is isolated fr
 - **Signal emission**: normalize Slack/email/calendar activity into tier-tagged comms signals for C1.
 - Swappable sender (Slack first); tier-gated — never emit admin content outward.
 
+## Reply PDP — origin-confined disclosure (I-10 / AIO-391)
+The **outbound reply** path is gated by a NEW, SEPARATE policy decision point,
+`src/operator-loop/inbox/reply-policy.ts` — distinct from and upstream of the notification
+`sender.ts` (which stays byte-for-byte unchanged). Inbound comms evidence is admin-tier by
+default, so the sender's "admin-never-outbound" invariant would reject every reply; the reply PDP
+resolves that with a two-axis rule — content that originated in a thread may return to THAT
+thread's verified participants (admin-tier or not), and every expansion (added recipients, channel
+move, cross-thread quoting, workspace attachments, unrelated admin context, unknown participant) is
+default-denied with a named promotion path. `evaluateReply` is a pure/deterministic core;
+`decideReply` journals one I-02 `pdp-decision` event (refs/counts only, admin-tier local, never
+synced). Contract + rule ids: `src/operator-loop/inbox/reply-policy.ts`; matrix:
+`test/operator-loop/inbox-reply-policy.test.mjs`. See the domain spec `I-10-reply-pdp.md` and
+disclosure rules in `I-01` §5.
+
 ## Signal contract (emitted to C1)
 `{ kind: "comms", source: "slack|email|calendar", tier, occurredAt, ref: <message/event id>, payload: { channel, direction, summary, waitingOn?, dueAt? } }`
 
