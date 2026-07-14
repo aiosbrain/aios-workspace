@@ -592,6 +592,33 @@ export {
   type ShadowRow,
 } from "./inbox/ranker.js";
 
+// Unified inbox — Reply PDP (origin-confined disclosure, I-10 / AIO-391). A NEW, SEPARATE policy
+// decision point upstream of the comms sender (which stays byte-for-byte untouched): same-thread
+// evidence may return to that thread's verified participants (admin-tier or not); every expansion
+// is default-denied with a named promotion path. `evaluateReply` is the pure/deterministic core;
+// `decideReply` journals one I-02 `pdp-decision` event via an injected sink (refs/counts only).
+export {
+  evaluateReply,
+  decideReply,
+  createMemoryJournalSink,
+  REPLY_RULE_IDS,
+  type ReplyVerdict,
+  type ReplyRuleId,
+  type ParticipantIdentity,
+  type EvidenceKind,
+  type EvidenceRef as ReplyEvidenceRef,
+  type AttachmentRef,
+  type QuotedRef,
+  type Delegation,
+  type ReplyChannel,
+  type ReplyRequest,
+  type ThreadContext,
+  type PdpDecisionEvent,
+  type PdpJournalSink,
+  type ReplyContext,
+  type PdpDecision,
+} from "./inbox/reply-policy.js";
+
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
   NOTIF_CHANNEL_KEY,
