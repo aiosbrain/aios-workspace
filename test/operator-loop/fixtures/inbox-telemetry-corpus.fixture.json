@@ -1,0 +1,16 @@
+{
+  "_comment": "Synthetic forbidden-string corpus for the inbox telemetry redaction lint (I-16 / AIO-397). Every string here is a message body, subject, or participant identity that MUST NEVER appear in the telemetry path. All synthetic — no real data.",
+  "bodies": [
+    "Let's move the kickoff to Thursday afternoon",
+    "Please find the signed contract attached for your records",
+    "Can you approve the refund before end of day"
+  ],
+  "subjects": ["Q3 board deck review", "Re: invoice 4471 overdue", "Welcome to the pilot program"],
+  "participants": [
+    "Dana Whitfield",
+    "dana.whitfield@example.com",
+    "+15551230000",
+    "@dwhitfield",
+    "acme-tenant-7781"
+  ]
+}

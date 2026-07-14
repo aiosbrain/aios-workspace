@@ -1,0 +1,71 @@
+# Machine-readable retention table — unified inbox (I-16 / AIO-397).
+#
+# Every store the epic created maps to a retention period + deletion procedure. Deletion covers
+# BACKUPS. Tamper-evidence retention is reconciled with the deletion obligations: the audit log
+# holds only digests (never content), so executing any store's deletion leaves every audit digest
+# intact and `verifyChain` still passes (see audit.ts / retention.ts). The store `id`s here are the
+# canonical ids the data-inventory doc and the redaction/doc lint reconcile against.
+#
+# Tier: every store below is admin-tier local under `.aios/loop/`. None is in `sync_include`. The
+# only bytes that ever cross to the Team Brain are audit chain heads + digests via the D6 checkpoint
+# endpoint (digests only, tier-reviewed in docs/brain-api.md first) — never a record or payload.
+
+version: 1
+
+records:
+  journal:
+    store: .aios/loop/inbox/inbox-events.*.ndjson
+    retention: 90d
+    deletion: compact-boundary-prune          # transition events pruned at the compaction boundary;
+                                               # consumed-tombstones + receipts + audit links kept in window
+    covers_backups: true
+    contains_content: digests-and-metadata     # payloads carry ids/digests, not comms bodies
+
+  read_model:
+    store: .aios/loop/inbox/read-model.db
+    retention: derived-from-journal            # a projection; rebuildable from the journal
+    deletion: drop-and-rebuild
+    covers_backups: true
+    contains_content: projected-state
+
+  observations:
+    store: .aios/loop/inbox/observations/*.jsonl
+    retention: 90d
+    deletion: purge-live-and-backup
+    covers_backups: true
+    contains_content: participant-identity     # account/tenant identity — deletable user content
+
+  snippets_body_cache:
+    store: .aios/loop/inbox/bodies/*
+    retention: 7d
+    deletion: purge-live-and-backup
+    covers_backups: true
+    contains_content: message-bodies-and-subjects  # the highest-sensitivity store — shortest window
+
+  outbox:
+    store: .aios/loop/inbox/outbox/*.json
+    retention: 30d
+    deletion: purge-live-and-backup
+    covers_backups: true
+    contains_content: draft-bodies
+
+  audit:
+    store: .aios/loop/inbox/audit-log.ndjson
+    retention: 365d                            # tamper-evidence window > every content window above
+    deletion: never-within-retention           # reconciled: digests only, so nothing to erase here
+    covers_backups: true
+    contains_content: digests-only             # no bodies, subjects, or participant plaintext
+
+  backups:
+    store: .aios/loop/inbox/backups/*
+    retention: matches-source                  # a backup inherits its source store's window
+    deletion: covered-by-source-deletion        # every source deletion above deletes its backup too
+    covers_backups: false
+    contains_content: mirror-of-source
+
+  telemetry:
+    store: .aios/loop/telemetry/events.jsonl
+    retention: 90d
+    deletion: purge-live-and-backup
+    covers_backups: true
+    contains_content: redacted-only            # redaction lint proves no body/subject/participant
