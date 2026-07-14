@@ -8,10 +8,11 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadRubric, DETERMINISTIC_CHECK_IDS } from "../scripts/spec-eval.mjs";
+import { loadRubric, resolveRubricPath, DETERMINISTIC_CHECK_IDS } from "../scripts/spec-eval.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const RUBRIC = path.join(DIR, "..", ".claude", "rubrics", "spec-readiness.md");
+const TOOLKIT_ROOT = path.join(DIR, "..");
 
 test("loadRubric parses frontmatter + all SR rows", () => {
   const r = loadRubric(RUBRIC);
@@ -21,6 +22,26 @@ test("loadRubric parses frontmatter + all SR rows", () => {
   const ids = r.rows.map((row) => row.id);
   assert.equal(ids.length, 16);
   for (let i = 1; i <= 16; i++) assert.ok(ids.includes(`SR${i}`), `SR${i}`);
+});
+
+test("resolveRubricPath — explicit > repo-local > toolkit fallback", () => {
+  // 1. explicit override is honored verbatim
+  assert.equal(resolveRubricPath("/anywhere", "/tmp/custom.md"), "/tmp/custom.md");
+
+  // 2. a repo that vendors its own rubric uses it (the toolkit checkout itself is one)
+  assert.equal(resolveRubricPath(TOOLKIT_ROOT), RUBRIC);
+
+  // 3. a repo WITHOUT a rubric (the Brain, any bare repo) falls back to the toolkit rubric —
+  //    instead of the old hard exit-4 "rubric not found". The fallback must be loadable.
+  const bare = mkdtempSync(path.join(tmpdir(), "no-rubric-repo-"));
+  try {
+    const resolved = resolveRubricPath(bare);
+    assert.notEqual(resolved, path.join(bare, ".claude", "rubrics", "spec-readiness.md"));
+    assert.match(resolved, /\.claude[/\\]rubrics[/\\]spec-readiness\.md$/);
+    assert.equal(loadRubric(resolved).frontmatter.kind, "rubric");
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
+  }
 });
 
 test("SR15 keeps its sharpened, recoverability-aware wording (locks the rubric↔prompt pair)", () => {

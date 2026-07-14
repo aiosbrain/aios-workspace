@@ -53,6 +53,7 @@ import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./
 import {
   evaluateSpec,
   loadRubric,
+  resolveRubricPath,
   loadRecentDecisions,
   formatFindings,
   extractSections,
@@ -1017,8 +1018,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     evaluateSpec: evaluateSpecDep = evaluateSpec,
     specEvalHints: specEvalHintsDep = specEvalHints,
     loadRecentDecisions: loadRecentDecisionsDep = loadRecentDecisions,
-    loadSpecRubric: loadSpecRubricDep = () =>
-      loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md")),
+    loadSpecRubric: loadSpecRubricDep = () => loadRubric(resolveRubricPath(repo)),
     readState = () => null,
     writeState = () => {},
     writeGate = () => {},

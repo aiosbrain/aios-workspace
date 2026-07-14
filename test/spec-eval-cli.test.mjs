@@ -71,6 +71,31 @@ test("valid spec_gate frontmatter parses; a bad value errors (exit 4, like eval_
   }
 });
 
+test("eval in a rubric-less repo falls back to the toolkit rubric (no exit 4)", () => {
+  // Reproduces the Team Brain case: --repo points at a repo with no .claude/rubrics/. Before the
+  // fallback this hard-failed with exit 4 ("rubric not found"); now it grades against the toolkit's
+  // own rubric. Offline (--no-llm) so no key is needed. Spawn directly with a single --repo bare.
+  const bare = mkdtempSync(path.join(tmpdir(), "brain-like-repo-"));
+  try {
+    const spec = path.join(bare, "issue.md");
+    writeFileSync(spec, readFileSync(STRONG, "utf8"));
+    const r = spawnSync(
+      process.execPath,
+      [AIOS, "spec", "eval", spec, "--no-llm", "--repo", bare],
+      {
+        encoding: "utf8",
+        env: { ...process.env },
+      }
+    );
+    // The fix: it no longer dies on rubric loading. (The exact verdict/exit depends on how the
+    // spec's own path claims resolve against the bare repo — not what this test is asserting.)
+    assert.notEqual(r.status, 4, r.stderr);
+    assert.doesNotMatch(r.stderr, /rubric not found/);
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
+  }
+});
+
 test("directory eval emits one batch summary and accepts deterministic specs", () => {
   const d = mkdtempSync(path.join(tmpdir(), "spec-batch-"));
   try {

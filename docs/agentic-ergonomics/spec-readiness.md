@@ -39,6 +39,10 @@ aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model 
 ```
 
 - **eval** grades the spec. `--no-llm` runs the deterministic layer only (offline, no key).
+- **Rubric resolution:** `--rubric <path>` (explicit) → the target repo's own
+  `.claude/rubrics/spec-readiness.md` → the canonical rubric shipped in the toolkit. The last
+  fallback lets the gate run in a **non-workspace repo** (the Team Brain, any bare repo) that doesn't
+  vendor a rubric, instead of failing with exit 4.
 - A spec may declare `eval_tier: deterministic` in frontmatter (or receive `--tier deterministic`).
   Its mandatory deterministic check is the complete evaluation, so a clean result is `SPEC_READY`
   (exit 0) and never makes a model call. The default tier is `full`.
