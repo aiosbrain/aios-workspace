@@ -421,6 +421,56 @@ export {
   type CompactReport,
   type SourceRead,
 } from "./inbox/read-model.js";
+// Tamper-evident audit log + D6 checkpoint anchoring (I-16 / AIO-397). A governance log DISTINCT
+// from the agent-event journal: an append-only hash chain over authenticated records (digests only,
+// never comms plaintext) that a host-independent control plane (the Team Brain checkpoint endpoint,
+// digests-only + tier-reviewed) periodically anchors, so tampering is detectable after restore.
+// Admin-tier local; NEVER synced — this module does not push to the brain (anchoring is via the
+// injected AnchorSink; the live brain adapter is a separate tier-reviewed integration).
+export {
+  AUDIT_LOG_BASENAME,
+  AUDIT_ANCHORS_BASENAME,
+  AUDIT_SCHEMA_VERSION,
+  AUDIT_GENESIS,
+  AUDIT_EVENTS,
+  AuditValidationError,
+  auditLogPath,
+  auditAnchorsPath,
+  digestPayload,
+  computeRecordHash,
+  parseAuditLine,
+  readAuditLog,
+  appendAuditRecord,
+  chainDigest,
+  createLocalAnchorSink,
+  checkpoint as auditCheckpoint,
+  checkpointDue,
+  runCheckpointCadence,
+  verifyChain,
+  verifyAuditStore,
+  backupAuditStore,
+  restoreAuditStore,
+  type AuditEvent,
+  type AuditRecord,
+  type AppendAuditInput,
+  type Anchor,
+  type AnchorSink,
+  type AuditReadResult,
+  type VerifyFailure,
+  type VerifyResult,
+  type CheckpointResult,
+  type CadenceResult,
+} from "./inbox/audit.js";
+// Deterministic retention + deletion engine (I-16 / AIO-397). Executes a store's deletion procedure
+// over BOTH live + backup sets; records a `retention.deletion` audit record (digest of erased ids,
+// never content) so `verifyChain` still passes after a user's content is deleted.
+export {
+  executeDeletion,
+  backupStore,
+  type StoreDescriptor,
+  type DeletionRequest,
+  type DeletionResult,
+} from "./inbox/retention.js";
 // Enriched adapter-observation record + dual-read projection (I-06 / AIO-387). The versioned
 // record carries account/tenant identity so the corrected dedup key
 // `(connection/account/tenant, object_kind, native_id)` keeps two accounts observing one native

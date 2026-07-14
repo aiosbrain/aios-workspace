@@ -1,0 +1,4 @@
+{"v":1,"kind":"inbox.rank","tier":"admin","at":"2026-07-14T09:00:00.000Z","correlation_id":"corr_9","payload":{"score":0.82,"weight":"team","item_digest":"sha256:3f1a...","count":41}}
+{"v":1,"kind":"inbox.action","tier":"admin","at":"2026-07-14T09:01:04.000Z","correlation_id":"corr_9","payload":{"operation":"gmail.send","latency_ms":812,"outcome":"success"}}
+{"v":1,"kind":"inbox.ingest","tier":"admin","at":"2026-07-14T09:02:00.000Z","correlation_id":"corr_10","payload":{"source":"slack","p95_lag_ms":41200,"items":37,"body_digest":"sha256:9c22..."}}
+{"v":1,"kind":"inbox.checkpoint","tier":"admin","at":"2026-07-14T09:05:00.000Z","correlation_id":null,"payload":{"through_seq":8,"digest":"sha256:aa01...","anchor_ref":"anchor:1f2e"}}
