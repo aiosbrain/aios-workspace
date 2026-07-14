@@ -425,19 +425,41 @@ test("CLI: explicit per-item --merge writes the registry; --unmerge reverses it;
 // The gate is now re-checked from the authoritative journal INSIDE `withInboxLock`. This test proves
 // the invariant end-to-end by racing a `merge` child against a `reject` child on the same id.
 
-// A child that generates the (deterministic) suggestions, finds one by id, and runs merge|reject.
-// Prints one JSON line: {winner:true,status} on success, or {winner:false,conflict,currentStatus}
-// on SeedConflictError. Any other failure exits non-zero.
+// A child that loads the (deterministic) suggestion by id, then — CRUCIALLY — waits at a two-child
+// readiness barrier until BOTH children have loaded the SAME suggestion from the still-pristine
+// registry, and only THEN races the locked merge|reject op. Without the barrier the harness is
+// flaky: a merge winner completes and the cold-start skip filters the now-known person out of
+// generation, so a reject child that hadn't loaded yet would re-generate and find nothing
+// (`no-suggestion`). The barrier makes "both poised, then race" deterministic — it does NOT touch
+// product code or weaken semantics; the actual merge/reject contention still resolves under the
+// real inbox lock. Prints one JSON line: {winner:true,status} on success, or
+// {winner:false,conflict,currentStatus} on SeedConflictError. Any other failure exits non-zero.
 function writeRaceChild(root) {
   const file = path.join(root, "seed-race-child.mjs");
   writeFileSync(
     file,
-    `const dist = await import(${JSON.stringify(DIST_INDEX)});
-const [root, action, id, owner] = process.argv.slice(2);
+    `import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+const dist = await import(${JSON.stringify(DIST_INDEX)});
+const [root, action, id, owner, barrierDir] = process.argv.slice(2);
+
+// 1. Load the suggestion while the registry is still pristine (both children reach this pre-race).
 const { observations } = dist.readObservations(root);
 const history = dist.observationsToHistory(observations, { ownerIds: [owner] });
 const s = dist.generateSuggestions(root, history).find((x) => x.id === id);
 if (!s) { console.log(JSON.stringify({ error: "no-suggestion" })); process.exit(2); }
+
+// 2. Readiness barrier: announce this child is loaded + poised, then block until BOTH are.
+function sleep(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+mkdirSync(barrierDir, { recursive: true });
+writeFileSync(join(barrierDir, "ready-" + action), String(process.pid));
+const deadline = Date.now() + 15000;
+while (!(existsSync(join(barrierDir, "ready-merge")) && existsSync(join(barrierDir, "ready-reject")))) {
+  if (Date.now() > deadline) { console.log(JSON.stringify({ error: "barrier-timeout", action })); process.exit(3); }
+  sleep(5);
+}
+
+// 3. Both poised — race the locked op on the ALREADY-LOADED suggestion (no re-generation).
 try {
   const r = action === "merge" ? dist.mergeSuggestion(root, s) : dist.rejectSuggestion(root, s);
   console.log(JSON.stringify({ winner: true, action, status: r.status }));
@@ -451,9 +473,9 @@ try {
   return file;
 }
 
-function runRaceChild(childFile, root, action, id, owner) {
+function runRaceChild(childFile, root, action, id, owner, barrierDir) {
   return new Promise((resolve, reject) => {
-    const p = spawn("node", [childFile, root, action, id, owner], {
+    const p = spawn("node", [childFile, root, action, id, owner, barrierDir], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -474,18 +496,20 @@ function runRaceChild(childFile, root, action, id, owner) {
 }
 
 test("concurrency: racing merge vs reject — exactly one wins; registry, journal, and replay agree", async () => {
-  // Repeat the race several times so scheduling can land either order (merge-first or reject-first).
-  for (let round = 0; round < 6; round++) {
+  // Repeat the race many times so scheduling can land either order (merge-first or reject-first).
+  for (let round = 0; round < 24; round++) {
     const root = ws();
     try {
       const history = seedHistory(root);
       const target = generateSuggestions(root, history).find((s) => s.kind === "person");
       const child = writeRaceChild(root);
+      const barrierDir = path.join(root, `race-barrier-${round}`);
 
-      // Fire both children concurrently on the SAME suggestion id.
+      // Fire both children concurrently on the SAME suggestion id; they rendezvous at the barrier
+      // (both loaded + poised) before contending for the inbox lock.
       const [a, b] = await Promise.all([
-        runRaceChild(child, root, "merge", target.id, OWNER),
-        runRaceChild(child, root, "reject", target.id, OWNER),
+        runRaceChild(child, root, "merge", target.id, OWNER, barrierDir),
+        runRaceChild(child, root, "reject", target.id, OWNER, barrierDir),
       ]);
       const results = [a, b];
       assert.ok(
