@@ -26,11 +26,25 @@ import {
 import {
   issueHandle,
   consumeAndExecute,
+  reconcile,
   readCapabilities,
   loadRecord,
+  makeIssueRecord,
+  retryEligibility,
   capabilityDigest,
   CAPABILITY_STORE_REL,
 } from "../../gui/server/runtime-adapters/capability-store.mjs";
+import {
+  ws as fxWs,
+  sampleRequest as fxRequest,
+  brokeredFor,
+  seedIssued,
+  seedCrashWindow,
+  mutatedValue,
+  FIXTURE_IDENTITY,
+  FIXTURE_AUDIENCE,
+  FIXTURE_EPOCH,
+} from "../../gui/server/runtime-adapters/__fixtures__/capability-fixtures.mjs";
 
 const IDENTITY = "/repo/aios-workspace@feat/inbox";
 
@@ -286,4 +300,288 @@ test("KILL fallback: notifyDeepLink is content-free and demoable standalone", ()
   }
   // No capability store is touched by the fallback lane — it needs no durable consume.
   assert.equal(existsSync(path.join(tmpdir(), CAPABILITY_STORE_REL)), false);
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// I-07 (AIO-388) — Capability fixture matrix.
+//
+// The seven adversarial fixture families the domain spec enumerates, hardening the I-03 round-trip into
+// a defended contract. Every family is RED-GREEN: it fails against unhardened I-03 and passes against the
+// hardening patches in capability-store.mjs (documented in the PR body). Two cross-cutting invariants:
+//   • the FIELD-COVERAGE meta-test enumerates every persisted PendingApproval field so none ships unattacked;
+//   • the EXECUTION-COUNTER meta-test proves every handle across the matrix executes exactly-once or zero.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+// Execution ledger: every family records the side-effect count it observed for its handle(s). The final
+// meta-test asserts every entry is 0 or 1 — no fixture in the whole matrix ever double-executes.
+const EXEC_LEDGER = [];
+const ledger = (family, handle, count) => void EXEC_LEDGER.push({ family, handle, count });
+
+// ── Family 1: field mutation — every persisted field, one at a time, rejected before execution ──────
+// The record schema is derived live, so a NEW field added to makeIssueRecord auto-enters the attack loop
+// and the coverage meta-test below fails until it's accounted for.
+const SCHEMA_FIELDS = Object.keys(makeIssueRecord(fxRequest()));
+const FIELD_MUTATION_ATTACKED = new Set();
+
+for (const field of SCHEMA_FIELDS) {
+  test(`I-07 family 1 (field mutation): '${field}' tampered on disk → rejected, counter 0`, () => {
+    // Seed a store whose issue line has ONE field mutated but the ORIGINAL integrity + digest intact —
+    // modelling an attacker who edits the durable record yet cannot forge its issue-time hash.
+    const { root, record } = seedIssued(fxRequest(), {
+      mutate: (r) => {
+        r[field] = mutatedValue(field, r[field]);
+      },
+    });
+    try {
+      const brokered = brokeredFor(record); // human-approved handle + digest
+      const { c, execute } = counter();
+      // Deliberately pass NO identity/audience/epoch so integrity is the SOLE gate under test for each
+      // field (identity/audience/epoch mutations are also caught by their own families' checks).
+      const r = consumeAndExecute(root, record.handle, brokered, { execute });
+      assert.notEqual(r.kind, "native-receipt", `mutating '${field}' must not execute`);
+      assert.equal(c.n, 0, `mutating '${field}' executed the side effect`);
+      FIELD_MUTATION_ATTACKED.add(field);
+      ledger("family1", record.handle, c.n);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("I-07 meta (field coverage): every persisted PendingApproval field is attacked by family 1", () => {
+  assert.deepEqual(
+    [...FIELD_MUTATION_ATTACKED].sort(),
+    [...SCHEMA_FIELDS].sort(),
+    "a persisted field escaped the field-mutation family — add it to the attack matrix"
+  );
+  // Hard floor: the security-critical fields MUST be part of the schema (guards against silently
+  // dropping a field from makeIssueRecord and thereby from coverage).
+  for (const required of [
+    "operation",
+    "normalizedArgs",
+    "targetResources",
+    "repoWorktreeIdentity",
+    "requestDigest",
+    "expiresAt",
+    "audience",
+    "idempotency",
+    "epoch",
+    "integrity",
+  ]) {
+    assert.ok(SCHEMA_FIELDS.includes(required), `record schema is missing '${required}'`);
+  }
+});
+
+// ── Family 2: issuer / audience / session substitution ──────────────────────────────────────────────
+test("I-07 family 2 (substitution): a handle issued by runtime A presented to runtime B → unknown-handle", () => {
+  const a = seedIssued(fxRequest()); // runtime A's durable store
+  const rootB = fxWs(); // a DIFFERENT runtime's store — never saw this handle
+  try {
+    const { c, execute } = counter();
+    const r = consumeAndExecute(rootB, a.record.handle, brokeredFor(a.record), {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
+    assert.equal(r.reason, "unknown-handle");
+    assert.equal(c.n, 0);
+    ledger("family2-issuer", a.record.handle, c.n);
+  } finally {
+    rmSync(a.root, { recursive: true, force: true });
+    rmSync(rootB, { recursive: true, force: true });
+  }
+});
+
+test("I-07 family 2 (substitution): a decision brokered for session X consumed in session Y → audience-mismatch", () => {
+  const { root, record } = seedIssued(fxRequest({ audience: FIXTURE_AUDIENCE }));
+  try {
+    const brokered = brokeredFor(record);
+    const { c, execute } = counter();
+    // Same valid handle + digest, presented under a DIFFERENT session.
+    const r = consumeAndExecute(root, record.handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      audience: "runtime-B/session-Y",
+      execute,
+    });
+    assert.equal(r.kind, "rejected");
+    assert.equal(r.reason, "audience-mismatch");
+    assert.equal(r.expected, FIXTURE_AUDIENCE);
+    assert.equal(c.n, 0, "cross-session substitution must not execute");
+    // The CORRECT session still consumes exactly once — the binding is precise, not a blanket block.
+    const good = consumeAndExecute(root, record.handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      audience: FIXTURE_AUDIENCE,
+      execute,
+    });
+    assert.equal(good.kind, "native-receipt");
+    assert.equal(c.n, 1);
+    ledger("family2-session", record.handle, c.n);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Family 3: crash after consume, before action ────────────────────────────────────────────────────
+test("I-07 family 3 (crash after consume, before action): surfaced as outcome_unknown, never silent re-exec", () => {
+  const { root, record } = seedCrashWindow(fxRequest({ idempotency: "at-most-once" }));
+  try {
+    const brokered = brokeredFor(record);
+    const { c, execute } = counter();
+    // A naive re-consume of a crash-window record must NOT silently re-run and must NOT hide it as a flat
+    // replay — it surfaces the unknown outcome with the retry plan its idempotency class dictates.
+    const r = consumeAndExecute(root, record.handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    assert.equal(r.kind, "outcome");
+    assert.equal(r.outcome, "outcome_unknown");
+    assert.equal(r.crashWindow, true);
+    assert.deepEqual(r.retry, retryEligibility("at-most-once"));
+    assert.equal(c.n, 0, "no silent re-execution across the crash window");
+    // at-most-once → reconcile refuses to auto-retry; still zero executions.
+    const rec = reconcile(root, record.handle, { queryNativeReceipt: () => null, execute });
+    assert.equal(rec.outcome, "outcome_unknown");
+    assert.equal(rec.requires, "human-reapproval");
+    assert.equal(c.n, 0);
+    ledger("family3", record.handle, c.n);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Family 4: crash after action, before receipt ────────────────────────────────────────────────────
+test("I-07 family 4 (crash after action, before receipt): reconcile resolves via native receipt, no re-exec", () => {
+  const { root, record } = seedCrashWindow(fxRequest({ idempotency: "reconcile-first" }));
+  try {
+    const { c, execute } = counter();
+    const nativeReceipt = { ran: true, id: "native-abc" };
+    // The action DID run; the channel provides a native receipt. Reconcile emits outcome_unknown then
+    // resolves via that receipt — it must NOT re-execute the already-run side effect.
+    const r = reconcile(root, record.handle, { queryNativeReceipt: () => nativeReceipt, execute });
+    assert.equal(r.outcome, "resolved-native");
+    assert.equal(r.via, "native-receipt");
+    assert.deepEqual(r.nativeReceipt, nativeReceipt);
+    assert.equal(c.n, 0, "reconcile must not re-run an action the channel confirms already ran");
+    // Durably resolved now — a later consume is a flat replay, not another crash window.
+    const replay = consumeAndExecute(root, record.handle, brokeredFor(record), {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
+    assert.equal(replay.reason, "replay-consumed");
+    assert.equal(replay.outcome, "resolved-native");
+    assert.equal(c.n, 0);
+    ledger("family4", record.handle, c.n);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Family 5: outcome_unknown + idempotency-class retry ─────────────────────────────────────────────
+test("I-07 family 5 (idempotency-class retry): the class dictates retry, never a guess", () => {
+  // Pure policy: retry eligibility derives from the class alone; an unknown class defaults to the safest.
+  assert.deepEqual(retryEligibility("safe-retry"), { retryable: true, action: "re-execute" });
+  assert.deepEqual(retryEligibility("reconcile-first"), { retryable: true, action: "reconcile-channel" });
+  assert.deepEqual(retryEligibility("at-most-once"), { retryable: false, action: "human-reapproval" });
+  assert.deepEqual(retryEligibility("bogus"), { retryable: false, action: "human-reapproval" });
+
+  // safe-retry: the action never ran, so reconcile re-executes — the FIRST and only execution.
+  const sr = seedCrashWindow(fxRequest({ idempotency: "safe-retry" }));
+  const srC = counter();
+  const rSr = reconcile(sr.root, sr.record.handle, { execute: srC.execute });
+  assert.equal(rSr.outcome, "re-executed");
+  assert.equal(srC.c.n, 1, "safe-retry re-executes exactly once");
+  const rSr2 = reconcile(sr.root, sr.record.handle, { execute: srC.execute });
+  assert.equal(rSr2.alreadyResolved, true, "re-executed record is now terminal");
+  assert.equal(srC.c.n, 1, "no second execution");
+  ledger("family5-safe-retry", sr.record.handle, srC.c.n);
+
+  // at-most-once: reconcile refuses to auto-retry — a human must re-approve.
+  const am = seedCrashWindow(fxRequest({ idempotency: "at-most-once" }));
+  const amC = counter();
+  const rAm = reconcile(am.root, am.record.handle, { execute: amC.execute });
+  assert.equal(rAm.requires, "human-reapproval");
+  assert.equal(amC.c.n, 0, "at-most-once never auto-re-executes");
+  ledger("family5-at-most-once", am.record.handle, amC.c.n);
+
+  // reconcile-first: query the channel first; no native receipt → stays unknown, no execution.
+  const rf = seedCrashWindow(fxRequest({ idempotency: "reconcile-first" }));
+  const rfC = counter();
+  const rRf = reconcile(rf.root, rf.record.handle, { queryNativeReceipt: () => null, execute: rfC.execute });
+  assert.equal(rRf.outcome, "outcome_unknown");
+  assert.equal(rRf.action, "reconcile-channel");
+  assert.equal(rfC.c.n, 0, "reconcile-first queries the channel, it does not execute");
+  ledger("family5-reconcile-first", rf.record.handle, rfC.c.n);
+
+  for (const r of [sr.root, am.root, rf.root]) rmSync(r, { recursive: true, force: true });
+});
+
+// ── Family 6: rotation ──────────────────────────────────────────────────────────────────────────────
+test("I-07 family 6 (rotation): a handle issued under an old key/session epoch is rejected, TYPED", () => {
+  const { root, record } = seedIssued(fxRequest({ epoch: FIXTURE_EPOCH }));
+  try {
+    const brokered = brokeredFor(record);
+    const { c, execute } = counter();
+    // Key/session rotated between issue and consume — current epoch differs from the issued one.
+    const r = consumeAndExecute(root, record.handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      epoch: "key-epoch-2",
+      execute,
+    });
+    assert.equal(r.kind, "rejected");
+    assert.equal(r.reason, "rotation-superseded", "must be a typed rotation error, not generic failure");
+    assert.equal(r.issuedEpoch, FIXTURE_EPOCH);
+    assert.equal(c.n, 0);
+    // Same (un-rotated) epoch still consumes exactly once.
+    const good = consumeAndExecute(root, record.handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      epoch: FIXTURE_EPOCH,
+      execute,
+    });
+    assert.equal(good.kind, "native-receipt");
+    assert.equal(c.n, 1);
+    ledger("family6", record.handle, c.n);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Family 7: replay (before AND after restart) ─────────────────────────────────────────────────────
+test("I-07 family 7 (replay): consumed handle rejected before and after restart, exactly-once preserved", async () => {
+  const root = fxWs();
+  try {
+    const { handle, displayProjection } = issueHandle(root, fxRequest());
+    const brokered = brokerDecision(displayProjection, "approve");
+    const { c, execute } = counter();
+    const first = consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    assert.equal(first.kind, "native-receipt");
+    assert.equal(c.n, 1);
+
+    // Replay BEFORE restart (same in-memory module instance).
+    const beforeRestart = consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    assert.equal(beforeRestart.reason, "replay-consumed");
+    assert.equal(c.n, 1, "no re-execution on in-process replay");
+
+    // Replay AFTER restart: a fresh module instance re-folds the durable tombstone + receipt from disk.
+    const fresh = await import("../../gui/server/runtime-adapters/capability-store.mjs?fam7=1");
+    const afterRestart = fresh.consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    assert.equal(afterRestart.reason, "replay-consumed");
+    assert.equal(c.n, 1, "no re-execution on post-restart replay");
+    ledger("family7", handle, c.n);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Meta: execution counter across the whole matrix ─────────────────────────────────────────────────
+test("I-07 meta (execution counter): every handle across the matrix executes exactly-once or zero", () => {
+  assert.ok(EXEC_LEDGER.length >= SCHEMA_FIELDS.length + 6, "ledger did not capture every family");
+  for (const e of EXEC_LEDGER) {
+    assert.ok(
+      e.count === 0 || e.count === 1,
+      `${e.family}/${e.handle}: executed ${e.count}× (matrix invariant: exactly-once or zero)`
+    );
+  }
+  // Every family (1..7) contributed at least one observation.
+  for (const n of ["family1", "family2", "family3", "family4", "family5", "family6", "family7"]) {
+    assert.ok(
+      EXEC_LEDGER.some((e) => e.family.startsWith(n)),
+      `${n} missing from the execution ledger`
+    );
+  }
 });
