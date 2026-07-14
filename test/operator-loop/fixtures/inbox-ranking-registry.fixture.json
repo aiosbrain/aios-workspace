@@ -1,0 +1,106 @@
+{
+  "_note": "SYNTHETIC fixture registry for I-04 tests. Admin-tier, local-only shape. Swap in real graph at G3.",
+  "people": [
+    {
+      "ids": ["acct-anna", "anna@client.com", "Anna Park"],
+      "tier": 1,
+      "projectWeight": 0.9,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-ben", "ben@client.com", "Ben Ortiz"],
+      "tier": 1,
+      "projectWeight": 0.8,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-carla", "carla@partner.io", "Carla Reyes"],
+      "tier": 2,
+      "projectWeight": 0.7,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-dan", "dan@partner.io", "Dan Lee"],
+      "tier": 2,
+      "projectWeight": 0.6,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-eve", "eve@client.com", "Eve Nwosu"],
+      "tier": 1,
+      "projectWeight": 0.85,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-finn", "finn@client.com", "Finn Walsh"],
+      "tier": 2,
+      "projectWeight": 0.5,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-gita", "gita@client.com", "Gita Rao"],
+      "tier": 1,
+      "projectWeight": 0.75,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-hugo", "hugo@partner.io", "Hugo Kim"],
+      "tier": 2,
+      "projectWeight": 0.65,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-iris", "iris@client.com", "Iris Cole"],
+      "tier": 1,
+      "projectWeight": 0.8,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-jack", "jack@partner.io", "Jack Diaz"],
+      "tier": 2,
+      "projectWeight": 0.55,
+      "entityFile": true,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-kim", "kim@old.com", "Kim Old"],
+      "tier": 2,
+      "projectWeight": 0.4,
+      "entityFile": true,
+      "engagement": "inactive"
+    },
+    {
+      "ids": ["acct-liam", "liam@old.com", "Liam Past"],
+      "tier": 3,
+      "projectWeight": 0.3,
+      "entityFile": true,
+      "engagement": "inactive"
+    },
+    {
+      "ids": ["acct-mona", "mona@lead.com", "Mona Sable"],
+      "tier": 2,
+      "projectWeight": 0.5,
+      "entityFile": false,
+      "engagement": "active"
+    },
+    {
+      "ids": ["acct-nate", "nate@vendor.com", "Nate Vend"],
+      "tier": 3,
+      "projectWeight": 0.2
+    },
+    {
+      "ids": ["acct-omar", "omar@list.com", "Omar List"],
+      "tier": 4,
+      "projectWeight": 0.1
+    }
+  ]
+}
