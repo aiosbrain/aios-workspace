@@ -29,11 +29,11 @@ the three-week or multi-day human-adoption criteria.
 | `npm run check:docs` | exit 0 |
 | Operator Loop tests | 512/512 pass |
 | Secret scan / leak gate | both exit 0 |
-| `npm run build:loop` | **blocked:** duplicate `InboxEvent` / `InboxEventKind` exports |
-| `npm test` | **blocked:** stops at the same `build:loop` compilation error |
+| `npm run build:loop` | exit 0 on merged `main` (`41da9e8`) |
+| `npm test` | exit 0 on merged `main` |
 
-The Inbox compile failure is outside this read-only close-out lane and remains a tag blocker; no
-Unified Inbox implementation was changed here.
+The upstream Inbox compile collision was repaired after this evidence run. Both capability and
+durable-journal event types remain available under unambiguous public names.
 
 ## Reproduction
 
