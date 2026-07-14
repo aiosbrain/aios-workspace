@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { jsonWriteback, resolveLoopTasksPath } from "../../scripts/loop.mjs";
 
+const cleanups = [];
+
 function workspace() {
   const repo = mkdtempSync(path.join(tmpdir(), "loop-task-file-"));
+  cleanups.push(repo);
   const log = path.join(repo, "3-log");
   mkdirSync(log, { recursive: true });
   return { repo, log };
@@ -46,4 +49,10 @@ test("C6 JSON omits team-tier task titles", () => {
   const payload = JSON.parse(jsonWriteback(plan, ["pm"], { signals: [] }, loop));
   assert.deepEqual(payload.taskRows, [{ row_key: "nw-123" }]);
   assert.ok(!JSON.stringify(payload).includes("private team wording"));
+});
+
+process.on("exit", () => {
+  for (const p of cleanups) {
+    try { rmSync(p, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
 });
