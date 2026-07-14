@@ -99,14 +99,24 @@ export interface InboxView {
 }
 
 /**
- * Optional I-04 ranker seam. When merged, I-04 supplies a per-item `why` + an overall
- * `ranker_version`; until then `assembleInboxView` uses the recency fallback. Kept as an injected
- * function so I-04 lands without touching this file's shape.
+ * The I-04 ranker seam. When injected (default wiring: the deterministic-ranker adapter built at the
+ * loop composition point, AIO-429), it supplies a per-item `why`, the per-item protected verdict, and
+ * an overall `ranker_version`; when absent `assembleInboxView` uses the recency fallback. Kept as an
+ * injected object so I-04 lands (and tests substitute a fake) without touching this file's shape.
  */
 export interface Ranker {
   version: string;
-  /** Return a sorted copy + a `why` per item id. Must be a total, deterministic order. */
-  rank(items: readonly InboxItem[]): { order: InboxItem[]; why: Map<string, string> };
+  /**
+   * Rank ALL items: return a deterministically-ordered copy, a `why` per item id, and the set of ids
+   * the ranker considers protected. Must be a total, deterministic order. The caller re-enforces the
+   * protected-partition split as a safety net, so protection is a UNION with each row's structural
+   * `protected` (an open blocker is never demoted regardless of the ranker's verdict).
+   */
+  rank(items: readonly InboxItem[]): {
+    order: InboxItem[];
+    why: Map<string, string>;
+    protectedIds: Set<string>;
+  };
 }
 
 export interface AssembleInput {
@@ -180,19 +190,27 @@ function byChronological(a: InboxItem, b: InboxItem): number {
 
 /**
  * Ranked order: the protected partition first (recency within it), then everything else (recency).
- * With an injected ranker the per-partition order + `why` come from I-04; the partition split is
- * preserved either way (protected always renders above the fold).
+ * With an injected ranker the order, `why`, and protected verdict come from I-04 (unioned with each
+ * row's structural protection); the partition split is re-enforced here either way, so protected
+ * always renders above the fold.
  */
 export function rankItems(items: readonly InboxItem[], ranker?: Ranker): InboxItem[] {
+  if (ranker) {
+    const { order, why, protectedIds } = ranker.rank(items);
+    for (const it of order) {
+      // UNION (trust floor): the ranker can promote a row into the partition, never demote a row
+      // that is already structurally protected (an open blocker).
+      it.protected = protectedIds.has(it.id) || it.protected;
+      it.why = why.get(it.id) ?? it.why;
+    }
+    // Re-enforce the partition invariant regardless of the ranker's returned order: protected always
+    // renders above the fold. Relative order within each partition is the ranker's.
+    const protectedItems = order.filter((i) => i.protected);
+    const rest = order.filter((i) => !i.protected);
+    return [...protectedItems, ...rest];
+  }
   const protectedItems = items.filter((i) => i.protected);
   const rest = items.filter((i) => !i.protected);
-  if (ranker) {
-    const p = ranker.rank(protectedItems);
-    const r = ranker.rank(rest);
-    for (const it of p.order) it.why = p.why.get(it.id) ?? it.why;
-    for (const it of r.order) it.why = r.why.get(it.id) ?? it.why;
-    return [...p.order, ...r.order];
-  }
   return [...protectedItems].sort(byRecency).concat([...rest].sort(byRecency));
 }
 
