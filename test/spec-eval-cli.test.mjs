@@ -51,6 +51,26 @@ test("deterministic eval tier is SPEC_READY without a model key", () => {
   }
 });
 
+test("valid spec_gate frontmatter parses; a bad value errors (exit 4, like eval_tier)", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-gate-"));
+  try {
+    const strong = readFileSync(STRONG, "utf8");
+    const good = path.join(d, "advisory.md");
+    writeFileSync(good, `---\neval_tier: deterministic\nspec_gate: advisory\n---\n\n${strong}`);
+    // spec_gate is an enforcement-policy hint (consumed by `aios ship`), not an eval knob — a valid
+    // value must not disturb `aios spec eval`, which still reports readiness normally.
+    assert.equal(runSpec(["eval", good, "--json"], { DEEPSEEK_API_KEY: "" }).code, 0);
+
+    const bad = path.join(d, "bad.md");
+    writeFileSync(bad, `---\nspec_gate: sometimes\n---\n\n${strong}`);
+    const r = runSpec(["eval", bad, "--no-llm"]);
+    assert.equal(r.code, 4, r.stderr);
+    assert.match(r.stderr, /spec_gate/);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test("directory eval emits one batch summary and accepts deterministic specs", () => {
   const d = mkdtempSync(path.join(tmpdir(), "spec-batch-"));
   try {

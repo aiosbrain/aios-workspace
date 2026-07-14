@@ -44,6 +44,13 @@ export const DETERMINISTIC_CHECK_IDS = new Set([
   "SR16",
 ]);
 
+// Spec-gate ENFORCEMENT policies (orthogonal to eval_tier, which selects layers):
+//   block    — a NOT_READY verdict stops the build (default; the contract most specs want)
+//   advisory — run the eval, record findings, WARN, but proceed to build regardless of verdict
+//   off      — do not run the adversarial gate at all (named equivalent of --skip-spec-gate)
+export const SPEC_GATE_POLICIES = new Set(["block", "advisory", "off"]);
+export const DEFAULT_SPEC_GATE = "block";
+
 // ── rubric loading ──────────────────────────────────────────────────────────────────────────
 
 /**
@@ -667,6 +674,15 @@ export function specEvalHints(specText) {
   if (tier !== "full" && tier !== "deterministic") {
     throw new Error(`invalid eval_tier '${tier}' (expected full|deterministic)`);
   }
+  // spec_gate is the ENFORCEMENT policy (does a NOT_READY verdict block?), orthogonal to eval_tier
+  // (which LAYERS run). Unset → undefined so the caller's flag/config default wins; block | advisory
+  // | off when declared. Validated here so a typo fails loudly rather than silently blocking.
+  const specGate = values.spec_gate;
+  if (specGate != null && !SPEC_GATE_POLICIES.has(specGate)) {
+    throw new Error(
+      `invalid spec_gate '${specGate}' (expected ${[...SPEC_GATE_POLICIES].join("|")})`
+    );
+  }
   const provenance = [
     values.eval_provenance,
     values.parent_plan_reviewed,
@@ -676,7 +692,7 @@ export function specEvalHints(specText) {
   const planTraceable = provenance.some((value) =>
     ["true", "yes", "adversarial-reviewed", "adversarially-reviewed", "reviewed"].includes(value)
   );
-  return { tier, planTraceable };
+  return { tier, planTraceable, specGate };
 }
 
 function collectSpecPaths(input) {

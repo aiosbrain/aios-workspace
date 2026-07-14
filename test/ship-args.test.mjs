@@ -30,6 +30,17 @@ console.log("parseShipArgs defaults");
   check("loop default full", o.loop === "full");
   check("dry-run off", o.dryRun === false);
   check("skip-spec-gate off by default", o.skipSpecGate === false);
+  check("spec-gate unset by default (null)", o.specGate === null);
+}
+
+console.log("parseShipArgs --spec-gate");
+{
+  check(
+    "advisory parsed",
+    parseShipArgs(["AIO-9", "--spec-gate", "advisory"]).specGate === "advisory"
+  );
+  check("off parsed", parseShipArgs(["AIO-9", "--spec-gate", "off"]).specGate === "off");
+  check("block parsed", parseShipArgs(["AIO-9", "--spec-gate", "block"]).specGate === "block");
 }
 
 console.log("parseShipArgs overrides");
@@ -95,6 +106,27 @@ console.log("validateShipArgs");
   check(
     "light loop cannot skip its spec gate",
     validateShipArgs(parseShipArgs(["AIO-1", "--loop", "light", "--skip-spec-gate"])) !== null
+  );
+  check(
+    "bad --spec-gate value → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--spec-gate", "wat"])) !== null
+  );
+  check(
+    "--spec-gate advisory → null (supported)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--spec-gate", "advisory"])) === null
+  );
+  check(
+    "--spec-gate off → null on full loop",
+    validateShipArgs(parseShipArgs(["AIO-1", "--spec-gate", "off"])) === null
+  );
+  check(
+    "light loop + --spec-gate off → error (gate is the entry contract)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--loop", "light", "--spec-gate", "off"])) !== null
+  );
+  check(
+    "light loop + --spec-gate advisory → null (advisory still runs + records)",
+    validateShipArgs(parseShipArgs(["AIO-1", "--loop", "light", "--spec-gate", "advisory"])) ===
+      null
   );
   check(
     "unknown reviewer → error",
