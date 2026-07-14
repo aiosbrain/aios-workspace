@@ -1,0 +1,142 @@
+{
+  "items": [
+    {
+      "id": "[\"gmail-a\",\"alice@acme.com\",\"acme.com\",\"email\",\"msg-2\"]",
+      "origin": "thread-state",
+      "source": "email",
+      "account": "alice@acme.com",
+      "bucket": "thread",
+      "protected": false,
+      "why": "recency",
+      "attention_state": "surfaced",
+      "action_state": "none",
+      "ts": "2020-01-01T09:10:00.000Z",
+      "observation": {
+        "key": "[\"gmail-a\",\"alice@acme.com\",\"acme.com\",\"email\",\"msg-2\"]",
+        "connection_id": "gmail-a",
+        "account": "alice@acme.com",
+        "tenant": "acme.com",
+        "object_kind": "email",
+        "native_id": "msg-2",
+        "thread_id": null,
+        "participants": [],
+        "snippet": "alice@acme.com:msg-2",
+        "deleted": false,
+        "revisions": [
+          {
+            "op": "create",
+            "revision": 0,
+            "ts": "2020-01-01T09:10:00.000Z"
+          }
+        ],
+        "ts": "2020-01-01T09:10:00.000Z",
+        "origin": "enriched"
+      }
+    },
+    {
+      "id": "[\"gmail-b\",\"bob@acme.com\",\"acme.com\",\"email\",\"msg-1\"]",
+      "origin": "thread-state",
+      "source": "email",
+      "account": "bob@acme.com",
+      "bucket": "thread",
+      "protected": false,
+      "why": "recency",
+      "attention_state": "surfaced",
+      "action_state": "none",
+      "ts": "2020-01-01T09:05:00.000Z",
+      "observation": {
+        "key": "[\"gmail-b\",\"bob@acme.com\",\"acme.com\",\"email\",\"msg-1\"]",
+        "connection_id": "gmail-b",
+        "account": "bob@acme.com",
+        "tenant": "acme.com",
+        "object_kind": "email",
+        "native_id": "msg-1",
+        "thread_id": null,
+        "participants": [],
+        "snippet": "bob@acme.com:msg-1",
+        "deleted": false,
+        "revisions": [
+          {
+            "op": "create",
+            "revision": 0,
+            "ts": "2020-01-01T09:05:00.000Z"
+          }
+        ],
+        "ts": "2020-01-01T09:05:00.000Z",
+        "origin": "enriched"
+      }
+    },
+    {
+      "id": "[\"gmail-a\",\"alice@acme.com\",\"acme.com\",\"email\",\"msg-1\"]",
+      "origin": "thread-state",
+      "source": "email",
+      "account": "alice@acme.com",
+      "bucket": "thread",
+      "protected": false,
+      "why": "recency",
+      "attention_state": "surfaced",
+      "action_state": "none",
+      "ts": "2020-01-01T09:00:00.000Z",
+      "observation": {
+        "key": "[\"gmail-a\",\"alice@acme.com\",\"acme.com\",\"email\",\"msg-1\"]",
+        "connection_id": "gmail-a",
+        "account": "alice@acme.com",
+        "tenant": "acme.com",
+        "object_kind": "email",
+        "native_id": "msg-1",
+        "thread_id": null,
+        "participants": [],
+        "snippet": "alice@acme.com:msg-1",
+        "deleted": false,
+        "revisions": [
+          {
+            "op": "create",
+            "revision": 0,
+            "ts": "2020-01-01T09:00:00.000Z"
+          }
+        ],
+        "ts": "2020-01-01T09:00:00.000Z",
+        "origin": "enriched"
+      }
+    },
+    {
+      "id": "legacy:[\"email\",\"legacy-only\"]",
+      "origin": "thread-state",
+      "source": "email",
+      "account": null,
+      "bucket": "thread",
+      "protected": false,
+      "why": "recency",
+      "attention_state": "surfaced",
+      "action_state": "none",
+      "ts": "2020-01-01T09:00:00.000Z",
+      "observation": {
+        "key": "legacy:[\"email\",\"legacy-only\"]",
+        "connection_id": null,
+        "account": null,
+        "tenant": null,
+        "object_kind": "email",
+        "native_id": "legacy-only",
+        "thread_id": null,
+        "participants": [],
+        "snippet": "legacy record",
+        "deleted": false,
+        "revisions": [
+          {
+            "op": "create",
+            "revision": 0,
+            "ts": "2020-01-01T09:00:00.000Z"
+          }
+        ],
+        "ts": "2020-01-01T09:00:00.000Z",
+        "origin": "legacy"
+      }
+    }
+  ],
+  "ranker_version": "recency-fallback",
+  "staleness": {
+    "stale": true,
+    "newest_observation_ts": "2020-01-01T09:10:00.000Z",
+    "slo_ms": 300000
+  }
+}

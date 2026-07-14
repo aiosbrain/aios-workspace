@@ -1,0 +1,54 @@
+# Fly coordinator — ONE app per user (I-15 / AIO-396, the G6b gate).
+#
+# This is a TEMPLATE. `scripts/inbox-host-restore-drill.mjs` proves the SQLite/journal backup unit;
+# the provisioning runbook (docs/v1-operator-loop/host/provisioning-runbook.md) stamps this template
+# per user and drives `fly launch`/`fly deploy`. John owns Fly ops (D9); client self-provisioning is
+# deferred to the credential-aggregation workstream.
+#
+# *** MERGE-GATED ***: do NOT `fly deploy` until I-11 / PR #321 is merged. The coordinator hosts the
+# full I-02…I-11 vertical; there is nothing to run before that. See the runbook §Deploy + smoke.
+#
+# Substitutions the runbook fills in: {{USER_SLUG}}, {{FLY_REGION}}, {{VOLUME_NAME}}.
+
+app = "aios-inbox-{{USER_SLUG}}"       # one app per user; NOT multi-tenant (control plane deferred)
+primary_region = "{{FLY_REGION}}"      # keep near the operator; single region (no autoscaling — deferred)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  # The read-model + journal live on the persistent volume — admin-tier, never synced to the brain.
+  AIOS_INBOX_DATA_DIR = "/data/inbox"
+  # The read-model API binds loopback+internal only; the device-identity workstream gates all access.
+  # NO bare port exposure: there is deliberately no [[services]] block publishing a public port.
+  AIOS_HOST_BIND = "fly-local-6pn"
+
+# Persistent volume for the append-only journal (inbox-events.ndjson segments) + SQLite read model +
+# the device registry. The D5 backup unit is this volume's journal; the restore drill re-projects it.
+[mounts]
+  source = "{{VOLUME_NAME}}"
+  destination = "/data"
+
+# Supervised, always-on machine (the coordinator + its adapters). auto_stop is OFF: the coordinator
+# must stay up to meet the p95 ingest-lag ≤5m freshness SLO (I-09). Adapter supervision (restart /
+# backoff / crash-loop) is IN-PROCESS via host-supervisor.ts, surfaced as AttentionItems — Fly only
+# restarts the whole machine as the outer backstop.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[checks.coordinator]
+  # Fly-level liveness: the coordinator exposes an internal health endpoint that returns 200 only
+  # while every adapter is within its supervision window. A degraded adapter still surfaces as an
+  # AttentionItem in-app (it does NOT flap the machine); this check catches a fully-wedged host.
+  type = "http"
+  port = 8081
+  path = "/healthz"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+
+[deploy]
+  # One machine, replace in place — no rolling multi-instance (single-tenant host).
+  strategy = "immediate"
