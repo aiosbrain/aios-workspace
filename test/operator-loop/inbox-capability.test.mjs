@@ -428,7 +428,10 @@ test("I-07 family 3 (crash after consume, before action): surfaced as outcome_un
     const { c, execute } = counter();
     // A naive re-consume of a crash-window record must NOT silently re-run and must NOT hide it as a flat
     // replay — it surfaces the unknown outcome with the retry plan its idempotency class dictates.
-    const r = consumeAndExecute(root, record.handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    const r = consumeAndExecute(root, record.handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
     assert.equal(r.kind, "outcome");
     assert.equal(r.outcome, "outcome_unknown");
     assert.equal(r.crashWindow, true);
@@ -476,8 +479,14 @@ test("I-07 family 4 (crash after action, before receipt): reconcile resolves via
 test("I-07 family 5 (idempotency-class retry): the class dictates retry, never a guess", () => {
   // Pure policy: retry eligibility derives from the class alone; an unknown class defaults to the safest.
   assert.deepEqual(retryEligibility("safe-retry"), { retryable: true, action: "re-execute" });
-  assert.deepEqual(retryEligibility("reconcile-first"), { retryable: true, action: "reconcile-channel" });
-  assert.deepEqual(retryEligibility("at-most-once"), { retryable: false, action: "human-reapproval" });
+  assert.deepEqual(retryEligibility("reconcile-first"), {
+    retryable: true,
+    action: "reconcile-channel",
+  });
+  assert.deepEqual(retryEligibility("at-most-once"), {
+    retryable: false,
+    action: "human-reapproval",
+  });
   assert.deepEqual(retryEligibility("bogus"), { retryable: false, action: "human-reapproval" });
 
   // safe-retry: the action never ran, so reconcile re-executes — the FIRST and only execution.
@@ -502,7 +511,10 @@ test("I-07 family 5 (idempotency-class retry): the class dictates retry, never a
   // reconcile-first: query the channel first; no native receipt → stays unknown, no execution.
   const rf = seedCrashWindow(fxRequest({ idempotency: "reconcile-first" }));
   const rfC = counter();
-  const rRf = reconcile(rf.root, rf.record.handle, { queryNativeReceipt: () => null, execute: rfC.execute });
+  const rRf = reconcile(rf.root, rf.record.handle, {
+    queryNativeReceipt: () => null,
+    execute: rfC.execute,
+  });
   assert.equal(rRf.outcome, "outcome_unknown");
   assert.equal(rRf.action, "reconcile-channel");
   assert.equal(rfC.c.n, 0, "reconcile-first queries the channel, it does not execute");
@@ -524,7 +536,11 @@ test("I-07 family 6 (rotation): a handle issued under an old key/session epoch i
       execute,
     });
     assert.equal(r.kind, "rejected");
-    assert.equal(r.reason, "rotation-superseded", "must be a typed rotation error, not generic failure");
+    assert.equal(
+      r.reason,
+      "rotation-superseded",
+      "must be a typed rotation error, not generic failure"
+    );
     assert.equal(r.issuedEpoch, FIXTURE_EPOCH);
     assert.equal(c.n, 0);
     // Same (un-rotated) epoch still consumes exactly once.
@@ -548,18 +564,27 @@ test("I-07 family 7 (replay): consumed handle rejected before and after restart,
     const { handle, displayProjection } = issueHandle(root, fxRequest());
     const brokered = brokerDecision(displayProjection, "approve");
     const { c, execute } = counter();
-    const first = consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    const first = consumeAndExecute(root, handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
     assert.equal(first.kind, "native-receipt");
     assert.equal(c.n, 1);
 
     // Replay BEFORE restart (same in-memory module instance).
-    const beforeRestart = consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    const beforeRestart = consumeAndExecute(root, handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
     assert.equal(beforeRestart.reason, "replay-consumed");
     assert.equal(c.n, 1, "no re-execution on in-process replay");
 
     // Replay AFTER restart: a fresh module instance re-folds the durable tombstone + receipt from disk.
     const fresh = await import("../../gui/server/runtime-adapters/capability-store.mjs?fam7=1");
-    const afterRestart = fresh.consumeAndExecute(root, handle, brokered, { identity: FIXTURE_IDENTITY, execute });
+    const afterRestart = fresh.consumeAndExecute(root, handle, brokered, {
+      identity: FIXTURE_IDENTITY,
+      execute,
+    });
     assert.equal(afterRestart.reason, "replay-consumed");
     assert.equal(c.n, 1, "no re-execution on post-restart replay");
     ledger("family7", handle, c.n);

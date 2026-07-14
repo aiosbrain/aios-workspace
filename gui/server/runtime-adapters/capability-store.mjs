@@ -446,7 +446,10 @@ export function consumeAndExecute(
     // consumed under another, even with a perfectly valid brokered decision — the request digest never
     // covered the audience, so only this explicit check stops a cross-session substitution.
     if (rec.audience != null && audience !== rec.audience) {
-      return rejection(handle, "audience-mismatch", { expected: rec.audience, presented: audience ?? null });
+      return rejection(handle, "audience-mismatch", {
+        expected: rec.audience,
+        presented: audience ?? null,
+      });
     }
     // Rotation (I-07 family 6): a key/session rotation between issue and consume supersedes old handles.
     // A TYPED rotation error (not a generic failure) so a legitimate rotation is distinguishable from an
@@ -464,7 +467,10 @@ export function consumeAndExecute(
         storePath(root),
         consumeLine(handle, "deny", new Date(now).toISOString(), brokered.digest) + "\n"
       );
-      appendFileSync(storePath(root), receiptLine(handle, "denied", new Date(now).toISOString()) + "\n");
+      appendFileSync(
+        storePath(root),
+        receiptLine(handle, "denied", new Date(now).toISOString()) + "\n"
+      );
       appendEvent?.({
         kind: "outcome",
         handle,
@@ -552,7 +558,11 @@ export function consumeAndExecute(
  *
  * A record that already carries a durable outcome is terminal and returned as-is (idempotent).
  */
-export function reconcile(root, handle, { queryNativeReceipt, execute, now = Date.now(), appendEvent } = {}) {
+export function reconcile(
+  root,
+  handle,
+  { queryNativeReceipt, execute, now = Date.now(), appendEvent } = {}
+) {
   return withLock(root, () => {
     const rec = readCapabilities(root).get(handle);
     if (!rec) return rejection(handle, "unknown-handle");
@@ -564,16 +574,35 @@ export function reconcile(root, handle, { queryNativeReceipt, execute, now = Dat
     const cls = normalizeIdempotency(rec.idempotency);
     // The crash window is ALWAYS surfaced as outcome_unknown first — the journal records that we did not
     // know the action's fate before we resolved it.
-    appendEvent?.({ kind: "outcome", handle, at, data: { outcome: "outcome_unknown", idempotency: cls } });
+    appendEvent?.({
+      kind: "outcome",
+      handle,
+      at,
+      data: { outcome: "outcome_unknown", idempotency: cls },
+    });
 
     if (cls === "reconcile-first") {
       const native = queryNativeReceipt ? queryNativeReceipt(rec) : null;
       if (native) {
         appendFileSync(storePath(root), receiptLine(handle, "resolved-native", at) + "\n");
         appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "reconcile" } });
-        return { kind: "outcome", ok: true, handle, outcome: "resolved-native", via: "native-receipt", nativeReceipt: native };
+        return {
+          kind: "outcome",
+          ok: true,
+          handle,
+          outcome: "resolved-native",
+          via: "native-receipt",
+          nativeReceipt: native,
+        };
       }
-      return { kind: "outcome", ok: true, handle, outcome: "outcome_unknown", retryable: true, action: "reconcile-channel" };
+      return {
+        kind: "outcome",
+        ok: true,
+        handle,
+        outcome: "outcome_unknown",
+        retryable: true,
+        action: "reconcile-channel",
+      };
     }
 
     if (cls === "safe-retry") {
@@ -581,7 +610,13 @@ export function reconcile(root, handle, { queryNativeReceipt, execute, now = Dat
       try {
         output = execute ? execute(rec) : undefined;
       } catch (e) {
-        return { kind: "outcome", ok: true, handle, outcome: "outcome_unknown", error: String(e?.message ?? e) };
+        return {
+          kind: "outcome",
+          ok: true,
+          handle,
+          outcome: "outcome_unknown",
+          error: String(e?.message ?? e),
+        };
       }
       appendFileSync(storePath(root), receiptLine(handle, "re-executed", at) + "\n");
       appendEvent?.({ kind: "native-receipt", handle, at, data: { via: "safe-retry" } });
@@ -589,6 +624,13 @@ export function reconcile(root, handle, { queryNativeReceipt, execute, now = Dat
     }
 
     // at-most-once (and the safe default): never auto-retry — hand it back to a human.
-    return { kind: "outcome", ok: true, handle, outcome: "outcome_unknown", retryable: false, requires: "human-reapproval" };
+    return {
+      kind: "outcome",
+      ok: true,
+      handle,
+      outcome: "outcome_unknown",
+      retryable: false,
+      requires: "human-reapproval",
+    };
   });
 }
