@@ -257,7 +257,10 @@ test("--json round-trips (parse → re-serialize → deep-equal) and carries the
     assert.ok("generated_at" in parsed, "carries generated_at");
     // Every row carries a real, non-empty ranker `why` (never the recency-fallback string).
     for (const it of parsed.items) {
-      assert.ok(typeof it.why === "string" && it.why.trim().length > 0, "non-empty why on every row");
+      assert.ok(
+        typeof it.why === "string" && it.why.trim().length > 0,
+        "non-empty why on every row"
+      );
       assert.notEqual(it.why, RECENCY_WHY, "real ranker why, not the recency fallback");
     }
   } finally {

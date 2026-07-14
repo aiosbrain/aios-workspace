@@ -56,9 +56,7 @@ function looksLikeEmail(v: string | null | undefined): v is string {
  *  participant. Used only for registry resolution; returns null when there are no participants. */
 function pickCounterparty(obs: ProjectedItem): ObservationParticipant | null {
   const ps = Array.isArray(obs.participants) ? obs.participants : [];
-  const from = ps.find(
-    (p) => p.role === "from" || p.role === "sender" || p.role === "organizer"
-  );
+  const from = ps.find((p) => p.role === "from" || p.role === "sender" || p.role === "organizer");
   return from ?? ps[0] ?? null;
 }
 
@@ -81,7 +79,9 @@ function threadKindOf(obs: ProjectedItem): ThreadKind {
 export function toRankInput(item: InboxItem, now: string): RankInput {
   if (item.origin === "agent-event" && item.ask) {
     const ask = item.ask;
-    const body = [ask.title, ask.body].filter((s): s is string => !!s && s.trim() !== "").join("\n");
+    const body = [ask.title, ask.body]
+      .filter((s): s is string => !!s && s.trim() !== "")
+      .join("\n");
     return {
       channel: "agent-ask",
       sender: { account: null, handle: null, email: null, display: null },
