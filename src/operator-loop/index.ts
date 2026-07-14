@@ -479,6 +479,37 @@ export {
   type NotifyDeepLinkOptions,
 } from "./inbox/capability.js";
 
+// Unified inbox — deterministic ranking in SHADOW mode (I-04 / AIO-385). Ports the hermes-aluna
+// digest's zero-LLM classification rules + the entity/project importance signal + the protected
+// partition. Admin-tier LOCAL only: `features`/`why`/shadow sidecar NEVER sync to the brain, and this
+// module never perturbs the I-02 read-model projection (shadow = zero user-visible change).
+export {
+  RANKER_VERSION,
+  SHADOW_LOG_BASENAME,
+  EMPTY_REGISTRY,
+  buildRegistry,
+  loadRegistry,
+  resolvePerson,
+  protectedPartition,
+  isNoise,
+  actionability,
+  importanceOf,
+  isVendorish,
+  rankItem,
+  rankCorpus,
+  shadowLogPath,
+  recordShadowRanking,
+  type Bucket,
+  type ThreadKind,
+  type SenderIdentity,
+  type RankInput,
+  type RankResult,
+  type RegistryPerson,
+  type Registry,
+  type RankedRow,
+  type ShadowRow,
+} from "./inbox/ranker.js";
+
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
   NOTIF_CHANNEL_KEY,

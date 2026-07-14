@@ -1,0 +1,5143 @@
+{
+  "_note": "SYNTHETIC labeled corpus for I-04 (AIO-385). Swap in real labeled history at G3.",
+  "ranker_version_at_freeze": "see RANKER_VERSION",
+  "now": "2026-07-14T12:00:00.000Z",
+  "items": [
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": "Can you approve the budget by tomorrow? ",
+        "fromAddress": "anna@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0000",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0001",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0002",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0003",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "noted",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0004",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "anna@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0005",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "hey",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0006",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0007",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0008",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0009",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0010",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0011",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": "👍",
+        "fromAddress": "ben@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0012",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0013",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Sharing the notes from yesterday for your records.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0014",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0015",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0016",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0017",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0018",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": "ok",
+        "fromAddress": "carla@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0019",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0020",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0021",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0022",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0023",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0024",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0025",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": "The quarterly report looks solid, nothin",
+        "fromAddress": "dan@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0026",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "noted",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0027",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "Missed voice call",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0028",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "hey",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0029",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0030",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": "What did you think of the proposal?",
+        "fromAddress": "dan@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0031",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0032",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": "Need this signed off by Friday, deadline",
+        "fromAddress": "eve@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0033",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0034",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "👍",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0035",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0036",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "Sharing the notes from yesterday for your records.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0037",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": null,
+        "subject": "Please review the attached deck and send",
+        "fromAddress": "eve@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0038",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0039",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "finn@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0040",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0041",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "ok",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0042",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0043",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0044",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": "Can you approve the budget by tomorrow? ",
+        "fromAddress": "finn@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0045",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0046",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0047",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0048",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0049",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "noted",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0050",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0051",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "hey",
+        "chatName": null,
+        "subject": "hey",
+        "fromAddress": "gita@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0052",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0053",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0054",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-gita",
+          "email": "gita@client.com",
+          "handle": "acct-gita",
+          "display": "Gita Rao"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0055",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0056",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0057",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0058",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": "How can we help you today? Please confir",
+        "fromAddress": "hugo@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0059",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "Sharing the notes from yesterday for your records.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0060",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0061",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0062",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-hugo",
+          "email": "hugo@partner.io",
+          "handle": "acct-hugo",
+          "display": "Hugo Kim"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0063",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0064",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0065",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": "(no subject)",
+        "fromAddress": "iris@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0066",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0067",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0068",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0069",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0070",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-iris",
+          "email": "iris@client.com",
+          "handle": "acct-iris",
+          "display": "Iris Cole"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": "The quarterly report looks solid, nothin",
+        "fromAddress": "iris@client.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0071",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0072",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "noted",
+        "chatName": null,
+        "subject": "noted",
+        "fromAddress": "jack@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0073",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0074",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "hey",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0075",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0076",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0077",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": "Need this signed off by Friday, deadline",
+        "fromAddress": "jack@partner.io",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0078",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-jack",
+          "email": "jack@partner.io",
+          "handle": "acct-jack",
+          "display": "Jack Diaz"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0079",
+        "sentAt": "2026-07-13T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": true,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": "Can you approve the budget by tomorrow? ",
+        "fromAddress": "kim@old.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0080",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0081",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0082",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0083",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0084",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-kim",
+          "email": "kim@old.com",
+          "handle": "acct-kim",
+          "display": "Kim Old"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "kim@old.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0085",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0086",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0087",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0088",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0089",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": "The quarterly report looks solid, nothin",
+        "fromAddress": "liam@old.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0090",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-liam",
+          "email": "liam@old.com",
+          "handle": "acct-liam",
+          "display": "Liam Past"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0091",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0092",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0093",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "URGENT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0094",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": "I finished the migration and pushed the ",
+        "fromAddress": "mona@lead.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0095",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0096",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-mona",
+          "email": "mona@lead.com",
+          "handle": "acct-mona",
+          "display": "Mona Sable"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0097",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0098",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0099",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": null,
+        "subject": "Need this signed off by Friday, deadline",
+        "fromAddress": "nate@vendor.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0100",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0101",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "FYI"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "ok",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0102",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-nate",
+          "email": "nate@vendor.com",
+          "handle": "acct-nate",
+          "display": "Nate Vend"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0103",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0104",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": "Let's meet Tuesday at 3pm to walk throug",
+        "fromAddress": "omar@list.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0105",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0106",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0107",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "noted",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0108",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-omar",
+          "email": "omar@list.com",
+          "handle": "acct-omar",
+          "display": "Omar List"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0109",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": "Can you approve the budget by tomorrow? ",
+        "fromAddress": "ext-rick",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0110",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0111",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0112",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0113",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0114",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "ext-rick",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0115",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0116",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0117",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0118",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0119",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "ext-rick",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0120",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0121",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0122",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-rick",
+          "display": "ext-rick"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0123",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0124",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0125",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0126",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0127",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "ext-sara",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0128",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0129",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0130",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0131",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0132",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "ext-sara",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0133",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0134",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0135",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0136",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-sara",
+          "display": "ext-sara"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0137",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0138",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0139",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0140",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "ext-tom",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0141",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0142",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0143",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0144",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0145",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "ext-tom",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0146",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0147",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0148",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0149",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0150",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-tom",
+          "display": "ext-tom"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "ext-tom",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0151",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0152",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0153",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "ext-uma",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0154",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0155",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0156",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0157",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0158",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "ext-uma",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0159",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0160",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0161",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0162",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0163",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "ext-uma",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0164",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-uma",
+          "display": "ext-uma"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0165",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0166",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "ext-vic",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0167",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0168",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0169",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0170",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0171",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "ext-vic",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0172",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0173",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0174",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0175",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0176",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "ext-vic",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0177",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0178",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": null,
+          "handle": "ext-vic",
+          "display": "ext-vic"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0179",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "customer.care@resort.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0180",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "IMPORTANT"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0181",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0182",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0183",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0184",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "customer.care@resort.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0185",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0186",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0187",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0188",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0189",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "customer.care@resort.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0190",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0191",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0192",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "customer.care@resort.com",
+          "handle": "customer.care@resort.com",
+          "display": "customer.care@resort.com"
+        },
+        "body": "hey",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0193",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Let's meet Tuesday at 3pm to walk through the plan.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0194",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Need this signed off by Friday, deadline is hard.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0195",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "I finished the migration and pushed the changes to staging.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0196",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "The quarterly report looks solid, nothing else from my side.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0197",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Congrats on the launch, well done to the whole team!",
+        "chatName": null,
+        "subject": "Congrats on the launch, well done to the",
+        "fromAddress": "no-reply@newsletter@list.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0198",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "ok",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0199",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "noted",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0200",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "👍",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0201",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0202",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Missed voice call",
+        "chatName": null,
+        "subject": "Missed voice call",
+        "fromAddress": "no-reply@newsletter@list.com",
+        "threadKind": "email-thread",
+        "fromMe": false,
+        "correlationId": "corr-0203",
+        "sentAt": "2026-07-10T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "How can we help you today? Please confirm your reservation.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0204",
+        "sentAt": "2026-07-14T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Your booking is confirmed. Thank you for choosing our hotel.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": false,
+        "correlationId": "corr-0205",
+        "sentAt": "2026-07-13T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "hey",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0206",
+        "sentAt": "2026-07-12T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": null,
+          "email": "no-reply@newsletter@list.com",
+          "handle": "no-reply@newsletter@list.com",
+          "display": "no-reply@newsletter@list.com"
+        },
+        "body": "Sharing the notes from yesterday for your records.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": false,
+        "correlationId": "corr-0207",
+        "sentAt": "2026-07-11T12:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-anna",
+          "email": "anna@client.com",
+          "handle": "acct-anna",
+          "display": "Anna Park"
+        },
+        "body": "Can you approve the budget by tomorrow? It's urgent and blocking the team.",
+        "chatName": null,
+        "subject": "Can you approve the budget by tomorrow? ",
+        "fromAddress": "anna@client.com",
+        "threadKind": "email-thread",
+        "fromMe": true,
+        "correlationId": "corr-0208",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-ben",
+          "email": "ben@client.com",
+          "handle": "acct-ben",
+          "display": "Ben Ortiz"
+        },
+        "body": "Are we still on for the call today? Please confirm asap.",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": true,
+        "correlationId": "corr-0209",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "whatsapp",
+        "sender": {
+          "account": "acct-carla",
+          "email": "carla@partner.io",
+          "handle": "acct-carla",
+          "display": "Carla Reyes"
+        },
+        "body": "Please review the attached deck and send me your comments.",
+        "chatName": "Project Room",
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "group",
+        "fromMe": true,
+        "correlationId": "corr-0210",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "agent-ask",
+        "sender": {
+          "account": "acct-dan",
+          "email": "dan@partner.io",
+          "handle": "acct-dan",
+          "display": "Dan Lee"
+        },
+        "body": "Could you share the final numbers when you get a chance?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": true,
+        "correlationId": "corr-0211",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "slack",
+        "sender": {
+          "account": "acct-eve",
+          "email": "eve@client.com",
+          "handle": "acct-eve",
+          "display": "Eve Nwosu"
+        },
+        "body": "What did you think of the proposal?",
+        "chatName": null,
+        "subject": null,
+        "fromAddress": null,
+        "threadKind": "dm",
+        "fromMe": true,
+        "correlationId": "corr-0212",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    },
+    {
+      "input": {
+        "channel": "gmail",
+        "sender": {
+          "account": "acct-finn",
+          "email": "finn@client.com",
+          "handle": "acct-finn",
+          "display": "Finn Walsh"
+        },
+        "body": "How should we handle the onboarding for the new hires?",
+        "chatName": null,
+        "subject": "How should we handle the onboarding for ",
+        "fromAddress": "finn@client.com",
+        "threadKind": "email-thread",
+        "fromMe": true,
+        "correlationId": "corr-0213",
+        "sentAt": "2026-07-14T00:00:00.000Z",
+        "now": "2026-07-14T12:00:00.000Z"
+      },
+      "label": {
+        "protected": false,
+        "expected_bucket": "AWARENESS"
+      }
+    }
+  ]
+}
