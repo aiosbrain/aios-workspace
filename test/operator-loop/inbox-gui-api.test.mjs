@@ -23,19 +23,29 @@ import { getInboxView, getInboxDetail, decideInbox } from "../../gui/server/inbo
 import {
   issueHandle,
   capabilityTargets,
+  loadRecord,
 } from "../../gui/server/runtime-adapters/capability-store.mjs";
 import { buildObservation, appendObservations } from "../../dist/operator-loop/index.js";
 
 // Issue a capability handle exactly as the WS gateway does (index.mjs) — with explicit `targetResources`,
-// so the persisted record's request digest is self-consistent (the runtime's own integrity gate).
-function issue(dir, command) {
-  return issueHandle(dir, {
-    operation: "Bash",
-    normalizedArgs: { command },
-    targetResources: capabilityTargets("Bash", { command }),
-    repoWorktreeIdentity: dir,
-  });
+// so the persisted record's request digest is self-consistent (the runtime's own integrity gate). `extra`
+// carries the I-07 binding fields (audience/epoch) and TTL for the adversarial cases.
+function issue(dir, command, extra = {}) {
+  const { ttlMs, ...binding } = extra;
+  return issueHandle(
+    dir,
+    {
+      operation: "Bash",
+      normalizedArgs: { command },
+      targetResources: capabilityTargets("Bash", { command }),
+      repoWorktreeIdentity: dir,
+      ...binding,
+    },
+    ttlMs !== undefined ? { ttlMs } : {}
+  );
 }
+/** The exactly-three-field body the client is allowed to post. */
+const body = (handle, digest, decision) => ({ handle, digest, decision });
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = path.join(ROOT, "scripts", "aios.mjs");
@@ -160,104 +170,214 @@ test("GET /api/inbox/:id surfaces a pending capability as a scoped-confirm appro
   }
 });
 
-test("POST /api/inbox/:id/decision approves → durable native receipt; replay is rejected", async () => {
+test("POST decision — the URL id IS the handle: approve → durable native receipt; replay is rejected", async () => {
   const dir = ws();
   try {
-    const id = addAsk(dir, "review", "decision", "Approve push?");
     const { handle, displayProjection } = issue(dir, "git push");
-    const approve = await decideInbox(dir, id, {
+    // The decision resource is the handle itself — the URL id must equal it (binding).
+    const approve = await decideInbox(
+      dir,
       handle,
-      digest: displayProjection.digest,
-      decision: "approve",
-    });
+      body(handle, displayProjection.digest, "approve")
+    );
     assert.equal(approve.ok, true);
     assert.equal(approve.status, 200);
     assert.equal(approve.result.kind, "native-receipt", "approved + executed exactly once");
 
-    // Replaying the same handle after a completed round-trip is rejected at the door — the durable
-    // tombstone means the handle is no longer pending, so it is never re-brokered or re-executed.
-    const replay = await decideInbox(dir, id, {
+    // Replay after a completed round-trip is rejected by the LOCKED consume (durable tombstone + outcome).
+    const replay = await decideInbox(
+      dir,
       handle,
-      digest: displayProjection.digest,
-      decision: "approve",
-    });
+      body(handle, displayProjection.digest, "approve")
+    );
     assert.equal(replay.ok, false);
     assert.equal(replay.status, 409);
-    assert.equal(replay.state, "consumed", "the handle folds to consumed (replay guard)");
+    assert.equal(replay.result.kind, "rejected");
+    assert.equal(replay.result.reason, "replay-consumed", "authoritative locked replay guard");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("POST /api/inbox/:id/decision denies → typed denial (handle spent, never re-brokerable to approve)", async () => {
+test("POST decision — deny is a processed decision that spends the handle (never re-brokerable to approve)", async () => {
   const dir = ws();
   try {
-    const id = addAsk(dir, "review", "decision", "Approve push?");
     const { handle, displayProjection } = issue(dir, "git push");
-    const deny = await decideInbox(dir, id, {
-      handle,
-      digest: displayProjection.digest,
-      decision: "deny",
-    });
+    const deny = await decideInbox(dir, handle, body(handle, displayProjection.digest, "deny"));
     assert.equal(deny.status, 200);
+    assert.equal(deny.ok, true, "a denial is processed, not an error");
     assert.equal(deny.result.kind, "rejected");
     assert.equal(deny.result.reason, "denied");
 
-    // A spent (denied) handle cannot then be approved.
-    const flip = await decideInbox(dir, id, {
-      handle,
-      digest: displayProjection.digest,
-      decision: "approve",
-    });
+    // The spent (denied) handle can never then be approved.
+    const flip = await decideInbox(dir, handle, body(handle, displayProjection.digest, "approve"));
     assert.notEqual(flip.result?.kind, "native-receipt", "a denied handle never executes");
+    assert.equal(flip.status, 409);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("POST /api/inbox/:id/decision rejects a tampered digest and an unknown handle", async () => {
+test("POST decision — tampered digest is rejected by the LOCKED consume (no misleading precheck)", async () => {
   const dir = ws();
   try {
-    const id = addAsk(dir, "review", "decision", "Approve push?");
-    const { handle } = issueHandle(dir, {
-      operation: "Bash",
-      normalizedArgs: { command: "git push" },
-      repoWorktreeIdentity: dir,
-    });
-    const tampered = await decideInbox(dir, id, {
-      handle,
-      digest: "deadbeef".repeat(8),
-      decision: "approve",
-    });
+    const { handle } = issue(dir, "git push");
+    const tampered = await decideInbox(dir, handle, body(handle, "deadbeef".repeat(8), "approve"));
     assert.equal(tampered.ok, false);
     assert.equal(tampered.status, 409);
-    assert.equal(tampered.error, "digest-mismatch");
+    // The verdict comes from the locked compare-and-consume, not an unlocked precheck.
+    assert.equal(tampered.result.kind, "rejected");
+    assert.equal(tampered.result.reason, "digest-mismatch");
 
-    const unknown = await decideInbox(dir, id, {
-      handle: "not-a-real-handle",
-      digest: "x",
-      decision: "approve",
-    });
-    assert.equal(unknown.ok, false);
-    assert.equal(unknown.status, 404);
-    assert.equal(unknown.error, "unknown-handle");
+    // …and the handle is still consumable with the correct digest afterwards (nothing was spent).
+    const { requestDigest } = loadRecord(dir, handle);
+    const ok = await decideInbox(dir, handle, body(handle, requestDigest, "approve"));
+    assert.equal(ok.result.kind, "native-receipt", "a rejected tamper never consumed the handle");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("POST /api/inbox/:id/decision validates its input (bad decision, missing handle)", async () => {
+test("POST decision — validates its input (bad decision, missing handle)", async () => {
   const dir = ws();
   try {
-    const badDecision = await decideInbox(dir, "item", {
-      handle: "h",
-      digest: "d",
-      decision: "maybe",
-    });
-    assert.equal(badDecision.status, 400);
-    const noHandle = await decideInbox(dir, "item", { digest: "d", decision: "approve" });
+    assert.equal((await decideInbox(dir, "h", body("h", "d", "maybe"))).status, 400);
+    const noHandle = await decideInbox(dir, "h", { digest: "d", decision: "approve" });
     assert.equal(noHandle.status, 400);
     assert.equal(noHandle.error, "handle is required");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── adversarial: substitution, concurrency, expiry, audience, epoch ─────────────────────────────────
+
+test("ADVERSARIAL — a handle cannot be approved through another resource's URL or an arbitrary id", async () => {
+  const dir = ws();
+  try {
+    const a = issue(dir, "git push A");
+    const b = issue(dir, "git push B");
+
+    // Approving handle A through handle B's URL is refused (URL id must name the same resource).
+    const crossUrl = await decideInbox(
+      dir,
+      b.handle,
+      body(a.handle, a.displayProjection.digest, "approve")
+    );
+    assert.equal(crossUrl.status, 400);
+    assert.equal(crossUrl.error, "handle does not match the decision resource");
+
+    // Approving A through an ARBITRARY id in the URL is refused for the same reason.
+    const arbitraryUrl = await decideInbox(
+      dir,
+      "totally-made-up-id",
+      body(a.handle, a.displayProjection.digest, "approve")
+    );
+    assert.equal(arbitraryUrl.status, 400);
+
+    // A self-consistent but NON-EXISTENT resource id is a 404 from the store (server data, not a claim).
+    const ghost = await decideInbox(dir, "ghost-handle", body("ghost-handle", "x", "approve"));
+    assert.equal(ghost.status, 404);
+    assert.equal(ghost.error, "unknown-handle");
+
+    // Neither real handle was consumed by any of the above — both still approve normally.
+    const okA = await decideInbox(
+      dir,
+      a.handle,
+      body(a.handle, a.displayProjection.digest, "approve")
+    );
+    const okB = await decideInbox(
+      dir,
+      b.handle,
+      body(b.handle, b.displayProjection.digest, "approve")
+    );
+    assert.equal(okA.result.kind, "native-receipt");
+    assert.equal(okB.result.kind, "native-receipt");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ADVERSARIAL — concurrent approvals of the same handle: exactly one native receipt, one rejection", async () => {
+  const dir = ws();
+  try {
+    const { handle, displayProjection } = issue(dir, "git push");
+    const req = () => decideInbox(dir, handle, body(handle, displayProjection.digest, "approve"));
+    const [r1, r2] = await Promise.all([req(), req()]);
+    const kinds = [r1.result?.kind, r2.result?.kind].sort();
+    assert.deepEqual(
+      kinds,
+      ["native-receipt", "rejected"],
+      "exactly one executes; the other is rejected"
+    );
+    const rejected = [r1, r2].find((r) => r.result?.kind === "rejected");
+    assert.equal(rejected.status, 409);
+    // The rejection is a durable replay/crash-window verdict, never a second execution.
+    assert.ok(
+      ["replay-consumed"].includes(rejected.result.reason) || rejected.result.kind === "outcome",
+      "second consumer never re-executes"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ADVERSARIAL — an expired approval window is rejected (locked, clock-driven)", async () => {
+  const dir = ws();
+  try {
+    const { handle, displayProjection } = issue(dir, "git push", { ttlMs: 5 * 60 * 1000 });
+    // Consume with a clock past the TTL — the locked consume distinguishes expiry from denial.
+    const expired = await decideInbox(
+      dir,
+      handle,
+      body(handle, displayProjection.digest, "approve"),
+      {
+        now: Date.now() + 6 * 60 * 1000,
+      }
+    );
+    assert.equal(expired.status, 409);
+    assert.equal(expired.result.kind, "rejected");
+    assert.equal(expired.result.reason, "expired");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ADVERSARIAL — audience/session binding is enforced through the GUI consume path", async () => {
+  const dir = ws();
+  try {
+    const { handle, displayProjection } = issue(dir, "git push", { audience: "session-A" });
+    const b = body(handle, displayProjection.digest, "approve");
+
+    // Wrong consuming session → rejected (never executed).
+    const wrong = await decideInbox(dir, handle, b, { audience: "session-B" });
+    assert.equal(wrong.status, 403);
+    assert.equal(wrong.result.kind, "rejected");
+    assert.equal(wrong.result.reason, "audience-mismatch");
+
+    // The bound session → succeeds (binding continues to work, it isn't dormant).
+    const right = await decideInbox(dir, handle, b, { audience: "session-A" });
+    assert.equal(right.result.kind, "native-receipt");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ADVERSARIAL — a rotated (superseded) epoch is rejected; the current epoch consumes", async () => {
+  const dir = ws();
+  try {
+    const { handle, displayProjection } = issue(dir, "git push", { epoch: "epoch-1" });
+    const b = body(handle, displayProjection.digest, "approve");
+
+    // A key/session rotation supersedes the old handle → typed rotation rejection (not a silent failure).
+    const superseded = await decideInbox(dir, handle, b, { epoch: "epoch-2" });
+    assert.equal(superseded.status, 409);
+    assert.equal(superseded.result.kind, "rejected");
+    assert.equal(superseded.result.reason, "rotation-superseded");
+
+    // The current epoch consumes normally.
+    const current = await decideInbox(dir, handle, b, { epoch: "epoch-1" });
+    assert.equal(current.result.kind, "native-receipt");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

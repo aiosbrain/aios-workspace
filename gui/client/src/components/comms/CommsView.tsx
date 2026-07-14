@@ -92,7 +92,10 @@ export function CommsView() {
       setDialogBusy(true);
       setDialogError(null);
       try {
-        const res = await postDecision(api, selectedId ?? projection.handle, {
+        // The decision resource IS the capability handle: the URL id must equal the handle so the server
+        // can bind them (no cross-item / arbitrary-id substitution). The body still carries exactly three
+        // fields.
+        const res = await postDecision(api, projection.handle, {
           handle: projection.handle,
           digest: projection.digest,
           decision,
@@ -110,7 +113,7 @@ export function CommsView() {
         setDialogBusy(false);
       }
     },
-    [api, projection, selectedId, load]
+    [api, projection, load]
   );
 
   const health = deriveHealth(view);

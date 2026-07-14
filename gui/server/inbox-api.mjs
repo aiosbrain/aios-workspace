@@ -103,31 +103,56 @@ function readPendingApprovals(repo, now = Date.now()) {
   }
 }
 
+// A typed rejection reason → the HTTP status the route emits. A denial is a *processed* decision (200),
+// not a client/server error; everything else is a 4xx the caller must surface distinctly.
+const REJECTION_STATUS = {
+  denied: 200,
+  "unknown-handle": 404,
+  "handle-mismatch": 409,
+  "digest-mismatch": 409,
+  "record-integrity": 409,
+  expired: 409,
+  "replay-consumed": 409,
+  "identity-mismatch": 409,
+  "audience-mismatch": 403,
+  "rotation-superseded": 409,
+};
+
 /**
- * Broker + durably consume a scoped-confirmation decision. Input is EXACTLY `{ handle, digest, decision }`.
- * The coordinator broker never authorizes; the owning runtime re-loads its authoritative record and
- * validates it. We additionally gate on the operator-supplied digest matching the runtime's stored request
- * digest, so a mutated digest is rejected BEFORE anything is brokered or consumed.
+ * Broker + durably consume a scoped-confirmation decision. The client body is EXACTLY
+ * `{ handle, digest, decision }`; `id` is the URL path segment naming the capability resource.
+ *
+ * Four properties the review made load-bearing:
+ *
+ *  1. BINDING (no cross-item / arbitrary-id substitution). The URL `id` IS the authoritative resource
+ *     key — the capability handle. The record is loaded by `id` from the store (server data, never a
+ *     client claim), and the body `handle` must echo the same `id`. A handle for one resource therefore
+ *     cannot be approved through another resource's URL or through an arbitrary id.
+ *  2. NO MISLEADING TOCTOU PRECHECK. We do NOT pre-decide accept/reject from an unlocked read. The single
+ *     unlocked read exists only to build the content-free display projection `brokerDecision` needs; every
+ *     accept/reject verdict — pending/consumed/expired, digest tamper, record integrity, identity, audience,
+ *     epoch — is made INSIDE `consumeAndExecute`'s lock (a true compare-and-consume), and the HTTP response
+ *     is derived from THAT locked result.
+ *  3. DIGEST IS THE HUMAN'S CLAIM. The brokered envelope carries the client-supplied digest (what the human
+ *     saw), so the locked consume's tamper gate genuinely compares it against the runtime's stored digest.
+ *  4. AUDIENCE + EPOCH. The consuming session's `audience`/`epoch` (server-supplied via `session`, never the
+ *     client) are plumbed through, so session binding and key/session rotation are enforced, not dormant.
  *
  * Returns `{ ok, status, ...payload }` — `status` is the HTTP status the route should emit.
  */
-export async function decideInbox(repo, id, payload) {
+export async function decideInbox(repo, id, payload, session = {}) {
   const handle = payload && typeof payload.handle === "string" ? payload.handle : "";
   const digest = payload && typeof payload.digest === "string" ? payload.digest : "";
   const decision = payload && payload.decision;
-  if (!handle) return { ok: false, status: 400, error: "handle is required" };
   if (decision !== "approve" && decision !== "deny") {
     return { ok: false, status: 400, error: "decision must be 'approve' or 'deny'" };
   }
-  const rec = loadRecord(repo, handle);
-  if (!rec) return { ok: false, status: 404, error: "unknown-handle" };
-  if (rec.state !== "pending") {
-    return { ok: false, status: 409, error: `handle is ${rec.state}`, state: rec.state };
-  }
-  // Tamper gate at the door: the digest the operator confirmed must equal the runtime's stored request
-  // digest. (consumeAndExecute re-checks this against its own record; we fail fast + clearly here too.)
-  if (!digest || digest !== rec.requestDigest) {
-    return { ok: false, status: 409, error: "digest-mismatch" };
+  // BINDING: the URL id is the authoritative resource; the body handle must name that same resource.
+  // (Comparing the two request-supplied names only *scopes* the decision to one URL — the record itself
+  // is loaded and validated from the store below, so this never trusts the client for authorization.)
+  if (!handle) return { ok: false, status: 400, error: "handle is required" };
+  if (handle !== id) {
+    return { ok: false, status: 400, error: "handle does not match the decision resource" };
   }
 
   const loop = await loadLoop();
@@ -136,20 +161,36 @@ export async function decideInbox(repo, id, payload) {
   if (typeof brokerDecision !== "function") {
     return { ok: false, status: 503, error: "coordinator broker unavailable (build the loop)" };
   }
+
+  // ONE unlocked read — used ONLY to build the content-free display projection the broker needs (operation
+  // label + expiry). It never decides accept/reject; the locked consume re-folds and is the sole authority.
+  const seed = loadRecord(repo, id);
+  if (!seed) return { ok: false, status: 404, error: "unknown-handle" };
+
   const journal = typeof makeJournal === "function" ? makeJournal(repo) : undefined;
-  const projection = projectionOf(rec);
+  // The projection carries the CLIENT digest (the human's claim), so the locked tamper gate is genuine.
+  const projection = { ...projectionOf(seed), digest };
   const brokered = brokerDecision(
     projection,
     decision,
     journal ? { appendInboxEvent: journal } : {}
   );
-  const result = consumeAndExecute(repo, handle, brokered, {
+  // Authoritative, locked compare-and-consume. `identity`/`audience`/`epoch` are server-supplied; the
+  // owning runtime validates ITS record against them. Optional `session.now` is a test-only clock seam.
+  const result = consumeAndExecute(repo, id, brokered, {
     identity: repo,
+    audience: session.audience,
+    epoch: session.epoch,
+    ...(session.now !== undefined ? { now: session.now } : {}),
     execute: () => true,
     appendEvent: journal,
   });
-  // A rejection (incl. an explicit denial) is a processed decision, not a server error — 200 with the
-  // typed result so the client can render "denied" / "rejected: <reason>" distinctly.
-  const ok = result.kind !== "rejected" || result.reason === "denied";
-  return { ok, status: 200, result };
+
+  if (result.kind === "rejected") {
+    const status = REJECTION_STATUS[result.reason] ?? 409;
+    return { ok: result.reason === "denied", status, result };
+  }
+  // native-receipt (approved + executed) or a typed outcome (crash-window / outcome_unknown) — both are
+  // processed terminal states the client renders as-is.
+  return { ok: true, status: 200, result };
 }

@@ -193,8 +193,10 @@ describe("scoped-confirm decision POST", () => {
       },
       wsUrl: () => "",
     };
-    // Deliberately hand it extra fields; postDecision must strip everything but the three contract fields.
-    await postDecision(api, "ask-blocker", {
+    // The decision resource IS the handle: the client posts to /api/inbox/<handle>/decision so the server
+    // can bind the URL id to the handle. Deliberately hand it extra fields; postDecision must strip
+    // everything but the three contract fields.
+    await postDecision(api, "cap-123", {
       handle: "cap-123",
       digest: "d1",
       decision: "approve",
@@ -203,7 +205,7 @@ describe("scoped-confirm decision POST", () => {
       command: "git push",
     });
     expect(captured).not.toBeNull();
-    expect(captured!.path).toBe("/api/inbox/ask-blocker/decision");
+    expect(captured!.path).toBe("/api/inbox/cap-123/decision");
     expect(Object.keys(captured!.body as object).sort()).toEqual(["decision", "digest", "handle"]);
     expect(captured!.body).toEqual({ handle: "cap-123", digest: "d1", decision: "approve" });
   });

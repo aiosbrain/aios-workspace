@@ -176,6 +176,15 @@ if (
 // parse it back out of stdout; otherwise we mint a random one (the dev/CLI path).
 const TOKEN = process.env.AIOS_GUI_TOKEN || randomBytes(16).toString("hex");
 
+// The consuming session's capability audience/epoch for scoped-confirm decisions (I-14). SERVER-supplied
+// (never from the client body), so I-03's audience/session binding + key/session rotation are enforced at
+// consume time. Unset by default → a null-audience/null-epoch handle (today's issuance) consumes normally,
+// while an audience/epoch-bound handle requires the coordinator to present the matching value.
+const CAP_SESSION = {
+  audience: (process.env.AIOS_GUI_CAP_AUDIENCE || "").trim() || undefined,
+  epoch: (process.env.AIOS_GUI_CAP_EPOCH || "").trim() || undefined,
+};
+
 // Chat transcripts + index live INSIDE the workspace (.aios/ is gitignored by the
 // scaffold), so they're inherently scoped to this repo and never leak across
 // workspaces. They are local + private + token-gated: a transcript can contain
@@ -559,7 +568,7 @@ const server = http.createServer((req, res) => {
       } catch {
         /* bad body → decideInbox returns a 400 */
       }
-      decideInbox(repo, decodeURIComponent(inboxDecision[1]), payload)
+      decideInbox(repo, decodeURIComponent(inboxDecision[1]), payload, CAP_SESSION)
         .then(({ status, ...rest }) => {
           res.writeHead(status || 200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(rest));
