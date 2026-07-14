@@ -51,12 +51,7 @@ export interface ParticipantIdentity {
 /** Where a piece of evidence originated. Only `thread-message` from the reply's own thread is
  *  origin-confined; every other kind is unrelated workspace/admin context. */
 export type EvidenceKind =
-  | "thread-message"
-  | "workspace-attachment"
-  | "ledger"
-  | "entity"
-  | "other-thread"
-  | "unknown";
+  "thread-message" | "workspace-attachment" | "ledger" | "entity" | "other-thread" | "unknown";
 
 /** A structured pointer to a piece of evidence backing the draft. The PDP reads these fields only —
  *  never the evidence body. */
@@ -203,10 +198,7 @@ function isVerifiedIdentity(p: ParticipantIdentity): boolean {
  * the FIRST match wins; `allow` fires only when the positive origin-confinement condition holds and
  * no deny rule matched; an unrecognized shape falls through to an explicit default-deny.
  */
-export function evaluateReply(
-  request: ReplyRequest,
-  thread: ThreadContext,
-): PdpDecision {
+export function evaluateReply(request: ReplyRequest, thread: ThreadContext): PdpDecision {
   const attachments = request.attachments ?? [];
   const quoted = request.quoted_refs ?? [];
   const delegations = request.delegations ?? [];
@@ -224,7 +216,7 @@ export function evaluateReply(
       return deny(
         REPLY_RULE_IDS.DENY_UNKNOWN_PARTICIPANT,
         "a recipient is not an account/tenant-resolved verified participant",
-        "verify the participant's identity, then re-request",
+        "verify the participant's identity, then re-request"
       );
     }
   }
@@ -236,7 +228,7 @@ export function evaluateReply(
       return needsPromotion(
         REPLY_RULE_IDS.DENY_RECIPIENT_EXPANSION,
         "a recipient is not a verified participant of this thread (recipient-set expansion)",
-        "obtain explicit scoped authorization to add the recipient",
+        "obtain explicit scoped authorization to add the recipient"
       );
     }
   }
@@ -250,7 +242,7 @@ export function evaluateReply(
     return deny(
       REPLY_RULE_IDS.DENY_CHANNEL_MOVE,
       "the reply targets a different channel/thread than the evidence's origin (channel move)",
-      "explicitly authorize disclosure to the new channel",
+      "explicitly authorize disclosure to the new channel"
     );
   }
 
@@ -260,21 +252,18 @@ export function evaluateReply(
       return deny(
         REPLY_RULE_IDS.DENY_CROSS_THREAD_QUOTE,
         "the draft quotes content from a different thread (cross-thread disclosure)",
-        "explicitly authorize quoting the other thread's content",
+        "explicitly authorize quoting the other thread's content"
       );
     }
   }
 
   // (5) Workspace attachments — anything not sourced from this thread.
   for (const a of attachments) {
-    if (
-      a.origin !== "thread" ||
-      (a.origin_thread ?? null) !== request.thread_ref
-    ) {
+    if (a.origin !== "thread" || (a.origin_thread ?? null) !== request.thread_ref) {
       return deny(
         REPLY_RULE_IDS.DENY_WORKSPACE_ATTACHMENT,
         "the draft attaches a workspace object that did not originate in this thread",
-        "explicitly authorize disclosing the workspace attachment",
+        "explicitly authorize disclosing the workspace attachment"
       );
     }
   }
@@ -286,7 +275,7 @@ export function evaluateReply(
       return deny(
         REPLY_RULE_IDS.DENY_UNRELATED_ADMIN_CONTEXT,
         "the draft draws on workspace/admin context outside this thread (ledger/entity/other-thread)",
-        "explicitly authorize disclosing the unrelated context",
+        "explicitly authorize disclosing the unrelated context"
       );
     }
   }
@@ -298,7 +287,7 @@ export function evaluateReply(
       return needsPromotion(
         REPLY_RULE_IDS.DENY_DELEGATION_CAPABILITY,
         "the reply carries a capability delegation that requires explicit scoped approval",
-        "grant explicit scoped approval for the delegated capability",
+        "grant explicit scoped approval for the delegated capability"
       );
     }
   }
@@ -320,7 +309,7 @@ export function evaluateReply(
   return deny(
     REPLY_RULE_IDS.DENY_DEFAULT,
     "the request did not satisfy origin confinement and matched no promotion path",
-    "reformulate the reply to keep evidence and recipients confined to this thread",
+    "reformulate the reply to keep evidence and recipients confined to this thread"
   );
 }
 
@@ -329,7 +318,7 @@ export function evaluateReply(
 function isOriginConfined(
   request: ReplyRequest,
   thread: ThreadContext,
-  rosterKeys: ReadonlySet<string>,
+  rosterKeys: ReadonlySet<string>
 ): boolean {
   if (request.channel.thread_ref !== request.thread_ref) return false;
   if (request.thread_ref !== thread.thread_ref) return false;
@@ -339,18 +328,13 @@ function isOriginConfined(
     if (!isVerifiedIdentity(r) || !rosterKeys.has(identityKey(r))) return false;
   }
   for (const e of request.evidence) {
-    if (e.kind !== "thread-message" || e.origin_thread !== request.thread_ref)
-      return false;
+    if (e.kind !== "thread-message" || e.origin_thread !== request.thread_ref) return false;
   }
   for (const q of request.quoted_refs ?? []) {
     if (q.thread !== request.thread_ref) return false;
   }
   for (const a of request.attachments ?? []) {
-    if (
-      a.origin !== "thread" ||
-      (a.origin_thread ?? null) !== request.thread_ref
-    )
-      return false;
+    if (a.origin !== "thread" || (a.origin_thread ?? null) !== request.thread_ref) return false;
   }
   for (const d of request.delegations ?? []) {
     if (CAPABILITY_REQUIRES_APPROVAL.has(d.capability)) return false;
@@ -358,18 +342,14 @@ function isOriginConfined(
   return true;
 }
 
-function deny(
-  rule_id: ReplyRuleId,
-  explanation: string,
-  promotion_path: string,
-): PdpDecision {
+function deny(rule_id: ReplyRuleId, explanation: string, promotion_path: string): PdpDecision {
   return { verdict: "deny", rule_id, explanation, promotion_path };
 }
 
 function needsPromotion(
   rule_id: ReplyRuleId,
   explanation: string,
-  promotion_path: string,
+  promotion_path: string
 ): PdpDecision {
   return { verdict: "needs_promotion", rule_id, explanation, promotion_path };
 }
@@ -379,10 +359,7 @@ function needsPromotion(
  * I-02 `pdp-decision` event through the injected sink (the only side effect) and returns the same
  * decision object. The journal event carries refs/counts/verdict/rule only — never comms plaintext.
  */
-export function decideReply(
-  request: ReplyRequest,
-  context: ReplyContext,
-): PdpDecision {
+export function decideReply(request: ReplyRequest, context: ReplyContext): PdpDecision {
   const decision = evaluateReply(request, context.thread);
   context.journal.record({
     type: "pdp-decision",
