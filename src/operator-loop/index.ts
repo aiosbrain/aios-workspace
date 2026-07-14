@@ -33,6 +33,9 @@ import type { AppendOutboxEvent } from "./inbox/outbox.js";
 // domain never value-imports the `asks` domain.
 import { buildOverdueView, type OverdueView } from "./inbox/recovery.js";
 import { deepLinkForAsk } from "./inbox/notify-telegram.js";
+// Type-only local import so `createDurableM365VerifyJournal` can name the sink type in scope (a
+// `export … from` re-export does not bring a symbol into local scope).
+import type { M365VerifyJournalSink } from "./inbox/m365-verify.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -834,6 +837,78 @@ export function createDurableOutboxJournal(root: string): AppendOutboxEvent {
       payload: event.data ?? {},
       ...(event.at ? { ts: event.at } : {}),
     });
+  };
+}
+
+// Unified inbox — m365 connect-and-verify (I-12 / AIO-393). The SECOND channel wired at the honest
+// claim level: auth → read → one policy-mediated send on a TEST tenant, reported at exactly the level
+// proven. CREDENTIAL-FREE: every Graph call rides the injected `GraphTransport` seam (fixtures ship;
+// a live transport is the labelled needs-tenant residual). A fixture run never claims "connected and
+// verified"; only a live, all-green run does. Admin-tier local; the one journal event is content-free.
+export {
+  M365_REQUIRED_SCOPES,
+  M365_CHECK_SCOPE,
+  M365_DIAGNOSTICS,
+  M365_CONFIG_REL,
+  verifyM365,
+  validateToken,
+  normalizeScopes,
+  missingScopes,
+  classifyGraphError,
+  normalizeMessage,
+  m365IdentityKey,
+  paginateMessages,
+  needsTenantReport,
+  recordVerifyReport,
+  createMemoryVerifyJournal,
+  createFixtureTransport,
+  loadM365Config,
+  parseM365Config,
+  type M365Scope,
+  type M365DiagnosticCode,
+  type M365TenantConfig,
+  type AccessToken,
+  type GraphMessage,
+  type GraphPage,
+  type GraphError,
+  type GraphResult,
+  type GraphTransport,
+  type OutboundTestMessage,
+  type SendReceipt,
+  type ListMessagesOptions,
+  type CheckStatus,
+  type CheckResult,
+  type VerifyMode,
+  type VerifyStatus,
+  type VerifyClaim,
+  type VerifyReport,
+  type VerifyOptions,
+  type TokenValidation,
+  type GraphErrorClass,
+  type NormalizedM365Message,
+  type PaginateResult,
+  type PaginateOptions,
+  type FixtureScenario,
+  type M365VerifyEvent,
+  type M365VerifyJournalSink,
+} from "./inbox/m365-verify.js";
+
+/**
+ * Composition point (Constitution §4) for I-12: bridge the m365 verify seam's content-free
+ * `M365VerifyEvent` onto the durable I-02 `inbox-events.ndjson` journal. Returns a sink bound to
+ * `root`. Only a real `live` verify run should be durably journalled — a fixture/needs-tenant run
+ * observed no tenant and writes nothing. Mapping mirrors `createDurableCapabilityJournal`.
+ */
+export function createDurableM365VerifyJournal(root: string): M365VerifyJournalSink {
+  return {
+    record(event) {
+      appendInboxEvent(root, {
+        kind: event.kind,
+        correlation_id: event.correlation_id,
+        payload: event.data,
+        ...(event.ts ? { ts: event.ts } : {}),
+      });
+    },
   };
 }
 

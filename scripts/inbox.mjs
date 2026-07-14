@@ -30,7 +30,8 @@ import os from "node:os";
 import { c, die } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 
-const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact", "outbox", "send"];
+const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact", "outbox", "send", "m365-verify"];
+const M365_FIXTURE_SCENARIOS = ["happy", "bad-token", "missing-scope", "throttled"];
 
 // The I-02 journal event kinds the I-11 outbox emits (subset of INBOX_EVENT_KINDS).
 const OUTBOX_EVENT_KINDS = new Set(["action-attempt", "outcome", "native-receipt"]);
@@ -541,6 +542,58 @@ export async function cmdInbox(repo, cfg, args) {
     return;
   }
 
+  // ── m365-verify — I-12: connect-and-verify the m365 channel (auth → read → send) ────────────────
+  // CREDENTIAL-FREE build: with no `.aios/m365-config.json` (or `--tenant`) this reports `needs-tenant`
+  // and exits non-zero — it never makes a live Graph call and never claims verified. `--fixture <s>`
+  // runs a deterministic in-memory scenario so the three diagnostic states are demonstrable locally;
+  // a fixture run is always `mode: fixture` and its claim stays "not verified". Live verification
+  // against an Abe-provisioned test tenant is the labelled residual — see the runbook.
+  if (sub === "m365-verify") {
+    const fixture = argVal("--fixture");
+    const configPath = argVal("--config") ?? undefined;
+    const RUNBOOK = "docs/v1-operator-loop/runbooks/m365-connect-and-verify.md";
+
+    let report;
+    if (fixture != null) {
+      if (!M365_FIXTURE_SCENARIOS.includes(fixture)) {
+        die(
+          `unknown --fixture scenario: ${fixture} — expected one of ${M365_FIXTURE_SCENARIOS.join("|")}`
+        );
+      }
+      report = await loop.verifyM365({
+        transport: loop.createFixtureTransport(fixture),
+        config: {
+          tenant_id: "contoso.onmicrosoft.test",
+          client_id: "fixture-client",
+          test_recipient: "test-recipient@contoso.onmicrosoft.test",
+          account: "verify@contoso.onmicrosoft.test",
+        },
+        mode: "fixture",
+        sleep: () => Promise.resolve(),
+      });
+    } else {
+      // No live Graph transport is wired in this credential-free build. Load config purely to name
+      // the tenant in the needs-tenant report; absence (or presence) both yield needs-tenant here.
+      let config = null;
+      try {
+        config = loop.loadM365Config(repo, configPath);
+      } catch (e) {
+        die(e?.message ?? String(e));
+      }
+      report = loop.needsTenantReport(config);
+    }
+
+    if (asJson) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      renderM365Report(report, RUNBOOK);
+    }
+    // Exit 0 only when fully verified; needs-tenant / any failing check exits non-zero (the failing
+    // check is named in the rendered output + the JSON `checks`).
+    if (report.status !== "verified") process.exitCode = 1;
+    return;
+  }
+
   const suggestion = nearestSubcommand(sub);
   die(
     (suggestion
@@ -551,6 +604,37 @@ export async function cmdInbox(repo, cfg, args) {
       "       aios inbox rebuild [--db <path>] [--json]\n" +
       "       aios inbox compact [--boundary-seq <n>] [--json]\n" +
       "       aios inbox outbox [--json]\n" +
-      "       aios inbox send --draft <draft.json> [--confirm] [--account <email>] [--json]"
+      "       aios inbox send --draft <draft.json> [--confirm] [--account <email>] [--json]\n" +
+      "       aios inbox m365-verify [--fixture happy|bad-token|missing-scope|throttled] [--json]"
   );
+}
+
+/** Render a VerifyReport as a human-readable connect-and-verify status block. */
+function renderM365Report(report, runbook) {
+  const glyph = (s) => (s === "pass" ? c.green("✓") : s === "fail" ? c.red("✗") : c.dim("–"));
+  console.log(
+    c.blue("aios inbox m365-verify") +
+      c.dim(`  tenant ${report.tenant} · mode ${report.mode} · ${report.status}`)
+  );
+  for (const name of ["auth", "read", "send"]) {
+    const chk = report.checks[name];
+    console.log(`  ${glyph(chk.status)} ${name.padEnd(5)} ${c.dim(chk.code)}  ${chk.detail}`);
+  }
+  console.log(
+    c.dim(
+      `  graph permissions: ${report.graph_permissions.length ? report.graph_permissions.join(", ") : "(none observed)"}`
+    )
+  );
+  if (report.native_message_id)
+    console.log(c.dim(`  native message-id: ${report.native_message_id}`));
+  console.log(
+    `  claim: ${report.claim === "connected and verified" ? c.green(report.claim) : c.dim(report.claim)}`
+  );
+  if (report.status === "needs-tenant") {
+    console.log(
+      c.yellow(
+        `  needs a test tenant — this build makes no live Graph call. Live verification: ${runbook}`
+      )
+    );
+  }
 }

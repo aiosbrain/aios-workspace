@@ -70,6 +70,28 @@ synced). Contract + rule ids: `src/operator-loop/inbox/reply-policy.ts`; matrix:
 `test/operator-loop/inbox-reply-policy.test.mjs`. See the domain spec `I-10-reply-pdp.md` and
 disclosure rules in `I-01` §5.
 
+## m365 connect-and-verify (I-12 / AIO-393)
+The **m365** channel is wired as the second channel at the honest claim level: **auth → read → one
+policy-mediated send** on a **test tenant**, reported at exactly the level proven — the support claim
+is **"connected and verified"** and nothing more. The verify flows live in
+`src/operator-loop/inbox/m365-verify.ts` behind a single injected `GraphTransport` seam (auth / read /
+send); `verifyM365` runs the three checks and returns a deterministic `VerifyReport`
+(`{ tenant, mode, status, verified, claim, checks, graph_permissions, native_message_id, cursor, ts }`).
+The report enumerates the **exact Microsoft Graph scopes** the flows used, as observed on the token
+(`Mail.Read`, `Mail.Send` — least privilege). `aios inbox m365-verify [--json]` exits 0 with all three
+checks `pass` against a live test tenant and non-zero with the failing check named otherwise; a bundled
+fixture self-test (`--fixture happy|bad-token|missing-scope|throttled`) demonstrates the diagnostic
+states with no tenant. The one journal event is content-free and admin-tier local (never synced); test
+data only, no production recipient is addressable, and `sender.ts` is untouched.
+
+The **"connected and verified"** claim is published only when a `mode: "live"` run passes all three
+checks against a real tenant — a fixture run is honestly `mode: "fixture"` with claim `"not verified"`.
+As of this slice the live run has **not** been performed (no test tenant is provisioned): the single
+residual is the labelled live-verification step in
+[`../runbooks/m365-connect-and-verify.md`](../runbooks/m365-connect-and-verify.md). The **deep adapter**
+(enriched m365 observation writer, reply-PDP integration, outbox, production-tenant connection) is
+**post-Jul-29** and out of scope here.
+
 ## Signal contract (emitted to C1)
 `{ kind: "comms", source: "slack|email|calendar", tier, occurredAt, ref: <message/event id>, payload: { channel, direction, summary, waitingOn?, dueAt? } }`
 
