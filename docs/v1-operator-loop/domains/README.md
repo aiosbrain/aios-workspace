@@ -12,6 +12,7 @@ Each is a well-bounded TypeScript module per the [Engineering Constitution](../.
 | Communication | [communication.md](./communication.md) | Reuse connectors; build **unified notification layer** |
 | Meetings | [meetings.md](./meetings.md) | Reuse Granola + decisions; build stakeholder map + governance nudge |
 | Asks Queue (AIO-167) | [asks-queue.md](./asks-queue.md) | **Net-new** non-blocking escalation queue (append-only store + capture hook + inbox transport + CLI); dogfood-only slice |
+| Unified Inbox (AIO-381 / I-01) | [unified-inbox.md](./unified-inbox.md) | **Net-new** meta-inbox over agent asks + external comms: `inbox-events.ndjson` journal, SQLite read model (D5), orthogonal state machines, runtime-issued capability handle, reply PDP, enriched observations, audit anchor (D6), pre-registered metrics |
 | Attention Mode (AIO-168) | [attention-mode.md](./attention-mode.md) | **Net-new** deep-work / orchestration toggle for the local notification ping (`aios mode`); push untouched |
 | Sanity Metrics (AIO-169) | [sanity-metrics.md](./sanity-metrics.md) | **Net-new** four operational attention signals + Attention card in `aios analyze`, and Queued-asks/Attention sections in the daily brief; **local-only** (never pushed) |
 | Decision Capture (AIO-170) | [decision-capture.md](./decision-capture.md) | **Net-new** human-in-the-loop decision corpus (`aios decisions`): a PostToolUse hook captures `AskUserQuestion` + plan-approval prompts into an append-only store; **local-only** admin-tier (never pushed) |
