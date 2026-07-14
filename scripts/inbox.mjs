@@ -9,6 +9,11 @@
  *     separator; `--raw` is the pure-chronological escape hatch; `--json` is the stable machine
  *     surface `{ items, ranker_version, generated_at, staleness }` (a LOCAL artifact, not a sync
  *     surface). The per-item v1 ask fields pass through byte-identical to `aios asks --json`.
+ *   • `aios inbox --overdue` — I-05: the recovery view (the notify lane's safety net). One line per
+ *     OPEN, un-acknowledged ask whose Telegram interrupt went unacknowledged past the escalation
+ *     window (derived from the durable asks queue ∪ the journal's notify-lane events). `--json` is
+ *     the stable machine surface `{ items, generated_at, escalation_window_ms }`. Fails safe — a
+ *     silent/disabled lane never loses an ask.
  *   • `aios inbox rebuild` — I-02: deterministically re-projects the read model from
  *     asks.ndjson ∪ activity.jsonl ∪ inbox-events.ndjson.
  *   • `aios inbox compact` — I-02: collapses superseded transition events into a snapshot while
@@ -269,6 +274,27 @@ export async function cmdInbox(repo, cfg, args) {
 
   const loop = await loadOperatorLoop();
 
+  // ── `--overdue` — the I-05 recovery view (the notify lane's safety net) ────────────────────────
+  // Triggered by `aios inbox --overdue` (with optional `--json` / `--window <minutes>`). Read-only.
+  if (new Set(args).has("--overdue")) {
+    const windowArg = (() => {
+      const i = args.indexOf("--window");
+      return i >= 0 ? Number(args[i + 1]) : null;
+    })();
+    if (windowArg !== null && !Number.isFinite(windowArg))
+      die(`--window must be a number of minutes: ${args[args.indexOf("--window") + 1]}`);
+    const view = loop.buildOverdue(
+      repo,
+      windowArg !== null ? { escalationWindowMs: windowArg * 60 * 1000 } : {}
+    );
+    if (new Set(args).has("--json")) {
+      console.log(JSON.stringify(view, null, 2));
+      return;
+    }
+    console.log(loop.renderOverdueText(view, { colors: c }));
+    return;
+  }
+
   // ── default / `list` — the I-09 read-only unified queue ────────────────────────────────────────
   // Triggered by `aios inbox`, `aios inbox list`, or a bare-flag form (`aios inbox --json`).
   if (!sub || sub === "list" || sub.startsWith("--")) {
@@ -521,6 +547,7 @@ export async function cmdInbox(repo, cfg, args) {
       ? `unknown inbox subcommand: ${sub} — did you mean \`aios inbox ${suggestion}\`?\n`
       : "") +
       "usage: aios inbox [list] [--raw] [--json]\n" +
+      "       aios inbox --overdue [--window <minutes>] [--json]\n" +
       "       aios inbox rebuild [--db <path>] [--json]\n" +
       "       aios inbox compact [--boundary-seq <n>] [--json]\n" +
       "       aios inbox outbox [--json]\n" +

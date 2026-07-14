@@ -21,13 +21,18 @@ import { readObservations, type LegacyActivityRecord } from "./inbox/observation
 import { assembleFromObservations, type InboxView, type Ranker } from "./inbox/cli.js";
 // Composition-point wiring for the capability seam → durable I-02 journal (AIO-427). Local bindings
 // (a `export … from` re-export does NOT bring a symbol into local scope) for `createDurableCapabilityJournal`.
-import { appendInboxEvent, INBOX_DIR_REL } from "./inbox/journal.js";
+import { appendInboxEvent, readJournalSegments, INBOX_DIR_REL } from "./inbox/journal.js";
 import type { AppendCapabilityEvent } from "./inbox/capability.js";
 // Composition-point wiring for the ranker seam → I-04 deterministic ranker (AIO-429).
 import { loadRegistry } from "./inbox/ranker.js";
 import { createInboxRanker } from "./inbox/ranker-adapter.js";
 // Composition-point wiring for the outbox seam → durable I-02 journal (AIO-392).
 import type { AppendOutboxEvent } from "./inbox/outbox.js";
+// Composition-point wiring for the I-05 notify + recovery lane (AIO-386): the loop reads the asks
+// store + the durable journal here and hands them to the pure `buildOverdueView`, so the `inbox`
+// domain never value-imports the `asks` domain.
+import { buildOverdueView, type OverdueView } from "./inbox/recovery.js";
+import { deepLinkForAsk } from "./inbox/notify-telegram.js";
 
 export { collect, type CollectOptions } from "./collector.js";
 export { buildManifest, type RunManifest, type BuildManifestInput } from "./manifest.js";
@@ -545,6 +550,80 @@ export function buildInbox(
     now: opts.now,
     sloMs: opts.sloMs,
     ranker,
+  });
+}
+
+// Unified inbox — Telegram notify lane (I-05 / AIO-386, the G3b interrupt lane). Content-free
+// notification projection + deep-link + the two honest ack journal events (`delivery-attempted` /
+// `human-ack`). The `tg` adapter reaches the Bot API through an injected transport (the HTTP
+// boundary), so nothing here touches the network at import; `sender.ts` is a separate, untouched
+// contract this lane never invokes. Admin-tier local; nothing here syncs to the Team Brain.
+export {
+  DEEP_LINK_SCHEME,
+  DEEP_LINK_RE,
+  deepLinkForAsk,
+  askIdFromDeepLink,
+  projectNotification,
+  formatNotificationText,
+  loadTelegramConfig,
+  fetchTelegramTransport,
+  sendNotification,
+  recordHumanAck,
+  createDurableNotifyJournal,
+  TELEGRAM_TOKEN_ENVS,
+  TELEGRAM_CHAT_ENVS,
+  type NotificationProjection,
+  type ProjectionInput,
+  type TelegramRequest,
+  type TelegramResponse,
+  type TelegramTransport,
+  type TelegramConfig,
+  type NotifyStatus,
+  type NotifyResult,
+  type NotifyDeps,
+  type NotifyEventInput,
+} from "./inbox/notify-telegram.js";
+// Unified inbox — `aios inbox --overdue` recovery view (I-05 / AIO-386, the G3b safety net). A pure
+// projection over the durable asks queue ∪ the journal's notify-lane events: the OPEN, un-acked asks
+// whose interrupt went unacknowledged past the escalation window. Fails safe — a silent lane never
+// loses an ask. Composed with the stores at `buildOverdue` below.
+export {
+  DEFAULT_ESCALATION_WINDOW_MS,
+  foldNotificationState,
+  overdueView,
+  buildOverdueView,
+  renderOverdueText,
+  type NotificationState,
+  type OverdueItem,
+  type OverdueInput,
+  type OverdueView,
+  type OverdueRenderColors,
+} from "./inbox/recovery.js";
+
+/**
+ * Loop composition point (Constitution §4) for `aios inbox --overdue`: read the durable asks store +
+ * the durable `inbox-events.ndjson` journal, then compute the recovery view. The `inbox` domain never
+ * value-imports the `asks` domain — that seam is composed HERE. Read-only: no store is mutated. Fails
+ * safe: a corrupt/absent journal still lists every open, un-acked, overdue ask from the asks queue.
+ */
+export function buildOverdue(
+  root: string,
+  opts: {
+    now?: Date;
+    escalationWindowMs?: number;
+    asksOverride?: readonly Ask[];
+  } = {}
+): OverdueView {
+  const asks = opts.asksOverride ?? readAsks(root).asks;
+  const { events } = readJournalSegments(root);
+  return buildOverdueView({
+    asks,
+    events,
+    now: opts.now,
+    ...(opts.escalationWindowMs !== undefined
+      ? { escalationWindowMs: opts.escalationWindowMs }
+      : {}),
+    deepLinkForAsk,
   });
 }
 
