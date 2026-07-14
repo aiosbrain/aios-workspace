@@ -37,6 +37,7 @@ export const CATEGORIES = {
       "check:v1-linear",
       "check:domains",
       "check:size",
+      "check:inbox-audit",
       "pr:backlog",
       "test:gateway-contracts", // focused gateway contract conformance suite
       "pretest", // npm runs this automatically before `npm test`

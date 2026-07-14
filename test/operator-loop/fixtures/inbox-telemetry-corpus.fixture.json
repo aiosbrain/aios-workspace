@@ -5,11 +5,7 @@
     "Please find the signed contract attached for your records",
     "Can you approve the refund before end of day"
   ],
-  "subjects": [
-    "Q3 board deck review",
-    "Re: invoice 4471 overdue",
-    "Welcome to the pilot program"
-  ],
+  "subjects": ["Q3 board deck review", "Re: invoice 4471 overdue", "Welcome to the pilot program"],
   "participants": [
     "Dana Whitfield",
     "dana.whitfield@example.com",
