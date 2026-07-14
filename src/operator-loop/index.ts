@@ -574,15 +574,33 @@ export {
  * events. The `inbox` capability module never value-imports the journal — that seam is wired HERE.
  * Mapping: `handle → correlation_id`, `at → ts`, `data → payload`. `appendInboxEvent` validates the
  * kind against the real I-02 vocabulary and rejects an unknown kind before writing.
+ *
+ * NON-FATAL by contract (AIO-427 review): the sink NEVER throws. A validation error (unknown kind,
+ * empty correlation id) or a filesystem/lock error from `appendInboxEvent` is caught here and reduced
+ * to a CONTENT-FREE warning (the event kind + the error's class name only — never the payload/args),
+ * then swallowed. This is what lets the runtime write the journal BEFORE its authoritative store line
+ * without a journal fault ever stranding the store lock or crashing the gateway: the caller's store
+ * write proceeds regardless, and a dropped line is recoverable by a later `rebuildReadModel`.
  */
 export function createDurableCapabilityJournal(root: string): AppendCapabilityEvent {
   return (event) => {
-    appendInboxEvent(root, {
-      kind: event.kind,
-      correlation_id: event.handle,
-      payload: event.data ?? {},
-      ...(event.at ? { ts: event.at } : {}),
-    });
+    try {
+      appendInboxEvent(root, {
+        kind: event.kind,
+        correlation_id: event.handle,
+        payload: event.data ?? {},
+        ...(event.at ? { ts: event.at } : {}),
+      });
+    } catch (err) {
+      const name =
+        err && typeof err === "object" && "name" in err ? String((err as Error).name) : "Error";
+      try {
+        // Content-free: kind is a fixed enum; `name` is an error class — no payload is ever logged.
+        console.warn(`inbox journal: dropped a ${event?.kind ?? "?"} event (${name}); continuing`);
+      } catch {
+        /* never let logging itself throw */
+      }
+    }
   };
 }
 
