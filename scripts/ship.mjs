@@ -56,6 +56,9 @@ import {
   loadRecentDecisions,
   formatFindings,
   extractSections,
+  specEvalHints,
+  SPEC_GATE_POLICIES,
+  DEFAULT_SPEC_GATE,
 } from "./spec-eval.mjs";
 import { runLocalPrePrReview } from "./review-bugbot.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
@@ -216,7 +219,7 @@ export function parseShipArgs(args) {
   };
   const hasFlag = (name) => args.includes(name);
 
-  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner", "--loop"];
+  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner", "--loop", "--spec-gate"];
   const positional = args.filter(
     (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
   );
@@ -236,6 +239,9 @@ export function parseShipArgs(args) {
 
   const planRunner = flag("--plan-runner") ?? "cli";
   const loop = flag("--loop") ?? "full";
+  // spec_gate enforcement policy: null here means "not overridden on the CLI" → spec frontmatter or
+  // the config default decides. --skip-spec-gate remains a back-compat alias for `off`.
+  const specGate = flag("--spec-gate");
 
   return {
     help: hasFlag("--help") || hasFlag("-h"),
@@ -246,6 +252,7 @@ export function parseShipArgs(args) {
     maxFixRounds,
     planRunner,
     loop,
+    specGate,
     dryRun: hasFlag("--dry-run"),
     noSimplify: hasFlag("--no-simplify"),
     resume: hasFlag("--resume"),
@@ -270,10 +277,16 @@ export function validateShipArgs(opts) {
   // skipped for SPEC_READY specs; deterministic spec gate at entry; profile-pinned models).
   if (opts.loop !== "full" && opts.loop !== "light")
     return `unsupported --loop '${opts.loop}' — expected 'full' or 'light'.`;
-  // The deterministic spec gate IS the light loop's entry contract ("you did spec right, now
-  // build faster") — skipping it would leave the light loop with no evidence at all.
-  if (opts.loop === "light" && opts.skipSpecGate)
-    return "--skip-spec-gate cannot be combined with --loop light — the deterministic spec gate is the light loop's entry contract.";
+  // spec_gate is the enforcement policy: block (stop on NOT_READY) | advisory (warn + proceed) |
+  // off (don't run the gate). --skip-spec-gate is a back-compat alias for `off`.
+  if (opts.specGate != null && !SPEC_GATE_POLICIES.has(opts.specGate))
+    return `unsupported --spec-gate '${opts.specGate}' — expected ${[...SPEC_GATE_POLICIES].join(", ")}.`;
+  // The spec gate IS the light loop's entry contract ("you did spec right, now build faster").
+  // `off`/`--skip-spec-gate` would leave it with no evidence at all → rejected. `advisory` still
+  // RUNS and records the eval (it just doesn't block), so it satisfies the contract → allowed.
+  const gateIsOff = opts.skipSpecGate || opts.specGate === "off";
+  if (opts.loop === "light" && gateIsOff)
+    return "the spec gate cannot be turned off under --loop light — it is the light loop's entry contract. Use --spec-gate advisory to run-and-warn without blocking.";
   // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
   // silently disable BOTH gating reviewers and wave the PR through — reject it. (A bare
   // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
@@ -1002,6 +1015,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     callOpus = defaultCallOpus,
     makeAnthropic = defaultMakeAnthropic,
     evaluateSpec: evaluateSpecDep = evaluateSpec,
+    specEvalHints: specEvalHintsDep = specEvalHints,
     loadRecentDecisions: loadRecentDecisionsDep = loadRecentDecisions,
     loadSpecRubric: loadSpecRubricDep = () =>
       loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md")),
@@ -1169,10 +1183,26 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 1b. SPEC EVAL (EE5) ─────────────────────────────────────────────────────
-  // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds.
-  if (opts.skipSpecGate) {
-    record("spec-eval", { skipped: true, reason: "--skip-spec-gate" });
-    progress("spec eval: SKIPPED (--skip-spec-gate — logged for audit)");
+  // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds —
+  // UNLESS the enforcement policy is `advisory` (run + warn + proceed) or `off` (don't run).
+  // Precedence: --spec-gate flag (or --skip-spec-gate → off) > spec frontmatter > config default.
+  let frontmatterGate;
+  try {
+    frontmatterGate = specEvalHintsDep(specText).specGate;
+  } catch {
+    frontmatterGate = undefined; // a bad frontmatter value surfaces in evaluateSpec below, not here
+  }
+  const specGatePolicy =
+    opts.specGate ??
+    (opts.skipSpecGate ? "off" : undefined) ??
+    frontmatterGate ??
+    models.spec_eval?.spec_gate ??
+    DEFAULT_SPEC_GATE;
+
+  if (specGatePolicy === "off") {
+    const reason = opts.skipSpecGate ? "--skip-spec-gate" : "spec_gate=off";
+    record("spec-eval", { skipped: true, reason });
+    progress(`spec eval: SKIPPED (${reason} — logged for audit)`);
   } else if (state.specReady) {
     record("spec-eval", { resumed: true });
     progress("spec eval: resumed from checkpoint (SPEC_READY)");
@@ -1201,23 +1231,49 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       });
       writeAudit(issueId, "spec-eval-r1.md", formatSpecEvalAudit(res));
       if (res.verdict !== "SPEC_READY") {
-        record("spec-eval", { verdict: res.verdict, exitCode: res.exitCode, score: res.score });
-        console.error(formatFindings(res.findings));
-        console.error(
-          c.red(
-            `\nspec eval: NOT_READY (verdict ${res.verdict}, score ${res.score ?? "n/a"}) — refusing to plan.`
-          )
-        );
-        console.error(
-          c.dim(
-            `  Fix it:  aios spec fix .aios/loop/${issueId}/spec.md   then re-run aios ship ${issueId}`
-          )
-        );
-        return { code: SHIP_EXIT.SPEC_NOT_READY, records };
+        if (specGatePolicy === "advisory") {
+          // Advisory: the gate ran and found problems, but the operator chose warn-not-block.
+          // Surface everything loudly, record that it was non-blocking, and proceed to build.
+          record("spec-eval", {
+            verdict: res.verdict,
+            exitCode: res.exitCode,
+            score: res.score,
+            advisory: true,
+          });
+          console.error(formatFindings(res.findings));
+          console.error(
+            c.yellow(
+              `\nspec eval: NOT_READY (verdict ${res.verdict}, score ${res.score ?? "n/a"}) — ADVISORY mode, proceeding anyway.`
+            )
+          );
+          console.error(
+            c.dim(
+              `  To enforce: drop --spec-gate advisory (default blocks). To fix: aios spec fix .aios/loop/${issueId}/spec.md`
+            )
+          );
+          saveState({ specReady: true });
+          progress(`spec eval: ADVISORY — proceeding despite ${res.verdict}`);
+        } else {
+          record("spec-eval", { verdict: res.verdict, exitCode: res.exitCode, score: res.score });
+          console.error(formatFindings(res.findings));
+          console.error(
+            c.red(
+              `\nspec eval: NOT_READY (verdict ${res.verdict}, score ${res.score ?? "n/a"}) — refusing to plan.`
+            )
+          );
+          console.error(
+            c.dim(
+              `  Fix it:  aios spec fix .aios/loop/${issueId}/spec.md   then re-run aios ship ${issueId}` +
+                `\n  Or warn-and-proceed:  aios ship ${issueId} --spec-gate advisory`
+            )
+          );
+          return { code: SHIP_EXIT.SPEC_NOT_READY, records };
+        }
+      } else {
+        record("spec-eval", { verdict: res.verdict, score: res.score });
+        saveState({ specReady: true });
+        progress(`spec eval: SPEC_READY (score ${res.score ?? "n/a"})`);
       }
-      record("spec-eval", { verdict: res.verdict, score: res.score });
-      saveState({ specReady: true });
-      progress(`spec eval: SPEC_READY (score ${res.score ?? "n/a"})`);
     } catch (e) {
       record("spec-eval", { error: e.message });
       writeAudit(issueId, "spec-eval-FAILED.md", failedArtifact("spec-eval", e, specStartedAt));
@@ -2022,7 +2078,8 @@ function usage() {
       "  --approve-plan         satisfy a pending PLAN gate (use with --resume after inspecting",
       "                         .aios/loop/<issue>/GATE-plan.pending.md)",
       "  --approve-merge        satisfy a pending MERGE gate (use with --resume)",
-      "  --skip-spec-gate       skip the spec-readiness gate (logged loudly; escape hatch only)",
+      "  --spec-gate <policy>   spec-readiness enforcement: block (default) | advisory (warn+proceed) | off",
+      "  --skip-spec-gate       alias for --spec-gate off (logged loudly; escape hatch only)",
       "",
       "Gates default ON. In a non-TTY context without the matching flag, ship runs UP TO the",
       "gate, persists GATE-<name>.pending.md + state.json, and exits with the gate code —",

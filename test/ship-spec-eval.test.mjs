@@ -137,6 +137,7 @@ function optsFor(o = {}) {
     dryRun: false,
     resume: false,
     skipSpecGate: false,
+    specGate: null,
     ...o,
   };
 }
@@ -202,6 +203,47 @@ console.log("NOT_READY → SPEC_NOT_READY (15), spec.md + spec-eval-r1.md writte
   const dir = path.join(deps.repo, ".aios", "loop", "AIO-262");
   check("spec.md written", existsSync(path.join(dir, "spec.md")));
   check("spec-eval-r1.md written", existsSync(path.join(dir, "spec-eval-r1.md")));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("--spec-gate advisory: NOT_READY runs the eval, warns, but proceeds to build");
+{
+  const deps = makeDeps({
+    evaluateResult: {
+      verdict: "NOT_READY",
+      exitCode: 2,
+      score: 40,
+      deterministic: [{ ruleId: "SR2", severity: "blocker", detail: "missing AC" }],
+      adversarial: { findings: [] },
+      findings: [{ ruleId: "SR2", severity: "blocker", detail: "missing AC" }],
+    },
+  });
+  const { code, records } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-262",
+    opts: optsFor({ specGate: "advisory" }),
+    deps,
+  });
+  check("advisory NOT_READY still reaches OK", code === SHIP_EXIT.OK);
+  check("eval still ran (advisory is not skipping)", deps.evalCalls() === 1);
+  check(
+    "records the gate result as advisory",
+    records.stages.some((s) => s.stage === "spec-eval" && s.advisory === true)
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("--spec-gate off bypasses evaluateSpec (named alias of --skip-spec-gate)");
+{
+  const deps = makeDeps();
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-262",
+    opts: optsFor({ specGate: "off" }),
+    deps,
+  });
+  check("reaches OK", code === SHIP_EXIT.OK);
+  check("eval never called", deps.evalCalls() === 0);
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

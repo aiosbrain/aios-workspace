@@ -42,6 +42,16 @@ aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model 
 - A spec may declare `eval_tier: deterministic` in frontmatter (or receive `--tier deterministic`).
   Its mandatory deterministic check is the complete evaluation, so a clean result is `SPEC_READY`
   (exit 0) and never makes a model call. The default tier is `full`.
+- **Enforcement is separate from evaluation.** `eval_tier` chooses *which layers run*; `spec_gate`
+  chooses *whether a `NOT_READY` verdict blocks a build*. `aios ship` reads it (flag `--spec-gate
+  <block|advisory|off>` > spec frontmatter `spec_gate:` > config default `block`):
+  - `block` (default) — a `NOT_READY` verdict stops the ship at the gate.
+  - `advisory` — run the eval, print + record the findings, then **proceed to build anyway** (warn,
+    don't block). Allowed under `--loop light` because it still runs and records the gate.
+  - `off` — don't run the adversarial gate at all (the named form of `--skip-spec-gate`; **not**
+    allowed under `--loop light`, whose entry contract is a real gate result).
+  `aios spec eval` itself is unaffected by `spec_gate` — it always reports the true verdict/exit
+  code; only the *ship* enforcement changes.
 - A directory or glob is evaluated concurrently (default 6, bounded to 8) and prints one
   file/verdict/exit/score table. Every file still runs the deterministic layer.
 - Set `eval_provenance: adversarial-reviewed` (or `parent_plan_reviewed: true`) only when the

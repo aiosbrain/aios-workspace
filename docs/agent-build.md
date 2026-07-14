@@ -356,7 +356,13 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 - **Spec-readiness gate (EE5).** After recon and before the plan loop, ship runs `aios spec eval`
   against the Linear issue body (description + comments). Only `SPEC_READY` proceeds; otherwise ship
   exits `SPEC_NOT_READY` (15) with findings in the audit dir and a hint to
-  `aios spec fix .aios/loop/<issue>/spec.md`. Use `--skip-spec-gate` only as a logged escape hatch.
+  `aios spec fix .aios/loop/<issue>/spec.md`.
+  - **Enforcement policy — `--spec-gate <block|advisory|off>`** (or spec frontmatter `spec_gate:`;
+    default `block`). `advisory` runs the gate and prints/records findings but **builds anyway**
+    (warn, don't block) — the escape hatch for a gate you don't yet trust, without giving up the
+    signal. `off` (== `--skip-spec-gate`) skips the gate entirely; it is a logged escape hatch and
+    is rejected under `--loop light`, whose entry contract is a real gate result. `advisory` *is*
+    allowed under light because it still runs and records.
 - **Light loop (AIO-398).** `aios ship AIO-<n> --loop light` keeps the mandatory `SPEC_READY`
   gate but skips recon, the planner, and the plan gate. It derives the builder contract from the
   spec's **Interfaces**, **Implementation**, and **Acceptance** sections, then runs the normal
