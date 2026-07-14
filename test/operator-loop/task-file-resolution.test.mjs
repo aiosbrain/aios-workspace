@@ -53,6 +53,10 @@ test("C6 JSON omits team-tier task titles", () => {
 
 process.on("exit", () => {
   for (const p of cleanups) {
-    try { rmSync(p, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try {
+      rmSync(p, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   }
 });
