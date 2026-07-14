@@ -82,6 +82,7 @@ import { cmdMaturityWeek } from "./maturity-week-cmd.mjs";
 import { cmdTime } from "./time.mjs";
 import { cmdTimeline } from "./timeline.mjs";
 import { cmdAsks } from "./asks.mjs";
+import { cmdInbox } from "./inbox.mjs";
 import { cmdDecisions } from "./decisions.mjs";
 import { cmdLoop } from "./loop.mjs";
 import { cmdPromote } from "./promote.mjs";
@@ -2764,6 +2765,7 @@ const OFFLINE_CMDS = new Set([
   "loop",
   "time",
   "asks",
+  "inbox",
   "decisions",
   "mode",
   "rails",
@@ -2821,6 +2823,7 @@ try {
   else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
   else if (cmd === "time") await cmdTime(repo, cfg, rest);
   else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
+  else if (cmd === "inbox") await cmdInbox(repo, cfg, rest);
   else if (cmd === "transcripts") await cmdTranscripts(repo, cfg, rest);
   else if (cmd === "pm") await cmdPm(cfg, rest);
   else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);

@@ -47,6 +47,7 @@
     "@dotenvx/dotenvx": "^1.52.0",
     "@eslint/js": "^9.16.0",
     "@tauri-apps/cli": "^2.11.4",
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
     "c8": "^11.0.0",
     "eslint": "^9.16.0",
@@ -58,6 +59,7 @@
   },
   "dependencies": {
     "@aios-alpha/design": "^0.3.0",
-    "@clack/prompts": "^1.7.0"
+    "@clack/prompts": "^1.7.0",
+    "better-sqlite3": "^11.10.0"
   }
 }
