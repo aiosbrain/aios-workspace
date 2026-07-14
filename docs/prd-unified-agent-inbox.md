@@ -1,6 +1,13 @@
 # PRD — Unified Human-Agent Inbox (the AIOS Workstation meta-inbox)
 
-**Status:** Draft — vision-stage, in review. Unscheduled; no work should start without a
+> **Superseded by** the initiative epic **AIO-381** and its canonical build contract,
+> [`docs/v1-operator-loop/domains/unified-inbox.md`](./v1-operator-loop/domains/unified-inbox.md)
+> (issue AIO-382 / I-01). This document remains as the vision-stage argument for the shape of the
+> whole; the buildable contracts, decisions (D5/D6), and pre-registered metrics now live in the
+> domain spec. Start there for any implementation work.
+
+**Status:** Superseded (vision-stage). Kept for its rationale; the build contract is the domain spec
+above. Originally: Draft — vision-stage, in review. Unscheduled; no work should start without a
 separate scheduling decision.
 **Last updated:** 2026-07-04 · **Owner:** John
 **A note on the name:** John's ask referenced "the AIO-225 workstation." AIO-225 is
