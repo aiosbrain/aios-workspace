@@ -24,7 +24,14 @@ import {
   fetchNeedingReplyThreads,
   gogAvailable,
   DEFAULT_TIER,
+  enrichCalendarEvent,
+  enrichEmailThread,
+  appendObservations,
+  observationDedupKey,
+  observationLineKey,
+  OBSERVATIONS_SCHEMA_VERSION,
 } from "../scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs";
+import { projectObservations } from "../dist/operator-loop/index.js";
 
 // ── fixtures (trimmed, real gog --json shapes) ──────────────────────────────
 
@@ -196,6 +203,111 @@ test("loadExistingRefs: tolerates malformed lines already on disk", () => {
   appendFileSync(file, "not json\n"); // hand-corrupt: a stray non-JSON line
   const refs = loadExistingRefs(file);
   assert.ok(refs.has("cal:ki57062rqurcrjpeha2c02e14k_20260712T230000Z"));
+});
+
+// ── dual emission (AIO-387): legacy stream byte-identical + enriched stream ──
+
+function tmpObservationsPath() {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-gog-obs-"));
+  return path.join(dir, ".aios", "loop", "inbox", "observations.ndjson");
+}
+
+// The legacy activity.jsonl bytes MUST be unchanged by dual emission. Frozen golden = the exact
+// record objects the normalization contract has always produced (see the deepEqual tests above),
+// serialized one-per-line. If dual emission ever perturbs the legacy writer, this diff is non-empty.
+test("golden: legacy activity.jsonl is byte-identical (dual emission does not touch it)", () => {
+  const file = tmpActivityPath();
+  const records = [normalizeCalendarEvent(TIMED_EVENT), normalizeEmailThread(UNREAD_THREAD)];
+  appendActivity(file, records);
+  const golden =
+    JSON.stringify({
+      source: "calendar",
+      tier: "admin",
+      occurredAt: "2026-07-12T23:00:00.000Z",
+      ref: "cal:ki57062rqurcrjpeha2c02e14k_20260712T230000Z",
+      channel: null,
+      direction: null,
+      summary: 'Meeting: "1:1 with Alex" with Alex Rivera',
+    }) +
+    "\n" +
+    JSON.stringify({
+      source: "email",
+      tier: "admin",
+      occurredAt: "2026-07-13T03:52:00.000Z",
+      ref: "gmail:19f599b0a9e295ee",
+      channel: null,
+      direction: "inbound",
+      summary:
+        'Email needing reply: "Automatic reply: Confidential [M&R-CLIENTDMS.FID1896237]" from Jennifer Curtis <jennifer.acurtis@mills-reeve.com>',
+    }) +
+    "\n";
+  assert.equal(
+    readFileSync(file, "utf8"),
+    golden,
+    "legacy activity.jsonl golden-diff must be empty"
+  );
+});
+
+test("enrichCalendarEvent: timed event → versioned observation with identity + participants", () => {
+  const obs = enrichCalendarEvent(TIMED_EVENT, { account: "john@example.com", tenant: "personal" });
+  assert.equal(obs.schema_version, OBSERVATIONS_SCHEMA_VERSION);
+  assert.equal(obs.connection_id, "gog:john@example.com");
+  assert.equal(obs.account, "john@example.com");
+  assert.equal(obs.tenant, "personal");
+  assert.equal(obs.object_kind, "calendar-event");
+  assert.equal(obs.native_id, "ki57062rqurcrjpeha2c02e14k_20260712T230000Z");
+  assert.equal(obs.snippet, "1:1 with Alex");
+  assert.deepEqual(obs.participants, [
+    { id: "alex@example.com", display: "Alex Rivera", role: "attendee" },
+  ]);
+  assert.equal(obs.revision.op, "create");
+});
+
+test("enrichEmailThread: unread thread → versioned observation with sender participant", () => {
+  const obs = enrichEmailThread(UNREAD_THREAD, { account: "john@example.com" });
+  assert.equal(obs.object_kind, "email");
+  assert.equal(obs.native_id, "19f599b0a9e295ee");
+  assert.equal(obs.thread_id, "19f599b0a9e295ee");
+  assert.deepEqual(obs.participants, [
+    { id: "jennifer.acurtis@mills-reeve.com", display: "Jennifer Curtis", role: "from" },
+  ]);
+});
+
+test("enrich*: no id → null (not written), mirroring the legacy normalizers", () => {
+  assert.equal(enrichCalendarEvent(NO_ID_EVENT), null);
+  assert.equal(enrichEmailThread(NO_ID_THREAD), null);
+  assert.equal(enrichCalendarEvent(null), null);
+});
+
+test("dual emission: the writer's legacy + enriched twins collapse to one item in dual-read", () => {
+  const legacy = [normalizeCalendarEvent(TIMED_EVENT), normalizeEmailThread(UNREAD_THREAD)];
+  const enriched = [
+    enrichCalendarEvent(TIMED_EVENT, { account: "john@example.com" }),
+    enrichEmailThread(UNREAD_THREAD, { account: "john@example.com" }),
+  ];
+  const items = projectObservations({ legacy, enriched });
+  assert.equal(items.size, 2, "two objects, each legacy record absorbed into its enriched twin");
+  assert.ok([...items.values()].every((i) => i.origin === "enriched"));
+});
+
+test("dual emission: enriched stream appends idempotently (crash re-pull writes no duplicate)", () => {
+  const file = tmpObservationsPath();
+  const obs = [enrichEmailThread(UNREAD_THREAD, { account: "john@example.com" })];
+  const first = appendObservations(file, obs);
+  assert.equal(first.written, 1);
+  const second = appendObservations(file, obs); // re-pull
+  assert.equal(second.written, 0);
+  assert.equal(second.skipped, 1);
+  const lines = readFileSync(file, "utf8").trim().split("\n");
+  assert.equal(lines.length, 1);
+});
+
+test("dual emission: two accounts observing the same thread → distinct dedup keys (two items)", () => {
+  const a = enrichEmailThread(UNREAD_THREAD, { account: "alice@example.com" });
+  const b = enrichEmailThread(UNREAD_THREAD, { account: "bob@example.com" });
+  assert.notEqual(observationDedupKey(a), observationDedupKey(b));
+  assert.notEqual(observationLineKey(a), observationLineKey(b));
+  assert.equal(projectObservations({ enriched: [a, b] }).size, 2);
 });
 
 // ── integration (skip-if-no-gog) ─────────────────────────────────────────────
