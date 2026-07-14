@@ -962,6 +962,54 @@ export function createDurableM365VerifyJournal(root: string): M365VerifyJournalS
   };
 }
 
+// Unified inbox — cold-start entity seeding (I-08 / AIO-389, review-only stretch). Deterministic,
+// read-only suggestion generation over the enriched observation history; the SOLE writer of the
+// registry/entity files is `merge`, which is reversible byte-for-byte via `unmerge`. Admin-tier
+// LOCAL state under `.aios/loop/inbox/` (registry.json, entities/, seed-events.ndjson) — NEVER
+// synced; promotion to a shareable tier is a separate deliberate `access:`-retagging act.
+export {
+  SEED_REGISTRY_BASENAME,
+  SEED_ENTITIES_DIR,
+  SEED_JOURNAL_BASENAME,
+  SEED_JOURNAL_VERSION,
+  MIN_SUPPORT_EVENTS,
+  CONFIDENCE_WEIGHTS,
+  FREQUENCY_SATURATION,
+  THREAD_BREADTH_SATURATION,
+  RECENCY_TAU_DAYS,
+  SeedValidationError,
+  SeedConflictError,
+  registryPath as seedRegistryPath,
+  seedJournalPath,
+  entitiesDir as seedEntitiesDir,
+  entitySlug,
+  observationsToHistory,
+  knownIdentities,
+  generateSuggestions,
+  tierForConfidence,
+  readSeedJournal,
+  foldSeedStatus,
+  readSuggestions,
+  merge as mergeSuggestion,
+  reject as rejectSuggestion,
+  unmerge as unmergeSuggestion,
+  evaluateSuggestions,
+  summarizeStatuses,
+  listEntityFiles,
+  type SeedKind,
+  type SeedStatus,
+  type SeedHistoryEvent,
+  type ConfidenceBreakdown,
+  type SeedSuggestion,
+  type SeedProposedEntry,
+  type SeedJournalEvent,
+  type GenerateOptions,
+  type MergeResult,
+  type RejectResult,
+  type UnmergeResult,
+  type SeedEvaluation,
+} from "./inbox/seeding.js";
+
 // Attention mode — deep-work / orchestration toggle for the local notification ping (AIO-168).
 export {
   NOTIF_CHANNEL_KEY,

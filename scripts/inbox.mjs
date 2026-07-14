@@ -30,7 +30,7 @@ import os from "node:os";
 import { c, die } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 
-const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact", "outbox", "send", "m365-verify"];
+const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact", "outbox", "send", "m365-verify", "seed"];
 const M365_FIXTURE_SCENARIOS = ["happy", "bad-token", "missing-scope", "throttled"];
 
 // The I-02 journal event kinds the I-11 outbox emits (subset of INBOX_EVENT_KINDS).
@@ -594,6 +594,99 @@ export async function cmdInbox(repo, cfg, args) {
     return;
   }
 
+  // ── seed — I-08: cold-start entity seeding (REVIEW-ONLY). Mines the enriched observation history
+  // into confidence-scored suggestions the operator merges/rejects one at a time. Nothing is written
+  // to the registry/entity files except an explicit per-item `--merge` (no bulk-accept). Every
+  // suggestion + evidence summary is admin-tier local state under `.aios/loop/inbox/`, NEVER synced.
+  if (sub === "seed") {
+    const ownerArg = argVal("--owner");
+    const ownerIds = ownerArg
+      ? ownerArg
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [cfg?.owner, cfg?.email, cfg?.member].filter((v) => typeof v === "string" && v.trim());
+    const { observations } = loop.readObservations(repo);
+    const history = loop.observationsToHistory(observations, { ownerIds });
+
+    const mergeId = argVal("--merge");
+    const rejectId = argVal("--reject");
+    const unmergeId = argVal("--unmerge");
+
+    // Reversal path — restore the registry/entity files to their exact pre-merge bytes.
+    if (unmergeId) {
+      const r = loop.unmergeSuggestion(repo, unmergeId);
+      if (asJson) return void console.log(JSON.stringify(r, null, 2));
+      return void console.log(
+        c.blue("aios inbox seed") +
+          c.dim("  unmerged ") +
+          unmergeId +
+          c.dim(`  (reversed ${r.reversed})`)
+      );
+    }
+
+    // Mutating paths — a SINGLE explicit per-item confirmation each. No bulk-accept exists. The
+    // proposed-status gate is authoritative INSIDE the lock, so a SeedConflictError here means a
+    // concurrent merge/reject already won — report it deterministically, never a raw stack.
+    if (mergeId || rejectId) {
+      const id = mergeId || rejectId;
+      const suggestion = loop.readSuggestions(repo, history).find((s) => s.id === id);
+      if (!suggestion)
+        die(`no suggestion '${id}' in the current history — run \`aios inbox seed --review\``);
+      let r;
+      try {
+        r = mergeId
+          ? loop.mergeSuggestion(repo, suggestion)
+          : loop.rejectSuggestion(repo, suggestion);
+      } catch (e) {
+        if (e && e.name === "SeedConflictError") die(e.message);
+        throw e;
+      }
+      if (asJson) return void console.log(JSON.stringify(r, null, 2));
+      return void console.log(
+        c.blue("aios inbox seed") +
+          (mergeId ? c.green("  merged ") : c.dim("  rejected ")) +
+          id +
+          c.dim(`  (${suggestion.kind})`)
+      );
+    }
+
+    // Default (and `--review`) — READ-ONLY listing with confidence scores.
+    const suggestions = loop.readSuggestions(repo, history);
+    const summary = loop.summarizeStatuses(suggestions);
+    if (asJson) {
+      return void console.log(JSON.stringify({ suggestions, summary }, null, 2));
+    }
+    console.log(
+      c.blue("aios inbox seed --review") +
+        c.dim(`  ${suggestions.length} suggestion(s) from ${history.length} observation(s)`)
+    );
+    if (suggestions.length === 0) {
+      console.log(
+        c.dim("  no cold-start suggestions — the history is empty or everyone is already seeded.")
+      );
+    }
+    for (const s of suggestions) {
+      const mark =
+        s.status === "merged"
+          ? c.green("✓ merged  ")
+          : s.status === "rejected"
+            ? c.dim("x rejected")
+            : "  proposed";
+      const who = s.proposed_entry?.display || (s.proposed_entry?.ids || [])[0] || "?";
+      console.log(
+        `  ${mark}  ${c.dim(s.id)}  ${s.kind.padEnd(17)} ${s.confidence.toFixed(2)}  ${who}  ${c.dim(s.evidence_summary)}`
+      );
+    }
+    console.log(
+      c.dim(
+        `  proposed ${summary.proposed}   merged ${summary.merged}   rejected ${summary.rejected}` +
+          "   —  merge one with: aios inbox seed --merge <id>"
+      )
+    );
+    return;
+  }
+
   const suggestion = nearestSubcommand(sub);
   die(
     (suggestion
@@ -605,7 +698,9 @@ export async function cmdInbox(repo, cfg, args) {
       "       aios inbox compact [--boundary-seq <n>] [--json]\n" +
       "       aios inbox outbox [--json]\n" +
       "       aios inbox send --draft <draft.json> [--confirm] [--account <email>] [--json]\n" +
-      "       aios inbox m365-verify [--fixture happy|bad-token|missing-scope|throttled] [--json]"
+      "       aios inbox m365-verify [--fixture happy|bad-token|missing-scope|throttled] [--json]\n" +
+      "       aios inbox seed [--review] [--owner <id,…>] [--json]\n" +
+      "       aios inbox seed --merge|--reject <id>   |   aios inbox seed --unmerge <id>"
   );
 }
 
