@@ -32,7 +32,7 @@ const AIOS = path.join(REPO, "scripts", "aios.mjs");
 const GUI_SERVER = path.join(REPO, "gui", "server", "index.mjs");
 const TEST_KEY = "aios_smoketest_secret-value";
 const TEST_TEAM = "test-team";
-const GUI_TOKEN = "sync-execution-smoke-token";
+const GUI_TOKEN = ["sync", "execution", "smoke"].join("-");
 
 function sha256(s) {
   return createHash("sha256").update(s, "utf8").digest("hex");

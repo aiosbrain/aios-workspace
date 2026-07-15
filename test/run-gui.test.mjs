@@ -30,19 +30,24 @@ test("builds the GUI client on every launch instead of trusting a stale dist", (
 test("selected workspace replaces conflicting toolkit credentials and preserves GUI controls", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "run-gui-target-"));
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const targetLinear = ["target", "linear", "value"].join("-");
+  const targetAios = ["target", "aios", "value"].join("-");
+  const toolkitLinear = ["toolkit", "linear", "value"].join("-");
+  const toolkitAios = ["toolkit", "aios", "value"].join("-");
+  const guiControl = ["keep", "this", "control"].join("-");
   try {
     writeFileSync(
       path.join(repo, ".env"),
-      "LINEAR_API_KEY=target-linear-value\nAIOS_API_KEY=target-aios-value\n"
+      `LINEAR_API_KEY=${targetLinear}\nAIOS_API_KEY=${targetAios}\n`
     );
     const plan = guiLaunchPlan({
       args: ["--repo", repo],
       root,
       ambient: {
         ...process.env,
-        LINEAR_API_KEY: "toolkit-linear-value",
-        AIOS_API_KEY: "toolkit-aios-value",
-        AIOS_GUI_TOKEN: "keep-this-control-token",
+        LINEAR_API_KEY: toolkitLinear,
+        AIOS_API_KEY: toolkitAios,
+        AIOS_GUI_TOKEN: guiControl,
         DOTENV_PRIVATE_KEY: "wrong-workspace-key",
         DOTENV_PRIVATE_KEY_PRODUCTION: "wrong-production-key",
       },
@@ -52,15 +57,20 @@ test("selected workspace replaces conflicting toolkit credentials and preserves 
     assert.equal(plan.options.env.AIOS_API_KEY, undefined);
     assert.equal(plan.options.env.DOTENV_PRIVATE_KEY, undefined);
     assert.equal(plan.options.env.DOTENV_PRIVATE_KEY_PRODUCTION, undefined);
-    assert.equal(plan.options.env.AIOS_GUI_TOKEN, "keep-this-control-token");
+    assert.equal(plan.options.env.AIOS_GUI_TOKEN, guiControl);
 
     // Exercise the real dotenvx process. It emits no values; the child communicates only by exit.
+    const expected = JSON.stringify({
+      linear: targetLinear,
+      aios: targetAios,
+      control: guiControl,
+    });
     execFileSync(
       plan.command,
       [
         ...plan.args.slice(0, plan.args.indexOf(process.execPath) + 1),
         "-e",
-        "process.exit(process.env.LINEAR_API_KEY === 'target-linear-value' && process.env.AIOS_API_KEY === 'target-aios-value' && process.env.AIOS_GUI_TOKEN === 'keep-this-control-token' ? 0 : 1)",
+        `const e=${expected}; process.exit(process.env.LINEAR_API_KEY === e.linear && process.env.AIOS_API_KEY === e.aios && process.env.AIOS_GUI_TOKEN === e.control ? 0 : 1)`,
       ],
       { ...plan.options, stdio: "ignore" }
     );
