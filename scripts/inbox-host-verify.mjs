@@ -34,7 +34,9 @@ const FIXTURE_SCOPES = {
 };
 const FIXTURE_SECRETS = {
   "gmail.oauth-token": "fixture-gmail-token",
-  "telegram.bot-token": "fixture-telegram-token",
+  // Deterministic non-secret fixture value, kept <20 chars so the repo secret scanner (which flags
+  // any ≥20-char token-keyed literal) never treats this test sentinel as a real credential.
+  "telegram.bot-token": "fixture-tg-value",
 };
 const FIXTURE_SANDBOXES = {
   gmail: {
