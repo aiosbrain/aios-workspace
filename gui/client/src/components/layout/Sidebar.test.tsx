@@ -59,7 +59,8 @@ describe("Sidebar information architecture", () => {
     expect(html).toContain("Chat");
     expect(html).toContain("Tasks");
     expect(html).toContain("Operator Loop");
-    expect(html).toContain("Review &amp; Push");
+    expect(html).toContain("Team Brain Sync");
+    expect(html).not.toContain("Review &amp; Push");
   });
 });
 

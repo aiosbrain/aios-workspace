@@ -210,7 +210,7 @@ export function Sidebar() {
           )}
           onClick={() => setView("review")}
         >
-          <UploadCloud size={15} strokeWidth={2} /> Review &amp; Push
+          <UploadCloud size={15} strokeWidth={2} /> Team Brain Sync
         </button>
       </nav>
 
