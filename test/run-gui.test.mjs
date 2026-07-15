@@ -5,7 +5,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { buildGuiClient, guiLaunchPlan, scrubGuiWorkspaceEnv } from "../scripts/run-gui.mjs";
+import {
+  buildGuiClient,
+  guiLaunchPlan,
+  normalizeGuiLauncherArgs,
+  scrubGuiWorkspaceEnv,
+} from "../scripts/run-gui.mjs";
 
 test("builds the GUI client on every launch instead of trusting a stale dist", () => {
   const calls = [];
@@ -25,6 +30,18 @@ test("builds the GUI client on every launch instead of trusting a stale dist", (
       options: { cwd: root, stdio: "inherit" },
     },
   ]);
+});
+
+test("desktop skip-build still routes through the credential-safe launcher", () => {
+  const launch = normalizeGuiLauncherArgs([
+    "--skip-build",
+    "--repo",
+    "/tmp/selected-workspace",
+    "--port",
+    "8790",
+  ]);
+  assert.equal(launch.skipBuild, true);
+  assert.deepEqual(launch.serverArgs, ["--repo", "/tmp/selected-workspace", "--port", "8790"]);
 });
 
 test("selected workspace replaces conflicting toolkit credentials and preserves GUI controls", () => {

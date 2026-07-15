@@ -29,6 +29,15 @@ export function resolveGuiRepo(args, cwd = process.cwd()) {
   return path.resolve(flag(args, "--repo") || cwd);
 }
 
+// The packaged Tauri shell already ships a built client, but must still use this launcher's
+// selected-workspace credential boundary. Keep the private launcher flag out of server argv.
+export function normalizeGuiLauncherArgs(args) {
+  return {
+    skipBuild: args.includes("--skip-build"),
+    serverArgs: args.filter((arg) => arg !== "--skip-build"),
+  };
+}
+
 function envNames(file) {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
@@ -104,8 +113,9 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  buildGuiClient();
-  const plan = guiLaunchPlan();
+  const launch = normalizeGuiLauncherArgs(process.argv.slice(2));
+  if (!launch.skipBuild) buildGuiClient();
+  const plan = guiLaunchPlan({ args: launch.serverArgs });
   const child = spawn(plan.command, plan.args, { ...plan.options, stdio: "inherit" });
   child.on("exit", (code) => process.exit(code ?? 0));
 }

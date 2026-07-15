@@ -23,7 +23,9 @@ struct Sidecar(Mutex<Option<Child>>);
 fn random_token() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..32).map(|_| format!("{:x}", rng.gen_range(0..16))).collect()
+    (0..32)
+        .map(|_| format!("{:x}", rng.gen_range(0..16)))
+        .collect()
 }
 
 fn free_port() -> u16 {
@@ -34,9 +36,14 @@ fn free_port() -> u16 {
 }
 
 fn is_workspace(dir: &Path) -> bool {
-    ["aios.yaml", "workspace.yaml", "project.yaml", "engagement.yaml"]
-        .iter()
-        .any(|f| dir.join(f).exists())
+    [
+        "aios.yaml",
+        "workspace.yaml",
+        "project.yaml",
+        "engagement.yaml",
+    ]
+    .iter()
+    .any(|f| dir.join(f).exists())
         || dir.join(".claude").exists()
 }
 
@@ -126,7 +133,11 @@ fn enriched_path() -> String {
         dirs.insert(0, p.to_string_lossy().to_string());
     }
     let base = std::env::var("PATH").unwrap_or_default();
-    if base.is_empty() { dirs.join(":") } else { format!("{}:{}", dirs.join(":"), base) }
+    if base.is_empty() {
+        dirs.join(":")
+    } else {
+        format!("{}:{}", dirs.join(":"), base)
+    }
 }
 
 // Turn an empty folder into a workspace by running scaffold-project.sh. Asks the one
@@ -152,12 +163,22 @@ fn scaffold_into(app: &tauri::AppHandle, dir: &Path) -> bool {
 
     let status = Command::new("bash")
         .arg(&script)
-        .arg("--context").arg(context)
-        .arg("--slug").arg(&slug)
-        .arg("--owner").arg(&owner)
-        .arg("--stakeholder").arg(if consultant { "My Client" } else { "My Company" })
-        .arg("--team").arg(&owner)
-        .arg("--output").arg(dir)
+        .arg("--context")
+        .arg(context)
+        .arg("--slug")
+        .arg(&slug)
+        .arg("--owner")
+        .arg(&owner)
+        .arg("--stakeholder")
+        .arg(if consultant {
+            "My Client"
+        } else {
+            "My Company"
+        })
+        .arg("--team")
+        .arg(&owner)
+        .arg("--output")
+        .arg(dir)
         .current_dir(&toolkit)
         .env("PATH", enriched_path())
         .status();
@@ -260,8 +281,24 @@ fn ensure_env(app: &tauri::AppHandle, repo: &Path) {
         .status();
 }
 
-fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) -> std::io::Result<Child> {
-    let server = toolkit_dir(app).join("gui/server/index.mjs");
+fn sidecar_launch_args(toolkit: &Path, repo: &Path, port: u16) -> Vec<std::ffi::OsString> {
+    vec![
+        toolkit.join("scripts/run-gui.mjs").into_os_string(),
+        "--skip-build".into(),
+        "--repo".into(),
+        repo.as_os_str().to_owned(),
+        "--port".into(),
+        port.to_string().into(),
+    ]
+}
+
+fn start_sidecar(
+    app: &tauri::AppHandle,
+    repo: &Path,
+    port: u16,
+    token: &str,
+) -> std::io::Result<Child> {
+    let toolkit = toolkit_dir(app);
     let node = find_bin("node");
 
     // Log the sidecar (and the agent runtime it spawns) to a file so failures are
@@ -272,27 +309,45 @@ fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) ->
     let log_err = log.try_clone()?;
 
     ensure_env(app, repo);
-    // Under dotenvx when the workspace has an encrypted .env, so the agent's MCP
-    // servers get decrypted provider tokens at spawn.
-    let use_dotenvx = repo.join(".env").exists();
-    let mut cmd = if use_dotenvx {
-        let mut c = Command::new(find_bin("dotenvx"));
-        c.arg("run").arg("--").arg(&node);
-        c
-    } else {
-        Command::new(&node)
-    };
-    cmd.arg(&server)
-        .arg("--repo")
-        .arg(repo)
-        .arg("--port")
-        .arg(port.to_string())
+    // Always enter through run-gui's selected-workspace environment boundary. Starting
+    // gui/server directly here would let ambient connector credentials from the toolkit
+    // win over (or fill gaps in) the selected workspace. The packaged client is already
+    // built, so the private flag skips only that build — never credential reconciliation.
+    let mut cmd = Command::new(&node);
+    cmd.args(sidecar_launch_args(&toolkit, repo, port))
         .env("AIOS_GUI_TOKEN", token)
         .env("PATH", enriched_path())
         .current_dir(repo)
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
     cmd.spawn()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_sidecar_enters_through_credential_safe_launcher() {
+        let toolkit = Path::new("/opt/aios-workspace");
+        let repo = Path::new("/workspaces/selected");
+        let args = sidecar_launch_args(toolkit, repo, 8791);
+        let rendered: Vec<String> = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(rendered[0], "/opt/aios-workspace/scripts/run-gui.mjs");
+        assert_eq!(rendered[1], "--skip-build");
+        assert_eq!(
+            rendered[2..],
+            ["--repo", "/workspaces/selected", "--port", "8791"]
+        );
+        assert!(!rendered
+            .iter()
+            .any(|arg| arg.contains("gui/server/index.mjs")));
+        assert!(!rendered.iter().any(|arg| arg == "dotenvx"));
+    }
 }
 
 fn kill_sidecar(app: &tauri::AppHandle) {
@@ -327,7 +382,9 @@ fn main() {
                 Err(e) => {
                     rfd::MessageDialog::new()
                         .set_title("Couldn't start AIOS")
-                        .set_description(&format!("Failed to launch the local server (is Node installed?).\n\n{e}"))
+                        .set_description(&format!(
+                            "Failed to launch the local server (is Node installed?).\n\n{e}"
+                        ))
                         .show();
                     handle.exit(1);
                     return Ok(());
@@ -345,7 +402,11 @@ fn main() {
             if let Err(reason) = wait_result {
                 let log_path = repo.join(".aios").join("gui-server.log");
                 let tail = tail_log(&log_path, 4000);
-                let detail = if tail.is_empty() { reason } else { format!("{reason}\n\n{tail}") };
+                let detail = if tail.is_empty() {
+                    reason
+                } else {
+                    format!("{reason}\n\n{tail}")
+                };
                 rfd::MessageDialog::new()
                     .set_title("Couldn't start AIOS")
                     .set_description(&detail)
