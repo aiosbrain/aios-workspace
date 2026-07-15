@@ -136,6 +136,15 @@ the same image** (Fly access unavailable). Per the acceptance criteria this make
    ```bash
    fly deploy --config fly.toml --dockerfile deploy/fly/Dockerfile
    ```
+5. **Make the volume writable by the daemon's `node` user (one-time).** The daemon runs unprivileged
+   (`USER node`); a freshly-created Fly volume mounts root-owned and shadows the image's `/data/inbox`,
+   so grant ownership once, then restart:
+   ```bash
+   fly ssh console -C "chown -R node:node /data"
+   fly apps restart aios-inbox-<user>
+   ```
+   (`aios inbox status` / the daemon's `/healthz` will then persist admin-tier state under
+   `/data/inbox/.aios/loop/inbox/` — verify with `fly logs`.)
 
 ## Deploy + smoke (merge-gated) — the exact residual
 
