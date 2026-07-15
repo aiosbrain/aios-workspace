@@ -15,7 +15,7 @@
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
     "postinstall": "node scripts/postinstall-banner.mjs && node scripts/ensure-loop-built.mjs",
-    "gui": "dotenvx run -- node scripts/run-gui.mjs",
+    "gui": "node scripts/run-gui.mjs",
     "gui:build": "npm run build --workspace gui/client",
     "aios": "dotenvx run -- node scripts/aios.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
