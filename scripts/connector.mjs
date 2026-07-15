@@ -73,6 +73,7 @@ export function listConnectors(repo) {
   const teamConn = (bp && bp.connectors) || {};
   return Object.values(descs).map((d) => {
     const t = teamConn[d.id];
+    const local = connectorLocalState(repo, d);
     return {
       id: d.id,
       name: d.name,
@@ -94,6 +95,12 @@ export function listConnectors(repo) {
       // team instance config (e.g. the Jira site URL) overrides/augments the descriptor's
       instance: { ...(d.instance || {}), ...((t && t.instance) || {}) },
       status: statuses[d.id] || d.status || "available",
+      // Presence only: never return a decrypted value to the GUI. `status` records whether
+      // setup completed; these booleans let the GUI distinguish a saved credential from its
+      // still-missing runtime artifact (for example, an older workspace with LINEAR_API_KEY
+      // already in its encrypted vault but no linear-direct skill installed).
+      credential_present: local.credential_present,
+      artifact_present: local.artifact_present,
       team_enabled: !!(t && t.enabled),
       verified_against_docs: (d.docs && d.docs.verified_against_docs) || null,
       // Dual-auth connectors (currently just Granola) report which path is active —
@@ -102,6 +109,36 @@ export function listConnectors(repo) {
       auth_path: d.id === "granola" ? granolaAuthPath(repo) : null,
     };
   });
+}
+
+/** Read-only local setup reconciliation. Values are reduced to booleans at this boundary. */
+export function connectorLocalState(repo, descriptor) {
+  const secrets = descriptor.auth_mode === "oauth" ? [] : descriptor.secrets || [];
+  const required = secrets.filter((s) => s.required !== false);
+  const present = new Set(secrets.filter((s) => Boolean(vaultGet(repo, s.env))).map((s) => s.env));
+  const credential_present =
+    secrets.length > 0 && required.every((s) => present.has(s.env)) && present.size > 0;
+
+  let artifact_present = false;
+  if (descriptor.transport === "skill") {
+    artifact_present = Boolean(
+      descriptor.skill?.skill_name &&
+      existsSync(path.join(repo, ".claude", "skills", descriptor.skill.skill_name))
+    );
+  } else if (descriptor.transport === "mcp") {
+    try {
+      const mcp = JSON.parse(readFileSync(path.join(repo, ".mcp.json"), "utf8"));
+      artifact_present = Boolean(
+        descriptor.mcp?.server_key && mcp.mcpServers?.[descriptor.mcp.server_key]
+      );
+    } catch {
+      artifact_present = false;
+    }
+  } else if (descriptor.transport === "api") {
+    // API connectors intentionally have no generated runtime artifact.
+    artifact_present = credential_present;
+  }
+  return { credential_present, artifact_present };
 }
 
 export function getDescriptor(repo, id) {
@@ -557,6 +594,49 @@ export function storeConnector(repo, descriptor, secretValues) {
 
   flipStatus(repo, descriptor.id, "wired");
   return { id: descriptor.id, status: "wired", transport: descriptor.transport };
+}
+
+/**
+ * Validate and finish setup from credentials already encrypted in this workspace.
+ * The decrypted values stay inside this server-side function and are never included
+ * in its result, making it safe for the GUI's token-gated API to return the result.
+ */
+export async function storeExistingConnector(
+  repo,
+  descriptor,
+  { validate = validateConnector, store = storeConnector } = {}
+) {
+  if (descriptor.auth_mode === "oauth") {
+    const error = new Error("OAuth credentials are stored remotely and cannot be reused locally");
+    error.code = "credential_missing";
+    throw error;
+  }
+  const secrets = {};
+  for (const spec of descriptor.secrets || []) {
+    const value = vaultGet(repo, spec.env);
+    if (value) secrets[spec.env] = value;
+  }
+  const missing = (descriptor.secrets || []).filter(
+    (spec) => spec.required !== false && !secrets[spec.env]
+  );
+  if (missing.length) {
+    const error = new Error("No complete saved credential is available for this connector");
+    error.code = "credential_missing";
+    throw error;
+  }
+
+  const validation = await validate(descriptor, secrets);
+  if (!validation.ok) return { ok: false, validation };
+  const stored = store(repo, descriptor, {
+    ...secrets,
+    ...(validation.captured || {}),
+  });
+  return {
+    ok: true,
+    ...stored,
+    identity: validation.identity,
+    instance: validation.instance,
+  };
 }
 
 /** Remove a connector's artifact + secret line, flip status back to available. */

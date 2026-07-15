@@ -359,6 +359,10 @@ export interface Connector {
   team_instance?: ConnectorInstanceField[];
   instance?: Record<string, string>;
   status: string;
+  /** Required local secret(s) are present in the encrypted workspace vault; no values cross API. */
+  credential_present?: boolean;
+  /** The connector's skill/MCP runtime artifact is installed. */
+  artifact_present?: boolean;
   team_enabled: boolean;
 }
 export interface ConnectorsResponse {
