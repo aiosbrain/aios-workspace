@@ -91,7 +91,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     },
     {
       id: "review",
-      label: "Review & Push",
+      label: "Team Brain Sync",
       icon: <UploadCloud size={16} />,
       onRun: () => run(() => setView("review")),
     },
