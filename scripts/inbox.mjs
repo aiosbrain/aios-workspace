@@ -30,7 +30,16 @@ import os from "node:os";
 import { c, die } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 
-const INBOX_SUBCOMMANDS = ["list", "rebuild", "compact", "outbox", "send", "m365-verify", "seed"];
+const INBOX_SUBCOMMANDS = [
+  "list",
+  "rebuild",
+  "compact",
+  "outbox",
+  "send",
+  "m365-verify",
+  "seed",
+  "status",
+];
 const M365_FIXTURE_SCENARIOS = ["happy", "bad-token", "missing-scope", "throttled"];
 
 // The I-02 journal event kinds the I-11 outbox emits (subset of INBOX_EVENT_KINDS).
@@ -687,6 +696,48 @@ export async function cmdInbox(repo, cfg, args) {
     return;
   }
 
+  // ── status — coordinator + adapter health (I-15 / AIO-396). Reads the admin-tier host-health state
+  //    file the Fly coordinator writes on every supervision tick; NEVER synced to the Team Brain. ──
+  if (sub === "status") {
+    const hh = loop.readHostHealth(repo);
+    const summary = loop.coordinatorHealthSummary(hh ? hh.adapters : []);
+    // A degraded coordinator exits non-zero (both output modes) so `aios inbox status` is scriptable.
+    if (hh && !summary.ok) process.exitCode = 1;
+    if (asJson) {
+      console.log(
+        JSON.stringify(
+          {
+            coordinator_ok: summary.ok,
+            generated_at: hh ? hh.generatedAt : null,
+            counts: summary.counts,
+            adapters: summary.adapters,
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
+    console.log(c.blue("aios inbox status") + c.dim("  (admin-tier local; never synced)"));
+    if (!hh) {
+      console.log(
+        c.dim("  no host-health state yet — the coordinator has not reported (local-only run?)")
+      );
+      return;
+    }
+    const badge = summary.ok ? c.green("● healthy") : c.red("● degraded");
+    console.log(
+      `  coordinator: ${badge}   ${c.dim(
+        `${summary.counts.healthy}/${summary.counts.total} adapters healthy · reported ${hh.generatedAt}`
+      )}`
+    );
+    for (const a of summary.adapters) {
+      const mark = a.healthy ? c.green("✓") : c.yellow("⚠");
+      console.log(`    ${mark} ${a.adapter.padEnd(16)} ${a.state.padEnd(14)} ${c.dim(a.detail)}`);
+    }
+    return;
+  }
+
   const suggestion = nearestSubcommand(sub);
   die(
     (suggestion
@@ -700,7 +751,8 @@ export async function cmdInbox(repo, cfg, args) {
       "       aios inbox send --draft <draft.json> [--confirm] [--account <email>] [--json]\n" +
       "       aios inbox m365-verify [--fixture happy|bad-token|missing-scope|throttled] [--json]\n" +
       "       aios inbox seed [--review] [--owner <id,…>] [--json]\n" +
-      "       aios inbox seed --merge|--reject <id>   |   aios inbox seed --unmerge <id>"
+      "       aios inbox seed --merge|--reject <id>   |   aios inbox seed --unmerge <id>\n" +
+      "       aios inbox status [--json]"
   );
 }
 

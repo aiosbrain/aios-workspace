@@ -18,7 +18,14 @@ import {
 } from "./asks/harvest.js";
 import { readAsks, type Ask } from "./asks/store.js";
 import { readObservations, type LegacyActivityRecord } from "./inbox/observations.js";
-import { assembleFromObservations, type InboxView, type Ranker } from "./inbox/cli.js";
+import {
+  assembleFromObservations,
+  type InboxView,
+  type InboxItem,
+  type Ranker,
+} from "./inbox/cli.js";
+// Local bindings for host-health merge (a re-export does NOT bring a symbol into local scope).
+import { readHostHealth, unhealthyInboxItems } from "./inbox/host-health.js";
 // Composition-point wiring for the capability seam → durable I-02 journal (AIO-427). Local bindings
 // (a `export … from` re-export does NOT bring a symbol into local scope) for `createDurableCapabilityJournal`.
 import { appendInboxEvent, readJournalSegments, INBOX_DIR_REL } from "./inbox/journal.js";
@@ -529,6 +536,7 @@ export {
   type Ranker,
   type AssembleInput,
   type RenderColors,
+  type InboxHealthBadge,
 } from "./inbox/cli.js";
 
 /** Admin-tier LOCAL default for I-04's relationship/project registry, read by `buildInbox` to build
@@ -542,6 +550,80 @@ export function inboxRankingRegistryPath(root: string): string {
 }
 
 export { createInboxRanker, toRankInput } from "./inbox/ranker-adapter.js";
+
+// Unified Inbox — Fly coordinator host (I-15 / AIO-396, the G6b gate). Adapter supervision (restart
+// policy / backoff / crash-loop detection), the AdapterHealth→Signal/AttentionItem projection, the
+// per-adapter credential broker + sandbox fence, and the remote-access device-identity workstream.
+// ALL admin-tier local host state — never synced to the Team Brain. `src/operator-loop/comms/sender.ts`
+// stays byte-for-byte untouched. Deploy to Fly is merge-gated on I-11 (see the provisioning runbook).
+export {
+  DEFAULT_SUPERVISOR_POLICY,
+  ADAPTER_HEALTH_STATES,
+  backoffFor,
+  isUnhealthy,
+  foldSupervisor,
+  type SupervisorPolicy,
+  type SupervisorEvent,
+  type SupervisorEventKind,
+  type AdapterHealthState,
+  type AdapterHealth,
+} from "./inbox/host-supervisor.js";
+export {
+  HOST_HEALTH_BASENAME,
+  HOST_HEALTH_REL,
+  HOST_HEALTH_SOURCE,
+  HOST_HEALTH_STATE_VERSION,
+  MAX_ADAPTER_ID_LEN,
+  MAX_DETAIL_LEN,
+  sanitizeAdapterHealth,
+  adapterHealthSignal,
+  healthToInboxItem,
+  unhealthyInboxItems,
+  coordinatorHealthSummary,
+  hostHealthPath,
+  writeHostHealth,
+  readHostHealth,
+  type CoordinatorHealth,
+  type HostHealthRead,
+} from "./inbox/host-health.js";
+export {
+  STORE_RESERVED_KEYS,
+  CredentialScopeError,
+  createCredentialBroker,
+  crossScopeLeaks,
+  checkPathAccess,
+  checkEgress,
+  type CredentialScopes,
+  type CredentialResolver,
+  type CredentialBroker,
+  type CrossScopeLeak,
+  type AdapterSandbox,
+} from "./inbox/credential-broker.js";
+export {
+  DEVICE_SCOPES,
+  DEVICE_REGISTRY_BASENAME,
+  DEVICE_REGISTRY_REL,
+  DEVICE_REGISTRY_VERSION,
+  DEFAULT_MAX_NONCES,
+  NONCE_STORE_BASENAME,
+  NONCE_STORE_REL,
+  createDeviceRegistry,
+  createHostDeviceRegistry,
+  fileDeviceStore,
+  memoryDeviceStore,
+  memoryNonceStore,
+  fileNonceStore,
+  deviceRegistryPath,
+  type DeviceScope,
+  type DeviceRecord,
+  type DeviceStore,
+  type DeviceRegistry,
+  type DeviceRegistryOptions,
+  type DeviceVerifyReason,
+  type DeviceVerifyResult,
+  type NonceStore,
+  type NonceConsumeResult,
+} from "./inbox/device-identity.js";
 
 /**
  * Loop composition point (Constitution §4) for `aios inbox`: read the asks store + the enriched
@@ -565,6 +647,8 @@ export function buildInbox(
     asksOverride?: readonly Ask[];
     activityPaths?: string[];
     observationsPath?: string;
+    /** Skip merging host-health rows even if the state file is present (dual-read parity fixtures). */
+    hostHealth?: boolean;
   } = {}
 ): InboxView {
   const ranker =
@@ -596,10 +680,21 @@ export function buildInbox(
       }
     }
   }
+  // Merge host-health AttentionItems (I-15): a degraded channel adapter surfaces in the SAME queue,
+  // protected above the fold. Read from the admin-tier host-health state file the coordinator writes;
+  // absent file → no rows (local dev without a supervisor). Opt-out via `hostHealth: false` so the
+  // I-09 dual-read parity fixtures stay a pure asks∪observations set.
+  let healthRows: InboxItem[] = [];
+  if (opts.hostHealth !== false) {
+    const hh = readHostHealth(root);
+    if (hh)
+      healthRows = unhealthyInboxItems(hh.adapters, hh.generatedAt || new Date(0).toISOString());
+  }
   return assembleFromObservations({
     asks,
     enriched: observations,
     legacy,
+    healthRows,
     now: opts.now,
     sloMs: opts.sloMs,
     ranker,

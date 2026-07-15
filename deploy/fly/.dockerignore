@@ -1,0 +1,15 @@
+# Keep the coordinator image lean + admin-tier-safe: never bake local state, secrets, or the GUI
+# build into the Fly image. The image compiles src/ fresh (see Dockerfile); it does not need these.
+node_modules
+dist
+.aios
+.aios-nda
+.git
+.env
+.env.keys
+*.log
+gui/client/dist
+gui/client/node_modules
+coverage
+test
+examples

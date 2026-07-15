@@ -58,6 +58,18 @@ export type InboxBucket = "needs-you" | "in-flight" | "fyi" | "thread" | "done";
 export type InboxOrigin = "agent-event" | "thread-state";
 
 /**
+ * Content-free host-health badge carried by an `agent-event` row that represents a degraded channel
+ * adapter (I-15 / AIO-396). Projected from `AdapterHealth` (host-supervisor.ts) — no message bodies,
+ * no credentials, just adapter id / supervision state / restart count.
+ */
+export interface InboxHealthBadge {
+  adapter: string;
+  state: string;
+  detail: string;
+  restarts: number;
+}
+
+/**
  * One row of the unified queue (the read-model projection). The v1 ask fields ride UNCHANGED inside
  * `ask` for `agent-event` rows (dual-read parity); `observation` carries the projected thread for
  * `thread-state` rows. The flat fields (`bucket`/`protected`/`why`/`attention_state`/…) are the
@@ -76,10 +88,13 @@ export interface InboxItem {
   attention_state: string;
   action_state: string;
   ts: string;
-  /** Present iff `origin === "agent-event"` — the v1 ask, byte-identical to `aios asks --json`. */
+  /** Present iff `origin === "agent-event"` AND the row is a real ask — the v1 ask, byte-identical
+   *  to `aios asks --json`. Host-health `agent-event` rows carry `health` instead (never both). */
   ask?: Ask;
   /** Present iff `origin === "thread-state"` — the projected observation. */
   observation?: ProjectedItem;
+  /** Present iff the row is a host-health `agent-event` (I-15) — see `InboxHealthBadge`. */
+  health?: InboxHealthBadge;
 }
 
 export interface Staleness {
@@ -123,6 +138,9 @@ export interface AssembleInput {
   asks: readonly Ask[];
   /** Already-projected thread items (enriched ∪ legacy), e.g. from `projectObservations`. */
   threads: readonly ProjectedItem[];
+  /** Pre-mapped host-health `agent-event` rows (I-15), merged + ranked with everything else. These
+   *  are NOT thread observations, so they never affect the staleness computation. */
+  healthRows?: readonly InboxItem[];
   now?: Date;
   sloMs?: number;
   ranker?: Ranker;
@@ -249,7 +267,8 @@ export function assembleInboxView(input: AssembleInput): InboxView {
   const sloMs = input.sloMs ?? FRESHNESS_SLO_MS;
   const askItems = input.asks.map(askToItem);
   const threadItems = input.threads.map(threadToItem);
-  const items = rankItems([...askItems, ...threadItems], input.ranker);
+  const healthItems = input.healthRows ?? [];
+  const items = rankItems([...askItems, ...threadItems, ...healthItems], input.ranker);
   return {
     items,
     ranker_version: input.ranker?.version ?? INBOX_RANKER_VERSION_FALLBACK,
