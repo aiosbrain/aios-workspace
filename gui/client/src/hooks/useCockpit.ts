@@ -430,7 +430,16 @@ export function useCockpit() {
       .catch(() => {});
     api
       .get<{ repo?: string }>("/api/info")
-      .then((d) => setRepo(d.repo || ""))
+      .then((d) => {
+        const nextRepo = d.repo || "";
+        setRepo(nextRepo);
+        if (typeof document !== "undefined" && nextRepo) {
+          const base = nextRepo.split("/").filter(Boolean).pop() || "AIOS Workspace";
+          document.title = base
+            .replace(/[-_]+/g, " ")
+            .replace(/\b\w/g, (letter) => letter.toUpperCase());
+        }
+      })
       .catch(() => {});
     api
       .get<ConfigResponse>("/api/config")

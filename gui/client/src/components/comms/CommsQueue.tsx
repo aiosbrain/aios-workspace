@@ -1,19 +1,39 @@
-/**
- * CommsQueue (I-14 / AIO-395) — the ranked queue, left half of the Command Deck split-screen.
- *
- * Renders the three trust affordances the design ruling makes load-bearing: the PROTECTED PARTITION
- * (protected rows above a visible separator), a per-row "why now" string (I-04), and the ranker version
- * + honest staleness in the header. Read-only; selecting a row drives the detail pane.
- */
+/** Quiet, scan-first queue. Ranking and protection still determine order; they are not UI chrome. */
 
-import { Terminal, Mail, AlertTriangle } from "lucide-react";
+import { Bot, CalendarDays, Mail, Terminal } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { StateChip } from "./AskCard";
 import { deriveAskState, type InboxItem, type InboxView } from "./types";
-import { itemLabel, itemSnippet, itemMeta, ageLabel } from "./presenters";
+import { itemLabel, itemSnippet, ageLabel } from "./presenters";
 
-const EYEBROW =
-  "px-1 pb-1 font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground";
+function sourceFor(item: InboxItem) {
+  if (item.origin === "agent-event") {
+    return { label: item.source || "Agent", Glyph: Terminal };
+  }
+  if (item.observation?.object_kind === "calendar-event" || item.source === "calendar") {
+    return { label: "Calendar", Glyph: CalendarDays };
+  }
+  return { label: "Gmail", Glyph: Mail };
+}
+
+function stateLabel(item: InboxItem) {
+  const state = deriveAskState(item);
+  if (state === "action_pending") return "Pending";
+  if (state === "delivery_failed" || state === "reopened_failed") return "Failed";
+  if (state === "outcome_unknown") return "Unknown";
+  return state.charAt(0).toUpperCase() + state.slice(1);
+}
+
+export function refreshLabel(view: InboxView) {
+  const refresh = view.refresh;
+  if (!refresh) return null;
+  if (refresh.status === "refreshing" && !refresh.last_success_at) return "Updating…";
+  if (refresh.status === "failed" || refresh.status === "unavailable") return refresh.error;
+  if (refresh.last_success_at) {
+    const prefix = refresh.status === "degraded" ? "Partly updated" : "Updated";
+    return `${prefix} ${ageLabel(refresh.last_success_at)}${refresh.status === "degraded" ? " · some sources unavailable" : ""}`;
+  }
+  return null;
+}
 
 function QueueRow({
   item,
@@ -24,47 +44,58 @@ function QueueRow({
   selected: boolean;
   onSelect: (id: string) => void;
 }) {
-  const Glyph = item.origin === "agent-event" ? Terminal : Mail;
-  const state = deriveAskState(item);
+  const { label: source, Glyph } = sourceFor(item);
+  const summary = itemSnippet(item);
+  const state = stateLabel(item);
   return (
     <button
       type="button"
       onClick={() => onSelect(item.id)}
       aria-current={selected}
       className={cn(
-        "flex w-full flex-col gap-1 border-l-2 border-transparent px-3 py-2 text-left hover:bg-secondary",
+        "group flex w-full gap-3 border-l-2 border-b border-l-transparent border-b-border-visible px-3 py-3 text-left transition-colors hover:bg-secondary",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset",
         selected && "border-l-[var(--accent-line)] bg-[var(--accent-soft)]"
       )}
     >
-      <div className="flex items-center gap-2">
+      <span className="relative mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border-visible bg-muted text-muted-foreground">
+        <Glyph size={15} strokeWidth={1.8} />
         {item.protected && (
           <span
-            className="h-[6px] w-[6px] shrink-0 rounded-full bg-primary"
+            className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-card bg-primary"
             aria-label="protected"
           />
         )}
-        <Glyph size={14} className="shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
-          {itemLabel(item)}
-        </span>
-        <StateChip state={state} />
-        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-          {ageLabel(item.ts)}
-        </span>
-      </div>
-      {itemSnippet(item) && (
-        <p className="truncate pl-4 text-[12px] text-muted-foreground">{itemSnippet(item)}</p>
-      )}
-      <div className="flex flex-wrap items-center gap-x-2 pl-4 font-mono text-[11px] text-muted-foreground">
-        {itemMeta(item).map((m) => (
-          <span key={m} className={m.startsWith("runtime:") ? "text-primary" : undefined}>
-            {m}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
+            {itemLabel(item)}
           </span>
-        ))}
-        {/* the per-row "why now" string (I-04) — every surfaced item owes the user its reason. */}
-        <span className="text-muted-foreground">· {item.why}</span>
-      </div>
+          <span className="shrink-0 text-[11px] text-muted-foreground">{ageLabel(item.ts)}</span>
+        </span>
+        {summary && (
+          <span className="mt-0.5 block truncate text-[12px] leading-5 text-muted-foreground">
+            {summary}
+          </span>
+        )}
+        <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="shrink-0">{source}</span>
+          {item.account && <span className="truncate">· {item.account}</span>}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-foreground/75">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full bg-muted-foreground",
+                state === "Failed" && "bg-destructive",
+                state === "Pending" && "bg-[var(--aios-amber)]",
+                state === "Open" && "bg-[var(--green)]"
+              )}
+            />
+            {state}
+          </span>
+        </span>
+        <span className="sr-only">Why now: {item.why}</span>
+      </span>
     </button>
   );
 }
@@ -76,49 +107,50 @@ export interface CommsQueueProps {
 }
 
 export function CommsQueue({ view, selectedId, onSelect }: CommsQueueProps) {
-  const protectedItems = view.items.filter((i) => i.protected);
-  const rest = view.items.filter((i) => !i.protected);
-  const stale = view.staleness.stale;
-  const channels = new Set(
-    view.items.filter((i) => i.origin === "thread-state").map((i) => i.source || i.account)
-  ).size;
-  const agentAsks = view.items.filter((i) => i.origin === "agent-event").length;
+  const protectedItems = view.items.filter((item) => item.protected);
+  const rest = view.items.filter((item) => !item.protected);
+  const freshness = refreshLabel(view);
 
   return (
-    <div className="flex h-full min-h-0 w-[360px] shrink-0 flex-col border-r border-border-visible bg-card">
-      <div className="border-b border-border-visible px-3 py-3">
-        <div className="flex items-baseline gap-2">
-          <h1 className="font-display text-lg tracking-[var(--aios-tracking-snug)] text-foreground">
-            Queue
-          </h1>
-          <span className="font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-            ranked · {view.ranker_version}
-          </span>
-        </div>
-        <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-          {view.items.length} items · {channels} channels · {agentAsks} agent asks
-        </div>
-        {stale && (
-          <div className="mt-2 flex items-center gap-1.5 rounded-md border border-[color-mix(in_srgb,var(--aios-amber)_45%,var(--aios-border-visible))] bg-secondary px-2 py-1 text-[11px] text-[var(--aios-amber)]">
-            <AlertTriangle size={12} />
-            <span>
-              Read model is STALE — newest observation{" "}
-              {view.staleness.newest_observation_ts
-                ? ageLabel(view.staleness.newest_observation_ts)
-                : "?"}{" "}
-              old (SLO {Math.round(view.staleness.slo_ms / 60000)}m)
-            </span>
-          </div>
+    <section className="flex h-full min-h-0 w-[348px] shrink-0 flex-col border-r border-border-visible bg-card max-lg:w-[316px]">
+      <header className="border-b border-border-visible px-3 py-3">
+        <h1 className="text-[15px] font-semibold tracking-tight text-foreground">Inbox</h1>
+        {freshness && (
+          <p
+            className={cn(
+              "mt-0.5 text-[11px] text-muted-foreground",
+              (view.refresh?.status === "failed" || view.refresh?.status === "degraded") &&
+                "text-[var(--aios-amber)]",
+              view.refresh?.status === "unavailable" && "text-muted-foreground"
+            )}
+            role={view.refresh?.error ? "status" : undefined}
+          >
+            {freshness}
+          </p>
         )}
-      </div>
+      </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {protectedItems.length > 0 && (
+        {view.items.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center px-8 text-center">
+            <Mail size={18} className="mb-2 text-muted-foreground" />
+            <p className="text-[13px] font-medium text-foreground">Nothing needs attention</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">New messages will appear here.</p>
+          </div>
+        ) : (
           <>
-            <div className={cn(EYEBROW, "pt-2 text-primary")}>
-              Protected · approvals & unbreakables
-            </div>
             {protectedItems.map((item) => (
+              <QueueRow
+                key={item.id}
+                item={item}
+                selected={item.id === selectedId}
+                onSelect={onSelect}
+              />
+            ))}
+            {protectedItems.length > 0 && rest.length > 0 && (
+              <div role="separator" aria-label="protected partition" className="h-1 bg-muted/50" />
+            )}
+            {rest.map((item) => (
               <QueueRow
                 key={item.id}
                 item={item}
@@ -128,26 +160,11 @@ export function CommsQueue({ view, selectedId, onSelect }: CommsQueueProps) {
             ))}
           </>
         )}
-        {/* the protected-partition separator — protected always renders above this line. */}
-        <div
-          className="my-1 border-t border-border-visible"
-          role="separator"
-          aria-label="protected partition"
-        />
-        <div className={EYEBROW}>Ranked by attention</div>
-        {rest.length === 0 ? (
-          <p className="px-3 py-2 text-[12px] text-muted-foreground">Nothing below the line.</p>
-        ) : (
-          rest.map((item) => (
-            <QueueRow
-              key={item.id}
-              item={item}
-              selected={item.id === selectedId}
-              onSelect={onSelect}
-            />
-          ))
-        )}
       </div>
-    </div>
+
+      <footer className="flex items-center gap-1.5 border-t border-border-visible px-3 py-2 text-[11px] text-muted-foreground">
+        <Bot size={12} /> Telegram sends alerts only
+      </footer>
+    </section>
   );
 }

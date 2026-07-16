@@ -65,7 +65,7 @@ function projectionOf(rec) {
  * The unified read-only queue. Returns EXACTLY the `aios inbox --json` contract shape, assembled from the
  * same compiled read model, so the GUI and the CLI never diverge. `raw` swaps to pure-chronological order.
  */
-export async function getInboxView(repo, { raw = false } = {}) {
+export async function getInboxView(repo, { raw = false, refresh = null } = {}) {
   const loop = await loadLoop();
   if (!loop || typeof loop.buildInbox !== "function") {
     const err = new Error("operator-loop is not built — run: npm run build:loop");
@@ -82,6 +82,7 @@ export async function getInboxView(repo, { raw = false } = {}) {
     ranker_version: view.ranker_version,
     generated_at: view.generated_at,
     staleness: view.staleness,
+    ...(refresh ? { refresh } : {}),
   };
 }
 

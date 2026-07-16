@@ -63,6 +63,17 @@ export interface InboxView {
   ranker_version: string;
   generated_at: string;
   staleness: Staleness;
+  refresh?: {
+    status: "idle" | "refreshing" | "ready" | "degraded" | "failed" | "unavailable";
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    error: string | null;
+    sources: {
+      gmail: string;
+      calendar: string;
+      telegram: "outbound_only";
+    };
+  };
 }
 
 /** I-03 safe-to-render display projection (no request payload — only the digest the human binds to). */

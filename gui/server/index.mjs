@@ -97,6 +97,7 @@ import {
   getInboxView,
   replyInboxAsk,
 } from "./inbox-api.mjs";
+import { createInboxRefresher } from "./inbox-refresh.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -546,7 +547,7 @@ const server = http.createServer((req, res) => {
       return res.end("unauthorized");
     }
     const raw = /^(1|true|raw)$/i.test(url.searchParams.get("raw") || "");
-    getInboxView(repo, { raw })
+    getInboxView(repo, { raw, refresh: inboxRefresher.snapshot() })
       .then((view) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(view));
@@ -1532,7 +1533,10 @@ wss.on("connection", (ws, req) => {
   });
 });
 
+const inboxRefresher = createInboxRefresher({ repo });
+
 server.listen(port, "127.0.0.1", () => {
+  inboxRefresher.start();
   console.log("");
   console.log("  aios-workspace GUI");
   console.log(`  repo:  ${repo}`);

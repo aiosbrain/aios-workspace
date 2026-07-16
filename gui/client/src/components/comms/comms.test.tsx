@@ -8,7 +8,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommsQueue } from "./CommsQueue";
+import { CommsQueue, refreshLabel } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
@@ -123,24 +123,35 @@ describe("CommsQueue", () => {
     expect(html.indexOf("Nightly ran clean")).toBeGreaterThan(sep);
     expect(html.indexOf("quarterly review notes attached")).toBeGreaterThan(sep);
 
-    // Every row owes the user its "why" string (I-04) — all four are present.
+    // Every row keeps its "why" explanation available to assistive technology without adding chrome.
     for (const why of ["open blocker", "tier-1 client · active engagement", "recency"]) {
       expect(html).toContain(why);
     }
-    // Header carries the ranker version.
-    expect(html).toContain("inbox-ranker-v1");
+    expect(html).not.toContain("inbox-ranker-v1");
+    expect(html).not.toContain("Ranked by attention");
+    expect(html).toContain("Telegram sends alerts only");
   });
 
-  test("shows the honest staleness banner only when the read model is stale", () => {
-    const fresh = fixtureView();
-    expect(
-      renderToStaticMarkup(<CommsQueue view={fresh} selectedId={null} onSelect={() => {}} />)
-    ).not.toContain("STALE");
-    const stale = fixtureView();
-    stale.staleness = { ...stale.staleness, stale: true };
-    expect(
-      renderToStaticMarkup(<CommsQueue view={stale} selectedId={null} onSelect={() => {}} />)
-    ).toContain("STALE");
+  test("freshness reports connector success time, not a future source occurrence time", () => {
+    const view = fixtureView();
+    view.staleness = {
+      ...view.staleness,
+      stale: true,
+      newest_observation_ts: "2099-01-01T00:00:00.000Z",
+    };
+    view.refresh = {
+      status: "ready",
+      last_attempt_at: "2026-07-14T09:04:59.000Z",
+      last_success_at: "2026-07-14T09:05:00.000Z",
+      error: null,
+      sources: { gmail: "ready", calendar: "ready", telegram: "outbound_only" },
+    };
+    expect(refreshLabel(view)).toMatch(/^Updated /);
+    const html = renderToStaticMarkup(
+      <CommsQueue view={view} selectedId={null} onSelect={() => {}} />
+    );
+    expect(html).not.toContain("2099");
+    expect(html).not.toContain("STALE");
   });
 });
 
