@@ -21,6 +21,16 @@ jobs:
           node-version: 20
       - run: npm run check:docs
 
+  context-health:
+    name: Context health guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - run: npm run check:context
+
   constitution:
     name: Constitution guards (domain isolation + size)
     runs-on: ubuntu-latest

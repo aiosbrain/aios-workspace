@@ -21,7 +21,7 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 | Skill | What it does |
 |---|---|
 | `agentic-maturity` | Place the workspace owner on the Agentic Maturity (AM) model and give them a prescribed next step. |
-| `ai-code-review` | Review AI-generated code, agent-produced diffs, pull requests, commits, or implementation summaries for security, correctness, maintainability, test coverage, supply-chain risk, and technical best practices. |
+| `ai-code-review` | Verify an agent wrap-up's checkable claims — review AI-generated diffs, PRs, commits, or implementation summaries and validate assertions like "CI green", "secrets rotated", "tests added", or "mergeable" against reality, plus security, correctness, and supply-chain risk. |
 | `aios-linear` | Manage the AIOS Linear board (the ONLY PM tool — Plane is retired). |
 | `aios-sync` | Sync this workspace with the AIOS Team Brain. |
 | `codebase-memory` | Use the codebase knowledge graph for structural code queries. |

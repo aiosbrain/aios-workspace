@@ -87,6 +87,7 @@ import { cmdLoop } from "./loop.mjs";
 import { cmdPromote } from "./promote.mjs";
 import { cmdTranscripts } from "./transcripts.mjs";
 import { cmdPm, printProjectionHealth } from "./pm.mjs";
+import { computeContextHealth } from "./context-health.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2360,6 +2361,37 @@ async function cmdAssessCodebase(repo, _cfg, _patterns, args = []) {
   if (modularity) for (const line of formatReportLines(modularity)) console.log(line);
 }
 
+// `aios context-health` — score the repo's "Context Engineering Health": whether the
+// agent-facing context (CLAUDE.md/RESOLVER.md/AGENTS.md, the resolver, tier frontmatter,
+// the decision log, the toolkit sync, the skills catalog) actually holds up. Offline,
+// read-only. See scripts/context-health.mjs for the check catalog + scoring bands.
+function cmdContextHealth(repo, args = []) {
+  const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
+  const asJson = args.includes("--json");
+  const result = computeContextHealth(target);
+
+  if (asJson) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(
+    `${c.bold ? c.bold("Context health") : "Context health"}: ${target} (${result.mode} mode)`
+  );
+  for (const chk of result.checks) {
+    const mark = chk.ok ? c.green("✓") : chk.kind === "hard" ? c.red("✗") : c.yellow("•");
+    console.log(`  ${mark} ${chk.label} — ${chk.detail}`);
+  }
+  console.log(`\n  Context health: ${result.summary}`);
+
+  const failing = result.checks.filter((chk) => !chk.ok).slice(0, 3);
+  if (failing.length) {
+    console.log("\n  Fix hints:");
+    for (const chk of failing)
+      console.log(`    ${chk.kind === "hard" ? "✗" : "•"} ${chk.id}: ${chk.detail}`);
+  }
+}
+
 // `aios learn` — read the owner's saved AEM placement (.claude/memory/MATURITY.md)
 // and prescribe the next module + patterns from the individual rubric's patternMap.
 // Offline. The `agentic-maturity` skill is what writes MATURITY.md; this is the quick
@@ -2648,6 +2680,9 @@ usage:
     [--install]                         for hermes: also run hermes skills install on each
   aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
+  aios context-health [path]            score the repo's Context Engineering Health: CLAUDE.md/
+    [--json]                            RESOLVER.md/AGENTS.md, tier frontmatter, decision log,
+                                         toolkit sync, skills catalog (offline, read-only, 0-4)
   aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
     [--base <ref>]                     --base defaults to origin/main; links node_modules,
                                        copies opencode.json/.claude/settings, wires hooks
@@ -2747,6 +2782,7 @@ const OFFLINE_CMDS = new Set([
   "onboard",
   "skills",
   "assess-codebase",
+  "context-health",
   "learn",
   "analyze",
   "relay",
@@ -2808,6 +2844,7 @@ try {
   else if (cmd === "graph") cmdGraph(repo, cfg, rest);
   else if (cmd === "skills") cmdSkills(repo, rest);
   else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
+  else if (cmd === "context-health") cmdContextHealth(repo, rest);
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay")
