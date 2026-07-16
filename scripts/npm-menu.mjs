@@ -40,6 +40,7 @@ export const CATEGORIES = {
       "check:inbox-audit",
       "pr:backlog",
       "test:gateway-contracts", // focused gateway contract conformance suite
+      "test:gateway-approval-contracts", // AIO-407 durable approval/admin extension
       "pretest", // npm runs this automatically before `npm test`
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],
