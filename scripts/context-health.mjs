@@ -653,3 +653,35 @@ export function computeContextHealth(repoPath, opts = {}) {
 
   return { mode: m, checks, hardFailures, softMisses, score, summary };
 }
+
+// Render a computeContextHealth result for the CLI (`aios context-health`). `colors` is
+// the caller's ANSI helper object ({ bold, green, red, yellow } — each string→string).
+export function renderContextHealth(result, target, colors) {
+  const id = (fn, s) => (typeof fn === "function" ? fn(s) : s);
+  const lines = [`${id(colors.bold, "Context health")}: ${target} (${result.mode} mode)`];
+  for (const chk of result.checks) {
+    const mark = chk.ok
+      ? id(colors.green, "✓")
+      : chk.kind === "hard"
+        ? id(colors.red, "✗")
+        : id(colors.yellow, "•");
+    lines.push(`  ${mark} ${chk.label} — ${chk.detail}`);
+  }
+  lines.push(`\n  Context health: ${result.summary}`);
+  const failing = result.checks.filter((chk) => !chk.ok).slice(0, 3);
+  if (failing.length) {
+    lines.push("\n  Fix hints:");
+    for (const chk of failing)
+      lines.push(`    ${chk.kind === "hard" ? "✗" : "•"} ${chk.id}: ${chk.detail}`);
+  }
+  return lines.join("\n");
+}
+
+// CLI entry for `aios context-health` — kept here (not in aios.mjs) so the dispatcher
+// stays under its size cap; aios.mjs passes its ANSI color helper through.
+export function runContextHealthCli(repo, args = [], colors = {}) {
+  const target = path.resolve(args.find((a) => !a.startsWith("--")) || repo);
+  const result = computeContextHealth(target);
+  if (args.includes("--json")) console.log(JSON.stringify(result, null, 2));
+  else console.log(renderContextHealth(result, target, colors));
+}
