@@ -5,7 +5,14 @@ import { describe, test, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CostBarChart, COST_CHART_H } from "./CostBarChart";
-import type { CostProviderActual } from "../../types/protocol";
+import {
+  CostSettingsForm,
+  buildConfigPatch,
+  formFromConfig,
+  parseUsd,
+  type CostSettingsFormValues,
+} from "./CostSettingsForm";
+import type { CostConfigResponse, CostProviderActual } from "../../types/protocol";
 
 const row = (
   provider: string,
@@ -67,5 +74,85 @@ describe("CostBarChart", () => {
     );
     expect(html).toContain("No actual spend recorded for 2026-07.");
     expect(html).toContain(`height="${COST_CHART_H}"`);
+  });
+});
+
+// ── Settings form: a failed config GET must never turn into a config wipe ──────────────────────────
+
+const BLANK_FORM: CostSettingsFormValues = { claude: "", cursor: "", codex: "", anthropic: "" };
+
+function renderForm(props: Partial<Parameters<typeof CostSettingsForm>[0]> = {}) {
+  return renderToStaticMarkup(
+    <CostSettingsForm
+      period="2026-07"
+      form={BLANK_FORM}
+      loaded={false}
+      loadError={null}
+      status={null}
+      busy={false}
+      onChange={() => {}}
+      onSave={() => {}}
+      onRetry={() => {}}
+      {...props}
+    />
+  );
+}
+
+describe("CostSettingsForm", () => {
+  test("Save and inputs are disabled until the config GET has hydrated the form", () => {
+    // Reviewer repro: GET failed → all-blank form. Saving it would post explicit
+    // nulls and delete every existing entry, so everything must be disabled.
+    const html = renderForm({ loaded: false, loadError: "http 500" });
+    const saveBtn = html.slice(html.lastIndexOf("<button"));
+    expect(saveBtn).toContain('disabled=""'); // the attribute, not the Tailwind variant
+    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(4);
+    expect(html).toContain("editing is disabled so a save can’t wipe your existing entries");
+    expect(html).toContain("Retry");
+  });
+
+  test("hydrated form is fully editable", () => {
+    const html = renderForm({
+      loaded: true,
+      form: { claude: "200", cursor: "20", codex: "", anthropic: "42.13" },
+    });
+    const saveBtn = html.slice(html.lastIndexOf("<button"));
+    expect(saveBtn).not.toContain('disabled=""');
+    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(0);
+    expect(html).toContain('value="42.13"');
+  });
+});
+
+describe("config patch round-trip", () => {
+  const CFG: CostConfigResponse = {
+    ok: true,
+    subscriptions: { claude: 200, cursor: null, codex: 0 },
+    metered: { anthropic: { "2026-07": 42.13 }, cursor: {}, codex: {}, opencode: {} },
+  };
+
+  test("formFromConfig displays exactly what the server resolved", () => {
+    expect(formFromConfig(CFG, "2026-07")).toEqual({
+      claude: "200",
+      cursor: "",
+      codex: "0",
+      anthropic: "42.13",
+    });
+  });
+
+  test("buildConfigPatch preserves hydrated values and nulls only true blanks", () => {
+    const built = buildConfigPatch(formFromConfig(CFG, "2026-07"), "2026-07");
+    expect(built).toEqual({
+      patch: {
+        subscriptions: { claude: 200, cursor: null, codex: 0 },
+        metered: { anthropic: { "2026-07": 42.13 } },
+      },
+    });
+  });
+
+  test("buildConfigPatch rejects invalid amounts instead of posting them", () => {
+    const built = buildConfigPatch({ ...BLANK_FORM, cursor: "lots" }, "2026-07");
+    expect(built).toEqual({ error: '"lots" isn\'t a valid USD amount' });
+    expect(parseUsd("$20")).toBe(20);
+    expect(parseUsd("  ")).toBeNull();
+    expect(Number.isNaN(parseUsd("-5") as number)).toBe(true);
   });
 });

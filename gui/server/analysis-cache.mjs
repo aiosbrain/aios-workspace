@@ -50,7 +50,7 @@ export class AnalyzeTimeoutError extends Error {
 /**
  * @param {object} opts
  * @param {(signal: AbortSignal) => Promise<string>} opts.exec — runs
- *   `aios analyze --json --since 30d` and resolves with its raw stdout. MUST honor
+ *   `aios analyze --json --since 35d` and resolves with its raw stdout. MUST honor
  *   the AbortSignal (node's execFile `signal` option kills the child on abort).
  * @param {string} opts.snapshotFile — path of the persisted last-good snapshot.
  * @param {number} [opts.freshMs] — how long a snapshot serves without a refresh.

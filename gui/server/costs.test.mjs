@@ -193,6 +193,23 @@ test("rollups sort known spend first, unknown last", () => {
   assert.equal(p.by_provider[0].provider, "claude"); // $200 tops the month
 });
 
+test("window coverage of the calendar month is surfaced, never silently partial", () => {
+  // Window starts before the 1st → the month is fully covered.
+  assert.equal(build().config_status.window_covers_month, true);
+  // Window starts ON the 1st → covered.
+  const onFirst = structuredClone(SAMPLE);
+  onFirst.window = { since: "2026-07-01", until: "2026-07-16" };
+  assert.equal(build({}, onFirst).config_status.window_covers_month, true);
+  // Window starts after the 1st (the old rolling `30d` on the 31st) → flagged,
+  // so a billing sum labeled "{period}" is never a silent undercount.
+  const partial = structuredClone(SAMPLE);
+  partial.window = { since: "2026-07-03", until: "2026-08-01" };
+  assert.equal(build({}, partial).config_status.window_covers_month, false);
+  // No window at all → nothing provable, no false alarm.
+  const p = buildCostsPayload(JSON.stringify({ costs: {} }), { period: PERIOD });
+  assert.equal(p.config_status.window_covers_month, true);
+});
+
 test("currentPeriod formats YYYY-MM (UTC)", () => {
   assert.equal(currentPeriod(new Date("2026-07-16T10:00:00Z")), "2026-07");
   assert.equal(currentPeriod(new Date("2026-12-31T23:59:59Z")), "2026-12");

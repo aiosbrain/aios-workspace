@@ -580,8 +580,12 @@ export interface CostResponse extends AnalysisCacheMeta {
   lines: CostLine[];
   by_provider: CostProviderActual[];
   totals: { month_usd: number };
-  /** Configuration completeness: providers with activity but no actual-spend source. */
-  config_status: { complete: boolean; unknown: string[] };
+  /**
+   * Configuration completeness: providers with activity but no actual-spend
+   * source, plus whether the analyze window provably covered the whole
+   * calendar month (false ⇒ billing sums for the period may be partial).
+   */
+  config_status: { complete: boolean; unknown: string[]; window_covers_month: boolean };
   cursor_error: string | null;
   anthropic_error?: string | null;
   error?: string | null;

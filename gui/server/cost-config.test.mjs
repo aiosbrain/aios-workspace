@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,7 +10,10 @@ import {
   editableCostConfig,
   readCostConfig,
   updateCostConfig,
+  coerceUsd,
+  configSubscriptionUsd,
 } from "./cost-config.mjs";
+import { buildCostsPayload } from "./costs.mjs";
 import { detectClaudePlan, loadCostConfig } from "../../scripts/analyze/claude-plan.mjs";
 
 function tmpRepo(initial) {
@@ -66,15 +69,50 @@ test("apply merges, deletes on null, and preserves unmanaged keys", () => {
   assert.notEqual(next, existing); // pure — input not mutated
   assert.equal(existing.claude.monthly_usd, 200);
 
-  // Nulls clear both claude keys and drop emptied month maps.
+  // Nulls clear ALL claude config keys (monthly_usd AND plan — a bare plan
+  // still resolves to a "config" price in claude-plan.mjs) and drop emptied
+  // month maps. Hand-added unmanaged keys survive.
   const cleared = applyCostConfigPatch(next, {
     subscriptions: { claude: null },
     metered: { anthropic: { "2026-06": null, "2026-07": null } },
   });
   assert.equal(cleared.subscriptions.claude, undefined);
   assert.equal(cleared.claude.monthly_usd, undefined);
-  assert.equal(cleared.claude.plan, "max_20x");
+  assert.equal(cleared.claude.plan, undefined);
+  assert.equal(cleared.claude.custom_note, "hand-added");
   assert.equal(cleared.metered, undefined);
+});
+
+test("clearing the Claude entry cannot resurrect as owner-entered (reviewer repro)", () => {
+  // Empirical scenario from PR #342 review: a config holding BOTH plan and
+  // monthly_usd, cleared from the GUI, must fall back to auto-detection —
+  // not keep showing $200 with "config"/owner-entered provenance forever.
+  const repo = tmpRepo({ claude: { plan: "max_20x", monthly_usd: 200 } });
+  const cleared = updateCostConfig(repo, { subscriptions: { claude: null } });
+  assert.equal(cleared.ok, true);
+  const onDisk = readCostConfig(repo);
+  assert.equal(onDisk.claude, undefined); // both keys gone → container dropped
+
+  // The CLI reader no longer resolves a "config"-sourced plan…
+  const plan = detectClaudePlan({ config: onDisk, env: {} });
+  assert.notEqual(plan.source, "config");
+  // …the Settings surface shows blank…
+  assert.equal(editableCostConfig(onDisk).subscriptions.claude, null);
+  // …and the ledger shows the keychain-detected plan with HONEST provenance.
+  const payload = buildCostsPayload(
+    JSON.stringify({
+      window: null,
+      costs: {
+        claude: { totals: { cost_usd: 1, events: 1 }, days: [] },
+        plan: { provider: "claude", plan: "max_20x", monthly_usd: 200, source: "keychain" },
+      },
+    }),
+    { config: onDisk, period: "2026-07" }
+  );
+  const line = payload.lines.find((l) => l.provider === "claude");
+  assert.equal(line.source, "detected");
+  assert.equal(payload.by_provider.find((b) => b.provider === "claude").status, "subscription");
+  rmSync(repo, { recursive: true, force: true });
 });
 
 test("updateCostConfig round-trips through the file and validates input", () => {
@@ -118,6 +156,63 @@ test("pre-existing legacy config keeps working end-to-end (claude-plan.mjs)", ()
   assert.equal(plan2.monthly_usd, 100);
   assert.equal(plan2.source, "config");
   rmSync(repo, { recursive: true, force: true });
+});
+
+test("updateCostConfig writes atomically (rename, no temp remnants)", () => {
+  const repo = tmpRepo({ claude: { monthly_usd: 200 } });
+  const ok = updateCostConfig(repo, { metered: { anthropic: { "2026-07": 1.5 } } });
+  assert.equal(ok.ok, true);
+  const files = readdirSync(path.join(repo, ".aios"));
+  assert.deepEqual(files, ["cost-config.json"]); // no .tmp left behind
+  assert.equal(readCostConfig(repo).metered.anthropic["2026-07"], 1.5);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("ledger and Settings share one coercion — hand-edited strings survive (reviewer repro)", () => {
+  // A hand-edited numeric string must be treated the same everywhere: counted
+  // by the ledger, displayed by the form, and preserved across a save.
+  const config = {
+    subscriptions: { cursor: { monthly_usd: "200" } },
+    metered: { anthropic: { "2026-07": "42.13" } },
+  };
+  assert.equal(coerceUsd("200"), 200);
+  assert.equal(coerceUsd(" 42.13 "), 42.13);
+  assert.equal(coerceUsd("junk"), null);
+  assert.equal(coerceUsd(""), null);
+  assert.equal(coerceUsd(-1), null);
+  // Ledger read path…
+  assert.equal(configSubscriptionUsd(config, "cursor"), 200);
+  const payload = buildCostsPayload(JSON.stringify({ window: null, costs: {} }), {
+    config,
+    period: "2026-07",
+  });
+  assert.equal(payload.lines.find((l) => l.provider === "cursor").amount_usd, 200);
+  assert.equal(payload.lines.find((l) => l.provider === "anthropic").amount_usd, 42.13);
+  // …and the Settings hydration agree.
+  const editable = editableCostConfig(config);
+  assert.equal(editable.subscriptions.cursor, 200);
+  assert.deepEqual(editable.metered.anthropic, { "2026-07": 42.13 });
+  // A hydrated-form save round-trip preserves the value (as a number).
+  const repo = tmpRepo(config);
+  const saved = updateCostConfig(repo, {
+    subscriptions: { cursor: editable.subscriptions.cursor },
+    metered: { anthropic: { "2026-07": editable.metered.anthropic["2026-07"] } },
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(readCostConfig(repo).subscriptions.cursor.monthly_usd, 200);
+  assert.equal(editableCostConfig(readCostConfig(repo)).subscriptions.cursor, 200);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("a bare claude.plan resolves like the CLI does (config price, editable, clearable)", () => {
+  const config = { claude: { plan: "max_20x" } };
+  // claude-plan.mjs maps a bare plan to its list price with source "config"…
+  const plan = detectClaudePlan({ config, env: {} });
+  assert.equal(plan.monthly_usd, 200);
+  assert.equal(plan.source, "config");
+  // …so the GUI readers must agree (Settings shows 200, not blank).
+  assert.equal(configSubscriptionUsd(config, "claude"), 200);
+  assert.equal(editableCostConfig(config).subscriptions.claude, 200);
 });
 
 test("readCostConfig tolerates missing or corrupt files", () => {

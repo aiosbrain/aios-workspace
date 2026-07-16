@@ -5,13 +5,18 @@ import { Freshness } from "../ui/freshness";
 import { cn } from "../../lib/cn";
 import type { CostConfigResponse, CostResponse } from "../../types/protocol";
 import { CostBarChart, colorFor, usd } from "./CostBarChart";
+import {
+  CostSettingsForm,
+  EMPTY_FORM,
+  buildConfigPatch,
+  formFromConfig,
+  type CostSettingsFormValues,
+} from "./CostSettingsForm";
 
 const REV_BTN =
   "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
 const PANEL = "flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4";
 const CARD = "rounded-lg border border-border-visible bg-secondary/40 px-4 py-3";
-const INPUT =
-  "w-24 rounded-[6px] border border-border-visible bg-background px-2 py-1 text-right font-mono text-[12px] tabular-nums text-foreground";
 
 const SOURCE_LABEL: Record<string, string> = {
   config: "owner-entered",
@@ -20,20 +25,6 @@ const SOURCE_LABEL: Record<string, string> = {
   session: "session",
 };
 const currentPeriod = () => new Date().toISOString().slice(0, 7);
-
-/** null = leave unset; NaN = invalid input. */
-function parseUsd(raw: string): number | null {
-  const s = raw.trim().replace(/^\$/, "");
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) && n >= 0 ? n : NaN;
-}
-
-const SUB_FIELDS = [
-  { key: "claude", label: "Claude subscription" },
-  { key: "cursor", label: "Cursor subscription" },
-  { key: "codex", label: "Codex subscription" },
-] as const;
 
 /** Owner-entered actuals editor — writes .aios/cost-config.json via the server. */
 function CostSettings({
@@ -44,61 +35,44 @@ function CostSettings({
   onSaved: () => void | Promise<void>;
 }) {
   const { api } = useConnection();
-  const [form, setForm] = useState<Record<string, string>>({
-    claude: "",
-    cursor: "",
-    codex: "",
-    anthropic: "",
-  });
+  const [form, setForm] = useState<CostSettingsFormValues>(EMPTY_FORM);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    api
-      .get<CostConfigResponse>("/api/costs/config")
-      .then((cfg) => {
-        if (!alive) return;
-        setForm({
-          claude: cfg.subscriptions.claude != null ? String(cfg.subscriptions.claude) : "",
-          cursor: cfg.subscriptions.cursor != null ? String(cfg.subscriptions.cursor) : "",
-          codex: cfg.subscriptions.codex != null ? String(cfg.subscriptions.codex) : "",
-          anthropic:
-            cfg.metered.anthropic?.[period] != null ? String(cfg.metered.anthropic[period]) : "",
-        });
-      })
-      .catch((e) => setStatus(`config load failed: ${(e as Error).message}`));
-    return () => {
-      alive = false;
-    };
+  const loadConfig = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const cfg = await api.get<CostConfigResponse>("/api/costs/config");
+      setForm(formFromConfig(cfg, period));
+      setLoaded(true);
+    } catch (e) {
+      setLoaded(false);
+      setLoadError((e as Error).message);
+    }
   }, [api, period]);
 
-  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setStatus(null);
-    setForm((f) => ({ ...f, [key]: e.target.value }));
-  };
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
 
   const save = async () => {
-    const parsed: Record<string, number | null> = {};
-    for (const key of ["claude", "cursor", "codex", "anthropic"]) {
-      const v = parseUsd(form[key]);
-      if (Number.isNaN(v)) {
-        setStatus(`"${form[key]}" isn't a valid USD amount`);
-        return;
-      }
-      parsed[key] = v;
+    if (!loaded) return; // never post deletes from a form that never hydrated
+    const built = buildConfigPatch(form, period);
+    if ("error" in built) {
+      setStatus(built.error);
+      return;
     }
     setBusy(true);
     setStatus(null);
     try {
-      const res = await api.post<CostConfigResponse>("/api/costs/config", {
-        subscriptions: { claude: parsed.claude, cursor: parsed.cursor, codex: parsed.codex },
-        metered: { anthropic: { [period]: parsed.anthropic } },
-      });
+      const res = await api.post<CostConfigResponse>("/api/costs/config", built.patch);
       if (!res.ok) {
         setStatus((res.errors ?? ["save failed"]).join("; "));
       } else {
         setStatus("saved");
+        setForm(formFromConfig(res, period));
         await onSaved();
       }
     } catch (e) {
@@ -108,62 +82,20 @@ function CostSettings({
   };
 
   return (
-    <div className={CARD}>
-      <div className="mb-1 text-[13px] font-semibold text-foreground">Enter exact actuals</div>
-      <p className="mb-3 text-[11px] text-muted-foreground">
-        Owner-entered figures override everything else and live only in{" "}
-        <code className="font-mono">.aios/cost-config.json</code> on this machine. Blank = unset
-        (falls back to billing, then a detected plan, then honest “unknown”).
-      </p>
-      <div className="flex flex-col gap-2">
-        {SUB_FIELDS.map((f) => (
-          <label
-            key={f.key}
-            className="flex items-center justify-between gap-3 text-[12px] text-foreground"
-          >
-            <span>
-              {f.label} <span className="text-muted-foreground">($/mo)</span>
-            </span>
-            <input
-              className={INPUT}
-              inputMode="decimal"
-              placeholder="—"
-              value={form[f.key]}
-              onChange={set(f.key)}
-              aria-label={`${f.label} in US dollars per month`}
-            />
-          </label>
-        ))}
-        <label className="flex items-center justify-between gap-3 text-[12px] text-foreground">
-          <span>
-            Anthropic API spend <span className="text-muted-foreground">({period}, $)</span>
-          </span>
-          <input
-            className={INPUT}
-            inputMode="decimal"
-            placeholder="—"
-            value={form.anthropic}
-            onChange={set("anthropic")}
-            aria-label={`Exact Anthropic API spend for ${period} in US dollars`}
-          />
-        </label>
-      </div>
-      <div className="mt-3 flex items-center gap-3">
-        <button className={REV_BTN} onClick={save} disabled={busy}>
-          Save
-        </button>
-        {status && (
-          <span
-            className={cn(
-              "text-[11px]",
-              status === "saved" ? "text-muted-foreground" : "text-destructive"
-            )}
-          >
-            {status}
-          </span>
-        )}
-      </div>
-    </div>
+    <CostSettingsForm
+      period={period}
+      form={form}
+      loaded={loaded}
+      loadError={loadError}
+      status={status}
+      busy={busy}
+      onChange={(key, value) => {
+        setStatus(null);
+        setForm((f) => ({ ...f, [key]: value }));
+      }}
+      onSave={save}
+      onRetry={loadConfig}
+    />
   );
 }
 
@@ -252,12 +184,22 @@ export function CostPanel() {
       {error && <div className="text-[11px] text-destructive">refresh failed: {error}</div>}
 
       {/* configuration completeness */}
-      {!data.config_status.complete && (
-        <div className={cn(CARD, "text-[11px] text-muted-foreground")}>
-          No actual-spend source for{" "}
-          <span className="text-foreground">{data.config_status.unknown.join(", ")}</span> — usage
-          was detected, but no owner-entered amount, billing data, or subscription exists. Enter the
-          real figure in Settings; nothing is estimated in the meantime.
+      {(!data.config_status.complete || !data.config_status.window_covers_month) && (
+        <div className={cn(CARD, "flex flex-col gap-1 text-[11px] text-muted-foreground")}>
+          {!data.config_status.complete && (
+            <span>
+              No actual-spend source for{" "}
+              <span className="text-foreground">{data.config_status.unknown.join(", ")}</span> —
+              usage was detected, but no owner-entered amount, billing data, or subscription exists.
+              Enter the real figure in Settings; nothing is estimated in the meantime.
+            </span>
+          )}
+          {!data.config_status.window_covers_month && (
+            <span>
+              Billing data starts {data.window?.since ?? "mid-month"}, after the 1st of {period} —
+              billed totals for this month may be incomplete (owner-entered figures are unaffected).
+            </span>
+          )}
         </div>
       )}
 

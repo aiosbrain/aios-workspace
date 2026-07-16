@@ -21,9 +21,18 @@
  * Cursor plan beats the dashboard usage number). Anthropic API metered spend is
  * a separate provider line, so it is ADDITIVE to the Claude subscription.
  *
+ * The analyze window must cover the whole calendar month (the route fetches
+ * `--since 35d`); when it provably doesn't (window.since after the 1st), the
+ * payload surfaces `config_status.window_covers_month: false` instead of
+ * silently undercounting billing-sourced lines.
+ *
  * Lives in its own module (not index.mjs, which self-boots an http server on
- * import) so it can be unit-tested without side effects. Zero dependencies.
+ * import) so it can be unit-tested without side effects. No npm dependencies —
+ * config-value coercion is shared with cost-config.mjs so the ledger and the
+ * Settings surface always agree on what a config value is worth.
  */
+
+import { configSubscriptionUsd, configMeteredUsd } from "./cost-config.mjs";
 
 /** Display order + labels for the providers analyze can emit. */
 export const PROVIDER_META = [
@@ -60,25 +69,6 @@ function monthTotal(block, period) {
     if (v != null) sum += v;
   }
   return round2(sum);
-}
-
-/**
- * Owner-configured flat subscription for a provider (USD/month), or null.
- * Reads the extended `subscriptions.<provider>` shape and falls back to the
- * legacy `claude.monthly_usd` key so pre-existing configs load unchanged
- * (the same key scripts/analyze/claude-plan.mjs reads).
- */
-export function configSubscriptionUsd(config, provider) {
-  const sub = config?.subscriptions?.[provider];
-  const v = usdOrNull(sub && typeof sub === "object" ? sub.monthly_usd : sub);
-  if (v != null) return v;
-  if (provider === "claude") return usdOrNull(config?.claude?.monthly_usd);
-  return null;
-}
-
-/** Owner-entered exact metered spend for a provider in a period, or null. */
-export function configMeteredUsd(config, provider, period) {
-  return usdOrNull(config?.metered?.[provider]?.[period]);
 }
 
 /** True when analyze saw any activity for this provider block. */
@@ -236,13 +226,23 @@ export function buildCostsPayload(stdout, { config = {}, period = currentPeriod(
     return (b.total_usd ?? 0) - (a.total_usd ?? 0);
   });
 
+  // Honest coverage: if the analyze window starts after the 1st of the month,
+  // billing/session sums for "{period}" are provably partial — surface it in
+  // the completeness indicator instead of silently undercounting.
+  const windowCoversMonth =
+    typeof data.window?.since === "string" ? data.window.since <= `${period}-01` : true;
+
   return {
     period,
     window: data.window ?? null,
     lines,
     by_provider: byProvider,
     totals: { month_usd: round2(lines.reduce((s, l) => s + l.amount_usd, 0)) },
-    config_status: { complete: unknown.length === 0, unknown },
+    config_status: {
+      complete: unknown.length === 0,
+      unknown,
+      window_covers_month: windowCoversMonth,
+    },
     cursor_error: costs.cursor_error ?? null,
     anthropic_error: costs.anthropic_error ?? null,
   };

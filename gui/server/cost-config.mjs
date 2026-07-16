@@ -13,15 +13,26 @@
  *   }
  *
  * Claude subscription edits are written to BOTH `claude.monthly_usd` (so the CLI
- * keeps working) and `subscriptions.claude` (the uniform new shape). Unknown keys
- * are always preserved — a pre-existing config keeps working with no migration.
+ * keeps working) and `subscriptions.claude` (the uniform new shape). CLEARING the
+ * Claude entry removes `claude.monthly_usd` AND `claude.plan` — a bare plan key
+ * also resolves to a "config" price in claude-plan.mjs, so leaving it behind
+ * would resurrect an owner-entered figure the GUI could never clear. After a
+ * clear, the value falls back to auto-detection (honest "detected" provenance).
+ * Unknown keys are always preserved — a pre-existing config keeps working with
+ * no migration.
+ *
+ * `coerceUsd` is THE shared coercion for config-sourced dollar values: the
+ * ledger read path (costs.mjs) and the Settings hydration both use it, so any
+ * value the ledger accepts (including a hand-edited numeric string) the form
+ * displays and preserves.
  *
  * Pure helpers (validate/apply) are exported for unit tests; only read/update
- * touch the filesystem. Zero dependencies.
+ * touch the filesystem. No npm dependencies.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { PLAN_PRICES } from "../../scripts/analyze/claude-plan.mjs";
 
 export const SUBSCRIPTION_PROVIDERS = ["claude", "cursor", "codex"];
 export const METERED_PROVIDERS = ["anthropic", "cursor", "codex", "opencode"];
@@ -46,6 +57,41 @@ export function readCostConfig(repo) {
 
 function validUsd(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_USD;
+}
+
+/**
+ * Shared coercion for config-sourced dollar values (ledger read path AND
+ * Settings hydration): finite number or numeric string, 0..MAX_USD → number,
+ * anything else → null.
+ */
+export function coerceUsd(v) {
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return validUsd(n) ? n : null;
+}
+
+/**
+ * Owner-configured flat subscription for a provider (USD/month), or null.
+ * Reads the extended `subscriptions.<provider>` shape, then the legacy Claude
+ * keys claude-plan.mjs reads: `claude.monthly_usd`, else a bare `claude.plan`
+ * mapped to its list price (that's what the CLI resolves it to, with source
+ * "config" — the GUI must agree so Settings and ledger never diverge).
+ */
+export function configSubscriptionUsd(config, provider) {
+  const sub = config?.subscriptions?.[provider];
+  const v = coerceUsd(sub && typeof sub === "object" ? sub.monthly_usd : sub);
+  if (v != null) return v;
+  if (provider === "claude") {
+    const legacy = coerceUsd(config?.claude?.monthly_usd);
+    if (legacy != null) return legacy;
+    const planPrice = PLAN_PRICES[config?.claude?.plan];
+    if (planPrice != null) return planPrice;
+  }
+  return null;
+}
+
+/** Owner-entered exact metered spend for a provider in a period (YYYY-MM), or null. */
+export function configMeteredUsd(config, provider, period) {
+  return coerceUsd(config?.metered?.[provider]?.[period]);
 }
 
 /**
@@ -108,7 +154,14 @@ export function applyCostConfigPatch(config, patch) {
   for (const [provider, v] of Object.entries(patch.subscriptions ?? {})) {
     if (v === null) {
       if (next.subscriptions) delete next.subscriptions[provider];
-      if (provider === "claude" && next.claude) delete next.claude.monthly_usd;
+      if (provider === "claude" && next.claude) {
+        // Clear BOTH legacy keys: a bare `claude.plan` still resolves to a
+        // "config"-sourced price in claude-plan.mjs, which would resurrect an
+        // owner-entered figure the GUI can never clear. Falling back to
+        // auto-detection ("detected" provenance) is the honest state.
+        delete next.claude.monthly_usd;
+        delete next.claude.plan;
+      }
     } else {
       next.subscriptions ??= {};
       next.subscriptions[provider] = { ...next.subscriptions[provider], monthly_usd: v };
@@ -137,22 +190,25 @@ export function applyCostConfigPatch(config, patch) {
   return next;
 }
 
-/** The subset the Settings surface edits, resolved from a parsed config. */
+/**
+ * The subset the Settings surface edits, resolved from a parsed config with the
+ * SAME helpers the ledger read path uses (configSubscriptionUsd/coerceUsd) — so
+ * any value the ledger accepts, the form displays and preserves.
+ */
 export function editableCostConfig(config) {
   const subscriptions = {};
   for (const p of SUBSCRIPTION_PROVIDERS) {
-    const sub = config?.subscriptions?.[p];
-    let v = sub && typeof sub === "object" ? sub.monthly_usd : sub;
-    if (p === "claude" && !validUsd(v)) v = config?.claude?.monthly_usd;
-    subscriptions[p] = validUsd(v) ? v : null;
+    subscriptions[p] = configSubscriptionUsd(config, p);
   }
   const metered = {};
   for (const p of METERED_PROVIDERS) {
     const months = config?.metered?.[p];
     metered[p] = {};
     if (months && typeof months === "object") {
-      for (const [period, v] of Object.entries(months)) {
-        if (PERIOD_RE.test(period) && validUsd(v)) metered[p][period] = v;
+      for (const period of Object.keys(months)) {
+        if (!PERIOD_RE.test(period)) continue;
+        const v = configMeteredUsd(config, p, period);
+        if (v != null) metered[p][period] = v;
       }
     }
   }
@@ -168,6 +224,10 @@ export function updateCostConfig(repo, patch) {
   if (errors.length) return { ok: false, errors };
   const next = applyCostConfigPatch(readCostConfig(repo), patch);
   mkdirSync(path.join(repo, ".aios"), { recursive: true });
-  writeFileSync(configPath(repo), JSON.stringify(next, null, 2) + "\n", "utf8");
+  // Atomic write: temp file + rename, so a crash mid-write never truncates the config.
+  const file = configPath(repo);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", "utf8");
+  renameSync(tmp, file);
   return { ok: true, config: next };
 }
