@@ -26,7 +26,7 @@ export const CATEGORIES = {
   },
   Build: {
     description: "packaging the desktop app / GUI bundle",
-    scripts: ["gui:build", "app:dev", "app:build", "app:icon"],
+    scripts: ["gui:preflight", "gui:build", "app:dev", "app:build", "app:icon"],
   },
   "Internal / CI": {
     description: "maintainers and automation — you rarely need these directly",
