@@ -26,8 +26,24 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import type { Tier } from "../signal.js";
+
+const require = createRequire(import.meta.url);
+const recoveryPolicy = require(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+    "hooks",
+    "asks-claim-recovery.cjs"
+  )
+) as {
+  claimRecoveryDecision: (claim: unknown, nowMs: number) => "recover" | "busy";
+  processIdentity: (pid: number) => string | null;
+};
 
 export const ASKS_STORE_REL = ".aios/loop/asks/asks.ndjson";
 export const ASKS_SCHEMA_VERSION = 1;
@@ -501,59 +517,12 @@ function foldedUnderLock(root: string): Ask[] {
   return existsSync(abs) ? foldLines(readFileSync(abs, "utf8").split(/\r?\n/)).asks : [];
 }
 
-function processIdentity(pid: number): string | null {
-  if (!Number.isSafeInteger(pid) || pid <= 1) return null;
-  try {
-    if (process.platform === "linux") {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      const close = stat.lastIndexOf(")");
-      const fields = stat.slice(close + 2).split(" ");
-      return fields[19] ? `linux-start:${fields[19]}` : null;
-    }
-    const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
-      encoding: "utf8",
-      timeout: 1_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return started ? `${process.platform}-start:${started}` : null;
-  } catch {
-    return null;
-  }
-}
-
-function pidLiveness(pid: number | null): "alive" | "dead" | "unknown" {
-  if (!pid || !Number.isSafeInteger(pid) || pid <= 1) return "unknown";
-  try {
-    process.kill(pid, 0);
-    return "alive";
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return "dead";
-    if (code === "EPERM") return "alive";
-    return "unknown";
-  }
-}
-
-/**
- * Dead PID or a reused PID (different start identity) is authoritative recovery evidence. When OS
- * identity cannot be inspected, fail closed until the conservative lease expires, then recover so
- * legacy/uncertain claims cannot wedge an ask forever.
- */
-function claimRecoverable(claim: NonNullable<Ask["replyClaim"]>, nowMs: number): boolean {
-  const liveness = pidLiveness(claim.ownerPid);
-  if (liveness === "dead") return true;
-  if (liveness === "alive" && claim.ownerPid && claim.ownerIdentity) {
-    const currentIdentity = processIdentity(claim.ownerPid);
-    if (currentIdentity) return currentIdentity !== claim.ownerIdentity;
-    // Identity inspection is uncertain: fail closed for the full lease (which exceeds the SDK
-    // timeout), then recover boundedly so an uninspectable/reused PID cannot wedge the ask forever.
-  }
-  const expiresMs = Date.parse(claim.expiresAt);
-  return Number.isFinite(expiresMs) && nowMs >= expiresMs;
-}
-
 function releaseAbandonedClaim(root: string, ask: Ask, at: string): boolean {
-  if (!ask.replyClaim || !claimRecoverable(ask.replyClaim, Date.parse(at))) return false;
+  if (
+    !ask.replyClaim ||
+    recoveryPolicy.claimRecoveryDecision(ask.replyClaim, Date.parse(at)) !== "recover"
+  )
+    return false;
   appendFileSync(
     storePath(root),
     JSON.stringify({
@@ -583,7 +552,7 @@ export function claimReply(
     const acquiredMs = Date.parse(at);
     if (!Number.isFinite(acquiredMs)) return "busy";
     const expiresAt = new Date(acquiredMs + REPLY_CLAIM_LEASE_MS).toISOString();
-    const ownerIdentity = processIdentity(ownerPid);
+    const ownerIdentity = recoveryPolicy.processIdentity(ownerPid);
     appendFileSync(
       storePath(root),
       JSON.stringify({

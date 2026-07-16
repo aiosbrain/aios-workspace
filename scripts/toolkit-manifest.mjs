@@ -65,6 +65,12 @@ export const MANAGED_PATHS = [
   { dest: "hooks/team-ops-guard.sh", src: "hooks/team-ops-guard.sh", kind: "file", exec: true },
   { dest: "hooks/asks-capture.mjs", src: "hooks/asks-capture.mjs", kind: "file", exec: true },
   {
+    dest: "hooks/asks-claim-recovery.cjs",
+    src: "hooks/asks-claim-recovery.cjs",
+    kind: "file",
+    exec: true,
+  },
+  {
     dest: "hooks/decision-capture.mjs",
     src: "hooks/decision-capture.mjs",
     kind: "file",

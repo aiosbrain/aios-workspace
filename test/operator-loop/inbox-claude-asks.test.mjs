@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -309,6 +310,44 @@ test("GET reconciliation cannot resolve a partial UI reply that later fails", as
         sessionId: SESSION,
         timestamp: "2099-01-01T00:00:00.000Z",
         message: { content: "I returned outside the failed GUI reply" },
+      },
+    ]);
+    assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 1);
+    assert.equal(loop.readAsks(f.root).asks[0].status, "resolved");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("GET reconciliation recovers a dead claim but quarantines its prompt until a later turn", () => {
+  const f = fixture();
+  try {
+    recordAsk(f.root, f.transcriptPath);
+    const child = [
+      `import * as loop from ${JSON.stringify(new URL("../../dist/operator-loop/index.js", import.meta.url).href)};`,
+      `if (loop.claimReply(process.argv[1], "ask-1", "dead-get-token") !== "claimed") process.exit(2);`,
+    ].join("\n");
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, f.root]);
+    writeTurns(f.transcriptPath, [
+      {
+        type: "user",
+        sessionId: SESSION,
+        timestamp: "2099-01-01T00:00:00.000Z",
+        message: { content: "crashed GUI prompt" },
+      },
+    ]);
+    assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 0);
+    const recovered = loop.readAsks(f.root).asks[0];
+    assert.equal(recovered.status, "open");
+    assert.equal(recovered.replyClaim, null);
+    assert.ok(recovered.reconcileAfter);
+
+    writeTurns(f.transcriptPath, [
+      {
+        type: "user",
+        sessionId: SESSION,
+        timestamp: "2099-01-01T00:01:00.000Z",
+        message: { content: "later independent prompt" },
       },
     ]);
     assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 1);

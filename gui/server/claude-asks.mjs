@@ -139,7 +139,7 @@ function canonicalAsk(loop, repo, id) {
 export function reconcileClaudeAsks(loop, repo, options = {}) {
   let resolved = 0;
   for (const ask of loop.readAsks(repo).asks) {
-    if (ask.status !== "open" || ask.replyClaim || !HOOK_SOURCES.has(ask.source)) continue;
+    if (ask.status !== "open" || !HOOK_SOURCES.has(ask.source)) continue;
     try {
       const createdAt = Date.parse(ask.createdAt);
       const reconcileAfter = Date.parse(ask.reconcileAfter || "");

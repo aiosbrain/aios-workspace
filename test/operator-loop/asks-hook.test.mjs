@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ASKS_STORE_REL,
   claimReply,
@@ -20,6 +20,7 @@ import {
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOOK = path.join(ROOT, "hooks", "asks-capture.mjs");
+const DIST_INDEX = pathToFileURL(path.join(ROOT, "dist", "operator-loop", "index.js")).href;
 
 function ws() {
   return mkdtempSync(path.join(tmpdir(), "asks-hook-"));
@@ -296,6 +297,35 @@ test("UserPromptSubmit does not resolve an idle ask claimed by an in-flight GUI 
       "resolved",
       "ordinary later prompt still closes the idle ask"
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("crashed GUI claim: discovering prompt only recovers+watermarks; a later prompt resolves", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "Notification",
+      notification_type: "idle_prompt",
+      session_id: "session-crashed",
+      message: "Waiting for your input",
+    });
+    const ask = open(dir)[0];
+    const child = [
+      `import * as loop from ${JSON.stringify(DIST_INDEX)};`,
+      `if (loop.claimReply(process.argv[1], process.argv[2], "dead-hook-token") !== "claimed") process.exit(2);`,
+    ].join("\n");
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, dir, ask.id]);
+
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-crashed" });
+    const recovered = open(dir)[0];
+    assert.equal(recovered.status, "open");
+    assert.equal(recovered.replyClaim, null);
+    assert.ok(recovered.reconcileAfter, "crashed prompt is durably watermarked");
+
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-crashed" });
+    assert.equal(open(dir)[0].status, "resolved", "only the later distinct prompt resolves");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

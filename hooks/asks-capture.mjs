@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+import recoveryPolicy from "./asks-claim-recovery.cjs";
 
 const ASKS_STORE_REL = ".aios/loop/asks/asks.ndjson";
 const SCHEMA_VERSION = 1;
@@ -338,6 +339,7 @@ function resolveIdleForSession(root, payload) {
           }) + "\n"
         );
         claimed.delete(ask.id);
+        continue; // quarantine THIS crashed GUI prompt; only a later distinct prompt may resolve
       }
       if (
         !claimed.has(ask.id) &&
@@ -354,18 +356,7 @@ function resolveIdleForSession(root, payload) {
 }
 
 function abandonedClaim(claim, nowMs) {
-  const pid = claim?.ownerPid;
-  if (Number.isSafeInteger(pid) && pid > 1) {
-    try {
-      process.kill(pid, 0);
-      return false; // live (or PID reused): the server-side identity check is authoritative later
-    } catch (error) {
-      if (error?.code === "ESRCH") return true;
-      if (error?.code === "EPERM") return false;
-    }
-  }
-  const expiresMs = Date.parse(claim?.expiresAt || "");
-  return Number.isFinite(expiresMs) && nowMs >= expiresMs;
+  return recoveryPolicy.claimRecoveryDecision(claim, nowMs) === "recover";
 }
 
 async function readStdin() {
