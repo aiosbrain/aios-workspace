@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
+import { Freshness } from "../ui/freshness";
 import { cn } from "../../lib/cn";
 import type { CostResponse, CostSpendDay, CostTokenDay } from "../../types/protocol";
 
@@ -134,7 +135,17 @@ export function CostPanel() {
     load();
   }, [load]);
 
-  if (error)
+  // Stale-while-revalidate: while the server refreshes in the background, poll for
+  // the fresh snapshot (each poll is a warm cache hit; stops once refreshing clears).
+  useEffect(() => {
+    if (!data?.refreshing) return;
+    const t = window.setTimeout(load, 2500);
+    return () => window.clearTimeout(t);
+  }, [data, load]);
+
+  // Full-panel error only before the first data lands — after that the last-good
+  // content stays visible and failures surface via the Freshness indicator.
+  if (error && !data)
     return (
       <div className={PANEL}>
         <div className="self-center bg-transparent p-0.5 text-xs text-destructive">
@@ -172,10 +183,14 @@ export function CostPanel() {
             </>
           )}
         </span>
-        <button className={REV_BTN} onClick={load} disabled={busy}>
-          Refresh
-        </button>
+        <span className="flex items-center gap-3">
+          <Freshness meta={data} busy={busy} />
+          <button className={REV_BTN} onClick={load} disabled={busy}>
+            Refresh
+          </button>
+        </span>
       </div>
+      {error && <div className="text-[11px] text-destructive">refresh failed: {error}</div>}
 
       {/* flat subscription (real spend, not per-token) */}
       {data.plan?.monthly_usd != null && (

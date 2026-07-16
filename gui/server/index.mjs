@@ -74,6 +74,7 @@ import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
 import { buildMaturityPayload } from "./maturity.mjs";
 import { buildCostsPayload } from "./costs.mjs";
+import { createAnalysisCache } from "./analysis-cache.mjs";
 import {
   validateCadence,
   validateWindow,
@@ -491,50 +492,45 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ── maturity panel (token-gated; read-only) ──
-  // Runs a fresh `analyze --json` and reshapes it for the cockpit. CE stays SHADOW.
+  // Reshapes the shared 30-day analyze snapshot (analysis-cache.mjs — AIO-453:
+  // 60s fresh window, stale-while-revalidate, single-flight). CE stays SHADOW.
   if (url.pathname === "/api/maturity") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    runAios(["analyze", "--json", "--since", "30d"], (err, out) => {
-      if (err) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ error: err.message }));
-      }
-      try {
-        const payload = buildMaturityPayload(out);
+    analysisCache
+      .get()
+      .then(({ raw, ...meta }) => {
+        const payload = { ...buildMaturityPayload(raw), ...meta };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
-      } catch (e) {
+      })
+      .catch((e) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
-      }
-    });
+      });
     return;
   }
   // ── cost panel (token-gated; read-only) ──
-  // Runs a fresh `analyze --json` and reshapes its per-provider cost blocks for
-  // the cockpit. Individual (this-workspace) spend across all four providers.
+  // Reshapes the SAME shared 30-day analyze snapshot's per-provider cost blocks
+  // for the cockpit. Individual (this-workspace) spend across all four providers.
   if (url.pathname === "/api/costs") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    runAios(["analyze", "--json", "--since", "30d"], (err, out) => {
-      if (err) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ error: err.message }));
-      }
-      try {
-        const payload = buildCostsPayload(out);
+    analysisCache
+      .get()
+      .then(({ raw, ...meta }) => {
+        const payload = { ...buildCostsPayload(raw), ...meta };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
-      } catch (e) {
+      })
+      .catch((e) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
-      }
-    });
+      });
     return;
   }
   // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
@@ -1068,6 +1064,23 @@ function stripAnsi(s) {
   // eslint-disable-next-line no-control-regex
   return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
+
+// Shared 30-day analysis cache behind /api/maturity + /api/costs (AIO-453).
+// One `aios analyze --json --since 30d` snapshot serves both routes; the last-good
+// snapshot persists under .aios/gui/ (admin-tier, local-only — never synced).
+const analysisCache = createAnalysisCache({
+  exec: (signal) =>
+    new Promise((resolve, reject) => {
+      execFile(
+        process.execPath,
+        [AIOS_CLI, "analyze", "--json", "--since", "30d", "--repo", repo],
+        { cwd: repo, maxBuffer: 10 * 1024 * 1024, signal }, // abort kills the child
+        (err, stdout) => (err ? reject(err) : resolve(stdout))
+      );
+    }),
+  snapshotFile: path.join(repo, ".aios", "gui", "analysis-snapshot.json"),
+  log: (msg) => console.error(msg),
+});
 
 // Keys the GUI is allowed to write into aios.yaml. Callers validate the VALUE
 // (model ∈ ALLOWED_MODELS; personality ∈ scanned dir) before calling.
