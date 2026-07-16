@@ -109,10 +109,56 @@ test("refresh failure retains last-good data and exposes lastError", async () =>
   const r = await cache.get();
   assert.equal(r.raw, DOC); // last-good retained
   assert.equal(r.lastError, "boom");
-  await settle(); // that ^ get() kicked refresh #3 (still stale) — let it succeed
+  assert.equal(r.refreshing, false); // backed off — no new attempt in flight
+  t = 122_000; // past the failure backoff → the next stale hit retries
+  await cache.get();
+  await settle(); // let refresh #3 succeed
   const healed = await cache.get();
   assert.equal(healed.raw, DOC2);
   assert.equal(healed.lastError, null); // success clears the error
+});
+
+test("persistently failing refresh backs off: one spawn per window, refreshing false between", async () => {
+  let t = 0;
+  const { exec, calls } = fakeExec([{ value: DOC }, { error: new Error("down") }]);
+  const cache = createAnalysisCache({ exec, snapshotFile: tmpSnapshotFile(), now: () => t });
+  await cache.get(); // cold spawn
+  t = 61_000;
+  const stale = await cache.get(); // kicks the failing refresh
+  assert.equal(stale.refreshing, true);
+  await settle();
+  // hammer the routes within the backoff window — no new spawns, degraded mode
+  // reports refreshing:false + lastError (so the client's poll loop terminates)
+  for (const dt of [1, 2_500, 30_000, 59_999]) {
+    t = 61_000 + dt;
+    const r = await cache.get();
+    assert.equal(r.raw, DOC); // stale last-good still served
+    assert.equal(r.refreshing, false);
+    assert.equal(r.lastError, "down");
+  }
+  assert.equal(calls.length, 2); // cold + exactly ONE failed attempt
+  t = 61_000 + 60_000; // backoff window elapsed → exactly one more attempt
+  const retry = await cache.get();
+  assert.equal(retry.refreshing, true);
+  assert.equal(calls.length, 3);
+});
+
+test("a successful refresh clears the failure backoff", async () => {
+  let t = 0;
+  const { exec, calls } = fakeExec([{ value: DOC }, { error: new Error("down") }, { value: DOC2 }]);
+  const cache = createAnalysisCache({ exec, snapshotFile: tmpSnapshotFile(), now: () => t });
+  await cache.get();
+  t = 61_000;
+  await cache.get(); // failing refresh
+  await settle();
+  t = 121_000; // past the backoff → retry succeeds
+  await cache.get();
+  await settle();
+  assert.equal((await cache.get()).lastError, null);
+  t = 182_000; // stale again — no failure since, so revalidation kicks immediately
+  const r = await cache.get();
+  assert.equal(r.refreshing, true);
+  assert.equal(calls.length, 4);
 });
 
 test("cold failure with no snapshot rejects", async () => {

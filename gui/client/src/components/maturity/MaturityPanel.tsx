@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { Freshness } from "../ui/freshness";
@@ -47,8 +47,16 @@ export function MaturityPanel() {
 
   // Stale-while-revalidate: while the server refreshes in the background, poll for
   // the fresh snapshot (each poll is a warm cache hit; stops once refreshing clears).
+  // Hard cap the loop at ~30s so a server bug can never produce an infinite poll —
+  // after that we rely on the next navigation or a manual Refresh.
+  const pollDeadline = useRef(0);
   useEffect(() => {
-    if (!plan?.refreshing) return;
+    if (!plan?.refreshing) {
+      pollDeadline.current = 0;
+      return;
+    }
+    if (!pollDeadline.current) pollDeadline.current = Date.now() + 30_000;
+    if (Date.now() > pollDeadline.current) return;
     const t = window.setTimeout(load, 2500);
     return () => window.clearTimeout(t);
   }, [plan, load]);

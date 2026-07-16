@@ -19,7 +19,13 @@
  *     snapshot files are ignored — the cache just recomputes;
  *   • failure keeps last-good: a failed refresh never evicts the snapshot; the
  *     error message is exposed as `lastError` on every response until a refresh
- *     succeeds again.
+ *     succeeds again;
+ *   • failure backoff: after a failed refresh, stale hits do NOT start a new
+ *     background refresh for `failureBackoffMs` (60s) — they serve last-good with
+ *     `refreshing: false` + `lastError` set, so a persistently failing analyze
+ *     converges to one attempt per window instead of one per request (and the
+ *     client's refresh-poll loop terminates). A successful refresh clears the
+ *     backoff.
  *
  * Like maturity.mjs / costs.mjs this module is pure ESM with no server side
  * effects, so it can be unit-tested with an injected `exec` + clock.
@@ -30,6 +36,7 @@ import path from "node:path";
 
 export const FRESH_MS = 60_000;
 export const ANALYZE_TIMEOUT_MS = 30_000;
+export const FAILURE_BACKOFF_MS = 60_000;
 
 /** Typed timeout failure — `code` lets callers distinguish it from analyze errors. */
 export class AnalyzeTimeoutError extends Error {
@@ -47,6 +54,8 @@ export class AnalyzeTimeoutError extends Error {
  *   the AbortSignal (node's execFile `signal` option kills the child on abort).
  * @param {string} opts.snapshotFile — path of the persisted last-good snapshot.
  * @param {number} [opts.freshMs] — how long a snapshot serves without a refresh.
+ * @param {number} [opts.failureBackoffMs] — how long after a failed refresh before
+ *   a stale hit may start another background attempt.
  * @param {number} [opts.timeoutMs] — subprocess timeout.
  * @param {() => number} [opts.now] — clock seam for tests.
  * @param {(msg: string) => void} [opts.log] — non-fatal diagnostics sink.
@@ -55,6 +64,7 @@ export function createAnalysisCache({
   exec,
   snapshotFile,
   freshMs = FRESH_MS,
+  failureBackoffMs = FAILURE_BACKOFF_MS,
   timeoutMs = ANALYZE_TIMEOUT_MS,
   now = Date.now,
   log = () => {},
@@ -63,6 +73,8 @@ export function createAnalysisCache({
   let snapshot = null;
   /** @type {string | null} message of the last failed refresh; null when healthy */
   let lastError = null;
+  /** @type {number | null} when the last refresh failed — gates the stale-hit retry */
+  let lastFailureAt = null;
   /** @type {Promise<void> | null} the single-flight inflight refresh */
   let inflight = null;
 
@@ -108,10 +120,12 @@ export function createAnalysisCache({
         JSON.parse(raw); // a "successful" run must yield a parseable document
         snapshot = { raw, generatedAt: now() };
         lastError = null;
+        lastFailureAt = null; // success clears the failure backoff
         persist();
       } catch (e) {
         const err = ac.signal.aborted ? (ac.signal.reason ?? e) : e;
         lastError = err?.message || String(err);
+        lastFailureAt = now();
         throw err;
       } finally {
         clearTimeout(timer);
@@ -133,13 +147,17 @@ export function createAnalysisCache({
 
   /**
    * Resolve the current analyze document + freshness metadata.
-   * Warm → immediate; stale → immediate + background refresh; cold → awaits the
-   * (single-flight) run and rejects only when there is no last-good snapshot at all.
+   * Warm → immediate; stale → immediate + background refresh (unless a recent
+   * failure has it backed off — then `refreshing: false` with `lastError` set, so
+   * degraded mode converges); cold → awaits the (single-flight) run and rejects
+   * only when there is no last-good snapshot at all.
    * @returns {Promise<{raw: string, generatedAt: string, ageMs: number, refreshing: boolean, lastError: string | null}>}
    */
   async function get() {
     if (snapshot) {
-      if (now() - snapshot.generatedAt >= freshMs) refresh(); // stale-while-revalidate
+      const stale = now() - snapshot.generatedAt >= freshMs;
+      const backedOff = lastFailureAt !== null && now() - lastFailureAt < failureBackoffMs;
+      if (stale && !backedOff) refresh(); // stale-while-revalidate
       return { raw: snapshot.raw, ...meta() };
     }
     await refresh(); // cold: block on the shared run
