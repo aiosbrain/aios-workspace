@@ -44,14 +44,14 @@ export function detectScheduler(platform = process.platform) {
   return platform === "darwin" ? "launchd" : "cron";
 }
 
-// ── CLI invocation resolution (reuses the existing bin/aios + scripts/aios.mjs shim chain —
-//    the same resolution install-aios-shell.sh's aios() function and the npm "aios" script
+// Scheduler commands pin the workspace shim to the installing Node runtime (the existing shell and npm paths
 //    already rely on; no new mechanism) ──────────────────────────────────────────────────────
 
-export function resolveAiosInvocation(repo, { execPath = process.execPath, fs = nodeFs } = {}) {
-  const binAios = path.join(repo, "bin", "aios");
-  if (fs.existsSync(binAios)) return { command: binAios, baseArgs: [] };
+export function resolveAiosInvocation(repo, { execPath = process.execPath } = {}) {
   const cliScript = path.join(repo, "scripts", "aios.mjs");
+  // launchd and cron do not inherit the interactive shell PATH. The bin/aios wrapper uses
+  // bare `node`, which breaks for nvm installs. Pin the runtime that performs installation
+  // and invoke the existing workspace shim directly.
   return { command: execPath, baseArgs: [cliScript] };
 }
 
@@ -93,11 +93,12 @@ export function buildInstallPlan({
   platform = process.platform,
   home = os.homedir(),
   scheduler,
+  execPath = process.execPath,
 } = {}) {
   const { project } = resolveLoopIdentity(repo);
   const slug = project || slugify(path.basename(repo)) || "workspace";
   const chosenScheduler = scheduler || detectScheduler(platform);
-  const { command, baseArgs } = resolveAiosInvocation(repo);
+  const { command, baseArgs } = resolveAiosInvocation(repo, { execPath });
   const logsDir = path.join(repo, ".aios", "loop", "logs");
 
   const buildCommandLine = (argsList) =>

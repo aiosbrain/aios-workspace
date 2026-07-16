@@ -127,7 +127,8 @@ so the weekly closeout is assembly rather than archaeology.
 
 ## Cross-Cutting Constraints
 
-- **Runs from CLI and cockpit against the same core.** The CLI is the current canonical flow:
+- **Runs from CLI and cockpit against the same core.** The CLI is the canonical V1 beta flow;
+  cockpit parity is explicitly outside the V1 beta public claim. The CLI supports:
   `collect`, `manifest --explain`, `verify`, `weekly`, and `writeback`. MCP currently exposes
   `aios_loop_collect`; broader cockpit parity remains a release-readiness gap, not an implicit promise.
 - **Tier policy is the safety boundary.** No admin/private content reaches a shareable digest or

@@ -5,6 +5,10 @@ V1 build and dogfood hub is [`docs/v1-operator-loop/README.md`](./v1-operator-lo
 This page records what must be true before V1 is presented publicly or included in
 an OSS release.
 
+V1 beta scope is Unified Inbox plus the CLI-canonical Verified Operator Loop. The entire managed
+GitHub / Executor gateway workstream (AIO-399–AIO-409) is routed to V2 and is not part of the V1
+beta product or demo claim.
+
 ## Current Gate Status
 
 | Gate | Command / Evidence | Status |
@@ -16,18 +20,19 @@ an OSS release.
 | Full repo tests | `npm test` | **Pass** — 2026-07-14 on merged `main` |
 | Scaffold validators | `validation/validate-all.sh <workspace>` | **Pass** on fresh synthetic workspace; optional warnings only |
 | Secret/leak gates | `validation/check-secrets.sh .` and `scripts/leak-gate.sh .` | **Pass** — 2026-07-14 |
+| Installed scheduler preflight | [2026-07-16 live preflight](./evidence/v1-operator-loop/2026-07-16-live-preflight/README.md) | **Pass mechanically:** launchd daily, analyze, and weekly jobs each exited 0 under pinned Node 22 |
 | Website alignment | Cross-repo docs sync/review | Required before website says V1 is shipped |
 
 ## AIO-122 Exit Criteria Evidence
 
 | Exit criterion | Evidence source | Release state |
 |---|---|---|
-| Three consecutive weekly dogfood runs per active user with zero admin/private-tier leaks | [2026-07-14 synthetic pack](./evidence/v1-operator-loop/2026-07-14/README.md) | **Gap:** 1 clean synthetic weekly, 0 shipped leaks; longitudinal 3-run criterion not met |
-| Daily loop run on majority of working days | [`telemetry.json`](./evidence/v1-operator-loop/2026-07-14/telemetry.json) | **Gap:** 1/1 synthetic day only; not a multi-day adoption window |
+| Three consecutive weekly dogfood runs per active user with zero admin/private-tier leaks | [2026-07-14 synthetic pack](./evidence/v1-operator-loop/2026-07-14/README.md) plus [2026-07-16 live preflight](./evidence/v1-operator-loop/2026-07-16-live-preflight/README.md) | **Gap:** live scheduler preflight was clean, but it is not an accepted longitudinal run; 3-run criterion not met |
+| Daily loop run on majority of working days | [`telemetry.json`](./evidence/v1-operator-loop/2026-07-14/telemetry.json) plus [scheduler status](./evidence/v1-operator-loop/2026-07-16-live-preflight/scheduler-status.json) | **Gap:** installed daily automation now exits 0; multi-day adoption window has not started |
 | Median weekly closeout under 20 minutes after setup | Synthetic command timing + C8 telemetry | **Pass mechanically:** 0.1 min, n=1; insufficient longitudinal sample |
-| Shareable digest passes must-pass verifier criteria in at least 90% of accepted runs | [`verifier-team.json`](./evidence/v1-operator-loop/2026-07-14/verifier-team.json) | **Pass mechanically:** 100%, n=1; team and external passed |
-| At least 70% of accepted weekly runs produce approved next-week actions | [`writeback-approved.json`](./evidence/v1-operator-loop/2026-07-14/writeback-approved.json) | **Pass mechanically:** 100%, n=1 after C6 split-task compatibility fix |
-| CLI and cockpit parity against same plan/review/approve model | CLI commands plus cockpit loop/task handlers | **Partial:** shared closeout payload exists; MCP still exposes collect only |
+| Shareable digest passes must-pass verifier criteria in at least 90% of accepted runs | [`verifier-team.json`](./evidence/v1-operator-loop/2026-07-14/verifier-team.json) plus [live verifier summary](./evidence/v1-operator-loop/2026-07-16-live-preflight/verifier-summary.json) | **Pass mechanically:** synthetic and live preflight verifiers passed; accepted longitudinal denominator not established |
+| At least 70% of accepted weekly runs produce approved next-week actions | [`writeback-approved.json`](./evidence/v1-operator-loop/2026-07-14/writeback-approved.json) plus [live writeback preview](./evidence/v1-operator-loop/2026-07-16-live-preflight/writeback-preview-summary.json) | **Gap in live preflight:** 20 proposed actions were admin-tier and safely skipped; no live action approval counted |
+| CLI and cockpit parity against same plan/review/approve model | CLI commands plus cockpit loop/task handlers | **Scoped for beta:** CLI is canonical; cockpit parity is explicitly excluded from the V1 beta public claim |
 
 The synthetic run is evidence of mechanics, tier enforcement, and writeback behavior. It is not
 evidence of human habit adoption. AIO-122 remains In Progress until the longitudinal and cockpit
