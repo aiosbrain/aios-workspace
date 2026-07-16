@@ -1,0 +1,4 @@
+# Synthetic routing fixture for test/fixtures/fake-workspace (context-health.test.mjs).
+fixtures:
+  - intent: "Sample synthetic intent for the fixture workspace"
+    expected: "sample-check"
