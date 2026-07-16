@@ -49,22 +49,27 @@ test("detectScheduler: anything else (win32, freebsd, ...) -> cron", () => {
   assert.equal(detectScheduler("freebsd"), "cron");
 });
 
-// ── CLI invocation resolution (reuses bin/aios / scripts/aios.mjs, no new mechanism) ────────
+// CLI invocation resolution pins Node for non-interactive scheduler environments.
 
-test("resolveAiosInvocation: prefers bin/aios when present", () => {
+test("resolveAiosInvocation: bypasses bin/aios and pins the installing Node runtime", () => {
   const dir = tmpWorkspace();
   try {
     mkdirSync(path.join(dir, "bin"), { recursive: true });
-    writeFileSync(path.join(dir, "bin", "aios"), "#!/bin/sh\nexit 0\n");
-    const { command, baseArgs } = resolveAiosInvocation(dir);
-    assert.equal(command, path.join(dir, "bin", "aios"));
-    assert.deepEqual(baseArgs, []);
+    writeFileSync(
+      path.join(dir, "bin", "aios"),
+      '#!/bin/sh\nexec node "$PWD/scripts/aios.mjs" "$@"\n'
+    );
+    const { command, baseArgs } = resolveAiosInvocation(dir, {
+      execPath: "/nvm/node-v22/bin/node",
+    });
+    assert.equal(command, "/nvm/node-v22/bin/node");
+    assert.deepEqual(baseArgs, [path.join(dir, "scripts", "aios.mjs")]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("resolveAiosInvocation: falls back to node + scripts/aios.mjs", () => {
+test("resolveAiosInvocation: uses node + scripts/aios.mjs when bin/aios is absent", () => {
   const dir = tmpWorkspace();
   try {
     const { command, baseArgs } = resolveAiosInvocation(dir, { execPath: "/usr/bin/node" });
@@ -81,13 +86,19 @@ test("buildInstallPlan: three jobs (daily/weekly/analyze), scheduler follows pla
   const dir = tmpWorkspace();
   const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
   try {
-    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "darwin",
+      home,
+      execPath: "/nvm/node-v22/bin/node",
+    });
     assert.equal(plan.scheduler, "launchd");
     assert.deepEqual(
       plan.jobs.map((j) => j.key),
       ["daily", "weekly", "analyze"]
     );
     const daily = plan.jobs.find((j) => j.key === "daily");
+    assert.match(daily.commandLine, /^\/nvm\/node-v22\/bin\/node /);
     assert.match(daily.commandLine, /loop.*daily/);
     const weekly = plan.jobs.find((j) => j.key === "weekly");
     // The weekly job bundles the AM6 maturity report so its own "run weekly" nag has a real home.

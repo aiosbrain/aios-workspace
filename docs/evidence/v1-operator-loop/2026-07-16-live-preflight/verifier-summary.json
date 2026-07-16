@@ -1,0 +1,9 @@
+{
+  "audience": "team",
+  "cadence": "weekly",
+  "status": "pass",
+  "checkedClaims": 79,
+  "findings": 0,
+  "leakWithheld": 0,
+  "sourceContentIncluded": false
+}

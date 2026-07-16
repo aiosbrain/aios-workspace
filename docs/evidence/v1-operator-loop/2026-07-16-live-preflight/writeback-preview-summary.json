@@ -1,0 +1,11 @@
+{
+  "dryRun": true,
+  "proposedActions": 20,
+  "eligibleTaskRows": 0,
+  "skipped": {
+    "reason": "admin-tier",
+    "count": 20
+  },
+  "approved": false,
+  "written": false
+}
