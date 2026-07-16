@@ -70,6 +70,26 @@ test("fold: create → open; resolve/orphan derive status + resolvedAt (in creat
   }
 });
 
+test("archive is a durable lifecycle state and no longer participates in open dedupe", () => {
+  const root = ws();
+  try {
+    const ask = appendCreate(root, {
+      kind: "idle",
+      severity: "blocker",
+      title: "Dismiss me",
+      source: "hook:idle",
+      dedupeKey: "archive-key",
+    });
+    appendOp(root, "archive", ask.id, "2026-07-16T02:00:00.000Z");
+    assert.equal(readAsks(root).asks[0].status, "archived");
+    assert.equal(hasOpenDuplicate(root, "archive-key"), false);
+    compact(root, new Date("2026-07-17T00:00:00.000Z"));
+    assert.equal(readAsks(root).asks[0].status, "archived", "compaction preserves archive op");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fold: duplicate create id — FIRST wins, second is a warning", () => {
   const root = ws();
   try {

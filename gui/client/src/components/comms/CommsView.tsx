@@ -15,7 +15,7 @@ import { cn } from "../../lib/cn";
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { fetchInbox, fetchInboxItem, postDecision } from "./api";
+import { fetchInbox, fetchInboxItem, postAskArchive, postAskReply, postDecision } from "./api";
 import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notification";
 import type { DisplayProjection, InboxDetail, InboxView } from "./types";
 
@@ -116,6 +116,24 @@ export function CommsView() {
     [api, projection, load]
   );
 
+  const onReply = useCallback(
+    async (id: string, message: string) => {
+      const result = await postAskReply(api, id, message);
+      if (!result.ok) throw new Error(result.error || "Claude did not accept the reply");
+      await load();
+    },
+    [api, load]
+  );
+
+  const onArchive = useCallback(
+    async (id: string) => {
+      const result = await postAskArchive(api, id);
+      if (!result.ok) throw new Error(result.error || "Could not archive the ask");
+      await load();
+    },
+    [api, load]
+  );
+
   const health = deriveHealth(view);
 
   return (
@@ -156,7 +174,12 @@ export function CommsView() {
             {error ? "Failed to load the queue." : "Loading queue…"}
           </div>
         )}
-        <CommsDetail detail={detail} onScopedConfirm={setProjection} />
+        <CommsDetail
+          detail={detail}
+          onScopedConfirm={setProjection}
+          onReply={onReply}
+          onArchive={onArchive}
+        />
       </div>
 
       {projection && (

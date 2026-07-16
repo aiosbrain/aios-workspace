@@ -29,6 +29,12 @@ import {
   consumeAndExecute,
   readCapabilities,
 } from "./runtime-adapters/capability-store.mjs";
+import {
+  archiveClaudeAsk,
+  projectClaudeAskContext,
+  reconcileClaudeAsks,
+  replyToClaudeAsk,
+} from "./claude-asks.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LOOP_DIST = path.join(SCRIPT_DIR, "..", "..", "dist", "operator-loop", "index.js");
@@ -66,6 +72,9 @@ export async function getInboxView(repo, { raw = false } = {}) {
     err.statusCode = 503;
     throw err;
   }
+  // Hook delivery is best-effort. A later ordinary user turn in the bound transcript is hard evidence
+  // that an idle/stop ask is stale, so reconcile before presenting the queue.
+  reconcileClaudeAsks(loop, repo);
   const view = loop.buildInbox(repo);
   const items = raw && typeof loop.rawOrder === "function" ? loop.rawOrder(view.items) : view.items;
   return {
@@ -85,7 +94,39 @@ export async function getInboxDetail(repo, id) {
   const view = await getInboxView(repo);
   const item = view.items.find((i) => i.id === id) ?? null;
   const pendingApprovals = readPendingApprovals(repo);
-  return { item, pendingApprovals, generated_at: view.generated_at, staleness: view.staleness };
+  let agentContext = null;
+  if (item?.origin === "agent-event" && item.ask?.status === "open") {
+    try {
+      agentContext = projectClaudeAskContext(repo, item.ask);
+    } catch {
+      // Do not expose an unbound transcript. The row remains visible and can still be archived.
+      agentContext = {
+        subject: item.ask.title || "Claude needs your input",
+        summary: item.ask.body || item.ask.title || "Claude needs your input.",
+        turns: [],
+        canReply: false,
+      };
+    }
+  }
+  return {
+    item,
+    agentContext,
+    pendingApprovals,
+    generated_at: view.generated_at,
+    staleness: view.staleness,
+  };
+}
+
+export async function replyInboxAsk(repo, id, payload, deps) {
+  const loop = await loadLoop();
+  if (!loop) throw Object.assign(new Error("operator-loop is not built"), { statusCode: 503 });
+  return replyToClaudeAsk(loop, repo, id, payload, deps);
+}
+
+export async function archiveInboxAsk(repo, id) {
+  const loop = await loadLoop();
+  if (!loop) throw Object.assign(new Error("operator-loop is not built"), { statusCode: 503 });
+  return archiveClaudeAsk(loop, repo, id);
 }
 
 /** Fold the capability store and project every still-pending, unexpired handle (best-effort). */

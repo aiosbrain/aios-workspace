@@ -193,7 +193,7 @@ export async function cmdAsks(repo, cfg, args) {
 
   if (sub === "list") {
     const status = argVal("--status") ?? "open";
-    const valid = ["open", "resolved", "orphaned", "all"];
+    const valid = ["open", "resolved", "orphaned", "archived", "all"];
     if (!valid.includes(status)) die(`--status must be one of ${valid.join("|")}`);
     const { asks, warnings } = loop.readAsks(repo);
     const filtered = (status === "all" ? asks : asks.filter((a) => a.status === status)).sort(
@@ -442,7 +442,7 @@ export async function cmdAsks(repo, cfg, args) {
     (suggestion
       ? `unknown asks subcommand: ${sub} — did you mean \`aios asks ${suggestion}\`?\n`
       : "") +
-      "usage: aios asks list [--status open|resolved|orphaned|all] [--json]\n" +
+      "usage: aios asks list [--status open|resolved|orphaned|archived|all] [--json]\n" +
       "       aios asks show <id> [--json]\n" +
       "       aios asks resolve <id...> [--json]\n" +
       "       aios asks drain [--keep-open] [--json]\n" +

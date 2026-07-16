@@ -149,7 +149,11 @@ export interface AssembleInput {
 // ── mapping (source records → unified rows) ─────────────────────────────────────────────────────────
 
 function askAttention(status: Ask["status"]): string {
-  return status === "resolved" ? "resolved" : status === "orphaned" ? "archived" : "surfaced";
+  return status === "resolved"
+    ? "resolved"
+    : status === "orphaned" || status === "archived"
+      ? "archived"
+      : "surfaced";
 }
 function askBucket(ask: Ask): InboxBucket {
   if (ask.status !== "open") return "done";
@@ -265,7 +269,9 @@ function computeStaleness(threads: readonly InboxItem[], now: Date, sloMs: numbe
 export function assembleInboxView(input: AssembleInput): InboxView {
   const now = input.now ?? new Date();
   const sloMs = input.sloMs ?? FRESHNESS_SLO_MS;
-  const askItems = input.asks.map(askToItem);
+  // Explicitly archived asks stay in the durable ledger for audit/CLI inspection but disappear from
+  // the actionable inbox. Resolved/orphaned rows retain the historical behavior of appearing in Done.
+  const askItems = input.asks.filter((ask) => ask.status !== "archived").map(askToItem);
   const threadItems = input.threads.map(threadToItem);
   const healthItems = input.healthRows ?? [];
   const items = rankItems([...askItems, ...threadItems, ...healthItems], input.ranker);

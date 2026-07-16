@@ -117,7 +117,7 @@ function withStoreLock(root, fn) {
   }
 }
 
-// Set of dedupeKeys currently OPEN (mini-fold: create opens, resolve/orphan closes; first wins).
+// Set of dedupeKeys currently OPEN (mini-fold: create opens, lifecycle ops close; first wins).
 function openDedupeKeys(root) {
   const abs = storePath(root);
   if (!existsSync(abs)) return { keys: new Set(), lineCount: 0 };
@@ -140,7 +140,10 @@ function openDedupeKeys(root) {
     if (o.op === "create" && o.ask && typeof o.ask.id === "string") {
       if (!byId.has(o.ask.id))
         byId.set(o.ask.id, { dedupeKey: o.ask.dedupeKey ?? null, open: true });
-    } else if ((o.op === "resolve" || o.op === "orphan") && typeof o.id === "string") {
+    } else if (
+      (o.op === "resolve" || o.op === "orphan" || o.op === "archive") &&
+      typeof o.id === "string"
+    ) {
       const e = byId.get(o.id);
       if (e) e.open = false;
     }
@@ -307,7 +310,8 @@ function resolveIdleForSession(root, payload) {
       try {
         const op = JSON.parse(line);
         if (op.op === "create" && op.ask?.id) open.set(op.ask.id, op.ask);
-        else if ((op.op === "resolve" || op.op === "orphan") && op.id) open.delete(op.id);
+        else if ((op.op === "resolve" || op.op === "orphan" || op.op === "archive") && op.id)
+          open.delete(op.id);
       } catch {
         /* malformed lines stay the store reader's concern */
       }

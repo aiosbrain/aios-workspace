@@ -76,6 +76,12 @@ export interface DisplayProjection {
 
 export interface InboxDetail {
   item: InboxItem | null;
+  agentContext: {
+    subject: string;
+    summary: string;
+    turns: { role: "You" | "Claude"; text: string }[];
+    canReply: boolean;
+  } | null;
   pendingApprovals: DisplayProjection[];
   generated_at: string;
   staleness: Staleness;

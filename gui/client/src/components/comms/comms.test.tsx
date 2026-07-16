@@ -9,9 +9,10 @@ import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CommsQueue } from "./CommsQueue";
+import { CommsDetail } from "./CommsDetail";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { postDecision } from "./api";
+import { postAskArchive, postAskReply, postDecision } from "./api";
 import {
   contentFreeNotification,
   notifyNewBlockingAsks,
@@ -160,6 +161,59 @@ describe("AskCard", () => {
     for (const named of ["stale", "action_pending", "delivery_failed"] as const) {
       expect(ASK_CARD_STATES).toContain(named);
     }
+  });
+});
+
+describe("actionable Claude ask", () => {
+  test("renders useful prose context and an inline original-session reply composer", () => {
+    const item = agentAsk("ask-reply", {
+      title: "Generic hook title",
+      why: "open blocker",
+      protected: true,
+    });
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item,
+          agentContext: {
+            subject: "Choose the release environment",
+            summary: "Claude has prepared the release and needs to know whether to use staging.",
+            turns: [{ role: "Claude", text: "Should I deploy this to staging or production?" }],
+            canReply: true,
+          },
+          pendingApprovals: [],
+          generated_at: "2026-07-16T02:00:00.000Z",
+          staleness: fixtureView().staleness,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(html).toContain("Choose the release environment");
+    expect(html).toContain("Should I deploy this to staging or production?");
+    expect(html).toContain("resumes the original Claude session");
+    expect(html).toContain("Send to Claude");
+    expect(html).toContain("Archive");
+    expect(html).not.toContain("data-terminal-frame");
+  });
+
+  test("reply body cannot substitute a session and archive has an empty body", async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const api: Api = {
+      get: async () => ({}) as never,
+      post: async (path, body) => {
+        calls.push({ path, body });
+        return { ok: true } as never;
+      },
+      wsUrl: () => "",
+    };
+    await postAskReply(api, "ask/a", "Use staging");
+    await postAskArchive(api, "ask/a");
+    expect(calls).toEqual([
+      { path: "/api/inbox/ask%2Fa/reply", body: { message: "Use staging" } },
+      { path: "/api/inbox/ask%2Fa/archive", body: {} },
+    ]);
   });
 });
 

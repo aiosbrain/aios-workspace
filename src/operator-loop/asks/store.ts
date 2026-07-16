@@ -52,8 +52,8 @@ const SEVERITIES: ReadonlySet<string> = new Set(["blocker", "decision", "fyi"]);
 const TIERS: ReadonlySet<string> = new Set<Tier>(["admin", "team", "external"]);
 
 export type AskSeverity = "blocker" | "decision" | "fyi";
-export type AskStatus = "open" | "resolved" | "orphaned";
-export type AskOp = "resolve" | "orphan";
+export type AskStatus = "open" | "resolved" | "orphaned" | "archived";
+export type AskOp = "resolve" | "orphan" | "archive";
 
 /** The persisted create-line payload (no fold-derived fields). */
 export interface AskRecord {
@@ -335,7 +335,7 @@ export function foldLines(lines: readonly string[]): FoldResult {
       order.push(rec.id);
       return;
     }
-    if (op === "resolve" || op === "orphan") {
+    if (op === "resolve" || op === "orphan" || op === "archive") {
       const id = asStr(parsed.id);
       const at = asStr(parsed.at);
       if (!id || !byId.has(id)) {
@@ -343,7 +343,7 @@ export function foldLines(lines: readonly string[]): FoldResult {
         return;
       }
       const ask = byId.get(id) as Ask;
-      ask.status = op === "resolve" ? "resolved" : "orphaned";
+      ask.status = op === "resolve" ? "resolved" : op === "orphan" ? "orphaned" : "archived";
       ask.resolvedAt = at && Number.isFinite(Date.parse(at)) ? at : new Date().toISOString();
       return;
     }
@@ -411,7 +411,7 @@ export function appendCreateDeduped(root: string, input: AskInput): AskRecord | 
   });
 }
 
-/** Append a resolve/orphan op under the lock. Existence is the caller's concern (CLI validates). */
+/** Append a resolve/orphan/archive op under the lock. Existence is the caller's concern. */
 export function appendOp(
   root: string,
   op: AskOp,
@@ -483,7 +483,7 @@ export function compact(
       if (status !== "open") {
         lines.push(
           opLine(
-            status === "resolved" ? "resolve" : "orphan",
+            status === "resolved" ? "resolve" : status === "orphaned" ? "orphan" : "archive",
             ask.id,
             resolvedAt ?? now.toISOString()
           )

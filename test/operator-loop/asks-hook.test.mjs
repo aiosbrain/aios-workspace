@@ -251,3 +251,19 @@ test("Stop (last assistant message is tool_use-only) → nothing, even if an ear
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("tracked root and scaffold settings wire UserPromptSubmit lifecycle reconciliation", () => {
+  for (const settingsPath of [
+    path.join(ROOT, ".claude", "settings.json"),
+    path.join(ROOT, "scaffold", ".claude", "settings.json"),
+  ]) {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const commands = (settings.hooks?.UserPromptSubmit || []).flatMap((group) =>
+      (group.hooks || []).map((hook) => hook.command)
+    );
+    assert.ok(
+      commands.includes("${CLAUDE_PROJECT_DIR}/hooks/asks-capture.mjs"),
+      `${settingsPath} resolves matching idle asks when the user returns`
+    );
+  }
+});
