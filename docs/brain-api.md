@@ -1,6 +1,8 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.10** (`/api/v1`). This document is the single pinned contract between the
+**Version: 1.9** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.10**
+also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
+claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
 sides build against this file. Treat any drift between this doc and either implementation
 as a bug.
@@ -103,11 +105,15 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-07-13 — **v1.9**: added team-tier **`GET /api/v1/pm-sync/health`** projection
   observability and explicit **`GET /api/v1/tasks?all=1`** full-table reads. Plain `GET /tasks`
   remains the dashboard writeback feed. Additive — newer CLIs tolerate a `404` health endpoint.*
-- *2026-07-14 — **v1.10**: added the contract-first AIOS-managed, read-only GitHub gateway:
-  member connect/validate/status/disconnect/repository-discovery endpoints plus the server-only
-  Executor lease, exact-call authorize/redeem, outcome, approval, and durable resume-claim
-  contract. Additive — a newer workspace treats `404` as `managed_gateway_unavailable`, never
-  falls back to a local/environment PAT, and leaves direct connector state unchanged.*
+- *2026-07-14 — document revision **1.10**: added the contract-first AIOS-managed, read-only GitHub
+  gateway. AIO-401 shipped only the server-only Executor lease, exact-call authorize/redeem, and
+  outcome routes behind a disabled-by-default flag. Member connect/validate/status/disconnect and
+  repository discovery remain deferred, so the member-facing API remains **1.9**.*
+- *2026-07-16 — internal gateway **1.10**, AIO-407 contract: added service-authenticated durable
+  `resume-claim` plus admin-session approval, gateway-policy, and service-credential lifecycle
+  routes. The canonical extension fixture is
+  [`contract/gateway-approval-v1.10.json`](./contract/gateway-approval-v1.10.json) and pins the
+  byte-addressed AIO-401 base contract. The feature flag remains disabled by default.*
 
 ---
 
@@ -951,11 +957,76 @@ classifications become `failed`; `blocked` accepts only `blocked`; `approval_req
 `approval_required`. The first compare-and-swap inserts exactly one outcome audit row in the same
 transaction. An identical replay returns `204`; a different or incompatible replay returns `409`.
 
-Approval decisions and approved-execution resume claims are owned by AIO-407 and are intentionally
-not routes in the AIO-401 gateway contract. A lost initial allow response is never recovered by a
-resume: retrying the same lease or idempotency key returns `409 gateway_allow_already_committed`
-without decrypting or sealing again. Reusing an idempotency key with a different binding, toolkit,
-tool, or request hash returns `409 gateway_idempotency_conflict`.
+The AIO-401 allow branch is unchanged: a lost initial allow response is never recovered by a
+resume. Retrying that allow's lease or idempotency key returns `409
+gateway_allow_already_committed` without decrypting or sealing again. AIO-407 resume applies only
+to an execution created in `approval_required`, subsequently approved by an admin, and still
+eligible after full stored-authority revalidation.
+
+### `POST /api/internal/executor-gateway/v1/executions/{executionId}/resume-claim`
+
+This route uses the same service authentication and version headers as AIO-401. Its exact request
+is:
+
+```json
+{
+  "executorTenantId": "opaque-tenant",
+  "executorSubjectId": "opaque-subject",
+  "toolkit": "aios-github-readonly",
+  "tool": "github.repository.get",
+  "requestHash": "lowercase-sha256",
+  "correlationId": "uuid",
+  "idempotencyKey": "opaque"
+}
+```
+
+The one winning request returns `200` with `status: "claimed"`, the execution/tool identifiers,
+the verified `normalizedArgs`, and a short-lived `sealedCredential`. An identical retry returns
+only `200 {"status":"already_claimed","executionId":"uuid","state":"claimed|succeeded|failed"}`;
+it never returns arguments or a credential and never decrypts or reseals. A different key or
+fingerprint returns `409 gateway_idempotency_conflict`; a foreign service/team/subject returns a
+non-enumerating `404`; database-time approval expiry returns `410
+gateway_approval_expired`; a known execution whose rebound principal or scope is no longer eligible
+returns `422 gateway_scope_not_found`.
+
+The claim transaction locks and revalidates the authenticating credential row, stable service
+identity, exact Executor tenant/subject, immutable member/role/tier snapshot, active team-tier
+membership, connection ownership/provider, toolkit/tool/resource/request hash, encrypted request
+envelope hash, and current gateway policy. It holds a credential-scoped PostgreSQL advisory lock on
+the same session from commit through the one request-local decrypt-and-seal operation; revocation
+takes the same lock. A current block or changed principal/scope cancels execution and approval with
+no credential. Post-commit seal failure moves `claimed` to `failed` with classification
+`credential`. Plaintext and derived-key buffers are zeroed and the response is never persisted.
+
+### Gateway admin-session routes
+
+These routes require an authenticated, active, same-team Brain admin session. Unauthenticated is
+`401`; member/lead is `403`; external/ineligible is `422`; unknown or foreign resources are
+non-enumerating `404`. They are absent behind the same disabled-by-default feature flag:
+
+- `GET /api/internal/executor-gateway/v1/admin/{teamSlug}/approvals`
+- `POST /api/internal/executor-gateway/v1/admin/{teamSlug}/approvals/{approvalId}/decision` with
+  `{decision:"approve"|"deny",correlationId}`
+- gateway-only policy CRUD under
+  `/api/internal/executor-gateway/v1/admin/{teamSlug}/policies`; subjects are a tagged actor, role,
+  tier, or team selector and effects are `block|require_approval|allow` (`block` maps to stored
+  `deny`)
+- credential list/rotation/revocation under
+  `/api/internal/executor-gateway/v1/admin/{teamSlug}/service-identities/{serviceIdentityId}/credentials`
+
+Rotation accepts client-generated
+`{credentialId,secret,replacesCredentialId,correlationId,expiresAt?}`, stores only the decoded-secret
+digest, and returns only non-secret metadata. Old and new rows remain independently active until
+explicit revocation or expiry. The approval queue exposes only member, tool, allowlisted repository
+resource, request-hash prefix, age, and database expiry—never ciphertext, PAT, service secret,
+lease, arguments, or full envelope/hash.
+
+State transitions are frozen: creation is `approval_required/pending`; approve is
+`approved/approved`; deny is `cancelled/denied`; database-time expiry makes both `expired`; claim
+makes execution `claimed` while approval stays `approved`; revalidation failure cancels both; seal
+failure makes execution `failed/credential`; settlement preserves AIO-401's claimed-to-terminal
+table. The extension fixture exhaustively pins schemas, errors, transitions, precedence, discovery
+counts, fingerprint vectors, rotation seals, and request-envelope/hash vectors.
 
 ### Internal failure and audit rules
 
