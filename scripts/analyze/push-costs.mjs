@@ -214,20 +214,3 @@ function logPushSummary(provider, { sent, skipped, failed }) {
     )
   );
 }
-
-/** @deprecated use pushProviderCosts */
-export async function pushCursorCosts(repo, cfg, helpers, opts) {
-  const costData = await gatherCostData({
-    sinceMs: opts.sinceMs,
-    endMs: opts.endMs,
-    events: [],
-    window: {
-      since: new Date(opts.sinceMs).toISOString().slice(0, 10),
-      until: new Date(opts.endMs).toISOString().slice(0, 10),
-    },
-  });
-  return pushProviderCosts(repo, cfg, helpers, costData, {
-    member: opts.member,
-    project: opts.project,
-  }).then((s) => s.cursor);
-}
