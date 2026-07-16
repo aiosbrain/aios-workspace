@@ -326,6 +326,35 @@ function attentionReading({ csr, focus, interrupts, concurrency }) {
   return "mixed — some focus, some context-switching";
 }
 
+// ── Context health card (NOT an AEM axis) ───────────────────────────────────
+// A compact read on the repo/workspace's Context Engineering hygiene (toolkit
+// staleness, tier/frontmatter coverage, broken links, etc — see
+// scripts/context-health.mjs). Deliberately NOT an AEM axis and NEVER folded
+// into scoreAxes/spineLevel/placement — it never touches AXIS_LABELS, session
+// signals, or the pinned baseline placement. Input is the raw
+// computeContextHealth() result (or null if the module was unavailable / threw);
+// null in, null out.
+
+/**
+ * @param {?{mode:string, checks:Array, hardFailures:number, softMisses:number,
+ *   score:number, summary:string}} ch
+ * @returns {?{label:"Context health", metrics:{score:number, mode:string,
+ *   hard_failures:number, soft_misses:number}, reading:string}}
+ */
+export function contextHealthCard(ch) {
+  if (!ch) return null;
+  return {
+    label: "Context health",
+    metrics: {
+      score: ch.score,
+      mode: ch.mode,
+      hard_failures: ch.hardFailures,
+      soft_misses: ch.softMisses,
+    },
+    reading: ch.summary,
+  };
+}
+
 /** Full AEM placement for a signals object. */
 export function placement(signals) {
   const axes = scoreAxes(signals);

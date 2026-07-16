@@ -9,13 +9,13 @@
  * Zero dependencies.
  */
 
-import { AXIS_LABELS, attentionCard } from "./aem.mjs";
+import { AXIS_LABELS, attentionCard, contextHealthCard } from "./aem.mjs";
 import {
   scoreCognitiveErgonomics,
   ergonomicsBaseline,
   AXIS_LABEL_ERGONOMICS,
 } from "./ergonomics.mjs";
-import { AXIS_GUIDE, ergonomicsTip } from "./guidance.mjs";
+import { AXIS_GUIDE, ergonomicsTip, contextHealthTip } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
 const SPINE_GLOSS = {
@@ -100,7 +100,7 @@ function plainStat(key, s) {
 }
 
 /** Default terminal report — human-readable, every axis self-explaining. */
-export function renderText(result, color) {
+export function renderText(result, color, contextHealth) {
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
   const { window: win, tools, totals, placement, signals } = result;
   const L = [];
@@ -164,6 +164,18 @@ export function renderText(result, color) {
     )
   );
   L.push("");
+  // Context health card — SHADOW, repo/workspace hygiene, NEVER an axis. Renders
+  // only when the check ran (contextHealth non-null); silently omitted otherwise
+  // so a missing/failed check never breaks the report.
+  const chCard = contextHealthCard(contextHealth);
+  if (chCard) {
+    L.push(`  Context health — ${chCard.metrics.score}/4 — ${chCard.reading}`);
+    const failing = (contextHealth.checks || []).filter((chk) => !chk.ok).slice(0, 3);
+    if (failing.length) {
+      L.push(c.dim(`    ${failing.map((f) => f.label).join(" · ")}`));
+    }
+  }
+  L.push("");
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
   L.push(`    ${AXIS_GUIDE[w].steps[0]}`);
@@ -177,7 +189,7 @@ export function renderText(result, color) {
 }
 
 /** Deep-dive coaching on the weakest axis (printed by --report). */
-export function renderReport(result, color) {
+export function renderReport(result, color, contextHealth) {
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s, bold: (s) => s };
   const { placement, signals } = result;
   const w = placement.weakest;
@@ -209,11 +221,22 @@ export function renderReport(result, color) {
       )
     );
   }
+  // Context health SHADOW coaching — only when the check ran AND is in a bad
+  // enough band (score <= 2) to warrant a nudge. Never touches the axis coaching
+  // above; purely additive.
+  const chCard = contextHealthCard(contextHealth);
+  if (chCard && chCard.metrics.score <= 2) {
+    L.push("");
+    L.push(c.yellow("  Context health (shadow)"));
+    L.push(`    ${chCard.reading}`);
+    const tip = contextHealthTip(chCard.metrics.score);
+    if (tip) L.push(`    ${tip}`);
+  }
   return L.join("\n");
 }
 
 /** Machine-readable shape (no raw events, no message text). */
-export function toJson(result, costData) {
+export function toJson(result, costData, contextHealth) {
   const days = result.days || [];
   const bands = shadowBands(days);
   const out = {
@@ -240,6 +263,12 @@ export function toJson(result, costData) {
       },
     })),
   };
+  // Context health SHADOW card (repo/workspace hygiene) — omitted entirely when
+  // the check didn't run / threw (contextHealth is null), same pattern as `costs`.
+  const chCard = contextHealthCard(contextHealth);
+  if (chCard) {
+    out.context_health = chCard;
+  }
   if (costData) {
     out.costs = {
       cursor: costData.cursor
@@ -268,11 +297,11 @@ export function toJson(result, costData) {
  * or tool names). Resolved at analyze time so the hook is a dumb instant reader
  * with no scoring logic of its own (W3, AIO-214).
  */
-export function buildLastSummary(result) {
+export function buildLastSummary(result, contextHealth) {
   const { placement, signals, window: win, days } = result;
   const w = placement.weakest;
   const att = attentionCard(signals || {});
-  return {
+  const summary = {
     generated_at: new Date().toISOString(),
     window: win,
     spine: placement.spine,
@@ -283,6 +312,40 @@ export function buildLastSummary(result) {
     attention_reading: att.reading,
     ce_tip: ergonomicsTip(att.reading),
   };
+  const chCard = contextHealthCard(contextHealth);
+  if (chCard) summary.context_health_score = chCard.metrics.score;
+  return summary;
+}
+
+/** Find a context-health check by id and return its raw `value`, or null. */
+function checkValue(checks, id) {
+  const hit = (checks || []).find((c) => c.id === id);
+  return hit ? hit.value : null;
+}
+
+/**
+ * Derive the scalars-only `context_health` push object from a
+ * computeContextHealth() result, or null if the check didn't run.
+ * Never includes paths/filenames/detail strings — see docs/brain-api.md.
+ */
+function contextHealthPushFields(ch) {
+  if (!ch) return null;
+  const checks = ch.checks || [];
+  const versionsBehind = ch.mode === "workspace" ? checkValue(checks, "toolkit-staleness") : null;
+  const coveragePct =
+    ch.mode === "workspace"
+      ? checkValue(checks, "tier-coverage")
+      : checkValue(checks, "claude-coverage");
+  const brokenLinkCount = checkValue(checks, "broken-links") ?? 0;
+  return {
+    score: ch.score,
+    mode: ch.mode,
+    drift_count: ch.hardFailures,
+    versions_behind: versionsBehind,
+    coverage_pct: coveragePct,
+    broken_link_count: brokenLinkCount,
+    checked_at: new Date().toISOString().slice(0, 10),
+  };
 }
 
 /**
@@ -290,10 +353,13 @@ export function buildLastSummary(result) {
  * (standalone endpoint). Carries ratios + counts + the provisional placement,
  * plus the optional v1.3 ce_band shadow integer (0–4|null). No tool names, no
  * branch, no cwd, no message text, and none of the four raw attention signals.
+ * `contextHealth` (optional) is the raw computeContextHealth() result — the
+ * caller (pushDays, index.mjs) attaches it only to the most recent day's
+ * payload; omitting it (or passing null/undefined) leaves the key absent.
  * This is the entire privacy surface.
  */
-export function buildPushPayload(day, member, ceBand) {
-  return {
+export function buildPushPayload(day, member, ceBand, contextHealth) {
+  const payload = {
     member,
     metric: "aem-individual",
     date: day.date,
@@ -318,4 +384,7 @@ export function buildPushPayload(day, member, ceBand) {
     sessions: day.signals.sessions,
     tasks: day.signals.tasks,
   };
+  const chFields = contextHealthPushFields(contextHealth);
+  if (chFields) payload.context_health = chFields;
+  return payload;
 }
