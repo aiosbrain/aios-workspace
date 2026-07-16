@@ -28,8 +28,11 @@ test("permits HTTP only for exact loopback hosts", () => {
 });
 
 test("rejects credentials, fragments, queries, protocols, and unrecognized paths", () => {
+  const credentialedUrl = new URL("https://brain.example.com");
+  credentialedUrl.username = "user";
+  credentialedUrl.password = "pass";
   assert.throws(
-    () => normalizeBrainOrigin("https://user:pass@brain.example.com"),
+    () => normalizeBrainOrigin(credentialedUrl.href),
     /username or password/i
   );
   assert.throws(() => normalizeBrainOrigin("https://brain.example.com/#settings"), /fragment/i);

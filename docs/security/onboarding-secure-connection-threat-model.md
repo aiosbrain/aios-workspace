@@ -42,7 +42,7 @@ Use a versioned JSON envelope signed with Ed25519 over RFC 8785/JCS canonical by
   "member": { "id": "uuid", "handle": "alex", "display_name": "Alex" },
   "request": { "machine_name": "Alex's Mac", "workspace_name": "alex-workspace" },
   "capabilities": ["items:read", "items:write", "query:read"],
-  "token": { "id": "uuid", "secret": "one-time-random-value" },
+  "token": { "id": "uuid", "secret": "single-use" },
   "issued_at": "RFC3339",
   "expires_at": "RFC3339",
   "nonce": "base64url-128-bit",
