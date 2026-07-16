@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -24,14 +24,17 @@ import {
   appendCreate,
   appendCreateDeduped,
   appendOp,
+  archiveAsk,
   claimReply,
   buildRecord,
   compact,
+  completeReply,
   detectOrphans,
   foldLines,
   hasOpenDuplicate,
   readAsks,
   releaseReply,
+  resolveUnclaimed,
   withLock,
 } from "../../dist/operator-loop/index.js";
 
@@ -111,6 +114,93 @@ test("reply ownership survives compaction without changing the public JSON ask c
     assert.equal(readAsks(root).asks[0].replyClaim, null);
     assert.equal(readAsks(root).asks[0].reconcileAfter, "2026-07-16T01:02:00.000Z");
     assert.doesNotMatch(JSON.stringify(readAsks(root).asks[0]), /reconcileAfter/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cross-process crash recovery reclaims a dead owner without allowing stale-token completion", () => {
+  const root = ws();
+  try {
+    const replyAsk = appendCreate(root, {
+      id: "crashed-reply",
+      kind: "idle",
+      severity: "blocker",
+      title: "Recover reply",
+      source: "hook:idle",
+    });
+    const archiveTarget = appendCreate(root, {
+      id: "crashed-archive",
+      kind: "idle",
+      severity: "blocker",
+      title: "Recover archive",
+      source: "hook:idle",
+    });
+    const child = [
+      `import * as loop from ${JSON.stringify(DIST_INDEX)};`,
+      `const root = process.argv[1];`,
+      `if (loop.claimReply(root, "crashed-reply", "dead-token") !== "claimed") process.exit(2);`,
+      `if (loop.claimReply(root, "crashed-archive", "dead-archive-token") !== "claimed") process.exit(3);`,
+    ].join("\n");
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, root], {
+      stdio: "inherit",
+    });
+    const deadPid = readAsks(root).asks.find((ask) => ask.id === replyAsk.id).replyClaim?.ownerPid;
+    assert.ok(deadPid && deadPid !== process.pid, "claim belongs to the exited child process");
+
+    assert.equal(claimReply(root, replyAsk.id, "replacement-token"), "claimed");
+    assert.equal(releaseReply(root, replyAsk.id, "dead-token"), false);
+    assert.equal(completeReply(root, replyAsk.id, "dead-token"), "claim-mismatch");
+    assert.equal(
+      readAsks(root).asks.find((ask) => ask.id === replyAsk.id).replyClaim?.token,
+      "replacement-token"
+    );
+
+    assert.equal(archiveAsk(root, archiveTarget.id), "archived");
+    assert.equal(readAsks(root).asks.find((ask) => ask.id === archiveTarget.id).status, "archived");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a known-live owner cannot be stolen, while dead reconciliation only releases its prompt", () => {
+  const root = ws();
+  try {
+    const live = appendCreate(root, {
+      id: "live-owner",
+      kind: "idle",
+      severity: "blocker",
+      title: "Live",
+      source: "hook:idle",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+    assert.equal(claimReply(root, live.id, "live-token", "2026-07-16T00:01:00.000Z"), "claimed");
+    assert.equal(
+      claimReply(root, live.id, "thief-token", "2099-01-01T00:00:00.000Z"),
+      "busy",
+      "matching live PID/start identity wins over a far-future wall clock"
+    );
+
+    const crashed = appendCreate(root, {
+      id: "dead-reconcile",
+      kind: "idle",
+      severity: "blocker",
+      title: "Dead reconcile",
+      source: "hook:idle",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+    const child = [
+      `import * as loop from ${JSON.stringify(DIST_INDEX)};`,
+      `if (loop.claimReply(process.argv[1], "dead-reconcile", "dead-reconcile-token") !== "claimed") process.exit(2);`,
+    ].join("\n");
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, root]);
+    assert.equal(
+      resolveUnclaimed(root, crashed.id, "2099-01-01T00:00:00.000Z"),
+      "stale-evidence",
+      "the crashed reply prompt is watermarked, never treated as success"
+    );
+    assert.equal(readAsks(root).asks.find((ask) => ask.id === crashed.id).replyClaim, null);
+    assert.equal(resolveUnclaimed(root, crashed.id, "2099-01-01T00:01:00.000Z"), "resolved");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

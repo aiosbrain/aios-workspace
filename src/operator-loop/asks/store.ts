@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import type { Tier } from "../signal.js";
 
 export const ASKS_STORE_REL = ".aios/loop/asks/asks.ndjson";
@@ -44,6 +45,8 @@ const TITLE_MAX = 200;
 const BODY_MAX = 2000;
 const KIND_MAX = 40;
 const DAY_MS = 86_400_000;
+/** Safely exceeds the GUI's enforced 120-second SDK abort window. */
+export const REPLY_CLAIM_LEASE_MS = 5 * 60_000;
 // Any control char (C0 range + DEL) — collapsed to a space so a title is always one clean line.
 // eslint-disable-next-line no-control-regex -- intentional: sanitize control chars from a title
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f]+", "g");
@@ -76,7 +79,13 @@ export interface AskRecord {
 export interface Ask extends AskRecord {
   status: AskStatus;
   resolvedAt: string | null;
-  replyClaim?: { token: string; claimedAt: string } | null;
+  replyClaim?: {
+    token: string;
+    claimedAt: string;
+    expiresAt: string;
+    ownerPid: number | null;
+    ownerIdentity: string | null;
+  } | null;
   reconcileAfter?: string | null;
 }
 
@@ -371,7 +380,20 @@ export function foldLines(lines: readonly string[]): FoldResult {
         warnings.push({ line, reason: "invalid-claim-reply" });
         return;
       }
-      if (ask.status === "open" && !ask.replyClaim) ask.replyClaim = { token, claimedAt: at };
+      const expiresRaw = asStr(parsed.expiresAt);
+      const acquiredMs = Date.parse(at);
+      const expiresAt =
+        expiresRaw && Number.isFinite(Date.parse(expiresRaw))
+          ? expiresRaw
+          : new Date(acquiredMs + REPLY_CLAIM_LEASE_MS).toISOString();
+      const ownerPid =
+        typeof parsed.ownerPid === "number" && Number.isSafeInteger(parsed.ownerPid)
+          ? parsed.ownerPid
+          : null;
+      const ownerIdentity = asStr(parsed.ownerIdentity) ?? null;
+      if (ask.status === "open" && !ask.replyClaim) {
+        ask.replyClaim = { token, claimedAt: at, expiresAt, ownerPid, ownerIdentity };
+      }
       return;
     }
     if (op === "release-reply") {
@@ -479,20 +501,101 @@ function foldedUnderLock(root: string): Ask[] {
   return existsSync(abs) ? foldLines(readFileSync(abs, "utf8").split(/\r?\n/)).asks : [];
 }
 
+function processIdentity(pid: number): string | null {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return null;
+  try {
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const close = stat.lastIndexOf(")");
+      const fields = stat.slice(close + 2).split(" ");
+      return fields[19] ? `linux-start:${fields[19]}` : null;
+    }
+    const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      timeout: 1_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return started ? `${process.platform}-start:${started}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidLiveness(pid: number | null): "alive" | "dead" | "unknown" {
+  if (!pid || !Number.isSafeInteger(pid) || pid <= 1) return "unknown";
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+
+/**
+ * Dead PID or a reused PID (different start identity) is authoritative recovery evidence. When OS
+ * identity cannot be inspected, fail closed until the conservative lease expires, then recover so
+ * legacy/uncertain claims cannot wedge an ask forever.
+ */
+function claimRecoverable(claim: NonNullable<Ask["replyClaim"]>, nowMs: number): boolean {
+  const liveness = pidLiveness(claim.ownerPid);
+  if (liveness === "dead") return true;
+  if (liveness === "alive" && claim.ownerPid && claim.ownerIdentity) {
+    const currentIdentity = processIdentity(claim.ownerPid);
+    if (currentIdentity) return currentIdentity !== claim.ownerIdentity;
+    // Identity inspection is uncertain: fail closed for the full lease (which exceeds the SDK
+    // timeout), then recover boundedly so an uninspectable/reused PID cannot wedge the ask forever.
+  }
+  const expiresMs = Date.parse(claim.expiresAt);
+  return Number.isFinite(expiresMs) && nowMs >= expiresMs;
+}
+
+function releaseAbandonedClaim(root: string, ask: Ask, at: string): boolean {
+  if (!ask.replyClaim || !claimRecoverable(ask.replyClaim, Date.parse(at))) return false;
+  appendFileSync(
+    storePath(root),
+    JSON.stringify({
+      v: ASKS_SCHEMA_VERSION,
+      op: "release-reply",
+      id: ask.id,
+      token: ask.replyClaim.token,
+      at,
+      reason: "owner-dead-or-lease-expired",
+    }) + "\n"
+  );
+  return true;
+}
+
 export function claimReply(
   root: string,
   id: string,
   token: string,
-  at: string = new Date().toISOString()
+  at: string = new Date().toISOString(),
+  ownerPid: number = process.pid
 ): ReplyClaimResult {
   return withLock(root, () => {
     const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
     if (!ask) return "missing";
     if (ask.status !== "open") return "closed";
-    if (ask.replyClaim) return "busy";
+    if (ask.replyClaim && !releaseAbandonedClaim(root, ask, at)) return "busy";
+    const acquiredMs = Date.parse(at);
+    if (!Number.isFinite(acquiredMs)) return "busy";
+    const expiresAt = new Date(acquiredMs + REPLY_CLAIM_LEASE_MS).toISOString();
+    const ownerIdentity = processIdentity(ownerPid);
     appendFileSync(
       storePath(root),
-      JSON.stringify({ v: ASKS_SCHEMA_VERSION, op: "claim-reply", id, token, at }) + "\n"
+      JSON.stringify({
+        v: ASKS_SCHEMA_VERSION,
+        op: "claim-reply",
+        id,
+        token,
+        at,
+        expiresAt,
+        ownerPid,
+        ownerIdentity,
+      }) + "\n"
     );
     return "claimed";
   });
@@ -541,7 +644,7 @@ export function archiveAsk(
     if (!ask) return "missing";
     if (ask.status === "archived") return "already-archived";
     if (ask.status !== "open") return "closed";
-    if (ask.replyClaim) return "busy";
+    if (ask.replyClaim && !releaseAbandonedClaim(root, ask, at)) return "busy";
     appendFileSync(storePath(root), opLine("archive", id, at) + "\n");
     return "archived";
   });
@@ -553,7 +656,10 @@ export function resolveUnclaimed(root: string, id: string, evidenceAt: string): 
     const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
     if (!ask) return "missing";
     if (ask.status !== "open") return "closed";
-    if (ask.replyClaim) return "busy";
+    if (ask.replyClaim) {
+      if (releaseAbandonedClaim(root, ask, new Date().toISOString())) return "stale-evidence";
+      return "busy";
+    }
     const evidenceMs = Date.parse(evidenceAt);
     const createdMs = Date.parse(ask.createdAt);
     const reconcileMs = Date.parse(ask.reconcileAfter || "");
@@ -643,6 +749,9 @@ export function compact(
             id: ask.id,
             token: replyClaim.token,
             at: replyClaim.claimedAt,
+            expiresAt: replyClaim.expiresAt,
+            ownerPid: replyClaim.ownerPid,
+            ownerIdentity: replyClaim.ownerIdentity,
           })
         );
       }

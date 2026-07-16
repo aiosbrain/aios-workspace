@@ -311,8 +311,8 @@ function resolveIdleForSession(root, payload) {
       try {
         const op = JSON.parse(line);
         if (op.op === "create" && op.ask?.id) open.set(op.ask.id, op.ask);
-        else if (op.op === "claim-reply" && op.id && op.token) claimed.set(op.id, op.token);
-        else if (op.op === "release-reply" && op.id && claimed.get(op.id) === op.token)
+        else if (op.op === "claim-reply" && op.id && op.token) claimed.set(op.id, op);
+        else if (op.op === "release-reply" && op.id && claimed.get(op.id)?.token === op.token)
           claimed.delete(op.id);
         else if ((op.op === "resolve" || op.op === "orphan" || op.op === "archive") && op.id) {
           open.delete(op.id);
@@ -324,6 +324,21 @@ function resolveIdleForSession(root, payload) {
     }
     const at = new Date().toISOString();
     for (const ask of open.values()) {
+      const claim = claimed.get(ask.id);
+      if (claim && abandonedClaim(claim, Date.parse(at))) {
+        appendFileSync(
+          abs,
+          JSON.stringify({
+            v: SCHEMA_VERSION,
+            op: "release-reply",
+            id: ask.id,
+            token: claim.token,
+            at,
+            reason: "owner-dead-or-lease-expired",
+          }) + "\n"
+        );
+        claimed.delete(ask.id);
+      }
       if (
         !claimed.has(ask.id) &&
         ask.kind === "idle" &&
@@ -336,6 +351,21 @@ function resolveIdleForSession(root, payload) {
         );
     }
   });
+}
+
+function abandonedClaim(claim, nowMs) {
+  const pid = claim?.ownerPid;
+  if (Number.isSafeInteger(pid) && pid > 1) {
+    try {
+      process.kill(pid, 0);
+      return false; // live (or PID reused): the server-side identity check is authoritative later
+    } catch (error) {
+      if (error?.code === "ESRCH") return true;
+      if (error?.code === "EPERM") return false;
+    }
+  }
+  const expiresMs = Date.parse(claim?.expiresAt || "");
+  return Number.isFinite(expiresMs) && nowMs >= expiresMs;
 }
 
 async function readStdin() {

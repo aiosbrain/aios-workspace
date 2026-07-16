@@ -305,6 +305,7 @@ export {
   RESOLVED_GC_DAYS,
   OPEN_SOFT_CAP,
   OPEN_STALE_DAYS,
+  REPLY_CLAIM_LEASE_MS,
   sha256,
   buildRecord,
   withLock,
