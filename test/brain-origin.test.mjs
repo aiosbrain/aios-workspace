@@ -31,10 +31,7 @@ test("rejects credentials, fragments, queries, protocols, and unrecognized paths
   const credentialedUrl = new URL("https://brain.example.com");
   credentialedUrl.username = "user";
   credentialedUrl.password = "pass";
-  assert.throws(
-    () => normalizeBrainOrigin(credentialedUrl.href),
-    /username or password/i
-  );
+  assert.throws(() => normalizeBrainOrigin(credentialedUrl.href), /username or password/i);
   assert.throws(() => normalizeBrainOrigin("https://brain.example.com/#settings"), /fragment/i);
   assert.throws(() => normalizeBrainOrigin("https://brain.example.com/?team=acme"), /query/i);
   assert.throws(() => normalizeBrainOrigin("ftp://brain.example.com"), /protocol/i);
