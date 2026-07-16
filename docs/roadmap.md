@@ -19,5 +19,4 @@ Sequencing: (1) is the highest-value user-facing feature and is independent; (3)
 run anytime (release hygiene); (2) is only needed once we want non-official skills.
 (4) is the wide on-ramp — read-only server already in tree; P1 packaging unblocks
 non-technical Claude Desktop users. (5) follows from the access-surface doctrine
-(public summary: [`architecture.md` § Access surfaces](./architecture.md#access-surfaces--how-callers-reach-the-brain);
-fuller maintainer-only brief in `strategy/`, removed at public release) and is independent of (4).
+(see [`architecture.md` § Access surfaces](./architecture.md#access-surfaces--how-callers-reach-the-brain)) and is independent of (4).
