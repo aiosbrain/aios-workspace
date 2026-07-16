@@ -2810,10 +2810,9 @@ try {
   else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
-  else if (cmd === "relay") {
-    const { cmdRelay } = await import("./relay.mjs");
-    await cmdRelay(repo, rest);
-  } else if (cmd === "build") await cmdBuild(repo, rest);
+  else if (cmd === "relay")
+    await import("./relay.mjs").then(({ cmdRelay }) => cmdRelay(repo, rest));
+  else if (cmd === "build") await cmdBuild(repo, rest);
   else if (cmd === "simplify") process.exit(await cmdSimplify(repo, rest));
   else if (cmd === "spec") await cmdSpec(repo, rest);
   else if (cmd === "pr") await cmdPr(repo, rest);

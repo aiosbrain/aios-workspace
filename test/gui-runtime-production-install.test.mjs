@@ -1,17 +1,25 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test(
   "a clean production install includes both GUI SDKs and Claude's native executable",
   { timeout: 120_000 },
-  () => {
+  async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), "aios-gui-production-install-"));
     try {
       const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
@@ -36,11 +44,18 @@ test(
         ["install", "--omit=dev", "--include=optional", "--ignore-scripts", "--no-audit"],
         { cwd: fixture, stdio: "ignore" }
       );
-      const output = execFileSync(process.execPath, ["scripts/gui-runtime-preflight.mjs"], {
-        cwd: fixture,
-        encoding: "utf8",
-      });
-      assert.match(output, /GUI runtime ready/);
+      const { assertGuiRuntimeReady } = await import(
+        pathToFileURL(path.join(fixture, "scripts/gui-runtime-preflight.mjs"))
+      );
+      const result = assertGuiRuntimeReady();
+      assert.equal(result.ok, true);
+      assert.ok(
+        realpathSync(result.executable).startsWith(
+          realpathSync(path.join(fixture, "node_modules"))
+        ),
+        "the native executable must come from the clean production fixture"
+      );
+      assert.match(result.executable, /claude(?:\.exe)?$/);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
