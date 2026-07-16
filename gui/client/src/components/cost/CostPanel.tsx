@@ -3,122 +3,177 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { Freshness } from "../ui/freshness";
 import { cn } from "../../lib/cn";
-import type { CostResponse, CostSpendDay, CostTokenDay } from "../../types/protocol";
+import type { CostConfigResponse, CostResponse } from "../../types/protocol";
+import { CostBarChart, colorFor, usd } from "./CostBarChart";
 
 const REV_BTN =
   "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
 const PANEL = "flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4";
 const CARD = "rounded-lg border border-border-visible bg-secondary/40 px-4 py-3";
+const INPUT =
+  "w-24 rounded-[6px] border border-border-visible bg-background px-2 py-1 text-right font-mono text-[12px] tabular-nums text-foreground";
 
-// Provider colors mirror the Team Brain cost charts so both surfaces read as one system.
-const PROVIDER_COLOR: Record<string, string> = {
-  claude: "#7c3aed",
-  cursor: "#3b82f6",
-  codex: "#4ade80",
-  opencode: "#f59e0b",
+const SOURCE_LABEL: Record<string, string> = {
+  config: "owner-entered",
+  billing: "billed",
+  detected: "detected plan",
+  session: "session",
 };
-const CYCLE = ["#7c3aed", "#3b82f6", "#4ade80", "#f59e0b", "#2dd4bf", "#d946ef"];
-function colorFor(provider: string, i: number): string {
-  return PROVIDER_COLOR[provider] ?? CYCLE[i % CYCLE.length];
+const currentPeriod = () => new Date().toISOString().slice(0, 7);
+
+/** null = leave unset; NaN = invalid input. */
+function parseUsd(raw: string): number | null {
+  const s = raw.trim().replace(/^\$/, "");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : NaN;
 }
-const TOKEN_COLOR = { input: "#3b82f6", output: "#7c3aed", cache_read: "#2dd4bf" };
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+const SUB_FIELDS = [
+  { key: "claude", label: "Claude subscription" },
+  { key: "cursor", label: "Cursor subscription" },
+  { key: "codex", label: "Codex subscription" },
+] as const;
 
-const CHART_H = 150;
-const PAD_T = 8;
-const PAD_B = 18;
-
-/** A dependency-free stacked vertical bar chart (matches the GUI's hand-rolled SVG style). */
-function StackedBars<T extends { date: string }>({
-  rows,
-  series,
-  colorOf,
-  label,
+/** Owner-entered actuals editor — writes .aios/cost-config.json via the server. */
+function CostSettings({
+  period,
+  onSaved,
 }: {
-  rows: T[];
-  series: string[];
-  colorOf: (key: string, i: number) => string;
-  label: string;
+  period: string;
+  onSaved: () => void | Promise<void>;
 }) {
-  const totals = rows.map((r) => series.reduce((s, k) => s + Number(r[k as keyof T] ?? 0), 0));
-  const max = Math.max(1, ...totals);
-  const step = 100 / Math.max(1, rows.length);
-  const barW = Math.min(step * 0.7, 4);
-  const plotH = CHART_H - PAD_T - PAD_B;
+  const { api } = useConnection();
+  const [form, setForm] = useState<Record<string, string>>({
+    claude: "",
+    cursor: "",
+    codex: "",
+    anthropic: "",
+  });
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get<CostConfigResponse>("/api/costs/config")
+      .then((cfg) => {
+        if (!alive) return;
+        setForm({
+          claude: cfg.subscriptions.claude != null ? String(cfg.subscriptions.claude) : "",
+          cursor: cfg.subscriptions.cursor != null ? String(cfg.subscriptions.cursor) : "",
+          codex: cfg.subscriptions.codex != null ? String(cfg.subscriptions.codex) : "",
+          anthropic:
+            cfg.metered.anthropic?.[period] != null ? String(cfg.metered.anthropic[period]) : "",
+        });
+      })
+      .catch((e) => setStatus(`config load failed: ${(e as Error).message}`));
+    return () => {
+      alive = false;
+    };
+  }, [api, period]);
+
+  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setStatus(null);
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+  };
+
+  const save = async () => {
+    const parsed: Record<string, number | null> = {};
+    for (const key of ["claude", "cursor", "codex", "anthropic"]) {
+      const v = parseUsd(form[key]);
+      if (Number.isNaN(v)) {
+        setStatus(`"${form[key]}" isn't a valid USD amount`);
+        return;
+      }
+      parsed[key] = v;
+    }
+    setBusy(true);
+    setStatus(null);
+    try {
+      const res = await api.post<CostConfigResponse>("/api/costs/config", {
+        subscriptions: { claude: parsed.claude, cursor: parsed.cursor, codex: parsed.codex },
+        metered: { anthropic: { [period]: parsed.anthropic } },
+      });
+      if (!res.ok) {
+        setStatus((res.errors ?? ["save failed"]).join("; "));
+      } else {
+        setStatus("saved");
+        await onSaved();
+      }
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+    setBusy(false);
+  };
 
   return (
-    <svg
-      viewBox={`0 0 100 ${CHART_H}`}
-      className="w-full"
-      role="img"
-      aria-label={label}
-      preserveAspectRatio="none"
-    >
-      {[0, 0.25, 0.5, 0.75, 1].map((f, i) => {
-        const y = PAD_T + plotH * f;
-        return (
-          <line
-            key={i}
-            x1={0}
-            x2={100}
-            y1={y}
-            y2={y}
-            stroke="var(--aios-border-visible)"
-            strokeWidth={0.3}
-            strokeDasharray="0.6 0.9"
+    <div className={CARD}>
+      <div className="mb-1 text-[13px] font-semibold text-foreground">Enter exact actuals</div>
+      <p className="mb-3 text-[11px] text-muted-foreground">
+        Owner-entered figures override everything else and live only in{" "}
+        <code className="font-mono">.aios/cost-config.json</code> on this machine. Blank = unset
+        (falls back to billing, then a detected plan, then honest “unknown”).
+      </p>
+      <div className="flex flex-col gap-2">
+        {SUB_FIELDS.map((f) => (
+          <label
+            key={f.key}
+            className="flex items-center justify-between gap-3 text-[12px] text-foreground"
+          >
+            <span>
+              {f.label} <span className="text-muted-foreground">($/mo)</span>
+            </span>
+            <input
+              className={INPUT}
+              inputMode="decimal"
+              placeholder="—"
+              value={form[f.key]}
+              onChange={set(f.key)}
+              aria-label={`${f.label} in US dollars per month`}
+            />
+          </label>
+        ))}
+        <label className="flex items-center justify-between gap-3 text-[12px] text-foreground">
+          <span>
+            Anthropic API spend <span className="text-muted-foreground">({period}, $)</span>
+          </span>
+          <input
+            className={INPUT}
+            inputMode="decimal"
+            placeholder="—"
+            value={form.anthropic}
+            onChange={set("anthropic")}
+            aria-label={`Exact Anthropic API spend for ${period} in US dollars`}
           />
-        );
-      })}
-      {rows.map((r, ri) => {
-        const cx = step * ri + step / 2;
-        let yTop = PAD_T + plotH;
-        return (
-          <g key={r.date}>
-            {series.map((k, si) => {
-              const v = Number(r[k as keyof T] ?? 0);
-              if (v <= 0) return null;
-              const h = (v / max) * plotH;
-              yTop -= h;
-              return (
-                <rect
-                  key={k}
-                  x={cx - barW / 2}
-                  y={yTop}
-                  width={barW}
-                  height={h}
-                  fill={colorOf(k, si)}
-                >
-                  <title>{`${r.date} · ${k}: ${v.toLocaleString("en-US")}`}</title>
-                </rect>
-              );
-            })}
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-function Legend({ items }: { items: { key: string; label: string; color: string }[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-      {items.map((it) => (
-        <span key={it.key} className="flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: it.color }} />
-          {it.label}
-        </span>
-      ))}
+        </label>
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button className={REV_BTN} onClick={save} disabled={busy}>
+          Save
+        </button>
+        {status && (
+          <span
+            className={cn(
+              "text-[11px]",
+              status === "saved" ? "text-muted-foreground" : "text-destructive"
+            )}
+          >
+            {status}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-/** Cost panel: this-workspace spend across all four providers (Cursor billed; others estimate/session). */
+/** Cost panel: ACTUAL spend only — owner config > billing > detected subscription > unknown. */
 export function CostPanel() {
   const { api } = useConnection();
   const [data, setData] = useState<CostResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -173,26 +228,22 @@ export function CostPanel() {
       </div>
     );
 
-  const spend: CostSpendDay[] = data.spendByDay ?? [];
-  const tokens: CostTokenDay[] = data.tokensByDay ?? [];
-  const hasSpend = spend.length > 0 && data.providers.length > 0;
-  const hasTokens = tokens.some((t) => t.input || t.output || t.cache_read);
+  const period = data.period || currentPeriod();
+  const unknown = data.by_provider.filter((p) => p.total_usd == null);
 
   return (
     <div className={PANEL}>
-      {/* header */}
-      <div className="flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
+      {/* header — current-month actual total */}
+      <div className="flex items-center justify-between gap-3 font-mono text-xs tabular-nums text-muted-foreground">
         <span>
-          Total {usd(data.totals.cost_usd)}
-          {data.window && (
-            <>
-              {" "}
-              · {data.window.since} → {data.window.until}
-            </>
-          )}
+          {period} actual spend {usd(data.totals.month_usd)}
+          {unknown.length > 0 && " (+ unknown)"}
         </span>
         <span className="flex items-center gap-3">
           <Freshness meta={data} busy={busy} />
+          <button className={REV_BTN} onClick={() => setShowSettings((s) => !s)}>
+            {showSettings ? "Close settings" : "Settings"}
+          </button>
           <button className={REV_BTN} onClick={load} disabled={busy}>
             Refresh
           </button>
@@ -200,113 +251,106 @@ export function CostPanel() {
       </div>
       {error && <div className="text-[11px] text-destructive">refresh failed: {error}</div>}
 
-      {/* flat subscription (real spend, not per-token) */}
-      {data.plan?.monthly_usd != null && (
-        <div className={CARD}>
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[13px] font-semibold text-foreground">
-              Claude {data.plan.label}
-              <span className="ml-1.5 font-normal text-muted-foreground">subscription</span>
-            </span>
-            <span className="font-mono text-foreground">
-              ${data.plan.monthly_usd.toFixed(0)}/mo
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Flat fee — the estimates below are API-equivalent value, not this bill.
-            {data.plan.source === "keychain" &&
-              " Plan detected from login; override in .aios/cost-config.json if wrong."}
-          </p>
+      {/* configuration completeness */}
+      {!data.config_status.complete && (
+        <div className={cn(CARD, "text-[11px] text-muted-foreground")}>
+          No actual-spend source for{" "}
+          <span className="text-foreground">{data.config_status.unknown.join(", ")}</span> — usage
+          was detected, but no owner-entered amount, billing data, or subscription exists. Enter the
+          real figure in Settings; nothing is estimated in the meantime.
         </div>
       )}
 
-      {/* per-provider tiles with provenance */}
-      {data.by_provider.length === 0 ? (
+      {showSettings && <CostSettings period={period} onSaved={load} />}
+
+      {/* actual ledger lines */}
+      {data.lines.length === 0 ? (
         <div className="text-xs text-muted-foreground">
-          No provider spend yet — do some agent work, then refresh.
+          No actual spend recorded for {period}. Enter subscriptions or exact metered spend in
+          Settings.
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {data.by_provider.map((p, i) => (
-            <div key={p.provider} className={CARD}>
-              <div className="mb-1 flex items-center gap-1.5">
-                <span
-                  className="inline-block h-2 w-2 rounded-full"
-                  style={{ background: colorFor(p.provider, i) }}
-                />
-                <span className="text-[13px] font-semibold text-foreground">{p.label}</span>
-              </div>
-              <div className="font-mono text-lg text-foreground">
-                {p.estimated ? "~" : ""}
-                {usd(p.cost_usd)}
-              </div>
-              <div className="text-[11px] text-muted-foreground">
-                {p.events} {p.source === "billing" ? "events" : "turns"} ·{" "}
-                {p.source === "billing" ? "billed" : p.source === "session" ? "session" : "est."}
-              </div>
-            </div>
-          ))}
+        <div className={CARD}>
+          <div className="mb-2 text-[13px] font-semibold text-foreground">
+            Ledger — {period} (actuals only)
+          </div>
+          <table className="w-full border-collapse text-[12px]">
+            <thead>
+              <tr className="text-left text-[11px] text-muted-foreground">
+                <th className="py-1 font-normal">Provider</th>
+                <th className="py-1 font-normal">Kind</th>
+                <th className="py-1 font-normal">Source</th>
+                <th className="py-1 text-right font-normal">USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.lines.map((l, i) => (
+                <tr
+                  key={`${l.provider}-${l.kind}-${i}`}
+                  className="border-t border-border-visible/60 text-foreground"
+                >
+                  <td className="py-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        aria-hidden="true"
+                        className="inline-block h-2 w-2 rounded-full"
+                        style={{ background: colorFor(l.provider, i) }}
+                      />
+                      {l.label}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-muted-foreground">{l.kind}</td>
+                  <td className="py-1.5 text-muted-foreground" title={l.note}>
+                    {SOURCE_LABEL[l.source] ?? l.source}
+                  </td>
+                  <td className="py-1.5 text-right font-mono tabular-nums">{usd(l.amount_usd)}</td>
+                </tr>
+              ))}
+              <tr className="border-t border-border-visible text-foreground">
+                <td className="py-1.5 font-semibold" colSpan={3}>
+                  Total
+                </td>
+                <td className="py-1.5 text-right font-mono font-semibold tabular-nums">
+                  {usd(data.totals.month_usd)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
+
+      {/* provider chart — fixed height regardless of provider count */}
+      <div className={CARD}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className="text-[13px] font-semibold text-foreground">
+            Actual spend by provider
+          </span>
+          <span className="text-[11px] text-muted-foreground">{period}</span>
+        </div>
+        <CostBarChart rows={data.by_provider} period={period} />
+        {unknown.length > 0 && (
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Not charted (unknown, never estimated): {unknown.map((p) => p.label).join(", ")}
+          </p>
+        )}
+      </div>
 
       {data.cursor_error && (
         <div className="text-[11px] text-muted-foreground">
-          Cursor billing unavailable ({data.cursor_error}) — sign in to Cursor to include it.
+          Cursor billing unavailable ({data.cursor_error}) — sign in to Cursor or enter a
+          subscription in Settings.
+        </div>
+      )}
+      {data.anthropic_error && (
+        <div className="text-[11px] text-muted-foreground">
+          Anthropic admin cost report unavailable ({data.anthropic_error}) — enter exact API spend
+          in Settings.
         </div>
       )}
 
-      {/* daily spend, stacked by provider */}
-      <div className={CARD}>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <span className="text-[13px] font-semibold text-foreground">Daily spend by provider</span>
-          <Legend
-            items={data.providers.map((p, i) => ({ key: p, label: p, color: colorFor(p, i) }))}
-          />
-        </div>
-        {hasSpend ? (
-          <StackedBars
-            rows={spend}
-            series={data.providers}
-            colorOf={colorFor}
-            label="Daily spend by provider"
-          />
-        ) : (
-          <div className="py-6 text-center text-xs text-muted-foreground">
-            No spend in this window.
-          </div>
-        )}
-      </div>
-
-      {/* daily tokens, stacked by kind */}
-      <div className={CARD}>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <span className="text-[13px] font-semibold text-foreground">Daily tokens</span>
-          <Legend
-            items={[
-              { key: "input", label: "Input", color: TOKEN_COLOR.input },
-              { key: "output", label: "Output", color: TOKEN_COLOR.output },
-              { key: "cache_read", label: "Cache read", color: TOKEN_COLOR.cache_read },
-            ]}
-          />
-        </div>
-        {hasTokens ? (
-          <StackedBars
-            rows={tokens}
-            series={["input", "output", "cache_read"]}
-            colorOf={(k) => TOKEN_COLOR[k as keyof typeof TOKEN_COLOR]}
-            label="Daily tokens by kind"
-          />
-        ) : (
-          <div className="py-6 text-center text-xs text-muted-foreground">
-            No token activity in this window.
-          </div>
-        )}
-      </div>
-
       <p className="text-[11px] text-muted-foreground">
-        This workspace only. Cursor is authoritative billing; Claude and Codex are token estimates;
-        Opencode is per-message session cost. Push to the brain with{" "}
-        <code className="font-mono">aios analyze --push</code> to see team totals.
+        Actual financial spend only — owner-entered figures beat billing APIs, which beat a detected
+        subscription; anything else shows as unknown. Token usage is never converted to money here.
       </p>
     </div>
   );
