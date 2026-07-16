@@ -8,8 +8,9 @@
  * Environment heuristic (kept deliberately simple — see docs/loop-install.md):
  *   macOS  → launchd LaunchAgent (StartCalendarInterval gives free catch-up-on-wake: a job
  *            missed while the laptop was asleep runs as soon as the system wakes, unlike cron).
- *   other  → cron (the realistic 24/7-box case for this toolkit's users; cron has no catch-up,
+ *   Linux  → cron (the realistic 24/7-box case for this toolkit's users; cron has no catch-up,
  *            which is fine — a server isn't expected to sleep).
+ *   Windows is not supported natively yet; WSL uses the Linux/cron path.
  * `--scheduler launchd|cron` overrides detection for testing / an atypical setup.
  *
  * Three jobs are installed:
@@ -348,7 +349,8 @@ export function readCronStatus(plan, { exec = execFileSync } = {}) {
 const INSTALL_HELP = `aios loop install [--dry-run] [--uninstall] [--status] [--scheduler launchd|cron]
   Detects the environment and installs a real scheduler for the operator loop:
     macOS       → launchd LaunchAgent per job (catch-up-on-wake via StartCalendarInterval)
-    Linux/other → crontab entries (a single marker-delimited, idempotent block)
+    Linux      → crontab entries (a single marker-delimited, idempotent block)
+    Windows    → not supported natively yet; use WSL (V2 Task Scheduler parity is planned)
   Installs three jobs: \`aios loop daily\` (morning), \`aios loop weekly\` + \`aios maturity-week\`
   (Monday morning), and \`aios analyze\` (hourly self-refresh — it's ~3.7s, so it just runs
   instead of nagging a human to remember a cron). Re-running is idempotent (no duplicates).
