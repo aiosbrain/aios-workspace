@@ -26,8 +26,9 @@ it's the workspace a person works in and from which they push selected output to
 - **The Team Brain** is the only shared/team layer; it receives pushes and answers queries.
 
 The toolkit is **cloned per person** and skinned to a context chosen at onboarding:
-**`--context consultant`** (client/engagement framing) or **`--context employee`** (role/OKR framing) —
-the same spine, two skins.
+**`--context consultant`** (client/engagement framing), **`--context employee`** (role/OKR framing), or
+**`--context business-owner`** (consultant profile + a `6-business/` spine folder) —
+the same spine, three skins.
 
 ---
 
@@ -35,7 +36,7 @@ the same spine, two skins.
 
 | Path | What |
 |------|------|
-| `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/` including **git-workflow**, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`, `AGENTS.md.tmpl`). Editing the product's behavior usually means editing here. |
+| `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/` including **git-workflow**, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`) + `scaffold/AGENTS.md.tmpl`. Editing the product's behavior usually means editing here. |
 | `scripts/` | `scaffold-project.sh` (stamp a workspace), `aios.mjs` (Team Brain sync CLI: `push`/`pull`/`status`), `leak-gate.sh`, GUI/runtime/catalog helpers. |
 | `validation/` | OGR validators (`validate-all.sh`: structure · frontmatter · secrets · aios config · rubrics). Must pass. |
 | `hooks/` | Claude Code PreToolUse guards (secrets, access-tier, frontmatter, sync nudge) shipped into every scaffolded workspace. |
@@ -43,6 +44,12 @@ the same spine, two skins.
 | `examples/` | A fully synthetic sample workspace used to demo + test the harnesses. Use it; never put real data here. |
 | `docs/` | `architecture.md`, `feature-set.md`, `workflows.md`, **`brain-api.md` (the pinned sync contract)**, roadmap. |
 | `test/` | Toolkit tests. |
+
+---
+
+## 2b. Unified Inbox feature (distinct from `1-inbox/` spine folder)
+
+The **Unified Inbox** (`aios inbox` CLI) is a cross-source human+agent attention queue (canonical spec: `docs/v1-operator-loop/domains/unified-inbox.md`). It is a separate feature from the `1-inbox/` workspace spine folder — the spine folder is a static filing location, while the Unified Inbox is a live, ranked, prioritized attention surface. For orientation and infrastructure details: `docs/v1-operator-loop/domains/unified-inbox-overview.md`, host ops: `docs/v1-operator-loop/host/provisioning-runbook.md`, and data governance: `docs/v1-operator-loop/domains/inbox-governance/`.
 
 ---
 
@@ -70,7 +77,7 @@ invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy
 
 ## 4. The pinned sync contract — do not drift ⚠️
 
-**`docs/brain-api.md` is the single pinned contract (currently **v1.8**, major `/api/v1`)** between this toolkit and
+**`docs/brain-api.md` is the single pinned contract (currently **v1.10**, major `/api/v1`)** between this toolkit and
 the Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change
 in that file first** — bump the version and make the matching change in `aios-team-brain`. A silent
 drift breaks `aios push`/`aios pull` for everyone. Forward-compat rule: clients MUST ignore item kinds
@@ -121,8 +128,8 @@ they don't recognize.
   (`scripts/toolkit-contribute.mjs`) closes that loop in one command: it maps the workspace file back to its
   toolkit `src`, drops it into a throwaway toolkit worktree off `origin/main` (never the primary checkout),
   and opens the PR with `gh`. `--dry-run` prints the plan without writing.
-- **Both contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
-  `--context employee`. Test both.
+- **All three contexts must keep working.** A scaffold change has to hold for `--context consultant` AND
+  `--context employee` AND `--context business-owner`. Test all three.
 - **The example is synthetic.** `examples/` is the only place with sample content; keep it fake.
 - **Workflow-layer code follows the constitution.** The 5 workflow domains + the Operator Loop are
   governed by **`docs/ENGINEERING-CONSTITUTION.md`** — all-TypeScript, well-bounded modules that emit

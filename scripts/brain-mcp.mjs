@@ -6,7 +6,7 @@
  * …) to an AIOS Team Brain over the v1 contract in docs/brain-api.md. This is the
  * GUI-surface counterpart to the `aios` CLI: shell-capable agents call `aios` directly
  * (faster, cheaper, no schema overhead); GUI-only agents that cannot spawn a shell
- * reach the brain through this server instead. See docs/strategy/team-brain-access-strategy.md.
+ * reach the brain through this server instead.
  *
  * DESIGN CONSTRAINTS
  *   - Zero npm dependencies (Node >= 18: built-in fetch, JSON-RPC hand-rolled over stdio).
