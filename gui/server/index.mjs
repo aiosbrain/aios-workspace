@@ -97,7 +97,7 @@ import {
   getInboxView,
   replyInboxAsk,
 } from "./inbox-api.mjs";
-import { createInboxRefresher } from "./inbox-refresh.mjs";
+import { createInboxRefresher, installInboxRefreshShutdown } from "./inbox-refresh.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -538,8 +538,8 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
-  // GET /api/inbox → the I-09 read-only unified queue, the exact `aios inbox --json` shape, served from
-  // the same compiled read model so the GUI and CLI never diverge. `?raw=1` mirrors `aios inbox --raw`.
+  // GET /api/inbox → the I-09 ranked queue plus honest GUI ingestion freshness. Occurrence-based
+  // read-model staleness is intentionally not published as ingestion freshness. `?raw=1` keeps raw order.
   // Admin-tier local state — nothing here syncs to the Team Brain.
   if (url.pathname === "/api/inbox" && req.method === "GET") {
     if (url.searchParams.get("token") !== TOKEN) {
@@ -1534,6 +1534,7 @@ wss.on("connection", (ws, req) => {
 });
 
 const inboxRefresher = createInboxRefresher({ repo });
+installInboxRefreshShutdown({ refresher: inboxRefresher, server, webSocketServer: wss });
 
 server.listen(port, "127.0.0.1", () => {
   inboxRefresher.start();

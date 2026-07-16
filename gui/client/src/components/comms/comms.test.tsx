@@ -14,6 +14,7 @@ import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
 import { postAskArchive, postAskReply, postDecision } from "./api";
+import { ageLabel } from "./presenters";
 import {
   contentFreeNotification,
   notifyNewBlockingAsks,
@@ -98,12 +99,7 @@ function fixtureView(): InboxView {
     ],
     ranker_version: "inbox-ranker-v1",
     generated_at: "2026-07-14T09:05:00.000Z",
-    staleness: {
-      stale: false,
-      newest_observation_ts: "2026-07-14T08:30:00.000Z",
-      slo_ms: 300000,
-      age_ms: 120000,
-    },
+    freshness: null,
   };
 }
 
@@ -134,12 +130,7 @@ describe("CommsQueue", () => {
 
   test("freshness reports connector success time, not a future source occurrence time", () => {
     const view = fixtureView();
-    view.staleness = {
-      ...view.staleness,
-      stale: true,
-      newest_observation_ts: "2099-01-01T00:00:00.000Z",
-    };
-    view.refresh = {
+    view.freshness = {
       status: "ready",
       last_attempt_at: "2026-07-14T09:04:59.000Z",
       last_success_at: "2026-07-14T09:05:00.000Z",
@@ -152,6 +143,9 @@ describe("CommsQueue", () => {
     );
     expect(html).not.toContain("2099");
     expect(html).not.toContain("STALE");
+    expect(ageLabel("2099-01-01T00:00:00.000Z", new Date("2026-07-16T00:00:00.000Z"))).toBe(
+      "just now"
+    );
   });
 });
 
@@ -195,7 +189,7 @@ describe("actionable Claude ask", () => {
           },
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
-          staleness: fixtureView().staleness,
+          freshness: fixtureView().freshness,
         }}
         onScopedConfirm={() => {}}
         onReply={async () => {}}
@@ -208,6 +202,9 @@ describe("actionable Claude ask", () => {
     expect(html).toContain("Send to Claude");
     expect(html).toContain("Archive");
     expect(html).not.toContain("data-terminal-frame");
+    expect(html.match(/Choose the release environment/g)).toHaveLength(1);
+    expect(html).not.toContain("font-mono");
+    expect(html).not.toContain("uppercase");
   });
 
   test("reply body cannot substitute a session and archive has an empty body", async () => {
@@ -226,6 +223,36 @@ describe("actionable Claude ask", () => {
       { path: "/api/inbox/ask%2Fa/reply", body: { message: "Use staging" } },
       { path: "/api/inbox/ask%2Fa/archive", body: {} },
     ]);
+  });
+
+  test("an unresumable active ask still offers archive without noisy terminal chrome", () => {
+    const item = agentAsk("ask-unbound", {
+      title: "Claude needs clarification",
+      why: "open blocker",
+    });
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item,
+          agentContext: {
+            subject: "Claude needs clarification",
+            summary: "The original session cannot be resumed safely.",
+            turns: [],
+            canReply: false,
+          },
+          pendingApprovals: [],
+          generated_at: "2026-07-16T02:00:00.000Z",
+          freshness: null,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(html).toContain("Archive");
+    expect(html).toContain("can’t be resumed safely");
+    expect(html).not.toContain("font-mono");
+    expect(html).not.toContain("uppercase");
   });
 });
 

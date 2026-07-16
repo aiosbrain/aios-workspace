@@ -3,9 +3,9 @@
 // The load-bearing contract: `GET /api/inbox` must render EXACTLY what `aios inbox --json` returns, so
 // the GUI queue and the terminal never diverge (the spec's "API contract test: GET /api/inbox
 // deep-equals the aios inbox --json output over the same fixture workspace"). We assert that against the
-// real CLI over the same fixture workspace, ignoring only the two wall-clock fields that can never match
-// across two separate reads (`generated_at`, `staleness.age_ms`) — every item, the ranker version, and
-// the staleness verdict are identity-checked.
+// real CLI over the same fixture workspace, ignoring response metadata: every active item and the ranker
+// version are identity-checked. The GUI intentionally replaces the CLI's occurrence-derived `staleness`
+// with connector-ingestion `freshness`, because occurrence timestamps do not measure ingestion health.
 //
 // The rest of the suite covers the raw escape hatch, item detail, and the ONLY mutating call in this
 // issue — the scoped-confirmation decision — including its tamper (digest) and replay guards, which are
@@ -82,11 +82,9 @@ function seedObservations(dir, ts = new Date().toISOString()) {
   ]);
 }
 
-// The two fields that can never match across two independent reads (each stamps its own `now`).
-function stripVolatile(view) {
-  const { generated_at: _generated_at, staleness, ...rest } = view;
-  const { age_ms: _age_ms, ...stalenessRest } = staleness ?? {};
-  return { ...rest, staleness: stalenessRest };
+// Compare the shared queue contract while allowing each surface to own its response metadata.
+function queueProjection(view) {
+  return { items: view.items, ranker_version: view.ranker_version };
 }
 
 test("EXIT — GET /api/inbox deep-equals `aios inbox --json` over the same fixture workspace", async () => {
@@ -99,12 +97,11 @@ test("EXIT — GET /api/inbox deep-equals `aios inbox --json` over the same fixt
     const cliView = JSON.parse(cli(dir, "inbox", ["--json"]));
     const apiView = await getInboxView(dir);
 
-    // Every item, the ranker version, and the staleness verdict are identical; only the wall-clock
-    // fields differ (two separate reads), so they're stripped before the deep-equal.
-    assert.deepEqual(stripVolatile(apiView), stripVolatile(cliView));
-    // The volatile fields still exist and carry the right types on the API response.
+    assert.deepEqual(queueProjection(apiView), queueProjection(cliView));
+    // The GUI publishes ingestion freshness only; it must not mislabel message age as connector health.
     assert.equal(typeof apiView.generated_at, "string");
-    assert.equal(typeof apiView.staleness.stale, "boolean");
+    assert.equal(apiView.freshness, null);
+    assert.equal("staleness" in apiView, false);
     assert.ok(apiView.items.length >= 3, "queue carries the seeded asks + observation");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -120,7 +117,7 @@ test("GET /api/inbox?raw deep-equals `aios inbox --raw --json` (pure chronologic
 
     const cliRaw = JSON.parse(cli(dir, "inbox", ["--raw", "--json"]));
     const apiRaw = await getInboxView(dir, { raw: true });
-    assert.deepEqual(stripVolatile(apiRaw), stripVolatile(cliRaw));
+    assert.deepEqual(queueProjection(apiRaw), queueProjection(cliRaw));
     assert.deepEqual(
       apiRaw.items.map((i) => i.id),
       cliRaw.items.map((i) => i.id),

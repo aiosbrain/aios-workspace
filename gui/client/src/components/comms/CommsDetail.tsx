@@ -1,16 +1,12 @@
 /**
  * CommsDetail (I-14 / AIO-395) — the detail pane, right half of the split-screen. Renders the selected
- * item's thread/ask detail as a TerminalFrame-based AskCard in its current state, plus any pending I-03
- * capability approvals as scoped-confirm entry points. Reply composition is DEFERRED (deep-link to Gmail
- * per the Won't list) — this pane reads; the only mutation is the scoped confirmation, brokered by the
- * parent. Content shown is admin-tier local (synthetic in fixtures).
+ * item's thread/ask detail in a quiet reading layout, plus pending I-03 capability approvals.
  */
 
 import { useEffect, useState } from "react";
 import { Archive, Bot, ExternalLink, Mail, Send, ShieldAlert } from "lucide-react";
-import { AskCard } from "./AskCard";
-import { deriveAskState, type DisplayProjection, type InboxDetail } from "./types";
-import { itemLabel, itemMeta, ageLabel } from "./presenters";
+import type { DisplayProjection, InboxDetail } from "./types";
+import { itemLabel, ageLabel } from "./presenters";
 
 export interface CommsDetailProps {
   detail: InboxDetail | null;
@@ -40,52 +36,46 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
   }
   const item = detail.item;
   const Glyph = item.origin === "agent-event" ? Bot : Mail;
-  const state = deriveAskState(item);
-  const body =
+  const subject =
     item.origin === "agent-event"
-      ? `${(item.ask?.kind as string) || "ask"} · ${(item.ask?.severity as string) || ""}\n${(item.ask?.title as string) || ""}`.trim()
-      : (item.observation?.snippet as string) || "(no preview available)";
+      ? detail.agentContext?.subject || itemLabel(item)
+      : itemLabel(item);
+  const summary =
+    item.origin === "agent-event"
+      ? detail.agentContext?.summary || item.ask?.body || "Claude needs your input."
+      : (item.observation?.snippet as string) || "No preview available.";
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-border-visible px-4 py-3">
+      <header className="flex items-center gap-2 border-b border-border-visible px-5 py-3.5">
         <Glyph size={16} className="text-muted-foreground" />
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">
-          {itemLabel(item)}
+          {subject}
         </h2>
         {item.protected && (
-          <span className="rounded-full border border-[var(--accent-line)] bg-secondary px-2 py-px font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-primary">
-            protected
+          <span className="flex items-center gap-1 text-[11px] text-primary">
+            <ShieldAlert size={12} /> Protected
           </span>
         )}
-        <span className="font-mono text-[11px] text-muted-foreground">
+        <span className="text-[11px] text-muted-foreground">
           {item.source || item.account || item.origin} · {ageLabel(item.ts)}
         </span>
-      </div>
+      </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5">
         {item.origin === "agent-event" ? (
-          <section className="rounded-lg border border-border-visible bg-card p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-primary">
-                Claude needs you
-              </span>
-              <span className="text-[11px] text-muted-foreground">{ageLabel(item.ts)}</span>
-            </div>
-            <h3 className="text-[16px] font-semibold leading-snug text-foreground">
-              {detail.agentContext?.subject || itemLabel(item)}
-            </h3>
-            <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">
-              {detail.agentContext?.summary || body}
+          <section className="max-w-3xl">
+            <p className="whitespace-pre-wrap text-[14px] leading-6 text-foreground/85">
+              {summary}
             </p>
             {detail.agentContext?.turns.length ? (
-              <div className="mt-4 space-y-3 border-t border-border-visible pt-3">
+              <div className="mt-5 space-y-4 border-t border-border-visible pt-4">
                 {detail.agentContext.turns.map((turn, index) => (
                   <div key={`${turn.role}-${index}`} className="grid grid-cols-[52px_1fr] gap-3">
-                    <span className="pt-0.5 font-mono text-[10px] uppercase text-muted-foreground">
+                    <span className="pt-0.5 text-[11px] font-medium text-muted-foreground">
                       {turn.role}
                     </span>
-                    <p className="whitespace-pre-wrap text-[12px] leading-5 text-foreground/85">
+                    <p className="whitespace-pre-wrap text-[13px] leading-5 text-foreground/85">
                       {turn.text}
                     </p>
                   </div>
@@ -94,20 +84,16 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
             ) : null}
           </section>
         ) : (
-          <AskCard
-            state={state}
-            title={itemLabel(item)}
-            source={item.source}
-            why={item.why}
-            body={body}
-            meta={itemMeta(item)}
-            timeLabel={ageLabel(item.ts)}
-            origin={item.origin}
-          />
+          <section className="max-w-3xl">
+            <p className="whitespace-pre-wrap text-[14px] leading-6 text-foreground/85">
+              {summary}
+            </p>
+            <p className="mt-3 text-[11px] text-muted-foreground">Why now: {item.why}</p>
+          </section>
         )}
 
         {item.origin === "agent-event" && item.ask?.status === "open" && (
-          <section className="rounded-lg border border-border-visible bg-card p-3">
+          <section className="max-w-3xl border-t border-border-visible pt-4">
             <label
               htmlFor={`ask-reply-${item.id}`}
               className="text-[12px] font-medium text-foreground"
@@ -178,12 +164,10 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
 
         {/* Scoped-confirm entry points — the pending I-03 approvals the operator can authorize. */}
         {detail.pendingApprovals.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-lg border border-[var(--accent-line)] bg-card p-3">
+          <div className="flex max-w-3xl flex-col gap-2 border-t border-border-visible pt-4">
             <div className="flex items-center gap-2">
               <ShieldAlert size={15} className="text-primary" />
-              <span className="font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-primary">
-                pending approvals
-              </span>
+              <span className="text-[12px] font-medium text-primary">Pending approvals</span>
             </div>
             {detail.pendingApprovals.map((p) => (
               <div

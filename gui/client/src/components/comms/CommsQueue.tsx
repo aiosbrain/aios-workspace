@@ -24,7 +24,7 @@ function stateLabel(item: InboxItem) {
 }
 
 export function refreshLabel(view: InboxView) {
-  const refresh = view.refresh;
+  const refresh = view.freshness;
   if (!refresh) return null;
   if (refresh.status === "refreshing" && !refresh.last_success_at) return "Updating…";
   if (refresh.status === "failed" || refresh.status === "unavailable") return refresh.error;
@@ -119,11 +119,11 @@ export function CommsQueue({ view, selectedId, onSelect }: CommsQueueProps) {
           <p
             className={cn(
               "mt-0.5 text-[11px] text-muted-foreground",
-              (view.refresh?.status === "failed" || view.refresh?.status === "degraded") &&
+              (view.freshness?.status === "failed" || view.freshness?.status === "degraded") &&
                 "text-[var(--aios-amber)]",
-              view.refresh?.status === "unavailable" && "text-muted-foreground"
+              view.freshness?.status === "unavailable" && "text-muted-foreground"
             )}
-            role={view.refresh?.error ? "status" : undefined}
+            role={view.freshness?.error ? "status" : undefined}
           >
             {freshness}
           </p>

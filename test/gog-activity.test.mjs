@@ -30,6 +30,7 @@ import {
   observationDedupKey,
   observationLineKey,
   OBSERVATIONS_SCHEMA_VERSION,
+  acquireGogActivityLock,
 } from "../scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs";
 import { projectObservations } from "../dist/operator-loop/index.js";
 
@@ -66,6 +67,35 @@ const UNREAD_THREAD = {
 };
 
 const NO_ID_THREAD = { date: "2026-07-13 03:52", subject: "Malformed — no id" };
+
+test("cross-process pull lock excludes a live owner and safely reclaims a dead one", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "gog-lock-"));
+  const releaseFirst = acquireGogActivityLock(repo, {
+    pid: 111,
+    token: "first",
+    probe: () => {},
+  });
+  assert.equal(typeof releaseFirst, "function");
+  assert.equal(acquireGogActivityLock(repo, { pid: 222, token: "second", probe: () => {} }), null);
+
+  const dead = new Error("dead");
+  dead.code = "ESRCH";
+  const releaseReclaimed = acquireGogActivityLock(repo, {
+    pid: 222,
+    token: "second",
+    probe: () => {
+      throw dead;
+    },
+  });
+  assert.equal(typeof releaseReclaimed, "function");
+  releaseFirst(); // stale owner cannot delete the replacement token
+  assert.equal(acquireGogActivityLock(repo, { pid: 333, token: "third", probe: () => {} }), null);
+  releaseReclaimed();
+  assert.equal(
+    typeof acquireGogActivityLock(repo, { pid: 333, token: "third", probe: () => {} }),
+    "function"
+  );
+});
 
 // ── normalization ────────────────────────────────────────────────────────────
 
