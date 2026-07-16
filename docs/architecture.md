@@ -53,7 +53,7 @@ lands in `brain-api.md` for product reasons, and both the CLI and the MCP bridge
 > the **brain**; the **runtime adapters** (`gui/server/runtime-adapters/`, `aios skills
 > export`) decide which *agent runtimes* can run the **local harness**. Different lever,
 > different layer. See the [MCP connector PRD](prd-team-brain-mcp-connector.md).
-
+>
 > **This section is the public, release-safe summary of the access doctrine.**
 
 ## Context-driven spine

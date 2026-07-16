@@ -128,9 +128,11 @@ small number of maintenance/action subcommands. Verified subcommands (from the s
 | `aios inbox seed` | Cold-start entity seeding: proposes registry/entity-file suggestions from observation history for the operator to merge or reject — never writes on its own. |
 | `aios inbox status` | Reports coordinator/adapter health (the host-health summary). |
 
-None of these subcommands mutate the asks store or sync anything to the Team Brain; the only
-mutating paths in the whole feature are `send` (an explicit, policy-approved Gmail send) and `seed
-merge` (an explicit registry write the operator triggers one suggestion at a time).
+None of these subcommands mutate the asks store or sync anything to the Team Brain. The only
+paths that produce off-machine effects are `send` (an explicit, policy-approved Gmail send) and
+`seed merge` (an explicit registry write the operator triggers one suggestion at a time).
+`rebuild` and `compact` are mutating on local state (SQLite writes, journal compaction) but never
+alter the asks store, the brain, or any external surface.
 
 ## 5. Where to go deeper
 

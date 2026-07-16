@@ -56,12 +56,25 @@ npm run format:check
 # Unit + integration tests (this is the same suite CI's `tests` job runs)
 npm test
 
-# Scaffold smoke test + validate — the canonical scaffolder, not the legacy one
+# Scaffold smoke test + validate — the canonical scaffolder, not the legacy one.
+# Test all three contexts when touching scaffold content (RESOLVER gate requires it):
 bash scripts/scaffold-project.sh \
   --context consultant --slug ci-sample --stakeholder "Sample Co" --owner alex \
   --members "alex,sam,jordan" --org your-github-org --currency USD \
-  --output /tmp/ci-sample
-bash validation/validate-all.sh /tmp/ci-sample
+  --output /tmp/ci-sample-consultant
+bash validation/validate-all.sh /tmp/ci-sample-consultant
+
+bash scripts/scaffold-project.sh \
+  --context employee --slug ci-sample-emp --stakeholder "Sample Co" --owner alex \
+  --members "alex,sam,jordan" --org your-github-org --currency USD \
+  --output /tmp/ci-sample-employee
+bash validation/validate-all.sh /tmp/ci-sample-employee
+
+bash scripts/scaffold-project.sh \
+  --context business-owner --slug ci-sample-biz --stakeholder "Sample Co" --owner alex \
+  --members "alex,sam,jordan" --org your-github-org --currency USD \
+  --output /tmp/ci-sample-biz
+bash validation/validate-all.sh /tmp/ci-sample-biz
 ```
 
 `scripts/scaffold-engagement.sh` is a **legacy** alias kept only for backward
