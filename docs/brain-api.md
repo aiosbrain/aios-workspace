@@ -112,7 +112,8 @@ writeback/registration pulls), so a newer client still works against an older br
 - *2026-07-16 — internal gateway **1.10**, AIO-407 contract: added service-authenticated durable
   `resume-claim` plus admin-session approval, gateway-policy, and service-credential lifecycle
   routes. The canonical extension fixture is
-  [`contract/gateway-approval-v1.10.json`](./contract/gateway-approval-v1.10.json) and pins the
+  [`contract/gateway-approval-v1.10.json`](./contract/gateway-approval-v1.10.json), SHA-256
+  `b1bed83fbdd4e6cfff2200a4cefa828a2d770c66f898e9e7d704511935cc5e62`, and separately pins the
   byte-addressed AIO-401 base contract. The feature flag remains disabled by default.*
 
 ---

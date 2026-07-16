@@ -160,69 +160,278 @@
         "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/approvals",
         "response": {
           "required": ["approvals"],
-          "rowFieldsExactly": [
-            "approvalId",
-            "executionId",
-            "memberId",
-            "memberName",
-            "tool",
-            "resource",
-            "requestHashPrefix",
-            "createdAt",
-            "expiresAt",
-            "status"
-          ]
+          "additionalProperties": false,
+          "properties": {
+            "approvals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "approvalId",
+                  "executionId",
+                  "memberId",
+                  "memberName",
+                  "tool",
+                  "resource",
+                  "requestHashPrefix",
+                  "createdAt",
+                  "expiresAt",
+                  "status"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "approvalId": "uuid",
+                  "executionId": "uuid",
+                  "memberId": "uuid",
+                  "memberName": "non-empty-string",
+                  "tool": "base-contract-tool",
+                  "resource": "canonical-github-repository-resource",
+                  "requestHashPrefix": { "pattern": "^[0-9a-f]{12}$" },
+                  "createdAt": "rfc3339-date-time",
+                  "expiresAt": "rfc3339-date-time",
+                  "status": { "const": "pending" }
+                }
+              }
+            }
+          }
         }
       },
       "approvalDecision": {
         "method": "POST",
         "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/approvals/{approvalId}/decision",
         "request": {
+          "type": "object",
           "required": ["decision", "correlationId"],
           "additionalProperties": false,
-          "decision": ["approve", "deny"]
+          "properties": {
+            "decision": { "enum": ["approve", "deny"] },
+            "correlationId": "uuid"
+          }
         },
         "response": {
+          "type": "object",
           "required": ["approvalId", "executionId", "status", "decidedAt"],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "properties": {
+            "approvalId": "uuid",
+            "executionId": "uuid",
+            "status": { "enum": ["approved", "denied"] },
+            "decidedAt": "rfc3339-date-time"
+          }
         }
       },
       "policyList": {
         "method": "GET",
-        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies"
+        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies",
+        "response": {
+          "type": "object",
+          "required": ["policies"],
+          "additionalProperties": false,
+          "properties": {
+            "policies": {
+              "type": "array",
+              "items": { "$ref": "#/admin/schemas/gateway-policy-metadata" }
+            }
+          }
+        }
       },
       "policyCreate": {
         "method": "POST",
-        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies"
+        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies",
+        "request": { "$ref": "#/admin/schemas/gateway-policy-mutation" },
+        "response": { "$ref": "#/admin/schemas/gateway-policy-metadata" },
+        "status": 201
       },
       "policyUpdate": {
         "method": "PATCH",
-        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies/{policyId}"
+        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies/{policyId}",
+        "request": { "$ref": "#/admin/schemas/gateway-policy-mutation" },
+        "response": { "$ref": "#/admin/schemas/gateway-policy-metadata" },
+        "status": 200
       },
       "policyDelete": {
         "method": "DELETE",
-        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies/{policyId}"
+        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/policies/{policyId}",
+        "request": {
+          "type": "object",
+          "required": ["correlationId"],
+          "additionalProperties": false,
+          "properties": { "correlationId": "uuid" }
+        },
+        "response": {
+          "type": "object",
+          "required": ["deleted"],
+          "additionalProperties": false,
+          "properties": { "deleted": { "const": true } }
+        },
+        "status": 200
       },
       "credentialList": {
         "method": "GET",
-        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/service-identities/{serviceIdentityId}/credentials"
+        "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/service-identities/{serviceIdentityId}/credentials",
+        "response": {
+          "type": "object",
+          "required": ["credentials"],
+          "additionalProperties": false,
+          "properties": {
+            "credentials": {
+              "type": "array",
+              "items": { "$ref": "#/admin/schemas/gateway-credential-metadata" }
+            }
+          }
+        }
       },
       "credentialRotate": {
         "method": "POST",
         "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/service-identities/{serviceIdentityId}/credentials",
         "request": {
+          "type": "object",
           "required": ["credentialId", "secret", "replacesCredentialId", "correlationId"],
           "optional": ["expiresAt"],
-          "additionalProperties": false
-        }
+          "additionalProperties": false,
+          "properties": {
+            "credentialId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{22}$",
+              "encoding": "canonical-base64url-no-padding",
+              "decodedBytes": 16
+            },
+            "secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$",
+              "encoding": "canonical-base64url-no-padding",
+              "decodedBytes": 32,
+              "minimumEntropyBits": 256
+            },
+            "replacesCredentialId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{22}$",
+              "encoding": "canonical-base64url-no-padding",
+              "decodedBytes": 16
+            },
+            "correlationId": "uuid",
+            "expiresAt": "optional-rfc3339-future-date-time"
+          }
+        },
+        "response": { "$ref": "#/admin/schemas/gateway-credential-metadata" },
+        "status": 201
       },
       "credentialRevoke": {
         "method": "POST",
         "path": "/api/internal/executor-gateway/v1/admin/{teamSlug}/service-identities/{serviceIdentityId}/credentials/{credentialId}/revoke",
         "request": {
+          "type": "object",
           "required": ["correlationId"],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "properties": { "correlationId": "uuid" }
+        },
+        "response": {
+          "type": "object",
+          "required": ["credentialId", "revoked"],
+          "additionalProperties": false,
+          "properties": {
+            "credentialId": { "pattern": "^[A-Za-z0-9_-]{22}$" },
+            "revoked": { "const": true }
+          }
+        },
+        "status": 200
+      }
+    },
+    "schemas": {
+      "gateway-subject-selector": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type", "memberId"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "const": "actor" },
+              "memberId": "uuid"
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "role"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "const": "role" },
+              "role": { "enum": ["admin", "lead", "member"] }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "tier"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "const": "tier" },
+              "tier": { "enum": ["team", "external"] }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": { "type": { "const": "team" } }
+          }
+        ]
+      },
+      "gateway-policy-mutation": {
+        "type": "object",
+        "required": ["subject", "tool", "resource", "effect", "priority", "enabled", "correlationId"],
+        "additionalProperties": false,
+        "properties": {
+          "subject": { "$ref": "#/admin/schemas/gateway-subject-selector" },
+          "tool": { "oneOf": ["base-contract-tool", { "const": "*" }] },
+          "resource": "canonical-github-repository-resource-or-wildcard",
+          "effect": { "enum": ["block", "require_approval", "allow"] },
+          "priority": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+          "enabled": { "type": "boolean" },
+          "correlationId": "uuid"
         }
+      },
+      "gateway-policy-metadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "priority",
+          "subjectRole",
+          "subjectTier",
+          "subjectActor",
+          "tool",
+          "resource",
+          "effect",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": "uuid",
+          "priority": "signed-int32",
+          "subjectRole": "nullable-admin-lead-member",
+          "subjectTier": "nullable-team-external",
+          "subjectActor": "nullable-non-empty-string",
+          "tool": { "oneOf": ["base-contract-tool", { "const": "*" }] },
+          "resource": "canonical-github-repository-resource-or-wildcard",
+          "effect": { "enum": ["block", "require_approval", "allow"] },
+          "enabled": { "type": "boolean" },
+          "createdAt": "rfc3339-date-time",
+          "updatedAt": "rfc3339-date-time"
+        }
+      },
+      "gateway-credential-metadata": {
+        "type": "object",
+        "required": ["credentialId", "version", "createdAt", "expiresAt", "revokedAt", "replacesCredentialId"],
+        "additionalProperties": false,
+        "properties": {
+          "credentialId": { "pattern": "^[A-Za-z0-9_-]{22}$" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": "rfc3339-date-time",
+          "expiresAt": "nullable-rfc3339-date-time",
+          "revokedAt": "nullable-rfc3339-date-time",
+          "replacesCredentialId": "nullable-canonical-base64url-16-bytes"
+        },
+        "forbidden": ["secret", "secretHash", "credentialHash"]
       }
     },
     "policy": {
@@ -233,7 +442,7 @@
         "taggedUnion": [
           { "type": "actor", "required": ["memberId"] },
           { "type": "role", "required": ["role"] },
-          { "type": "tier", "required": ["tier"] },
+          { "type": "tier", "required": ["tier"], "tier": ["team", "external"] },
           { "type": "team", "required": [] }
         ],
         "exactlyOne": true

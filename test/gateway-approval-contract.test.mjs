@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (name) => readFileSync(path.join(ROOT, "docs/contract", name));
-const fixture = JSON.parse(read("gateway-approval-v1.10.json"));
+const extensionBytes = read("gateway-approval-v1.10.json");
+const fixture = JSON.parse(extensionBytes);
 
 const jcs = (value) => {
   if (value === null || typeof value === "boolean" || typeof value === "string")
@@ -34,6 +35,16 @@ test("approval fixture pins the byte-addressed AIO-401 base contract", () => {
     createHash("sha256").update(read(fixture.baseContract.path)).digest("hex"),
     fixture.baseContract.sha256
   );
+});
+
+test("brain-api externally pins the canonical approval extension bytes", () => {
+  const contract = readFileSync(path.join(ROOT, "docs/brain-api.md"), "utf8");
+  const pin = contract.match(
+    /gateway-approval-v1\.10\.json\)[\s\S]{0,80}?SHA-256\s+`([0-9a-f]{64})`/
+  );
+  assert.ok(pin, "brain-api.md must publish the extension fixture SHA-256");
+  assert.equal(createHash("sha256").update(extensionBytes).digest("hex"), pin[1]);
+  assert.notEqual(pin[1], fixture.baseContract.sha256);
 });
 
 test("approval fixture discovery counts are exact and non-vacuous", () => {
@@ -82,6 +93,32 @@ test("admin routes, authorization, tagged subjects, and credential metadata are 
   assert.deepEqual(
     fixture.admin.policy.subjectSelector.taggedUnion.map((x) => x.type),
     ["actor", "role", "tier", "team"]
+  );
+  assert.deepEqual(
+    fixture.admin.policy.subjectSelector.taggedUnion.find((x) => x.type === "tier").tier,
+    ["team", "external"]
+  );
+  const schemas = fixture.admin.schemas;
+  for (const name of [
+    "gateway-subject-selector",
+    "gateway-policy-mutation",
+    "gateway-policy-metadata",
+    "gateway-credential-metadata",
+  ]) {
+    assert.equal(schemas[name].additionalProperties ?? false, false, name);
+  }
+  for (const route of Object.values(fixture.admin.routes)) {
+    assert.ok(route.response, `${route.method} ${route.path} response schema`);
+  }
+  const rotation = fixture.admin.routes.credentialRotate.request;
+  assert.equal(rotation.additionalProperties, false);
+  assert.equal(rotation.properties.secret.decodedBytes, 32);
+  assert.equal(rotation.properties.secret.minimumEntropyBits, 256);
+  assert.deepEqual(
+    fixture.admin.schemas["gateway-subject-selector"].oneOf.find(
+      (x) => x.properties.type.const === "tier"
+    ).properties.tier.enum,
+    ["team", "external"]
   );
   assert.deepEqual(fixture.admin.policy.effects, ["block", "require_approval", "allow"]);
   assert.equal(fixture.admin.policy.storedEffectMapping.block, "deny");
