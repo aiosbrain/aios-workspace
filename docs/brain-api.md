@@ -208,16 +208,20 @@ per-tool config).
 
 ## Authentication
 
-Every request carries:
+Every request carries `Authorization`. `X-AIOS-Team` is an optional compatibility header:
 
 ```
 Authorization: Bearer aios_<key_id>_<secret>
-X-AIOS-Team: <team_id>
+X-AIOS-Team: <team_uuid_or_slug>  # optional
 ```
 
 - Keys are issued per **member** in the brain's admin UI and shown once. The brain
   stores only `sha256(secret)`.
-- A key is valid only for its own team; `X-AIOS-Team` must match or the request fails.
+- The API key is the authoritative team identity. Clients do not need to configure or send a
+  separate team identifier.
+- When supplied for backward compatibility, `X-AIOS-Team` must match the key's team UUID or slug;
+  a mismatch fails authentication and is audit-logged. Clients must omit the header instead of
+  sending an empty value.
 - Failures return `401` and are audit-logged with source IP.
 
 ## `GET /api/v1/me` — authenticated identity
@@ -520,7 +524,8 @@ tier boundary is an **app-code gate** (same posture as `/metrics`, `/costs`, `/c
 `/projects`). Rate limit: 60/min per key. Clients **MUST tolerate a `404`** from an older brain that
 predates this endpoint (the forward-compat rule).
 
-**Request:** no body. Team-scoped to the key's team via `X-AIOS-Team`.
+**Request:** no body. Team-scoped by the authenticated key; the optional compatibility header,
+when present, must match that team.
 
 **Response `200` — snake_case throughout** (every v1 field is snake_case: `display_name`,
 `job_family`, `content_sha256`):
@@ -585,7 +590,7 @@ only, never connector credentials.
 
 ```
 Authorization: Bearer aios_<key_id>_<secret>
-X-AIOS-Team: <slug-or-id>
+X-AIOS-Team: <slug-or-id>  # optional compatibility header
 ```
 
 **Request:** no body.
@@ -624,8 +629,9 @@ are pinned in
 
 ### Common authorization and tier behavior
 
-All member-facing endpoints use the normal bearer key and `X-AIOS-Team`. The authenticated key
-must resolve to an active member in that team and the request tier must be exactly `team`.
+All member-facing endpoints use the normal bearer key and may receive the optional compatibility
+header `X-AIOS-Team`. The authenticated key must resolve to an active member in its team and the
+request tier must be exactly `team`.
 `external`, `admin`, a missing tier, cross-team/member identity, or tier elevation returns:
 
 ```http
@@ -1209,7 +1215,7 @@ contract unchanged).
 ```
 GET /api/v1/okf-bundle?project=<slug>&since=<ISO8601>&include_body=false&tier=team|external
 Authorization: Bearer aios_<key_id>_<secret>
-X-AIOS-Team: <team_id>
+X-AIOS-Team: <team_uuid_or_slug>  # optional compatibility header
 ```
 
 **Parameters:**

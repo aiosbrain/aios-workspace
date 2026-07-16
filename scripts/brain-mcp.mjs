@@ -144,7 +144,8 @@ function makeUnconfiguredBrainClient(missing) {
  * Resolve brain connection config. Precedence: process env → cwd/.env → aios.yaml.
  * env-first is deliberate: a Claude Desktop / Cowork user configures the server purely
  * through the extension's env block and has no workspace. Returns a config object plus
- * `missing[]` listing any required field that could not be resolved.
+ * `missing[]` listing any required field that could not be resolved. Team is
+ * optional: the API key is the authoritative team identity.
  */
 export function resolveBrainConfig({ cwd = process.cwd(), env = process.env } = {}) {
   const dotenv = loadDotEnv(cwd);
@@ -162,7 +163,6 @@ export function resolveBrainConfig({ cwd = process.cwd(), env = process.env } = 
   const missing = [];
   if (!brain_url) missing.push("AIOS_BRAIN_URL");
   if (!api_key) missing.push(keyEnv);
-  if (!team_id) missing.push("AIOS_TEAM");
 
   return { brain_url, api_key, team_id, member, missing };
 }
@@ -710,7 +710,7 @@ export function runStdio(config, deps = {}) {
   log(
     `${SERVER_NAME} v${SERVER_VERSION} → ${
       brainOk
-        ? `${config.brain_url} (team ${config.team_id})`
+        ? `${client.meta.brain_url} (${config.team_id ? `team ${config.team_id}` : "team from API key"})`
         : "<brain not configured — local aios_* tools only>"
     } · ${TOOLS.length} tools · read-only`
   );

@@ -183,3 +183,30 @@ test("mergeManaged: uncommitted (dirty) files are skipped, never merged", () => 
     rmSync(ws, { recursive: true, force: true });
   }
 });
+
+test("mergeManaged: preview classifies changes without writing live files or sidecars", () => {
+  const tk = mkdtempSync(path.join(tmpdir(), "aios-tk-preview-"));
+  const ws = mkdtempSync(path.join(tmpdir(), "aios-ws-preview-"));
+  try {
+    const baseSha = gitToolkit(tk);
+    for (const e of MANAGED_PATHS) {
+      cpSync(path.join(tk, e.src), path.join(ws, e.dest), { recursive: true });
+    }
+    const target = path.join(ws, "validation/secret-patterns.txt");
+    writeFileSync(target, "LOCAL\n");
+    writeFileSync(path.join(tk, "validation/secret-patterns.txt"), "TOOLKIT\n");
+    execFileSync("git", ["-C", tk, "add", "-A"]);
+    execFileSync("git", ["-C", tk, "commit", "-qm", "head"]);
+
+    const before = readFileSync(target, "utf8");
+    const r = mergeManaged(tk, tk, ws, baseSha, { dryRun: true });
+
+    assert.ok(r.conflicts.some((item) => item.path === "validation/secret-patterns.txt"));
+    assert.equal(readFileSync(target, "utf8"), before);
+    assert.equal(existsSync(`${target}.aios-incoming`), false);
+    assert.equal(existsSync(`${target}.aios-merge`), false);
+  } finally {
+    rmSync(tk, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});

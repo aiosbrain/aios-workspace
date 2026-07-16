@@ -698,8 +698,6 @@ async function cmdConnect(repo, args) {
   if (!ok) process.exitCode = 1;
 }
 
-const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
-
 /**
  * The ONE next action for this workspace, computed from real state instead of a static
  * multi-step list — replaces the "7-step next steps" wall (scaffold-project.sh's own
@@ -709,103 +707,13 @@ const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
  */
 function nextAction(repo) {
   if (!vaultGet(repo, "AIOS_API_KEY")) {
-    return "Connect the Team Brain: run `aios onboard` (or set AIOS_API_KEY + brain_url/team_id in aios.yaml).";
+    return "Run `aios status` to see what is local, private, and eligible to share.";
   }
   const state = loadState(repo);
   if (!Object.keys(state.items || {}).length) {
-    return "Run `aios status` to see what would sync, then `aios push`.";
+    return "Run `aios status` to preview what would sync.";
   }
-  return "Start the workspace GUI: `npm run gui -- --repo .`";
-}
-
-// aios onboard — guided first-run setup: one multi-select over every connector the
-// workspace knows about (Team Brain pinned + pre-selected at top, already-wired tools
-// pre-selected too), then masked secret entry + live validation feedback per item.
-// Every step is optional. Interactive only — on a non-TTY (CI, piped scaffold) it prints
-// the same guidance and exits 0 so it never blocks.
-async function cmdOnboard(repo, args = []) {
-  if (args.includes("--print-next-only")) {
-    console.log(nextAction(repo));
-    return;
-  }
-
-  const connectors = listConnectors(repo);
-
-  if (!process.stdin.isTTY) {
-    console.log(c.blue("AIOS onboarding"));
-    console.log("  Run these from an interactive terminal:");
-    console.log(c.dim("    aios onboard              # guided setup (brain + tools)"));
-    console.log(c.dim("    aios connect <id>         # any one tool"));
-    console.log(
-      c.dim(
-        "  Brain: set AIOS_API_KEY in .env, fill brain_url + team_id in aios.yaml, then: aios status"
-      )
-    );
-    return;
-  }
-
-  const { pickConnectors, askSecret, askViaClack, reportValidation, clack } =
-    await import("./onboard-ui.mjs");
-
-  clack.intro("AIOS onboarding");
-  const backedUp = backupConfig(repo);
-  if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);
-
-  const hasBrainKey = !!vaultGet(repo, "AIOS_API_KEY");
-  const teamBrainOption = {
-    id: TEAM_BRAIN_PSEUDO_ID,
-    name: "AIOS Team Brain",
-    summary: "Powers push/pull/status/query — get your key from your dashboard's profile page",
-    status: hasBrainKey ? "wired" : "available",
-  };
-
-  const selection = await pickConnectors(connectors, { pinned: teamBrainOption });
-
-  if (selection.includes(TEAM_BRAIN_PSEUDO_ID) && !hasBrainKey) {
-    const key = await askSecret("AIOS_API_KEY", {
-      instructions: "Sign in to your Team Brain dashboard → your profile → Generate my API key.",
-    });
-    if (!key) {
-      clack.log.warn("AIOS_API_KEY: no key entered — skipped.");
-    } else {
-      try {
-        vaultSet(repo, "AIOS_API_KEY", key);
-        ensureGitignore(repo);
-        reportValidation([
-          { name: "AIOS_API_KEY", ok: true, detail: "encrypted into .env (dotenvx)" },
-        ]);
-      } catch (e) {
-        reportValidation([{ name: "AIOS_API_KEY", ok: false, detail: e.message }]);
-      }
-    }
-  }
-
-  // Every other selected connector goes through the SAME connect→validate→store engine
-  // as standalone `aios connect <id>` — only the `ask` callback changes (clack's masked
-  // password prompt instead of a plaintext-echoing readline question). connectFlow
-  // already renders its own ✓/✗ check lines and the "connected as … in …" confirmation.
-  for (const id of selection.filter((v) => v !== TEAM_BRAIN_PSEUDO_ID)) {
-    const conn = connectors.find((cn) => cn.id === id);
-    if (conn?.status === "wired") continue; // already connected — nothing to do
-    try {
-      await connectFlow(repo, getDescriptor(repo, id), { ask: askViaClack });
-    } catch (e) {
-      clack.log.error(`${conn?.name || id}: ${e.message}`);
-    }
-  }
-
-  // Profile — the agent doesn't know who you are yet. Point at the workspace-setup skill
-  // rather than invoking it here (this is a plain Node script, not a Claude session). Kept
-  // as its own follow-on question, after the connector list finishes, not interleaved.
-  const wantsProfile = await clack.confirm({
-    message: "Set up your profile now — name, role, working style?",
-  });
-  if (!clack.isCancel(wantsProfile) && wantsProfile) {
-    clack.log.step('Say this once your GUI/CLI session starts: "set me up"');
-    clack.log.message("(interviews you, or drafts from a link — always confirms before writing)");
-  }
-
-  clack.outro(nextAction(repo));
+  return 'Ask shared memory one real question with `aios query "…"`.';
 }
 
 // aios review — interactive review-and-push panel for the terminal.
@@ -2544,6 +2452,7 @@ const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md
 usage:
   aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
   aios onboard                          guided first-run setup (brain + tools, one multi-select)
+    --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state
   aios connect [<id>]                   connect an integration (guided + live-validated)
     [--token <v>] [--set ENV=v]         non-interactive credential input
   aios review                           interactive: toggle inclusion, then push selected
@@ -2656,7 +2565,7 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
-  aios update [--check|--force|--contribute <path>]  3-way-merge toolkit governance (personal +
+  aios update [--check|--preview|--force|--contribute <path>]  3-way-merge toolkit governance (personal +
                                        uncommitted edits kept); --contribute opens a toolkit PR from a file
   aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
@@ -2784,6 +2693,7 @@ const OFFLINE_CMDS = new Set([
 let repo, cfg;
 if (OFFLINE_CMDS.has(cmd)) {
   repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
+  if (!repo && cmd === "onboard" && rest.includes("--inspect")) repo = process.cwd();
   if (!repo) die("could not locate repo root — pass --repo <path>");
   cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
 } else {
@@ -2801,8 +2711,10 @@ try {
   else if (cmd === "pull") await cmdPull(repo, cfg, rest);
   else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
   else if (cmd === "connect") await cmdConnect(repo, rest);
-  else if (cmd === "onboard") await cmdOnboard(repo, rest);
-  else if (cmd === "whoami") await cmdWhoami(repo, cfg);
+  else if (cmd === "onboard") {
+    const { cmdOnboard } = await import("./onboard-command.mjs");
+    await cmdOnboard(repo, cfg, rest, { connectFlow, nextAction });
+  } else if (cmd === "whoami") await cmdWhoami(repo, cfg);
   else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
   else if (cmd === "query") await cmdQuery(repo, cfg, rest);
   else if (cmd === "member")

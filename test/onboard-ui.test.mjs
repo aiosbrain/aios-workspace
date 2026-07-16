@@ -6,7 +6,14 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildConnectorOptions, cleanQuestion } from "../scripts/onboard-ui.mjs";
+import { buildConnectorOptions, cleanQuestion, ONBOARDING_PATHS } from "../scripts/onboard-ui.mjs";
+
+test("offers the Personal / Join / Create contract in that order", () => {
+  assert.deepEqual(
+    ONBOARDING_PATHS.map((item) => item.value),
+    ["personal", "join", "create"]
+  );
+});
 
 test("buildConnectorOptions pins the Team Brain first and pre-selects it", () => {
   const pinned = { id: "__team_brain__", name: "AIOS Team Brain", summary: "Powers sync" };

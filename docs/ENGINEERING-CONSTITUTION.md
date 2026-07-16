@@ -117,7 +117,7 @@ the same commit.
 
 | Concern | Source of truth |
 |---|---|
-| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.6) |
+| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.10) |
 | Design system | `aios-design/DESIGN.md` |
 | Engineering / workflow layer | **this file** |
 | Conventions & tiers | `scaffold/.claude/rules/` |

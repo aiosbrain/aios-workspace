@@ -3,7 +3,7 @@
  *
  * The single place that knows how to talk to a Team Brain over the v1 contract
  * (docs/brain-api.md): build the request URL, attach `Authorization: Bearer` +
- * the `X-AIOS-Team` header, make the fetch, map HTTP errors, and parse the
+ * an optional non-empty `X-AIOS-Team` header, make the fetch, map HTTP errors, and parse the
  * streaming `/query` (SSE) answer.
  *
  * Both consumers import this:
@@ -18,7 +18,7 @@
  * `deps.fetch` is injectable for tests.
  */
 
-const API_VERSION = "v1";
+import { brainApiUrl, fetchBrainOriginLocked, normalizeBrainOrigin } from "./brain-origin.mjs";
 
 /**
  * Parse one SSE event block (already split on the blank-line separator) into
@@ -82,12 +82,14 @@ export function createBrainClient(config, deps = {}) {
   const doFetch = deps.fetch || globalThis.fetch;
   const headers = {
     Authorization: `Bearer ${config.api_key}`,
-    "X-AIOS-Team": config.team_id || "",
   };
-  const base = `${String(config.brain_url || "").replace(/\/$/, "")}/api/${API_VERSION}`;
+  if (String(config.team_id || "").trim()) headers["X-AIOS-Team"] = String(config.team_id).trim();
+  const origin = normalizeBrainOrigin(config.brain_url);
+  const request = (route, options) =>
+    fetchBrainOriginLocked(doFetch, brainApiUrl(origin, route), options, origin);
 
   async function fetchJson(method, route, body = null) {
-    const res = await doFetch(`${base}${route}`, {
+    const res = await request(route, {
       method,
       headers: { ...headers, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
@@ -108,7 +110,7 @@ export function createBrainClient(config, deps = {}) {
 
   // Open the SSE /query stream; throws a mapped Error on a non-OK response.
   async function openQuery(question, project = null) {
-    const res = await doFetch(`${base}/query`, {
+    const res = await request("/query", {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({ question, project: project || null }),
@@ -183,7 +185,7 @@ export function createBrainClient(config, deps = {}) {
   // Non-secret connection metadata for status/probe surfaces. The API key is
   // deliberately absent — nothing here may leak a credential.
   const meta = {
-    brain_url: config.brain_url,
+    brain_url: origin,
     team: config.team_id || null,
     member: config.member || null,
   };
