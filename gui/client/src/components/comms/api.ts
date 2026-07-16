@@ -48,6 +48,7 @@ export interface AskActionResult {
   accepted?: boolean;
   archived?: boolean;
   error?: string;
+  code?: "reply_in_progress" | "ask_closed" | "lifecycle_conflict";
 }
 
 /** Only the reply text leaves the client; session identity is resolved from the canonical ask server-side. */

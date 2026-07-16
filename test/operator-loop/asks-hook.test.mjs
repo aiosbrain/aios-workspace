@@ -9,7 +9,14 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { foldLines, readAsks, sha256, ASKS_STORE_REL } from "../../dist/operator-loop/index.js";
+import {
+  ASKS_STORE_REL,
+  claimReply,
+  foldLines,
+  readAsks,
+  releaseReply,
+  sha256,
+} from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOOK = path.join(ROOT, "hooks", "asks-capture.mjs");
@@ -265,5 +272,31 @@ test("tracked root and scaffold settings wire UserPromptSubmit lifecycle reconci
       commands.includes("${CLAUDE_PROJECT_DIR}/hooks/asks-capture.mjs"),
       `${settingsPath} resolves matching idle asks when the user returns`
     );
+  }
+});
+
+test("UserPromptSubmit does not resolve an idle ask claimed by an in-flight GUI reply", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "Notification",
+      notification_type: "idle_prompt",
+      session_id: "session-claimed",
+      message: "Waiting for your input",
+    });
+    const ask = open(dir)[0];
+    assert.equal(claimReply(dir, ask.id, "claim-token", "2026-07-16T01:00:00.000Z"), "claimed");
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-claimed" });
+    assert.equal(open(dir)[0].status, "open");
+    assert.equal(open(dir)[0].replyClaim?.token, "claim-token");
+    assert.equal(releaseReply(dir, ask.id, "claim-token", "2026-07-16T01:01:00.000Z"), true);
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-claimed" });
+    assert.equal(
+      open(dir)[0].status,
+      "resolved",
+      "ordinary later prompt still closes the idle ask"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

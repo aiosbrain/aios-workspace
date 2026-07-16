@@ -76,7 +76,14 @@ export interface AskRecord {
 export interface Ask extends AskRecord {
   status: AskStatus;
   resolvedAt: string | null;
+  replyClaim?: { token: string; claimedAt: string } | null;
+  reconcileAfter?: string | null;
 }
+
+export type ReplyClaimResult = "claimed" | "missing" | "closed" | "busy";
+export type ReplyCompletionResult = "resolved" | "missing" | "closed" | "claim-mismatch";
+export type ArchiveResult = "archived" | "already-archived" | "missing" | "closed" | "busy";
+export type AskReconcileResult = "resolved" | "missing" | "closed" | "busy" | "stale-evidence";
 
 /** Shape callers pass to `appendCreate`; `id`/`createdAt` are stamped, the rest normalized. */
 export interface AskInput {
@@ -331,7 +338,14 @@ export function foldLines(lines: readonly string[]): FoldResult {
         warnings.push({ line, reason: "duplicate-create-id" }); // first create wins
         return;
       }
-      byId.set(rec.id, { ...rec, status: "open", resolvedAt: null });
+      const folded = { ...rec, status: "open", resolvedAt: null } as Ask;
+      // Concurrency metadata is durable but internal: keep the long-standing public/JSON ask shape
+      // byte-stable while server lifecycle code can still inspect these folded properties.
+      Object.defineProperties(folded, {
+        replyClaim: { value: null, writable: true, enumerable: false },
+        reconcileAfter: { value: null, writable: true, enumerable: false },
+      });
+      byId.set(rec.id, folded);
       order.push(rec.id);
       return;
     }
@@ -345,6 +359,45 @@ export function foldLines(lines: readonly string[]): FoldResult {
       const ask = byId.get(id) as Ask;
       ask.status = op === "resolve" ? "resolved" : op === "orphan" ? "orphaned" : "archived";
       ask.resolvedAt = at && Number.isFinite(Date.parse(at)) ? at : new Date().toISOString();
+      ask.replyClaim = null;
+      return;
+    }
+    if (op === "claim-reply") {
+      const id = asStr(parsed.id);
+      const token = asStr(parsed.token);
+      const at = asStr(parsed.at);
+      const ask = id ? byId.get(id) : undefined;
+      if (!ask || !token || !at || !Number.isFinite(Date.parse(at))) {
+        warnings.push({ line, reason: "invalid-claim-reply" });
+        return;
+      }
+      if (ask.status === "open" && !ask.replyClaim) ask.replyClaim = { token, claimedAt: at };
+      return;
+    }
+    if (op === "release-reply") {
+      const id = asStr(parsed.id);
+      const token = asStr(parsed.token);
+      const at = asStr(parsed.at);
+      const ask = id ? byId.get(id) : undefined;
+      if (!ask || !token || !at || !Number.isFinite(Date.parse(at))) {
+        warnings.push({ line, reason: "invalid-release-reply" });
+        return;
+      }
+      if (ask.replyClaim?.token === token) {
+        ask.replyClaim = null;
+        ask.reconcileAfter = at;
+      }
+      return;
+    }
+    if (op === "reconcile-after") {
+      const id = asStr(parsed.id);
+      const at = asStr(parsed.at);
+      const ask = id ? byId.get(id) : undefined;
+      if (!ask || !at || !Number.isFinite(Date.parse(at))) {
+        warnings.push({ line, reason: "invalid-reconcile-after" });
+        return;
+      }
+      ask.reconcileAfter = at;
       return;
     }
     warnings.push({ line, reason: "unknown-op" });
@@ -421,6 +474,98 @@ export function appendOp(
   withLock(root, () => appendFileSync(storePath(root), opLine(op, id, at) + "\n"));
 }
 
+function foldedUnderLock(root: string): Ask[] {
+  const abs = storePath(root);
+  return existsSync(abs) ? foldLines(readFileSync(abs, "utf8").split(/\r?\n/)).asks : [];
+}
+
+export function claimReply(
+  root: string,
+  id: string,
+  token: string,
+  at: string = new Date().toISOString()
+): ReplyClaimResult {
+  return withLock(root, () => {
+    const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
+    if (!ask) return "missing";
+    if (ask.status !== "open") return "closed";
+    if (ask.replyClaim) return "busy";
+    appendFileSync(
+      storePath(root),
+      JSON.stringify({ v: ASKS_SCHEMA_VERSION, op: "claim-reply", id, token, at }) + "\n"
+    );
+    return "claimed";
+  });
+}
+
+export function releaseReply(
+  root: string,
+  id: string,
+  token: string,
+  at: string = new Date().toISOString()
+): boolean {
+  return withLock(root, () => {
+    const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
+    if (ask?.status !== "open" || ask.replyClaim?.token !== token) return false;
+    appendFileSync(
+      storePath(root),
+      JSON.stringify({ v: ASKS_SCHEMA_VERSION, op: "release-reply", id, token, at }) + "\n"
+    );
+    return true;
+  });
+}
+
+export function completeReply(
+  root: string,
+  id: string,
+  token: string,
+  at: string = new Date().toISOString()
+): ReplyCompletionResult {
+  return withLock(root, () => {
+    const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
+    if (!ask) return "missing";
+    if (ask.status !== "open") return "closed";
+    if (ask.replyClaim?.token !== token) return "claim-mismatch";
+    appendFileSync(storePath(root), opLine("resolve", id, at) + "\n");
+    return "resolved";
+  });
+}
+
+export function archiveAsk(
+  root: string,
+  id: string,
+  at: string = new Date().toISOString()
+): ArchiveResult {
+  return withLock(root, () => {
+    const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
+    if (!ask) return "missing";
+    if (ask.status === "archived") return "already-archived";
+    if (ask.status !== "open") return "closed";
+    if (ask.replyClaim) return "busy";
+    appendFileSync(storePath(root), opLine("archive", id, at) + "\n");
+    return "archived";
+  });
+}
+
+/** Atomically consume transcript evidence only while no UI reply owns the ask. */
+export function resolveUnclaimed(root: string, id: string, evidenceAt: string): AskReconcileResult {
+  return withLock(root, () => {
+    const ask = foldedUnderLock(root).find((candidate) => candidate.id === id);
+    if (!ask) return "missing";
+    if (ask.status !== "open") return "closed";
+    if (ask.replyClaim) return "busy";
+    const evidenceMs = Date.parse(evidenceAt);
+    const createdMs = Date.parse(ask.createdAt);
+    const reconcileMs = Date.parse(ask.reconcileAfter || "");
+    const afterMs = Number.isFinite(reconcileMs) ? Math.max(createdMs, reconcileMs) : createdMs;
+    if (!Number.isFinite(evidenceMs) || !Number.isFinite(afterMs) || evidenceMs <= afterMs) {
+      return "stale-evidence";
+    }
+    appendFileSync(storePath(root), opLine("resolve", id, evidenceAt) + "\n");
+    return "resolved";
+  });
+}
+
 // ── maintenance ────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -478,8 +623,29 @@ export function compact(
     }
     const lines: string[] = [];
     for (const ask of kept) {
-      const { status, resolvedAt, ...rec } = ask;
+      const { status, resolvedAt, replyClaim, reconcileAfter, ...rec } = ask;
       lines.push(createLine(rec));
+      if (reconcileAfter) {
+        lines.push(
+          JSON.stringify({
+            v: ASKS_SCHEMA_VERSION,
+            op: "reconcile-after",
+            id: ask.id,
+            at: reconcileAfter,
+          })
+        );
+      }
+      if (replyClaim) {
+        lines.push(
+          JSON.stringify({
+            v: ASKS_SCHEMA_VERSION,
+            op: "claim-reply",
+            id: ask.id,
+            token: replyClaim.token,
+            at: replyClaim.claimedAt,
+          })
+        );
+      }
       if (status !== "open") {
         lines.push(
           opLine(

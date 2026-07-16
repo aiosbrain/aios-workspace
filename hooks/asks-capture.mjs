@@ -306,19 +306,30 @@ function resolveIdleForSession(root, payload) {
   if (!sessionId) return;
   withStoreLock(root, (abs) => {
     const open = new Map();
+    const claimed = new Map();
     for (const line of readFileSync(abs, "utf8").split(/\r?\n/)) {
       try {
         const op = JSON.parse(line);
         if (op.op === "create" && op.ask?.id) open.set(op.ask.id, op.ask);
-        else if ((op.op === "resolve" || op.op === "orphan" || op.op === "archive") && op.id)
+        else if (op.op === "claim-reply" && op.id && op.token) claimed.set(op.id, op.token);
+        else if (op.op === "release-reply" && op.id && claimed.get(op.id) === op.token)
+          claimed.delete(op.id);
+        else if ((op.op === "resolve" || op.op === "orphan" || op.op === "archive") && op.id) {
           open.delete(op.id);
+          claimed.delete(op.id);
+        }
       } catch {
         /* malformed lines stay the store reader's concern */
       }
     }
     const at = new Date().toISOString();
     for (const ask of open.values()) {
-      if (ask.kind === "idle" && ask.source === "hook:idle" && ask.sessionId === sessionId)
+      if (
+        !claimed.has(ask.id) &&
+        ask.kind === "idle" &&
+        ask.source === "hook:idle" &&
+        ask.sessionId === sessionId
+      )
         appendFileSync(
           abs,
           JSON.stringify({ v: SCHEMA_VERSION, op: "resolve", id: ask.id, at }) + "\n"

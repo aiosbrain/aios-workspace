@@ -24,12 +24,14 @@ import {
   appendCreate,
   appendCreateDeduped,
   appendOp,
+  claimReply,
   buildRecord,
   compact,
   detectOrphans,
   foldLines,
   hasOpenDuplicate,
   readAsks,
+  releaseReply,
   withLock,
 } from "../../dist/operator-loop/index.js";
 
@@ -85,6 +87,30 @@ test("archive is a durable lifecycle state and no longer participates in open de
     assert.equal(hasOpenDuplicate(root, "archive-key"), false);
     compact(root, new Date("2026-07-17T00:00:00.000Z"));
     assert.equal(readAsks(root).asks[0].status, "archived", "compaction preserves archive op");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reply ownership survives compaction without changing the public JSON ask contract", () => {
+  const root = ws();
+  try {
+    const ask = appendCreate(root, {
+      kind: "idle",
+      severity: "blocker",
+      title: "Claim me",
+      source: "hook:idle",
+    });
+    assert.equal(claimReply(root, ask.id, "owner-1", "2026-07-16T01:00:00.000Z"), "claimed");
+    assert.equal(readAsks(root).asks[0].replyClaim?.token, "owner-1");
+    assert.doesNotMatch(JSON.stringify(readAsks(root).asks[0]), /replyClaim|owner-1/);
+    compact(root, new Date("2026-07-16T01:01:00.000Z"));
+    assert.equal(readAsks(root).asks[0].replyClaim?.token, "owner-1");
+    assert.equal(releaseReply(root, ask.id, "owner-1", "2026-07-16T01:02:00.000Z"), true);
+    compact(root, new Date("2026-07-16T01:03:00.000Z"));
+    assert.equal(readAsks(root).asks[0].replyClaim, null);
+    assert.equal(readAsks(root).asks[0].reconcileAfter, "2026-07-16T01:02:00.000Z");
+    assert.doesNotMatch(JSON.stringify(readAsks(root).asks[0]), /reconcileAfter/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

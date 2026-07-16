@@ -623,7 +623,7 @@ const server = http.createServer((req, res) => {
         })
         .catch((e) => {
           res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: e.message }));
+          res.end(JSON.stringify({ ok: false, error: e.message, code: e.errorCode }));
         });
     });
     return;

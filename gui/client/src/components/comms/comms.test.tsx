@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
+import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
 import { postAskArchive, postAskReply, postDecision } from "./api";
@@ -214,6 +215,40 @@ describe("actionable Claude ask", () => {
       { path: "/api/inbox/ask%2Fa/reply", body: { message: "Use staging" } },
       { path: "/api/inbox/ask%2Fa/archive", body: {} },
     ]);
+  });
+});
+
+describe("detail request sequencing", () => {
+  test("a slower A response cannot replace B after B is selected", async () => {
+    const gate = new LatestDetailRequest();
+    let resolveA!: (value: string) => void;
+    let resolveB!: (value: string) => void;
+    const a = new Promise<string>((resolve) => (resolveA = resolve));
+    const b = new Promise<string>((resolve) => (resolveB = resolve));
+    const accepted: string[] = [];
+    const reject = () => {
+      throw new Error("unexpected rejection");
+    };
+
+    gate.select("A");
+    const loadA = gate.load(
+      "A",
+      () => a,
+      (value) => accepted.push(value),
+      reject
+    );
+    gate.select("B");
+    const loadB = gate.load(
+      "B",
+      () => b,
+      (value) => accepted.push(value),
+      reject
+    );
+    resolveB("detail-B");
+    await loadB;
+    resolveA("detail-A");
+    await loadA;
+    expect(accepted).toEqual(["detail-B"]);
   });
 });
 

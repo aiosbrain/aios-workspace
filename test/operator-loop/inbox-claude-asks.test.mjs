@@ -210,3 +210,110 @@ test("reconciliation resolves only on a later ordinary user turn from the bound 
     }
   }
 });
+
+test("single-flight claim rejects archive and a second reply while the first reply is in flight", async () => {
+  const f = fixture();
+  try {
+    writeTurns(f.transcriptPath, [
+      { type: "assistant", sessionId: SESSION, message: { content: "Need input" } },
+    ]);
+    recordAsk(f.root, f.transcriptPath);
+    let release;
+    let startedResolve;
+    const barrier = new Promise((resolve) => (release = resolve));
+    const started = new Promise((resolve) => (startedResolve = resolve));
+    let queryCalls = 0;
+    const query = () =>
+      (async function* () {
+        queryCalls++;
+        yield { type: "system", subtype: "init", session_id: SESSION };
+        startedResolve();
+        await barrier;
+        yield { type: "result", subtype: "success", session_id: SESSION };
+      })();
+    const first = replyToClaudeAsk(
+      loop,
+      f.root,
+      "ask-1",
+      { message: "Use staging" },
+      { query },
+      { allowedRoots: [f.sessions] }
+    );
+    await started;
+    assert.throws(() => archiveClaudeAsk(loop, f.root, "ask-1"), /reply already in progress/);
+    await assert.rejects(
+      replyToClaudeAsk(
+        loop,
+        f.root,
+        "ask-1",
+        { message: "Duplicate" },
+        { query },
+        { allowedRoots: [f.sessions] }
+      ),
+      /reply already in progress/
+    );
+    assert.equal(queryCalls, 1, "only the claimed response reaches Claude");
+    release();
+    await first;
+    assert.equal(loop.readAsks(f.root).asks[0].status, "resolved");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("GET reconciliation cannot resolve a partial UI reply that later fails", async () => {
+  const f = fixture();
+  try {
+    writeTurns(f.transcriptPath, [
+      { type: "assistant", sessionId: SESSION, message: { content: "Need input" } },
+    ]);
+    recordAsk(f.root, f.transcriptPath);
+    let release;
+    let startedResolve;
+    const barrier = new Promise((resolve) => (release = resolve));
+    const started = new Promise((resolve) => (startedResolve = resolve));
+    const query = () =>
+      (async function* () {
+        yield { type: "system", subtype: "init", session_id: SESSION };
+        writeTurns(f.transcriptPath, [
+          {
+            type: "user",
+            sessionId: SESSION,
+            timestamp: "2026-07-16T01:01:00.000Z",
+            message: { content: "Use staging" },
+          },
+        ]);
+        startedResolve();
+        await barrier;
+        yield { type: "result", subtype: "error_during_execution", session_id: SESSION };
+      })();
+    const reply = replyToClaudeAsk(
+      loop,
+      f.root,
+      "ask-1",
+      { message: "Use staging" },
+      { query },
+      { allowedRoots: [f.sessions] }
+    );
+    await started;
+    assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 0);
+    assert.equal(loop.readAsks(f.root).asks[0].status, "open");
+    release();
+    await assert.rejects(reply, /did not accept/);
+    assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 0);
+    assert.equal(loop.readAsks(f.root).asks[0].status, "open", "failed UI prompt stays suppressed");
+
+    writeTurns(f.transcriptPath, [
+      {
+        type: "user",
+        sessionId: SESSION,
+        timestamp: "2099-01-01T00:00:00.000Z",
+        message: { content: "I returned outside the failed GUI reply" },
+      },
+    ]);
+    assert.equal(reconcileClaudeAsks(loop, f.root, { allowedRoots: [f.sessions] }), 1);
+    assert.equal(loop.readAsks(f.root).asks[0].status, "resolved");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});

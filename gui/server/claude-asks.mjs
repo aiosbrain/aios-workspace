@@ -1,5 +1,6 @@
 /** Safe, owner-local lifecycle for Claude asks surfaced in the Unified Inbox. */
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { loadSecretPatterns, redactSecrets } from "./memory-reviewer.mjs";
@@ -9,9 +10,10 @@ const MESSAGE_MAX = 8000;
 const SESSION_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,127}$/;
 const HOOK_SOURCES = new Set(["hook:idle", "hook:stop"]);
 
-function httpError(message, statusCode) {
+function httpError(message, statusCode, errorCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
+  if (errorCode) error.errorCode = errorCode;
   return error;
 }
 
@@ -137,17 +139,25 @@ function canonicalAsk(loop, repo, id) {
 export function reconcileClaudeAsks(loop, repo, options = {}) {
   let resolved = 0;
   for (const ask of loop.readAsks(repo).asks) {
-    if (ask.status !== "open" || !HOOK_SOURCES.has(ask.source)) continue;
+    if (ask.status !== "open" || ask.replyClaim || !HOOK_SOURCES.has(ask.source)) continue;
     try {
       const createdAt = Date.parse(ask.createdAt);
-      if (!Number.isFinite(createdAt)) continue;
+      const reconcileAfter = Date.parse(ask.reconcileAfter || "");
+      const evidenceAfter = Number.isFinite(reconcileAfter)
+        ? Math.max(createdAt, reconcileAfter)
+        : createdAt;
+      if (!Number.isFinite(evidenceAfter)) continue;
       const turns = readBoundTranscript(ask, options);
       const laterUser = turns.find(
-        (turn) => turn.role === "You" && turn.timestamp !== null && turn.timestamp > createdAt
+        (turn) => turn.role === "You" && turn.timestamp !== null && turn.timestamp > evidenceAfter
       );
       if (!laterUser) continue;
-      loop.appendOp(repo, "resolve", ask.id, new Date(laterUser.timestamp).toISOString());
-      resolved++;
+      const result = loop.resolveUnclaimed(
+        repo,
+        ask.id,
+        new Date(laterUser.timestamp).toISOString()
+      );
+      if (result === "resolved") resolved++;
     } catch {
       // Missing/unbound transcripts are not proof; preserve the ask for the owner.
     }
@@ -156,17 +166,18 @@ export function reconcileClaudeAsks(loop, repo, options = {}) {
 }
 
 export function archiveClaudeAsk(loop, repo, id) {
-  const ask = canonicalAsk(loop, repo, id);
-  if (ask.status === "archived") return { ok: true, archived: true };
-  if (ask.status !== "open") throw httpError("only open asks can be archived", 409);
-  loop.appendOp(repo, "archive", ask.id);
-  return { ok: true, archived: true };
+  const result = loop.archiveAsk(repo, id);
+  if (result === "archived") return { ok: true, archived: true };
+  if (result === "already-archived") return { ok: true, archived: true, alreadyArchived: true };
+  if (result === "missing") throw httpError("ask not found", 404);
+  if (result === "busy") throw httpError("reply already in progress", 409, "reply_in_progress");
+  throw httpError("only open asks can be archived", 409, "ask_closed");
 }
 
 /** Resume the exact canonical session. The ask closes only after a successful exact-session result. */
 export async function replyToClaudeAsk(loop, repo, id, payload, deps = {}, options = {}) {
   const ask = canonicalAsk(loop, repo, id);
-  if (ask.status !== "open") throw httpError("ask is no longer open", 409);
+  if (ask.status !== "open") throw httpError("ask is no longer open", 409, "ask_closed");
   readBoundTranscript(ask, options);
   const message = typeof payload?.message === "string" ? payload.message.trim() : "";
   if (!message) throw httpError("message is required", 400);
@@ -175,19 +186,24 @@ export async function replyToClaudeAsk(loop, repo, id, payload, deps = {}, optio
   if (typeof deps.query !== "function")
     throw httpError("Claude session resume is unavailable", 503);
 
-  if (typeof deps.getSessionInfo === "function") {
-    const info = await deps.getSessionInfo(ask.sessionId, { dir: repo });
-    // The SDK intentionally returns undefined for a valid local session with no extractable summary.
-    // Treat a positive mismatch as fatal; let query(resume) authoritatively decide an absent result.
-    if (info && info.sessionId !== ask.sessionId)
-      throw httpError("Claude session was not found", 409);
-  }
+  const claimToken = randomUUID();
+  const claim = loop.claimReply(repo, ask.id, claimToken);
+  if (claim === "busy") throw httpError("reply already in progress", 409, "reply_in_progress");
+  if (claim === "closed") throw httpError("ask is no longer open", 409, "ask_closed");
+  if (claim === "missing") throw httpError("ask not found", 404);
 
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), 120_000);
   let initBound = false;
   let succeeded = false;
+  let completed = false;
   try {
+    if (typeof deps.getSessionInfo === "function") {
+      const info = await deps.getSessionInfo(ask.sessionId, { dir: repo });
+      // Undefined can be a valid summary-less session; only a positive mismatch is fatal.
+      if (info && info.sessionId !== ask.sessionId)
+        throw httpError("Claude session was not found", 409);
+    }
     const stream = deps.query({
       prompt: message,
       options: {
@@ -210,6 +226,11 @@ export async function replyToClaudeAsk(loop, repo, id, payload, deps = {}, optio
         succeeded = event.subtype === "success";
       }
     }
+    if (!initBound || !succeeded) throw httpError("Claude did not accept the reply", 502);
+    const completion = loop.completeReply(repo, ask.id, claimToken);
+    if (completion !== "resolved")
+      throw httpError("ask lifecycle changed during reply", 409, "lifecycle_conflict");
+    completed = true;
   } catch (error) {
     if (error?.statusCode) throw error;
     throw httpError(
@@ -218,8 +239,7 @@ export async function replyToClaudeAsk(loop, repo, id, payload, deps = {}, optio
     );
   } finally {
     clearTimeout(timer);
+    if (!completed) loop.releaseReply(repo, ask.id, claimToken);
   }
-  if (!initBound || !succeeded) throw httpError("Claude did not accept the reply", 502);
-  loop.appendOp(repo, "resolve", ask.id);
   return { ok: true, accepted: true };
 }
