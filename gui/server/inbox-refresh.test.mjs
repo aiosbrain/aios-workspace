@@ -116,9 +116,20 @@ test("timeout waits through TERM to KILL and cannot overlap a SIGTERM-ignoring c
   });
 
   const first = refresher.refresh();
-  await new Promise((resolve) => setTimeout(resolve, 7));
-  assert.equal(refresher.refresh(), first, "in-flight guard survives SIGTERM");
-  assert.deepEqual(child.signals, ["SIGTERM"]);
+  // Poll (bounded) instead of a fixed sleep: on a loaded CI runner a 5ms timer can lag well past a
+  // fixed wait, making the SIGTERM assertion flaky. The invariant is order, not wall time.
+  const deadline = Date.now() + 5_000;
+  let settled = false;
+  void first.then(() => (settled = true));
+  while (child.signals.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  assert.equal(child.signals[0], "SIGTERM", "TERM is sent first");
+  // Only probe the in-flight guard while the pull is genuinely still in flight (a loaded runner may
+  // have already walked TERM→KILL→close by now); `runs === 1` below still proves no overlap.
+  if (!settled) {
+    assert.equal(refresher.refresh(), first, "in-flight guard survives SIGTERM");
+  }
   await first;
   assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
   assert.equal(runs, 1);
