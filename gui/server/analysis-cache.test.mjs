@@ -143,6 +143,50 @@ test("persistently failing refresh backs off: one spawn per window, refreshing f
   assert.equal(calls.length, 3);
 });
 
+test("force bypasses the failure backoff (explicit Refresh is never a no-op)", async () => {
+  let t = 0;
+  const { exec, calls } = fakeExec([{ value: DOC }, { error: new Error("down") }, { value: DOC2 }]);
+  const cache = createAnalysisCache({ exec, snapshotFile: tmpSnapshotFile(), now: () => t });
+  await cache.get(); // cold spawn
+  t = 61_000;
+  await cache.get(); // kicks the failing refresh
+  await settle();
+  t = 62_000; // deep inside the backoff window
+  // automatic path stays backed off…
+  const auto = await cache.get();
+  assert.equal(auto.refreshing, false);
+  assert.equal(calls.length, 2);
+  // …but an explicit user refresh starts a new attempt immediately
+  const forced = await cache.get({ force: true });
+  assert.equal(forced.raw, DOC); // still serves last-good while refreshing
+  assert.equal(forced.refreshing, true);
+  assert.equal(calls.length, 3);
+  await settle();
+  const healed = await cache.get();
+  assert.equal(healed.raw, DOC2);
+  assert.equal(healed.lastError, null);
+});
+
+test("force during the fresh window revalidates; single-flight still holds", async () => {
+  let t = 0;
+  const { exec, calls } = fakeExec([{ value: DOC }, { value: DOC2 }]);
+  const cache = createAnalysisCache({ exec, snapshotFile: tmpSnapshotFile(), now: () => t });
+  await cache.get();
+  t = 5_000; // well inside the 60s fresh window — warm hits don't spawn…
+  await cache.get();
+  assert.equal(calls.length, 1);
+  // …but force does, serving the current snapshot while the refresh runs
+  const forced = await cache.get({ force: true });
+  assert.equal(forced.raw, DOC);
+  assert.equal(forced.refreshing, true);
+  // a second force while inflight joins the same run (no extra subprocess)
+  const again = await cache.get({ force: true });
+  assert.equal(again.refreshing, true);
+  assert.equal(calls.length, 2);
+  await settle();
+  assert.equal((await cache.get()).raw, DOC2);
+});
+
 test("a successful refresh clears the failure backoff", async () => {
   let t = 0;
   const { exec, calls } = fakeExec([{ value: DOC }, { error: new Error("down") }, { value: DOC2 }]);

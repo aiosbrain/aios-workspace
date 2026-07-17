@@ -172,6 +172,21 @@ const REJECTION_STATUS = {
   "rotation-superseded": 409,
 };
 
+// Machine reason → the human-readable sentence the route emits as `error`, so the
+// GUI dialog (ApiError reads body.error — api.ts) shows WHY instead of a bare
+// "Conflict" statusText. A denial is a processed decision (ok:true) and carries none.
+const REJECTION_MESSAGE = {
+  "unknown-handle": "This approval request no longer exists.",
+  "handle-mismatch": "The approval does not match this request.",
+  "digest-mismatch": "The request changed after it was shown to you — approval refused.",
+  "record-integrity": "The stored approval record failed its integrity check.",
+  expired: "The approval window has expired — ask the agent to request again.",
+  "replay-consumed": "This request was already decided.",
+  "identity-mismatch": "The approval was issued for a different workspace.",
+  "audience-mismatch": "The approval is bound to a different session.",
+  "rotation-superseded": "The session was rotated — this approval is no longer valid.",
+};
+
 /**
  * Broker + durably consume a scoped-confirmation decision. The client body is EXACTLY
  * `{ handle, digest, decision }`; `id` is the URL path segment naming the capability resource.
@@ -242,7 +257,11 @@ export async function decideInbox(repo, id, payload, session = {}) {
 
   if (result.kind === "rejected") {
     const status = REJECTION_STATUS[result.reason] ?? 409;
-    return { ok: result.reason === "denied", status, result };
+    if (result.reason === "denied") return { ok: true, status, result };
+    // 4xx bodies must carry `error` — it is what the client surfaces (api.ts falls
+    // back to the bare statusText otherwise, e.g. "Conflict").
+    const error = REJECTION_MESSAGE[result.reason] ?? `Approval rejected: ${result.reason}.`;
+    return { ok: false, status, error, result };
   }
   // native-receipt (approved + executed) or a typed outcome (crash-window / outcome_unknown) — both are
   // processed terminal states the client renders as-is.

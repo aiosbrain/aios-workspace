@@ -493,15 +493,17 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ── maturity panel (token-gated; read-only) ──
-  // Reshapes the shared 30-day analyze snapshot (analysis-cache.mjs — AIO-453:
+  // Reshapes the shared analyze snapshot (analysis-cache.mjs — AIO-453:
   // 60s fresh window, stale-while-revalidate, single-flight). CE stays SHADOW.
+  // `?force=1` = the explicit Refresh button: kick a refresh even during the
+  // failure backoff / fresh window (the backoff only gates automatic revalidation).
   if (url.pathname === "/api/maturity") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
       return res.end("unauthorized");
     }
     analysisCache
-      .get()
+      .get({ force: /^(1|true)$/i.test(url.searchParams.get("force") || "") })
       .then(({ raw, ...meta }) => {
         const payload = { ...buildMaturityPayload(raw), ...meta };
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -521,13 +523,14 @@ const server = http.createServer((req, res) => {
   // (see createAnalysisCache below) spans 35d so it covers the whole calendar
   // month even on the 31st; the builder month-filters the days and flags
   // config_status.window_covers_month when billing data starts mid-month.
+  // `?force=1` = the explicit Refresh button (see /api/maturity above).
   if (url.pathname === "/api/costs") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
       return res.end("unauthorized");
     }
     analysisCache
-      .get()
+      .get({ force: /^(1|true)$/i.test(url.searchParams.get("force") || "") })
       .then(({ raw, ...meta }) => {
         const payload = { ...buildCostsPayload(raw, { config: readCostConfig(repo) }), ...meta };
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -554,11 +557,21 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === "POST") {
       let body = "";
+      let tooLarge = false;
       req.on("data", (c) => {
+        if (tooLarge) return;
         body += c;
-        if (body.length > 1e6) req.destroy();
+        if (body.length > 1e6) {
+          // Answer BEFORE tearing down the socket so the Settings form gets a real
+          // error instead of a dead connection.
+          tooLarge = true;
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "request body too large" }));
+          req.destroy();
+        }
       });
       req.on("end", () => {
+        if (tooLarge) return;
         let patch = null;
         try {
           patch = JSON.parse(body || "{}");

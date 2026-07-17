@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMaturityPayload } from "./maturity.mjs";
+import { buildMaturityPayload, TREND_DAYS } from "./maturity.mjs";
 import { AXIS_GUIDE, ergonomicsTip } from "../../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS } from "../../scripts/analyze/aem.mjs";
 
@@ -77,6 +77,23 @@ test("days reshape to {date, am, ce} preserving null CE", () => {
     { date: "2026-07-02", am: 2.2, ce: null },
     { date: "2026-07-03", am: 2.2, ce: 3 },
   ]);
+});
+
+test("days beyond the 30-day trend window are sliced off (35d cache → 30d panel)", () => {
+  // The shared analysis cache spans 35d for cost-month coverage; the panel labels
+  // its chart "30-day trend" — only the TRAILING 30 days may reach the client.
+  const days = Array.from({ length: 35 }, (_, i) => ({
+    date: `2026-06-${String(i + 1).padStart(2, "0")}`,
+    signals: {},
+    placement: { overall: 1 + (i % 3) },
+    axes_shadow: { cognitive_ergonomics: i % 2 ? 2 : null },
+  }));
+  const p = buildMaturityPayload(JSON.stringify({ ...SAMPLE, days }));
+  assert.equal(p.days.length, TREND_DAYS);
+  // trailing window: the 5 oldest days are dropped, order preserved
+  assert.equal(p.days[0].date, days[5].date);
+  assert.equal(p.days.at(-1).date, days.at(-1).date);
+  assert.deepEqual(p.days[0], { date: days[5].date, am: days[5].placement.overall, ce: 2 });
 });
 
 test("malformed stdout throws an unparseable error", () => {

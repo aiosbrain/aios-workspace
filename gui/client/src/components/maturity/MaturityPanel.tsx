@@ -29,17 +29,24 @@ export function MaturityPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const data = await api.get<MaturityResponse>("/api/maturity");
-      setPlan(data);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-    setBusy(false);
-  }, [api]);
+  // `force` = the explicit Refresh button → `?force=1` bypasses the server's
+  // failure backoff (an automatic poll/retry never does).
+  const load = useCallback(
+    async (force = false) => {
+      setError(null);
+      setBusy(true);
+      try {
+        const data = await api.get<MaturityResponse>(
+          force ? "/api/maturity?force=1" : "/api/maturity"
+        );
+        setPlan(data);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      setBusy(false);
+    },
+    [api]
+  );
 
   useEffect(() => {
     load();
@@ -69,7 +76,7 @@ export function MaturityPanel() {
         <div className="self-center bg-transparent p-0.5 text-xs text-destructive">
           error: {error}
         </div>
-        <button className={cn(REV_BTN, "self-center")} onClick={load}>
+        <button className={cn(REV_BTN, "self-center")} onClick={() => load()}>
           Retry
         </button>
       </div>
@@ -102,7 +109,7 @@ export function MaturityPanel() {
         </span>
         <span className="flex items-center gap-3">
           <Freshness meta={plan} busy={busy} />
-          <button className={REV_BTN} onClick={load} disabled={busy}>
+          <button className={REV_BTN} onClick={() => load(true)} disabled={busy}>
             Refresh
           </button>
         </span>
