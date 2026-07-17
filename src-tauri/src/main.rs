@@ -17,13 +17,21 @@ use std::time::{Duration, Instant};
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// Holds the sidecar process so we can kill it when the window closes.
-struct Sidecar(Mutex<Option<Child>>);
+/// Owns the launcher plus every descendant it creates. The desktop closes the process
+/// tree, not just the run-gui wrapper, so the GUI server cannot outlive its window.
+struct SidecarProcess {
+    child: Child,
+    tree_root: u32,
+}
+
+struct Sidecar(Mutex<Option<SidecarProcess>>);
 
 fn random_token() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..32).map(|_| format!("{:x}", rng.gen_range(0..16))).collect()
+    (0..32)
+        .map(|_| format!("{:x}", rng.gen_range(0..16)))
+        .collect()
 }
 
 fn free_port() -> u16 {
@@ -34,9 +42,14 @@ fn free_port() -> u16 {
 }
 
 fn is_workspace(dir: &Path) -> bool {
-    ["aios.yaml", "workspace.yaml", "project.yaml", "engagement.yaml"]
-        .iter()
-        .any(|f| dir.join(f).exists())
+    [
+        "aios.yaml",
+        "workspace.yaml",
+        "project.yaml",
+        "engagement.yaml",
+    ]
+    .iter()
+    .any(|f| dir.join(f).exists())
         || dir.join(".claude").exists()
 }
 
@@ -126,7 +139,11 @@ fn enriched_path() -> String {
         dirs.insert(0, p.to_string_lossy().to_string());
     }
     let base = std::env::var("PATH").unwrap_or_default();
-    if base.is_empty() { dirs.join(":") } else { format!("{}:{}", dirs.join(":"), base) }
+    if base.is_empty() {
+        dirs.join(":")
+    } else {
+        format!("{}:{}", dirs.join(":"), base)
+    }
 }
 
 // Turn an empty folder into a workspace by running scaffold-project.sh. Asks the one
@@ -152,12 +169,22 @@ fn scaffold_into(app: &tauri::AppHandle, dir: &Path) -> bool {
 
     let status = Command::new("bash")
         .arg(&script)
-        .arg("--context").arg(context)
-        .arg("--slug").arg(&slug)
-        .arg("--owner").arg(&owner)
-        .arg("--stakeholder").arg(if consultant { "My Client" } else { "My Company" })
-        .arg("--team").arg(&owner)
-        .arg("--output").arg(dir)
+        .arg("--context")
+        .arg(context)
+        .arg("--slug")
+        .arg(&slug)
+        .arg("--owner")
+        .arg(&owner)
+        .arg("--stakeholder")
+        .arg(if consultant {
+            "My Client"
+        } else {
+            "My Company"
+        })
+        .arg("--team")
+        .arg(&owner)
+        .arg("--output")
+        .arg(dir)
         .current_dir(&toolkit)
         .env("PATH", enriched_path())
         .status();
@@ -260,8 +287,65 @@ fn ensure_env(app: &tauri::AppHandle, repo: &Path) {
         .status();
 }
 
-fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) -> std::io::Result<Child> {
-    let server = toolkit_dir(app).join("gui/server/index.mjs");
+fn sidecar_launch_args(toolkit: &Path, repo: &Path, port: u16) -> Vec<std::ffi::OsString> {
+    vec![
+        toolkit.join("scripts/run-gui.mjs").into_os_string(),
+        "--skip-build".into(),
+        "--repo".into(),
+        repo.as_os_str().to_owned(),
+        "--port".into(),
+        port.to_string().into(),
+    ]
+}
+
+fn configure_process_tree(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+fn terminate_process_tree(process: &mut SidecarProcess) {
+    #[cfg(unix)]
+    if let Ok(group) = i32::try_from(process.tree_root) {
+        // Negative pid targets the whole process group created before the wrapper spawned.
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // `/T` terminates descendants and `/F` is required for non-console GUI children.
+        let _ = Command::new("taskkill")
+            .args(["/PID", &process.tree_root.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    let _ = process.child.kill();
+
+    // Reap the owned wrapper. This is also the fallback if platform tree termination failed.
+    let _ = process.child.kill();
+    let _ = process.child.wait();
+}
+
+fn start_sidecar(
+    app: &tauri::AppHandle,
+    repo: &Path,
+    port: u16,
+    token: &str,
+) -> std::io::Result<SidecarProcess> {
+    let toolkit = toolkit_dir(app);
     let node = find_bin("node");
 
     // Log the sidecar (and the agent runtime it spawns) to a file so failures are
@@ -272,33 +356,94 @@ fn start_sidecar(app: &tauri::AppHandle, repo: &Path, port: u16, token: &str) ->
     let log_err = log.try_clone()?;
 
     ensure_env(app, repo);
-    // Under dotenvx when the workspace has an encrypted .env, so the agent's MCP
-    // servers get decrypted provider tokens at spawn.
-    let use_dotenvx = repo.join(".env").exists();
-    let mut cmd = if use_dotenvx {
-        let mut c = Command::new(find_bin("dotenvx"));
-        c.arg("run").arg("--").arg(&node);
-        c
-    } else {
-        Command::new(&node)
-    };
-    cmd.arg(&server)
-        .arg("--repo")
-        .arg(repo)
-        .arg("--port")
-        .arg(port.to_string())
+    // Always enter through run-gui's selected-workspace environment boundary. Starting
+    // gui/server directly here would let ambient connector credentials from the toolkit
+    // win over (or fill gaps in) the selected workspace. The packaged client is already
+    // built, so the private flag skips only that build — never credential reconciliation.
+    let mut cmd = Command::new(&node);
+    cmd.args(sidecar_launch_args(&toolkit, repo, port))
         .env("AIOS_GUI_TOKEN", token)
         .env("PATH", enriched_path())
         .current_dir(repo)
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
-    cmd.spawn()
+    configure_process_tree(&mut cmd);
+    let child = cmd.spawn()?;
+    let tree_root = child.id();
+    Ok(SidecarProcess { child, tree_root })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_sidecar_enters_through_credential_safe_launcher() {
+        let toolkit = Path::new("/opt/aios-workspace");
+        let repo = Path::new("/workspaces/selected");
+        let args = sidecar_launch_args(toolkit, repo, 8791);
+        let rendered: Vec<String> = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(rendered[0], "/opt/aios-workspace/scripts/run-gui.mjs");
+        assert_eq!(rendered[1], "--skip-build");
+        assert_eq!(
+            rendered[2..],
+            ["--repo", "/workspaces/selected", "--port", "8791"]
+        );
+        assert!(!rendered
+            .iter()
+            .any(|arg| arg.contains("gui/server/index.mjs")));
+        assert!(!rendered.iter().any(|arg| arg == "dotenvx"));
+    }
+
+    #[test]
+    fn terminating_desktop_sidecar_closes_descendant_listener() {
+        let port = free_port();
+        let descendant = format!(
+            "require('node:net').createServer(()=>{{}}).listen({port},'127.0.0.1');setInterval(()=>{{}},1000)"
+        );
+        let wrapper = format!(
+            "require('node:child_process').spawn(process.execPath,['-e',{}],{{stdio:'ignore'}});setInterval(()=>{{}},1000)",
+            serde_json::to_string(&descendant).unwrap()
+        );
+        let mut command = Command::new(find_bin("node"));
+        command
+            .args(["-e", &wrapper])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_process_tree(&mut command);
+        let child = command.spawn().expect("spawn wrapper with descendant");
+        let mut process = SidecarProcess {
+            tree_root: child.id(),
+            child,
+        };
+
+        let opened = wait_for_port_or_exit(port, Duration::from_secs(5), &mut process.child);
+        if let Err(error) = opened {
+            terminate_process_tree(&mut process);
+            panic!("descendant listener did not open: {error}");
+        }
+
+        terminate_process_tree(&mut process);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+            "desktop shutdown left the descendant listener alive"
+        );
+    }
 }
 
 fn kill_sidecar(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<Sidecar>() {
-        if let Some(mut child) = state.0.lock().unwrap().take() {
-            let _ = child.kill();
+        if let Some(mut process) = state.0.lock().unwrap().take() {
+            terminate_process_tree(&mut process);
         }
     }
 }
@@ -321,13 +466,15 @@ fn main() {
             let port = free_port();
 
             match start_sidecar(&handle, &repo, port, &token) {
-                Ok(child) => {
-                    *app.state::<Sidecar>().0.lock().unwrap() = Some(child);
+                Ok(process) => {
+                    *app.state::<Sidecar>().0.lock().unwrap() = Some(process);
                 }
                 Err(e) => {
                     rfd::MessageDialog::new()
                         .set_title("Couldn't start AIOS")
-                        .set_description(&format!("Failed to launch the local server (is Node installed?).\n\n{e}"))
+                        .set_description(&format!(
+                            "Failed to launch the local server (is Node installed?).\n\n{e}"
+                        ))
                         .show();
                     handle.exit(1);
                     return Ok(());
@@ -338,14 +485,20 @@ fn main() {
                 let state = app.state::<Sidecar>();
                 let mut guard = state.0.lock().unwrap();
                 match guard.as_mut() {
-                    Some(child) => wait_for_port_or_exit(port, Duration::from_secs(25), child),
+                    Some(process) => {
+                        wait_for_port_or_exit(port, Duration::from_secs(25), &mut process.child)
+                    }
                     None => Err("the local server isn't running".to_string()),
                 }
             };
             if let Err(reason) = wait_result {
                 let log_path = repo.join(".aios").join("gui-server.log");
                 let tail = tail_log(&log_path, 4000);
-                let detail = if tail.is_empty() { reason } else { format!("{reason}\n\n{tail}") };
+                let detail = if tail.is_empty() {
+                    reason
+                } else {
+                    format!("{reason}\n\n{tail}")
+                };
                 rfd::MessageDialog::new()
                     .set_title("Couldn't start AIOS")
                     .set_description(&detail)

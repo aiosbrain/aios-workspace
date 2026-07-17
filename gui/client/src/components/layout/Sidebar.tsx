@@ -9,6 +9,7 @@ import {
   Coins,
   Repeat,
   Inbox,
+  MessageSquare,
 } from "lucide-react";
 import { useConnection, useSession } from "../../state/cockpit";
 import { groupChatsByRecency } from "../../lib/recency";
@@ -20,6 +21,10 @@ const SIDE_KBD =
   "ml-auto font-mono text-[10px] text-muted-foreground bg-muted border border-border-visible rounded-sm px-[5px] py-px";
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card";
+
+export function shouldDisableNewChat(view: string, isEmptyDraft: boolean): boolean {
+  return view === "chat" && isEmptyDraft;
+}
 
 export function Sidebar() {
   const { repo } = useConnection();
@@ -49,6 +54,7 @@ export function Sidebar() {
 
   const isDraft = currentSession === null;
   const isEmptyDraft = isDraft && messages.length === 0 && !input.trim() && !connected && !busy;
+  const newChatDisabled = shouldDisableNewChat(view, isEmptyDraft);
   const repoName = repo ? repo.split("/").filter(Boolean).pop() : "workspace";
   const initial = (repoName?.[0] || "A").toUpperCase();
 
@@ -122,6 +128,92 @@ export function Sidebar() {
         </div>
       )}
 
+      <nav
+        className="mb-2 flex shrink-0 flex-col gap-px border-b border-border-visible pb-2"
+        aria-label="Workspace"
+      >
+        <div className="px-2.5 pt-1 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
+          Comms
+        </div>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "comms" &&
+              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("comms")}
+        >
+          <Inbox size={15} strokeWidth={2} /> Inbox
+        </button>
+        <div className="px-2.5 pt-2 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
+          Build
+        </div>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "chat" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("chat")}
+        >
+          <MessageSquare size={15} strokeWidth={2} /> Chat
+        </button>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "tasks" &&
+              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("tasks")}
+        >
+          <ListChecks size={15} strokeWidth={2} /> Tasks
+        </button>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "maturity" &&
+              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("maturity")}
+        >
+          <Activity size={15} strokeWidth={2} /> Maturity
+        </button>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "cost" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("cost")}
+        >
+          <Coins size={15} strokeWidth={2} /> Cost
+        </button>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "loop" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("loop")}
+        >
+          <Repeat size={15} strokeWidth={2} /> Operator Loop
+        </button>
+        <button
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING,
+            view === "review" &&
+              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+          )}
+          onClick={() => setView("review")}
+        >
+          <UploadCloud size={15} strokeWidth={2} /> Team Brain Sync
+        </button>
+      </nav>
+
       <div className="mb-2 flex flex-col gap-1.5">
         <button
           className={cn(
@@ -129,7 +221,7 @@ export function Sidebar() {
             FOCUS_RING
           )}
           onClick={newChat}
-          disabled={isEmptyDraft}
+          disabled={newChatDisabled}
         >
           <Plus size={16} /> New chat
           <span className={SIDE_KBD}>{shortcutLabel("newChat")}</span>
@@ -186,79 +278,6 @@ export function Sidebar() {
           </div>
         )}
       </div>
-
-      <nav className="mt-2 flex flex-col gap-px border-t border-border-visible pt-2">
-        <div className="px-2.5 pt-1 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          Comms
-        </div>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "comms" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("comms")}
-        >
-          <Inbox size={15} strokeWidth={2} /> Inbox
-        </button>
-        <div className="px-2.5 pt-2 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          Build
-        </div>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "tasks" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("tasks")}
-        >
-          <ListChecks size={15} strokeWidth={2} /> Tasks
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "maturity" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("maturity")}
-        >
-          <Activity size={15} strokeWidth={2} /> Maturity
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "cost" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("cost")}
-        >
-          <Coins size={15} strokeWidth={2} /> Cost
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "loop" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("loop")}
-        >
-          <Repeat size={15} strokeWidth={2} /> Operator Loop
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "review" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("review")}
-        >
-          <UploadCloud size={15} strokeWidth={2} /> Review &amp; Push
-        </button>
-      </nav>
 
       <button
         className={cn(

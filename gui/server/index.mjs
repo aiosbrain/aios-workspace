@@ -58,6 +58,7 @@ import {
   getDescriptor,
   validateConnector,
   storeConnector,
+  storeExistingConnector,
   unwireConnector,
   readBlueprint,
   startOAuth,
@@ -909,7 +910,9 @@ const server = http.createServer((req, res) => {
     })();
     return;
   }
-  const conn = url.pathname.match(/^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|unwire)$/);
+  const conn = url.pathname.match(
+    /^\/api\/connectors\/([a-z0-9-]+)\/(validate|store|store-existing|unwire)$/
+  );
   if (conn && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
@@ -936,6 +939,11 @@ const server = http.createServer((req, res) => {
           if (action === "unwire") {
             res.writeHead(200, { "Content-Type": "application/json" });
             return res.end(JSON.stringify(unwireConnector(repo, d)));
+          }
+          if (action === "store-existing") {
+            const existing = await storeExistingConnector(repo, d);
+            res.writeHead(existing.ok ? 200 : 422, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify(existing));
           }
           if (action === "store" && d.auth_mode === "oauth") {
             const cfg = resolveBrainConfig(repo);
@@ -978,7 +986,9 @@ const server = http.createServer((req, res) => {
             })
           );
         } catch (e) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          res.writeHead(e.code === "credential_missing" ? 422 : 500, {
+            "Content-Type": "application/json",
+          });
           res.end(JSON.stringify({ ok: false, error: e.message }));
         }
       })();

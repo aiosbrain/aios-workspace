@@ -14,7 +14,8 @@ export function ConnectorRow({
   connector: Connector;
   onConnect: (connector: Connector) => void;
 }) {
-  const wired = connector.status === "wired";
+  const wired = connector.status === "wired" && connector.artifact_present !== false;
+  const savedNeedsSetup = connector.credential_present && connector.artifact_present === false;
   const transport = connector.transport === "skill" ? "Direct API" : "MCP";
 
   return (
@@ -31,7 +32,7 @@ export function ConnectorRow({
             className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
               wired ? "bg-lime" : "bg-muted-foreground/40"
             }`}
-            title={wired ? "Connected" : "Available"}
+            title={wired ? "Connected" : savedNeedsSetup ? "Credential detected" : "Available"}
           />
           <span className="truncate text-sm font-medium leading-tight text-card-foreground">
             {connector.name}
@@ -51,7 +52,7 @@ export function ConnectorRow({
         className="shrink-0"
         onClick={() => onConnect(connector)}
       >
-        {wired ? "Manage" : "Connect"}
+        {wired ? "Manage" : savedNeedsSetup ? "Finish setup" : "Connect"}
       </Button>
     </div>
   );

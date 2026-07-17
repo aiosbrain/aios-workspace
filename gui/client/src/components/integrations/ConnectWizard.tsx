@@ -69,6 +69,8 @@ export function ConnectWizard({
 }) {
   const { api } = useConnection();
   const oauth = connector.auth_mode === "oauth";
+  const useExisting =
+    !oauth && connector.credential_present === true && connector.artifact_present !== true;
   // Pre-fill any field the team blueprint already set (e.g. the Jira site URL).
   const [secrets, setSecrets] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -96,9 +98,11 @@ export function ConnectWizard({
     setPhase("validating");
     setResult(null);
     try {
-      const data = await api.post<ConnectorStoreResponse>(`/api/connectors/${connector.id}/store`, {
-        secrets,
-      });
+      const action = useExisting ? "store-existing" : "store";
+      const data = await api.post<ConnectorStoreResponse>(
+        `/api/connectors/${connector.id}/${action}`,
+        useExisting ? {} : { secrets }
+      );
       setResult(data);
       setPhase("done");
       onConnected();
@@ -208,55 +212,71 @@ export function ConnectWizard({
 
         {phase !== "done" && !oauth && (
           <>
-            <div className={WIZ_STEP}>
-              <div className={WIZ_STEP_N}>1 · Get your key</div>
-              {connector.docs?.token_create_url ? (
-                <a
-                  className={WIZ_LINK}
-                  href={connector.docs.token_create_url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open {connector.name} to create a key →
-                </a>
-              ) : (
-                <div className={WIZ_INAPP}>Created in the {connector.name} app (no web page).</div>
-              )}
-              {connector.docs?.instructions && (
-                <p className={WIZ_NOTE}>{connector.docs.instructions}</p>
-              )}
-              {(connector.scopes?.length ?? 0) > 0 && (
-                <p className={WIZ_SCOPES}>
-                  Give it these scopes: <strong>{connector.scopes!.join(" · ")}</strong>
+            {useExisting ? (
+              <div className={WIZ_STEP}>
+                <div className={WIZ_STEP_N}>Saved credential detected</div>
+                <p className={WIZ_NOTE}>
+                  Use the credential already encrypted in this workspace to validate and finish
+                  installing {connector.name}. The key never enters the browser.
                 </p>
-              )}
-            </div>
-
-            <div className={WIZ_STEP}>
-              <div className={WIZ_STEP_N}>2 · Paste &amp; check</div>
-              {required.map((s) => (
-                <div key={s.env} className={WIZ_FIELD}>
-                  <label className={WIZ_FIELD_LABEL}>{s.label}</label>
-                  <div className={WIZ_INPUT_ROW}>
-                    <input
-                      className={WIZ_INPUT}
-                      type={reveal[s.env] ? "text" : "password"}
-                      placeholder={s.placeholder || s.env}
-                      value={secrets[s.env] || ""}
-                      onChange={(e) => setSecrets({ ...secrets, [s.env]: e.target.value })}
-                      autoComplete="off"
-                      spellCheck="false"
-                    />
-                    <button
-                      className={WIZ_EYE}
-                      onClick={() => setReveal({ ...reveal, [s.env]: !reveal[s.env] })}
+              </div>
+            ) : (
+              <>
+                <div className={WIZ_STEP}>
+                  <div className={WIZ_STEP_N}>1 · Get your key</div>
+                  {connector.docs?.token_create_url ? (
+                    <a
+                      className={WIZ_LINK}
+                      href={connector.docs.token_create_url}
+                      target="_blank"
+                      rel="noreferrer"
                     >
-                      👁
-                    </button>
-                  </div>
+                      Open {connector.name} to create a key →
+                    </a>
+                  ) : (
+                    <div className={WIZ_INAPP}>
+                      Created in the {connector.name} app (no web page).
+                    </div>
+                  )}
+                  {connector.docs?.instructions && (
+                    <p className={WIZ_NOTE}>{connector.docs.instructions}</p>
+                  )}
+                  {(connector.scopes?.length ?? 0) > 0 && (
+                    <p className={WIZ_SCOPES}>
+                      Give it these scopes: <strong>{connector.scopes!.join(" · ")}</strong>
+                    </p>
+                  )}
                 </div>
-              ))}
-            </div>
+              </>
+            )}
+
+            {!useExisting && (
+              <div className={WIZ_STEP}>
+                <div className={WIZ_STEP_N}>2 · Paste &amp; check</div>
+                {required.map((s) => (
+                  <div key={s.env} className={WIZ_FIELD}>
+                    <label className={WIZ_FIELD_LABEL}>{s.label}</label>
+                    <div className={WIZ_INPUT_ROW}>
+                      <input
+                        className={WIZ_INPUT}
+                        type={reveal[s.env] ? "text" : "password"}
+                        placeholder={s.placeholder || s.env}
+                        value={secrets[s.env] || ""}
+                        onChange={(e) => setSecrets({ ...secrets, [s.env]: e.target.value })}
+                        autoComplete="off"
+                        spellCheck="false"
+                      />
+                      <button
+                        className={WIZ_EYE}
+                        onClick={() => setReveal({ ...reveal, [s.env]: !reveal[s.env] })}
+                      >
+                        👁
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {phase === "validating" && <div className={WIZ_VALIDATING}>Checking it live…</div>}
             {checks.length > 0 && (
@@ -286,10 +306,14 @@ export function ConnectWizard({
 
             <button
               className={WIZ_GO}
-              disabled={!filled || phase === "validating"}
+              disabled={(!useExisting && !filled) || phase === "validating"}
               onClick={connect}
             >
-              {phase === "validating" ? "Checking…" : "Connect"}
+              {phase === "validating"
+                ? "Checking…"
+                : useExisting
+                  ? "Use saved credential"
+                  : "Connect"}
             </button>
           </>
         )}

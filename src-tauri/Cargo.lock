@@ -21,6 +21,7 @@ dependencies = [
 name = "aios-workspace"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rand 0.8.6",
  "rfd",
  "serde_json",

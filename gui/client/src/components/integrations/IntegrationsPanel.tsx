@@ -122,9 +122,11 @@ export function IntegrationsPanel({ onTryInChat }: { onTryInChat: (prompt: strin
       </div>
     );
 
-  const installed = filtered.filter((c) => c.status === "wired");
-  const available = filtered.filter((c) => c.status !== "wired");
-  const wiredTotal = connectors.filter((c) => c.status === "wired").length;
+  const isConnected = (connector: Connector) =>
+    connector.status === "wired" && connector.artifact_present !== false;
+  const installed = filtered.filter(isConnected);
+  const available = filtered.filter((c) => !isConnected(c));
+  const wiredTotal = connectors.filter(isConnected).length;
   const noResults = filtered.length === 0;
 
   return (

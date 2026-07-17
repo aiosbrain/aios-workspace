@@ -29,8 +29,10 @@ import { createBrainClient } from "../scripts/brain-client.mjs";
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
+const GUI_SERVER = path.join(REPO, "gui", "server", "index.mjs");
 const TEST_KEY = "aios_smoketest_secret-value";
 const TEST_TEAM = "test-team";
+const GUI_TOKEN = ["sync", "execution", "smoke"].join("-");
 
 function sha256(s) {
   return createHash("sha256").update(s, "utf8").digest("hex");
@@ -38,7 +40,7 @@ function sha256(s) {
 
 // Minimal brain-api v1.5 stub. `prepulled` seeds the item store so a pull has content
 // to fetch; pushes append to it too, so pushedItems + the store both reflect reality.
-function startStubBrain(prepulled = []) {
+function startStubBrain(prepulled = [], { rejectPushes = false } = {}) {
   const pushedItems = [];
   const requestsLog = [];
   const itemStore = [...prepulled];
@@ -66,6 +68,12 @@ function startStubBrain(prepulled = []) {
 
       if (req.method === "POST" && url.pathname === "/api/v1/items") {
         const item = JSON.parse(rawBody);
+        if (rejectPushes) {
+          send(503, {
+            error: { code: "unavailable", message: "fixture rejection", request_id: "r-503" },
+          });
+          return;
+        }
         // Server-side fail-closed backstop (brain-api.md §"Server semantics"): admin/
         // private content is rejected 422, independent of any client-side gate.
         if (item.access === "admin") {
@@ -171,6 +179,51 @@ function runAios(args, cwd) {
   });
 }
 
+async function reservePort() {
+  const server = createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+async function startGui(repo) {
+  const port = await reservePort();
+  const child = spawn(process.execPath, [GUI_SERVER, "--repo", repo, "--port", String(port)], {
+    cwd: REPO,
+    env: {
+      ...process.env,
+      AIOS_API_KEY: TEST_KEY,
+      AIOS_MEMBER: "smoke-bot",
+      AIOS_GUI_TOKEN: GUI_TOKEN,
+    },
+  });
+  let stdout = "";
+  let stderr = "";
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`GUI start timed out: ${stderr}`)), 10_000);
+    child.stderr.on("data", (d) => (stderr += d));
+    child.stdout.on("data", (d) => {
+      stdout += d;
+      if (!stdout.includes(`127.0.0.1:${port}`)) return;
+      clearTimeout(timeout);
+      resolve();
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`GUI exited ${code}: ${stderr || stdout}`));
+    });
+  });
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise((resolve) => {
+        child.once("exit", resolve);
+        child.kill("SIGTERM");
+      }),
+  };
+}
+
 test("aios push: team-tier item round-trips to the stub brain; admin tier is never sent (default-deny holds at the network layer)", async () => {
   const stub = await startStubBrain();
   const dir = makeWorkspace(stub.url);
@@ -199,6 +252,45 @@ test("aios push: team-tier item round-trips to the stub brain; admin tier is nev
     // "rejected if sent". buildPlan blocks it before cmdPush's loop even starts.
     assert.ok(!stub.pushedItems.some((i) => i.access === "admin"));
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("aios push: a Brain item rejection exits nonzero so GUI callers cannot report false success", async () => {
+  const stub = await startStubBrain([], { rejectPushes: true });
+  const dir = makeWorkspace(stub.url);
+  try {
+    const r = await runAios(["push", "--repo", dir], REPO);
+    assert.equal(r.code, 1, `expected a failed exit:\n${r.stderr}\n${r.stdout}`);
+    assert.match(r.stdout, /fixture rejection/);
+    assert.match(r.stdout, /pushed 0\/1/);
+    assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("GUI Team Brain sync returns ok:false when any Brain item is rejected", async () => {
+  const stub = await startStubBrain([], { rejectPushes: true });
+  const dir = makeWorkspace(stub.url);
+  const gui = await startGui(dir);
+  try {
+    const response = await fetch(`${gui.url}/api/push?token=${GUI_TOKEN}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: ["2-work/team-ok.md"], dryRun: false }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, false);
+    assert.equal(body.dryRun, false);
+    assert.match(body.output, /fixture rejection/);
+    assert.match(body.output, /pushed 0\/1/);
+    assert.match(body.error, /Command failed/);
+  } finally {
+    await gui.close();
     rmSync(dir, { recursive: true, force: true });
     await stub.close();
   }

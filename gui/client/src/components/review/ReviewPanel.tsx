@@ -16,7 +16,7 @@ const REV_BTN_PRIMARY = cn(
 );
 const REVIEW = "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
 
-/** Review-and-push panel: pick eligible files, dry-run, then push to the team brain. */
+/** Team Brain sync panel: pick eligible files, dry-run, then sync them deliberately. */
 export function ReviewPanel() {
   const { api } = useConnection();
   const [plan, setPlan] = useState<ReviewResponse | null>(null);
@@ -63,16 +63,19 @@ export function ReviewPanel() {
       if (!dryRun) {
         if (data.ok) {
           toast.success(
-            `Pushed ${selected.size} item${selected.size === 1 ? "" : "s"} to the brain`
+            `Synced ${selected.size} item${selected.size === 1 ? "" : "s"} to Team Brain`
           );
           load(); // refresh status after a real push
         } else {
-          toast.error(`Push failed${data.error ? `: ${data.error}` : ""}`, { duration: 10_000 });
+          toast.error(`Team Brain sync failed${data.error ? `: ${data.error}` : ""}`, {
+            duration: 10_000,
+          });
         }
       }
     } catch (e) {
       setOutput(`error: ${(e as Error).message}`);
-      if (!dryRun) toast.error(`Push failed: ${(e as Error).message}`, { duration: 10_000 });
+      if (!dryRun)
+        toast.error(`Team Brain sync failed: ${(e as Error).message}`, { duration: 10_000 });
     }
     setBusy(false);
   };
@@ -105,9 +108,12 @@ export function ReviewPanel() {
 
   return (
     <div className={REVIEW}>
-      <div className="flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
-        <span>
-          {plan.project} → {plan.brain_url || "offline"}
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border-visible bg-background py-2 font-mono text-xs text-muted-foreground">
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <strong className="font-sans text-sm text-foreground">Team Brain Sync</strong>
+          <span className="truncate">
+            {plan.project} → {plan.brain_url || "offline"}
+          </span>
         </span>
         <span className="flex gap-2">
           <button className={REV_BTN} onClick={load} disabled={busy}>
@@ -121,10 +127,18 @@ export function ReviewPanel() {
             onClick={() => push(false)}
             disabled={busy || !selected.size}
           >
-            Push {selected.size} selected
+            Sync {selected.size} selected
           </button>
         </span>
       </div>
+
+      {output && (
+        <TerminalFrame
+          filename={busy ? "Team Brain sync…" : "Team Brain sync"}
+          status={busy ? "live" : "static"}
+          code={output}
+        />
+      )}
 
       {pushable.length === 0 ? (
         <div className="m-auto flex max-w-[440px] flex-col items-center gap-3.5 text-center text-muted-foreground">
@@ -151,29 +165,23 @@ export function ReviewPanel() {
       )}
 
       {(plan.items.blocked?.length ?? 0) > 0 && (
-        <div className="rounded-lg border border-border-visible px-3 py-2.5">
-          <div className="mb-1 text-xs font-semibold text-destructive">
+        <details className="rounded-lg border border-border-visible px-3 py-2.5">
+          <summary className="cursor-pointer text-xs font-semibold text-destructive">
             blocked ({plan.items.blocked!.length}) — never sync
+          </summary>
+          <div className="mt-2 flex flex-col gap-0.5">
+            {plan.items.blocked!.map((b) => (
+              <div key={b.rel} className="font-mono text-xs text-muted-foreground">
+                {b.rel} — {b.reason}
+              </div>
+            ))}
           </div>
-          {plan.items.blocked!.map((b) => (
-            <div key={b.rel} className="font-mono text-xs text-muted-foreground">
-              {b.rel} — {b.reason}
-            </div>
-          ))}
-        </div>
+        </details>
       )}
 
       <div className="text-xs text-muted-foreground">
         clean (already synced): {plan.items.clean?.length || 0}
       </div>
-      {output && (
-        <TerminalFrame
-          filename={busy ? "aios push…" : "aios push"}
-          status={busy ? "live" : "static"}
-          code={output}
-          className="mt-4"
-        />
-      )}
     </div>
   );
 }

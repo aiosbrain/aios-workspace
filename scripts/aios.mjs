@@ -1003,8 +1003,8 @@ async function cmdPush(repo, cfg, patterns, args) {
     }
   }
   saveState(repo, state);
-  console.log("");
-  console.log(c.green(`pushed ${pushed}/${plan.push.length} item(s).`));
+  console.log(`\n${c.green(`pushed ${pushed}/${plan.push.length} item(s).`)}`);
+  if (result.failed.size) process.exitCode = 1; // propagate partial failure to shell/GUI callers
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
   if (plan.push.some((item) => item.kind === "task" && result.pushed.has(item.rel)))
