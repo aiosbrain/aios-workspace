@@ -18,7 +18,11 @@
  * `deps.fetch` is injectable for tests.
  */
 
-import { brainApiUrl, fetchBrainOriginLocked, normalizeBrainOrigin } from "./brain-origin.mjs";
+import {
+  brainApiUrl,
+  fetchBrainOriginLocked,
+  normalizeBrainOriginFromConfig,
+} from "./brain-origin.mjs";
 
 /**
  * Parse one SSE event block (already split on the blank-line separator) into
@@ -84,7 +88,7 @@ export function createBrainClient(config, deps = {}) {
     Authorization: `Bearer ${config.api_key}`,
   };
   if (String(config.team_id || "").trim()) headers["X-AIOS-Team"] = String(config.team_id).trim();
-  const origin = normalizeBrainOrigin(config.brain_url);
+  const origin = normalizeBrainOriginFromConfig(config.brain_url);
   const request = (route, options) =>
     fetchBrainOriginLocked(doFetch, brainApiUrl(origin, route), options, origin);
 

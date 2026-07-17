@@ -91,6 +91,46 @@ export function normalizeBrainOrigin(input) {
   return url.origin;
 }
 
+/**
+ * Grace-period normalization for brain_url values read from an EXISTING config.
+ *
+ * The two rules that became strict in this release (remote plain HTTP, and an
+ * unrecognized path on the configured URL) would retroactively brick working
+ * setups that were configured before the hardening (LAN/tailnet brains on http,
+ * reverse-proxy subpaths). For one release those two cases degrade to a loud
+ * stderr warning; every other rule (credentials, fragment, query, protocol)
+ * still throws, and the value is still reduced to its exact origin, which
+ * fetchBrainOriginLocked continues to enforce. New/interactive input must keep
+ * using the strict normalizeBrainOrigin.
+ */
+export function normalizeBrainOriginFromConfig(input, warn = (msg) => console.error(msg)) {
+  try {
+    return normalizeBrainOrigin(input);
+  } catch (err) {
+    const raw = String(input || "").trim();
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw err;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") throw err;
+    if (url.username || url.password || url.hash || url.search) throw err;
+
+    const remoteHttp = url.protocol === "http:" && !isLoopbackHostname(url.hostname);
+    const oddPath = !acceptedPath(url.pathname);
+    if (!remoteHttp && !oddPath) throw err;
+
+    warn(
+      `Warning: configured brain_url '${raw}' no longer meets the hardened origin rules ` +
+        `(${remoteHttp ? "remote HTTP origin" : `unrecognized path '${url.pathname}'`}). ` +
+        `Accepting it as ${url.origin} for this release only — run 'aios onboard' to repair the config. ` +
+        `The next release will reject it.`
+    );
+    return url.origin;
+  }
+}
+
 export function brainApiUrl(origin, route = "") {
   const canonical = normalizeBrainOrigin(origin);
   const suffix = String(route || "");

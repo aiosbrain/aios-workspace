@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { readDescriptors } from "./gen-catalog.mjs";
-import { fetchBrainOriginLocked, normalizeBrainOrigin } from "./brain-origin.mjs";
+import { fetchBrainOriginLocked, normalizeBrainOriginFromConfig } from "./brain-origin.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
@@ -314,7 +314,7 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function brainUrlOf(cfg) {
-  return normalizeBrainOrigin(cfg.brainUrl || cfg.brain_url || "");
+  return normalizeBrainOriginFromConfig(cfg.brainUrl || cfg.brain_url || "");
 }
 function oauthHeaders(cfg) {
   const headers = {

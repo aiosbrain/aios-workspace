@@ -125,6 +125,13 @@ writeback/registration pulls), so a newer client still works against an older br
   produces), `broken_link_count` (integer, defaults `0`), `checked_at` (`YYYY-MM-DD`, UTC). Sent
   only on the most recent day of a push batch (it's a point-in-time repo snapshot, not a
   historical per-day signal). Scalars only — no paths, filenames, or check `detail` strings.*
+- *2026-07-17 — authentication clarification (no wire change): the API key is the authoritative
+  team identity; **`X-AIOS-Team` is now optional** and, when supplied for backward compatibility,
+  must match the key's team (mismatch fails auth and is audit-logged). Clients must omit the
+  header instead of sending an empty value. Client-side, the CLI hardens `brain_url` handling to
+  exact-origin normalization with origin-locked redirects; existing configs that used remote
+  plain-HTTP or an unrecognized subpath get a one-release warning-and-accept grace period
+  (repair via `aios onboard`).*
 
 ---
 

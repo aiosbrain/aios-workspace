@@ -4,6 +4,7 @@ import {
   brainApiUrl,
   fetchBrainOriginLocked,
   normalizeBrainOrigin,
+  normalizeBrainOriginFromConfig,
 } from "../scripts/brain-origin.mjs";
 
 for (const value of [
@@ -40,6 +41,43 @@ test("rejects credentials, fragments, queries, protocols, and unrecognized paths
     () => normalizeBrainOrigin("https://brain.example.com/api/v1/not-real"),
     /not a recognized/i
   );
+});
+
+test("config grace: remote HTTP and unrecognized paths warn instead of throwing", () => {
+  const warnings = [];
+  const warn = (msg) => warnings.push(msg);
+  assert.equal(
+    normalizeBrainOriginFromConfig("http://192.168.1.10:3999", warn),
+    "http://192.168.1.10:3999"
+  );
+  assert.equal(
+    normalizeBrainOriginFromConfig("https://example.com/brain", warn),
+    "https://example.com"
+  );
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /remote HTTP origin/);
+  assert.match(warnings[0], /aios onboard/);
+  assert.match(warnings[1], /unrecognized path/);
+});
+
+test("config grace: hard rules still throw and valid values pass silently", () => {
+  const warnings = [];
+  const warn = (msg) => warnings.push(msg);
+  assert.equal(
+    normalizeBrainOriginFromConfig("https://brain.example.com/t/aios", warn),
+    "https://brain.example.com"
+  );
+  assert.throws(() => normalizeBrainOriginFromConfig("", warn), /empty/i);
+  assert.throws(() => normalizeBrainOriginFromConfig("ftp://brain.example.com", warn), /protocol/i);
+  assert.throws(
+    () => normalizeBrainOriginFromConfig("https://brain.example.com/?team=acme", warn),
+    /query/i
+  );
+  assert.throws(
+    () => normalizeBrainOriginFromConfig("https://user:pass@brain.example.com", warn),
+    /username or password/i
+  );
+  assert.equal(warnings.length, 0);
 });
 
 test("builds API URLs only from normalized origins", () => {
