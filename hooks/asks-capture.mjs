@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+import recoveryPolicy from "./asks-claim-recovery.cjs";
 
 const ASKS_STORE_REL = ".aios/loop/asks/asks.ndjson";
 const SCHEMA_VERSION = 1;
@@ -117,7 +118,7 @@ function withStoreLock(root, fn) {
   }
 }
 
-// Set of dedupeKeys currently OPEN (mini-fold: create opens, resolve/orphan closes; first wins).
+// Set of dedupeKeys currently OPEN (mini-fold: create opens, lifecycle ops close; first wins).
 function openDedupeKeys(root) {
   const abs = storePath(root);
   if (!existsSync(abs)) return { keys: new Set(), lineCount: 0 };
@@ -140,7 +141,10 @@ function openDedupeKeys(root) {
     if (o.op === "create" && o.ask && typeof o.ask.id === "string") {
       if (!byId.has(o.ask.id))
         byId.set(o.ask.id, { dedupeKey: o.ask.dedupeKey ?? null, open: true });
-    } else if ((o.op === "resolve" || o.op === "orphan") && typeof o.id === "string") {
+    } else if (
+      (o.op === "resolve" || o.op === "orphan" || o.op === "archive") &&
+      typeof o.id === "string"
+    ) {
       const e = byId.get(o.id);
       if (e) e.open = false;
     }
@@ -303,24 +307,56 @@ function resolveIdleForSession(root, payload) {
   if (!sessionId) return;
   withStoreLock(root, (abs) => {
     const open = new Map();
+    const claimed = new Map();
     for (const line of readFileSync(abs, "utf8").split(/\r?\n/)) {
       try {
         const op = JSON.parse(line);
         if (op.op === "create" && op.ask?.id) open.set(op.ask.id, op.ask);
-        else if ((op.op === "resolve" || op.op === "orphan") && op.id) open.delete(op.id);
+        else if (op.op === "claim-reply" && op.id && op.token) claimed.set(op.id, op);
+        else if (op.op === "release-reply" && op.id && claimed.get(op.id)?.token === op.token)
+          claimed.delete(op.id);
+        else if ((op.op === "resolve" || op.op === "orphan" || op.op === "archive") && op.id) {
+          open.delete(op.id);
+          claimed.delete(op.id);
+        }
       } catch {
         /* malformed lines stay the store reader's concern */
       }
     }
     const at = new Date().toISOString();
     for (const ask of open.values()) {
-      if (ask.kind === "idle" && ask.source === "hook:idle" && ask.sessionId === sessionId)
+      const claim = claimed.get(ask.id);
+      if (claim && abandonedClaim(claim, Date.parse(at))) {
+        appendFileSync(
+          abs,
+          JSON.stringify({
+            v: SCHEMA_VERSION,
+            op: "release-reply",
+            id: ask.id,
+            token: claim.token,
+            at,
+            reason: "owner-dead-or-lease-expired",
+          }) + "\n"
+        );
+        claimed.delete(ask.id);
+        continue; // quarantine THIS crashed GUI prompt; only a later distinct prompt may resolve
+      }
+      if (
+        !claimed.has(ask.id) &&
+        ask.kind === "idle" &&
+        ask.source === "hook:idle" &&
+        ask.sessionId === sessionId
+      )
         appendFileSync(
           abs,
           JSON.stringify({ v: SCHEMA_VERSION, op: "resolve", id: ask.id, at }) + "\n"
         );
     }
   });
+}
+
+function abandonedClaim(claim, nowMs) {
+  return recoveryPolicy.claimRecoveryDecision(claim, nowMs) === "recover";
 }
 
 async function readStdin() {

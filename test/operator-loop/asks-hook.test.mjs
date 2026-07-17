@@ -8,11 +8,19 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { foldLines, readAsks, sha256, ASKS_STORE_REL } from "../../dist/operator-loop/index.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  ASKS_STORE_REL,
+  claimReply,
+  foldLines,
+  readAsks,
+  releaseReply,
+  sha256,
+} from "../../dist/operator-loop/index.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOOK = path.join(ROOT, "hooks", "asks-capture.mjs");
+const DIST_INDEX = pathToFileURL(path.join(ROOT, "dist", "operator-loop", "index.js")).href;
 
 function ws() {
   return mkdtempSync(path.join(tmpdir(), "asks-hook-"));
@@ -247,6 +255,77 @@ test("Stop (last assistant message is tool_use-only) → nothing, even if an ear
       !existsSync(path.join(dir, ASKS_STORE_REL)),
       "stale earlier text must not be captured as the turn's tail"
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tracked root and scaffold settings wire UserPromptSubmit lifecycle reconciliation", () => {
+  for (const settingsPath of [
+    path.join(ROOT, ".claude", "settings.json"),
+    path.join(ROOT, "scaffold", ".claude", "settings.json"),
+  ]) {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const commands = (settings.hooks?.UserPromptSubmit || []).flatMap((group) =>
+      (group.hooks || []).map((hook) => hook.command)
+    );
+    assert.ok(
+      commands.includes("${CLAUDE_PROJECT_DIR}/hooks/asks-capture.mjs"),
+      `${settingsPath} resolves matching idle asks when the user returns`
+    );
+  }
+});
+
+test("UserPromptSubmit does not resolve an idle ask claimed by an in-flight GUI reply", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "Notification",
+      notification_type: "idle_prompt",
+      session_id: "session-claimed",
+      message: "Waiting for your input",
+    });
+    const ask = open(dir)[0];
+    assert.equal(claimReply(dir, ask.id, "claim-token", "2026-07-16T01:00:00.000Z"), "claimed");
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-claimed" });
+    assert.equal(open(dir)[0].status, "open");
+    assert.equal(open(dir)[0].replyClaim?.token, "claim-token");
+    assert.equal(releaseReply(dir, ask.id, "claim-token", "2026-07-16T01:01:00.000Z"), true);
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-claimed" });
+    assert.equal(
+      open(dir)[0].status,
+      "resolved",
+      "ordinary later prompt still closes the idle ask"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("crashed GUI claim: discovering prompt only recovers+watermarks; a later prompt resolves", () => {
+  const dir = ws();
+  try {
+    runHook(dir, {
+      hook_event_name: "Notification",
+      notification_type: "idle_prompt",
+      session_id: "session-crashed",
+      message: "Waiting for your input",
+    });
+    const ask = open(dir)[0];
+    const child = [
+      `import * as loop from ${JSON.stringify(DIST_INDEX)};`,
+      `if (loop.claimReply(process.argv[1], process.argv[2], "dead-hook-token") !== "claimed") process.exit(2);`,
+    ].join("\n");
+    execFileSync(process.execPath, ["--input-type=module", "-e", child, dir, ask.id]);
+
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-crashed" });
+    const recovered = open(dir)[0];
+    assert.equal(recovered.status, "open");
+    assert.equal(recovered.replyClaim, null);
+    assert.ok(recovered.reconcileAfter, "crashed prompt is durably watermarked");
+
+    runHook(dir, { hook_event_name: "UserPromptSubmit", session_id: "session-crashed" });
+    assert.equal(open(dir)[0].status, "resolved", "only the later distinct prompt resolves");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

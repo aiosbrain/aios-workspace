@@ -42,3 +42,20 @@ export function postDecision(api: Api, id: string, body: DecisionBody): Promise<
   };
   return api.post<DecisionResult>(`/api/inbox/${encodeURIComponent(id)}/decision`, payload);
 }
+
+export interface AskActionResult {
+  ok: boolean;
+  accepted?: boolean;
+  archived?: boolean;
+  error?: string;
+  code?: "reply_in_progress" | "ask_closed" | "lifecycle_conflict";
+}
+
+/** Only the reply text leaves the client; session identity is resolved from the canonical ask server-side. */
+export function postAskReply(api: Api, id: string, message: string): Promise<AskActionResult> {
+  return api.post<AskActionResult>(`/api/inbox/${encodeURIComponent(id)}/reply`, { message });
+}
+
+export function postAskArchive(api: Api, id: string): Promise<AskActionResult> {
+  return api.post<AskActionResult>(`/api/inbox/${encodeURIComponent(id)}/archive`, {});
+}

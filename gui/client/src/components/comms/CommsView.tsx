@@ -15,8 +15,9 @@ import { cn } from "../../lib/cn";
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { fetchInbox, fetchInboxItem, postDecision } from "./api";
+import { fetchInbox, fetchInboxItem, postAskArchive, postAskReply, postDecision } from "./api";
 import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notification";
+import { LatestDetailRequest } from "./detail-request";
 import type { DisplayProjection, InboxDetail, InboxView } from "./types";
 
 const POLL_MS = 15_000;
@@ -33,16 +34,20 @@ export function CommsView() {
 
   const seenBlocking = useRef<Set<string> | null>(null);
   const selectedRef = useRef<string | null>(null);
+  const detailRequests = useRef(new LatestDetailRequest());
   selectedRef.current = selectedId;
 
   const loadDetail = useCallback(
     async (id: string) => {
-      try {
-        setDetail(await fetchInboxItem(api, id));
-      } catch (e) {
-        setDetail(null);
-        setError((e as Error).message);
-      }
+      await detailRequests.current.load(
+        id,
+        () => fetchInboxItem(api, id),
+        setDetail,
+        (e) => {
+          setDetail(null);
+          setError((e as Error).message);
+        }
+      );
     },
     [api]
   );
@@ -65,7 +70,12 @@ export function CommsView() {
       // Keep a selection: default to the first (highest-ranked) item.
       const stillThere = next.items.some((i) => i.id === selectedRef.current);
       const nextId = stillThere ? selectedRef.current : (next.items[0]?.id ?? null);
-      if (nextId !== selectedRef.current) setSelectedId(nextId);
+      if (nextId !== selectedRef.current) {
+        selectedRef.current = nextId;
+        detailRequests.current.select(nextId);
+        setSelectedId(nextId);
+        setDetail(null);
+      }
       if (nextId) void loadDetail(nextId);
     } catch (e) {
       setError((e as Error).message);
@@ -80,7 +90,10 @@ export function CommsView() {
 
   const onSelect = useCallback(
     (id: string) => {
+      selectedRef.current = id;
+      detailRequests.current.select(id);
       setSelectedId(id);
+      setDetail(null);
       void loadDetail(id);
     },
     [loadDetail]
@@ -114,6 +127,24 @@ export function CommsView() {
       }
     },
     [api, projection, load]
+  );
+
+  const onReply = useCallback(
+    async (id: string, message: string) => {
+      const result = await postAskReply(api, id, message);
+      if (!result.ok) throw new Error(result.error || "Claude did not accept the reply");
+      await load();
+    },
+    [api, load]
+  );
+
+  const onArchive = useCallback(
+    async (id: string) => {
+      const result = await postAskArchive(api, id);
+      if (!result.ok) throw new Error(result.error || "Could not archive the ask");
+      await load();
+    },
+    [api, load]
   );
 
   const health = deriveHealth(view);
@@ -156,7 +187,12 @@ export function CommsView() {
             {error ? "Failed to load the queue." : "Loading queue…"}
           </div>
         )}
-        <CommsDetail detail={detail} onScopedConfirm={setProjection} />
+        <CommsDetail
+          detail={detail}
+          onScopedConfirm={setProjection}
+          onReply={onReply}
+          onArchive={onArchive}
+        />
       </div>
 
       {projection && (

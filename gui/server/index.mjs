@@ -23,7 +23,10 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
-import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import {
+  getSessionInfo as sdkGetSessionInfo,
+  query as sdkQuery,
+} from "@anthropic-ai/claude-agent-sdk";
 import { MEMORY_FILES, MEMORY_ABSENT } from "./memory-files.mjs";
 import {
   reviewTurn,
@@ -87,7 +90,13 @@ import {
 } from "./tasks.mjs";
 import { searchSessions } from "./sessions-search.mjs";
 // Unified Inbox comms section (I-14 / AIO-395): the local read-model queue + the scoped-confirm broker.
-import { getInboxView, getInboxDetail, decideInbox } from "./inbox-api.mjs";
+import {
+  archiveInboxAsk,
+  decideInbox,
+  getInboxDetail,
+  getInboxView,
+  replyInboxAsk,
+} from "./inbox-api.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -577,6 +586,44 @@ const server = http.createServer((req, res) => {
         .catch((e) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: e.message }));
+        });
+    });
+    return;
+  }
+  const inboxAskAction = url.pathname.match(/^\/api\/inbox\/([^/]+)\/(reply|archive)$/);
+  if (inboxAskAction && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 20_000) req.destroy();
+    });
+    req.on("end", () => {
+      let payload = {};
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        /* action returns its own 400 */
+      }
+      const [, encodedId, action] = inboxAskAction;
+      const operation =
+        action === "reply"
+          ? replyInboxAsk(repo, decodeURIComponent(encodedId), payload, {
+              query: sdkQuery,
+              getSessionInfo: sdkGetSessionInfo,
+            })
+          : archiveInboxAsk(repo, decodeURIComponent(encodedId));
+      operation
+        .then((result) => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((e) => {
+          res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: e.message, code: e.errorCode }));
         });
     });
     return;
