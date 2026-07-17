@@ -34,6 +34,7 @@ export const CATEGORIES = {
       "gen:catalog",
       "build:loop",
       "check:docs",
+      "check:context",
       "check:v1-linear",
       "check:domains",
       "check:size",

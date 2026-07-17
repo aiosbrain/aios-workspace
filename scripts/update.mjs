@@ -68,7 +68,7 @@ function looksLikeToolkit(dir) {
   );
 }
 
-function gitSha(dir) {
+export function gitSha(dir) {
   try {
     // Full sha (not --short): the version stamp is a merge base for future syncs,
     // and a full sha survives shallow/ephemeral clones where short shas can collide.
@@ -78,6 +78,26 @@ function gitSha(dir) {
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Resolve a local toolkit checkout for read-only inspection — same candidates as
+ * `resolveSource` (--from is caller-supplied, not applicable here; env var; the default
+ * `~/Projects/aios/aios-workspace` path) but NEVER falls back to a network clone. Callers
+ * that need a guaranteed dir (e.g. `aios update` itself) use `resolveSource`; callers that
+ * just want to opportunistically compare versions (e.g. context-health) use this and treat
+ * `null` as "signal unavailable" rather than triggering a clone as a side effect.
+ */
+export function resolveLocalToolkitDir(dir) {
+  const candidates = [
+    dir,
+    process.env.AIOS_TOOLKIT_DIR,
+    path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (looksLikeToolkit(candidate)) return path.resolve(candidate);
+  }
+  return null;
 }
 
 /** Resolve the toolkit source dir. Returns { dir, ephemeral } — clone dirs are ephemeral. */

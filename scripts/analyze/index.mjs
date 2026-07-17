@@ -38,6 +38,19 @@ import { renderCostSummary } from "./cost-report.mjs";
 import { cursorBillingStart } from "./cursor-api.mjs";
 import { calibrate, renderVerdict, writeVerdictArtifact } from "./ergonomics-calibrate.mjs";
 
+// Context Engineering Health SHADOW card (AIO context-health). Imported lazily/
+// defensively: computeContextHealth lives in a sibling module owned by a parallel
+// workstream, so a momentarily-absent module (or any runtime error inside it)
+// must never fail `aios analyze` — the whole side-channel degrades to `null`.
+async function gatherContextHealth(repo) {
+  try {
+    const mod = await import("../context-health.mjs");
+    return mod.computeContextHealth(repo);
+  } catch {
+    return null;
+  }
+}
+
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
 const PARSERS = { claude: parseClaude, codex: parseCodex, opencode: parseOpencode };
 const ALL_TOOLS = ["claude", "codex", "cursor", "opencode"];
@@ -261,19 +274,20 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     window: result.window,
     repo,
   });
+  const contextHealth = await gatherContextHealth(repo);
 
   if (opts.json) {
-    console.log(JSON.stringify(toJson(result, costData), null, 2));
+    console.log(JSON.stringify(toJson(result, costData, contextHealth), null, 2));
   } else {
-    console.log(renderText(result, color));
+    console.log(renderText(result, color, contextHealth));
     const costBlock = renderCostSummary(costData, color);
     if (costBlock) console.log(costBlock);
-    if (opts.report) console.log(renderReport(result, color));
+    if (opts.report) console.log(renderReport(result, color, contextHealth));
   }
 
   const state = loadAnalyzeState(repo);
   if (opts.push) {
-    await pushDays(repo, cfg, result, helpers, state);
+    await pushDays(repo, cfg, result, helpers, state, contextHealth);
     const { resolveMember, loadDotEnv } = helpers || {};
     const member = resolveMember
       ? resolveMember(repo, cfg, loadDotEnv ? loadDotEnv(repo) : {})
@@ -287,7 +301,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
 
   // Record the run (push dedup + future tail-parse offsets build on this).
   state.last_run = until.toISOString();
-  state.last_summary = buildLastSummary(result);
+  state.last_summary = buildLastSummary(result, contextHealth);
   saveAnalyzeState(repo, state);
 
   return result;
@@ -299,7 +313,7 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
  * Uses helpers injected from the CLI (api, resolveMember, loadDotEnv) to avoid a
  * circular import back into aios.mjs.
  */
-async function pushDays(repo, cfg, result, helpers, state) {
+async function pushDays(repo, cfg, result, helpers, state, contextHealth) {
   const { api, resolveMember, loadDotEnv } = helpers || {};
   if (!api || !resolveMember) {
     console.warn(color.yellow("  --push unavailable: CLI helpers not wired"));
@@ -348,7 +362,10 @@ async function pushDays(repo, cfg, result, helpers, state) {
       day.signals,
       ergonomicsBaseline(result.days.slice(0, i))
     );
-    const payload = buildPushPayload(day, member, ceBand);
+    // Context health is a point-in-time snapshot (current repo state), not a
+    // per-day historical signal — attach it only to the most recent day's push.
+    const isLatestDay = i === result.days.length - 1;
+    const payload = buildPushPayload(day, member, ceBand, isLatestDay ? contextHealth : null);
     const sha = simpleHash(JSON.stringify(payload));
     if (state.pushed[day.date] === sha) {
       skipped++;

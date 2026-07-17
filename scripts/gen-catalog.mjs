@@ -131,12 +131,10 @@ export function readDescriptors(repoDir) {
   return out;
 }
 
-function generate(repo) {
-  const skillsDir = path.join(repo, ".claude", "skills");
-  const skills = readSkills(repo);
-  const integrations = readIntegrations(repo);
-
-  // ── render skills INDEX.md ──
+// Pure builder: skills → the rendered INDEX.md text (no I/O). Extracted so a caller
+// (e.g. scripts/context-health.mjs's catalog-drift check) can diff the would-be output
+// against the committed file without writing anything.
+export function renderSkillsIndexMd(skills) {
   const harnesses = skills.filter((s) => s.kind === "workflow-harness");
   const others = skills.filter((s) => s.kind !== "workflow-harness");
   let sk =
@@ -164,7 +162,16 @@ function generate(repo) {
     `## Share a skill\n\nPush a skill to the Team Brain so teammates can pull it:\n\n` +
     "```bash\naios push skill <name>      # share SKILL.md + its reference files\naios pull skill <name>      # fetch a shared skill into 1-inbox/from-brain/skills/\naios install-skill <name>   # promote a pulled skill into .claude/skills/ (explicit, append-only)\n```\n\n" +
     `Pulled skills are executable code — install is always a deliberate act; they never auto-activate on pull.\n`;
-  writeFileSync(path.join(skillsDir, "INDEX.md"), sk);
+  return sk;
+}
+
+function generate(repo) {
+  const skillsDir = path.join(repo, ".claude", "skills");
+  const skills = readSkills(repo);
+  const integrations = readIntegrations(repo);
+
+  // ── render skills INDEX.md ──
+  writeFileSync(path.join(skillsDir, "INDEX.md"), renderSkillsIndexMd(skills));
 
   // ── render INTEGRATIONS.md ──
   const byCat = {};

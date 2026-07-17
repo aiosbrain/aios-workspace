@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.9** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.10**
+**Version: 1.11** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.11**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -115,6 +115,16 @@ writeback/registration pulls), so a newer client still works against an older br
   [`contract/gateway-approval-v1.10.json`](./contract/gateway-approval-v1.10.json), SHA-256
   `b1bed83fbdd4e6cfff2200a4cefa828a2d770c66f898e9e7d704511935cc5e62`, and separately pins the
   byte-addressed AIO-401 base contract. The feature flag remains disabled by default.*
+- *2026-07-16 — document revision **1.11**: added an optional `context_health` object to the
+  `POST /api/v1/metrics` payload (`aios analyze --push`, the Context Engineering Health shadow
+  card). Same provenance-only pattern as `ce_band` (v1.3): older CLIs omit it, an older brain
+  ignores the unknown key, and when present the brain persists it verbatim and never recomputes
+  it. Fields: `score` (integer `0`–`4`), `mode` (`"workspace"|"repo"`), `drift_count` (integer,
+  hard-check failures), `versions_behind` (integer or `null` — toolkit staleness, workspace mode
+  only), `coverage_pct` (number or `null` — tier or Claude-config coverage, whichever the mode
+  produces), `broken_link_count` (integer, defaults `0`), `checked_at` (`YYYY-MM-DD`, UTC). Sent
+  only on the most recent day of a push batch (it's a point-in-time repo snapshot, not a
+  historical per-day signal). Scalars only — no paths, filenames, or check `detail` strings.*
 
 ---
 
@@ -1359,6 +1369,15 @@ Rate limit: 60/min per key.
     "learning": 3.0, "cost_governance": 3.6
   } },
   "ce_band": 3,
+  "context_health": {
+    "score": 3,
+    "mode": "workspace",
+    "drift_count": 0,
+    "versions_behind": 1,
+    "coverage_pct": 92,
+    "broken_link_count": 0,
+    "checked_at": "2026-07-16"
+  },
   "sessions": 41,
   "tasks": 137
 }
@@ -1369,13 +1388,27 @@ Rate limit: 60/min per key.
 - The point is keyed by `(team_id, member_id, date)` — idempotent: re-pushing the same day
   updates in place, no duplicate snapshot.
 - `signals` are structural facts only (ratios + counts) — **no tool names, no branch, no cwd,
-  no message text, no per-session detail**. Together with the coarse `ce_band` scalar and the
-  `provisional` placement, these are the entire privacy surface.
+  no message text, no per-session detail**. Together with the coarse `ce_band` scalar, the optional
+  `context_health` snapshot, and the `provisional` placement, these are the entire privacy surface.
 - `ce_band` (v1.3, optional) is a single coarse **cognitive-ergonomics** band, integer `0`–`4`
   (higher = more protected attention — longer focus blocks, fewer interrupts, concurrency matched to
   the operator's own norm), scored client-side relative to the operator's own baseline and derived
   alongside `provisional`. It is provenance-only: the brain persists it verbatim and never recomputes
   it. Omitting it is valid; an older brain ignores it.
+- `context_health` (document revision 1.11, optional) is a point-in-time snapshot of the pushing
+  member's **Context Engineering Health** shadow card (`aios context-health` / `aios analyze`'s
+  Context health line) — repo/workspace hygiene, not a per-session signal. Same provenance-only
+  contract as `ce_band`: an older brain ignores the unknown key, and a present value is persisted
+  verbatim and never recomputed server-side. Omitted ≠ `null` — the client only sends the key when
+  the check actually ran, and even then only on the **most recent day** of a push batch (older days
+  in the same batch never carry it, since it isn't a historical-per-day fact). Fields:
+  `score` (integer `0`–`4`, higher = healthier), `mode` (`"workspace"` or `"repo"` — which check set
+  ran), `drift_count` (integer count of failing **hard**-kind checks), `versions_behind` (integer or
+  `null` — the `toolkit-staleness` check's value, `workspace` mode only), `coverage_pct` (number or
+  `null` — the `tier-coverage` check in `workspace` mode, or `claude-coverage` in `repo` mode),
+  `broken_link_count` (integer, defaults `0` when the `broken-links` check didn't run), `checked_at`
+  (`YYYY-MM-DD`, UTC, the day the check ran). **Scalars only** — no file paths, filenames, or the
+  checks' free-text `detail` strings ever cross the boundary.
 - `provisional` carries the **client-side** AEM placement (axes 0–4 + Spine `L1`–`L5`) computed by
   `scripts/analyze/aem.mjs`. The brain **recomputes the canonical** axis/Spine scores from
   `signals` server-side (`lib/metrics/individual-maturity.ts`) so team rollups have one authority; it

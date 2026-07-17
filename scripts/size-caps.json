@@ -1,6 +1,6 @@
 {
   "_comment": "Line caps (wc -l semantics) enforced by scripts/check-file-size.mjs. AIO-320 holds the line on scripts/aios.mjs growth; AIO-315 ratchets this down per extraction PR.",
   "caps": {
-    "scripts/aios.mjs": 2848
+    "scripts/aios.mjs": 2853
   }
 }

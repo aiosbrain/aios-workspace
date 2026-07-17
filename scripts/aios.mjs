@@ -87,6 +87,7 @@ import { cmdLoop } from "./loop.mjs";
 import { cmdPromote } from "./promote.mjs";
 import { cmdTranscripts } from "./transcripts.mjs";
 import { cmdPm, printProjectionHealth } from "./pm.mjs";
+import { runContextHealthCli } from "./context-health.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2648,6 +2649,8 @@ usage:
     [--install]                         for hermes: also run hermes skills install on each
   aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
     [--json]                            machine output; the Team Brain scanner records scores
+  aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,
+                                        read-only, 0-4): context files, tiers, catalog, sync
   aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
     [--base <ref>]                     --base defaults to origin/main; links node_modules,
                                        copies opencode.json/.claude/settings, wires hooks
@@ -2747,6 +2750,7 @@ const OFFLINE_CMDS = new Set([
   "onboard",
   "skills",
   "assess-codebase",
+  "context-health",
   "learn",
   "analyze",
   "relay",
@@ -2808,6 +2812,7 @@ try {
   else if (cmd === "graph") cmdGraph(repo, cfg, rest);
   else if (cmd === "skills") cmdSkills(repo, rest);
   else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
+  else if (cmd === "context-health") runContextHealthCli(repo, rest, c);
   else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
   else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
   else if (cmd === "relay")

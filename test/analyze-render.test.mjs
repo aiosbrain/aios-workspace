@@ -8,9 +8,9 @@
 // and text↔JSON band agreement.
 // Synthetic fixtures only. Zero network, zero deps. Run: node test/analyze-render.test.mjs
 
-import { renderText, toJson } from "../scripts/analyze/report.mjs";
+import { renderText, toJson, buildPushPayload } from "../scripts/analyze/report.mjs";
 import { ergonomicsTip } from "../scripts/analyze/guidance.mjs";
-import { AXIS_LABELS, placement } from "../scripts/analyze/aem.mjs";
+import { AXIS_LABELS, placement, contextHealthCard } from "../scripts/analyze/aem.mjs";
 import { AXIS_LABEL_ERGONOMICS, MIN_BASELINE_DAYS } from "../scripts/analyze/ergonomics.mjs";
 
 let failed = 0;
@@ -180,6 +180,135 @@ check(
     ergonomicsTip("none") === "" &&
     ergonomicsTip("") === "" &&
     ergonomicsTip(undefined) === ""
+);
+
+// ── Context health card (SHADOW, NOT an axis) ───────────────────────────────
+
+console.log("contextHealthCard");
+const FAKE_CH = {
+  mode: "workspace",
+  checks: [
+    { id: "toolkit-staleness", label: "toolkit staleness", kind: "soft", ok: false, value: 3 },
+    { id: "tier-coverage", label: "tier coverage", kind: "soft", ok: true, value: 92 },
+    {
+      id: "broken-links",
+      label: "broken links",
+      kind: "hard",
+      ok: false,
+      value: 2,
+      detail: "docs/foo.md -> missing",
+    },
+  ],
+  hardFailures: 1,
+  softMisses: 1,
+  score: 2,
+  summary: "a few things need attention",
+};
+check("contextHealthCard returns null for a null result", contextHealthCard(null) === null);
+check(
+  "contextHealthCard shapes a non-null result",
+  (() => {
+    const card = contextHealthCard(FAKE_CH);
+    return (
+      card.label === "Context health" &&
+      card.metrics.score === 2 &&
+      card.metrics.mode === "workspace" &&
+      card.metrics.hard_failures === 1 &&
+      card.metrics.soft_misses === 1 &&
+      card.reading === "a few things need attention"
+    );
+  })()
+);
+
+console.log("renderText — Context health card");
+const chLines = renderText(RICH, null, FAKE_CH).split("\n");
+check(
+  "a Context health line renders when a result is provided",
+  chLines.some((l) => l.startsWith("  Context health — "))
+);
+check(
+  "up to 3 failing check labels are listed",
+  chLines.some((l) => l.includes("toolkit staleness") && l.includes("broken links"))
+);
+check(
+  "no Context health line renders when the result is null (module absent/threw)",
+  !renderText(RICH, null, null)
+    .split("\n")
+    .some((l) => l.startsWith("  Context health — "))
+);
+
+console.log("toJson — context_health key");
+check(
+  "context_health is present when a result is provided",
+  toJson(RICH, undefined, FAKE_CH).context_health?.metrics.score === 2
+);
+check(
+  "context_health is absent when the result is null",
+  !("context_health" in toJson(RICH, undefined, null))
+);
+check(
+  "context_health is absent when not passed at all (back-compat 2-arg call)",
+  !("context_health" in toJson(RICH))
+);
+
+console.log("buildPushPayload — context_health (scalars only)");
+const pushDay = RICH.days[RICH.days.length - 1];
+const pushedWith = buildPushPayload(pushDay, "alex", 3, FAKE_CH);
+const pushedWithout = buildPushPayload(pushDay, "alex", 3);
+check(
+  "context_health is present and scalar-only when contextHealth is passed",
+  pushedWith.context_health &&
+    pushedWith.context_health.score === 2 &&
+    pushedWith.context_health.mode === "workspace" &&
+    pushedWith.context_health.drift_count === 1 &&
+    pushedWith.context_health.versions_behind === 3 &&
+    pushedWith.context_health.coverage_pct === 92 &&
+    pushedWith.context_health.broken_link_count === 2 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(pushedWith.context_health.checked_at) &&
+    Object.values(pushedWith.context_health).every((v) => v === null || typeof v !== "object")
+);
+check(
+  "context_health is absent when contextHealth is omitted",
+  !("context_health" in pushedWithout)
+);
+check(
+  "context_health is absent when contextHealth is explicitly null",
+  !("context_health" in buildPushPayload(pushDay, "alex", 3, null))
+);
+check(
+  "coverage_pct falls back to claude-coverage in repo mode",
+  buildPushPayload(pushDay, "alex", 3, {
+    mode: "repo",
+    checks: [
+      { id: "claude-coverage", label: "claude coverage", kind: "soft", ok: true, value: 55 },
+    ],
+    hardFailures: 0,
+    softMisses: 0,
+    score: 4,
+    summary: "healthy",
+  }).context_health.coverage_pct === 55
+);
+check(
+  "versions_behind is null in repo mode (no toolkit-staleness check)",
+  buildPushPayload(pushDay, "alex", 3, {
+    mode: "repo",
+    checks: [],
+    hardFailures: 0,
+    softMisses: 0,
+    score: 4,
+    summary: "healthy",
+  }).context_health.versions_behind === null
+);
+check(
+  "broken_link_count defaults to 0 when the broken-links check is absent",
+  buildPushPayload(pushDay, "alex", 3, {
+    mode: "workspace",
+    checks: [],
+    hardFailures: 0,
+    softMisses: 0,
+    score: 4,
+    summary: "healthy",
+  }).context_health.broken_link_count === 0
 );
 
 console.log("");

@@ -67,6 +67,36 @@ export const AXIS_GUIDE = {
   },
 };
 
+// Context Engineering Health — SHADOW coaching entry (matches the AXIS_GUIDE
+// gloss/why/try structure, but keyed by score band since it's a single 0-4
+// number rather than a per-signal axis). NOT an AEM axis; used only by the
+// --report deep dive when the context-health score is <= 2.
+export const CONTEXT_HEALTH_GUIDE = {
+  gloss: "is your workspace's context itself in good shape?",
+  meaning:
+    "Whether the scaffolding around your agent — toolkit version, frontmatter/tier coverage, doc links — is current and intact, not whether any one session went well.",
+  why: "A low score means the agent is working from a stale or broken map: an out-of-date toolkit, gaps in access-tier coverage, or dead links. Those compound quietly — they don't show up as a single bad session, they show up as friction and misplaced content everywhere.",
+  steps: [
+    "Run `aios context-health` to see the full check list and which ones are failing.",
+    "Fix hard drift first — hard-kind check failures block real progress; soft misses are lower priority.",
+    "If `versions_behind` is the culprit, run `aios update` to pull the latest toolkit-managed files.",
+  ],
+};
+
+/**
+ * One practical Context Health nudge, keyed off the 0-4 score band. Returns ""
+ * for a healthy score (caller only calls this when score <= 2).
+ */
+export function contextHealthTip(score) {
+  if (score <= 1) {
+    return "Start with `aios context-health` for the check list, fix hard drift first, then `aios update` if you're behind on the toolkit.";
+  }
+  if (score === 2) {
+    return "A few things need attention — `aios context-health` shows exactly which checks are failing.";
+  }
+  return "";
+}
+
 /**
  * One practical Cognitive Ergonomics nudge, keyed off the attention reading
  * (AIO-190 Phase A — SHADOW, not a maturity verdict). Prefix-matched against
