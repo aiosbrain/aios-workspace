@@ -11,10 +11,11 @@ const SAMPLE = {
   window: { since: "2026-06-09", until: "2026-07-09" },
   costs: {
     cursor: {
+      // Usage-based (no flat plan): every billed dollar is out-of-pocket overage.
       totals: { cost_usd: 35, events: 40 },
       days: [
-        { date: "2026-06-30", cost_usd: 5, events: 4 }, // outside the current month
-        { date: "2026-07-08", cost_usd: 30, events: 36 },
+        { date: "2026-06-30", cost_usd: 5, overage_usd: 5, events: 4 }, // outside the current month
+        { date: "2026-07-08", cost_usd: 30, overage_usd: 30, events: 36 },
       ],
       truncated: false,
     },
@@ -217,4 +218,47 @@ test("currentPeriod formats YYYY-MM (UTC)", () => {
 
 test("buildCostsPayload throws on unparseable stdout", () => {
   assert.throws(() => buildCostsPayload("not json"), /unparseable/);
+});
+
+test("Cursor plan-INCLUDED usage is excluded; only usage-based overage is billed spend", () => {
+  // A flat-plan Cursor user: most usage is INCLUDED (covered by the subscription),
+  // with a small usage-based OVERAGE. `cost_usd` conflates the two — only the
+  // overage is real out-of-pocket metered spend.
+  const sample = structuredClone(SAMPLE);
+  sample.costs.cursor = {
+    totals: { cost_usd: 120, events: 200 },
+    days: [
+      { date: "2026-07-05", cost_usd: 80, included_usd: 78, overage_usd: 2, events: 120 },
+      { date: "2026-07-12", cost_usd: 40, included_usd: 33, overage_usd: 7, events: 80 },
+    ],
+    truncated: false,
+  };
+  const cursor = build({}, sample).lines.find((l) => l.provider === "cursor");
+  // 2 + 7 overage — NOT 120 (which would count plan-covered usage as spend).
+  assert.equal(cursor.amount_usd, 9);
+  assert.equal(cursor.source, "billing");
+});
+
+test("truncated billing is never presented as complete actual spend", () => {
+  for (const key of ["cursor", "anthropic"]) {
+    const sample = structuredClone(SAMPLE);
+    sample.costs[key].truncated = true;
+    const p = build({}, sample);
+    const prov = p.by_provider.find((b) => b.provider === key);
+    // A known-partial fetch degrades to honest unknown — no line, no number.
+    assert.equal(prov.status, "unknown", `${key} truncated → unknown`);
+    assert.equal(prov.total_usd, null, `${key} truncated → no amount`);
+    assert.ok(p.config_status.unknown.includes(key), `${key} flagged incomplete`);
+    assert.equal(p.config_status.complete, false);
+  }
+});
+
+test("owner config still wins over a truncated billing fetch", () => {
+  const sample = structuredClone(SAMPLE);
+  sample.costs.cursor.truncated = true;
+  // Owner entered an exact Cursor subscription — authoritative despite truncation.
+  const p = build({ subscriptions: { cursor: 42 } }, sample);
+  const cursor = p.by_provider.find((b) => b.provider === "cursor");
+  assert.equal(cursor.status, "config");
+  assert.equal(cursor.total_usd, 42);
 });

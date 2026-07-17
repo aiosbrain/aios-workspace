@@ -59,13 +59,18 @@ export function currentPeriod(now = new Date()) {
   return now.toISOString().slice(0, 7);
 }
 
-/** Sum a provider block's billed days that fall inside the period (YYYY-MM). */
-function monthTotal(block, period) {
+/**
+ * Sum a provider block's billed days that fall inside the period (YYYY-MM).
+ * `field` selects which per-day amount to total — default `cost_usd` (all billed
+ * usage), or `overage_usd` for plan providers where included usage is already
+ * covered by the flat fee and must not be re-counted as metered spend.
+ */
+function monthTotal(block, period, field = "cost_usd") {
   const days = Array.isArray(block?.days) ? block.days : [];
   let sum = 0;
   for (const d of days) {
     if (!d || typeof d.date !== "string" || d.date.slice(0, 7) !== period) continue;
-    const v = usdOrNull(d.cost_usd);
+    const v = usdOrNull(d[field]);
     if (v != null) sum += v;
   }
   return round2(sum);
@@ -104,7 +109,11 @@ function resolveProvider(key, { costs, config, period }) {
   if (lines.length) return { lines, status: "config" };
 
   // 2. Authenticated billing / provider-reported actuals for this month.
-  if (key === "anthropic" && hasActivity(costs.anthropic)) {
+  //    A truncated billing fetch is a known-partial total — never present it as
+  //    complete actual spend; fall through to the "unknown" terminal state below
+  //    so the owner is asked to enter the real figure (owner config, resolved
+  //    above, still takes precedence).
+  if (key === "anthropic" && hasActivity(costs.anthropic) && !costs.anthropic.truncated) {
     return {
       lines: [
         line(
@@ -119,16 +128,18 @@ function resolveProvider(key, { costs, config, period }) {
       status: "billing",
     };
   }
-  if (key === "cursor" && hasActivity(costs.cursor)) {
+  if (key === "cursor" && hasActivity(costs.cursor) && !costs.cursor.truncated) {
     return {
       lines: [
         line(
           key,
           "metered",
-          monthTotal(costs.cursor, period),
+          // Only usage-based OVERAGE is out-of-pocket metered spend; INCLUDED
+          // usage is already paid for by the flat plan and must not be counted.
+          monthTotal(costs.cursor, period, "overage_usd"),
           "billing",
           period,
-          "Cursor billing API"
+          "Cursor billing API (metered overage)"
         ),
       ],
       status: "billing",
