@@ -16,9 +16,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// This test performs a REAL `npm install` against the live registry (~30s, network-dependent).
+// Locally that makes every `npm test` run fail offline or on a registry hiccup, so it only runs
+// where the coverage matters: CI (GitHub Actions sets CI=true) or an explicit opt-in.
+const LIVE_INSTALL = Boolean(process.env.CI) || process.env.AIOS_LIVE_INSTALL_TESTS === "1";
+
 test(
   "a clean production install includes both GUI SDKs and Claude's native executable",
-  { timeout: 120_000 },
+  {
+    timeout: 120_000,
+    skip: LIVE_INSTALL
+      ? false
+      : "live npm-registry install — runs in CI; set AIOS_LIVE_INSTALL_TESTS=1 to run locally",
+  },
   async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), "aios-gui-production-install-"));
     try {
