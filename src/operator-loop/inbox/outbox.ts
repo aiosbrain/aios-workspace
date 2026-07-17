@@ -54,6 +54,10 @@ export interface OutboxCommand {
   native_message_id?: string;
   /** Native Gmail thread id, set once a receipt is observed/reconciled. */
   native_thread_id?: string;
+  /** ISO timestamp of the last actual send attempt (journaled `action-attempt`). Drives the
+   *  eventual-consistency guard: a retry after an unknown outcome must wait out the Sent-search
+   *  propagation window measured from THIS moment. */
+  last_attempt_at?: string;
   /** Recipients a multi-recipient send rejected (partial failure); empty on full success. */
   rejected_recipients?: string[];
 }
@@ -85,6 +89,27 @@ export class OutboxTimeoutError extends Error {
   constructor(message = "gog send timed out (outcome unknown)") {
     super(message);
     this.name = "OutboxTimeoutError";
+  }
+}
+
+/**
+ * A retry was DEFERRED by the eventual-consistency guard: the prior send attempt has an unknown (or
+ * message-may-exist) outcome, the reconcile-first Sent query found nothing, and not enough time has
+ * passed for Gmail's full-text Sent search to be trustworthy. Gmail search is eventually consistent —
+ * "not found" moments after a send proves nothing, so re-sending inside the window risks a duplicate.
+ * The command stays retryable; the message names the earliest safe retry time for the operator.
+ */
+export class OutboxRetryDeferredError extends Error {
+  /** ISO timestamp after which a retry may actually (re)send. */
+  readonly retryAfter: string;
+  constructor(commandId: string, retryAfter: string) {
+    super(
+      `outbox retry deferred for "${commandId}": the prior send attempt may have landed, and Gmail's ` +
+        `Sent search is eventually consistent — a resend now could double-send. ` +
+        `Retry after ${retryAfter} (the reconcile will find the message if it exists).`
+    );
+    this.name = "OutboxRetryDeferredError";
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -472,6 +497,13 @@ export interface EnqueueInput {
   decision: PdpDecision;
 }
 
+/**
+ * The eventual-consistency window for Gmail's full-text Sent search. A "not found" from `querySent`
+ * within this window of the last actual send attempt is NOT trusted as proof of "not sent" — the
+ * retry is deferred (`OutboxRetryDeferredError`) instead of risking a double-send.
+ */
+export const DEFAULT_RECONCILE_MIN_DELAY_MS = 10 * 60_000;
+
 export interface OutboxDeps {
   client: OutboxSendClient;
   journal: AppendOutboxEvent;
@@ -481,12 +513,15 @@ export interface OutboxDeps {
   adminMarkers?: readonly string[];
   /** Prior journal events to fold on construction (crash recovery). */
   priorEvents?: readonly OutboxEvent[];
+  /** Minimum time after a send attempt before an empty Sent search may authorize a re-send. */
+  reconcileMinDelayMs?: number;
 }
 
 interface FoldedState {
   state: OutboxState;
   native_message_id?: string;
   native_thread_id?: string;
+  last_attempt_at?: string;
 }
 
 /**
@@ -505,6 +540,7 @@ export function foldOutboxState(events: readonly OutboxEvent[]): Map<string, Fol
     }
     if (ev.kind === "action-attempt") {
       cur.state = "attempting";
+      if (typeof ev.at === "string") cur.last_attempt_at = ev.at;
     } else if (ev.kind === "native-receipt") {
       const mid = ev.data?.native_message_id;
       const tid = ev.data?.native_thread_id;
@@ -562,7 +598,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     command_id: string,
     data?: Record<string, unknown>
   ): void => {
-    deps.journal({ kind, command_id, at: stamp(), ...(data ? { data } : {}) });
+    // Lane discriminator: the PR-#317 capability lane journals the SAME event kinds
+    // (`outcome`/`native-receipt`, keyed by capability handles) into the same durable journal.
+    // Stamping `lane: "outbox"` here lets replay/read paths separate the lanes without guessing.
+    deps.journal({ kind, command_id, at: stamp(), data: { lane: "outbox", ...(data ?? {}) } });
   };
 
   function requireEntry(commandId: string): Entry {
@@ -590,6 +629,7 @@ export function createOutbox(deps: OutboxDeps): Outbox {
       state: prior?.state ?? "queued",
       ...(prior?.native_message_id ? { native_message_id: prior.native_message_id } : {}),
       ...(prior?.native_thread_id ? { native_thread_id: prior.native_thread_id } : {}),
+      ...(prior?.last_attempt_at ? { last_attempt_at: prior.last_attempt_at } : {}),
     };
     entries.set(input.command_id, { command, sendCount: 0 });
     return command;
@@ -644,7 +684,28 @@ export function createOutbox(deps: OutboxDeps): Outbox {
       return cmd;
     }
 
+    // Eventual-consistency guard: Gmail's full-text Sent search can lag a real send by minutes, so a
+    // "not found" shortly after an attempt whose outcome is unknown (timeout / crash mid-attempt) or
+    // where a message may already exist (partial failure holds a native receipt) proves NOTHING.
+    // Refuse to re-send until the propagation window has passed since the last attempt — the next
+    // reconcile-first pass will find the message if it landed. Typed + operator-readable.
+    const mayAlreadyExist =
+      cmd.state === "outcome_unknown" ||
+      cmd.state === "attempting" ||
+      (cmd.state === "failed" && Boolean(cmd.native_message_id));
+    if (mayAlreadyExist && cmd.last_attempt_at) {
+      const attemptedAt = Date.parse(cmd.last_attempt_at);
+      const minDelay = deps.reconcileMinDelayMs ?? DEFAULT_RECONCILE_MIN_DELAY_MS;
+      if (Number.isFinite(attemptedAt) && now() - attemptedAt < minDelay) {
+        throw new OutboxRetryDeferredError(
+          commandId,
+          new Date(attemptedAt + minDelay).toISOString()
+        );
+      }
+    }
+
     // Journal the intent to act, then send exactly once.
+    cmd.last_attempt_at = stamp();
     emit("action-attempt", commandId, {
       recipients: outboundRecipientSet(cmd.exact_outbound_bytes).size,
     });

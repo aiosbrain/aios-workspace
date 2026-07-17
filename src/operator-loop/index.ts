@@ -856,7 +856,9 @@ export function createDurableCapabilityJournal(root: string): AppendCapabilityEv
       appendInboxEvent(root, {
         kind: event.kind,
         correlation_id: event.handle,
-        payload: event.data ?? {},
+        // Lane discriminator: the outbox lane journals the SAME `outcome`/`native-receipt` kinds
+        // (keyed by command ids). Stamping the lane keeps the two replays separable (AIO-427).
+        payload: { lane: "capability", ...(event.data ?? {}) },
         ...(event.at ? { ts: event.at } : {}),
       });
     } catch (err) {
@@ -944,6 +946,8 @@ export {
   OutboxTimeoutError,
   OutboxSendError,
   OutboxReconcileError,
+  OutboxRetryDeferredError,
+  DEFAULT_RECONCILE_MIN_DELAY_MS,
   approvedRecipientSet,
   outboundRecipientSet,
   parseOutboundMessage,
