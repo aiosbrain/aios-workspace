@@ -6,9 +6,11 @@
 // confidence-scored list of people / relationship tiers / project links the operator merges or
 // rejects one at a time. It NEVER writes live config on its own:
 //
-//   • `generateSuggestions` is a pure, deterministic function over a normalized history. It only
-//     READS (the existing registry, to skip already-known people) and never writes a registry or
-//     entity file. Every returned suggestion has `status: "proposed"`.
+//   • `generateSuggestions` is a pure, deterministic function over a normalized history. It never
+//     writes a registry or entity file, and it generates for KNOWN people too — merged/rejected
+//     status is the journal overlay's job (`readSuggestions`), so a merged person's sibling
+//     suggestions (tier / project-link) stay reviewable. Every generated suggestion starts
+//     `status: "proposed"`.
 //   • The ONLY writer of a registry/entity file is `merge`, and `merge` performs the
 //     `proposed → merged` status transition as it writes. `reject` writes no registry/entity file.
 //   • `merge` is REVERSIBLE: it captures the prior file bytes and records them as the inverse
@@ -374,7 +376,8 @@ function suggestionId(personKey: string, kind: SeedKind): string {
 
 // ── registry read (cold-start skip) ────────────────────────────────────────────────────────────────
 
-/** All normalized identities already present in the runtime registry (skip these — cold-start only). */
+/** All normalized identities already present in the runtime registry (tooling/tests convenience —
+ *  the generator deliberately does NOT skip these; see `generateSuggestions`). */
 export function knownIdentities(root: string): Set<string> {
   const known = new Set<string>();
   const p = registryPath(root);
@@ -408,7 +411,6 @@ export function generateSuggestions(
   opts: GenerateOptions = {}
 ): SeedSuggestion[] {
   const candidates = aggregate(history);
-  const known = knownIdentities(root);
   const referenceMs =
     opts.referenceMs ??
     history.reduce((mx, e) => {
@@ -419,7 +421,10 @@ export function generateSuggestions(
   const suggestions: SeedSuggestion[] = [];
   for (const cand of candidates.values()) {
     if (cand.count < MIN_SUPPORT_EVENTS) continue; // below min support → noise, not proposed
-    if (cand.identities.some((id) => known.has(normKey(id)))) continue; // already seeded → skip
+    // NOTE: a registry-known person is NOT skipped here. Skipping orphaned their still-proposed
+    // sibling suggestions — after merging the `person`, its relationship-tier / project-link
+    // suggestions stopped being generated and could never be merged. Status (merged/rejected) is the
+    // journal-status overlay's job (`readSuggestions`), not the generator's.
     const breakdown = scoreCandidate(cand, referenceMs);
     const confidence = confidenceOf(breakdown);
     const key = normKey(cand.personId);
@@ -720,6 +725,10 @@ export interface UnmergeResult {
  * Reverse the most recent, not-yet-reversed merge of `suggestionId`, restoring the registry and
  * entity file to their EXACT prior bytes (or removing a file that did not exist before). The
  * restore is byte-identical — a merge→unmerge round-trip leaves the files as they were.
+ *
+ * LIFO-ONLY: the inverse snapshot captures the WHOLE registry at merge time, so restoring it would
+ * silently roll back every merge that landed after the target. If a later, un-reversed merge exists,
+ * this refuses with a clear error naming it — unmerge the later merge(s) first (stack discipline).
  */
 export function unmerge(root: string, suggestionId: string): UnmergeResult {
   return withInboxLock(root, () => {
@@ -727,10 +736,26 @@ export function unmerge(root: string, suggestionId: string): UnmergeResult {
     const reversed = new Set<string>();
     for (const ev of events) if (ev.op === "unmerge" && ev.reverses) reversed.add(ev.reverses);
     let target: SeedJournalEvent | null = null;
-    for (const ev of events)
-      if (ev.op === "merge" && ev.suggestion_id === suggestionId && !reversed.has(ev.id))
+    let targetIdx = -1;
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i]!;
+      if (ev.op === "merge" && ev.suggestion_id === suggestionId && !reversed.has(ev.id)) {
         target = ev;
+        targetIdx = i;
+      }
+    }
     if (!target) throw new SeedValidationError(`no un-reversed merge found for "${suggestionId}"`);
+    // LIFO guard: a later un-reversed merge would be silently rolled back by this restore.
+    for (let i = targetIdx + 1; i < events.length; i++) {
+      const ev = events[i]!;
+      if (ev.op === "merge" && !reversed.has(ev.id)) {
+        throw new SeedValidationError(
+          `cannot unmerge "${suggestionId}" — a later merge ("${ev.suggestion_id}") is not yet ` +
+            `reversed, and restoring this snapshot would silently roll it back. Unmerge is ` +
+            `LIFO-only: unmerge the later merge(s) first.`
+        );
+      }
+    }
 
     const inv = target.inverse;
     const regAbs = registryPath(root);
