@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readDescriptors } from "./gen-catalog.mjs";
+import { assertGuiRuntimeReady } from "./gui-runtime-preflight.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -113,6 +114,7 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  assertGuiRuntimeReady();
   const launch = normalizeGuiLauncherArgs(process.argv.slice(2));
   if (!launch.skipBuild) buildGuiClient();
   const plan = guiLaunchPlan({ args: launch.serverArgs });
