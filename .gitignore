@@ -16,6 +16,8 @@ test/ux/evidence/
 .aios/
 
 .env.keys
+# Root-level scratch exports from aios tools (not source of truth; regenerated)
+/.aio-*.md
 # Confidential leak-gate term set — local only, never commit (see scripts/leak-gate-terms.example.sh)
 leak-gate-terms.sh
 **/leak-gate-terms.sh

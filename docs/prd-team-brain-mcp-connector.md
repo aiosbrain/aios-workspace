@@ -2,9 +2,8 @@
 
 **Status:** Phase 0 landed (read-only stdio server + `aios mcp`); Phases 1–3 proposed.
 **Last updated:** 2026-06-22 · **Owner:** John
-**Strategy:** [`strategy/team-brain-access-strategy.md`](./strategy/team-brain-access-strategy.md)
-— ⚠️ **maintainer-only** (removed at public release). Public readers: the release-safe summary is
-[`architecture.md` § Access surfaces](./architecture.md#access-surfaces--how-callers-reach-the-brain).
+**Access doctrine:** the access-surface strategy that drove this work is an internal document (removed at public release).
+Public readers: the release-safe summary is [`architecture.md` § Access surfaces](./architecture.md#access-surfaces--how-callers-reach-the-brain).
 **Contract:** [`brain-api.md`](./brain-api.md) — the pinned API **major `v1`** (`/api/v1`), currently
 at **doc revision 1.1**. Throughout this PRD, "v1" means the API major (the path + request/response
 shapes), not the doc revision. The connector is a *consumer* of this contract and must not require
@@ -256,7 +255,6 @@ depend on it and vice versa.
 
 ## 13. References
 
-- Strategy: [`strategy/team-brain-access-strategy.md`](./strategy/team-brain-access-strategy.md)
 - Contract: [`brain-api.md`](./brain-api.md) (v1)
 - Implementation: `scripts/brain-mcp.mjs`, `scripts/brain-mcp.test.mjs`, `aios mcp` in `scripts/aios.mjs`
 - MCP authoring reference (vendored): `gui/server/skill-library/mcp-builder/`

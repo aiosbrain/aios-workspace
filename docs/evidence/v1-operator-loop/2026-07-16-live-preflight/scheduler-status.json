@@ -1,0 +1,14 @@
+{
+  "recordedAt": "2026-07-16T11:18:00.000Z",
+  "platformScheduler": "launchd",
+  "runtime": {
+    "name": "node",
+    "version": "22.21.1",
+    "absolutePathPinned": true
+  },
+  "jobs": {
+    "daily": { "launchdRunsAfterReinstall": 1, "lastExitCode": 0 },
+    "analyze": { "launchdRunsAfterReinstall": 1, "lastExitCode": 0 },
+    "weekly": { "launchdRunsAfterReinstall": 1, "lastExitCode": 0 }
+  }
+}

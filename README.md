@@ -203,7 +203,7 @@ Every workspace ships a generated **skills catalog** (`.claude/skills/INDEX.md`)
 **integrations catalog** (`.claude/INTEGRATIONS.md`, from `.claude/integrations.json`) —
 so you can see what the workspace can do and connect to (Slack, Jira, Notion, Linear,
 GitHub, Gmail, Granola, Confluence, Mattermost, Toggl). To wire an integration, copy its
-server from `.mcp.example.json` into `.mcp.json`, set the env vars, and run
+server from `scaffold/.mcp.example.json` into `scaffold/.mcp.json`, set the env vars, and run
 `npm run gen:catalog`. Setup notes: [`docs/integrations.md`](docs/integrations.md).
 
 Skills are shareable: `aios push skill <name>` publishes to the brain; `aios pull skill

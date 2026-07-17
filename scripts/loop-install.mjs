@@ -8,8 +8,9 @@
  * Environment heuristic (kept deliberately simple — see docs/loop-install.md):
  *   macOS  → launchd LaunchAgent (StartCalendarInterval gives free catch-up-on-wake: a job
  *            missed while the laptop was asleep runs as soon as the system wakes, unlike cron).
- *   other  → cron (the realistic 24/7-box case for this toolkit's users; cron has no catch-up,
+ *   Linux  → cron (the realistic 24/7-box case for this toolkit's users; cron has no catch-up,
  *            which is fine — a server isn't expected to sleep).
+ *   Windows is not supported natively yet; WSL uses the Linux/cron path.
  * `--scheduler launchd|cron` overrides detection for testing / an atypical setup.
  *
  * Three jobs are installed:
@@ -44,14 +45,14 @@ export function detectScheduler(platform = process.platform) {
   return platform === "darwin" ? "launchd" : "cron";
 }
 
-// ── CLI invocation resolution (reuses the existing bin/aios + scripts/aios.mjs shim chain —
-//    the same resolution install-aios-shell.sh's aios() function and the npm "aios" script
+// Scheduler commands pin the workspace shim to the installing Node runtime (the existing shell and npm paths
 //    already rely on; no new mechanism) ──────────────────────────────────────────────────────
 
-export function resolveAiosInvocation(repo, { execPath = process.execPath, fs = nodeFs } = {}) {
-  const binAios = path.join(repo, "bin", "aios");
-  if (fs.existsSync(binAios)) return { command: binAios, baseArgs: [] };
+export function resolveAiosInvocation(repo, { execPath = process.execPath } = {}) {
   const cliScript = path.join(repo, "scripts", "aios.mjs");
+  // launchd and cron do not inherit the interactive shell PATH. The bin/aios wrapper uses
+  // bare `node`, which breaks for nvm installs. Pin the runtime that performs installation
+  // and invoke the existing workspace shim directly.
   return { command: execPath, baseArgs: [cliScript] };
 }
 
@@ -93,11 +94,12 @@ export function buildInstallPlan({
   platform = process.platform,
   home = os.homedir(),
   scheduler,
+  execPath = process.execPath,
 } = {}) {
   const { project } = resolveLoopIdentity(repo);
   const slug = project || slugify(path.basename(repo)) || "workspace";
   const chosenScheduler = scheduler || detectScheduler(platform);
-  const { command, baseArgs } = resolveAiosInvocation(repo);
+  const { command, baseArgs } = resolveAiosInvocation(repo, { execPath });
   const logsDir = path.join(repo, ".aios", "loop", "logs");
 
   const buildCommandLine = (argsList) =>
@@ -347,7 +349,8 @@ export function readCronStatus(plan, { exec = execFileSync } = {}) {
 const INSTALL_HELP = `aios loop install [--dry-run] [--uninstall] [--status] [--scheduler launchd|cron]
   Detects the environment and installs a real scheduler for the operator loop:
     macOS       → launchd LaunchAgent per job (catch-up-on-wake via StartCalendarInterval)
-    Linux/other → crontab entries (a single marker-delimited, idempotent block)
+    Linux      → crontab entries (a single marker-delimited, idempotent block)
+    Windows    → not supported natively yet; use WSL (V2 Task Scheduler parity is planned)
   Installs three jobs: \`aios loop daily\` (morning), \`aios loop weekly\` + \`aios maturity-week\`
   (Monday morning), and \`aios analyze\` (hourly self-refresh — it's ~3.7s, so it just runs
   instead of nagging a human to remember a cron). Re-running is idempotent (no duplicates).

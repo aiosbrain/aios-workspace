@@ -147,6 +147,8 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Gateway approval contract
+        run: npm run test:gateway-approval-contracts
       - name: Install optional ACP peer (server boot in the GUI search test)
         # The cockpit search route test (gui/server/sessions-search.test.mjs) boots the
         # real GUI server, which statically loads every runtime adapter — incl. the ACP
