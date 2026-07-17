@@ -233,10 +233,42 @@ test("Cursor plan-INCLUDED usage is excluded; only usage-based overage is billed
     ],
     truncated: false,
   };
-  const cursor = build({}, sample).lines.find((l) => l.provider === "cursor");
+  const p = build({}, sample);
+  const cursor = p.lines.find((l) => l.provider === "cursor");
   // 2 + 7 overage — NOT 120 (which would count plan-covered usage as spend).
   assert.equal(cursor.amount_usd, 9);
   assert.equal(cursor.source, "billing");
+  // INCLUDED usage means an unconfigured flat-plan fee — cursor is incomplete
+  // until the owner enters the actual plan spend (the overage line stays).
+  assert.equal(provider(p, "cursor").status, "unknown");
+  assert.ok(p.config_status.unknown.includes("cursor"));
+  assert.equal(p.config_status.complete, false);
+});
+
+test("all-INCLUDED Cursor flat plan is never presented as $0 billed and complete", () => {
+  // A flat-plan user whose entire month is plan-covered: overage is $0, but the
+  // plan fee is real spend analyze cannot see. Without owner config this must
+  // surface as incomplete (Settings prompt), never as a silent "$0 billed".
+  const sample = structuredClone(SAMPLE);
+  sample.costs.cursor = {
+    totals: { cost_usd: 120, events: 200 },
+    days: [
+      { date: "2026-07-05", cost_usd: 80, included_usd: 80, overage_usd: 0, events: 120 },
+      { date: "2026-07-12", cost_usd: 40, included_usd: 40, overage_usd: 0, events: 80 },
+    ],
+    truncated: false,
+  };
+  const p = build({}, sample);
+  const cursor = provider(p, "cursor");
+  assert.equal(cursor.status, "unknown");
+  assert.equal(cursor.total_usd, null); // no $0 line — honest unknown
+  assert.ok(p.config_status.unknown.includes("cursor"));
+  assert.equal(p.config_status.complete, false);
+  // An owner-configured flat plan resolves it: config wins, cursor is complete.
+  const cfg = build({ subscriptions: { cursor: { monthly_usd: 20 } } }, sample);
+  assert.equal(provider(cfg, "cursor").status, "config");
+  assert.equal(provider(cfg, "cursor").total_usd, 20);
+  assert.ok(!cfg.config_status.unknown.includes("cursor"));
 });
 
 test("truncated billing is never presented as complete actual spend", () => {
