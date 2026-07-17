@@ -83,12 +83,12 @@ export const LOOP_PROFILES = {
   light: {
     skips: ["plan", "plan_review"],
     overrides: {
-      build: { model: "codex:gpt-5.6-sol", effort: "high" },
+      build: { model: "claude-opus-4-8", effort: "high" },
       code_review: { model: "deepseek:deepseek-v4-pro" },
-      fix: { model: "codex:gpt-5.6-sol", effort: "medium" },
-      fix_escalated: { model: "codex:gpt-5.6-terra", effort: "high" },
+      fix: { model: "claude-sonnet-5", effort: "medium" },
+      fix_escalated: { model: "claude-opus-4-8", effort: "high" },
       consolidate: { model: "openrouter:openai/gpt-4o-mini" },
-      simplify: { model: "codex:gpt-5.6-luna", effort: "low" },
+      simplify: { model: "claude-sonnet-5", effort: "low" },
     },
   },
 };
