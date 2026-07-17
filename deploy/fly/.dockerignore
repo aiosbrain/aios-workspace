@@ -1,11 +1,14 @@
-# Keep the coordinator image lean + admin-tier-safe: never bake local state, secrets, or the GUI
-# build into the Fly image. The image compiles src/ fresh (see Dockerfile); it does not need these.
+# NOTE: this file only applies when the build CONTEXT is deploy/fly/ — the runbook's actual deploy
+# (`fly deploy --config fly.toml --dockerfile deploy/fly/Dockerfile`) uses the REPO ROOT as context,
+# where the authoritative ignore is the root-level `.dockerignore`. Keep THAT one in sync with the
+# Dockerfile's COPY set; this copy stays only as a belt-and-suspenders for context-local builds.
 node_modules
 dist
 .aios
 .aios-nda
 .git
 .env
+.env.*
 .env.keys
 *.log
 gui/client/dist

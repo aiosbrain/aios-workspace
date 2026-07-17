@@ -136,6 +136,10 @@ the same image** (Fly access unavailable). Per the acceptance criteria this make
    ```bash
    fly deploy --config fly.toml --dockerfile deploy/fly/Dockerfile
    ```
+   This uses the **repo root as the build context**, so the ignore that protects the tar sent to
+   Fly's remote builder is the **root-level `.dockerignore`** (it excludes `.env*`, `.aios/`, `.git`,
+   `node_modules` — `deploy/fly/.dockerignore` does NOT apply to a root-context build). Keep the root
+   file in sync with the Dockerfile's COPY set.
 5. **Make the volume writable by the daemon's `node` user (one-time).** The daemon runs unprivileged
    (`USER node`); a freshly-created Fly volume mounts root-owned and shadows the image's `/data/inbox`,
    so grant ownership once, then restart:
