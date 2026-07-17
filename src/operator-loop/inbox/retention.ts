@@ -41,8 +41,10 @@ export interface DeletionRequest {
   /** Authenticated actor performing the erasure (recorded in the audit trail). */
   actor: string;
   /**
-   * Which entries to delete, by store-relative path. Default: everything under the store's paths.
-   * A selector lets a per-user / per-record-type erasure target a subset deterministically.
+   * Which entries to delete, by STORE-relative path — relative to the live/backup base directory
+   * the entry sits under (so `alex/msg-1.txt` names the same record in the live tree and in every
+   * backup mirror). Default: everything under the store's paths. A selector lets a per-user /
+   * per-record-type erasure target a subset deterministically across live AND backups.
    */
   selector?: (relPath: string, absPath: string) => boolean;
   /** Reason string recorded (digested) in the audit record. */
@@ -51,6 +53,7 @@ export interface DeletionRequest {
 
 export interface DeletionResult {
   store: string;
+  /** Store-relative paths removed (relative to the live/backup base each entry sat under). */
   liveRemoved: string[];
   backupRemoved: string[];
   /** The seq of the `retention.deletion` audit record, or null if nothing was removed. */
@@ -92,7 +95,10 @@ function collectRemovable(
     for (const abs of listFiles(baseAbs)) {
       if (seen.has(abs)) continue;
       seen.add(abs);
-      const rel = path.relative(root, abs);
+      // STORE-relative (against this base), not root-relative: `backupStore` re-roots each entry
+      // under the backup base at the same store-relative path, so keying the selector on the base
+      // makes one selector match the same record in the live tree AND every backup mirror.
+      const rel = path.relative(baseAbs, abs);
       if (selector && !selector(rel, abs)) continue;
       hits.push({ abs, rel });
     }

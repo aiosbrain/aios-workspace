@@ -163,7 +163,7 @@ test("expired token → auth fail (token-expired), validated against the injecte
   assert.equal(r.checks.auth.code, M365_DIAGNOSTICS.AUTH_TOKEN_EXPIRED);
 });
 
-test("read 403: valid token but Graph denies read → read fail (insufficient-scope), send still runs", async () => {
+test("read 403: valid token but Graph denies read → read fail (insufficient-scope), send SKIPPED (sequential gating)", async () => {
   const r = await verify({
     transport: transport({
       list: { ok: false, error: { status: 403, code: "accessDenied", message: "denied" } },
@@ -172,10 +172,29 @@ test("read 403: valid token but Graph denies read → read fail (insufficient-sc
   assert.equal(r.checks.auth.status, "pass");
   assert.equal(r.checks.read.status, "fail");
   assert.equal(r.checks.read.code, M365_DIAGNOSTICS.READ_INSUFFICIENT_SCOPE);
-  assert.equal(r.checks.send.status, "pass");
+  // auth → read → send is sequential: a failed read means the one mediated send never fires.
+  assert.equal(r.checks.send.status, "skipped");
+  assert.equal(r.checks.send.code, M365_DIAGNOSTICS.SKIPPED_PRIOR_FAILURE);
+  assert.equal(r.native_message_id, null, "no send was attempted after a failed read");
   assert.equal(r.verified, false);
-  // Only the send scope was actually exercised successfully.
-  assert.deepEqual(r.graph_permissions, ["Mail.Send"]);
+  // No scope was exercised successfully (read failed, send never ran).
+  assert.deepEqual(r.graph_permissions, []);
+});
+
+test("sequential gating: sendMail is NEVER called when the read check fails", async () => {
+  let sendCalls = 0;
+  const t = transport({
+    list: { ok: false, error: { status: 500, code: "internalError", message: "boom" } },
+  });
+  const inner = t.sendMail.bind(t);
+  t.sendMail = (...args) => {
+    sendCalls += 1;
+    return inner(...args);
+  };
+  const r = await verify({ transport: t });
+  assert.equal(r.checks.read.status, "fail");
+  assert.equal(r.checks.send.status, "skipped");
+  assert.equal(sendCalls, 0, "the transport's sendMail was never invoked");
 });
 
 test("send 403: Graph denies send → send fail (insufficient-scope)", async () => {
@@ -258,6 +277,50 @@ test("pagination: follows next_link across pages and captures the terminal delta
   assert.equal(res.pages, 3);
   assert.equal(res.messages.length, 4);
   assert.equal(res.cursor, "DELTA-FINAL", "delta cursor is the terminal page's delta_link");
+});
+
+test("pagination bound: paginateMessages stops at maxPages even while next_link keeps flowing", async () => {
+  let calls = 0;
+  const t = transport({
+    list: () => {
+      calls += 1;
+      return {
+        ok: true,
+        value: { value: [{ id: `m${calls}` }], next_link: `P${calls + 1}`, delta_link: null },
+      };
+    },
+  });
+  const res = await paginateMessages(t, token(), {
+    top: 10,
+    maxThrottleRetries: 0,
+    sleep: NO_SLEEP,
+    maxPages: 3,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.pages, 3, "the walk stops at the page cap");
+  assert.equal(calls, 3, "no request is made beyond the cap");
+});
+
+test("verify read check is BOUNDED: one page of readCount, never a whole-mailbox walk", async () => {
+  // A hostile/huge mailbox: every page is full and always advertises another next_link.
+  let listCalls = 0;
+  const t = transport({
+    list: (opts) => {
+      listCalls += 1;
+      return {
+        ok: true,
+        value: {
+          value: Array.from({ length: opts.top }, (_, i) => ({ id: `m-${listCalls}-${i}` })),
+          next_link: `PAGE-${listCalls + 1}`,
+          delta_link: null,
+        },
+      };
+    },
+  });
+  const r = await verify({ transport: t, readCount: 10 });
+  assert.equal(r.checks.read.status, "pass");
+  assert.equal(listCalls, 1, "exactly one page request — the verify never follows next_link");
+  assert.equal(r.message_count, 10, "the read check lists readCount messages, not the mailbox");
 });
 
 test("normalization + identity: same native id on two accounts → two distinct keys (AIO-387 dedup key)", () => {

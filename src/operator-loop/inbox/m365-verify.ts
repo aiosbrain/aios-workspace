@@ -447,16 +447,20 @@ export interface VerifyOptions {
   journal?: M365VerifyJournalSink;
 }
 
-const SKIPPED: CheckResult = {
-  status: "skipped",
-  code: M365_DIAGNOSTICS.SKIPPED_PRIOR_FAILURE,
-  detail: "auth did not pass — dependent check skipped",
-};
+/** A skip result for a check whose prerequisite did not pass. `detail` is a module-constant string. */
+function skippedAfter(detail: string): CheckResult {
+  return { status: "skipped", code: M365_DIAGNOSTICS.SKIPPED_PRIOR_FAILURE, detail };
+}
+
+const SKIPPED_AUTH_DETAIL = "auth did not pass — dependent check skipped";
+const SKIPPED_READ_DETAIL = "read did not pass — send skipped (sequential gating)";
 
 /**
- * Run auth → read → send against the injected transport and produce a `VerifyReport`. Read + send are
- * skipped when auth fails (both need a valid token). The overall status is `verified` only when all
- * three pass; the "connected and verified" claim is emitted only for a LIVE verified run.
+ * Run auth → read → send against the injected transport and produce a `VerifyReport`. The gating is
+ * SEQUENTIAL: read is skipped when auth fails (it needs a valid token), and send is skipped when
+ * auth OR read did not pass — the one mediated send only fires on a connection whose prior checks
+ * are green. The overall status is `verified` only when all three pass; the "connected and
+ * verified" claim is emitted only for a LIVE verified run.
  */
 export async function verifyM365(opts: VerifyOptions): Promise<VerifyReport> {
   const mode: VerifyMode = opts.mode ?? "fixture";
@@ -502,8 +506,10 @@ export async function verifyM365(opts: VerifyOptions): Promise<VerifyReport> {
   const authPassed = authRes.status === "pass";
   const usableToken = authPassed ? token : null;
 
-  // (2) READ — list N recent messages, following pagination + capturing the delta cursor.
-  let readRes: CheckResult = SKIPPED;
+  // (2) READ — list the N most recent messages + capture the delta cursor. The verify is a bounded
+  // probe, not a sync: one page of `readCount` proves Mail.Read works, so the walk is capped at a
+  // single page — never a whole-mailbox pagination (the deep adapter owns real sync).
+  let readRes: CheckResult = skippedAfter(SKIPPED_AUTH_DETAIL);
   let messageCount: number | null = null;
   let cursor: string | null = null;
   if (usableToken) {
@@ -511,6 +517,7 @@ export async function verifyM365(opts: VerifyOptions): Promise<VerifyReport> {
       top: readCount,
       maxThrottleRetries,
       sleep,
+      maxPages: 1,
     });
     if (p.ok) {
       messageCount = p.messages.length;
@@ -541,9 +548,10 @@ export async function verifyM365(opts: VerifyOptions): Promise<VerifyReport> {
   }
 
   // (3) SEND — one policy-mediated send to the test-tenant recipient; capture the native message-id.
-  let sendRes: CheckResult = SKIPPED;
+  // Sequential gating: send fires only when auth AND read passed (auth → read → send).
+  let sendRes: CheckResult = skippedAfter(authPassed ? SKIPPED_READ_DETAIL : SKIPPED_AUTH_DETAIL);
   let nativeMessageId: string | null = null;
-  if (usableToken) {
+  if (usableToken && readRes.status === "pass") {
     const mail: OutboundTestMessage = {
       to: opts.config.test_recipient,
       subject: "AIOS m365 connect-and-verify",

@@ -9,7 +9,17 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, openSync, closeSync, unlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  openSync,
+  closeSync,
+  unlinkSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -226,6 +236,58 @@ test("FAIL CLOSED: an un-lockable durable nonce store yields `unavailable` / `no
     } catch {
       /* released */
     }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FAIL CLOSED: a corrupt/truncated durable nonce store is UNAVAILABLE — never read as empty", () => {
+  const dir = tmp();
+  const inbox = path.join(dir, ".aios", "loop", "inbox");
+  mkdirSync(inbox, { recursive: true });
+  const storePath = path.join(inbox, "device-nonces.json");
+  try {
+    // Consume a nonce, then simulate a crash-truncated store file.
+    const ns = fileNonceStore(dir);
+    assert.equal(ns.consume("k1", 9999, 1), "fresh");
+    const truncated = readFileSync(storePath, "utf8").slice(0, 12); // mid-JSON truncation
+    writeFileSync(storePath, truncated);
+
+    // A corrupt store must NOT be treated as empty (that would re-enable replay of k1) — it is
+    // unavailable, and every consume is denied until the operator repairs/removes the file.
+    assert.equal(ns.consume("k1", 9999, 2), "unavailable", "the consumed nonce is not re-usable");
+    assert.equal(ns.consume("k2", 9999, 2), "unavailable", "even a fresh key is denied");
+    assert.equal(ns.size(2), -1, "size is unknown over a corrupt store");
+    assert.equal(readFileSync(storePath, "utf8"), truncated, "the corrupt file is left untouched");
+
+    // The registry maps it to the fail-closed deny reason.
+    const reg = createDeviceRegistry(memoryDeviceStore(), "secret", { nonceStore: ns });
+    reg.enroll("d1", ["read-model"], "2026-07-14T00:00:00.000Z");
+    const tok = reg.mintToken({ deviceId: "d1", scope: "read-model", expiresAt: 9999, nonce: "n" });
+    const v = reg.verifyToken(tok, 1);
+    assert.equal(v.ok, false);
+    assert.equal(v.reason, "nonce-unavailable");
+
+    // A valid-JSON file that is not a nonce store (missing `nonces`) is corrupt too.
+    writeFileSync(storePath, "{}\n");
+    assert.equal(ns.consume("k3", 9999, 3), "unavailable");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ATOMIC WRITE: the durable nonce store persists via temp-file + rename (no lingering .tmp, valid JSON)", () => {
+  const dir = tmp();
+  const inbox = path.join(dir, ".aios", "loop", "inbox");
+  const storePath = path.join(inbox, "device-nonces.json");
+  try {
+    const ns = fileNonceStore(dir);
+    assert.equal(ns.consume("k1", 9999, 1), "fresh");
+    assert.equal(ns.consume("k2", 9999, 1), "fresh");
+    assert.ok(existsSync(storePath), "the store file exists after a consume");
+    assert.equal(existsSync(storePath + ".tmp"), false, "the temp file was renamed away");
+    const parsed = JSON.parse(readFileSync(storePath, "utf8"));
+    assert.deepEqual(parsed.nonces, { k1: 9999, k2: 9999 }, "the renamed file is complete JSON");
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
