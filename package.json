@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
-    "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/gui-runtime-preflight.mjs && node scripts/postinstall-banner.mjs",
+    "postinstall": "node scripts/ensure-loop-built.mjs && node scripts/gui-runtime-preflight.mjs --warn-only && node scripts/postinstall-banner.mjs",
     "gui": "node scripts/run-gui.mjs",
     "gui:build": "npm run build --workspace gui/client",
     "gui:preflight": "node scripts/gui-runtime-preflight.mjs",
