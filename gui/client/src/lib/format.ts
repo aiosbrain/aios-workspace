@@ -12,6 +12,15 @@ export function fmtUsd(n: number): string {
   return `$${Number(n).toFixed(n < 0.1 ? 4 : 2)}`;
 }
 
+/** Compact snapshot age for the analysis-cache freshness indicator: "12s" / "5m" / "2h". */
+export function fmtAge(ageMs: number): string {
+  const s = Math.max(0, Math.round(Number(ageMs) / 1000)) || 0;
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h`;
+}
+
 /**
  * The "turn done" meta line, shared by the live stream and transcript replay so they
  * read identically. `cost_usd` may be cumulative across a session — show a per-turn

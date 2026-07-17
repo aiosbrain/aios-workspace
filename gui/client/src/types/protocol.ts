@@ -520,7 +520,21 @@ export interface AxisGuidance {
   why: string;
   steps: string[];
 }
-export interface MaturityResponse {
+/**
+ * Freshness metadata attached by the shared 30-day analysis cache behind
+ * /api/maturity and /api/costs (gui/server/analysis-cache.mjs — AIO-453).
+ */
+export interface AnalysisCacheMeta {
+  /** ISO timestamp of the analyze snapshot this payload was built from. */
+  generatedAt?: string;
+  /** Age of that snapshot at response time, in milliseconds. */
+  ageMs?: number;
+  /** True while a background refresh is running (stale-while-revalidate). */
+  refreshing?: boolean;
+  /** Message of the last failed refresh; null when healthy. */
+  lastError?: string | null;
+}
+export interface MaturityResponse extends AnalysisCacheMeta {
   window: { since: string; until: string } | null;
   spine: string | null;
   overall: number | null;
@@ -568,7 +582,7 @@ export interface CostPlan {
   source: string;
   note?: string;
 }
-export interface CostResponse {
+export interface CostResponse extends AnalysisCacheMeta {
   window: { since: string; until: string } | null;
   providers: string[];
   by_provider: CostProviderRollup[];
