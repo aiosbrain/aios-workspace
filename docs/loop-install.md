@@ -10,7 +10,7 @@ snippet existed anywhere in this toolkit. `aios loop install` is that path.
 |---|---|---|
 | macOS (`process.platform === "darwin"`) | a `launchd` LaunchAgent per job, written to `~/Library/LaunchAgents/` | `StartCalendarInterval` gives **catch-up-on-wake** for free: if the laptop is asleep/closed at the scheduled time, launchd runs the job as soon as the system next wakes, instead of silently skipping it. Cron has no such mechanism. |
 | Linux | a single marker-delimited block in the user's `crontab` | The realistic 24/7-box case for this toolkit's users — a server isn't expected to sleep, so cron's lack of catch-up doesn't matter. |
-| Windows | **Not supported natively yet.** Use AIOS inside WSL, where the Linux/cron path applies. | Native Windows Task Scheduler install/status/uninstall parity is tracked for V2 in AIO-451. Do not interpret the current non-macOS cron fallback as Windows support. |
+| Windows | **Not supported natively yet.** `aios loop install` refuses to run on native win32 (with this WSL guidance) instead of dying with an opaque crontab ENOENT. Use AIOS inside WSL, where the Linux/cron path applies. | Native Windows Task Scheduler install/status/uninstall parity is tracked for V2 in AIO-451. |
 
 This is a deliberately simple heuristic for the supported native platforms (macOS laptop or
 Linux box), not full OS/power-state probing. Override it with `--scheduler launchd|cron` if your
