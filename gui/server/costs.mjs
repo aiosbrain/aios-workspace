@@ -129,20 +129,31 @@ function resolveProvider(key, { costs, config, period }) {
     };
   }
   if (key === "cursor" && hasActivity(costs.cursor) && !costs.cursor.truncated) {
+    // Only usage-based OVERAGE is out-of-pocket metered spend; INCLUDED usage
+    // is already paid for by the flat plan and must not be counted.
+    const overageUsd = monthTotal(costs.cursor, period, "overage_usd");
+    const includedUsd = monthTotal(costs.cursor, period, "included_usd");
+    // INCLUDED usage proves a flat plan whose fee the billing API never reports
+    // as a dollar amount. Owner config was already consulted above (step 1
+    // returns when a cursor subscription is configured), so without it the plan
+    // fee would silently read as $0 — keep any real overage line, but degrade
+    // the status to unknown so Settings prompts for the actual plan spend
+    // instead of undercounting.
     return {
-      lines: [
-        line(
-          key,
-          "metered",
-          // Only usage-based OVERAGE is out-of-pocket metered spend; INCLUDED
-          // usage is already paid for by the flat plan and must not be counted.
-          monthTotal(costs.cursor, period, "overage_usd"),
-          "billing",
-          period,
-          "Cursor billing API (metered overage)"
-        ),
-      ],
-      status: "billing",
+      lines:
+        overageUsd > 0 || includedUsd === 0
+          ? [
+              line(
+                key,
+                "metered",
+                overageUsd,
+                "billing",
+                period,
+                "Cursor billing API (metered overage)"
+              ),
+            ]
+          : [],
+      status: includedUsd > 0 ? "unknown" : "billing",
     };
   }
   if (key === "opencode" && hasActivity(costs.opencode)) {
