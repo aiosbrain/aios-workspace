@@ -2,8 +2,8 @@
 // workspace was actually in — the audit's explicit "ONE STEP. THAT'S IT" complaint. This
 // asserts scaffold-project.sh now prints exactly one dynamic next-action line, and the
 // 3-branch state machine behind it (aios.mjs's nextAction, exposed via cmdOnboard's
-// --print-next-only) responds to real repo state: no brain key -> connect the brain; key
-// but nothing pushed -> aios status/push; something pushed -> start the GUI.
+// --print-next-only) responds to real repo state: standalone -> status; connected but
+// nothing pushed -> status; shared history present -> one grounded Team Brain query.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -62,16 +62,16 @@ test("a real (non-interactive) scaffold run prints exactly one Next: line, not a
   }
 });
 
-test("nextAction: no brain key yet -> connect the brain", () => {
+test("nextAction: standalone Personal workspace -> local status preview", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "next-action-state-"));
   try {
-    assert.match(nextActionFor(repo), /Connect the Team Brain/);
+    assert.match(nextActionFor(repo), /aios status/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("nextAction: brain key set, nothing pushed yet -> aios status/push", () => {
+test("nextAction: brain key set, nothing pushed yet -> aios status preview", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "next-action-state-"));
   try {
     vaultSet(repo, "AIOS_API_KEY", "aios_test_fakevalue");
@@ -81,7 +81,7 @@ test("nextAction: brain key set, nothing pushed yet -> aios status/push", () => 
   }
 });
 
-test("nextAction: something already pushed -> start the GUI", () => {
+test("nextAction: something already shared -> one grounded query", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "next-action-state-"));
   try {
     vaultSet(repo, "AIOS_API_KEY", "aios_test_fakevalue");
@@ -90,7 +90,7 @@ test("nextAction: something already pushed -> start the GUI", () => {
       path.join(repo, ".aios", "state.json"),
       JSON.stringify({ items: { "2-work/foo.md": { sha: "abc", pushed_at: "2026-01-01" } } })
     );
-    assert.match(nextActionFor(repo), /npm run gui/);
+    assert.match(nextActionFor(repo), /aios query/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

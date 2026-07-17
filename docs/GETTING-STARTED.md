@@ -142,8 +142,6 @@ scripts/scaffold-project.sh --context employee \
   --slug abe-workspace \
   --owner abe \
   --team "sam,jordan" \
-  --brain-url https://brain.aios.example.com \
-  --team-id aios \
   --output ~/Projects/abe-workspace
 ```
 
@@ -156,8 +154,9 @@ Flags (verified against `scripts/scaffold-project.sh`):
   passes — see Troubleshooting). **Required.**
 - `--team "sam,jordan"` — *context only*; your teammates have their own workspaces.
   Optional.
-- `--brain-url` / `--team-id` — pre-fill the brain connection in `aios.yaml`. Both
-  optional; you can fill them in by hand later (step 6). Use `team_id: aios`.
+- `--brain-url` / `--team-id` — legacy-compatible optional fields. Prefer connecting later with
+  `aios onboard`: it normalizes and asks you to confirm a remote origin before saving it. A remote
+  `--brain-url` is rejected in scripted/non-TTY scaffolds because an agent cannot approve trust for you.
 - `--output` — where to create it (defaults to `~/Projects/<slug>`).
 
 Add `--dry-run` to preview the spine without creating anything.
@@ -182,11 +181,11 @@ you've set anything), and an initial git commit. When it finishes it prints:
 ```
 Workspace ready: ~/Projects/abe-workspace
 
-Next: Connect the Team Brain: run `aios onboard` (or set AIOS_API_KEY + brain_url/team_id in aios.yaml).
+Next: Run `aios status` to see what is local, private, and eligible to share.
 ```
 
 One line, not a checklist — it reflects whatever you actually still need to do next
-(connect the brain, then push something, then start the GUI), computed fresh each time
+(standalone or connected), computed fresh each time
 you scaffold or run `aios onboard --print-next-only`.
 
 The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to run
@@ -198,7 +197,17 @@ The scaffolder also copies `bin/aios`, `.envrc` (`PATH_add bin`), and offers to 
 ## 6. Connect to the brain
 
 `cd ~/Projects/abe-workspace` — you are now inside **folder B**, your real
-workspace, not the toolkit. Wire up two files, both at this folder's top level.
+workspace, not the toolkit. Inspect before changing it:
+
+```bash
+aios onboard --inspect --json
+aios onboard
+```
+
+The first command is dependency-free and read-only. The guided command explains what it found,
+offers Personal / Join / Create, and requires you to confirm the exact canonical Brain origin
+before it persists a newly entered remote value. It may validate the connection with `/api/v1/me`;
+it never runs `aios push`.
 
 **`.env`** (gitignored — never commit it) — the scaffolder already created this for
 you (copied from `.env.example`), so just fill in the real values:
@@ -209,13 +218,12 @@ AIOS_API_KEY=aios_demo_xxxxxxxx
 AIOS_MEMBER=abe
 ```
 
-**`aios.yaml`** — if you passed `--brain-url`/`--team-id` it's already filled. A
-done-looking config (note `api_key_env` names the *env var*, never the secret):
+**`aios.yaml`** — the guided flow fills the canonical `brain_url`. A done-looking config
+(note `api_key_env` names the *env var*, never the secret):
 
 ```yaml
 version: 1
 brain_url: "https://brain.aios.example.com"
-team_id: "aios"
 api_key_env: AIOS_API_KEY
 
 agent_runtime: claude-code
@@ -335,7 +343,7 @@ and **human-operating layer** (`aios asks`, `aios mode`, `aios decisions`, `aios
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `401 unauthorized` | Bad, revoked, or expired key, or `X-AIOS-Team` ≠ your key's team. Re-check `AIOS_API_KEY` and `team_id: aios`; ask John to re-issue if needed. |
+| `401 unauthorized` | Bad, revoked, or expired key, or a configured non-empty `X-AIOS-Team` value does not match the key's team UUID/slug. Re-check `AIOS_API_KEY`; remove/fix stale `team_id` only if your existing config sends one. |
 | `422 forbidden_tier` on push | You tried to push `private`/`admin`-tier (or untagged) content. **By design** — admin content never leaves the machine. Retag to `team`/`external` only if it really should be shared. |
 | `member '<x>' is not in … members` | Your identity isn't on the workspace roster. The CLI resolves member from `$AIOS_MEMBER` → `aios.yaml` `member:` → `git config aios.member` → `git user.name`, then checks it against the workspace member list. Fix your identity or add yourself via `--owner`/the member list. |
 | `cannot resolve member identity` | None of the sources above is set. Set one: `export AIOS_MEMBER=abe` or `git config aios.member abe`. |

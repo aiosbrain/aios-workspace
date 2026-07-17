@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { readDescriptors } from "./gen-catalog.mjs";
+import { fetchBrainOriginLocked, normalizeBrainOriginFromConfig } from "./brain-origin.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_SCAFFOLD = path.join(SCRIPT_DIR, "..", "scaffold");
@@ -313,19 +314,24 @@ export async function validateConnector(descriptor, secretValues, { timeoutMs = 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function brainUrlOf(cfg) {
-  return cfg.brainUrl || cfg.brain_url || "";
+  return normalizeBrainOriginFromConfig(cfg.brainUrl || cfg.brain_url || "");
 }
 function oauthHeaders(cfg) {
-  return {
+  const headers = {
     Authorization: `Bearer ${cfg.apiKey || cfg.api_key || ""}`,
-    "X-AIOS-Team": cfg.teamId || cfg.team_id || "",
   };
+  const team = String(cfg.teamId || cfg.team_id || "").trim();
+  if (team) headers["X-AIOS-Team"] = team;
+  return headers;
+}
+function brainFetch(fetchImpl, url, cfg, options) {
+  return fetchBrainOriginLocked(fetchImpl, url, options, brainUrlOf(cfg));
 }
 
 /** GET the descriptor's oauth.start_url with the member key → { authorize_url }. */
 export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
   const url = resolve((descriptor.oauth || {}).start_url || "", { BRAIN_URL: brainUrlOf(cfg) });
-  const res = await fetchImpl(url, { method: "GET", headers: oauthHeaders(cfg) });
+  const res = await brainFetch(fetchImpl, url, cfg, { method: "GET", headers: oauthHeaders(cfg) });
   const json = await res.json().catch(() => null);
   if (!res.ok || !json?.authorize_url) {
     throw new Error(
@@ -338,7 +344,7 @@ export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
 /** GET the descriptor's oauth.status_url once → { connected, slack_user_id, workspace }. */
 export async function checkOAuthStatus(descriptor, cfg, { fetchImpl = fetch } = {}) {
   const url = resolve((descriptor.oauth || {}).status_url || "", { BRAIN_URL: brainUrlOf(cfg) });
-  const res = await fetchImpl(url, { method: "GET", headers: oauthHeaders(cfg) });
+  const res = await brainFetch(fetchImpl, url, cfg, { method: "GET", headers: oauthHeaders(cfg) });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     throw new Error(
@@ -375,7 +381,7 @@ export async function pollOAuthStatus(
 /** Manual fallback: POST a pasted user token to the descriptor's fallback.store_url. */
 export async function postBrainToken(descriptor, cfg, token, { fetchImpl = fetch } = {}) {
   const url = resolve((descriptor.fallback || {}).store_url || "", { BRAIN_URL: brainUrlOf(cfg) });
-  const res = await fetchImpl(url, {
+  const res = await brainFetch(fetchImpl, url, cfg, {
     method: "POST",
     headers: { ...oauthHeaders(cfg), "Content-Type": "application/json" },
     body: JSON.stringify({ token }),

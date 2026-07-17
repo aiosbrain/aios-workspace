@@ -108,6 +108,34 @@ DESC="${DESC:-AIOS $CONTEXT workspace}"
 OUTPUT="${OUTPUT:-$HOME/Projects/$SLUG}"
 START_DATE=$(date +%Y-%m-%dT00:00:00Z)
 
+# A Brain value is always persisted as a canonical origin. Remote origins are a
+# human trust decision: scripted/non-TTY scaffolds must stay standalone and let
+# the human confirm later in `aios onboard`.
+if [ -n "$BRAIN_URL" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo -e "${RED}Error: Node 18+ is required to validate --brain-url safely.${NC}"; exit 1
+  fi
+  if ! NORMALIZED_BRAIN_URL=$(node --input-type=module -e \
+    'const { pathToFileURL } = await import("node:url"); const { normalizeBrainOrigin } = await import(pathToFileURL(process.argv[1]).href); try { process.stdout.write(normalizeBrainOrigin(process.argv[2])); } catch (e) { console.error(e.message); process.exit(1); }' \
+    "$SCRIPT_DIR/brain-origin.mjs" "$BRAIN_URL"); then
+    echo -e "${RED}Error: refusing unsafe Brain URL.${NC}"; exit 1
+  fi
+  BRAIN_URL="$NORMALIZED_BRAIN_URL"
+  if [[ "$BRAIN_URL" == https://* ]]; then
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      echo -e "${RED}Error: a remote Brain origin requires human confirmation.${NC}"
+      echo "  Scaffold without --brain-url, then run 'aios onboard' in an interactive terminal."
+      exit 1
+    fi
+    echo ""
+    echo "Remote Brain origin to trust and save:"
+    echo "  $BRAIN_URL"
+    printf "Save this exact origin? [y/N] "
+    read -r BRAIN_CONFIRM || BRAIN_CONFIRM=""
+    case "$BRAIN_CONFIRM" in [Yy]*) : ;; *) echo "Cancelled — Brain origin was not saved."; exit 1 ;; esac
+  fi
+fi
+
 # Team-for-context list (teammates have their OWN workspaces; this is context only).
 # The owner is always a member so identity resolution passes.
 MEMBERS="$OWNER${TEAM:+,$TEAM}"

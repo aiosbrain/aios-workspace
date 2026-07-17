@@ -14,6 +14,7 @@
  *
  *   aios update            # 3-way merge managed paths; print what changed
  *   aios update --check    # dry-run: is this workspace behind? (no writes)
+ *   aios update --preview  # classify every managed-file change (no writes/sidecars)
  *   aios update --from DIR  # use a specific toolkit checkout as the source
  *   aios update --force    # take the toolkit version for everything (overwrite)
  *
@@ -246,13 +247,17 @@ export function missingSeedPaths(srcRoot, repo) {
  * Copy seed files only into absent destinations. Deliberately does not accept `force`
  * or a merge base: once a personal destination exists, update has no authority over it.
  */
-function applySeeds(srcRoot, repo, r) {
+function applySeeds(srcRoot, repo, r, { dryRun = false } = {}) {
   for (const entry of SEED_IF_ABSENT) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const file of entryFiles(srcRoot, entry)) {
       assertSeedParentSafe(repo, file.destRel);
       const destAbs = path.join(repo, file.destRel);
       if (pathEntryExists(destAbs)) continue;
+      if (dryRun) {
+        r.seeded.push(file.destRel);
+        continue;
+      }
       mkdirSync(path.dirname(destAbs), { recursive: true });
       // COPYFILE_EXCL closes the check/copy race: a concurrently-created personal
       // file makes update fail safely instead of being overwritten.
@@ -269,11 +274,15 @@ function applySeeds(srcRoot, repo, r) {
 }
 
 /** Apply one file's merge decision. Mutates the workspace; records into `r`. */
-function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel, force }, r) {
+function applyFile(
+  { toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel, force, dryRun },
+  r
+) {
   const destAbs = path.join(repo, destRel);
   const theirs = readIf(path.join(srcRoot, srcRel));
   const mine = readIf(destAbs);
   const write = (content) => {
+    if (dryRun) return;
     mkdirSync(path.dirname(destAbs), { recursive: true });
     writeFileSync(destAbs, content);
     if (entry.exec) chmodSync(destAbs, 0o755);
@@ -303,7 +312,7 @@ function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel,
       return;
     case "fallback":
       // No baseline to reason from — surface rather than silently overwrite.
-      writeFileSync(`${destAbs}.aios-incoming`, theirs);
+      if (!dryRun) writeFileSync(`${destAbs}.aios-incoming`, theirs);
       r.conflicts.push({ path: destRel, kind: "no-base" });
       return;
     case "merge": {
@@ -318,8 +327,10 @@ function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel,
       } else {
         // Never write markers into the live file — it may be executed/parsed. Leave
         // `mine` in place; drop the toolkit version + the marked-up merge beside it.
-        writeFileSync(`${destAbs}.aios-incoming`, theirs);
-        writeFileSync(`${destAbs}.aios-merge`, content);
+        if (!dryRun) {
+          writeFileSync(`${destAbs}.aios-incoming`, theirs);
+          writeFileSync(`${destAbs}.aios-merge`, content);
+        }
         r.conflicts.push({ path: destRel, kind: "merge" });
       }
       return;
@@ -328,7 +339,7 @@ function applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel,
 }
 
 /** Propagate upstream deletions/renames for a dir entry (files gone since baseSha). */
-function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r) {
+function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r) {
   const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
   if (!baseFiles.length) return;
   const exclude = new Set((entry.exclude || []).map((rel) => `${entry.src}/${rel}`));
@@ -342,7 +353,7 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r)
     if (mine === undefined) continue; // already gone locally
     const base = gitShow(toolkitDir, baseSha, srcRel);
     if (force || mine === base) {
-      unlinkSync(destAbs); // untouched locally → propagate the removal
+      if (!dryRun) unlinkSync(destAbs); // untouched locally → propagate the removal
       r.deleted.push(destRel);
     } else {
       r.conflicts.push({ path: destRel, kind: "deleted-upstream" }); // modified + removed
@@ -360,6 +371,7 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r)
 export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   const dirty = opts.dirty || new Set();
   const force = !!opts.force;
+  const dryRun = !!opts.dryRun;
   const r = {
     created: [],
     seeded: [],
@@ -376,12 +388,12 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
         r.skippedDirty.push(f.destRel);
         continue;
       }
-      applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, ...f, force }, r);
+      applyFile({ toolkitDir, srcRoot, repo, baseSha, entry, ...f, force, dryRun }, r);
     }
     if (entry.kind === "dir")
-      applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force }, r);
+      applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r);
   }
-  applySeeds(srcRoot, repo, r);
+  applySeeds(srcRoot, repo, r, { dryRun });
   return r;
 }
 
@@ -401,6 +413,7 @@ export async function cmdUpdate(repo, cfg, args) {
   }
 
   const check = args.includes("--check");
+  const preview = args.includes("--preview");
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
@@ -466,24 +479,26 @@ export async function cmdUpdate(repo, cfg, args) {
 
     const shortSha = sha.slice(0, 12);
     console.log(color.dim(`  syncing toolkit ${meta.label} from ${srcDir} (${shortSha}) …`));
-    const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force });
+    const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: preview });
 
     // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
     // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
-    try {
-      execFileSync(
-        process.execPath,
-        [path.join(srcDir, "scripts", "gen-catalog.mjs"), "--repo", repo],
-        {
-          stdio: "inherit",
-        }
-      );
-    } catch {
-      console.warn(
-        color.yellow(
-          "  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually"
-        )
-      );
+    if (!preview) {
+      try {
+        execFileSync(
+          process.execPath,
+          [path.join(srcDir, "scripts", "gen-catalog.mjs"), "--repo", repo],
+          {
+            stdio: "inherit",
+          }
+        );
+      } catch {
+        console.warn(
+          color.yellow(
+            "  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually"
+          )
+        );
+      }
     }
 
     const report = (label, arr, tone = color.green) => {
@@ -512,10 +527,14 @@ export async function cmdUpdate(repo, cfg, args) {
       for (const cf of r.conflicts.slice(0, 20)) {
         const how =
           cf.kind === "merge"
-            ? `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
+            ? preview
+              ? "both sides changed — applying would create .aios-incoming and .aios-merge sidecars"
+              : `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
             : cf.kind === "deleted-upstream"
               ? "removed upstream but you modified it — delete it or upstream your change"
-              : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
+              : preview
+                ? "no sync baseline — applying would create an .aios-incoming sidecar"
+                : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
         console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
       }
       if (r.conflicts.length > 20)
@@ -524,6 +543,14 @@ export async function cmdUpdate(repo, cfg, args) {
 
     const changedCount =
       r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
+    if (preview) {
+      console.log(
+        color.dim(
+          `  preview only — ${changedCount} managed file(s) would change; no files or conflict sidecars were written.`
+        )
+      );
+      return;
+    }
     if (r.conflicts.length) {
       // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
       console.warn(

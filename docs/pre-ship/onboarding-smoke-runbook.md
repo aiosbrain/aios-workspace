@@ -29,8 +29,9 @@ per run.
 
 ## Phase 4 — Brain
 
-- [ ] `.env` has `AIOS_API_KEY`; `aios.yaml` has `brain_url` + `team_id`
-- [ ] `npm run aios -- status` shows connected brain
+- [ ] `aios onboard --inspect --json` reports the live state without mutation
+- [ ] `.env` has `AIOS_API_KEY`; `aios.yaml` has a confirmed canonical `brain_url` (`team_id` optional)
+- [ ] `aios status` and `/api/v1/me` validation succeed; onboarding did not push
 
 ## Phase 5 — Profile
 

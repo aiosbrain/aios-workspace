@@ -13,6 +13,16 @@
 
 import * as clack from "@clack/prompts";
 
+export const ONBOARDING_PATHS = [
+  { value: "personal", label: "Personal", hint: "Use AIOS locally; a Team Brain is optional." },
+  { value: "join", label: "Join", hint: "Connect this workspace to an existing Team Brain." },
+  {
+    value: "create",
+    label: "Create",
+    hint: "Review the existing self-host prerequisites and guide.",
+  },
+];
+
 /** Bail out the same way everywhere on Ctrl-C/Esc: a cancel message, then exit 1. */
 export function bailOnCancel(value) {
   if (clack.isCancel(value)) {
@@ -60,6 +70,25 @@ export async function pickConnectors(connectors, { pinned } = {}) {
     required: false,
   });
   return bailOnCancel(selected);
+}
+
+export async function pickOnboardingPath(initialValue = "personal") {
+  const value = await clack.select({
+    message: "How should this workspace operate?",
+    options: ONBOARDING_PATHS,
+    initialValue,
+  });
+  return bailOnCancel(value);
+}
+
+export async function askText(message, placeholder) {
+  const value = await clack.text({ message, placeholder });
+  return bailOnCancel(value)?.trim() ?? "";
+}
+
+export async function confirm(message, initialValue = false) {
+  const value = await clack.confirm({ message, initialValue });
+  return !!bailOnCancel(value);
 }
 
 /**
