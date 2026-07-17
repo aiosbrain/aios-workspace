@@ -1,7 +1,5 @@
 /**
- * CommsView (I-14 / AIO-395) — the `comms` view: the Command Deck split-screen living inside the AIOS
- * shell. A health strip across the top, the ranked queue (protected partition + why strings) on the left,
- * the thread/ask detail on the right, and the scoped-confirmation dialog for authority-requiring approvals.
+ * CommsView (I-14 / AIO-395) — the quiet three-pane `comms` workspace inside the AIOS shell.
  *
  * Data comes from the coordinator's LOCAL read-model API (`/api/inbox`), which mirrors `aios inbox --json`
  * exactly. Read-only except the single scoped-confirm POST. A new blocking ask fires a content-free
@@ -9,9 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, RadioTower } from "lucide-react";
 import { useConnection } from "../../state/cockpit";
-import { cn } from "../../lib/cn";
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
@@ -147,43 +143,13 @@ export function CommsView() {
     [api, load]
   );
 
-  const health = deriveHealth(view);
-
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* health strip — derived honestly from the read model (counts + staleness + ranker + timestamp). */}
-      <div className="flex items-center gap-3 border-b border-border-visible bg-card px-4 py-2">
-        <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          <RadioTower size={13} /> Command Deck
-        </span>
-        <span
-          className={cn(
-            "flex items-center gap-1 rounded-full border px-2 py-px font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)]",
-            health.stale
-              ? "border-[color-mix(in_srgb,var(--aios-amber)_45%,var(--aios-border-visible))] text-[var(--aios-amber)]"
-              : "border-border-visible text-[var(--green)]"
-          )}
-        >
-          {health.stale ? <AlertTriangle size={11} /> : <Activity size={11} />}
-          {health.stale ? "stale" : "deck live"}
-        </span>
-        {view && (
-          <span className="font-mono text-[11px] text-muted-foreground">
-            {view.items.length} items · {health.agentAsks} agent asks · {view.ranker_version}
-          </span>
-        )}
-        {error && (
-          <span className="ml-auto font-mono text-[11px] text-destructive" role="status">
-            {error}
-          </span>
-        )}
-      </div>
-
-      <div className="flex min-h-0 flex-1">
+    <div className="flex h-full min-h-0">
+      <div className="flex min-h-0 min-w-0 flex-1">
         {view ? (
           <CommsQueue view={view} selectedId={selectedId} onSelect={onSelect} />
         ) : (
-          <div className="flex w-[360px] shrink-0 items-center justify-center border-r border-border-visible bg-card text-[13px] text-muted-foreground">
+          <div className="flex w-[348px] shrink-0 items-center justify-center border-r border-border-visible bg-card text-[13px] text-muted-foreground">
             {error ? "Failed to load the queue." : "Loading queue…"}
           </div>
         )}
@@ -209,12 +175,4 @@ export function CommsView() {
       )}
     </div>
   );
-}
-
-function deriveHealth(view: InboxView | null) {
-  const items = view?.items ?? [];
-  return {
-    stale: Boolean(view?.staleness.stale),
-    agentAsks: items.filter((i) => i.origin === "agent-event").length,
-  };
 }

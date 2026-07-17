@@ -3,11 +3,10 @@
  *
  * Three localhost-only, admin-tier routes the GUI server (gui/server/index.mjs) mounts:
  *
- *   • GET  /api/inbox            → the I-09 read-only unified queue, byte-for-byte the same shape as
- *                                  `aios inbox --json`: `{ items, ranker_version, generated_at, staleness }`.
- *                                  Served IN-PROCESS from the same compiled read model (`buildInbox`) the
- *                                  CLI uses, so the GUI and the terminal render identical data (the API
- *                                  contract test deep-equals the two). `?raw=1` mirrors `aios inbox --raw`.
+ *   • GET  /api/inbox            → the I-09 read-only unified queue plus GUI ingestion freshness.
+ *                                  Ranking is served IN-PROCESS from the same compiled read model
+ *                                  (`buildInbox`) the CLI uses. The GUI then removes inactive history and
+ *                                  substitutes ingestion freshness for occurrence-derived staleness.
  *   • GET  /api/inbox/:id        → one item's detail plus any PENDING capability approvals (I-03 display
  *                                  projections) the operator could scoped-confirm from that item.
  *   • POST /api/inbox/:id/decision → the ONLY mutating call in this issue. Carries `{ handle, digest,
@@ -62,10 +61,10 @@ function projectionOf(rec) {
 }
 
 /**
- * The unified read-only queue. Returns EXACTLY the `aios inbox --json` contract shape, assembled from the
- * same compiled read model, so the GUI and the CLI never diverge. `raw` swaps to pure-chronological order.
+ * The unified read-only queue. Ranking comes from the same compiled model as the CLI; the GUI contract
+ * deliberately replaces occurrence-based `staleness` with connector-ingestion `freshness`.
  */
-export async function getInboxView(repo, { raw = false } = {}) {
+export async function getInboxView(repo, { raw = false, refresh = null } = {}) {
   const loop = await loadLoop();
   if (!loop || typeof loop.buildInbox !== "function") {
     const err = new Error("operator-loop is not built — run: npm run build:loop");
@@ -76,13 +75,27 @@ export async function getInboxView(repo, { raw = false } = {}) {
   // that an idle/stop ask is stale, so reconcile before presenting the queue.
   reconcileClaudeAsks(loop, repo);
   const view = loop.buildInbox(repo);
-  const items = raw && typeof loop.rawOrder === "function" ? loop.rawOrder(view.items) : view.items;
+  return projectActiveInboxView(view, { raw, refresh, rawOrder: loop.rawOrder });
+}
+
+export function projectActiveInboxView(view, { raw = false, refresh = null, rawOrder } = {}) {
+  const active = view.items.filter(isActiveInboxItem);
+  const items = raw && typeof rawOrder === "function" ? rawOrder(active) : active;
   return {
     items,
     ranker_version: view.ranker_version,
     generated_at: view.generated_at,
-    staleness: view.staleness,
+    freshness: refresh,
   };
+}
+
+/** Resolved/archived asks and done rows belong to history, never the active attention queue. */
+export function isActiveInboxItem(item) {
+  if (!item || item.bucket === "done") return false;
+  if (item.origin !== "agent-event") return true;
+  if (!item.ask) return true;
+  if (item.attention_state === "resolved" || item.attention_state === "archived") return false;
+  return item.ask?.status === "open";
 }
 
 /**
@@ -102,7 +115,7 @@ export async function getInboxDetail(repo, id) {
       // Do not expose an unbound transcript. The row remains visible and can still be archived.
       agentContext = {
         subject: item.ask.title || "Claude needs your input",
-        summary: item.ask.body || item.ask.title || "Claude needs your input.",
+        summary: item.ask.body || "The original Claude session cannot be resumed safely.",
         turns: [],
         canReply: false,
       };
@@ -113,7 +126,7 @@ export async function getInboxDetail(repo, id) {
     agentContext,
     pendingApprovals,
     generated_at: view.generated_at,
-    staleness: view.staleness,
+    freshness: view.freshness,
   };
 }
 

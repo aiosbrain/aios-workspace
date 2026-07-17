@@ -51,18 +51,21 @@ export interface InboxItem {
   observation?: ProjectedItem;
 }
 
-export interface Staleness {
-  stale: boolean;
-  newest_observation_ts: string | null;
-  slo_ms: number;
-  age_ms: number | null;
-}
-
 export interface InboxView {
   items: InboxItem[];
   ranker_version: string;
   generated_at: string;
-  staleness: Staleness;
+  freshness: {
+    status: "idle" | "refreshing" | "ready" | "degraded" | "failed" | "unavailable";
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    error: string | null;
+    sources: {
+      gmail: string;
+      calendar: string;
+      telegram: "outbound_only";
+    };
+  } | null;
 }
 
 /** I-03 safe-to-render display projection (no request payload — only the digest the human binds to). */
@@ -84,7 +87,7 @@ export interface InboxDetail {
   } | null;
   pendingApprovals: DisplayProjection[];
   generated_at: string;
-  staleness: Staleness;
+  freshness: InboxView["freshness"];
 }
 
 // ── ask-card display state vocabulary (I-13 Q3) ─────────────────────────────────────────────────────
@@ -131,14 +134,13 @@ export const ASK_CARD_STATE_LABELS: Record<AskCardState, string> = {
 };
 
 /**
- * Derive the display state for a live row from its orthogonal state columns + the view-level staleness.
+ * Derive the display state for a live row from its orthogonal state columns.
  * Best-effort and total (always returns a state). The enumeration test drives `AskCard` with explicit
  * states, so this derivation is only the live UI's convenience mapper.
  *
- * Note: a row's card state reflects the ITEM's own action/attention columns. The read model's overall
- * staleness (coordinator lag) is a QUEUE-level concern shown in the header/health strip — it is
- * deliberately NOT folded in here, so a stale queue doesn't paint every card STALE. The "stale" card
- * state is reserved for an item whose own approval window elapsed (`action_state === "expired"`).
+ * A row's card state reflects the ITEM's own action/attention columns. Ingestion freshness is a queue
+ * concern and is deliberately not folded in here. The "stale" card state is reserved for an item whose
+ * own approval window elapsed (`action_state === "expired"`).
  */
 export function deriveAskState(item: InboxItem): AskCardState {
   const attention = item.attention_state;

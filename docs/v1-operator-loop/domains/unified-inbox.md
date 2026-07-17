@@ -54,6 +54,20 @@ whole; this spec is the buildable contract.
 - **`aios inbox` CLI + notify lane** — ranked read-only queue, `--overdue` recovery view, Telegram
   content-free notification lane (I-04/I-05/I-09), outbox + Gmail send (I-11).
 
+### Current connector reachability
+
+The local GUI refreshes Gmail/Calendar through the reviewed, toolkit-owned GOG observation adapter on
+a bounded, non-overlapping cadence. An installed workspace descriptor is only the explicit opt-in marker:
+its bytes are never loaded or executed. A selected workspace never supplies connector executable code,
+and the child receives a minimal environment allowlist. Scheduled and manual/cron pulls share an atomic
+workspace lock; timeout/shutdown terminate the full connector process group before another pull can run.
+Public freshness comes from the last successful ingestion refresh, never from a source event's occurrence
+time. The Telegram integration is deliberately
+**outbound-only**: it sends
+content-free Bot API notifications, but no `getUpdates` poller or webhook ingestion contract is
+shipped. Until that inbound contract exists, the GUI labels Telegram as alerts-only and must not
+project Telegram conversations into the inbox.
+
 ## Contract
 
 The domain spec names these contracts before any implementation issue writes a line.

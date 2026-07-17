@@ -43,15 +43,84 @@
  * activity.jsonl already contains. See `docs/v1-operator-loop/domains/communication.md`.
  */
 
-import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  appendFileSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DEFAULT_EMAIL_QUERY = "in:inbox is:unread";
 export const DEFAULT_TIER = "admin"; // personal gmail/calendar is owner-private by default
 export const ACTIVITY_BASENAME = path.join("comms", "activity.jsonl");
+export const GOG_ACTIVITY_LOCK_BASENAME = path.join(
+  ".aios",
+  "loop",
+  "inbox",
+  "gog-activity.lock"
+);
+
+/**
+ * Cross-process exclusion shared by GUI scheduling and manual/cron invocation of this adapter. The
+ * lock is an atomic create and carries pid+token ownership. A provably dead pid is reclaimed; an
+ * unreadable/unknown owner fails closed. The release callback removes only its exact token.
+ */
+export function acquireGogActivityLock(
+  repo,
+  { pid = process.pid, token = randomUUID(), probe = process.kill } = {}
+) {
+  const lockPath = path.join(repo, GOG_ACTIVITY_LOCK_BASENAME);
+  const owner = `${pid}:${token}`;
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(lockPath, "wx", 0o600);
+      try {
+        writeFileSync(fd, owner, "utf8");
+      } finally {
+        closeSync(fd);
+      }
+      return () => {
+        try {
+          if (readFileSync(lockPath, "utf8") === owner) unlinkSync(lockPath);
+        } catch {
+          // Best effort: never remove a lock whose ownership cannot be re-verified.
+        }
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      let existing;
+      try {
+        existing = readFileSync(lockPath, "utf8");
+      } catch {
+        return null;
+      }
+      const existingPid = Number(existing.split(":", 1)[0]);
+      if (!Number.isSafeInteger(existingPid) || existingPid <= 0) return null;
+      try {
+        probe(existingPid, 0);
+        return null;
+      } catch (probeError) {
+        if (probeError?.code !== "ESRCH") return null;
+      }
+      try {
+        if (readFileSync(lockPath, "utf8") === existing) unlinkSync(lockPath);
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 
 // ── enriched adapter-observation record (I-06 / AIO-387) — DUAL EMISSION ─────
 //
@@ -370,6 +439,13 @@ async function main() {
   const has = (n) => argv.includes(n);
 
   const repo = path.resolve(flag("--repo", findRepoRoot(process.cwd())));
+  const releaseLock = acquireGogActivityLock(repo);
+  if (!releaseLock) {
+    console.error("gog-activity-pull: another pull owns the workspace lock; nothing written.");
+    process.exitCode = 75;
+    return;
+  }
+  try {
   const tier = flag("--tier", DEFAULT_TIER);
   const query = flag("--query", DEFAULT_EMAIL_QUERY);
   const max = parseInt(flag("--max", "25"), 10);
@@ -458,6 +534,9 @@ async function main() {
       observationsPath
     )} [account: ${account}/${tenant}]`
   );
+  } finally {
+    releaseLock();
+  }
 }
 
 const isMain =

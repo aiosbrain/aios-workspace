@@ -8,12 +8,13 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommsQueue } from "./CommsQueue";
+import { CommsQueue, refreshLabel } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
 import { postAskArchive, postAskReply, postDecision } from "./api";
+import { ageLabel } from "./presenters";
 import {
   contentFreeNotification,
   notifyNewBlockingAsks,
@@ -98,12 +99,7 @@ function fixtureView(): InboxView {
     ],
     ranker_version: "inbox-ranker-v1",
     generated_at: "2026-07-14T09:05:00.000Z",
-    staleness: {
-      stale: false,
-      newest_observation_ts: "2026-07-14T08:30:00.000Z",
-      slo_ms: 300000,
-      age_ms: 120000,
-    },
+    freshness: null,
   };
 }
 
@@ -123,24 +119,33 @@ describe("CommsQueue", () => {
     expect(html.indexOf("Nightly ran clean")).toBeGreaterThan(sep);
     expect(html.indexOf("quarterly review notes attached")).toBeGreaterThan(sep);
 
-    // Every row owes the user its "why" string (I-04) — all four are present.
+    // Every row keeps its "why" explanation available to assistive technology without adding chrome.
     for (const why of ["open blocker", "tier-1 client · active engagement", "recency"]) {
       expect(html).toContain(why);
     }
-    // Header carries the ranker version.
-    expect(html).toContain("inbox-ranker-v1");
+    expect(html).not.toContain("inbox-ranker-v1");
+    expect(html).not.toContain("Ranked by attention");
+    expect(html).toContain("Telegram sends alerts only");
   });
 
-  test("shows the honest staleness banner only when the read model is stale", () => {
-    const fresh = fixtureView();
-    expect(
-      renderToStaticMarkup(<CommsQueue view={fresh} selectedId={null} onSelect={() => {}} />)
-    ).not.toContain("STALE");
-    const stale = fixtureView();
-    stale.staleness = { ...stale.staleness, stale: true };
-    expect(
-      renderToStaticMarkup(<CommsQueue view={stale} selectedId={null} onSelect={() => {}} />)
-    ).toContain("STALE");
+  test("freshness reports connector success time, not a future source occurrence time", () => {
+    const view = fixtureView();
+    view.freshness = {
+      status: "ready",
+      last_attempt_at: "2026-07-14T09:04:59.000Z",
+      last_success_at: "2026-07-14T09:05:00.000Z",
+      error: null,
+      sources: { gmail: "ready", calendar: "ready", telegram: "outbound_only" },
+    };
+    expect(refreshLabel(view)).toMatch(/^Updated /);
+    const html = renderToStaticMarkup(
+      <CommsQueue view={view} selectedId={null} onSelect={() => {}} />
+    );
+    expect(html).not.toContain("2099");
+    expect(html).not.toContain("STALE");
+    expect(ageLabel("2099-01-01T00:00:00.000Z", new Date("2026-07-16T00:00:00.000Z"))).toBe(
+      "just now"
+    );
   });
 });
 
@@ -184,7 +189,7 @@ describe("actionable Claude ask", () => {
           },
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
-          staleness: fixtureView().staleness,
+          freshness: fixtureView().freshness,
         }}
         onScopedConfirm={() => {}}
         onReply={async () => {}}
@@ -197,6 +202,9 @@ describe("actionable Claude ask", () => {
     expect(html).toContain("Send to Claude");
     expect(html).toContain("Archive");
     expect(html).not.toContain("data-terminal-frame");
+    expect(html.match(/Choose the release environment/g)).toHaveLength(1);
+    expect(html).not.toContain("font-mono");
+    expect(html).not.toContain("uppercase");
   });
 
   test("reply body cannot substitute a session and archive has an empty body", async () => {
@@ -215,6 +223,36 @@ describe("actionable Claude ask", () => {
       { path: "/api/inbox/ask%2Fa/reply", body: { message: "Use staging" } },
       { path: "/api/inbox/ask%2Fa/archive", body: {} },
     ]);
+  });
+
+  test("an unresumable active ask still offers archive without noisy terminal chrome", () => {
+    const item = agentAsk("ask-unbound", {
+      title: "Claude needs clarification",
+      why: "open blocker",
+    });
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item,
+          agentContext: {
+            subject: "Claude needs clarification",
+            summary: "The original session cannot be resumed safely.",
+            turns: [],
+            canReply: false,
+          },
+          pendingApprovals: [],
+          generated_at: "2026-07-16T02:00:00.000Z",
+          freshness: null,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(html).toContain("Archive");
+    expect(html).toContain("can’t be resumed safely");
+    expect(html).not.toContain("font-mono");
+    expect(html).not.toContain("uppercase");
   });
 });
 
