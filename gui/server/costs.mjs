@@ -1,52 +1,196 @@
 /**
- * costs.mjs — pure reshaper for the cockpit Cost panel.
+ * costs.mjs — pure reshaper for the cockpit Cost panel (actual spend ONLY).
  *
- * `buildCostsPayload(stdout)` parses the JSON emitted by `aios analyze --json`
- * (see scripts/analyze/report.mjs `toJson` → `out.costs`) and flattens the
- * provider cost blocks into the friendly `CostResponse` contract the client
- * renders: per-provider daily spend, daily token buckets, a provider rollup,
- * and the flat subscription plan.
+ * `buildCostsPayload(stdout, { config, period })` parses the JSON emitted by
+ * `aios analyze --json` (scripts/analyze/report.mjs `toJson` → `out.costs`) and
+ * emits the `CostResponse` contract: a ledger of ACTUAL dollar lines for the
+ * current calendar month, a per-provider rollup, the month total, and a
+ * configuration-completeness indicator.
+ *
+ * THE INVARIANT (AIO-457): token-based "API-equivalent" estimates NEVER appear
+ * here — not as money, not as a chart. Per provider the actual figure resolves
+ * with this precedence, and stops honestly at "unknown":
+ *
+ *   1. explicit owner config   (.aios/cost-config.json — subscriptions/metered)
+ *   2. billing / admin API     (anthropic admin cost report, cursor billing,
+ *                               opencode per-message session cost)
+ *   3. detected subscription   (Claude plan read from the login token)
+ *   4. unknown                 (activity seen, no actual source — NEVER estimate)
+ *
+ * A configured subscription supersedes a provider's "usage value" (e.g. a flat
+ * Cursor plan beats the dashboard usage number). Anthropic API metered spend is
+ * a separate provider line, so it is ADDITIVE to the Claude subscription.
+ *
+ * The analyze window must cover the whole calendar month (the route fetches
+ * `--since 35d`); when it provably doesn't (window.since after the 1st), the
+ * payload surfaces `config_status.window_covers_month: false` instead of
+ * silently undercounting billing-sourced lines.
  *
  * Lives in its own module (not index.mjs, which self-boots an http server on
- * import) so it can be unit-tested without side effects — mirroring maturity.mjs.
- *
- * Provider cost provenance (surfaced so the UI never conflates estimate with bill):
- *   anthropic → org Admin cost report  (authoritative billed USD, API keys)
- *   cursor    → dashboard billing API  (authoritative USD)
- *   claude    → local session-log token estimate
- *   codex     → local session-log token estimate
- *   opencode  → per-message session-API cost
- *
- * Zero dependencies.
+ * import) so it can be unit-tested without side effects. No npm dependencies —
+ * config-value coercion is shared with cost-config.mjs so the ledger and the
+ * Settings surface always agree on what a config value is worth.
  */
 
-/** Display order + provenance for the four providers analyze can emit. */
-const PROVIDERS = [
-  { key: "anthropic", label: "Anthropic API", source: "billing", estimated: false },
-  { key: "cursor", label: "Cursor", source: "billing", estimated: false },
-  { key: "claude", label: "Claude", source: "estimate", estimated: true },
-  { key: "codex", label: "Codex", source: "estimate", estimated: true },
-  { key: "opencode", label: "Opencode", source: "session", estimated: false },
+import { configSubscriptionUsd, configMeteredUsd } from "./cost-config.mjs";
+
+/** Display order + labels for the providers analyze can emit. */
+export const PROVIDER_META = [
+  { key: "claude", label: "Claude" },
+  { key: "anthropic", label: "Anthropic API" },
+  { key: "cursor", label: "Cursor" },
+  { key: "codex", label: "Codex" },
+  { key: "opencode", label: "Opencode" },
 ];
 
-function num(v) {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+const LABELS = Object.fromEntries(PROVIDER_META.map((p) => [p.key, p.label]));
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
 }
 
-/** Read a day's tokens tolerating both key styles (cursor uses input/output/cache_read). */
-function dayTokens(d) {
-  return {
-    input: num(d.input_tokens ?? d.input),
-    output: num(d.output_tokens ?? d.output),
-    cache_read: num(d.cache_read_tokens ?? d.cache_read),
-  };
+function usdOrNull(v) {
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Current calendar month as YYYY-MM (UTC, matching analyze's UTC day buckets). */
+export function currentPeriod(now = new Date()) {
+  return now.toISOString().slice(0, 7);
+}
+
+/** Sum a provider block's billed days that fall inside the period (YYYY-MM). */
+function monthTotal(block, period) {
+  const days = Array.isArray(block?.days) ? block.days : [];
+  let sum = 0;
+  for (const d of days) {
+    if (!d || typeof d.date !== "string" || d.date.slice(0, 7) !== period) continue;
+    const v = usdOrNull(d.cost_usd);
+    if (v != null) sum += v;
+  }
+  return round2(sum);
+}
+
+/** True when analyze saw any activity for this provider block. */
+function hasActivity(block) {
+  if (!block) return false;
+  if (Array.isArray(block.days) && block.days.length) return true;
+  return block.totals != null || block.total_usd != null;
+}
+
+function line(provider, kind, amount_usd, source, period, note) {
+  const out = { provider, label: LABELS[provider] ?? provider, kind, amount_usd, source, period };
+  if (note) out.note = note;
+  return out;
+}
+
+/**
+ * Resolve one provider to its actual-spend lines + winning provenance.
+ * @returns {{lines: object[], status: "config"|"billing"|"subscription"|"unknown"}|null}
+ *          null when the provider has no actuals AND no detected activity (omitted).
+ */
+function resolveProvider(key, { costs, config, period }) {
+  const lines = [];
+  const subUsd =
+    key === "anthropic" || key === "opencode" ? null : configSubscriptionUsd(config, key);
+  const meteredUsd = configMeteredUsd(config, key, period);
+
+  // 1. Explicit owner config — subscription and owner-entered metered are both
+  //    explicit actuals, so they stack (e.g. flat plan + entered overage).
+  if (subUsd != null) lines.push(line(key, "subscription", subUsd, "config", period));
+  if (meteredUsd != null) {
+    lines.push(line(key, "metered", meteredUsd, "config", period, "owner-entered exact spend"));
+  }
+  if (lines.length) return { lines, status: "config" };
+
+  // 2. Authenticated billing / provider-reported actuals for this month.
+  if (key === "anthropic" && hasActivity(costs.anthropic)) {
+    return {
+      lines: [
+        line(
+          key,
+          "metered",
+          monthTotal(costs.anthropic, period),
+          "billing",
+          period,
+          "org admin cost report"
+        ),
+      ],
+      status: "billing",
+    };
+  }
+  if (key === "cursor" && hasActivity(costs.cursor)) {
+    return {
+      lines: [
+        line(
+          key,
+          "metered",
+          monthTotal(costs.cursor, period),
+          "billing",
+          period,
+          "Cursor billing API"
+        ),
+      ],
+      status: "billing",
+    };
+  }
+  if (key === "opencode" && hasActivity(costs.opencode)) {
+    return {
+      lines: [
+        line(
+          key,
+          "metered",
+          monthTotal(costs.opencode, period),
+          "session",
+          period,
+          "per-message session cost"
+        ),
+      ],
+      status: "billing",
+    };
+  }
+
+  // 3. Detected subscription (Claude plan from the login token — real flat fee,
+  //    not a token estimate; see claude-plan.mjs).
+  if (key === "claude") {
+    const plan = costs.plan;
+    if (plan && usdOrNull(plan.monthly_usd) != null) {
+      const fromConfig = plan.source === "config";
+      return {
+        lines: [
+          line(
+            key,
+            "subscription",
+            usdOrNull(plan.monthly_usd),
+            fromConfig ? "config" : "detected",
+            period,
+            fromConfig
+              ? undefined
+              : `detected ${plan.label ?? plan.plan} plan from the Claude Code login`
+          ),
+        ],
+        status: fromConfig ? "config" : "subscription",
+      };
+    }
+  }
+
+  // 4. Unknown — activity (or a billing error) with no actual source. Honest
+  //    terminal state: no line, no amount, and NEVER a token estimate.
+  const active =
+    hasActivity(costs[key]) ||
+    (key === "cursor" && costs.cursor_error != null) ||
+    (key === "anthropic" && costs.anthropic_error != null);
+  if (active) return { lines: [], status: "unknown" };
+  return null;
 }
 
 /**
  * @param {string} stdout - raw stdout of `aios analyze --json`
- * @returns {object} the CostResponse payload
+ * @param {{config?: object, period?: string}} [opts]
+ *   config: parsed .aios/cost-config.json; period: YYYY-MM (defaults to now).
+ * @returns {object} the CostResponse payload (actual spend only)
  */
-export function buildCostsPayload(stdout) {
+export function buildCostsPayload(stdout, { config = {}, period = currentPeriod() } = {}) {
   let data;
   try {
     data = JSON.parse(stdout);
@@ -55,69 +199,50 @@ export function buildCostsPayload(stdout) {
   }
 
   const costs = data.costs ?? {};
-  const spend = new Map(); // date → { date, [provider]: usd }
-  const tokens = new Map(); // date → { date, input, output, cache_read }
-  const present = [];
+  const lines = [];
   const byProvider = [];
+  const unknown = [];
 
-  for (const p of PROVIDERS) {
-    const block = costs[p.key];
-    if (!block) continue;
-    const days = Array.isArray(block.days) ? block.days : [];
-    // anthropic reports `total_usd` instead of `totals`; accept either.
-    if (!days.length && !block.totals && block.total_usd == null) continue;
-    present.push(p.key);
-
-    let providerCost = 0;
-    let providerEvents = 0;
-    for (const d of days) {
-      if (!d || d.date === "unknown" || d.date === "undated") continue;
-      const cost = num(d.cost_usd);
-      const tok = dayTokens(d);
-      providerCost += cost;
-      providerEvents += num(d.events);
-
-      const s = spend.get(d.date) ?? { date: d.date };
-      s[p.key] = Math.round(((s[p.key] ?? 0) + cost) * 1e5) / 1e5;
-      spend.set(d.date, s);
-
-      const t = tokens.get(d.date) ?? { date: d.date, input: 0, output: 0, cache_read: 0 };
-      t.input += tok.input;
-      t.output += tok.output;
-      t.cache_read += tok.cache_read;
-      tokens.set(d.date, t);
-    }
-
+  for (const meta of PROVIDER_META) {
+    const resolved = resolveProvider(meta.key, { costs, config, period });
+    if (!resolved) continue;
+    lines.push(...resolved.lines);
+    const total = resolved.lines.length
+      ? round2(resolved.lines.reduce((s, l) => s + l.amount_usd, 0))
+      : null;
     byProvider.push({
-      provider: p.key,
-      label: p.label,
-      source: p.source,
-      estimated: p.estimated,
-      cost_usd: Math.round((block.totals?.cost_usd ?? block.total_usd ?? providerCost) * 1e5) / 1e5,
-      events: block.totals?.events ?? providerEvents,
+      provider: meta.key,
+      label: meta.label,
+      status: resolved.status,
+      total_usd: total,
+      lines: resolved.lines.length,
     });
+    if (resolved.status === "unknown") unknown.push(meta.key);
   }
 
-  // 0-fill every present provider on every day so the stacked chart is dense.
-  const spendByDay = [...spend.values()]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((row) => {
-      for (const key of present) if (!(key in row)) row[key] = 0;
-      return row;
-    });
-  const tokensByDay = [...tokens.values()].sort((a, b) => a.date.localeCompare(b.date));
+  // Known totals first (largest spend on top), unknowns last, display order stable.
+  byProvider.sort((a, b) => {
+    if ((a.total_usd == null) !== (b.total_usd == null)) return a.total_usd == null ? 1 : -1;
+    return (b.total_usd ?? 0) - (a.total_usd ?? 0);
+  });
 
-  const totalCost = byProvider.reduce((s, p) => s + p.cost_usd, 0);
+  // Honest coverage: if the analyze window starts after the 1st of the month,
+  // billing/session sums for "{period}" are provably partial — surface it in
+  // the completeness indicator instead of silently undercounting.
+  const windowCoversMonth =
+    typeof data.window?.since === "string" ? data.window.since <= `${period}-01` : true;
 
   return {
+    period,
     window: data.window ?? null,
-    providers: present,
-    by_provider: byProvider.sort((a, b) => b.cost_usd - a.cost_usd),
-    spendByDay,
-    tokensByDay,
-    totals: { cost_usd: Math.round(totalCost * 1e5) / 1e5 },
-    // Flat subscription (Claude Max/Pro) — real spend, not per-token. See claude-plan.mjs.
-    plan: costs.plan ?? null,
+    lines,
+    by_provider: byProvider,
+    totals: { month_usd: round2(lines.reduce((s, l) => s + l.amount_usd, 0)) },
+    config_status: {
+      complete: unknown.length === 0,
+      unknown,
+      window_covers_month: windowCoversMonth,
+    },
     cursor_error: costs.cursor_error ?? null,
     anthropic_error: costs.anthropic_error ?? null,
   };

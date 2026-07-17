@@ -550,49 +550,52 @@ export interface MaturityResponse extends AnalysisCacheMeta {
   error?: string;
 }
 
-// ── Cost panel (individual, this-workspace spend across all four providers) ──
-/** One calendar day of spend; provider keys hold USD (0-filled), `date` is the label. */
-export interface CostSpendDay {
-  date: string;
-  [provider: string]: number | string;
-}
-/** One calendar day of token totals across all providers. */
-export interface CostTokenDay {
-  date: string;
-  input: number;
-  output: number;
-  cache_read: number;
-}
-/** Per-provider rollup with provenance (billing vs estimate vs session cost). */
-export interface CostProviderRollup {
+// ── Cost panel (this-workspace ACTUAL spend only — AIO-457) ──
+// Token-based "API-equivalent" estimates never appear in this contract. Each
+// provider resolves via: owner config > billing API > detected subscription >
+// unknown (an honest terminal state — never a synthesized number).
+/** One actual ledger line for the current month, with provenance. */
+export interface CostLine {
   provider: string;
   label: string;
-  source: "billing" | "estimate" | "session";
-  estimated: boolean;
-  cost_usd: number;
-  events: number;
-}
-/** Flat subscription plan (Claude Max/Pro) — real spend, not per-token. */
-export interface CostPlan {
-  provider: string;
-  billing: string;
-  plan: string;
-  label: string;
-  monthly_usd: number | null;
-  source: string;
+  kind: "subscription" | "metered";
+  amount_usd: number;
+  source: "config" | "billing" | "detected" | "session";
+  /** Calendar month the line covers, YYYY-MM. */
+  period: string;
   note?: string;
 }
+/** Per-provider rollup: which precedence level won and the month total (null = unknown). */
+export interface CostProviderActual {
+  provider: string;
+  label: string;
+  status: "config" | "billing" | "subscription" | "unknown";
+  total_usd: number | null;
+  lines: number;
+}
 export interface CostResponse extends AnalysisCacheMeta {
+  /** Current calendar month, YYYY-MM. */
+  period: string;
   window: { since: string; until: string } | null;
-  providers: string[];
-  by_provider: CostProviderRollup[];
-  spendByDay: CostSpendDay[];
-  tokensByDay: CostTokenDay[];
-  totals: { cost_usd: number };
-  plan: CostPlan | null;
+  lines: CostLine[];
+  by_provider: CostProviderActual[];
+  totals: { month_usd: number };
+  /**
+   * Configuration completeness: providers with activity but no actual-spend
+   * source, plus whether the analyze window provably covered the whole
+   * calendar month (false ⇒ billing sums for the period may be partial).
+   */
+  config_status: { complete: boolean; unknown: string[]; window_covers_month: boolean };
   cursor_error: string | null;
   anthropic_error?: string | null;
   error?: string | null;
+}
+/** GET/POST /api/costs/config — the owner-editable subset of .aios/cost-config.json. */
+export interface CostConfigResponse {
+  ok: boolean;
+  subscriptions: Record<string, number | null>;
+  metered: Record<string, Record<string, number>>;
+  errors?: string[];
 }
 
 /* ---- operator loop (Loop) ---- */

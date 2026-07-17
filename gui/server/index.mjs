@@ -75,6 +75,7 @@ import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-
 import { buildMaturityPayload } from "./maturity.mjs";
 import { buildCostsPayload } from "./costs.mjs";
 import { createAnalysisCache } from "./analysis-cache.mjs";
+import { readCostConfig, editableCostConfig, updateCostConfig } from "./cost-config.mjs";
 import {
   validateCadence,
   validateWindow,
@@ -513,8 +514,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   // ── cost panel (token-gated; read-only) ──
-  // Reshapes the SAME shared 30-day analyze snapshot's per-provider cost blocks
-  // for the cockpit. Individual (this-workspace) spend across all four providers.
+  // Reshapes the SAME shared analyze snapshot's per-provider cost blocks for the
+  // cockpit, resolving each provider to ACTUAL spend only (owner config > billing
+  // API > detected subscription > unknown — never a token estimate). Owner
+  // overrides come from <repo>/.aios/cost-config.json. The shared cache window
+  // (see createAnalysisCache below) spans 35d so it covers the whole calendar
+  // month even on the 31st; the builder month-filters the days and flags
+  // config_status.window_covers_month when billing data starts mid-month.
   if (url.pathname === "/api/costs") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
@@ -523,7 +529,7 @@ const server = http.createServer((req, res) => {
     analysisCache
       .get()
       .then(({ raw, ...meta }) => {
-        const payload = { ...buildCostsPayload(raw), ...meta };
+        const payload = { ...buildCostsPayload(raw, { config: readCostConfig(repo) }), ...meta };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
       })
@@ -532,6 +538,52 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       });
     return;
+  }
+  // ── cost settings (token-gated) — owner-entered actuals (AIO-457) ──
+  // GET reads / POST merge-writes <repo>/.aios/cost-config.json: flat subscriptions
+  // (claude/cursor/codex) + exact metered spend by provider and month. Admin-tier
+  // local state, gitignored, never synced, no secrets. POST validates every field.
+  if (url.pathname === "/api/costs/config") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, ...editableCostConfig(readCostConfig(repo)) }));
+    }
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => {
+        body += c;
+        if (body.length > 1e6) req.destroy();
+      });
+      req.on("end", () => {
+        let patch = null;
+        try {
+          patch = JSON.parse(body || "{}");
+        } catch {
+          /* fall through to validation error */
+        }
+        try {
+          const result = patch
+            ? updateCostConfig(repo, patch)
+            : { ok: false, errors: ["body must be valid JSON"] };
+          if (!result.ok) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            return res.end(JSON.stringify({ ok: false, errors: result.errors }));
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...editableCostConfig(result.config) }));
+        } catch (e) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: e.message }));
+        }
+      });
+      return;
+    }
+    res.writeHead(405);
+    return res.end("method not allowed");
   }
   // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
   // GET /api/inbox → the I-09 ranked queue plus honest GUI ingestion freshness. Occurrence-based
@@ -1065,15 +1117,18 @@ function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-// Shared 30-day analysis cache behind /api/maturity + /api/costs (AIO-453).
-// One `aios analyze --json --since 30d` snapshot serves both routes; the last-good
+// Shared analysis cache behind /api/maturity + /api/costs (AIO-453).
+// One `aios analyze --json --since 35d` snapshot serves both routes; the last-good
 // snapshot persists under .aios/gui/ (admin-tier, local-only — never synced).
+// The window is 35d (not 30d) so the cost model's month view always covers the
+// whole current calendar month even on the 31st (AIO-457); the extra days are
+// harmless for the maturity rollup.
 const analysisCache = createAnalysisCache({
   exec: (signal) =>
     new Promise((resolve, reject) => {
       execFile(
         process.execPath,
-        [AIOS_CLI, "analyze", "--json", "--since", "30d", "--repo", repo],
+        [AIOS_CLI, "analyze", "--json", "--since", "35d", "--repo", repo],
         { cwd: repo, maxBuffer: 10 * 1024 * 1024, signal }, // abort kills the child
         (err, stdout) => (err ? reject(err) : resolve(stdout))
       );
