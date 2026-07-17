@@ -23,7 +23,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import path from "node:path";
 import { parseFrontmatter } from "./workspace-parse.mjs";
 import { missingSeedPaths, resolveLocalToolkitDir, gitSha } from "./update.mjs";
@@ -271,7 +271,7 @@ function checkToolkitStaleness(repoPath) {
   let count;
   try {
     count = parseInt(
-      execSync(`git -C ${JSON.stringify(toolkitDir)} rev-list --count ${haveSha}..${headSha}`, {
+      execFileSync("git", ["-C", toolkitDir, "rev-list", "--count", `${haveSha}..${headSha}`], {
         encoding: "utf8",
       }).trim(),
       10
@@ -429,11 +429,24 @@ function checkSkillCount(repoPath) {
 
 function checkTierVocabPair(repoPath) {
   const frontmatterPath = path.join(repoPath, "scaffold", ".claude", "rules", "frontmatter.md");
+  // The hub copy lives OUTSIDE this repo (monorepo sibling). A single-repo checkout
+  // (CI, standalone clone, worktree container) legitimately doesn't have it — skip
+  // there; the check is hard only when the sibling actually exists.
   const vocabPath = path.join(repoPath, "..", "docs", "tier-vocabulary.md");
-  const a = readIf(frontmatterPath);
   const b = readIf(vocabPath);
-  if (a === null || b === null)
-    return { ok: true, value: null, detail: "one or both tier-vocab sources absent" };
+  if (b === null)
+    return {
+      ok: true,
+      value: null,
+      detail: "skipped — sibling docs/tier-vocabulary.md not present (single-repo checkout)",
+    };
+  const a = readIf(frontmatterPath);
+  if (a === null)
+    return {
+      ok: false,
+      value: null,
+      detail: "scaffold/.claude/rules/frontmatter.md missing while hub tier-vocabulary.md exists",
+    };
 
   const KNOWN = ["admin", "team", "external", "private", "personal", "client", "company"];
   const extract = (text) => {
