@@ -26,6 +26,7 @@ import {
   commandMarker,
   resolveGogCredential,
   gogTokenSecurityGate,
+  isOutboxLaneEvent,
 } from "../../scripts/inbox.mjs";
 
 const now = () => 1_700_000_000_000;
@@ -260,4 +261,53 @@ test("gogTokenSecurityGate: win32 unsupported-platform skip is preserved", () =>
   assert.equal(gate.ok, true);
   assert.equal(gate.skipped, true);
   assert.match(gate.reason, /win32/);
+});
+
+// -- (5) lane separation: capability events never contaminate the outbox replay --------------------
+
+test("mixed-lane journal: only outbox-lane events reach foldOutboxState (old journals included)", () => {
+  const mk = (kind, correlation_id, payload) => ({
+    kind,
+    correlation_id,
+    ts: "2026-07-17T00:00:00.000Z",
+    payload,
+  });
+  const events = [
+    // outbox lane (new, lane-stamped)
+    mk("action-attempt", "cmd-1", { lane: "outbox", recipients: 1 }),
+    mk("native-receipt", "cmd-1", {
+      lane: "outbox",
+      source: "send",
+      native_message_id: "mid-1",
+      native_thread_id: "tid-1",
+      rejected_count: 0,
+    }),
+    mk("outcome", "cmd-1", { lane: "outbox", status: "sent" }),
+    // capability lane (new, lane-stamped, keyed by capability HANDLES — PR #317)
+    mk("outcome", "cap-handle-1", { lane: "capability", result: "outcome_unknown" }),
+    mk("native-receipt", "cap-handle-1", {
+      lane: "capability",
+      receipt_id: "cap-handle-1",
+      native_ref: null,
+    }),
+    // LEGACY capability events (pre-lane) — separable by shape (`result` / `receipt_id`)
+    mk("outcome", "cap-handle-2", { result: "succeeded" }),
+    mk("native-receipt", "cap-handle-2", { receipt_id: "cap-handle-2", operation: "Bash" }),
+    // LEGACY outbox events (pre-lane) — must still replay sensibly
+    mk("action-attempt", "cmd-legacy", { recipients: 2 }),
+    mk("outcome", "cmd-legacy", { status: "outcome_unknown" }),
+    // other journal kinds are excluded by kind, lane or not
+    mk("capability-consumption", "cap-handle-1", { decision: "approve" }),
+    mk("delivery-attempted", "ask-1", { lane: "telegram" }),
+  ];
+  const kept = events.filter(isOutboxLaneEvent);
+  const folded = loop.foldOutboxState(
+    kept.map((ev) => ({ kind: ev.kind, command_id: ev.correlation_id, at: ev.ts, data: ev.payload }))
+  );
+  assert.deepEqual([...folded.keys()].sort(), ["cmd-1", "cmd-legacy"]);
+  assert.equal(folded.get("cmd-1").state, "sent");
+  assert.equal(folded.get("cmd-1").native_message_id, "mid-1");
+  assert.equal(folded.get("cmd-legacy").state, "outcome_unknown");
+  assert.equal(folded.has("cap-handle-1"), false, "capability handles must not fold as commands");
+  assert.equal(folded.has("cap-handle-2"), false, "legacy capability events must be excluded too");
 });

@@ -45,6 +45,24 @@ const M365_FIXTURE_SCENARIOS = ["happy", "bad-token", "missing-scope", "throttle
 // The I-02 journal event kinds the I-11 outbox emits (subset of INBOX_EVENT_KINDS).
 const OUTBOX_EVENT_KINDS = new Set(["action-attempt", "outcome", "native-receipt"]);
 
+/**
+ * True iff a durable journal event belongs to the OUTBOX lane. The PR-#317 capability lane writes
+ * the SAME `outcome`/`native-receipt` kinds (keyed by capability handles) into the same
+ * `inbox-events.ndjson`, so filtering by kind alone folds capability handles into outbox state.
+ * New events carry an explicit `payload.lane` discriminator (`"outbox"` vs `"capability"`); legacy
+ * events (pre-lane) are separated by shape — the capability lane's `outcome` carries `result`
+ * (never the outbox's `status`) and its `native-receipt` carries `receipt_id`, while
+ * `action-attempt` was always outbox-only. Old journals therefore still replay sensibly.
+ */
+export function isOutboxLaneEvent(ev) {
+  if (!OUTBOX_EVENT_KINDS.has(ev.kind)) return false;
+  const payload = ev.payload ?? {};
+  if (payload.lane != null) return payload.lane === "outbox";
+  if (ev.kind === "outcome") return !("result" in payload);
+  if (ev.kind === "native-receipt") return !("receipt_id" in payload);
+  return true; // action-attempt: outbox-only
+}
+
 /** Map a durable I-02 journal event ({correlation_id, ts, payload}) onto the outbox seam's
  *  {command_id, at, data} shape so `foldOutboxState` can derive lifecycle state. */
 function journalToOutboxEvent(ev) {
@@ -388,9 +406,7 @@ export async function cmdInbox(repo, cfg, args) {
   // ── outbox — read-only lifecycle view of I-11 outbox commands from the durable journal ─────────
   if (sub === "outbox") {
     const { events } = loop.readJournalSegments(repo);
-    const outboxEvents = events
-      .filter((e) => OUTBOX_EVENT_KINDS.has(e.kind))
-      .map(journalToOutboxEvent);
+    const outboxEvents = events.filter(isOutboxLaneEvent).map(journalToOutboxEvent);
     const folded = loop.foldOutboxState(outboxEvents);
     const rows = [...folded.entries()].map(([command_id, s]) => ({
       command_id,
@@ -515,9 +531,7 @@ export async function cmdInbox(repo, cfg, args) {
 
     // 4b) Confirmed: one reconcile-first, at-most-once gog send through the durable outbox journal.
     const { events } = loop.readJournalSegments(repo);
-    const priorEvents = events
-      .filter((e) => OUTBOX_EVENT_KINDS.has(e.kind))
-      .map(journalToOutboxEvent);
+    const priorEvents = events.filter(isOutboxLaneEvent).map(journalToOutboxEvent);
     const client = createGogSendClient(loop, { account, commandId: draft.command_id });
     const outbox = loop.createOutbox({
       client,
