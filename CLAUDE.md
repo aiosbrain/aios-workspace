@@ -105,9 +105,9 @@ they don't recognize.
   scaffolded workspace repo. It stays current WITHOUT re-scaffolding:
   1. **CLI = a delegating shim.** A workspace's `scripts/aios.mjs` is a thin shim (`scaffold/scripts/aios.mjs`)
      that forwards every command to the one canonical toolkit checkout (`../aios/aios-workspace`, or
-     `AIOS_TOOLKIT_CLI`). So command code (`push`/`pull`/`analyze`/harnesses) is **always current** — you
+     `AIOS_TOOLKIT_DIR`). So command code (`push`/`pull`/`analyze`/harnesses) is **always current** — you
      never vendor the full CLI (it needs `node_modules` deps and would crash in a workspace). Update it by
-     `git pull` in `aios-workspace`.
+     `aios update` (or `git pull` in `aios-workspace`).
   2. **Governance = vendored, synced by `aios update`.** The files Claude Code + validators read *in place*
      (`.claude/{skills,rules,rubrics,commands}`, guardrail `hooks/`, `validation/`) are copies that drift.
      **`aios update`** re-syncs exactly the scaffold-defined surface (`scripts/toolkit-manifest.mjs`, whose

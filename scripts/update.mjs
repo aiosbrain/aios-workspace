@@ -1,32 +1,41 @@
 /**
- * update.mjs — `aios update`: re-vendor the toolkit into this workspace.
+ * update.mjs — `aios update`: get the latest AIOS (the "auto-update like Claude" command).
  *
- * A scaffolded workspace carries a COPY of the toolkit (see toolkit-manifest.mjs).
- * This command re-syncs MANAGED_PATHS and fills missing SEED_IF_ABSENT starter files
- * from the canonical toolkit, then pins the version. Seeds are create-only: an existing
- * personal file is never read, merged, overwritten, or deleted, even with `--force`.
+ * One command, two halves. First it brings the local toolkit checkout current (git fetch +
+ * fast-forward + `npm ci`; see toolkit-pull.mjs) — because the workspace CLI is a thin shim
+ * forwarding to that checkout, a stale checkout means stale command code AND a re-vendor of
+ * stale governance. Then it re-vendors: a scaffolded workspace carries a COPY of the toolkit
+ * (see toolkit-manifest.mjs), so update re-syncs MANAGED_PATHS, fills missing SEED_IF_ABSENT
+ * starter files, and pins the version. Seeds are create-only: an existing personal file is
+ * never read, merged, overwritten, or deleted, even with `--force`.
  *
- * It is a **3-way merge**, not a blind overlay (see toolkit-merge.mjs): with the
+ * The re-vendor is a **3-way merge**, not a blind overlay (see toolkit-merge.mjs): with the
  * toolkit at the last-synced sha as the base, a file the workspace improved locally is
  * MERGED with the toolkit's change (or surfaced as a conflict) rather than silently
  * overwritten — the granola-1.1.0 regression class. Upstream deletions/renames are
  * propagated only for files the workspace didn't touch.
  *
- *   aios update            # 3-way merge managed paths; print what changed
- *   aios update --check    # dry-run: is this workspace behind? (no writes)
- *   aios update --preview  # classify every managed-file change (no writes/sidecars)
+ *   aios update            # pull the toolkit + reinstall deps + 3-way-merge governance
+ *   aios update --check    # dry-run: how far behind is the toolkit / this workspace? (no writes)
+ *   aios update --preview  # classify every managed-file change (implies --no-pull; no writes/sidecars)
+ *   aios update --no-pull  # skip the git pull + npm ci; only re-vendor governance
+ *   aios update --stash    # auto-stash a dirty toolkit tree, pull, then restore it
+ *   aios update --no-install  # skip `npm ci` even if the toolkit lockfile changed
  *   aios update --from DIR  # use a specific toolkit checkout as the source
  *   aios update --force    # take the toolkit version for everything (overwrite)
  *
- * Safety: managed files with UNCOMMITTED local changes are skipped (never clobbered).
- * Conflicts are NEVER written inline (the files are executed/parsed) — the toolkit
- * version lands at <file>.aios-incoming and the marked-up merge at <file>.aios-merge;
- * the stamp stays at the old base until conflicts are resolved.
+ * Safety: a dirty toolkit tree is never clobbered (refuse, or --stash to stash+restore); a
+ * non-fast-forward toolkit is refused, not auto-merged. Managed files with UNCOMMITTED local
+ * changes are skipped (never clobbered). Conflicts are NEVER written inline (the files are
+ * executed/parsed) — the toolkit version lands at <file>.aios-incoming and the marked-up
+ * merge at <file>.aios-merge; the stamp stays at the old base until conflicts are resolved.
+ * Run inside the toolkit checkout itself, update just pulls it (nothing to re-vendor into).
  *
- * Source resolution: --from DIR → $AIOS_TOOLKIT_DIR → ~/Projects/aios/aios-workspace
- * → `git clone` the canonical repo (aios.yaml `toolkit_repo`, else the default).
+ * Source resolution: --from DIR → $AIOS_TOOLKIT_DIR → the toolkit this CLI is executing from
+ * (the checkout the workspace shim forwarded to — always the right one to pull/vendor) →
+ * ~/Projects/aios/aios-workspace → `git clone` the canonical repo (aios.yaml `toolkit_repo`).
  *
- * Zero dependencies (git + cp/rm shelled out; Node >= 18).
+ * Zero dependencies (git + npm + cp/rm shelled out; Node >= 18).
  */
 
 import os from "node:os";
@@ -46,14 +55,22 @@ import {
   lstatSync,
   constants as fsConstants,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { c, die } from "./cli-common.mjs";
 import { MANAGED_PATHS, SEED_IF_ABSENT, VERSION_FILE } from "./toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
+import { pullToolkitCheckout, unmergedPaths } from "./toolkit-pull.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
+
+// The toolkit checkout this CLI is executing from — <toolkit>/scripts/update.mjs → <toolkit>.
+// The workspace shim (scaffold/scripts/aios.mjs) may forward here via a relative path rather
+// than $AIOS_TOOLKIT_DIR, so resolving from the running file guarantees update pulls/vendors
+// the SAME checkout the user is actually running — not a different one on the default path.
+const RUNNING_TOOLKIT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -112,9 +129,14 @@ function resolveSource(args, cfg, warn) {
         `(no scripts/aios.mjs + scaffold/). Point it at your aios-workspace clone.`
     );
   }
+  const legacyCliDir = process.env.AIOS_TOOLKIT_CLI
+    ? path.resolve(process.env.AIOS_TOOLKIT_CLI, "..", "..") // <dir>/scripts/aios.mjs → <dir>
+    : undefined;
   const candidates = [
     from,
     process.env.AIOS_TOOLKIT_DIR,
+    legacyCliDir, // deprecated alias — kept so existing custom-path configs don't break
+    RUNNING_TOOLKIT, // the checkout this CLI runs from — matches whatever the shim forwarded to
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
   for (const dir of candidates) {
@@ -405,15 +427,71 @@ function stampBody(sha, meta, srcDir) {
   return lines.join("\n") + "\n";
 }
 
+// Every flag `aios update` understands. Anything else is refused up front — in particular so
+// the self-update re-exec can never silently drop a flag it doesn't know how to forward.
+const UPDATE_BOOL_FLAGS = new Set([
+  "--check",
+  "--preview",
+  "--no-pull",
+  "--stash",
+  "--no-install",
+  "--force",
+]);
+const UPDATE_VALUE_FLAGS = new Set(["--from", "--repo", "--contribute"]);
+
+function assertKnownUpdateFlags(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (UPDATE_VALUE_FLAGS.has(a)) {
+      i++; // skip the flag's value
+      continue;
+    }
+    if (a.startsWith("--") && !UPDATE_BOOL_FLAGS.has(a))
+      die(
+        `aios update: unknown flag ${a} — supported: ` +
+          `${[...UPDATE_BOOL_FLAGS].join("|")} ${[...UPDATE_VALUE_FLAGS].map((f) => `${f} <val>`).join(" ")}`
+      );
+  }
+}
+
+/**
+ * `aios update`. Returns a process exit status (0 = success) instead of exiting, so
+ * programmatic callers (e.g. onboarding, which runs `--check` → `--preview` → apply as
+ * library calls) survive the call: `--preview` implies `--no-pull` — it never mutates the
+ * toolkit, never re-execs, never exits. The interactive CLI maps a non-zero return onto
+ * `process.exitCode`. (`die()` still exits on invalid input/unsafe states.)
+ */
 export async function cmdUpdate(repo, cfg, args) {
   const color = c;
-  // Guard: don't self-update the toolkit repo itself.
-  if (looksLikeToolkit(repo)) {
-    die("`aios update` runs inside a workspace, not the toolkit repo itself.");
-  }
-
+  assertKnownUpdateFlags(args);
   const check = args.includes("--check");
   const preview = args.includes("--preview");
+  // A preview is a read-only classification: it must never pull (mutate the toolkit
+  // checkout), never re-exec, and never exit — onboarding calls it mid-flow.
+  const noPull = args.includes("--no-pull") || preview;
+  const stash = args.includes("--stash");
+  const noInstall = args.includes("--no-install");
+  const pullOpts = { stash, noInstall, dryRun: check, check };
+  const io = { log: (m) => console.log(m), warn: (m) => console.warn(m) };
+
+  // Run inside the toolkit checkout itself: no workspace to re-vendor into, so `aios update`
+  // just brings the checkout current (git pull + npm ci) — the "self-update" case.
+  if (looksLikeToolkit(repo)) {
+    console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
+    // --check always reports status (read-only). --no-pull/--preview only suppress an APPLY
+    // run — and in the toolkit there's nothing else to do, so they're no-ops there.
+    if (noPull && !check) {
+      console.log(
+        color.dim(
+          `  ${preview ? "--preview" : "--no-pull"} — nothing to re-vendor in the toolkit checkout.`
+        )
+      );
+      return 0;
+    }
+    pullToolkitCheckout(repo, pullOpts, io);
+    return 0;
+  }
+
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
@@ -423,19 +501,71 @@ export async function cmdUpdate(repo, cfg, args) {
     } finally {
       if (ephemeral) rmSync(srcDir, { recursive: true, force: true });
     }
-    return;
+    return 0;
   }
 
-  const sha = gitSha(srcDir);
-  const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
-  const stampPath = path.join(repo, VERSION_FILE);
-  const stampField = (label) => {
-    if (!existsSync(stampPath)) return undefined;
-    const m = readFileSync(stampPath, "utf8").match(new RegExp(`^${label}\\s+(.+)$`, "m"));
-    return m ? m[1].trim() : undefined;
-  };
-
   try {
+    // Bring the local toolkit checkout current BEFORE re-vendoring from it — otherwise the
+    // sync copies stale governance and the shim runs stale code. A freshly-cloned source is
+    // already at latest. --check reports git status read-only (even with --no-pull, since
+    // --check always reports); --no-pull only skips the pull on an APPLY run.
+    let pullInfo = null;
+    if (!ephemeral && (check || !noPull)) {
+      const pr = pullToolkitCheckout(srcDir, pullOpts, io);
+      pullInfo = pr;
+      // If the pull advanced HEAD, this process still holds the PRE-pull modules
+      // (MANAGED_PATHS, merge logic). Vendoring now would use stale logic yet stamp the new
+      // sha — a later --check would then call the incomplete workspace "current". Re-exec the
+      // freshly-pulled CLI (with --no-pull, so it goes straight to vendoring) and hand off.
+      if (!check && pr?.pulled > 0) {
+        // Deps were already reinstalled by the pull above; the child only needs the vendor
+        // phase, so forward just the target + --force (--check/--preview never reach here,
+        // --stash/--no-install are pull-side only, and assertKnownUpdateFlags already refused
+        // anything unrecognized — nothing can be silently dropped).
+        const passthrough = ["update", "--no-pull", "--from", srcDir, "--repo", repo];
+        if (args.includes("--force")) passthrough.push("--force");
+        const res = spawnSync(
+          process.execPath,
+          [path.join(srcDir, "scripts", "aios.mjs"), ...passthrough],
+          {
+            stdio: "inherit",
+          }
+        );
+        // Return the child's status instead of exiting: a programmatic caller (onboarding)
+        // must survive the hand-off; the CLI dispatcher maps this onto process.exitCode.
+        return res.status ?? 1;
+      }
+    }
+
+    // Never vendor FROM a conflicted toolkit — its files hold `<<<<<<<` markers and the
+    // destinations are executed/parsed. This is checked independently of the pull, because
+    // --no-pull skips the git half entirely (e.g. re-running after a conflicted --stash
+    // restore aborted mid-way, which leaves the checkout unmerged).
+    const unmerged = unmergedPaths(srcDir);
+    if (unmerged.length) {
+      const detail = `${srcDir} has ${unmerged.length} unresolved conflict(s) (e.g. ${unmerged[0]})`;
+      if (check || preview) {
+        // Read-only modes write nothing, so a conflicted source is a warning, not a hard
+        // stop — dying here would kill a programmatic caller (onboarding) mid-flow.
+        console.warn(color.yellow(`  toolkit has unresolved conflicts — ${detail}.`));
+      } else {
+        die(
+          `the toolkit checkout has unresolved conflicts — ${detail}.\n` +
+            `  Refusing to vendor conflict markers into your workspace. Resolve them (git -C\n` +
+            `  ${srcDir} status), then re-run \`aios update\`.`
+        );
+      }
+    }
+
+    const sha = gitSha(srcDir); // read AFTER the pull so the re-vendor uses the newest toolkit
+    const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
+    const stampPath = path.join(repo, VERSION_FILE);
+    const stampField = (label) => {
+      if (!existsSync(stampPath)) return undefined;
+      const m = readFileSync(stampPath, "utf8").match(new RegExp(`^${label}\\s+(.+)$`, "m"));
+      return m ? m[1].trim() : undefined;
+    };
+
     if (check) {
       // Compare the pinned version to the source sha; also surface the semver delta.
       const have = existsSync(stampPath)
@@ -447,25 +577,28 @@ export async function cmdUpdate(repo, cfg, args) {
       const short = (s) => (s === "(none)" ? s : s.slice(0, 12));
       const haveVer = stampField("toolkit-version");
       const missingSeeds = missingSeedPaths(srcDir, repo);
-      if (matches && !missingSeeds.length) {
-        console.log(color.green(`  toolkit up to date — ${meta.label} (${short(sha)}).`));
-      } else if (matches) {
-        console.log(
-          color.yellow(
-            `  toolkit seed${missingSeeds.length === 1 ? "" : "s"} missing — ${missingSeeds.join(", ")}. ` +
-              `Run \`aios update\`.`
-          )
-        );
-      } else {
-        const from = haveVer ? `v${haveVer}` : short(have);
-        console.log(
-          color.yellow(
-            `  toolkit behind — workspace on ${from}, upstream ${meta.label} (${short(sha)}). ` +
-              `Run \`aios update\`.`
-          )
-        );
+      // `sha` is the LOCAL toolkit HEAD — check mode never fast-forwards. So a workspace can
+      // match the local toolkit exactly while that toolkit is itself behind its remote. The
+      // verdict must fold in the git-side behind-count, or it would report a green "up to
+      // date" immediately after reporting "N commits behind".
+      const behind = pullInfo?.behind ?? 0;
+      if (matches && !missingSeeds.length && behind === 0) {
+        console.log(color.green(`  up to date — ${meta.label} (${short(sha)}).`));
+        return 0;
       }
-      return;
+      const why = [];
+      if (behind > 0)
+        why.push(
+          `the toolkit checkout is ${behind} commit${behind === 1 ? "" : "s"} behind ${pullInfo.upstream}`
+        );
+      if (!matches)
+        why.push(
+          `this workspace is on ${haveVer ? `v${haveVer}` : short(have)}, local toolkit ${meta.label} (${short(sha)})`
+        );
+      if (missingSeeds.length)
+        why.push(`missing seed${missingSeeds.length === 1 ? "" : "s"}: ${missingSeeds.join(", ")}`);
+      console.log(color.yellow(`  behind — ${why.join("; ")}. Run \`aios update\`.`));
+      return 0;
     }
 
     // Protect uncommitted local edits: skip them (don't clobber) unless --force.
@@ -549,7 +682,7 @@ export async function cmdUpdate(repo, cfg, args) {
           `  preview only — ${changedCount} managed file(s) would change; no files or conflict sidecars were written.`
         )
       );
-      return;
+      return 0;
     }
     if (r.conflicts.length) {
       // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
@@ -576,4 +709,5 @@ export async function cmdUpdate(repo, cfg, args) {
   } finally {
     if (ephemeral) rmSync(srcDir, { recursive: true, force: true });
   }
+  return 0;
 }

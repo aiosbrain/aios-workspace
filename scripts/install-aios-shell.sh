@@ -35,17 +35,23 @@ aios() {
     fi
     dir="$(dirname "$dir")"
   done
-  if [[ -n "${AIOS_TOOLKIT_CLI:-}" && -f "$AIOS_TOOLKIT_CLI" ]]; then
-    node "$AIOS_TOOLKIT_CLI" "$@"
-    return $?
+  # Explicit config ALWAYS beats the conventional default — otherwise a legacy
+  # AIOS_TOOLKIT_CLI user who also happens to have ~/Projects/aios/aios-workspace on disk
+  # would silently run that checkout instead of the one they configured.
+  local cli=""
+  if [[ -n "${AIOS_TOOLKIT_DIR:-}" && -f "$AIOS_TOOLKIT_DIR/scripts/aios.mjs" ]]; then
+    cli="$AIOS_TOOLKIT_DIR/scripts/aios.mjs"
+  elif [[ -n "${AIOS_TOOLKIT_CLI:-}" && -f "$AIOS_TOOLKIT_CLI" ]]; then
+    cli="$AIOS_TOOLKIT_CLI" # deprecated alias — prefer AIOS_TOOLKIT_DIR
+  elif [[ -f "$HOME/Projects/aios/aios-workspace/scripts/aios.mjs" ]]; then
+    cli="$HOME/Projects/aios/aios-workspace/scripts/aios.mjs"
   fi
-  local toolkit="$HOME/Projects/aios/aios-workspace/scripts/aios.mjs"
-  if [[ -f "$toolkit" ]]; then
-    node "$toolkit" "$@"
+  if [[ -n "$cli" ]]; then
+    node "$cli" "$@"
     return $?
   fi
   echo "aios: no workspace found (walk up from cwd for aios.yaml)" >&2
-  echo "  hint: cd into your IC workspace or set AIOS_TOOLKIT_CLI" >&2
+  echo "  hint: cd into your IC workspace or set AIOS_TOOLKIT_DIR" >&2
   return 1
 }
 # <<< aios-shell end <<<

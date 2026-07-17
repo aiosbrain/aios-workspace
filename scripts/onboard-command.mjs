@@ -107,10 +107,17 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
       `Toolkit checkout ${inspection.toolkit.path} is ${inspection.toolkit.git.dirty ? "dirty" : "not fast-forward compatible"}; it will not be modified or used to upgrade this workspace.`
     );
   } else if (inspection.toolkit) {
+    // --check and --preview are read-only: preview implies --no-pull, so neither mutates the
+    // toolkit checkout, re-execs, or exits this process. The apply MAY pull + hand off to the
+    // freshly-pulled CLI in a child process; cmdUpdate returns that child's exit status.
     await cmdUpdate(repo, cfg, ["--check", "--from", inspection.toolkit.path]);
     await cmdUpdate(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
     if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
-      await cmdUpdate(repo, cfg, ["--from", inspection.toolkit.path]);
+      const status = await cmdUpdate(repo, cfg, ["--from", inspection.toolkit.path]);
+      if (status)
+        clack.log.warn(
+          "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
+        );
     }
   }
 
