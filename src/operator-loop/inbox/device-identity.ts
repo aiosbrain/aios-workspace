@@ -22,6 +22,7 @@ import {
   openSync,
   closeSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -326,6 +327,16 @@ class NonceLockError extends Error {
   }
 }
 
+/** Thrown when the durable nonce store exists but cannot be parsed (corrupt/truncated). Treated
+ *  exactly like a lock failure: the store is UNAVAILABLE and every verify is denied (fail closed).
+ *  Mapping a corrupt store to "empty" would silently re-enable replay of every unexpired token. */
+class NonceStoreCorruptError extends Error {
+  constructor() {
+    super("device-identity: nonce store is corrupt/unreadable");
+    this.name = "NonceStoreCorruptError";
+  }
+}
+
 // A minimal exclusive-lock discipline (asks-store style) so a cross-process consume is atomic.
 function withNonceLock<T>(lockPath: string, fn: () => T): T {
   mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -371,32 +382,43 @@ function withNonceLock<T>(lockPath: string, fn: () => T): T {
 /**
  * Durable, file-backed consumed-nonce store under `.aios/loop/inbox/` — replays are rejected across
  * process restarts (the coordinator reloads consumed nonces on every consume). Cross-process atomic
- * via an exclusive lockfile. Bounded: expired entries are pruned on every consume, and the store
- * fails closed at `maxEntries` (DoS bound) rather than growing without limit. Admin-tier local; never
+ * via an exclusive lockfile; writes are atomic (temp file + rename) so a crash can never truncate
+ * the store. A corrupt/unparsable store file is UNAVAILABLE (every consume denied, fail closed) —
+ * never read as empty. Bounded: expired entries are pruned on every consume, and the store fails
+ * closed at `maxEntries` (DoS bound) rather than growing without limit. Admin-tier local; never
  * synced (content-free — just opaque nonce keys + numeric expiries).
  */
 export function fileNonceStore(root: string, maxEntries: number = DEFAULT_MAX_NONCES): NonceStore {
   const file = nonceStorePath(root);
   const lock = file + ".lock";
+  // A MISSING store is legitimately empty (first run); an EXISTING-but-unparsable store is NOT —
+  // that's a corrupt/truncated file and reading it as empty would fail open (silent replay window).
   const read = (): Map<string, number> => {
     if (!existsSync(file)) return new Map();
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(readFileSync(file, "utf8")) as { nonces?: Record<string, number> };
-      const map = new Map<string, number>();
-      if (parsed && parsed.nonces && typeof parsed.nonces === "object") {
-        for (const [k, v] of Object.entries(parsed.nonces)) {
-          if (typeof v === "number" && Number.isFinite(v)) map.set(k, v);
-        }
-      }
-      return map;
+      parsed = JSON.parse(readFileSync(file, "utf8"));
     } catch {
-      return new Map();
+      throw new NonceStoreCorruptError();
     }
+    const nonces = (parsed as { nonces?: unknown } | null)?.nonces;
+    if (!parsed || typeof parsed !== "object" || !nonces || typeof nonces !== "object") {
+      throw new NonceStoreCorruptError();
+    }
+    const map = new Map<string, number>();
+    for (const [k, v] of Object.entries(nonces as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) map.set(k, v);
+    }
+    return map;
   };
+  // Atomic write (temp file + rename) so a crash mid-write can never leave a truncated store — the
+  // reader only ever sees the old complete file or the new complete file.
   const write = (map: Map<string, number>): void => {
     const nonces: Record<string, number> = {};
     for (const [k, v] of map) nonces[k] = v;
-    writeFileSync(file, JSON.stringify({ store_version: 1, nonces }, null, 2) + "\n", "utf8");
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ store_version: 1, nonces }, null, 2) + "\n", "utf8");
+    renameSync(tmp, file);
   };
   return {
     consume(key, expiresAt, now) {
@@ -417,8 +439,11 @@ export function fileNonceStore(root: string, maxEntries: number = DEFAULT_MAX_NO
           return "fresh";
         });
       } catch (e) {
-        // Fail closed: an un-lockable durable store means we cannot prove single-use → deny.
-        if (e instanceof NonceLockError) return "unavailable";
+        // Fail closed: an un-lockable OR unparsable durable store means we cannot prove
+        // single-use → deny.
+        if (e instanceof NonceLockError || e instanceof NonceStoreCorruptError) {
+          return "unavailable";
+        }
         throw e;
       }
     },
@@ -431,7 +456,8 @@ export function fileNonceStore(root: string, maxEntries: number = DEFAULT_MAX_NO
           return n;
         });
       } catch (e) {
-        if (e instanceof NonceLockError) return -1; // unknown (contended) — caller decides
+        // unknown (contended or corrupt) — caller decides
+        if (e instanceof NonceLockError || e instanceof NonceStoreCorruptError) return -1;
         throw e;
       }
     },
