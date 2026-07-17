@@ -209,3 +209,59 @@ test("failed refresh stays visible without leaking connector diagnostics", async
   assert.doesNotMatch(JSON.stringify(state), /secret-token|message-content/);
   assert.equal(state.sources.telegram, "outbound_only");
 });
+
+test("total ingestion failure (Gmail AND Calendar) reports failed and never advances freshness", async () => {
+  const child = new FakeChild();
+  const result = runTrustedGogAdapter("/tmp/workspace", {
+    spawnProcess() {
+      setImmediate(() => {
+        child.stderr.emit("data", "gmail fetch failed: 401\ncalendar fetch failed: 401\n");
+        child.emit("close", 0);
+      });
+      return child;
+    },
+    isEnabled: () => true,
+  });
+  const adapterResult = await result;
+  assert.equal(adapterResult.kind, "failed", "both sources down is a FAILURE, not degraded");
+
+  const refresher = createInboxRefresher({
+    repo: "/tmp/workspace",
+    run: async () => adapterResult,
+  });
+  await refresher.refresh();
+  const state = refresher.snapshot();
+  assert.equal(state.status, "failed");
+  assert.equal(state.sources.gmail, "failed");
+  assert.equal(state.sources.calendar, "failed");
+  assert.equal(state.last_success_at, null, "no source succeeded — freshness must not advance");
+});
+
+test("partial failure stays degraded and advances freshness (one source really succeeded)", async () => {
+  const child = new FakeChild();
+  const result = runTrustedGogAdapter("/tmp/workspace", {
+    spawnProcess() {
+      setImmediate(() => {
+        child.stderr.emit("data", "gmail fetch failed: 401\n");
+        child.emit("close", 0);
+      });
+      return child;
+    },
+    isEnabled: () => true,
+  });
+  const adapterResult = await result;
+  assert.equal(adapterResult.kind, "degraded");
+  assert.equal(adapterResult.gmail, "failed");
+  assert.equal(adapterResult.calendar, "ready");
+
+  const refresher = createInboxRefresher({
+    repo: "/tmp/workspace",
+    now: () => new Date("2026-07-17T02:00:00Z"),
+    run: async () => adapterResult,
+  });
+  await refresher.refresh();
+  const state = refresher.snapshot();
+  assert.equal(state.status, "degraded");
+  assert.equal(state.last_success_at, "2026-07-17T02:00:00.000Z");
+  assert.equal(state.error, "Some inbox sources could not refresh.");
+});
