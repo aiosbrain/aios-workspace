@@ -377,7 +377,10 @@ test("fetchTelegramTransport — deep link rides in the text, NEVER as a button 
     // No reply_markup at all — a fortiori no button with a non-https URL.
     assert.equal(body.reply_markup, undefined, "must not attach an inline keyboard");
     const buttons = JSON.stringify(body.reply_markup ?? {});
-    assert.ok(!/"url"\s*:\s*"(?!https:)/.test(buttons), "no non-https button URL may reach the wire");
+    assert.ok(
+      !/"url"\s*:\s*"(?!https:)/.test(buttons),
+      "no non-https button URL may reach the wire"
+    );
     // The deep link is delivered in the message text instead.
     assert.ok(body.text.includes(p.deep_link), "deep link must ride in the message text");
     assert.ok(body.text.includes("1 blocking ask"), "content-free summary text is preserved");

@@ -302,7 +302,12 @@ test("mixed-lane journal: only outbox-lane events reach foldOutboxState (old jou
   ];
   const kept = events.filter(isOutboxLaneEvent);
   const folded = loop.foldOutboxState(
-    kept.map((ev) => ({ kind: ev.kind, command_id: ev.correlation_id, at: ev.ts, data: ev.payload }))
+    kept.map((ev) => ({
+      kind: ev.kind,
+      command_id: ev.correlation_id,
+      at: ev.ts,
+      data: ev.payload,
+    }))
   );
   assert.deepEqual([...folded.keys()].sort(), ["cmd-1", "cmd-legacy"]);
   assert.equal(folded.get("cmd-1").state, "sent");
