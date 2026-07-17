@@ -73,8 +73,11 @@ test("config grace: hard rules still throw and valid values pass silently", () =
     () => normalizeBrainOriginFromConfig("https://brain.example.com/?team=acme", warn),
     /query/i
   );
+  const credentialedUrl = new URL("https://brain.example.com");
+  credentialedUrl.username = "user";
+  credentialedUrl.password = "pass";
   assert.throws(
-    () => normalizeBrainOriginFromConfig("https://user:pass@brain.example.com", warn),
+    () => normalizeBrainOriginFromConfig(credentialedUrl.href, warn),
     /username or password/i
   );
   assert.equal(warnings.length, 0);
