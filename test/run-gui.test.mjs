@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+/** A real secp256k1 keypair in dotenvx's hex form (64-char zero-padded private). */
+function dotenvKeypair() {
+  const ecdh = crypto.createECDH("secp256k1");
+  ecdh.generateKeys();
+  return {
+    priv: ecdh.getPrivateKey("hex").padStart(64, "0"),
+    pub: ecdh.getPublicKey("hex", "compressed"),
+  };
+}
 
 import {
   buildGuiClient,
@@ -107,6 +118,36 @@ test("a key missing from the selected workspace cannot inherit the toolkit value
     });
     assert.equal(env.LINEAR_API_KEY, undefined);
     assert.equal(env.AIOS_GUI_TOKEN, "preserved");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an ambient-key-only workspace keeps its own dotenv key but drops foreign ones", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "run-gui-ambient-key-"));
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+  const mine = dotenvKeypair();
+  const foreign = dotenvKeypair();
+  try {
+    // Encrypted workspace .env: the public key is plaintext, the value is encrypted,
+    // and the matching PRIVATE key lives ONLY in the ambient env (direnv) — there is
+    // no local .env.keys. The launcher must not delete the one key that can decrypt.
+    writeFileSync(
+      path.join(repo, ".env"),
+      `DOTENV_PUBLIC_KEY="${mine.pub}"\nAIOS_API_KEY="encrypted:BOGUS"\n`
+    );
+    const env = scrubGuiWorkspaceEnv({
+      ambient: {
+        DOTENV_PRIVATE_KEY: mine.priv, // the selected workspace's own key — must survive
+        DOTENV_PRIVATE_KEY_PRODUCTION: foreign.priv, // a different workspace's key — must go
+        AIOS_GUI_TOKEN: "keep-me",
+      },
+      root,
+      repo,
+    });
+    assert.equal(env.DOTENV_PRIVATE_KEY, mine.priv, "matching workspace key preserved");
+    assert.equal(env.DOTENV_PRIVATE_KEY_PRODUCTION, undefined, "foreign key scrubbed");
+    assert.equal(env.AIOS_GUI_TOKEN, "keep-me");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
