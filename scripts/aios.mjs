@@ -117,6 +117,28 @@ function findRepoRoot(start) {
   }
 }
 
+// `aios update` targets a WORKSPACE (aios.yaml) or the TOOLKIT checkout itself
+// (scripts/aios.mjs + scaffold/) — nothing else. Deliberately NOT the README-based offline
+// finder: that would let `aios update` treat gui/ or an unrelated repo as a workspace and
+// re-vendor governance into it.
+function isUpdateRoot(dir) {
+  return (
+    existsSync(path.join(dir, "aios.yaml")) ||
+    (existsSync(path.join(dir, "scaffold")) && existsSync(path.join(dir, "scripts", "aios.mjs")))
+  );
+}
+
+/** Walk up from `start` for the nearest workspace/toolkit root, or null. */
+function findUpdateRoot(start) {
+  let dir = path.resolve(start);
+  for (;;) {
+    if (isUpdateRoot(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 // Offline commands (export-okf, graph) don't require aios.yaml.
 // Walk up looking for project.yaml | engagement.yaml | README.md as fallbacks.
 function findRepoRootOffline(start) {
@@ -2562,8 +2584,10 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
-  aios update [--check|--preview|--force|--contribute <path>]  3-way-merge toolkit governance (personal +
-                                       uncommitted edits kept); --contribute opens a toolkit PR from a file
+  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]
+                                       get latest AIOS: pull the toolkit (git + npm ci) +
+                                       3-way-merge governance (personal + uncommitted edits kept);
+                                       --preview/--check never pull; --contribute opens a toolkit PR
   aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
     [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
     [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
@@ -2682,13 +2706,25 @@ const OFFLINE_CMDS = new Set([
   "maturity-week",
   "instincts",
   "worktree",
+
   // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
   // (the brain only enriches avatars when configured).
   "timeline",
 ]);
 
 let repo, cfg;
-if (OFFLINE_CMDS.has(cmd)) {
+if (cmd === "update") {
+  // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
+  // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed at
+  // an arbitrary directory to re-vendor governance into. May run inside the toolkit (no
+  // aios.yaml), so config loads offline.
+  repo = repoArg ? path.resolve(repoArg) : findUpdateRoot(process.cwd());
+  if (!repo || !isUpdateRoot(repo))
+    die(
+      "`aios update` must run in a workspace (aios.yaml) or the toolkit checkout — pass --repo <path>"
+    );
+  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
+} else if (OFFLINE_CMDS.has(cmd)) {
   repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
   if (!repo && cmd === "onboard" && rest.includes("--inspect")) repo = process.cwd();
   if (!repo) die("could not locate repo root — pass --repo <path>");
@@ -2748,8 +2784,12 @@ try {
   else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
   else if (cmd === "instincts") await cmdInstincts(repo, rest);
   else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
-  else if (cmd === "update") await cmdUpdate(repo, cfg, rest);
-  else if (cmd === "promote")
+  else if (cmd === "update") {
+    // cmdUpdate returns an exit status instead of exiting (programmatic callers like
+    // onboarding must survive it) — the CLI maps a failed self-update re-exec onto exitCode.
+    const status = await cmdUpdate(repo, cfg, rest);
+    if (status) process.exitCode = status;
+  } else if (cmd === "promote")
     await cmdPromote(repo, cfg, rest, {
       resolveMember: () => resolveMember(repo, cfg, loadDotEnv(repo)),
     });

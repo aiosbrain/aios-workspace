@@ -41,5 +41,5 @@ npm run aios -- push     # push team/{{OUTWARD_TIER}}-tier content
 npm run aios -- pull     # fetch team updates into 1-inbox/from-brain/
 npm run aios -- query "what did we decide about X?"
 ```
-The shim in `scripts/aios.mjs` forwards to the toolkit clone — set `AIOS_TOOLKIT_CLI` if it is not on a default relative path.
+The shim in `scripts/aios.mjs` forwards to the toolkit clone — set `AIOS_TOOLKIT_DIR` if it is not on a default relative path.
 `private` and untagged content never leave this machine.
