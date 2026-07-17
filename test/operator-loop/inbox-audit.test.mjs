@@ -250,6 +250,57 @@ test("deletion removes a store from live AND backup while verifyChain still pass
   rmSync(anchorDir, { recursive: true, force: true });
 });
 
+test("SELECTIVE deletion (per-user selector) removes the record from BOTH the live tree and the backup tree", () => {
+  const root = ws();
+  const anchorDir = ws("inbox-anchor-");
+  const sink = createLocalAnchorSink(anchorDir);
+  seedChain(root, 2);
+  auditCheckpoint(root, sink, { at: "2026-07-14T09:05:00.000Z" });
+
+  // Per-user layout: <store>/<user>/<record>. Backups are re-rooted under a DIFFERENT base, so a
+  // root-relative key would never match a backup — the selector must be keyed store-relative.
+  const liveDir = path.join(root, INBOX_REL, "bodies");
+  const backupDir = path.join(root, INBOX_REL, "backups", "bodies");
+  mkdirSync(path.join(liveDir, "alex"), { recursive: true });
+  mkdirSync(path.join(liveDir, "sam"), { recursive: true });
+  writeFileSync(path.join(liveDir, "alex", "msg-1.txt"), "alex body one");
+  writeFileSync(path.join(liveDir, "sam", "msg-2.txt"), "sam body two");
+
+  const store = {
+    id: "snippets_body_cache",
+    livePaths: [path.join(INBOX_REL, "bodies")],
+    backupPaths: [path.join(INBOX_REL, "backups", "bodies")],
+  };
+  backupStore(root, store);
+  assert.ok(existsSync(path.join(backupDir, "alex", "msg-1.txt")), "backup mirror created");
+
+  // Erase ONLY alex's records — one store-relative key matches live AND backup copies.
+  const result = executeDeletion({
+    root,
+    store,
+    actor: "owner:alex",
+    reason: "per-user erasure request",
+    selector: (rel) => rel.split(path.sep)[0] === "alex",
+  });
+
+  assert.deepEqual(result.liveRemoved, [path.join("alex", "msg-1.txt")]);
+  assert.deepEqual(result.backupRemoved, [path.join("alex", "msg-1.txt")]);
+  assert.equal(existsSync(path.join(liveDir, "alex", "msg-1.txt")), false, "live copy gone");
+  assert.equal(existsSync(path.join(backupDir, "alex", "msg-1.txt")), false, "backup copy gone");
+  assert.ok(existsSync(path.join(liveDir, "sam", "msg-2.txt")), "unselected live record survives");
+  assert.ok(
+    existsSync(path.join(backupDir, "sam", "msg-2.txt")),
+    "unselected backup record survives"
+  );
+  assert.ok(typeof result.auditSeq === "number", "the selective erasure is audited");
+
+  const after = verifyAuditStore(root, sink);
+  assert.equal(after.ok, true, "chain still verifies after the selective deletion");
+
+  rmSync(root, { recursive: true, force: true });
+  rmSync(anchorDir, { recursive: true, force: true });
+});
+
 test("the redaction/doc lint exits non-zero on a leak and zero on a clean fixture", () => {
   // Clean run (default targets) exits 0.
   execFileSync("node", [LINT], { cwd: REPO, encoding: "utf8" });
