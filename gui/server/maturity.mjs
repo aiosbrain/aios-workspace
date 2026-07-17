@@ -16,6 +16,11 @@
 import { AXIS_GUIDE, ergonomicsTip } from "../../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS } from "../../scripts/analyze/aem.mjs";
 
+// The shared analysis cache runs `aios analyze --since 35d` (the cost panel needs the
+// whole calendar month), but the Maturity panel promises a "30-day trend" and must
+// match the CLI's `aios analyze --since 30d`. Keep only the trailing 30 days here.
+export const TREND_DAYS = 30;
+
 /**
  * @param {string} stdout - raw stdout of `aios analyze --json`
  * @param {{AXIS_GUIDE?: object, AXIS_LABELS?: object, ergonomicsTip?: Function}} [deps]
@@ -46,7 +51,7 @@ export function buildMaturityPayload(stdout, deps = {}) {
 
   const weakest = placement?.weakest ?? null;
   const days = Array.isArray(data.days)
-    ? data.days.map((d) => ({
+    ? data.days.slice(-TREND_DAYS).map((d) => ({
         date: d.date,
         am: d.placement?.overall ?? null,
         ce: d.axes_shadow?.cognitive_ergonomics ?? null,

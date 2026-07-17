@@ -25,7 +25,8 @@
  *     `refreshing: false` + `lastError` set, so a persistently failing analyze
  *     converges to one attempt per window instead of one per request (and the
  *     client's refresh-poll loop terminates). A successful refresh clears the
- *     backoff.
+ *     backoff. An explicit user refresh (`get({ force: true })`, wired to the
+ *     panels' Refresh button via `?force=1`) bypasses the backoff + fresh window.
  *
  * Like maturity.mjs / costs.mjs this module is pure ESM with no server side
  * effects, so it can be unit-tested with an injected `exec` + clock.
@@ -151,13 +152,20 @@ export function createAnalysisCache({
    * failure has it backed off — then `refreshing: false` with `lastError` set, so
    * degraded mode converges); cold → awaits the (single-flight) run and rejects
    * only when there is no last-good snapshot at all.
+   *
+   * `force` is the explicit-user-refresh path (the panels' Refresh button →
+   * `?force=1`): it always kicks a background refresh, bypassing BOTH the fresh
+   * window and the failure backoff. The backoff only gates the *automatic*
+   * stale-hit revalidation; a deliberate human retry must never be a no-op.
+   * Single-flight still holds — a force during an inflight run joins it.
+   * @param {{force?: boolean}} [opts]
    * @returns {Promise<{raw: string, generatedAt: string, ageMs: number, refreshing: boolean, lastError: string | null}>}
    */
-  async function get() {
+  async function get({ force = false } = {}) {
     if (snapshot) {
       const stale = now() - snapshot.generatedAt >= freshMs;
       const backedOff = lastFailureAt !== null && now() - lastFailureAt < failureBackoffMs;
-      if (stale && !backedOff) refresh(); // stale-while-revalidate
+      if (force || (stale && !backedOff)) refresh(); // stale-while-revalidate
       return { raw: snapshot.raw, ...meta() };
     }
     await refresh(); // cold: block on the shared run

@@ -191,6 +191,9 @@ test("POST decision — the URL id IS the handle: approve → durable native rec
     assert.equal(replay.status, 409);
     assert.equal(replay.result.kind, "rejected");
     assert.equal(replay.result.reason, "replay-consumed", "authoritative locked replay guard");
+    // The 4xx body carries a human-readable `error` (api.ts surfaces body.error —
+    // without it the dialog shows the bare statusText "Conflict").
+    assert.equal(replay.error, "This request was already decided.");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -205,6 +208,7 @@ test("POST decision — deny is a processed decision that spends the handle (nev
     assert.equal(deny.ok, true, "a denial is processed, not an error");
     assert.equal(deny.result.kind, "rejected");
     assert.equal(deny.result.reason, "denied");
+    assert.equal(deny.error, undefined, "a processed denial is not an error");
 
     // The spent (denied) handle can never then be approved.
     const flip = await decideInbox(dir, handle, body(handle, displayProjection.digest, "approve"));
@@ -225,6 +229,7 @@ test("POST decision — tampered digest is rejected by the LOCKED consume (no mi
     // The verdict comes from the locked compare-and-consume, not an unlocked precheck.
     assert.equal(tampered.result.kind, "rejected");
     assert.equal(tampered.result.reason, "digest-mismatch");
+    assert.match(tampered.error, /changed after it was shown/, "human-readable reason in the body");
 
     // …and the handle is still consumable with the correct digest afterwards (nothing was spent).
     const { requestDigest } = loadRecord(dir, handle);
@@ -335,6 +340,7 @@ test("ADVERSARIAL — an expired approval window is rejected (locked, clock-driv
     assert.equal(expired.status, 409);
     assert.equal(expired.result.kind, "rejected");
     assert.equal(expired.result.reason, "expired");
+    assert.match(expired.error, /approval window has expired/, "human-readable reason");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

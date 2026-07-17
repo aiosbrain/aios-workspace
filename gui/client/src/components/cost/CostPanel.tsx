@@ -107,16 +107,21 @@ export function CostPanel() {
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      setData(await api.get<CostResponse>("/api/costs"));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-    setBusy(false);
-  }, [api]);
+  // `force` = the explicit Refresh button → `?force=1` bypasses the server's
+  // failure backoff (an automatic poll/retry never does).
+  const load = useCallback(
+    async (force = false) => {
+      setError(null);
+      setBusy(true);
+      try {
+        setData(await api.get<CostResponse>(force ? "/api/costs?force=1" : "/api/costs"));
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      setBusy(false);
+    },
+    [api]
+  );
 
   useEffect(() => {
     load();
@@ -146,7 +151,7 @@ export function CostPanel() {
         <div className="self-center bg-transparent p-0.5 text-xs text-destructive">
           error: {error}
         </div>
-        <button className={cn(REV_BTN, "self-center")} onClick={load}>
+        <button className={cn(REV_BTN, "self-center")} onClick={() => load()}>
           Retry
         </button>
       </div>
@@ -176,7 +181,7 @@ export function CostPanel() {
           <button className={REV_BTN} onClick={() => setShowSettings((s) => !s)}>
             {showSettings ? "Close settings" : "Settings"}
           </button>
-          <button className={REV_BTN} onClick={load} disabled={busy}>
+          <button className={REV_BTN} onClick={() => load(true)} disabled={busy}>
             Refresh
           </button>
         </span>
