@@ -160,6 +160,12 @@ export function runTrustedGogAdapter(
       }
       const gmailFailed = diagnostics.includes("gmail fetch failed");
       const calendarFailed = diagnostics.includes("calendar fetch failed");
+      if (gmailFailed && calendarFailed) {
+        // Total ingestion failure: NOTHING refreshed. Reporting "degraded" here would let the
+        // refresher stamp last_success_at for a run in which no source succeeded.
+        resolve({ kind: "failed", gmail: "failed", calendar: "failed" });
+        return;
+      }
       resolve({
         kind: gmailFailed || calendarFailed ? "degraded" : "ready",
         gmail: gmailFailed ? "failed" : "ready",
@@ -220,7 +226,10 @@ export function createInboxRefresher({
         state.status = result.kind;
         state.sources.gmail = result.gmail ?? "ready";
         state.sources.calendar = result.calendar ?? "ready";
-        state.last_success_at = now().toISOString();
+        // Freshness is honest: last_success_at advances only when at least one source succeeded.
+        if (state.sources.gmail === "ready" || state.sources.calendar === "ready") {
+          state.last_success_at = now().toISOString();
+        }
         state.error = result.kind === "degraded" ? "Some inbox sources could not refresh." : null;
         return snapshot();
       })

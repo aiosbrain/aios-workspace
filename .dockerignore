@@ -1,0 +1,31 @@
+# Root build-context ignore — the AUTHORITATIVE one for the Fly coordinator image.
+#
+# The runbook deploys with the REPO ROOT as the build context
+# (`fly deploy --config fly.toml --dockerfile deploy/fly/Dockerfile`), and Docker only honors the
+# `.dockerignore` at the context root — `deploy/fly/.dockerignore` is IGNORED for that build. Without
+# this file the whole working tree (.env, .env.keys, .aios/, .git, node_modules) gets tarred and
+# shipped to Fly's REMOTE builder. Keep this in sync with deploy/fly/Dockerfile's COPY set:
+# the image needs ONLY package.json, package-lock.json, tsconfig.json, src/, scripts/, docs/.
+
+# Secrets + local state — NEVER leave the machine as build context.
+.env
+.env.*
+.env.keys
+.aios
+.aios-nda
+*.log
+
+# VCS + dependency trees — huge, never needed (the image runs `npm ci` itself).
+.git
+node_modules
+
+# Build outputs + non-image surfaces (the image compiles src/ fresh).
+dist
+gui
+src-tauri
+coverage
+test
+examples
+validation
+hooks
+scaffold

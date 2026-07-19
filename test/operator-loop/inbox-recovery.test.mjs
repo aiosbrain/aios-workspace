@@ -30,6 +30,7 @@ import {
   askIdFromDeepLink,
   DEEP_LINK_RE,
   loadTelegramConfig,
+  fetchTelegramTransport,
   sendNotification,
   recordHumanAck,
   createDurableNotifyJournal,
@@ -348,6 +349,44 @@ test("deep-link — matches the format contract regex and resolves to the seeded
   const p = projectNotification({ ask_id: askId, count: 1, repo_label: "r" });
   assert.match(p.deep_link, DEEP_LINK_RE);
   assert.equal(askIdFromDeepLink(p.deep_link), askId);
+});
+
+// ── production wire shape (regression: 400 BUTTON_URL_INVALID) ────────────────────────────────────
+
+test("fetchTelegramTransport — deep link rides in the text, NEVER as a button (custom schemes 400)", async () => {
+  // Telegram's Bot API rejects inline-keyboard button URLs that aren't http(s)/tg:// with
+  // 400 BUTTON_URL_INVALID — an `aios://` button would fail EVERY production send. Capture the
+  // real wire body by stubbing global fetch (no network: the stub answers before any socket).
+  const captured = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    captured.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  try {
+    const transport = fetchTelegramTransport("TEST_TOKEN");
+    const p = projectNotification({ ask_id: "ask_wire-1", count: 1, repo_label: "aios-workspace" });
+    const res = await transport({
+      chat_id: "42",
+      text: formatNotificationText(p),
+      deep_link: p.deep_link,
+    });
+    assert.equal(res.ok, true);
+    assert.equal(captured.length, 1);
+    const body = captured[0].body;
+    // No reply_markup at all — a fortiori no button with a non-https URL.
+    assert.equal(body.reply_markup, undefined, "must not attach an inline keyboard");
+    const buttons = JSON.stringify(body.reply_markup ?? {});
+    assert.ok(
+      !/"url"\s*:\s*"(?!https:)/.test(buttons),
+      "no non-https button URL may reach the wire"
+    );
+    // The deep link is delivered in the message text instead.
+    assert.ok(body.text.includes(p.deep_link), "deep link must ride in the message text");
+    assert.ok(body.text.includes("1 blocking ask"), "content-free summary text is preserved");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 // ── overdueView purity + ordering, and the CLI surface ──────────────────────────────────────────────

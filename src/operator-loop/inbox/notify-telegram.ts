@@ -114,7 +114,12 @@ export function formatNotificationText(p: NotificationProjection): string {
 export interface TelegramRequest {
   chat_id: string;
   text: string;
-  /** Best-effort deep link, surfaced as a URL button by the production transport (content-free). */
+  /**
+   * Best-effort deep link, appended to the message text by the production transport (content-free).
+   * NEVER surfaced as an inline-keyboard URL button: the Bot API rejects non-HTTP(S)/tg:// button
+   * URLs with 400 BUTTON_URL_INVALID, and `aios://` is a custom scheme — a button would kill every
+   * production send.
+   */
   deep_link: string;
 }
 
@@ -175,10 +180,11 @@ export function fetchTelegramTransport(token: string): TelegramTransport {
       const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        // The deep link rides IN the text: `aios://` is a custom scheme, and the Bot API rejects
+        // non-HTTP(S)/tg:// inline-keyboard button URLs with 400 BUTTON_URL_INVALID. No reply_markup.
         body: JSON.stringify({
           chat_id: req.chat_id,
-          text: req.text,
-          reply_markup: { inline_keyboard: [[{ text: "Open", url: req.deep_link }]] },
+          text: req.deep_link ? `${req.text}\n${req.deep_link}` : req.text,
         }),
       });
       let description: string | undefined;

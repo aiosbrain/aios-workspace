@@ -32,6 +32,8 @@ import {
   OutboxTimeoutError,
   OutboxSendError,
   OutboxReconcileError,
+  OutboxRetryDeferredError,
+  DEFAULT_RECONCILE_MIN_DELAY_MS,
   ADMIN_CONTEXT_MARKERS,
 } from "../../dist/operator-loop/index.js";
 
@@ -635,4 +637,86 @@ test("gateway credential wrapper: a 0600 gateway-owned token passes; wrong mode 
   // The unsupported-platform skip path is always assertable.
   const skipped = assertGatewayTokenSecurity(tokenPath, { platform: "win32" });
   assert.equal(skipped.skipped, true);
+});
+
+// -- eventual-consistency guard: an empty Sent search right after an attempt proves nothing ---------
+
+test("retry after a timeout with an empty Sent search is DEFERRED inside the propagation window", () => {
+  // Gmail's full-text Sent search is eventually consistent: a message that DID land can be invisible
+  // to `in:sent` for minutes. A retry that trusts the empty search would double-send.
+  let clock = 1_000_000;
+  let sends = 0;
+  const client = {
+    querySent: () => ({ found: false }), // the Sent index never catches up in this fixture
+    send() {
+      sends += 1;
+      throw new OutboxTimeoutError(); // outcome unknown — the message MAY have landed
+    },
+  };
+  const journal = createInMemoryOutboxJournal();
+  const ob = createOutbox({ client, journal: journal.append, now: () => clock });
+  const c1 = ob.sendApproved(enqueueInput());
+  assert.equal(c1.state, "outcome_unknown");
+  assert.equal(sends, 1);
+  // 30s later the search still shows nothing — that proves NOTHING; the retry must refuse to resend
+  // with a typed, operator-readable deferral naming the earliest safe retry time.
+  clock += 30_000;
+  assert.throws(
+    () => ob.attempt("cmd-1"),
+    (e) =>
+      e instanceof OutboxRetryDeferredError &&
+      typeof e.retryAfter === "string" &&
+      /double-send/.test(e.message)
+  );
+  assert.equal(sends, 1, "no resend inside the eventual-consistency window");
+  // Past the window an empty Sent search is trustworthy — the retry may genuinely resend.
+  clock += DEFAULT_RECONCILE_MIN_DELAY_MS + 1_000;
+  const c2 = ob.attempt("cmd-1");
+  assert.equal(c2.state, "outcome_unknown"); // this attempt times out too, but it WAS authorized
+  assert.equal(sends, 2);
+});
+
+test("restart: the folded attempt timestamp still defers a too-early retry (no blind resend)", () => {
+  // Crash after an attempt whose outcome never resolved: the journal holds the action-attempt ts.
+  const attemptAt = new Date(1_000_000).toISOString();
+  const priorEvents = [
+    { kind: "action-attempt", command_id: "cmd-1", at: attemptAt, data: { lane: "outbox" } },
+    {
+      kind: "outcome",
+      command_id: "cmd-1",
+      at: new Date(1_001_000).toISOString(),
+      data: { lane: "outbox", status: "outcome_unknown" },
+    },
+  ];
+  let sends = 0;
+  const client = {
+    querySent: () => ({ found: false }),
+    send() {
+      sends += 1;
+      return { message_id: "m", thread_id: "t" };
+    },
+  };
+  const ob = createOutbox({
+    client,
+    journal: () => {},
+    now: () => 1_000_000 + 60_000, // one minute after the crash-era attempt
+    priorEvents,
+  });
+  ob.enqueue(enqueueInput());
+  assert.throws(
+    () => ob.attempt("cmd-1"),
+    (e) => e instanceof OutboxRetryDeferredError
+  );
+  assert.equal(sends, 0, "recovery must not resend inside the window");
+});
+
+test("outbox journal events carry the lane discriminator (lane: outbox)", () => {
+  const { client } = fakeGog();
+  const journal = createInMemoryOutboxJournal();
+  const ob = createOutbox({ client, journal: journal.append, now });
+  ob.sendApproved(enqueueInput());
+  assert.ok(journal.events.length > 0);
+  for (const ev of journal.events) {
+    assert.equal(ev.data.lane, "outbox", `${ev.kind} must be lane-stamped`);
+  }
 });

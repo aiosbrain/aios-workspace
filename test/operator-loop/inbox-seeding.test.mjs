@@ -393,14 +393,20 @@ test("CLI: explicit per-item --merge writes the registry; --unmerge reverses it;
     assert.equal(JSON.parse(merged.stdout).status, "merged");
     assert.equal(existsSync(seedRegistryPath(root)), true, "the registry now exists");
 
-    // Cold-start semantics: a merged person is now a KNOWN registry identity, so re-listing no
-    // longer re-proposes her (the durable merge lives in the seed journal, not the proposed list).
+    // A merged person is still LISTED (so her sibling suggestions stay reviewable) but shows the
+    // durable `merged` status from the seed journal — she is never re-PROPOSED.
     const after = JSON.parse(runCli(root, ["--json", "--owner", OWNER]).stdout);
-    assert.equal(
-      after.suggestions.some((s) => s.kind === "person" && s.id === person.id),
-      false,
-      "a seeded person is not re-proposed (cold-start skip)"
+    const afterPerson = after.suggestions.find((s) => s.kind === "person" && s.id === person.id);
+    assert.ok(afterPerson, "a merged person still appears in the review list");
+    assert.equal(afterPerson.status, "merged", "…with her durable merged status (not proposed)");
+    // Her sibling relationship-tier suggestion is still generated and still proposed (mergeable).
+    const siblingTier = after.suggestions.find(
+      (s) =>
+        s.kind === "relationship-tier" &&
+        s.proposed_entry.ids.some((id) => person.proposed_entry.ids.includes(id))
     );
+    assert.ok(siblingTier, "the merged person's tier suggestion is still generated");
+    assert.equal(siblingTier.status, "proposed", "…and still proposed (not orphaned)");
 
     // Unmerge reverses it — the registry returns to absent (it did not exist before) AND the person
     // becomes a cold-start candidate again.
@@ -579,5 +585,83 @@ test("concurrency: racing merge vs reject — exactly one wins; registry, journa
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+// ── LIFO unmerge: the whole-registry inverse snapshot must never roll back later merges ────────────
+
+test("unmerge is LIFO-only: merge A, merge B, unmerge A → error; unmerge B then A → works", () => {
+  const root = ws();
+  try {
+    const history = seedHistory(root);
+    const people = generateSuggestions(root, history).filter((s) => s.kind === "person");
+    const a = people.find((s) => s.proposed_entry.ids.includes("anna@client.com"));
+    const b = people.find((s) => s.proposed_entry.ids.includes("ben@client.com"));
+    assert.ok(a && b, "two distinct person suggestions");
+
+    mergeSuggestion(root, a);
+    mergeSuggestion(root, b);
+    const withBoth = readFileSync(seedRegistryPath(root), "utf8");
+    assert.match(withBoth, /ben@client\.com/, "B is in the registry after both merges");
+
+    // Out-of-order unmerge would restore A's snapshot (which predates B) and silently revert B.
+    assert.throws(
+      () => unmergeSuggestion(root, a.id),
+      (e) => e.name === "SeedValidationError" && /LIFO/.test(e.message) && e.message.includes(b.id),
+      "unmerging A while B is un-reversed must refuse with a clear LIFO error"
+    );
+    assert.equal(
+      readFileSync(seedRegistryPath(root), "utf8"),
+      withBoth,
+      "a refused unmerge changes nothing"
+    );
+
+    // Stack order works: unmerge B, then A — back to no registry (neither existed before).
+    unmergeSuggestion(root, b.id);
+    assert.doesNotMatch(
+      readFileSync(seedRegistryPath(root), "utf8"),
+      /ben@client\.com/,
+      "B reversed"
+    );
+    unmergeSuggestion(root, a.id);
+    assert.equal(existsSync(seedRegistryPath(root)), false, "A reversed — registry back to absent");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── merged person's sibling suggestions stay mergeable (no orphaning) ──────────────────────────────
+
+test("merge person, then merge their relationship-tier suggestion → works; counts stay correct", () => {
+  const root = ws();
+  try {
+    const history = seedHistory(root);
+    const person = generateSuggestions(root, history).find(
+      (s) => s.kind === "person" && s.proposed_entry.ids.includes("anna@client.com")
+    );
+    mergeSuggestion(root, person);
+
+    // The tier suggestion must still be generated for the now-known person, still `proposed`.
+    const tier = readSuggestions(root, history).find(
+      (s) => s.kind === "relationship-tier" && s.proposed_entry.ids.includes("anna@client.com")
+    );
+    assert.ok(tier, "the merged person's tier suggestion is still generated");
+    assert.equal(tier.status, "proposed");
+
+    // …and it merges: the registry person now carries the banded tier.
+    const r = mergeSuggestion(root, tier);
+    assert.equal(r.status, "merged");
+    const registry = JSON.parse(readFileSync(seedRegistryPath(root), "utf8"));
+    const entry = registry.people.find((p) => p.ids.includes("anna@client.com"));
+    assert.equal(entry.tier, tier.proposed_entry.tier, "the tier landed on the registry person");
+
+    // Review counts fold from the journal overlay: person + tier merged, nothing double-counted.
+    const statuses = foldSeedStatus(readSeedJournal(root));
+    assert.equal(statuses.get(person.id), "merged");
+    assert.equal(statuses.get(tier.id), "merged");
+    const listed = readSuggestions(root, history);
+    assert.equal(listed.filter((s) => s.status === "merged").length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
