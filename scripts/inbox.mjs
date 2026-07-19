@@ -112,7 +112,9 @@ function isTimeoutError(e) {
  * A real gog-backed outbox send client (I-11). It honors the `OutboxSendClient` contract:
  *   • `querySent` is RECONCILE-FIRST + FAIL-CLOSED: it searches Sent for the stable body marker; on
  *     ANY exec/parse error it throws `OutboxReconcileError` (never returns `{found:false}` on error,
- *     which would risk a duplicate send). Robust to subject edits (marker lives in the body).
+ *     which would risk a duplicate send). Robust to subject edits (marker lives in the body). gog's
+ *     search returns THREADS, so a reconcile-found command carries a `thread_id` only — no message id
+ *     is fabricated from a thread id.
  *   • `send` sends EXACTLY the checked bytes: it parses `exact_outbound_bytes` via the loop's
  *     `parseOutboundMessage` and passes those recipients/subject/body to `gog gmail send` — no
  *     separate message object can diverge from what `checkPreSend` validated.
@@ -147,7 +149,11 @@ export function createGogSendClient(loop, { account, commandId, runGog = default
         throw new loop.OutboxReconcileError(`gog Sent search returned non-JSON: ${e.message}`);
       }
       if (Array.isArray(arr) && arr.length > 0) {
-        return { found: true, message_id: arr[0].id, thread_id: arr[0].threadId || arr[0].id };
+        // `gog gmail search` returns THREAD objects — `id` is a THREAD id, not a message id.
+        // Fetching the real message id would take a second `gog gmail thread get` round-trip, so
+        // journal honestly: thread id only, and NO fabricated `message_id` (a reconciled command
+        // keeps `native_message_id` null and carries `native_thread_id`).
+        return { found: true, thread_id: arr[0].threadId || arr[0].id };
       }
       return { found: false };
     },
@@ -424,7 +430,12 @@ export async function cmdInbox(repo, cfg, args) {
       return;
     }
     for (const r of rows) {
-      const idShort = r.native_message_id ? c.dim(` ${r.native_message_id}`) : "";
+      // A reconciled command may hold only a thread id (gog's Sent search returns threads).
+      const idShort = r.native_message_id
+        ? c.dim(` ${r.native_message_id}`)
+        : r.native_thread_id
+          ? c.dim(` thread:${r.native_thread_id}`)
+          : "";
       console.log(`  ${r.state.padEnd(16)} ${r.command_id}${idShort}`);
     }
     return;
@@ -455,7 +466,21 @@ export async function cmdInbox(repo, cfg, args) {
     }
 
     // 1) PDP (I-10). The decision + one content-free journal event is the origin-confinement gate.
-    const sink = loop.createMemoryJournalSink();
+    //    A CONFIRMED (real) send journals its `pdp-decision` DURABLY into the same I-02 journal the
+    //    outbox lane writes — keyed by the command id and stamped `lane: "outbox"` like every other
+    //    outbox-lane event — so the audit trail of a real send never lives only in process memory.
+    //    A dry-run stays side-effect-free (in-memory sink).
+    const sink = confirm
+      ? {
+          record(event) {
+            loop.appendInboxEvent(repo, {
+              kind: "pdp-decision",
+              correlation_id: draft.command_id,
+              payload: { lane: "outbox", ...event },
+            });
+          },
+        }
+      : loop.createMemoryJournalSink();
     const decision = loop.decideReply(draft.request, { thread: draft.thread, journal: sink });
     if (decision.verdict !== "allow") {
       const payload = { command_id: draft.command_id, decision };
@@ -547,6 +572,27 @@ export async function cmdInbox(repo, cfg, args) {
         decision,
       });
     } catch (e) {
+      if (e && e.name === "OutboxRetryDeferredError") {
+        // A deferral is NOT a success: the retry is refused inside the eventual-consistency window.
+        // Non-zero like every other non-sent branch of this command, but named distinctly.
+        if (asJson)
+          console.log(
+            JSON.stringify(
+              {
+                ok: false,
+                deferred: true,
+                command_id: draft.command_id,
+                retry_after: e.retryAfter ?? null,
+                detail: e.message,
+              },
+              null,
+              2
+            )
+          );
+        else console.error(c.yellow(`✗ outbox retry deferred: ${e.message}`));
+        process.exitCode = 1;
+        return;
+      }
       die(`outbox send rejected: ${e.message}`);
     }
     const out = {
@@ -561,7 +607,12 @@ export async function cmdInbox(repo, cfg, args) {
       const ok = out.ok ? c.green("✓") : c.red("✗");
       console.log(`${ok} outbox ${cmd.state}  ${c.dim(cmd.command_id)}`);
       if (cmd.native_message_id) console.log(c.dim(`  gmail message id: ${cmd.native_message_id}`));
+      else if (cmd.native_thread_id)
+        console.log(c.dim(`  gmail thread id: ${cmd.native_thread_id}`));
     }
+    // A confirmed send that did not verifiably land (`failed` / `outcome_unknown`) exits non-zero,
+    // consistent with every other failure branch of this command.
+    if (!out.ok) process.exitCode = 1;
     return;
   }
 

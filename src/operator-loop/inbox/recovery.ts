@@ -147,11 +147,13 @@ export function overdueView(input: OverdueInput): OverdueItem[] {
     const createdMs = Date.parse(ask.createdAt);
     const deliveryMs = state?.last_delivery_at ? Date.parse(state.last_delivery_at) : NaN;
     // Reference = most recent delivery attempt if we have one, else the ask's creation time.
+    // An unparseable timestamp is treated as OLDEST (epoch → immediately overdue): falling back to
+    // "now" would reset on every evaluation and hide the ask forever, breaking the fail-safe.
     const refMs = Number.isFinite(deliveryMs)
       ? (deliveryMs as number)
       : Number.isFinite(createdMs)
         ? createdMs
-        : now; // an unparseable timestamp is treated as "just now" (not yet overdue), never dropped
+        : 0;
     const age = now - refMs;
     if (age <= windowMs) continue;
 
