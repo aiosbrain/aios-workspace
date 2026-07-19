@@ -67,7 +67,18 @@ export function desktopNotify(n: InboxNotification): void {
     if (Notification.permission === "granted") {
       new Notification(n.title, { body: n.body, tag: n.deepLink });
     } else if (Notification.permission === "default") {
-      void Notification.requestPermission();
+      // The triggering ask is already in the caller's seen-set by the time permission resolves, so it
+      // would otherwise NEVER banner. Fire it here once the user grants — content-free, so replaying
+      // the payload after the prompt is safe.
+      void Notification.requestPermission()
+        .then((permission) => {
+          if (permission === "granted") {
+            new Notification(n.title, { body: n.body, tag: n.deepLink });
+          }
+        })
+        .catch(() => {
+          /* denied/unavailable — stay silent */
+        });
     }
   } catch {
     /* notifications are additive — never let a banner failure break the queue */

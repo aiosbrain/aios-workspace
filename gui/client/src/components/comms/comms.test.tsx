@@ -17,6 +17,7 @@ import { postAskArchive, postAskReply, postDecision } from "./api";
 import { ageLabel } from "./presenters";
 import {
   contentFreeNotification,
+  desktopNotify,
   notifyNewBlockingAsks,
   CONTENT_FREE_DEEPLINK_RE,
   type InboxNotification,
@@ -146,6 +147,23 @@ describe("CommsQueue", () => {
     expect(ageLabel("2099-01-01T00:00:00.000Z", new Date("2026-07-16T00:00:00.000Z"))).toBe(
       "just now"
     );
+  });
+
+  test("a fetch error is rendered in the header while the last-good queue stays visible", () => {
+    const view = fixtureView();
+    const html = renderToStaticMarkup(
+      <CommsQueue
+        view={view}
+        selectedId={null}
+        onSelect={() => {}}
+        error="GET /api/inbox failed: 503"
+      />
+    );
+    expect(html).toContain("Refresh failed — showing the last good read.");
+    expect(html).toContain("GET /api/inbox failed: 503");
+    expect(html).toContain('role="status"');
+    // The queue itself still renders from the last good read.
+    expect(html).toContain("Approve deploy of feat/inbox-adapter");
   });
 });
 
@@ -366,5 +384,54 @@ describe("content-free notifications", () => {
     fire.mockClear();
     notifyNewBlockingAsks(new Set(["ask-blocker"]), view, fire);
     expect(fire).not.toHaveBeenCalled();
+  });
+
+  test("permission 'default': the TRIGGERING ask still banners once permission is granted", async () => {
+    const created: { title: string; options?: NotificationOptions }[] = [];
+    class FakeNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission = vi.fn(async () => {
+        FakeNotification.permission = "granted";
+        return "granted" as NotificationPermission;
+      });
+      constructor(title: string, options?: NotificationOptions) {
+        created.push({ title, options });
+      }
+    }
+    vi.stubGlobal("Notification", FakeNotification);
+    try {
+      const n = contentFreeNotification(
+        agentAsk("ask-blocker", { title: "t", why: "open blocker", protected: true })
+      );
+      desktopNotify(n);
+      expect(FakeNotification.requestPermission).toHaveBeenCalledOnce();
+      // The seen-set already contains the ask by now — the grant callback must fire it itself.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(created).toHaveLength(1);
+      expect(created[0].title).toBe("AIOS · needs you");
+      expect(created[0].options?.tag).toBe(n.deepLink);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("permission 'denied': no banner and no permission re-prompt", async () => {
+    const created: string[] = [];
+    class FakeNotification {
+      static permission: NotificationPermission = "denied";
+      static requestPermission = vi.fn(async () => "denied" as NotificationPermission);
+      constructor(title: string) {
+        created.push(title);
+      }
+    }
+    vi.stubGlobal("Notification", FakeNotification);
+    try {
+      desktopNotify(contentFreeNotification(agentAsk("a1", { title: "t", why: "w" })));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(FakeNotification.requestPermission).not.toHaveBeenCalled();
+      expect(created).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

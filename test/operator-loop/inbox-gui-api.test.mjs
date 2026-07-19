@@ -19,7 +19,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getInboxView, getInboxDetail, decideInbox } from "../../gui/server/inbox-api.mjs";
+import {
+  getInboxView,
+  getInboxDetail,
+  decideInbox,
+  shouldReconcileClaudeAsks,
+  invalidateReconcileThrottle,
+} from "../../gui/server/inbox-api.mjs";
 import {
   issueHandle,
   capabilityTargets,
@@ -142,6 +148,40 @@ test("GET /api/inbox/:id returns the matching unified row for detail", async () 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("GET /api/inbox/:id threads ingestion freshness exactly like the list endpoint", async () => {
+  const dir = ws();
+  try {
+    const id = addAsk(dir, "idle", "blocker", "with freshness");
+    const refresh = {
+      status: "ready",
+      last_attempt_at: "2026-07-17T09:04:59.000Z",
+      last_success_at: "2026-07-17T09:05:00.000Z",
+      error: null,
+      sources: { gmail: "ready", calendar: "ready", telegram: "outbound_only" },
+    };
+    const detail = await getInboxDetail(dir, id, { refresh });
+    assert.deepEqual(detail.freshness, refresh, "detail carries the refresher snapshot");
+    // The contract declares freshness non-optional — without a refresher it is an explicit null.
+    const bare = await getInboxDetail(dir, id);
+    assert.equal(bare.freshness, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile throttle — at most once per 30s, and an ask decision bypasses the wait", () => {
+  invalidateReconcileThrottle();
+  const t0 = 1_000_000_000;
+  assert.equal(shouldReconcileClaudeAsks(t0), true, "first read reconciles");
+  assert.equal(shouldReconcileClaudeAsks(t0 + 10_000), false, "polls inside the window skip");
+  assert.equal(shouldReconcileClaudeAsks(t0 + 29_999), false, "still inside the window");
+  assert.equal(shouldReconcileClaudeAsks(t0 + 30_000), true, "window elapsed → reconcile again");
+  // A posted decision/reply/archive clears the throttle so the next read is immediate.
+  invalidateReconcileThrottle();
+  assert.equal(shouldReconcileClaudeAsks(t0 + 30_001), true, "mutation bypasses the throttle");
+  invalidateReconcileThrottle();
 });
 
 test("GET /api/inbox/:id surfaces a pending capability as a scoped-confirm approval", async () => {

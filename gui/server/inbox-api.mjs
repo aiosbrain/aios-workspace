@@ -60,11 +60,30 @@ function projectionOf(rec) {
   };
 }
 
+// Reconcile does a synchronous 256KB transcript tail-read per open hook-ask, and BOTH polling routes
+// (queue + detail) fold through here — unthrottled, every 15s poll pays that cost twice. Transcript
+// evidence only ages in, so once per interval is plenty; an ask mutation (reply/archive/decision)
+// clears the throttle so the very next read reflects the user's action immediately.
+const RECONCILE_INTERVAL_MS = 30_000;
+let lastReconcileAt = 0;
+
+/** Force the next inbox read to reconcile immediately (called after any ask/approval mutation). */
+export function invalidateReconcileThrottle() {
+  lastReconcileAt = 0;
+}
+
+/** Gate + record one reconcile pass. `now` is injectable for tests. */
+export function shouldReconcileClaudeAsks(now = Date.now()) {
+  if (now - lastReconcileAt < RECONCILE_INTERVAL_MS) return false;
+  lastReconcileAt = now;
+  return true;
+}
+
 /**
  * The unified read-only queue. Ranking comes from the same compiled model as the CLI; the GUI contract
  * deliberately replaces occurrence-based `staleness` with connector-ingestion `freshness`.
  */
-export async function getInboxView(repo, { raw = false, refresh = null } = {}) {
+export async function getInboxView(repo, { raw = false, refresh = null, now = Date.now() } = {}) {
   const loop = await loadLoop();
   if (!loop || typeof loop.buildInbox !== "function") {
     const err = new Error("operator-loop is not built — run: npm run build:loop");
@@ -72,8 +91,8 @@ export async function getInboxView(repo, { raw = false, refresh = null } = {}) {
     throw err;
   }
   // Hook delivery is best-effort. A later ordinary user turn in the bound transcript is hard evidence
-  // that an idle/stop ask is stale, so reconcile before presenting the queue.
-  reconcileClaudeAsks(loop, repo);
+  // that an idle/stop ask is stale, so reconcile (throttled) before presenting the queue.
+  if (shouldReconcileClaudeAsks(now)) reconcileClaudeAsks(loop, repo);
   const view = loop.buildInbox(repo);
   return projectActiveInboxView(view, { raw, refresh, rawOrder: loop.rawOrder });
 }
@@ -103,8 +122,8 @@ export function isActiveInboxItem(item) {
  * `pendingApprovals` are the display projections of any still-pending capability handles the operator
  * could scoped-confirm — the bridge between the read-model queue and the I-03 approval broker.
  */
-export async function getInboxDetail(repo, id) {
-  const view = await getInboxView(repo);
+export async function getInboxDetail(repo, id, { refresh = null } = {}) {
+  const view = await getInboxView(repo, { refresh });
   const item = view.items.find((i) => i.id === id) ?? null;
   const pendingApprovals = readPendingApprovals(repo);
   let agentContext = null;
@@ -133,13 +152,17 @@ export async function getInboxDetail(repo, id) {
 export async function replyInboxAsk(repo, id, payload, deps) {
   const loop = await loadLoop();
   if (!loop) throw Object.assign(new Error("operator-loop is not built"), { statusCode: 503 });
-  return replyToClaudeAsk(loop, repo, id, payload, deps);
+  const result = await replyToClaudeAsk(loop, repo, id, payload, deps);
+  invalidateReconcileThrottle();
+  return result;
 }
 
 export async function archiveInboxAsk(repo, id) {
   const loop = await loadLoop();
   if (!loop) throw Object.assign(new Error("operator-loop is not built"), { statusCode: 503 });
-  return archiveClaudeAsk(loop, repo, id);
+  const result = archiveClaudeAsk(loop, repo, id);
+  invalidateReconcileThrottle();
+  return result;
 }
 
 /** Fold the capability store and project every still-pending, unexpired handle (best-effort). */
@@ -254,6 +277,9 @@ export async function decideInbox(repo, id, payload, session = {}) {
     execute: () => true,
     appendEvent: journal,
   });
+  // The locked consume mutated the approval state; let the next queue/detail read reconcile
+  // immediately so the UI reflects the decision without waiting out the throttle window.
+  invalidateReconcileThrottle();
 
   if (result.kind === "rejected") {
     const status = REJECTION_STATUS[result.reason] ?? 409;
