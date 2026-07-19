@@ -40,7 +40,8 @@ export function CommsView() {
         () => fetchInboxItem(api, id),
         setDetail,
         (e) => {
-          setDetail(null);
+          // Keep the last-good detail on a failed refresh — blanking to the placeholder mid-read
+          // would look like the item vanished. The error surfaces in the queue header instead.
           setError((e as Error).message);
         }
       );
@@ -147,7 +148,7 @@ export function CommsView() {
     <div className="flex h-full min-h-0">
       <div className="flex min-h-0 min-w-0 flex-1">
         {view ? (
-          <CommsQueue view={view} selectedId={selectedId} onSelect={onSelect} />
+          <CommsQueue view={view} selectedId={selectedId} onSelect={onSelect} error={error} />
         ) : (
           <div className="flex w-[348px] shrink-0 items-center justify-center border-r border-border-visible bg-card text-[13px] text-muted-foreground">
             {error ? "Failed to load the queue." : "Loading queue…"}

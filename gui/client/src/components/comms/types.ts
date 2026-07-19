@@ -14,6 +14,7 @@ export interface Ask {
   severity?: string;
   status?: string;
   title?: string;
+  body?: string;
   source?: string | null;
   tier?: string;
   createdAt?: string;

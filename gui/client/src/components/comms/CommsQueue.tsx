@@ -104,9 +104,11 @@ export interface CommsQueueProps {
   view: InboxView;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** A fetch error while the last-good view stays rendered (poll or detail refresh failure). */
+  error?: string | null;
 }
 
-export function CommsQueue({ view, selectedId, onSelect }: CommsQueueProps) {
+export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProps) {
   const protectedItems = view.items.filter((item) => item.protected);
   const rest = view.items.filter((item) => !item.protected);
   const freshness = refreshLabel(view);
@@ -115,6 +117,11 @@ export function CommsQueue({ view, selectedId, onSelect }: CommsQueueProps) {
     <section className="flex h-full min-h-0 w-[348px] shrink-0 flex-col border-r border-border-visible bg-card max-lg:w-[316px]">
       <header className="border-b border-border-visible px-3 py-3">
         <h1 className="text-[15px] font-semibold tracking-tight text-foreground">Inbox</h1>
+        {error && (
+          <p className="mt-0.5 text-[11px] text-[var(--aios-amber)]" role="status">
+            Refresh failed — showing the last good read. {error}
+          </p>
+        )}
         {freshness && (
           <p
             className={cn(

@@ -697,7 +697,9 @@ const server = http.createServer((req, res) => {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    getInboxDetail(repo, decodeURIComponent(inboxDetail[1]))
+    getInboxDetail(repo, decodeURIComponent(inboxDetail[1]), {
+      refresh: inboxRefresher.snapshot(),
+    })
       .then((detail) => {
         res.writeHead(detail.item ? 200 : 404, { "Content-Type": "application/json" });
         res.end(JSON.stringify(detail));

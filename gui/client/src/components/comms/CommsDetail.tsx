@@ -43,7 +43,7 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
   const summary =
     item.origin === "agent-event"
       ? detail.agentContext?.summary || item.ask?.body || "Claude needs your input."
-      : (item.observation?.snippet as string) || "No preview available.";
+      : item.observation?.snippet || "No preview available.";
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
