@@ -5,19 +5,14 @@ made public later. Before flipping it public, complete every item below.
 
 ## Must do before going public
 
-- [ ] **Remove `docs/strategy/`** — internal studio strategy + competitive research,
-      reviewer-only. Move it to a private location; it must not ship publicly.
-- [ ] **Fix the strategy back-links left in public docs.** The PRD header
-      (`docs/prd-team-brain-mcp-connector.md`) hard-links `strategy/team-brain-access-strategy.md`,
-      and `docs/architecture.md` names it inside a `maintainer-only` HTML comment; `docs/roadmap.md`
-      references the `strategy/` folder in prose. After removing `docs/strategy/`, repoint the PRD
-      header at the public substitute (`docs/architecture.md` § "Access surfaces") or strip it, and
-      delete the architecture comment + roadmap mention. Confirm none remain:
-      `grep -rn "strategy/team-brain-access-strategy" docs/` (excluding `docs/strategy/`) returns
-      nothing. (`docs/integrations.md` already links only the public substitute + PRD — no fix needed.)
-- [ ] **Re-run the leak gate without the strategy exemption** to confirm the public
-      surface is clean: `scripts/leak-gate.sh .` (after removing `docs/strategy/`,
-      drop the `--exclude-dir=strategy` line so nothing is silently skipped).
+- [x] **Remove `docs/strategy/`** — done (PR #336): the internal studio strategy +
+      competitive research no longer lives in this repo.
+- [x] **Fix the strategy back-links left in public docs.** Done with the removal
+      (PR #336): the PRD header, the `docs/architecture.md` maintainer-only comment, and
+      the `docs/roadmap.md` prose mention are gone.
+      `grep -rn "strategy/team-brain-access-strategy" docs/` returns nothing.
+- [x] **Re-run the leak gate without the strategy exemption** — done: `scripts/leak-gate.sh .`
+      has no `--exclude-dir=strategy` line, so the full public surface is scanned.
 - [ ] **Confirm the brand decision** — reconcile the `LICENSE` copyright holder with
       the studio brand used in the (removed) strategy docs if the public-facing brand
       differs from the copyright holder.

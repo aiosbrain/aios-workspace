@@ -23,6 +23,10 @@ import {
   mergeCronBlock,
   applyCronInstall,
   applyCronUninstall,
+  pinnedRuntimeFromPlist,
+  pinnedRuntimesFromCrontab,
+  checkPinnedRuntimes,
+  WIN32_UNSUPPORTED_MESSAGE,
 } from "../scripts/loop-install.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,9 +48,27 @@ test("detectScheduler: linux -> cron", () => {
   assert.equal(detectScheduler("linux"), "cron");
 });
 
-test("detectScheduler: anything else (win32, freebsd, ...) -> cron", () => {
-  assert.equal(detectScheduler("win32"), "cron");
+test("detectScheduler: other unixes (freebsd, ...) -> cron", () => {
   assert.equal(detectScheduler("freebsd"), "cron");
+});
+
+test("detectScheduler: native win32 is refused with WSL guidance (AIO-451)", () => {
+  assert.throws(() => detectScheduler("win32"), /WSL/);
+  assert.throws(() => detectScheduler("win32"), /AIO-451/);
+  assert.match(WIN32_UNSUPPORTED_MESSAGE, /docs\/loop-install\.md/);
+});
+
+test("buildInstallPlan: native win32 is refused even with a --scheduler override", () => {
+  const dir = tmpWorkspace();
+  try {
+    assert.throws(() => buildInstallPlan({ repo: dir, platform: "win32" }), /WSL/);
+    assert.throws(
+      () => buildInstallPlan({ repo: dir, platform: "win32", scheduler: "cron" }),
+      /AIO-451/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // CLI invocation resolution pins Node for non-interactive scheduler environments.
@@ -331,6 +353,128 @@ test("applyCronInstall + applyCronUninstall: idempotent install (stubbed crontab
     assert.match(stored, /pre-existing line/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── pinned-runtime health (status surfaces a vanished install-time Node) ────────────────────
+
+test("pinnedRuntimeFromPlist: extracts the pinned Node from the /bin/sh -c command line", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "darwin",
+      home,
+      execPath: "/nvm/node-v22/bin/node",
+    });
+    for (const r of renderLaunchdPlan(plan)) {
+      assert.equal(pinnedRuntimeFromPlist(r.content), "/nvm/node-v22/bin/node");
+    }
+    assert.equal(pinnedRuntimeFromPlist("<plist></plist>"), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("pinnedRuntimesFromCrontab: extracts pinned runtimes only from this slug's block", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "linux",
+      execPath: "/nvm/node-v20/bin/node",
+    });
+    const merged = mergeCronBlock(
+      "0 0 * * * /usr/bin/backup.sh\n",
+      buildCronBlock(plan),
+      plan.slug
+    );
+    assert.deepEqual(pinnedRuntimesFromCrontab(merged, plan.slug), ["/nvm/node-v20/bin/node"]);
+    assert.deepEqual(pinnedRuntimesFromCrontab(merged, "other-slug"), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkPinnedRuntimes: launchd — flags a pinned runtime that no longer exists", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const gone = "/nvm/versions/node/v20.0.0/bin/node";
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home, execPath: gone });
+    applyLaunchdInstall(plan, { exec: () => "", load: false });
+    assert.deepEqual(checkPinnedRuntimes(plan), [gone]);
+
+    // A runtime that does exist (this test's own Node) reports clean.
+    const healthy = buildInstallPlan({
+      repo: dir,
+      platform: "darwin",
+      home,
+      execPath: process.execPath,
+    });
+    applyLaunchdInstall(healthy, { exec: () => "", load: false });
+    assert.deepEqual(checkPinnedRuntimes(healthy), []);
+
+    // No plists installed at all → nothing to flag.
+    applyLaunchdUninstall(healthy, { exec: () => "" });
+    assert.deepEqual(checkPinnedRuntimes(healthy), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("checkPinnedRuntimes: cron — flags a vanished runtime from the crontab block", () => {
+  const dir = tmpWorkspace();
+  try {
+    const gone = "/nvm/versions/node/v18.0.0/bin/node";
+    const plan = buildInstallPlan({ repo: dir, platform: "linux", execPath: gone });
+    const crontab = mergeCronBlock("", buildCronBlock(plan), plan.slug);
+    const stubExec = (cmd, args) => {
+      assert.equal(cmd, "crontab");
+      assert.deepEqual(args, ["-l"]);
+      return crontab;
+    };
+    assert.deepEqual(checkPinnedRuntimes(plan, { exec: stubExec }), [gone]);
+
+    const healthy = buildInstallPlan({ repo: dir, platform: "linux", execPath: process.execPath });
+    const healthyTab = mergeCronBlock("", buildCronBlock(healthy), healthy.slug);
+    assert.deepEqual(checkPinnedRuntimes(healthy, { exec: () => healthyTab }), []);
+
+    // No crontab at all (crontab -l fails) → nothing to flag.
+    assert.deepEqual(
+      checkPinnedRuntimes(plan, {
+        exec: () => {
+          throw new Error("no crontab for user");
+        },
+      }),
+      []
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI --status prints the runtime-missing nudge when the pinned Node is gone", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const gone = "/nvm/versions/node/v19.9.9/bin/node";
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home, execPath: gone });
+    applyLaunchdInstall(plan, { exec: () => "", load: false });
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "loop", "install", "--status", "--scheduler", "launchd"],
+      { cwd: dir, encoding: "utf8", env: { ...process.env, HOME: home } }
+    );
+    assert.equal(res.status, 0);
+    assert.match(res.stdout, /runtime missing/);
+    assert.match(res.stdout, /re-run `aios loop install`/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

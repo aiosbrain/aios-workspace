@@ -52,8 +52,8 @@ EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=.venv
 # skill-scan-fixtures/ — DELIBERATELY-malicious scanner test inputs; never shipped.
 # target/ — Rust/Tauri build output; gitignored. evidence/ — gitignored UX harness output.
 # .env* — local-only config (gitignored).
-# (docs/strategy/ is NO LONGER excluded — this is an open project; strategy ships and is
-#  scanned like everything else.)
+# (docs/strategy/ was deleted from the repo entirely (PR #336) — nothing strategy-related is
+#  excluded; the full docs tree is scanned like everything else.)
 
 fail=0
 hit() { echo "LEAK: $1"; echo "$2" | sed 's/^/    /'; fail=1; }
