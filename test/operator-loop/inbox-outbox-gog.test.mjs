@@ -105,11 +105,11 @@ test("wired through the outbox, a search outage fails closed: outcome_unknown, Z
 test("querySent finds the message by its stable body marker despite a subject edit", () => {
   const commandId = "cmd-subj-edit";
   const marker = commandMarker(commandId);
-  // The fake Sent folder holds the message under an EDITED subject, but the body marker is intact.
+  // The fake Sent folder holds the THREAD under an EDITED subject, but the body marker is intact.
+  // Real `gog gmail search` returns thread objects — `id` is a thread id (no message id exists).
   const sentFolder = [
     {
-      id: "mid-9",
-      threadId: "tid-9",
+      id: "tid-9",
       subject: "TOTALLY DIFFERENT edited subject",
       labels: ["SENT"],
     },
@@ -126,8 +126,9 @@ test("querySent finds the message by its stable body marker despite a subject ed
   });
   const q = client.querySent();
   assert.equal(q.found, true);
-  assert.equal(q.message_id, "mid-9");
   assert.equal(q.thread_id, "tid-9");
+  // Honest naming: a thread id is never journaled as a message id.
+  assert.equal(q.message_id, undefined);
 });
 
 test("reconcile-first with the body marker prevents a duplicate after a timeout", () => {
@@ -144,9 +145,8 @@ test("reconcile-first with the body marker prevents a duplicate after a timeout"
     commandId,
     runGog(args) {
       if (args[1] === "search") {
-        return JSON.stringify(
-          landed ? [{ id: "mid-dup", threadId: "tid-dup", labels: ["SENT"] }] : []
-        );
+        // Thread objects, as real gog returns them — `id` is the thread id.
+        return JSON.stringify(landed ? [{ id: "tid-dup", labels: ["SENT"] }] : []);
       }
       // send: it "lands" at Gmail but times out on our side.
       sends += 1;
@@ -163,7 +163,10 @@ test("reconcile-first with the body marker prevents a duplicate after a timeout"
   assert.equal(sends, 1);
   const c2 = ob.attempt(commandId); // reconcile-first finds the landed message via marker
   assert.equal(c2.state, "reconciled");
-  assert.equal(c2.native_message_id, "mid-dup");
+  // gog's Sent search returns threads: the reconcile carries the thread id, never a fabricated
+  // message id (native_message_id stays unset).
+  assert.equal(c2.native_thread_id, "tid-dup");
+  assert.equal(c2.native_message_id, undefined);
   assert.equal(sends, 1, "reconcile-first via the stable marker prevents a duplicate send");
 });
 

@@ -438,6 +438,63 @@ test("overdueView — acked asks are excluded, resolved asks are excluded, most-
   );
 });
 
+test("overdueView — an unparseable createdAt is treated as OLDEST (immediately overdue), never hidden", () => {
+  // Fail-safe regression: falling back to `now` for a bad timestamp would reset the reference time on
+  // EVERY evaluation, so the ask could never age past the window — hidden from recovery forever.
+  const asks = [
+    {
+      id: "bad-ts",
+      title: "t",
+      severity: "blocker",
+      source: "s",
+      status: "open",
+      createdAt: "not-a-timestamp",
+    },
+    {
+      id: "fresh",
+      title: "t",
+      severity: "blocker",
+      source: "s",
+      status: "open",
+      createdAt: iso(minsAgo(1)), // inside the window → correctly NOT overdue
+    },
+  ];
+  const rows = overdueView({ asks, events: [], now: NOW, escalationWindowMs: WINDOW_MS });
+  assert.deepEqual(
+    rows.map((r) => r.ask_id),
+    ["bad-ts"],
+    "the bad-timestamp ask surfaces immediately; the fresh ask stays out"
+  );
+  assert.ok(rows[0].overdue_by_ms > 0, "overdue_by_ms is positive (epoch reference)");
+  // A later evaluation still surfaces it — the reference time must not track `now`.
+  const later = overdueView({
+    asks,
+    events: [],
+    now: new Date(NOW.getTime() + 60 * 60_000),
+    escalationWindowMs: WINDOW_MS,
+  });
+  assert.ok(
+    later.some((r) => r.ask_id === "bad-ts"),
+    "the ask is never dropped on subsequent evaluations"
+  );
+  // A parseable delivery attempt supersedes the broken createdAt as the reference time.
+  const delivered = overdueView({
+    asks: [asks[0]],
+    events: [
+      {
+        seq: 1,
+        kind: "delivery-attempted",
+        correlation_id: "bad-ts",
+        ts: iso(minsAgo(1)),
+        payload: {},
+      },
+    ],
+    now: NOW,
+    escalationWindowMs: WINDOW_MS,
+  });
+  assert.deepEqual(delivered, [], "a recent delivery attempt takes over as the reference time");
+});
+
 test("`aios inbox --overdue` exits 0, prints one line per overdue ask; --json round-trips deep-equal", async () => {
   const { cmdInbox } = await import(path.join(HERE, "..", "..", "scripts", "inbox.mjs"));
   const root = ws();
