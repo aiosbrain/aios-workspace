@@ -610,13 +610,19 @@ function buildResult({
     : false;
   const sourceBlocks = sourceClean != null && sourceClean !== "clean";
   const vendorBlocks = vs != null && !vs.safe;
+  // mode === "error" is cmdUpdate's outer catch converting a thrown UpdateError into a
+  // result — none of the other three signals were ever computed, so they default to
+  // non-blocking and would otherwise leave applyAllowed silently true after a failed
+  // check/preview. When we couldn't even evaluate whether it's safe, never default to
+  // "allowed".
+  const errorBlocks = mode === "error";
   return {
     exitStatus,
     mode,
     remoteState,
     sourceClean,
     vendorSafety: vs,
-    applyAllowed: !remoteBlocks && !sourceBlocks && !vendorBlocks,
+    applyAllowed: !remoteBlocks && !sourceBlocks && !vendorBlocks && !errorBlocks,
     applied,
     changedCount,
     reasons,

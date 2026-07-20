@@ -53,6 +53,15 @@ function fakeNpm(root) {
   return { ranFile, binPath: `${bin}${path.delimiter}${process.env.PATH}` };
 }
 
+/** Put a fake `npm` first on PATH that ALWAYS fails (both `ci` and its `install` fallback). */
+function failingNpm(root) {
+  const bin = path.join(root, "fakebin-fail");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nexit 1\n`);
+  chmodSync(path.join(bin, "npm"), 0o755);
+  return `${bin}${path.delimiter}${process.env.PATH}`;
+}
+
 // ---- High #1: npm ci must never follow a symlinked node_modules -------------
 
 test("apply skips npm through a SYMLINKED node_modules (never erases the shared target)", () => {
@@ -670,3 +679,67 @@ test("a source mutated AFTER the pinned snapshot is taken does not affect what g
 // scripts/aios.mjs) to pass before a snapshot is ever pinned FROM that same validated
 // checkout, so the guard exists purely as defense-in-depth for a state that can't be
 // reached via a normal invocation.
+
+// ---- Round 3 (Bugbot follow-up): buildResult's "error" mode must block, snapshots must
+// never leak on a failure downstream of pinning ------------------------------------------
+
+test("an UpdateError result (mode: error) always reports applyAllowed: false", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-error-blocks-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    // A bad --from is the simplest reliable way to make cmdUpdate hit its own outer
+    // UpdateError catch (resolveSource throws before any of the other signals exist).
+    const script = `
+      import { cmdUpdate } from ${JSON.stringify(UPDATE_MODULE)};
+      const r = await cmdUpdate(${JSON.stringify(workspace)}, {}, ["--check", "--from", "/does/not/exist"]);
+      console.log("RESULT_JSON:" + JSON.stringify(r));
+    `;
+    const res = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+    });
+    const line = res.stdout.split("\n").find((l) => l.startsWith("RESULT_JSON:"));
+    const result = JSON.parse(line.slice("RESULT_JSON:".length));
+    assert.equal(result.mode, "error");
+    assert.equal(result.exitStatus, 1);
+    assert.equal(
+      result.applyAllowed,
+      false,
+      "an error result must never default to applyAllowed: true — onboarding relies on this to suppress the apply confirmation"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a pinned snapshot is not leaked when npm fails during dependency reconciliation", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-npm-leak-"));
+  const prevPath = process.env.PATH;
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
+    });
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true }); // real dir, not symlinked
+    process.env.PATH = failingNpm(root);
+
+    let threw = null;
+    try {
+      pullToolkitCheckout(clone, {}, NOOP_IO); // throws — nothing to clean up on the success path
+    } catch (e) {
+      threw = e;
+    }
+    assert.ok(threw, "npm failure must surface as a thrown UpdateError, not a silent success");
+    assert.match(threw.message, /reconciling toolkit dependencies failed/);
+    // The critical assertion: no dangling worktree registration left on the source repo.
+    const worktrees = git(clone, "worktree", "list");
+    assert.equal(
+      worktrees.split("\n").length,
+      1,
+      `snapshot worktree must be cleaned up on npm failure, not leaked — got:\n${worktrees}`
+    );
+  } finally {
+    process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

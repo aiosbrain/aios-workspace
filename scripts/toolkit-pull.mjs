@@ -633,6 +633,18 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   }
 
   let installed = false;
-  if (!noInstall) installed = reconcileDeps(dir, { log, warn });
+  if (!noInstall) {
+    try {
+      installed = reconcileDeps(dir, { log, warn });
+    } catch (e) {
+      // The snapshot is already pinned at this point — an npm failure here must not leak
+      // it (a stale git-worktree registration + orphaned temp dir accumulating across
+      // repeated failures).
+      removePinnedSnapshot(dir, snapshotDir);
+      throw new UpdateError(
+        `reconciling toolkit dependencies failed (${String(e.message || e).trim()}).`
+      );
+    }
+  }
   return ret({ pulled, installed, sourceClean, srcHead, snapshotDir });
 }
