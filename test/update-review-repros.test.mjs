@@ -1,0 +1,343 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  symlinkSync,
+  chmodSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
+
+import { pullToolkitCheckout } from "../scripts/toolkit-pull.mjs";
+import { conflictMarkerPaths, shouldReExecVendor } from "../scripts/update.mjs";
+import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
+
+// Regressions for the eight adversarial repros in code-review-pr343.md. Each rebuilds the
+// reviewer's real-repo scenario and asserts the safety property now holds.
+
+const CLI = fileURLToPath(new URL("../scripts/aios.mjs", import.meta.url));
+const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+const NOOP_IO = { log: () => {}, warn: () => {} };
+
+function initRepo(dir) {
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "t@t.t");
+  git(dir, "config", "user.name", "t");
+}
+
+/** A bare-bones toolkit-shaped origin + a tracking clone of it. */
+function originAndToolkitClone(root, { extraOriginFiles } = {}) {
+  const origin = path.join(root, "origin");
+  const clone = path.join(root, "toolkit");
+  mkdirSync(path.join(origin, "scaffold"), { recursive: true });
+  mkdirSync(path.join(origin, "scripts"), { recursive: true });
+  initRepo(origin);
+  writeFileSync(path.join(origin, "scaffold", ".keep"), "");
+  writeFileSync(path.join(origin, "scripts", "aios.mjs"), "// stub entry\n");
+  for (const [rel, body] of Object.entries(extraOriginFiles || {})) {
+    mkdirSync(path.dirname(path.join(origin, rel)), { recursive: true });
+    writeFileSync(path.join(origin, rel), body);
+  }
+  git(origin, "add", "-A");
+  git(origin, "commit", "-qm", "init");
+  execFileSync("git", ["clone", "-q", origin, clone]);
+  git(clone, "config", "user.email", "t@t.t");
+  git(clone, "config", "user.name", "t");
+  return { origin, clone };
+}
+
+/** Put a fake `npm` first on PATH that records each call and exits 0. Returns { ranFile, env }. */
+function fakeNpm(root) {
+  const bin = path.join(root, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  const ranFile = path.join(root, "npm-ran.log");
+  writeFileSync(
+    path.join(bin, "npm"),
+    `#!/bin/sh\necho "$@" >> ${JSON.stringify(ranFile)}\nexit 0\n`
+  );
+  chmodSync(path.join(bin, "npm"), 0o755);
+  return { ranFile, binPath: `${bin}${path.delimiter}${process.env.PATH}` };
+}
+
+// ---- High #1: npm ci must never follow a symlinked node_modules -------------
+
+test("apply skips npm through a SYMLINKED node_modules (never erases the shared target)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-symlink-"));
+  const prevPath = process.env.PATH;
+  try {
+    const { clone } = originAndToolkitClone(root);
+    // package-lock present so, absent the symlink guard, a reinstall would fire.
+    writeFileSync(path.join(clone, "package-lock.json"), '{"lockfileVersion":3}\n');
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "lock");
+    // Shared install target with a sentinel, node_modules symlinked to it (as worktrees do).
+    const shared = path.join(root, "shared-node-modules");
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(path.join(shared, "SENTINEL"), "precious\n");
+    symlinkSync(shared, path.join(clone, "node_modules"));
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    pullToolkitCheckout(clone, {}, NOOP_IO); // apply mode, behind === 0 → reconcile path
+
+    assert.ok(!existsSync(ranFile), "npm must NOT be invoked through the symlink");
+    assert.ok(existsSync(path.join(clone, "node_modules")), "the symlink survives");
+    assert.ok(existsSync(path.join(shared, "SENTINEL")), "the shared target is untouched");
+  } finally {
+    process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- High #2: an already-current alternate --from still hands off ------------
+
+test("apply --from an already-current OTHER checkout runs THAT checkout's CLI (not our stale modules)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-altfrom-"));
+  try {
+    const { clone } = originAndToolkitClone(root); // 0 commits behind — pulled would be 0
+    const marker = path.join(root, "B-RAN");
+    // Give B's CLI observable behavior: writing a marker when it runs the vendor phase.
+    writeFileSync(
+      path.join(clone, "scripts", "aios.mjs"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "B\\n");\n`
+    );
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const res = spawnSync(process.execPath, [CLI, "update", "--from", clone, "--repo", workspace], {
+      encoding: "utf8",
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(existsSync(marker), "B's CLI ran the vendor phase even though B was 0 behind");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- High #2 (concurrent variant): head moved since load → hand off ----------
+
+test("shouldReExecVendor hands off for an alternate checkout AND a moved-since-load HEAD", () => {
+  // Same checkout, HEAD unchanged since our modules loaded → run in-process (no hand-off, no loop).
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/tk", srcHead: "aaa", runReal: "/tk", runHead: "aaa" }),
+    false
+  );
+  // A DIFFERENT checkout (`--from B`), even at the same sha → hand off to B's CLI.
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/B", srcHead: "aaa", runReal: "/tk", runHead: "aaa" }),
+    true
+  );
+  // SAME checkout but its HEAD moved since we loaded (our own ff OR a CONCURRENT updater) →
+  // hand off; our in-memory modules predate the new code. This is the un-raceable concurrent case.
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/tk", srcHead: "bbb", runReal: "/tk", runHead: "aaa" }),
+    true
+  );
+  // A non-git source (head unknown) has nothing to hand off to → run in-process, never loop.
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/tk", srcHead: "unknown", runReal: "/tk", runHead: "aaa" }),
+    false
+  );
+});
+
+// ---- High #3: staged / hand-authored conflict markers are caught -------------
+
+test("conflictMarkerPaths detects a marker whose index looks resolved (staged)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-marker-unit-"));
+  try {
+    const entry = MANAGED_PATHS.find((e) => e.kind !== "dir");
+    assert.ok(entry, "a file-kind managed entry exists");
+    const abs = path.join(root, entry.src);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, "<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n");
+    assert.deepEqual(conflictMarkerPaths(root), [entry.src]);
+    // A clean file is not flagged.
+    writeFileSync(abs, "resolved content\n");
+    assert.deepEqual(conflictMarkerPaths(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("apply --no-pull refuses a source whose managed file has staged conflict markers", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-marker-cli-"));
+  try {
+    const entry = MANAGED_PATHS.find((e) => e.kind !== "dir");
+    // The marker lands committed (index fully clean — `--diff-filter=U` finds nothing), so only
+    // a CONTENT scan can catch it. This is the staged/hand-authored case the index check misses.
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { [entry.src]: "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const destBefore = path.join(workspace, entry.dest);
+
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-pull", "--force", "--from", clone, "--repo", workspace],
+      { encoding: "utf8" }
+    );
+    assert.notEqual(res.status, 0, "must refuse (even with --force)");
+    assert.match(res.stderr, /conflict marker/);
+    assert.ok(!existsSync(destBefore), "no marker-bearing file was vendored into the workspace");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- High #4: --check --contribute must not push; --dry-run must be accepted -
+
+test("update --check --contribute is refused before any Git/gh write", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-checkcontrib-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const res = spawnSync(
+      process.execPath,
+      [
+        CLI,
+        "update",
+        "--check",
+        "--contribute",
+        "validation/secret-patterns.txt",
+        "--from",
+        clone,
+        "--repo",
+        workspace,
+      ],
+      { encoding: "utf8" }
+    );
+    assert.notEqual(res.status, 0, "must refuse the read-only + write combination");
+    assert.match(res.stderr, /cannot be combined/);
+    const branches = git(clone, "branch", "--list", "contribute/*");
+    assert.equal(branches, "", "no contribute branch was created");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("update --contribute --dry-run is a recognized flag combination (not 'unknown flag')", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-contribdry-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const res = spawnSync(
+      process.execPath,
+      [
+        CLI,
+        "update",
+        "--contribute",
+        "validation/secret-patterns.txt",
+        "--dry-run",
+        "--from",
+        clone,
+        "--repo",
+        workspace,
+      ],
+      { encoding: "utf8" }
+    );
+    assert.doesNotMatch(res.stderr, /unknown flag/, "--dry-run must pass flag validation");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Medium #1: --check must not mutate the toolkit's remote-tracking refs ----
+
+test("update --check does not fetch (remote-tracking ref is unchanged)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-checkref-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    const refBefore = git(clone, "rev-parse", "refs/remotes/origin/main");
+    // Advance origin so a fetch WOULD move the clone's tracking ref.
+    writeFileSync(path.join(origin, "n.txt"), "advance\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "advance");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    spawnSync(process.execPath, [CLI, "update", "--check", "--from", clone, "--repo", workspace], {
+      encoding: "utf8",
+    });
+    assert.equal(
+      git(clone, "rev-parse", "refs/remotes/origin/main"),
+      refBefore,
+      "check must not update remote-tracking refs"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Medium #2: an unreachable remote must never read green ------------------
+
+test("update --check does not green-light when the remote is unreachable", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-offline-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    // Break the remote so ls-remote fails; local tracking (stale) would otherwise say behind 0.
+    git(clone, "remote", "set-url", "origin", path.join(root, "does-not-exist"));
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    writeFileSync(
+      path.join(workspace, ".aios-toolkit-version"),
+      `${git(clone, "rev-parse", "HEAD")}\ntoolkit-version 0.7.0\n`
+    );
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--check", "--from", clone, "--repo", workspace],
+      { encoding: "utf8" }
+    );
+    assert.doesNotMatch(res.stdout, /up to date/, "unverified remote must not read green");
+    assert.match(res.stdout + res.stderr, /verif|offline|unverified/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Medium #3: an interrupted install self-heals on the next run ------------
+
+test("apply reconciles deps when behind===0 but the recorded install is stale (interrupted pull)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-interrupted-"));
+  const prevPath = process.env.PATH;
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "package-lock.json"), '{"lockfileVersion":3,"v":1}\n');
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "lock");
+    // Real node_modules dir present but no install marker → simulates a fast-forward that
+    // landed before `npm ci` ran. behind === 0, so the OLD early-return would skip deps forever.
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+
+    const first = pullToolkitCheckout(clone, {}, NOOP_IO);
+    assert.ok(existsSync(ranFile), "the stale install was repaired (npm ran)");
+    assert.equal(first.installed, true);
+
+    // Second run: the marker now matches the lockfile → no redundant reinstall.
+    rmSync(ranFile, { force: true });
+    const second = pullToolkitCheckout(clone, {}, NOOP_IO);
+    assert.ok(!existsSync(ranFile), "a matching marker skips reinstall");
+    assert.equal(second.installed, false);
+  } finally {
+    process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

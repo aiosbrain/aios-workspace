@@ -53,6 +53,7 @@ import {
   unlinkSync,
   copyFileSync,
   lstatSync,
+  realpathSync,
   constants as fsConstants,
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -71,6 +72,33 @@ const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 // than $AIOS_TOOLKIT_DIR, so resolving from the running file guarantees update pulls/vendors
 // the SAME checkout the user is actually running — not a different one on the default path.
 const RUNNING_TOOLKIT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+
+/** Real path + HEAD sha of the checkout THIS process loaded its modules from, captured at load.
+ *  The vendor phase must run code matching the SOURCE at its current HEAD; comparing against
+ *  these two values (not "did my own merge move HEAD") is what decides whether to hand off. */
+function realPathOr(p) {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+const RUNNING_TOOLKIT_REAL = realPathOr(RUNNING_TOOLKIT);
+const RUNNING_TOOLKIT_HEAD = gitSha(RUNNING_TOOLKIT);
+
+/**
+ * Should the vendor phase hand off to the SOURCE's CLI instead of running in this process? Yes
+ * whenever our loaded modules don't correspond to the source at its current HEAD: a DIFFERENT
+ * checkout (`--from B`), or the SAME checkout whose HEAD moved since we loaded (our own
+ * fast-forward OR a concurrent updater's). When neither head is knowable (a non-git source),
+ * there's nothing to hand off to, so run in-process — which also guarantees the child can't loop
+ * (its RUNNING head == the source head it re-execs against). Pure, so both the alternate-`--from`
+ * and the un-raceable concurrent-fast-forward case are unit-testable.
+ */
+export function shouldReExecVendor({ srcReal, srcHead, runReal, runHead }) {
+  if (srcHead === "unknown" || runHead === "unknown") return false;
+  return srcReal !== runReal || srcHead !== runHead;
+}
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -250,6 +278,34 @@ function entryFiles(srcRoot, entry) {
   };
   walk(absSrc, "");
   return out;
+}
+
+// A git conflict OPENER/closer at line start (7 markers + a space). Every real conflict has an
+// opener, so scanning for it catches marker-bearing files that an UNMERGED-index check misses —
+// e.g. a conflict that was `git add`-ed (index looks resolved) or markers introduced by hand.
+const CONFLICT_MARKER = /^(?:<{7}|>{7}) /m;
+
+/**
+ * Managed SOURCE files (relative paths) that contain conflict markers in their CONTENT. The
+ * unmerged-index check (toolkit-pull `unmergedPaths`) only sees UNMERGED entries; a staged or
+ * hand-authored marker leaves the index clean, so we must also read the bytes we're about to
+ * vendor. Governance files are executed/parsed downstream — a marker must never reach them.
+ */
+export function conflictMarkerPaths(srcRoot) {
+  const hits = [];
+  for (const entry of MANAGED_PATHS) {
+    if (!existsSync(path.join(srcRoot, entry.src))) continue;
+    for (const f of entryFiles(srcRoot, entry)) {
+      let content;
+      try {
+        content = readFileSync(path.join(srcRoot, f.srcRel), "utf8");
+      } catch {
+        continue;
+      }
+      if (CONFLICT_MARKER.test(content)) hits.push(f.srcRel);
+    }
+  }
+  return hits;
 }
 
 /** Seed destinations that the toolkit can supply and the workspace does not have. */
@@ -436,6 +492,7 @@ const UPDATE_BOOL_FLAGS = new Set([
   "--stash",
   "--no-install",
   "--force",
+  "--dry-run", // consumed by --contribute (cmdContribute); previews the PR without writing
 ]);
 const UPDATE_VALUE_FLAGS = new Set(["--from", "--repo", "--contribute"]);
 
@@ -466,6 +523,15 @@ export async function cmdUpdate(repo, cfg, args) {
   assertKnownUpdateFlags(args);
   const check = args.includes("--check");
   const preview = args.includes("--preview");
+  // --contribute performs Git + `gh` writes (pushes a branch, opens a PR). It must never run
+  // under a read-only mode — otherwise `aios update --check --contribute <path>` silently makes
+  // remote writes while claiming to be read-only. Preview it with `--contribute <path> --dry-run`.
+  if (args.includes("--contribute") && (check || preview)) {
+    die(
+      "aios update --contribute cannot be combined with --check/--preview — it pushes a branch and\n" +
+        "  can open a PR. Preview it instead with: aios update --contribute <path> --dry-run"
+    );
+  }
   // A preview is a read-only classification: it must never pull (mutate the toolkit
   // checkout), never re-exec, and never exit — onboarding calls it mid-flow.
   const noPull = args.includes("--no-pull") || preview;
@@ -511,39 +577,18 @@ export async function cmdUpdate(repo, cfg, args) {
     // --check always reports); --no-pull only skips the pull on an APPLY run.
     let pullInfo = null;
     if (!ephemeral && (check || !noPull)) {
-      const pr = pullToolkitCheckout(srcDir, pullOpts, io);
-      pullInfo = pr;
-      // If the pull advanced HEAD, this process still holds the PRE-pull modules
-      // (MANAGED_PATHS, merge logic). Vendoring now would use stale logic yet stamp the new
-      // sha — a later --check would then call the incomplete workspace "current". Re-exec the
-      // freshly-pulled CLI (with --no-pull, so it goes straight to vendoring) and hand off.
-      if (!check && pr?.pulled > 0) {
-        // Deps were already reinstalled by the pull above; the child only needs the vendor
-        // phase, so forward just the target + --force (--check/--preview never reach here,
-        // --stash/--no-install are pull-side only, and assertKnownUpdateFlags already refused
-        // anything unrecognized — nothing can be silently dropped).
-        const passthrough = ["update", "--no-pull", "--from", srcDir, "--repo", repo];
-        if (args.includes("--force")) passthrough.push("--force");
-        const res = spawnSync(
-          process.execPath,
-          [path.join(srcDir, "scripts", "aios.mjs"), ...passthrough],
-          {
-            stdio: "inherit",
-          }
-        );
-        // Return the child's status instead of exiting: a programmatic caller (onboarding)
-        // must survive the hand-off; the CLI dispatcher maps this onto process.exitCode.
-        return res.status ?? 1;
-      }
+      pullInfo = pullToolkitCheckout(srcDir, pullOpts, io);
     }
 
     // Never vendor FROM a conflicted toolkit — its files hold `<<<<<<<` markers and the
-    // destinations are executed/parsed. This is checked independently of the pull, because
-    // --no-pull skips the git half entirely (e.g. re-running after a conflicted --stash
-    // restore aborted mid-way, which leaves the checkout unmerged).
-    const unmerged = unmergedPaths(srcDir);
-    if (unmerged.length) {
-      const detail = `${srcDir} has ${unmerged.length} unresolved conflict(s) (e.g. ${unmerged[0]})`;
+    // destinations are executed/parsed. Runs HERE, in the parent (current code), BEFORE any
+    // re-exec hand-off — so the guarantee can't depend on the source CLI's version — and
+    // independently of the pull (so --no-pull can't bypass it). TWO signals: an unmerged index
+    // (a mid-conflict tree) AND a content scan of the managed source files (catches a
+    // `git add`-ed or hand-authored marker whose index looks clean). Before --force too.
+    const conflicted = [...new Set([...unmergedPaths(srcDir), ...conflictMarkerPaths(srcDir)])];
+    if (conflicted.length) {
+      const detail = `${srcDir} has ${conflicted.length} file(s) with conflict markers (e.g. ${conflicted[0]})`;
       if (check || preview) {
         // Read-only modes write nothing, so a conflicted source is a warning, not a hard
         // stop — dying here would kill a programmatic caller (onboarding) mid-flow.
@@ -554,6 +599,36 @@ export async function cmdUpdate(repo, cfg, args) {
             `  Refusing to vendor conflict markers into your workspace. Resolve them (git -C\n` +
             `  ${srcDir} status), then re-run \`aios update\`.`
         );
+      }
+    }
+
+    // The vendor phase must run code that matches the SOURCE at its CURRENT head. This process
+    // loaded its modules (MANAGED_PATHS, merge logic) from RUNNING_TOOLKIT at RUNNING_TOOLKIT_HEAD.
+    // Hand off whenever the source is a DIFFERENT checkout (`--from B`) OR the source HEAD has
+    // moved since load — by our own fast-forward, by a concurrent updater, or anything else. Keying
+    // on "did MY merge move HEAD" (pulled>0) missed both: an already-current `--from B` and a
+    // race where another process fast-forwarded between our behind-count and our merge.
+    if (!check && !preview) {
+      const handOff = shouldReExecVendor({
+        srcReal: realPathOr(srcDir),
+        srcHead: gitSha(srcDir),
+        runReal: RUNNING_TOOLKIT_REAL,
+        runHead: RUNNING_TOOLKIT_HEAD,
+      });
+      if (handOff) {
+        // Re-exec the SOURCE's CLI (its current code) with --no-pull so it vendors directly and
+        // cannot loop (its own RUNNING_TOOLKIT == srcDir at srcHeadNow, so it will match). Deps
+        // were already reconciled by the pull above; forward only the target + --force.
+        const passthrough = ["update", "--no-pull", "--from", srcDir, "--repo", repo];
+        if (args.includes("--force")) passthrough.push("--force");
+        const res = spawnSync(
+          process.execPath,
+          [path.join(srcDir, "scripts", "aios.mjs"), ...passthrough],
+          { stdio: "inherit" }
+        );
+        // Return the child's status instead of exiting: a programmatic caller (onboarding) must
+        // survive the hand-off; the CLI dispatcher maps this onto process.exitCode.
+        return res.status ?? 1;
       }
     }
 
@@ -579,15 +654,27 @@ export async function cmdUpdate(repo, cfg, args) {
       const missingSeeds = missingSeedPaths(srcDir, repo);
       // `sha` is the LOCAL toolkit HEAD — check mode never fast-forwards. So a workspace can
       // match the local toolkit exactly while that toolkit is itself behind its remote. The
-      // verdict must fold in the git-side behind-count, or it would report a green "up to
-      // date" immediately after reporting "N commits behind".
-      const behind = pullInfo?.behind ?? 0;
-      if (matches && !missingSeeds.length && behind === 0) {
+      // verdict must fold in the git-side status, or it would report a green "up to date"
+      // immediately after reporting "N commits behind". Three git states can block green:
+      //   behind > 0        — toolkit is definitively behind
+      //   behind === null   — toolkit differs from the remote (exact count needs a fetch)
+      //   !remoteVerified   — the remote was unreachable (offline); a stale local count that
+      //                       happens to read 0 must NOT be trusted as "up to date"
+      // Keep null (remote differs / count unknown) distinct from 0 — `?? 0` would collapse it
+      // back to a green verdict. Only when NO pull ran (pullInfo null) is 0 the right default.
+      const behind = pullInfo ? pullInfo.behind : 0;
+      const remoteVerified = pullInfo ? pullInfo.remoteVerified !== false : true;
+      const remoteCurrent = remoteVerified && behind === 0;
+      if (matches && !missingSeeds.length && remoteCurrent) {
         console.log(color.green(`  up to date — ${meta.label} (${short(sha)}).`));
         return 0;
       }
       const why = [];
-      if (behind > 0)
+      if (!remoteVerified)
+        why.push(`couldn't verify the toolkit's remote (offline?) — status unconfirmed`);
+      else if (behind === null)
+        why.push(`the toolkit checkout differs from ${pullInfo.upstream} (behind)`);
+      else if (behind > 0)
         why.push(
           `the toolkit checkout is ${behind} commit${behind === 1 ? "" : "s"} behind ${pullInfo.upstream}`
         );

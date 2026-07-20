@@ -140,6 +140,28 @@ Tier 2 reads the same fields the check already uses — no new format. A future 
 Linear [AIO-463](https://linear.app/je4light/issue/AIO-463) (team AIO) — this doc is the
 design reference; tier 1 ships under it.
 
+## Safety invariants (hardened through adversarial review)
+
+- **`--check` is truly read-only w.r.t. the toolkit repo.** It reads the remote via
+  `git ls-remote` (no `git fetch`, so no `refs/remotes/*` or `FETCH_HEAD` writes). When the
+  remote object isn't local it reports "differs (behind)" without an exact count rather than
+  fetching. An **unreachable remote never reads green** — a stale local tracking ref that
+  happens to say 0 is reported as "unverified (offline?)", not "up to date".
+- **`npm ci` never runs through a symlinked `node_modules`.** A git worktree symlinks it to the
+  primary checkout's shared install; `npm ci` deletes `node_modules`, so following the symlink
+  would erase the shared target. Detected with `lstat` and skipped.
+- **An interrupted install self-heals.** The lockfile hash of the last successful install is
+  recorded under the git common dir; deps are reconciled on every apply run (even `behind === 0`),
+  so a pull that landed before `npm ci` ran is repaired next time instead of masked forever.
+- **The vendor phase always runs code matching the source at its current HEAD.** It hands off
+  (re-exec `--no-pull`) whenever the source is a different checkout (`--from B`) or its HEAD moved
+  since load — including a concurrent updater's fast-forward, not just our own pull.
+- **A conflicted toolkit is never vendored.** Two signals, both in the parent (before any
+  hand-off) and independent of `--no-pull`/`--force`: an unmerged index AND a content scan of the
+  managed source files (catches a `git add`-ed or hand-authored `<<<<<<<` marker).
+- **`--check`/`--preview` cannot combine with `--contribute`** (which pushes a branch / opens a
+  PR). Preview a contribution with `--contribute <path> --dry-run`.
+
 ## Non-goals
 
 - No auto-commit/auto-push of the user's workspace content — ever.

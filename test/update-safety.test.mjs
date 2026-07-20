@@ -250,7 +250,9 @@ test("update --check never reports green 'up to date' while the toolkit is behin
       { encoding: "utf8" }
     );
     assert.equal(res.status, 0, res.stderr);
-    assert.match(res.stdout, /1 commit behind/, "git half reports behind");
+    // Read-only check no longer fetches (ls-remote only), so the remote object may be absent
+    // and the exact count unavailable — but it must still detect the divergence, never green.
+    assert.match(res.stdout, /behind|differs/, "git half reports behind/differs");
     assert.doesNotMatch(res.stdout, /up to date/, "must NOT green-light while behind");
     assert.match(res.stdout, /Run `aios update`/, "tells the user to act");
   } finally {
