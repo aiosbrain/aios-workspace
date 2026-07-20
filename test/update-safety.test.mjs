@@ -374,3 +374,42 @@ test("interactive CLI still self-updates and propagates the re-exec child's fail
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- #9 the unconditional hand-off can't loop (base case: same source, twice in a row) -----
+
+test("update against an already-current same source runs twice in a row without hanging or looping", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-norecurse-"));
+  try {
+    // A REAL toolkit checkout (this repo itself), not a stub — exercises the actual recursive
+    // spawn (parent sets AIOS_UPDATE_VENDOR_CHILD, the child inherits it and must not spawn
+    // again) rather than a synthetic aios.mjs that just writes a marker and exits.
+    const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    // First run: nothing synced yet, so this vendors for real. Bounded timeout — a
+    // reintroduced infinite-recursion bug must fail loudly and fast, never hang CI.
+    const first = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-install", "--from", toolkitRoot, "--repo", workspace],
+      { encoding: "utf8", timeout: 30_000 }
+    );
+    assert.notEqual(first.signal, "SIGTERM", "first run must not time out (no infinite loop)");
+    assert.equal(first.status, 0, first.stderr);
+
+    // Second run: workspace is now current — the exact "already-current, same source" case
+    // that used to run in-process. Under the unconditional design it still spawns a child,
+    // but that child must recognize itself as the vendor child and NOT spawn a grandchild.
+    const second = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-install", "--from", toolkitRoot, "--repo", workspace],
+      { encoding: "utf8", timeout: 30_000 }
+    );
+    assert.notEqual(second.signal, "SIGTERM", "second run must not time out (no infinite loop)");
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stdout, /already up to date|synced to/, "completed normally, not stuck");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
 import { pullToolkitCheckout, remoteStatus } from "../scripts/toolkit-pull.mjs";
-import { conflictMarkerPaths, shouldReExecVendor } from "../scripts/update.mjs";
+import { conflictMarkerPaths } from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
 
 // Regressions for the eight adversarial repros in code-review-pr343.md. Each rebuilds the
@@ -119,42 +119,6 @@ test("apply --from an already-current OTHER checkout runs THAT checkout's CLI (n
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-// ---- High #2 (concurrent variant): head moved since load → hand off ----------
-
-test("shouldReExecVendor hands off for an alternate checkout AND a moved-since-load HEAD", () => {
-  // Same checkout, HEAD unchanged since our modules loaded → run in-process (no hand-off, no loop).
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/tk", srcHead: "aaa", runReal: "/tk", runHead: "aaa" }),
-    false
-  );
-  // A DIFFERENT checkout (`--from B`), even at the same sha → hand off to B's CLI.
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/B", srcHead: "aaa", runReal: "/tk", runHead: "aaa" }),
-    true
-  );
-  // SAME checkout but its HEAD moved since we loaded (our own ff OR a CONCURRENT updater) →
-  // hand off; our in-memory modules predate the new code. This is the un-raceable concurrent case.
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/tk", srcHead: "bbb", runReal: "/tk", runHead: "aaa" }),
-    true
-  );
-  // A non-git source (head unknown) on the SAME real path → run in-process, never loop.
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/tk", srcHead: "unknown", runReal: "/tk", runHead: "aaa" }),
-    false
-  );
-  // Review #5: a DIFFERENT checkout must hand off even when a head is unknown (a non-git
-  // vendored toolkit) — the real-path difference alone is sufficient and must not be swallowed.
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/B", srcHead: "aaa", runReal: "/tk", runHead: "unknown" }),
-    true
-  );
-  assert.equal(
-    shouldReExecVendor({ srcReal: "/B", srcHead: "unknown", runReal: "/tk", runHead: "unknown" }),
-    true
-  );
 });
 
 // ---- High #3: staged / hand-authored conflict markers are caught -------------

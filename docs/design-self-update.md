@@ -153,9 +153,14 @@ design reference; tier 1 ships under it.
 - **An interrupted install self-heals.** The lockfile hash of the last successful install is
   recorded under the git common dir; deps are reconciled on every apply run (even `behind === 0`),
   so a pull that landed before `npm ci` ran is repaired next time instead of masked forever.
-- **The vendor phase always runs code matching the source at its current HEAD.** It hands off
-  (re-exec `--no-pull`) whenever the source is a different checkout (`--from B`) or its HEAD moved
-  since load — including a concurrent updater's fast-forward, not just our own pull.
+- **The vendor phase always runs code matching the source at its current HEAD, by construction.**
+  Two review rounds each found a new race in *conditionally deciding* whether to hand off based on
+  comparing independently-sampled HEAD reads — every fix patched one more read site instead of
+  removing the need to compare reads at all. So the apply path never vendors in-process: it always
+  hands off (re-exec `--no-pull`) to the source's own freshly-started CLI, which by construction
+  reads its own files fresh. `cmdUpdate` is recursive (the spawned child re-invokes it); an
+  internal env marker set only on that child (never a CLI flag) is the base case that stops it
+  looping, not a HEAD comparison.
 - **A conflicted toolkit is never vendored.** Two signals, both in the parent (before any
   hand-off) and independent of `--no-pull`/`--force`: an unmerged index AND a content scan of the
   managed source files (catches a `git add`-ed or hand-authored `<<<<<<<` marker).

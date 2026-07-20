@@ -53,7 +53,6 @@ import {
   unlinkSync,
   copyFileSync,
   lstatSync,
-  realpathSync,
   constants as fsConstants,
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -73,36 +72,10 @@ const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 // the SAME checkout the user is actually running — not a different one on the default path.
 const RUNNING_TOOLKIT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 
-/** Real path of the checkout THIS process loaded its modules from. Its HEAD is captured lazily
- *  inside cmdUpdate (NOT at module load — importing update.mjs must not shell out to git; other
- *  commands, e.g. ship, import it and assert no external calls). Comparing the source's real
- *  path + current HEAD against these decides whether the vendor phase must hand off. */
-function realPathOr(p) {
-  try {
-    return realpathSync(p);
-  } catch {
-    return path.resolve(p);
-  }
-}
-const RUNNING_TOOLKIT_REAL = realPathOr(RUNNING_TOOLKIT);
-
-/**
- * Should the vendor phase hand off to the SOURCE's CLI instead of running in this process? Yes
- * whenever our loaded modules don't correspond to the source at its current HEAD: a DIFFERENT
- * checkout (`--from B`), or the SAME checkout whose HEAD moved since we loaded (our own
- * fast-forward OR a concurrent updater's). When neither head is knowable (a non-git source),
- * there's nothing to hand off to, so run in-process — which also guarantees the child can't loop
- * (its RUNNING head == the source head it re-execs against). Pure, so both the alternate-`--from`
- * and the un-raceable concurrent-fast-forward case are unit-testable.
- */
-export function shouldReExecVendor({ srcReal, srcHead, runReal, runHead }) {
-  // A DIFFERENT checkout always needs the hand-off — even a non-git one whose head is unknown
-  // (looksLikeToolkit accepts a `.git`-less vendored copy). Only the HEAD-moved comparison is
-  // skipped when a head is unknowable, which keeps the re-exec child (same checkout) from looping.
-  if (srcReal !== runReal) return true;
-  if (srcHead === "unknown" || runHead === "unknown") return false;
-  return srcHead !== runHead;
-}
+// Set (as an env var, not a CLI flag) only on the child this process spawns to vendor — see the
+// hand-off block in cmdUpdate. Not a flag: keeps it out of assertKnownUpdateFlags/--help and out
+// of reach of anyone but this process's own spawnSync call.
+const VENDOR_CHILD_ENV = "AIOS_UPDATE_VENDOR_CHILD";
 
 function argValue(args, flag) {
   const i = args.indexOf(flag);
@@ -563,13 +536,6 @@ export async function cmdUpdate(repo, cfg, args) {
     return 0;
   }
 
-  // HEAD of the checkout this process's modules were loaded from. Captured BEFORE resolveSource()
-  // (which can do slow I/O — an existsSync chain, or a real `git clone` in the fallback) so a
-  // concurrent updater that fast-forwards RUNNING_TOOLKIT during that window can't slip past
-  // shouldReExecVendor undetected. Computed here (not at import) so importing update.mjs — e.g.
-  // from ship.mjs, which asserts no external calls — never shells out to git.
-  const runToolkitHead = gitSha(RUNNING_TOOLKIT);
-
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
@@ -621,38 +587,29 @@ export async function cmdUpdate(repo, cfg, args) {
       }
     }
 
-    // The vendor phase must run code that matches the SOURCE at its CURRENT head. This process
-    // loaded its modules (MANAGED_PATHS, merge logic) from RUNNING_TOOLKIT at runToolkitHead.
-    // Hand off whenever the source is a DIFFERENT checkout (`--from B`) OR the source HEAD has
-    // moved since load — by our own fast-forward, by a concurrent updater, or anything else. Keying
-    // on "did MY merge move HEAD" (pulled>0) missed both: an already-current `--from B` and a
-    // race where another process fast-forwarded between our behind-count and our merge.
-    // Gated on !ephemeral, like the pull above: a throwaway network clone always has a different
-    // real path from RUNNING_TOOLKIT, which would otherwise force a redundant child spawn on every
-    // single apply run. (Ephemeral only happens if RUNNING_TOOLKIT itself isn't a valid toolkit.)
-    if (applying && !ephemeral) {
-      const handOff = shouldReExecVendor({
-        srcReal: realPathOr(srcDir),
-        srcHead,
-        runReal: RUNNING_TOOLKIT_REAL,
-        runHead: runToolkitHead,
-      });
-      if (handOff) {
-        // Re-exec the SOURCE's CLI (its current code) with --no-pull so it vendors directly and
-        // cannot loop (its own RUNNING_TOOLKIT == srcDir at srcHeadNow, so it will match). Deps
-        // were already reconciled by the pull above; forward only the target + --force.
-        const passthrough = ["update", "--no-pull", "--from", srcDir, "--repo", repo];
-        if (args.includes("--force")) passthrough.push("--force");
-        const res = spawnSync(
-          process.execPath,
-          [path.join(srcDir, "scripts", "aios.mjs"), ...passthrough],
-          { stdio: "inherit" }
-        );
-        // Return the child's status instead of exiting: a programmatic caller (onboarding) must
-        // survive the hand-off; the CLI dispatcher maps this onto process.exitCode.
-        return res.status ?? 1;
-      }
+    // The vendor phase must run code that matches the SOURCE at its CURRENT head. Comparing
+    // independently-sampled HEAD reads to decide THIS was two review rounds' worth of races
+    // (a captured-too-late head, a redundant re-read, an unknown-head ordering bug) — every fix
+    // patched one more read site instead of removing the need to compare reads at all. So: never
+    // vendor in-process. Always hand off to the source's own freshly-started CLI, which by
+    // construction reads its own files fresh — there's nothing left to compare. `cmdUpdate` is
+    // recursive (the child re-invokes this same function); the env marker below — set only by
+    // the parent, only on the spawned child — is the base case that stops it looping.
+    if (applying && process.env[VENDOR_CHILD_ENV] !== "1") {
+      const passthrough = ["update", "--no-pull", "--from", srcDir, "--repo", repo];
+      if (args.includes("--force")) passthrough.push("--force");
+      const res = spawnSync(
+        process.execPath,
+        [path.join(srcDir, "scripts", "aios.mjs"), ...passthrough],
+        { stdio: "inherit", env: { ...process.env, [VENDOR_CHILD_ENV]: "1" } }
+      );
+      // Return the child's status instead of exiting: a programmatic caller (onboarding) must
+      // survive the hand-off; the CLI dispatcher maps this onto process.exitCode.
+      return res.status ?? 1;
     }
+    // else: --check/--preview (never spawn, unaffected by any of this), OR this process IS the
+    // freshly-spawned vendor child — fall through and vendor in-process using the modules it
+    // just loaded, which match srcDir exactly by construction.
 
     const sha = srcHead; // the single post-pull read; stamped value == the head we validated
     const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
