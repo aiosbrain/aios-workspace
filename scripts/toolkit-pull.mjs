@@ -98,8 +98,19 @@ function staleLocalStatus(dir, upstreamName) {
  *  the two callers assign different meaning to "the rev-list count itself failed": in
  *  readonly mode the remote object simply isn't fetched locally yet (expected, → still
  *  "behind", count unknown); in apply mode (called AFTER a real fetch) the same failure
- *  means something local is actually broken (→ "local-status-error"). */
-function classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure }) {
+ *  means something local is actually broken (→ "local-status-error"). `checkStaleAheadOnCountFailure`
+ *  (readonly only) still consults the stale local tracking ref before falling back to
+ *  `onCountFailure` — a count failure there is EXPECTED (the remote object was never
+ *  fetched), which must not silently swallow real local-only-commit divergence the way a
+ *  plain "behind" verdict would (leaving `buildResult().applyAllowed` true for a checkout
+ *  apply mode will hard-refuse as diverged). */
+function classifyAgainst(
+  dir,
+  remoteSha,
+  branch,
+  upstreamName,
+  { onCountFailure, checkStaleAheadOnCountFailure = false }
+) {
   let localHead;
   try {
     localHead = git(dir, ["rev-parse", "HEAD"]);
@@ -113,6 +124,18 @@ function classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure 
   try {
     counts = git(dir, ["rev-list", "--left-right", "--count", `${remoteSha}...HEAD`]);
   } catch {
+    if (checkStaleAheadOnCountFailure) {
+      const stale = staleLocalStatus(dir, upstreamName);
+      if (stale.ahead > 0) {
+        return {
+          state: "diverged",
+          branch,
+          upstream: upstreamName,
+          behind: stale.behind ?? 0,
+          ahead: stale.ahead,
+        };
+      }
+    }
     return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
   }
   const [behind = "0", ahead = "0"] = counts.split(/\s+/);
@@ -260,7 +283,10 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
       ahead: 0,
     };
   }
-  return classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure: "behind" });
+  return classifyAgainst(dir, remoteSha, branch, upstreamName, {
+    onCountFailure: "behind",
+    checkStaleAheadOnCountFailure: true,
+  });
 }
 
 /** Human-readable line for an acquireRemoteState() result. One function, used by both the
@@ -646,5 +672,11 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
       );
     }
   }
-  return ret({ pulled, installed, sourceClean, srcHead, snapshotDir });
+  // Report "clean", not the pre-stash `sourceClean` value: by this point a snapshot has
+  // been successfully pinned, which by construction only ever happens from a clean tree
+  // (dirty-without-stash already threw above; dirty-with-stash was pushed away before
+  // pinning). Returning the stale "dirty" value here would make buildResult() block a
+  // fully successful apply's own result, even though the vendored content came from a
+  // verified-clean, pinned snapshot.
+  return ret({ pulled, installed, sourceClean: "clean", srcHead, snapshotDir });
 }

@@ -232,12 +232,21 @@ function pathEntryExists(p) {
   }
 }
 
-/** Refuse a seed destination whose existing parent chain escapes through a symlink. */
-function assertSeedParentSafe(repo, destRel) {
+/**
+ * Refuse a destination path that escapes the workspace root (a `../` traversal in a
+ * manifest entry's `dest`, or a symlinked parent directory redirecting the write
+ * elsewhere). Applies to every managed write/delete AND seed, not just seeds — a manifest
+ * entry's `dest` is only as trustworthy as its source: apply mode always spawns the
+ * PINNED SNAPSHOT's own `scripts/aios.mjs`, which loads that same snapshot's own
+ * `toolkit-manifest.mjs`, so a `--from` pointed at an untrusted checkout could otherwise
+ * define a `MANAGED_PATHS`/`SEED_IF_ABSENT` entry targeting `../../.ssh/authorized_keys`
+ * or `.git/hooks/*` with no containment check at all before this fix.
+ */
+export function assertDestPathSafe(repo, destRel, verb = "vendor") {
   const root = path.resolve(repo);
   const destAbs = path.resolve(root, destRel);
   if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
-    throw new Error(`refusing to seed path outside the workspace: ${destRel}`);
+    throw new Error(`refusing to ${verb} path outside the workspace: ${destRel}`);
   }
   const parentRel = path.relative(root, path.dirname(destAbs));
   let current = root;
@@ -252,7 +261,7 @@ function assertSeedParentSafe(repo, destRel) {
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new Error(
-        `refusing to seed ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
+        `refusing to ${verb} ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
       );
     }
   }
@@ -383,7 +392,7 @@ export function missingSeedPaths(srcRoot, repo) {
   for (const entry of SEED_IF_ABSENT) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const file of entryFiles(srcRoot, entry)) {
-      assertSeedParentSafe(repo, file.destRel);
+      assertDestPathSafe(repo, file.destRel, "seed");
       if (!pathEntryExists(path.join(repo, file.destRel))) missing.push(file.destRel);
     }
   }
@@ -398,7 +407,7 @@ function applySeeds(srcRoot, repo, r, { dryRun = false } = {}) {
   for (const entry of SEED_IF_ABSENT) {
     if (!existsSync(path.join(srcRoot, entry.src))) continue;
     for (const file of entryFiles(srcRoot, entry)) {
-      assertSeedParentSafe(repo, file.destRel);
+      assertDestPathSafe(repo, file.destRel, "seed");
       const destAbs = path.join(repo, file.destRel);
       if (pathEntryExists(destAbs)) continue;
       if (dryRun) {
@@ -425,6 +434,10 @@ function applyFile(
   { toolkitDir, srcRoot, repo, baseSha, entry, srcRel, destRel, force, dryRun },
   r
 ) {
+  // destRel is only as trustworthy as the manifest that produced it — see
+  // assertDestPathSafe's doc comment. Validated before any read/write, not just for the
+  // final write, so a malicious entry can't even probe `mine`'s existence outside the repo.
+  assertDestPathSafe(repo, destRel);
   const destAbs = path.join(repo, destRel);
   const theirs = readIf(path.join(srcRoot, srcRel));
   const mine = readIf(destAbs);
@@ -495,6 +508,7 @@ function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryR
     if (exclude.has(srcRel)) continue; // excluded files are never synced — never "deleted" either
     if (present.has(srcRel)) continue; // still shipped — not a deletion
     const destRel = entry.dest + srcRel.slice(entry.src.length);
+    assertDestPathSafe(repo, destRel, "delete");
     const destAbs = path.join(repo, destRel);
     const mine = readIf(destAbs);
     if (mine === undefined) continue; // already gone locally

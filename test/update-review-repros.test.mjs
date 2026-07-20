@@ -21,7 +21,7 @@ import {
   acquireRemoteState,
   removePinnedSnapshot,
 } from "../scripts/toolkit-pull.mjs";
-import { conflictMarkerPaths, vendorSafety } from "../scripts/update.mjs";
+import { conflictMarkerPaths, vendorSafety, assertDestPathSafe } from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
 import { git, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
 
@@ -740,6 +740,85 @@ test("a pinned snapshot is not leaked when npm fails during dependency reconcili
     );
   } finally {
     process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Round 4 (Bugbot follow-up): destination containment, readonly count-failure
+// divergence detection, and post-stash sourceClean accuracy -------------------------------
+
+test("assertDestPathSafe refuses a manifest dest that escapes the workspace via ../ traversal", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-containment-traversal-"));
+  try {
+    assert.throws(
+      () => assertDestPathSafe(root, "../../etc/escaped.txt"),
+      /outside the workspace/,
+      "a dest path escaping the repo root via .. must be refused"
+    );
+    // A normal, contained path must NOT throw.
+    assert.doesNotThrow(() => assertDestPathSafe(root, "scripts/aios.mjs"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("assertDestPathSafe refuses a manifest dest whose parent chain is a symlink escaping the workspace", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-containment-symlink-"));
+  try {
+    const outside = path.join(root, "outside");
+    mkdirSync(outside, { recursive: true });
+    const repo = path.join(root, "repo");
+    mkdirSync(repo, { recursive: true });
+    symlinkSync(outside, path.join(repo, "escape-link"));
+    assert.throws(
+      () => assertDestPathSafe(repo, "escape-link/payload.txt"),
+      /parent path is not a real workspace directory/,
+      "a symlinked parent directory must be refused, not silently followed"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("acquireRemoteState readonly: local-only commits are still detected as diverged even when the ls-remote sha isn't locally fetched", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-readonly-divergence-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    // Advance origin so the remote sha the clone will discover via ls-remote is NOT locally
+    // present — reproduces the "rev-list against an unfetched object fails" path.
+    writeFileSync(path.join(origin, "advance.txt"), "v2\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "advance");
+    // The clone ALSO has a local-only commit never pushed anywhere.
+    writeFileSync(path.join(clone, "local-only.txt"), "never pushed\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "local-only work");
+
+    const st = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(
+      st.state,
+      "diverged",
+      "must not collapse to a plain 'behind' that would leave applyAllowed true for a checkout apply will refuse"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("apply --stash: the returned result reports sourceClean 'clean' (from the pinned snapshot), not the pre-stash 'dirty' value", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-stash-sourceclean-"));
+  let result;
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "my-local-notes.txt"), "uncommitted\n");
+    result = pullToolkitCheckout(clone, { stash: true }, NOOP_IO);
+    assert.equal(
+      result.sourceClean,
+      "clean",
+      "the pinned snapshot was taken from a clean tree — the result must reflect that, not the pre-stash dirty state"
+    );
+  } finally {
+    cleanupPullResult(path.join(root, "toolkit"), result);
     rmSync(root, { recursive: true, force: true });
   }
 });
