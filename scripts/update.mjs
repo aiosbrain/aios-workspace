@@ -73,9 +73,10 @@ const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
 // the SAME checkout the user is actually running — not a different one on the default path.
 const RUNNING_TOOLKIT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 
-/** Real path + HEAD sha of the checkout THIS process loaded its modules from, captured at load.
- *  The vendor phase must run code matching the SOURCE at its current HEAD; comparing against
- *  these two values (not "did my own merge move HEAD") is what decides whether to hand off. */
+/** Real path of the checkout THIS process loaded its modules from. Its HEAD is captured lazily
+ *  inside cmdUpdate (NOT at module load — importing update.mjs must not shell out to git; other
+ *  commands, e.g. ship, import it and assert no external calls). Comparing the source's real
+ *  path + current HEAD against these decides whether the vendor phase must hand off. */
 function realPathOr(p) {
   try {
     return realpathSync(p);
@@ -84,7 +85,6 @@ function realPathOr(p) {
   }
 }
 const RUNNING_TOOLKIT_REAL = realPathOr(RUNNING_TOOLKIT);
-const RUNNING_TOOLKIT_HEAD = gitSha(RUNNING_TOOLKIT);
 
 /**
  * Should the vendor phase hand off to the SOURCE's CLI instead of running in this process? Yes
@@ -570,6 +570,10 @@ export async function cmdUpdate(repo, cfg, args) {
     return 0;
   }
 
+  // HEAD of the checkout this process's modules were loaded from, captured BEFORE any pull —
+  // computed here (not at import) so merely importing update.mjs never shells out to git.
+  const runToolkitHead = gitSha(RUNNING_TOOLKIT);
+
   try {
     // Bring the local toolkit checkout current BEFORE re-vendoring from it — otherwise the
     // sync copies stale governance and the shim runs stale code. A freshly-cloned source is
@@ -603,7 +607,7 @@ export async function cmdUpdate(repo, cfg, args) {
     }
 
     // The vendor phase must run code that matches the SOURCE at its CURRENT head. This process
-    // loaded its modules (MANAGED_PATHS, merge logic) from RUNNING_TOOLKIT at RUNNING_TOOLKIT_HEAD.
+    // loaded its modules (MANAGED_PATHS, merge logic) from RUNNING_TOOLKIT at runToolkitHead.
     // Hand off whenever the source is a DIFFERENT checkout (`--from B`) OR the source HEAD has
     // moved since load — by our own fast-forward, by a concurrent updater, or anything else. Keying
     // on "did MY merge move HEAD" (pulled>0) missed both: an already-current `--from B` and a
@@ -613,7 +617,7 @@ export async function cmdUpdate(repo, cfg, args) {
         srcReal: realPathOr(srcDir),
         srcHead: gitSha(srcDir),
         runReal: RUNNING_TOOLKIT_REAL,
-        runHead: RUNNING_TOOLKIT_HEAD,
+        runHead: runToolkitHead,
       });
       if (handOff) {
         // Re-exec the SOURCE's CLI (its current code) with --no-pull so it vendors directly and
