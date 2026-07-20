@@ -113,8 +113,9 @@ writeback/registration pulls), so a newer client still works against an older br
   `resume-claim` plus admin-session approval, gateway-policy, and service-credential lifecycle
   routes. The canonical extension fixture is
   [`contract/gateway-approval-v1.10.json`](./contract/gateway-approval-v1.10.json), SHA-256
-  `b1bed83fbdd4e6cfff2200a4cefa828a2d770c66f898e9e7d704511935cc5e62`, and separately pins the
-  byte-addressed AIO-401 base contract. The feature flag remains disabled by default.*
+  `49156f5f1025c7408350d6bc97bd8769bf0fc54b90ffc6c78639597c4f12d02d` (amended 2026-07-19, below),
+  and separately pins the byte-addressed AIO-401 base contract. The feature flag remains disabled
+  by default.*
 - *2026-07-16 — document revision **1.11**: added an optional `context_health` object to the
   `POST /api/v1/metrics` payload (`aios analyze --push`, the Context Engineering Health shadow
   card). Same provenance-only pattern as `ce_band` (v1.3): older CLIs omit it, an older brain
@@ -132,6 +133,18 @@ writeback/registration pulls), so a newer client still works against an older br
   exact-origin normalization with origin-locked redirects; existing configs that used remote
   plain-HTTP or an unrecognized subpath get a one-release warning-and-accept grace period
   (repair via `aios onboard`).*
+- *2026-07-19 — internal gateway **1.10** fingerprint amendment (AIO-407, annotated within
+  document revision 1.11; no wire change): the durable resume-claim idempotency fingerprint no
+  longer includes `credentialId`/`credentialVersion` of the authenticating service credential. The
+  original definition made a fingerprint mismatch return `409 gateway_idempotency_conflict`, so an
+  Executor that claimed, lost the response, rotated its credential (an explicitly supported
+  overlap flow), and retried the identical resume was permanently 409'd and could never learn the
+  claim state — defeating the durable-resume guarantee. The fingerprint now binds execution,
+  Executor tenant/subject, member, team, service identity, toolkit, tool, and request hash only;
+  an identical retry authenticated by any active sibling credential of the same service identity
+  returns `already_claimed`. Credential identity is still revalidated at claim time and recorded
+  on the audit row — it is just never part of the idempotency fingerprint. The extension fixture
+  bytes were amended in place; the pinned SHA-256 above is the amended value.*
 
 ---
 
@@ -1007,7 +1020,13 @@ is:
 The one winning request returns `200` with `status: "claimed"`, the execution/tool identifiers,
 the verified `normalizedArgs`, and a short-lived `sealedCredential`. An identical retry returns
 only `200 {"status":"already_claimed","executionId":"uuid","state":"claimed|succeeded|failed"}`;
-it never returns arguments or a credential and never decrypts or reseals. A different key or
+it never returns arguments or a credential and never decrypts or reseals. The idempotency
+fingerprint binds the execution, Executor tenant/subject, member, team, service identity, toolkit,
+tool, and request hash — deliberately **not** the authenticating credential's
+`credentialId`/`credentialVersion`, so an identical retry authenticated by a sibling active
+credential of the same service identity (credential-rotation overlap) still resolves to
+`already_claimed` instead of poisoning the claim. Credential identity is revalidated at claim time
+and recorded on the audit row, never fingerprinted. A different key or
 fingerprint returns `409 gateway_idempotency_conflict`; a foreign service/team/subject returns a
 non-enumerating `404`; database-time approval expiry returns `410
 gateway_approval_expired`; a known execution whose rebound principal or scope is no longer eligible
