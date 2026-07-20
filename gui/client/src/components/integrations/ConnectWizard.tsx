@@ -49,6 +49,17 @@ type Phase = "collect" | "validating" | "waiting" | "done" | "error";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The brain returns a provider authorize URL (a different domain per connector), so we can't pin
+// it to one host — but we can refuse anything that isn't a plain https:// URL, closing off
+// javascript:/data: and other schemes a compromised or misconfigured response could smuggle in.
+export function isSafeAuthorizeUrl(url: string): boolean {
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Guided connect flow. Two shapes:
  *  - token: link to the key page → paste secrets → validate live → store (encrypted locally).
@@ -121,6 +132,7 @@ export function ConnectWizard({
       const start = await api.post<OAuthStartResponse>(`/api/connectors/${connector.id}/start`, {});
       if (cancelled.current) return;
       if (!start.authorize_url) throw new Error(start.error || "couldn’t start sign-in");
+      if (!isSafeAuthorizeUrl(start.authorize_url)) throw new Error("unsafe authorize URL");
       window.open(start.authorize_url, "_blank", "noopener,noreferrer");
 
       const deadline = Date.now() + 120000;
