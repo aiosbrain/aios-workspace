@@ -3,7 +3,7 @@
  * Runtime-neutral Stop/idle gate for the local Cursor Bugbot reviewer.
  *
  * Claude, Codex, Cursor, and OpenCode adapters all call this file. The expensive
- * blocked evidence is cached by the exact base-to-worktree fingerprint in worktree-local
+ * blocked verdicts are cached by the exact base-to-worktree fingerprint in worktree-local
  * git state. Clear verdicts are never trusted from disk. The child Cursor reviewer
  * runs outside the checkout so project Stop hooks cannot recursively launch the gate.
  */
@@ -27,21 +27,20 @@ import {
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   captureBranchDiff,
+  LOCAL_BUGBOT_DIFF_CAP,
   REQUIRED_BUGBOT_FAIL_ON,
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
 } from "../scripts/review-bugbot.mjs";
 
 const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
-const VERDICT_CHILD_TIMEOUT_SECONDS = 120;
 const REVIEW_ATTEMPT_BUDGET_MULTIPLIER = 3; // first attempt + one doubled retry
 const REVIEW_PROCESS_GRACE_MS = 20_000;
-const NATIVE_HOOK_TIMEOUT_MS = 86_400_000;
 const NATIVE_HOOK_GRACE_MS = 60_000;
 const LOCK_POLL_MS = 250;
 const LOCK_INITIALIZATION_GRACE_MS = 5_000;
 const OUTPUT_CAP = 9_000;
-const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v19";
+const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v20";
 const VALID_RUNTIMES = new Set(["claude", "codex", "cursor", "opencode"]);
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
   existsSync
@@ -211,7 +210,8 @@ function cachedResult(file, fingerprint) {
       status: "blocked",
       cached: true,
       fingerprint,
-      output: previous.output,
+      reason:
+        "Bugbot previously found Medium-or-higher findings for this exact changeset; change the diff or run the manual review command to refresh evidence.",
     };
   }
   return null;
@@ -343,6 +343,13 @@ export function evaluateLocalBugbotGate({
       fingerprint: snapshot.fingerprint,
     };
   }
+  if (snapshot.reviewTooLarge) {
+    return {
+      status: "error",
+      reason: `changeset exceeds the ${LOCAL_BUGBOT_DIFF_CAP}-character local Bugbot limit; split the changeset so code and security reviewers can inspect it atomically`,
+      fingerprint: snapshot.fingerprint,
+    };
+  }
   if (!snapshot.diffStat && !snapshot.logOneline) {
     return {
       status: "skipped",
@@ -357,18 +364,8 @@ export function evaluateLocalBugbotGate({
     .digest("hex");
   if (probeOnly) return { status: "probe", fingerprint };
   const reviewTimeoutMs =
-    snapshot.reviewChunks.length *
-      REVIEW_ATTEMPT_BUDGET_MULTIPLIER *
-      (REVIEW_CHILD_TIMEOUT_SECONDS + VERDICT_CHILD_TIMEOUT_SECONDS) *
-      1000 +
+    REVIEW_ATTEMPT_BUDGET_MULTIPLIER * REVIEW_CHILD_TIMEOUT_SECONDS * 1000 +
     REVIEW_PROCESS_GRACE_MS;
-  if (reviewTimeoutMs >= NATIVE_HOOK_TIMEOUT_MS - NATIVE_HOOK_GRACE_MS) {
-    return {
-      status: "error",
-      reason: `changeset requires ${snapshot.reviewChunks.length} review chunks, exceeding the native hook capacity; split the changeset before completing`,
-      fingerprint,
-    };
-  }
 
   const existing = cachedResult(file, fingerprint);
   if (existing) return existing;
@@ -395,7 +392,6 @@ export function evaluateLocalBugbotGate({
       env,
       model,
       timeoutMs: reviewTimeoutMs,
-      chunkCount: snapshot.reviewChunks.length,
     });
     const currentSnapshot = captureBranchDiff(root, baseSha, { includeWorktree: true });
     if (currentSnapshot.suppressedTrackedFiles.length) {
@@ -422,7 +418,7 @@ export function evaluateLocalBugbotGate({
     const verifiedClear = rawOutput.split("\n").some((line) => line.trim() === BUGBOT_CLEAR_MARKER);
     if (review.ok && verifiedClear) {
       // A writable on-disk clear cache is a bypass: an agent can forge the public
-      // fingerprint. Keep blocked evidence for UX, but require a real review for clear.
+      // fingerprint. Persist only blocked metadata and require a real review for clear.
       rmSync(file, { force: true });
       return { status: "clear", verified: true, cached: false, fingerprint, output };
     }
@@ -443,7 +439,7 @@ export function evaluateLocalBugbotGate({
         branch,
         model,
         reviewedAt: new Date().toISOString(),
-        output,
+        evidenceSha256: createHash("sha256").update(rawOutput).digest("hex"),
       });
       return { status: "blocked", cached: false, fingerprint, output };
     }

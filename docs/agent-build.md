@@ -199,15 +199,13 @@ tracked path is marked `skip-worktree` or `assume-unchanged`, so local index hin
 reviewed changeset.
 
 This is intentionally a toolkit-product checkout gate, not a vendored customer-workspace
-hook: it depends on the toolkit's `scripts/aios.mjs` review CLI. Large diffs are packed into
-target-sized, whole-file review chunks (an oversized single-file patch stays intact), and both
-code and security passes must clear every chunk. The configured reviewer timeout applies to each
-call, so adding chunks never starves later calls of time. Code and security run concurrently; a timed-out Cursor call retries once with a
+hook: it depends on the toolkit's `scripts/aios.mjs` review CLI. A review sees the whole atomic
+changeset. Diffs above the 500,000-character review limit fail closed with a request to split the
+changeset, because independently clearing chunks could miss a cross-file vulnerability. Code and
+security passes run concurrently; a timed-out Cursor call retries once with a
 doubled per-call budget. The hook writes a local progress heartbeat every 30 seconds to stderr
 while preserving machine-readable JSON on stdout. The native adapters share an explicit 24-hour
-capacity; changesets beyond that calculated review budget fail immediately with a split-the-change
-message instead of being killed mid-review. Abandoned locks carry an owner PID and are reclaimed
-as soon as that process is gone.
+capacity. Abandoned locks carry an owner PID and are reclaimed as soon as that process is gone.
 
 OpenCode 1.18 does not expose a blocking `Stop`/`session.stopping` plugin hook. Its adapter
 runs the same required gate on `session.idle` and re-prompts an interactive session on failure

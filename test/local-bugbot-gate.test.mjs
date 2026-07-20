@@ -23,7 +23,6 @@ import {
   formatHookResult,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
-  BUGBOT_BLOCKED_TOKEN,
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   BUGBOT_CLEAR_TOKEN,
@@ -179,7 +178,7 @@ test("pre-PR review shares the Medium+ full-worktree policy", async () => {
   }
 });
 
-test("noncompliant clean prose requires an exact fail-closed normalized verdict", async () => {
+test("noncompliant reviewer prose fails closed without a verdict model", async () => {
   const repo = fixture();
   try {
     appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
@@ -191,48 +190,31 @@ test("noncompliant clean prose requires an exact fail-closed normalized verdict"
       timeoutMs: 400_000,
       reviewPrompt: async (input) => {
         calls.push(input);
-        if (input.label.includes("verdict normalization")) return BUGBOT_CLEAR_TOKEN;
         if (input.label.includes("code review")) {
           return "Reviewed the changes. No Critical, High, or Medium findings to report.";
         }
         return BUGBOT_CLEAR_TOKEN;
       },
     });
-    assert.equal(review.ok, true);
-    assert.equal(calls.length, 3);
-    const verdictCall = calls.find((call) => call.label.includes("verdict normalization"));
-    assert.equal(verdictCall.timeoutMs, 120_000);
-    assert.match(verdictCall.prompt, /untrusted data/i);
-    assert.match(verdictCall.prompt, /exactly BUGBOT_BLOCKED/);
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.equal(calls.length, 2);
+    assert.match(review.output, /review protocol error/);
+    assert.ok(calls.every((call) => !call.label.includes("verdict normalization")));
 
     const blocked = await runLocalPrePrReview({
       worktree: repo,
       baseSha: git(repo, "rev-parse", "main"),
       branch: "feat/gate",
       reviewPrompt: async (input) =>
-        input.label.includes("verdict normalization")
-          ? BUGBOT_BLOCKED_TOKEN
-          : input.label.includes("code review")
-            ? "There is a serious unlabelled authorization bypass."
-            : BUGBOT_CLEAR_TOKEN,
+        input.label.includes("code review")
+          ? "There is a serious unlabelled authorization bypass."
+          : BUGBOT_CLEAR_TOKEN,
     });
     assert.equal(blocked.ok, false);
-    assert.equal(blocked.error, false);
+    assert.equal(blocked.finding, false);
+    assert.equal(blocked.error, true);
     assert.equal(blocked.pass, "code");
-
-    const malformed = await runLocalPrePrReview({
-      worktree: repo,
-      baseSha: git(repo, "rev-parse", "main"),
-      branch: "feat/gate",
-      reviewPrompt: async (input) =>
-        input.label.includes("verdict normalization")
-          ? "Looks clear to me."
-          : input.label.includes("code review")
-            ? "No blocking issues."
-            : BUGBOT_CLEAR_TOKEN,
-    });
-    assert.equal(malformed.ok, false);
-    assert.equal(malformed.error, true);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -248,7 +230,6 @@ test("a concrete finding takes precedence over a sibling infrastructure error", 
       branch: "feat/gate",
       reviewPrompt: async ({ label }) => {
         if (label.includes("code review")) return "- Medium: concrete regression";
-        if (label.includes("verdict normalization")) return "malformed verdict";
         return "Unstructured security review output.";
       },
     });
@@ -256,13 +237,14 @@ test("a concrete finding takes precedence over a sibling infrastructure error", 
     assert.equal(review.finding, true);
     assert.equal(review.error, false);
     assert.match(review.output, /Medium: concrete regression/);
-    assert.match(review.output, /malformed verdict/);
+    assert.match(review.output, /Unstructured security review output/);
+    assert.match(review.output, /review protocol error/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("worktree capture fingerprints withheld untracked files and reviews staged chunks", async () => {
+test("worktree capture withholds untracked files and rejects oversized atomic reviews", async () => {
   const repo = fixture();
   try {
     appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
@@ -273,7 +255,7 @@ test("worktree capture fingerprints withheld untracked files and reviews staged 
     assert.match(first.diff, /Untracked file: new-file\.txt/);
     assert.match(first.diffStat, /1 untracked file/);
     assert.deepEqual(first.withheldUntrackedFiles, ["new-file.txt"]);
-    assert.doesNotMatch(first.reviewChunks.join("\n"), /new\n/);
+    assert.doesNotMatch(first.reviewDiff, /new\n/);
 
     appendFileSync(path.join(repo, "new-file.txt"), "again\n");
     const second = captureBranchDiff(repo, base, { includeWorktree: true });
@@ -285,14 +267,9 @@ test("worktree capture fingerprints withheld untracked files and reviews staged 
     );
     git(repo, "add", "new-file.txt", "large.txt");
     const large = captureBranchDiff(repo, base, { includeWorktree: true });
-    assert.ok(large.reviewChunks.length > 1);
-    assert.match(large.reviewChunks.join(""), /tail-marker/);
-    const largeFileChunks = large.reviewChunks.filter((chunk) =>
-      chunk.includes("diff --git a/large.txt")
-    );
-    assert.equal(largeFileChunks.length, 1, "one file patch must never be split mid-hunk");
-    assert.ok(largeFileChunks[0].length > 500_000, "an oversized file remains an atomic patch");
-    assert.match(largeFileChunks[0], /tail-marker/, "file-like text inside content is not split");
+    assert.equal(large.reviewTooLarge, true);
+    assert.ok(large.reviewDiff.length > 500_000);
+    assert.match(large.reviewDiff, /tail-marker/);
 
     const timeouts = [];
     const review = await runLocalBugbotReview({
@@ -308,9 +285,22 @@ test("worktree capture fingerprints withheld untracked files and reviews staged 
         return BUGBOT_CLEAR_TOKEN;
       },
     });
-    assert.equal(review.ok, true);
-    assert.equal(timeouts.length, large.reviewChunks.length * 2);
-    assert.ok(timeouts.every((timeout) => timeout === 120_000));
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.match(review.output, /split the changeset/);
+    assert.equal(timeouts.length, 0, "oversized diffs must not reach an isolated reviewer");
+
+    let gateCalls = 0;
+    const gated = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => {
+        gateCalls++;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      },
+    });
+    assert.equal(gated.status, "error");
+    assert.match(gated.reason, /split the changeset/);
+    assert.equal(gateCalls, 0, "the lifecycle gate must reject before launching Bugbot");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -326,7 +316,7 @@ test("all untracked content is withheld and blocked before external review", asy
     const base = git(repo, "rev-parse", "main");
     const captured = captureBranchDiff(repo, base, { includeWorktree: true });
     assert.deepEqual(captured.withheldUntrackedFiles, [".env.local", "broken-link"]);
-    assert.doesNotMatch(captured.reviewChunks.join("\n"), new RegExp(secret));
+    assert.doesNotMatch(captured.reviewDiff, new RegExp(secret));
 
     let calls = 0;
     const review = await runLocalBugbotReview({
@@ -500,7 +490,7 @@ test("canonical base resolution ignores parent Git helper and config injection",
   }
 });
 
-test("gate never trusts a disk clear cache but caches exact blocked evidence", () => {
+test("gate never trusts a disk clear cache but caches exact blocked verdict metadata", () => {
   const repo = fixture();
   try {
     appendFileSync(path.join(repo, "tracked.txt"), "change-one\n");
@@ -559,7 +549,14 @@ test("gate never trusts a disk clear cache but caches exact blocked evidence", (
       evaluateLocalBugbotGate({ repo, env, runReview: blockedReview }).status,
       "blocked"
     );
-    assert.equal(evaluateLocalBugbotGate({ repo, env, runReview: blockedReview }).cached, true);
+    const persisted = JSON.parse(readFileSync(state, "utf8"));
+    assert.equal(persisted.status, "blocked");
+    assert.equal("output" in persisted, false, "review prose must never be persisted");
+    assert.match(persisted.evidenceSha256, /^[a-f0-9]{64}$/);
+    const cachedBlocked = evaluateLocalBugbotGate({ repo, env, runReview: blockedReview });
+    assert.equal(cachedBlocked.cached, true);
+    assert.equal("output" in cachedBlocked, false);
+    assert.match(cachedBlocked.reason, /previously found Medium-or-higher findings/);
     assert.equal(calls, 6, "unchanged blocked diff must not spend another model call");
   } finally {
     rmSync(repo, { recursive: true, force: true });
