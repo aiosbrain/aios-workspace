@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 
-import { pullToolkitCheckout } from "../scripts/toolkit-pull.mjs";
+import { pullToolkitCheckout, remoteStatus } from "../scripts/toolkit-pull.mjs";
 import { conflictMarkerPaths, shouldReExecVendor } from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
 
@@ -140,10 +140,20 @@ test("shouldReExecVendor hands off for an alternate checkout AND a moved-since-l
     shouldReExecVendor({ srcReal: "/tk", srcHead: "bbb", runReal: "/tk", runHead: "aaa" }),
     true
   );
-  // A non-git source (head unknown) has nothing to hand off to → run in-process, never loop.
+  // A non-git source (head unknown) on the SAME real path → run in-process, never loop.
   assert.equal(
     shouldReExecVendor({ srcReal: "/tk", srcHead: "unknown", runReal: "/tk", runHead: "aaa" }),
     false
+  );
+  // Review #5: a DIFFERENT checkout must hand off even when a head is unknown (a non-git
+  // vendored toolkit) — the real-path difference alone is sufficient and must not be swallowed.
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/B", srcHead: "aaa", runReal: "/tk", runHead: "unknown" }),
+    true
+  );
+  assert.equal(
+    shouldReExecVendor({ srcReal: "/B", srcHead: "unknown", runReal: "/tk", runHead: "unknown" }),
+    true
   );
 });
 
@@ -157,6 +167,9 @@ test("conflictMarkerPaths detects a marker whose index looks resolved (staged)",
     const abs = path.join(root, entry.src);
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, "<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n");
+    assert.deepEqual(conflictMarkerPaths(root), [entry.src]);
+    // Review #9: a BARE, label-less opener (no trailing space) must still be caught.
+    writeFileSync(abs, "<<<<<<<\nmine\n=======\ntheirs\n>>>>>>>\n");
     assert.deepEqual(conflictMarkerPaths(root), [entry.src]);
     // A clean file is not flagged.
     writeFileSync(abs, "resolved content\n");
@@ -337,6 +350,93 @@ test("apply reconciles deps when behind===0 but the recorded install is stale (i
     assert.equal(second.installed, false);
   } finally {
     process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Review round 2 -----------------------------------------------------------
+
+// #3 — ls-remote must match the EXACT ref, not a sibling that sorts first.
+test("remoteStatus picks the tracked branch's sha, not a same-suffixed sibling", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-ambig-ref-"));
+  try {
+    const origin = path.join(root, "origin");
+    const clone = path.join(root, "clone");
+    mkdirSync(origin, { recursive: true });
+    git(origin, "init", "-q", "-b", "release");
+    git(origin, "config", "user.email", "t@t.t");
+    git(origin, "config", "user.name", "t");
+    writeFileSync(path.join(origin, "f.txt"), "base\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "base");
+    execFileSync("git", ["clone", "-q", "-b", "release", origin, clone]);
+    // Origin gains a sibling `hotfix/release` (sorts before `release`) at a DIFFERENT sha.
+    git(origin, "checkout", "-q", "-b", "hotfix/release");
+    writeFileSync(path.join(origin, "f.txt"), "hotfix\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "hotfix");
+    git(origin, "checkout", "-q", "release");
+
+    const st = remoteStatus(clone);
+    const releaseSha = git(origin, "rev-parse", "release");
+    // The clone is level with origin/release → behind 0, verified. If the code grabbed
+    // hotfix/release's sha instead, that object isn't local and it would report behind:null.
+    assert.equal(st.remoteVerified, true);
+    assert.equal(st.behind, 0, "matched refs/heads/release exactly");
+    assert.equal(git(clone, "rev-parse", "HEAD"), releaseSha);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// #4 — a toolkit with no upstream is "not tracking", NOT "offline"; --check can still green.
+test("remoteStatus reports a no-upstream toolkit as verified/current, not offline", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-no-upstream-"));
+  try {
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "config", "user.email", "t@t.t");
+    git(dir, "config", "user.name", "t");
+    writeFileSync(path.join(dir, "f.txt"), "v1\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "init");
+    const st = remoteStatus(dir);
+    assert.equal(st.upstream, null);
+    assert.equal(st.behind, 0);
+    assert.equal(
+      st.remoteVerified,
+      true,
+      "no upstream is a known state, not an unreachable remote"
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("update --check greens a no-upstream toolkit when the workspace stamp matches", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-no-upstream-cli-"));
+  try {
+    const tk = originAndToolkitClone(root).clone;
+    // Drop the upstream: a local-only toolkit that tracks nothing (not offline).
+    git(tk, "branch", "--unset-upstream");
+    git(tk, "remote", "remove", "origin");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    writeFileSync(
+      path.join(workspace, ".aios-toolkit-version"),
+      `${git(tk, "rev-parse", "HEAD")}\ntoolkit-version 0.7.0\n`
+    );
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--check", "--from", tk, "--repo", workspace],
+      {
+        encoding: "utf8",
+      }
+    );
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /up to date/, "no-upstream + matching stamp is current");
+    assert.doesNotMatch(res.stdout + res.stderr, /offline/i, "must not claim offline");
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

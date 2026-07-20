@@ -67,16 +67,41 @@ export function trackingStatus(dir) {
 export function remoteStatus(dir, warn = () => {}) {
   const branch = gitSafe(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
   const upstream = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-  if (!upstream) return { branch, upstream: null, behind: 0, ahead: 0, remoteVerified: false };
+  // No upstream configured is NOT "offline" — there's simply no remote to be behind. Report it
+  // as verified/up-to-date (behind 0) so a matching workspace can still read green, distinct from
+  // an unreachable remote. `upstream: null` still tells the caller to skip the pull.
+  if (!upstream) {
+    return { branch, upstream: null, behind: 0, ahead: 0, remoteVerified: true, noUpstream: true };
+  }
   const slash = upstream.indexOf("/");
   const remote = upstream.slice(0, slash);
   const remoteBranch = upstream.slice(slash + 1);
-  const line = gitSafe(dir, ["ls-remote", remote, remoteBranch]);
-  if (!line) {
+  const out = gitSafe(dir, ["ls-remote", remote, remoteBranch]);
+  if (!out) {
     warn(c.yellow("  couldn't reach the remote — reporting local state only (unverified)."));
     return { branch, upstream, behind: null, ahead: 0, remoteVerified: false };
   }
-  const remoteSha = line.split(/\s+/)[0];
+  // `git ls-remote <remote> <branch>` matches by trailing component, so a sibling like
+  // `refs/heads/hotfix/<branch>` (or a same-named tag) can appear too — pick the EXACT ref, not
+  // just line 0, or the count is computed against the wrong sha.
+  const wantHead = `refs/heads/${remoteBranch}`;
+  const wantTag = `refs/tags/${remoteBranch}`;
+  let remoteSha = null;
+  let tagSha = null;
+  for (const l of out.split("\n")) {
+    const [sha, ref] = l.split(/\s+/);
+    if (ref === wantHead) {
+      remoteSha = sha;
+      break;
+    }
+    if (ref === wantTag) tagSha = sha;
+  }
+  remoteSha = remoteSha || tagSha;
+  if (!remoteSha) {
+    // Remote reachable but no exact branch/tag match (renamed/deleted upstream, odd layout):
+    // we know it isn't confirmably current, but won't invent a false green.
+    return { branch, upstream, behind: null, ahead: 0, remoteVerified: true };
+  }
   const localHead = gitSafe(dir, ["rev-parse", "HEAD"]);
   if (remoteSha === localHead)
     return { branch, upstream, behind: 0, ahead: 0, remoteVerified: true };
@@ -138,15 +163,19 @@ function lockfileHash(dir) {
 }
 
 /**
- * Where the lockfile hash of the last SUCCESSFUL install is recorded — under the git common
- * dir (untracked, shared across worktrees). Comparing against it on every run means an install
- * interrupted between fast-forward and `npm ci` self-heals next time, instead of being masked
- * forever by a `behind === 0` early return.
+ * Where the lockfile hash of the last SUCCESSFUL install is recorded (untracked). Comparing
+ * against it on every run means an install interrupted between fast-forward and `npm ci`
+ * self-heals next time, instead of being masked forever by a `behind === 0` early return.
+ *
+ * Uses the PER-WORKTREE git dir (`--git-dir`, e.g. `.git/worktrees/<name>`), not the shared
+ * common dir: this marker only governs a REAL, worktree-local `node_modules` (a symlinked one is
+ * skipped before we get here), and two worktrees with independent installs on different lockfiles
+ * must not overwrite each other's marker and thrash into needless reinstalls.
  */
 function installedLockPath(dir) {
-  const common = gitSafe(dir, ["rev-parse", "--git-common-dir"]);
-  if (!common) return null;
-  return path.join(path.resolve(dir, common), "aios-installed-lock");
+  const gitDir = gitSafe(dir, ["rev-parse", "--git-dir"]);
+  if (!gitDir) return null;
+  return path.join(path.resolve(dir, gitDir), "aios-installed-lock");
 }
 
 /**
@@ -188,6 +217,20 @@ function reconcileDeps(dir, { log, warn }) {
     return false;
   }
   const cmd = currentHash ? "ci" : "install";
+  // Re-check right before npm runs (TOCTOU): if node_modules became a symlink since the lstat
+  // above, `npm ci` would delete through it and wipe the shared target. Bail rather than risk it.
+  try {
+    if (lstatSync(nm).isSymbolicLink()) {
+      warn(
+        c.yellow(
+          "  toolkit node_modules became a symlink — skipping npm ci to protect the shared install."
+        )
+      );
+      return false;
+    }
+  } catch {
+    /* vanished between checks — nothing to protect; npm will recreate it */
+  }
   log(c.dim(`  reinstalling toolkit deps (npm ${cmd}) …`));
   // On Windows npm is npm.cmd — execFileSync("npm") throws ENOENT there; shell:true resolves
   // it via PATHEXT. Args are fixed strings ("ci"/"install"), so shell interpolation is safe.

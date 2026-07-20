@@ -96,8 +96,12 @@ const RUNNING_TOOLKIT_REAL = realPathOr(RUNNING_TOOLKIT);
  * and the un-raceable concurrent-fast-forward case are unit-testable.
  */
 export function shouldReExecVendor({ srcReal, srcHead, runReal, runHead }) {
+  // A DIFFERENT checkout always needs the hand-off — even a non-git one whose head is unknown
+  // (looksLikeToolkit accepts a `.git`-less vendored copy). Only the HEAD-moved comparison is
+  // skipped when a head is unknowable, which keeps the re-exec child (same checkout) from looping.
+  if (srcReal !== runReal) return true;
   if (srcHead === "unknown" || runHead === "unknown") return false;
-  return srcReal !== runReal || srcHead !== runHead;
+  return srcHead !== runHead;
 }
 
 function argValue(args, flag) {
@@ -280,10 +284,11 @@ function entryFiles(srcRoot, entry) {
   return out;
 }
 
-// A git conflict OPENER/closer at line start (7 markers + a space). Every real conflict has an
-// opener, so scanning for it catches marker-bearing files that an UNMERGED-index check misses —
-// e.g. a conflict that was `git add`-ed (index looks resolved) or markers introduced by hand.
-const CONFLICT_MARKER = /^(?:<{7}|>{7}) /m;
+// A git conflict OPENER/closer at line start — 7 markers followed by a space (labelled, as git
+// writes them) OR end-of-line (a bare, label-less marker some tools / manual edits produce).
+// Every real conflict has an opener, so this catches marker-bearing files that an UNMERGED-index
+// check misses — e.g. a conflict that was `git add`-ed (index looks resolved) or hand-authored.
+const CONFLICT_MARKER = /^(?:<{7}|>{7})(?: |\t|\r?$)/m;
 
 /**
  * Managed SOURCE files (relative paths) that contain conflict markers in their CONTENT. The
@@ -558,6 +563,13 @@ export async function cmdUpdate(repo, cfg, args) {
     return 0;
   }
 
+  // HEAD of the checkout this process's modules were loaded from. Captured BEFORE resolveSource()
+  // (which can do slow I/O — an existsSync chain, or a real `git clone` in the fallback) so a
+  // concurrent updater that fast-forwards RUNNING_TOOLKIT during that window can't slip past
+  // shouldReExecVendor undetected. Computed here (not at import) so importing update.mjs — e.g.
+  // from ship.mjs, which asserts no external calls — never shells out to git.
+  const runToolkitHead = gitSha(RUNNING_TOOLKIT);
+
   const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
@@ -570,10 +582,6 @@ export async function cmdUpdate(repo, cfg, args) {
     return 0;
   }
 
-  // HEAD of the checkout this process's modules were loaded from, captured BEFORE any pull —
-  // computed here (not at import) so merely importing update.mjs never shells out to git.
-  const runToolkitHead = gitSha(RUNNING_TOOLKIT);
-
   try {
     // Bring the local toolkit checkout current BEFORE re-vendoring from it — otherwise the
     // sync copies stale governance and the shim runs stale code. A freshly-cloned source is
@@ -584,13 +592,20 @@ export async function cmdUpdate(repo, cfg, args) {
       pullInfo = pullToolkitCheckout(srcDir, pullOpts, io);
     }
 
+    // Read the source HEAD ONCE, after the pull. Reused for both the hand-off decision and the
+    // version stamp so they can't disagree if a concurrent updater moves srcDir between them.
+    const srcHead = gitSha(srcDir);
+
     // Never vendor FROM a conflicted toolkit — its files hold `<<<<<<<` markers and the
     // destinations are executed/parsed. Runs HERE, in the parent (current code), BEFORE any
     // re-exec hand-off — so the guarantee can't depend on the source CLI's version — and
-    // independently of the pull (so --no-pull can't bypass it). TWO signals: an unmerged index
-    // (a mid-conflict tree) AND a content scan of the managed source files (catches a
-    // `git add`-ed or hand-authored marker whose index looks clean). Before --force too.
-    const conflicted = [...new Set([...unmergedPaths(srcDir), ...conflictMarkerPaths(srcDir)])];
+    // independently of the pull (so --no-pull can't bypass it). The unmerged-index check is
+    // cheap (git) and always runs; the full content scan is apply-only (it's the safety gate
+    // for the vendor write, and read-only --check shouldn't pay a whole-tree read).
+    const applying = !check && !preview;
+    const conflicted = [
+      ...new Set([...unmergedPaths(srcDir), ...(applying ? conflictMarkerPaths(srcDir) : [])]),
+    ];
     if (conflicted.length) {
       const detail = `${srcDir} has ${conflicted.length} file(s) with conflict markers (e.g. ${conflicted[0]})`;
       if (check || preview) {
@@ -612,10 +627,13 @@ export async function cmdUpdate(repo, cfg, args) {
     // moved since load — by our own fast-forward, by a concurrent updater, or anything else. Keying
     // on "did MY merge move HEAD" (pulled>0) missed both: an already-current `--from B` and a
     // race where another process fast-forwarded between our behind-count and our merge.
-    if (!check && !preview) {
+    // Gated on !ephemeral, like the pull above: a throwaway network clone always has a different
+    // real path from RUNNING_TOOLKIT, which would otherwise force a redundant child spawn on every
+    // single apply run. (Ephemeral only happens if RUNNING_TOOLKIT itself isn't a valid toolkit.)
+    if (applying && !ephemeral) {
       const handOff = shouldReExecVendor({
         srcReal: realPathOr(srcDir),
-        srcHead: gitSha(srcDir),
+        srcHead,
         runReal: RUNNING_TOOLKIT_REAL,
         runHead: runToolkitHead,
       });
@@ -636,7 +654,7 @@ export async function cmdUpdate(repo, cfg, args) {
       }
     }
 
-    const sha = gitSha(srcDir); // read AFTER the pull so the re-vendor uses the newest toolkit
+    const sha = srcHead; // the single post-pull read; stamped value == the head we validated
     const meta = toolkitMeta(srcDir); // semver + brain-api version of the source toolkit
     const stampPath = path.join(repo, VERSION_FILE);
     const stampField = (label) => {
