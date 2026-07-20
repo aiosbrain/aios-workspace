@@ -328,6 +328,21 @@ function brainFetch(fetchImpl, url, cfg, options) {
   return fetchBrainOriginLocked(fetchImpl, url, options, brainUrlOf(cfg));
 }
 
+// Every consumer of authorize_url (this CLI's `open`/`xdg-open`, and the GUI server that
+// forwards it to the browser's window.open) is a navigation sink. Each connector's OAuth
+// provider lives on a different domain, so this can't pin a host — it requires a plain
+// https:// URL with no embedded credentials, closing off javascript:/data:/custom-protocol
+// smuggling and userinfo look-alike redirects (https://real-host@evil.com/...) at the one
+// place both consumers call through.
+function isSafeAuthorizeUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === "https:" && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+}
+
 /** GET the descriptor's oauth.start_url with the member key → { authorize_url }. */
 export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
   const url = resolve((descriptor.oauth || {}).start_url || "", { BRAIN_URL: brainUrlOf(cfg) });
@@ -337,6 +352,9 @@ export async function startOAuth(descriptor, cfg, { fetchImpl = fetch } = {}) {
     throw new Error(
       `oauth start failed: ${(json && (json.message || json.error)) || `HTTP ${res.status}`}`
     );
+  }
+  if (!isSafeAuthorizeUrl(json.authorize_url)) {
+    throw new Error("oauth start failed: brain returned an unsafe authorize_url");
   }
   return { authorize_url: json.authorize_url };
 }
