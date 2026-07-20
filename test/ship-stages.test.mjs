@@ -85,6 +85,8 @@ function makeDeps(over = {}) {
       addComment: async () => ({ ok: true }),
     },
     resolveModels: resolveLoopModels,
+    resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0, // CLEAR
@@ -175,6 +177,37 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
   for (const f of ["task.md", "recon.md", "plan.md", "deferred.md", "ship-transcript.md"]) {
     check(`audit ${f} written`, existsSync(path.join(issueDir, f)));
   }
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("local pre-PR Bugbot evidence is visible when it blocks");
+{
+  const evidence = "- Medium: operator-visible regression";
+  const deps = makeDeps({
+    runLocalPrePrReview: async () => ({
+      ok: false,
+      error: false,
+      pass: "security",
+      output: evidence,
+    }),
+  });
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+  let code;
+  try {
+    ({ code } = await runShip({
+      repo: deps.repo,
+      issue: "AIO-163",
+      opts: optsFor(),
+      deps,
+    }));
+  } finally {
+    console.error = originalError;
+  }
+  check("pre-PR finding blocks merge", code === SHIP_EXIT.MERGE_BLOCKED);
+  check("pre-PR evidence is printed", errors.join("\n").includes(evidence));
+  check("PR was not opened", !deps.ghCalls.some((call) => call.includes("pr create")));
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

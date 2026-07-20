@@ -91,10 +91,12 @@ if [[ ! -e "$here/.mcp.json" && -f "$scaffold/.mcp.json" ]]; then
   echo "copied .mcp.json"
 fi
 
-# .opencode/ — agents and plugin
-if [[ ! -e "$here/.opencode" && -d "$scaffold/.opencode" ]]; then
-  cp -R "$scaffold/.opencode" "$here/.opencode"
-  echo "copied .opencode/"
+# .opencode/ — agents and plugins. The product Bugbot adapter is tracked, so the
+# directory can already exist in a fresh worktree; fill only missing hydrated files.
+if [[ -d "$scaffold/.opencode" ]]; then
+  mkdir -p "$here/.opencode"
+  cp -Rn "$scaffold/.opencode/." "$here/.opencode/"
+  echo "hydrated .opencode/"
 fi
 
 # ── direnv ──────────────────────────────────────────────────────────────────

@@ -161,12 +161,82 @@ For each round, the tool — not the agent — owns one authoritative change set
 
 ### Local Bugbot hook (`/review-bugbot`)
 
-When `--merge` is set, `aios build` runs a **local Cursor Bugbot review** on the real worktree
-diff before merging (same skill as `/review-bugbot` in the IDE). It blocks merge on Critical/High
-findings unless you pass `--no-bugbot`. Standalone:
+When `--merge` is set, `aios build` runs **local code and security review passes** on the real
+worktree diff before merging (the code pass uses the same `/review-bugbot` skill as the IDE).
+Both passes block on Medium-or-higher findings unless you pass `--no-bugbot`. Standalone:
 
 ```bash
 npm run aios -- review-bugbot feat/my-branch
+```
+
+For interactive product-repo work, `hooks/local-bugbot-gate.mjs` is the shared agent
+completion gate. Project adapters invoke it from Claude Code `Stop`, Codex `Stop`, Cursor
+`stop`, and OpenCode `session.idle`. It reviews committed, staged, and unstaged changes and
+fails closed on reviewer/infrastructure errors or any untracked file. Stage intended new files
+before review; this prevents forgotten local secrets from being sent to the external reviewer.
+Medium-or-higher findings block. Blocked evidence is cached in worktree-local git state for the
+exact diff fingerprint, but clear verdicts are never trusted from writable disk. The read-only
+Cursor reviewer runs from a neutral temporary directory, so it cannot load the checkout's Stop
+hook and recursively fire the same gate. This neutral-directory rule applies to every read-only
+review provider, and the lifecycle gate pins its reviewer model rather than accepting an agent-
+controlled environment override. The parent gate independently requires the child's
+exact clear marker and re-fingerprints the worktree after review; malformed output or a mid-review
+edit fails closed and requires a fresh pass. The hook uses Cursor Composer so an exhausted
+premium-model allowance cannot silently skip the required review. The lifecycle gate runs the reviewer in read-only mode against the supplied
+diff; repository tests remain a separate required check and cannot be mutated or restarted by
+the reviewer. The lifecycle gate, the iterative `aios build` review/scan loop, and both hard
+pre-merge paths (`aios build` and `aios ship`) resolve the diff base through the same canonical
+GitHub `main` lookup instead of trusting the writable local
+`origin/main` ref; this lookup requires network access and fails closed when the canonical base
+cannot be verified. That verification intentionally precedes the no-diff decision: a clean Git
+status can still contain committed feature-branch changes, while a local `origin/main`-based skip
+would restore the writable-ref bypass. The standalone `aios review-bugbot` command uses the same lookup unless the
+operator deliberately supplies `--base`. Before any external review, the gate runs the local secrets scanner and withholds
+all scanner output. Untracked files are fingerprinted locally but their contents are never sent; the
+gate fails closed until each intended file is staged or the local-only file is ignored/removed.
+Trusted Git calls disable replacement objects, and a full-worktree review refuses to run while any
+tracked path is marked `skip-worktree` or `assume-unchanged`, so local index hints cannot shrink the
+reviewed changeset.
+
+This is intentionally a toolkit-product checkout gate, not a vendored customer-workspace
+hook: it depends on the toolkit's `scripts/aios.mjs` review CLI. Large diffs are packed into
+target-sized, whole-file review chunks (an oversized single-file patch stays intact), and both
+code and security passes must clear every chunk. The configured reviewer timeout applies to each
+call, so adding chunks never starves later calls of time. Code and security run concurrently; a timed-out Cursor call retries once with a
+doubled per-call budget. The hook writes a local progress heartbeat every 30 seconds to stderr
+while preserving machine-readable JSON on stdout. The native adapters share an explicit 24-hour
+capacity; changesets beyond that calculated review budget fail immediately with a split-the-change
+message instead of being killed mid-review. Abandoned locks carry an owner PID and are reclaimed
+as soon as that process is gone.
+
+OpenCode 1.18 does not expose a blocking `Stop`/`session.stopping` plugin hook. Its adapter
+runs the same required gate on `session.idle` and re-prompts an interactive session on failure
+through the asynchronous prompt endpoint, awaiting its enqueue acknowledgement so delivery errors propagate,
+but a headless OpenCode process can exit after the idle event. The aligned `aios build`/`aios
+ship` pre-merge review is therefore the hard enforcement boundary for OpenCode until upstream
+adds a blocking lifecycle hook. Claude, Codex, and Cursor block directly in their native Stop
+contracts. Their native commands enter through `hooks/run-local-bugbot-gate.sh`, which removes
+Node, dynamic-loader, shell-startup, Git, and Bugbot override variables before Node starts. The
+OpenCode plugin applies the equivalent cleanup to the gate child environment. The shell launcher
+selects only an executable, working Node binary from fixed system/Homebrew locations, while the
+review runner invokes the Cursor CLI through a resolved absolute path and gives its child a fixed
+system tool PATH. The reviewer derives its home directory from the OS account record, pins the
+standard XDG roots beneath it, and rejects inherited Cursor config/path overrides; hook-supplied
+`HOME` or `XDG_CONFIG_HOME` therefore cannot select reviewer configuration. The Cursor child uses
+an allowlisted environment (locale/terminal metadata plus Cursor authentication only), so proxy,
+endpoint, certificate, loader, and other inherited process overrides do not reach the reviewer.
+Claude and Cursor pass their native project-root variables explicitly; Codex
+derives the root with a pinned `/usr/bin/git` under an empty environment.
+
+These checked-in lifecycle adapters are project-local UX controls, not a cryptographic boundary
+against an actor that can rewrite the worktree or its hook configuration. The pinned, read-only
+`aios build`/`aios ship` review is the normal pre-merge boundary; organizations requiring
+tamper-resistant enforcement must also make the same review a required external CI check.
+
+Manual diagnostic invocation (the OpenCode shape returns the raw structured result):
+
+```bash
+node hooks/local-bugbot-gate.mjs --runtime opencode --json --check-exit
 ```
 
 Poll remote GitHub Bugbot on a PR (no email):

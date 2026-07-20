@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(for git_bin in /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git; do [ -x \"$git_bin\" ] || continue; /usr/bin/env -i PATH=/usr/bin:/bin \"$git_bin\" -C \"$(pwd -P)\" rev-parse --show-toplevel && exit 0; done; exit 1) && /bin/sh \"$root/hooks/run-local-bugbot-gate.sh\" codex \"$root\"",
+            "timeout": 86400,
+            "statusMessage": "Running required local Bugbot review"
+          }
+        ]
+      }
+    ]
+  }
+}

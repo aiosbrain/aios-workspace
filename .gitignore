@@ -28,6 +28,10 @@ docs/pre-ship/.spec-fix-log.txt
 
 # Worktree hydration artifacts (created by scripts/link-worktree-env.sh in every
 # worktree) — machine-local config, must never be committed.
-/.opencode/
+/.opencode/*
+!/.opencode/plugins/
+/.opencode/plugins/*
+!/.opencode/plugins/aios-bugbot.mjs
+!/.opencode/opencode.json
 /opencode.json
 /.mcp.json

@@ -61,7 +61,11 @@ import {
   SPEC_GATE_POLICIES,
   DEFAULT_SPEC_GATE,
 } from "./spec-eval.mjs";
-import { runLocalPrePrReview } from "./review-bugbot.mjs";
+import {
+  REQUIRED_BUGBOT_MODEL,
+  resolveRequiredBugbotBase,
+  runLocalPrePrReview,
+} from "./review-bugbot.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 import { runSimplify } from "./simplify.mjs";
 
@@ -1539,23 +1543,19 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 4b. PRE-PR LOCAL REVIEW ───────────────────────────────────────────────────
-  // Code + security pass on the worktree diff before opening a PR. Uses DeepSeek when
-  // DEEPSEEK_API_KEY is set (default since 2026-07-04) — no Cursor API/Bugbot quota.
+  // Code + security pass on the worktree diff before opening a PR. This hard boundary
+  // uses the same pinned reviewer as build and the lifecycle gate.
   if (!state.prePrReviewDone) {
     progress("pre-pr-review: local code + security pass");
-    let baseSha = "origin/main";
-    try {
-      baseSha = (gitExec(["rev-parse", "origin/main"], repo) ?? "").trim() || baseSha;
-    } catch {
-      /* best-effort */
-    }
-    const reviewModel = models.code_review.model ?? "deepseek-v4-pro";
+    const reviewModel = REQUIRED_BUGBOT_MODEL;
     const reviewTimeout = models.code_review.timeoutMs ?? 300 * 1000;
     let prePr;
     try {
+      const verifiedBase = (deps.resolveBugbotBase ?? resolveRequiredBugbotBase)(worktreePath);
+      if (!verifiedBase.ok) throw new Error(verifiedBase.reason);
       prePr = await (deps.runLocalPrePrReview ?? runLocalPrePrReview)({
         worktree: worktreePath,
-        baseSha,
+        baseSha: verifiedBase.baseSha,
         branch,
         timeoutMs: reviewTimeout,
         model: reviewModel,
@@ -1571,9 +1571,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       record("pre-pr-review", { blocked: true, pass: prePr.pass });
       console.error(
         c.red(
-          `pre-pr-review: Critical/High findings in ${prePr.pass ?? "review"} pass — PR blocked.`
+          prePr.error
+            ? "pre-pr-review: local Bugbot could not complete — PR blocked."
+            : `pre-pr-review: Medium+ findings in ${prePr.pass ?? "review"} pass — PR blocked.`
         )
       );
+      console.error(prePr.output || "(local Bugbot produced no evidence)");
       return { code: SHIP_EXIT.MERGE_BLOCKED, records };
     }
     record("pre-pr-review", { ok: true, skipped: !!prePr.skipped });

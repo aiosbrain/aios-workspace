@@ -56,6 +56,9 @@ npm run format:check
 # Unit + integration tests (this is the same suite CI's `tests` job runs)
 npm test
 
+# Required local agent review (Claude/Codex/Cursor Stop; OpenCode idle + pre-merge gate)
+node hooks/local-bugbot-gate.mjs --runtime opencode --json --check-exit
+
 # Scaffold smoke test + validate — the canonical scaffolder, not the legacy one.
 # Test all three contexts when touching scaffold content (RESOLVER gate requires it):
 bash scripts/scaffold-project.sh \
