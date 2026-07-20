@@ -21,9 +21,14 @@ function check(label, cond) {
 
 console.log("detectBugbotClear");
 {
-  check("CLEAR token passes", detectBugbotClear(`## Findings\n\nNone.\n\n${BUGBOT_CLEAR_TOKEN}`));
+  check("exact CLEAR token passes", detectBugbotClear(BUGBOT_CLEAR_TOKEN));
+  check("surrounding whitespace passes", detectBugbotClear(`\n${BUGBOT_CLEAR_TOKEN}\n`));
   check("High finding blocks", detectBugbotClear("## Findings\n\n- High: bad thing\n") === false);
-  check("Critical bullet blocks", detectBugbotClear("- Critical: leak in file\n") === false);
+  check("no-findings prose plus token blocks", !detectBugbotClear(`None.\n${BUGBOT_CLEAR_TOKEN}`));
+  check(
+    "contradictory finding plus token blocks",
+    !detectBugbotClear(`High: bug\n${BUGBOT_CLEAR_TOKEN}`)
+  );
 }
 
 console.log("buildBugbotPrompt");
@@ -39,6 +44,7 @@ console.log("buildBugbotPrompt");
   check("includes skill", p.startsWith("/review-bugbot"));
   check("includes diff", p.includes("+line"));
   check("asks for CLEAR token", p.includes(BUGBOT_CLEAR_TOKEN));
+  check("requires an exact clear-only response", /entire response MUST be exactly/.test(p));
 }
 
 console.log("hasCriticalOrHighFindings — one dialect (bullet, table, bracket)");

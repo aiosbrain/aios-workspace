@@ -94,6 +94,7 @@ function makeDeps(over = {}) {
       addComment: async () => ({ ok: true }),
     },
     resolveModels: resolveLoopModels,
+    resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
     runBuild: async () => (counters.build++, BUILD_EXIT.OK),
     cmdPr: async () => (counters.pr++, 77),
     cmdConsolidateFindings: async () => (counters.review++, 0), // CLEAR

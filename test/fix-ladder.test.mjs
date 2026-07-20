@@ -66,21 +66,18 @@ console.log("hasCriticalOrHighFindings (structural)");
 
 console.log("detectBugbotClear regression (unchanged after extraction)");
 {
-  check(
-    "BUGBOT_CLEAR trailing token clears (no Crit/High)",
-    detectBugbotClear("## Findings\n\nNone.\n\nBUGBOT_CLEAR") === true
-  );
+  check("exact BUGBOT_CLEAR clears", detectBugbotClear("BUGBOT_CLEAR") === true);
   check(
     "Critical bullet with no trailing token blocks",
     detectBugbotClear("## Findings\n\n- Critical: bad\n") === false
   );
   check(
-    "trailing token wins even over a Critical bullet (unchanged semantics)",
-    detectBugbotClear("- Critical: bad\n\nBUGBOT_CLEAR") === true
+    "trailing token cannot override a Critical bullet",
+    detectBugbotClear("- Critical: bad\n\nBUGBOT_CLEAR") === false
   );
   check(
-    "mentions Critical in prose but ends with token → clear",
-    detectBugbotClear("No Critical issues found.\n\nBUGBOT_CLEAR") === true
+    "even no-findings prose makes the protocol non-clear",
+    detectBugbotClear("No Critical issues found.\n\nBUGBOT_CLEAR") === false
   );
 }
 

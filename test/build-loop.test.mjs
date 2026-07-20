@@ -95,6 +95,17 @@ function opts(over) {
     keepWorktree: false,
     dryRun: false,
     chained: false,
+    resolveBugbotBase: (worktree) => ({
+      ok: true,
+      baseSha: execFileSync("git", ["merge-base", "HEAD", "main"], {
+        cwd: worktree,
+        encoding: "utf8",
+      }).trim(),
+    }),
+    runLocalBugbotReview: async () =>
+      process.env.FAKE_AGENT_SCRIPT === "bugbot-block"
+        ? { ok: false, error: false, output: "- High: blocking issue in test." }
+        : { ok: true, error: false, output: "BUGBOT_CLEAR" },
     ...over,
   };
 }
@@ -104,12 +115,16 @@ const origOut = process.stdout.write.bind(process.stdout);
 const origErr = process.stderr.write.bind(process.stderr);
 const origLog = console.log;
 const origError = console.error;
+let lastErrorOutput = "";
 async function run({ repo, branch, mode, o }) {
   process.env.FAKE_AGENT_SCRIPT = mode;
+  lastErrorOutput = "";
   process.stdout.write = () => true;
   process.stderr.write = () => true;
   console.log = () => {};
-  console.error = () => {};
+  console.error = (...args) => {
+    lastErrorOutput += `${args.join(" ")}\n`;
+  };
   try {
     return await runBuild({ repo, plan: "Add a feature module.", branch, opts: o });
   } finally {
@@ -184,17 +199,34 @@ console.log("builder commits on PRIMARY checkout (HEAD moved) → note only, bui
   check("run continues to its natural exit (NO_DIFF, not FATAL)", code === EXIT.NO_DIFF);
 }
 
-console.log("Bugbot blocks merge on Critical/High → exit 4");
+console.log("Bugbot blocks merge on Medium+ → exit 4");
 {
   const repo = freshRepo();
   const wt = wtPath(repo, "feat/t4e");
+  let baseResolutions = 0;
   const code = await run({
     repo,
     branch: "feat/t4e",
     mode: "bugbot-block",
-    o: opts({ merge: true, bugbot: true, noBugbot: false }),
+    o: opts({
+      merge: true,
+      bugbot: true,
+      noBugbot: false,
+      resolveBugbotBase: (worktree) => {
+        baseResolutions++;
+        return {
+          ok: true,
+          baseSha: execFileSync("git", ["merge-base", "HEAD", "main"], {
+            cwd: worktree,
+            encoding: "utf8",
+          }).trim(),
+        };
+      },
+    }),
   });
   check("exit GATE_FAILED (Bugbot)", code === EXIT.GATE_FAILED);
+  check("Bugbot evidence is printed to the operator", /High: blocking issue/.test(lastErrorOutput));
+  check("canonical Bugbot base covers iterative and final review phases", baseResolutions === 2);
   check("not merged to main", !existsSync(path.join(repo, "feature.js")));
   check("worktree preserved", existsSync(wt));
 }

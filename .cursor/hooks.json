@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
+        "timeout": 86400
+      }
+    ]
+  }
+}

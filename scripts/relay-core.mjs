@@ -223,7 +223,7 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 // phase passes --trust (a fresh worktree is otherwise untrusted) and --force.
 export async function callCursorAgent(prompt, timeoutMs, opts = {}) {
   const args = ["agent", "-p", prompt, "--output-format", "stream-json", ...(opts.extraArgs ?? [])];
-  return spawnAgentStream("cursor", "cursor", args, timeoutMs, opts);
+  return spawnAgentStream("cursor", opts.bin ?? "cursor", args, timeoutMs, opts);
 }
 
 // DeepSeek's own API — an alternative reviewer backend, called directly (no Cursor

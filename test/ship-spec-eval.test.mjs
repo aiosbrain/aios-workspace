@@ -67,6 +67,7 @@ function makeDeps(over = {}) {
       createIssue: async () => ({ identifier: "AIO-9" }),
     },
     resolveModels: resolveLoopModels,
+    resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,

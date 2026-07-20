@@ -48,7 +48,13 @@ import {
 } from "./relay-core.mjs";
 import { slugify as slugifyBase } from "./cli-common.mjs";
 import { callAgentModel, requirePromptModelKey, reviewCallForModel } from "./model-call.mjs";
-import { runLocalBugbotReview, hasCriticalOrHighFindings } from "./review-bugbot.mjs";
+import {
+  runLocalBugbotReview,
+  hasCriticalOrHighFindings,
+  REQUIRED_BUGBOT_FAIL_ON,
+  REQUIRED_BUGBOT_MODEL,
+  resolveRequiredBugbotBase,
+} from "./review-bugbot.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { parseModelRef } from "./model-providers.mjs";
 import { cmdPr } from "./pr.mjs";
@@ -909,7 +915,20 @@ export async function runBuild({ repo, plan, branch, opts }) {
     dryRun,
   });
 
-  const baseSha = resolveBaseSha({ wt, base, resumed, dryRun, repo });
+  let baseSha = resolveBaseSha({ wt, base, resumed, dryRun, repo });
+  const resolveBugbotBase = opts.resolveBugbotBase ?? resolveRequiredBugbotBase;
+  if (bugbot && !dryRun) {
+    const verifiedBase = resolveBugbotBase(wt);
+    if (!verifiedBase.ok) {
+      console.error(c.red("\n✗ local Bugbot base verification failed — build blocked."));
+      console.error(c.dim(verifiedBase.reason));
+      return EXIT.GATE_FAILED;
+    }
+    // The iterative reviewer, per-round secrets scan, and final Bugbot gate must
+    // describe the same canonical-main changeset. Re-resolve in finish() to catch
+    // upstream movement during a long build.
+    baseSha = verifiedBase.baseSha;
+  }
 
   // Create the log first, THEN snapshot the tripwire baseline — so a --log file
   // written inside the repo is part of the baseline (our write, not the agent's)
@@ -1186,6 +1205,8 @@ export async function runBuild({ repo, plan, branch, opts }) {
         approvedHeadSha,
         verify,
         bugbot,
+        resolveBugbotBase,
+        runBugbotReview: opts.runLocalBugbotReview,
         // Bugbot (finish) uses the explicit timeout when set, else the plain default —
         // it reviews the whole branch diff, not the per-round diff, so it doesn't adapt.
         cursorTimeout: explicitReviewTimeoutMs ?? DEFAULT_REVIEW_TIMEOUT * 1000,
@@ -1229,6 +1250,8 @@ async function finish({
   verify,
   bugbot,
   cursorTimeout,
+  resolveBugbotBase = resolveRequiredBugbotBase,
+  runBugbotReview = runLocalBugbotReview,
 }) {
   // Re-capture: reviewer (--force) may have committed after MERGE_READY was emitted.
   snapshotDiff(wt, baseSha);
@@ -1272,17 +1295,34 @@ async function finish({
 
   // Bugbot runs before ANY ship action (merge OR push/PR) — never after code leaves.
   if ((merge || pr) && bugbot && !dryRun) {
-    const bb = await runLocalBugbotReview({
+    const verifiedBase = resolveBugbotBase(wt);
+    if (!verifiedBase.ok) {
+      console.error(c.red("\n✗ local Bugbot base verification failed — merge blocked."));
+      console.error(c.dim(verifiedBase.reason));
+      return EXIT.GATE_FAILED;
+    }
+    const bb = await runBugbotReview({
       repo,
       worktree: wt,
-      baseSha,
+      baseSha: verifiedBase.baseSha,
       branch,
       cursorTimeout,
+      failOn: REQUIRED_BUGBOT_FAIL_ON,
+      includeWorktree: true,
+      readOnly: true,
+      model: REQUIRED_BUGBOT_MODEL,
     });
     log("Pre-merge Bugbot review", bb.output.slice(-8000));
     if (!bb.ok) {
-      console.error(c.red("\n✗ local Bugbot found Critical/High issues — merge blocked."));
-      console.error(c.dim("Fix findings or pass --no-bugbot to skip (not recommended)."));
+      console.error(
+        c.red(
+          bb.error
+            ? "\n✗ local Bugbot could not complete — merge blocked."
+            : "\n✗ local Bugbot found Medium+ issues — merge blocked."
+        )
+      );
+      console.error(bb.output?.slice(-8000) || "(Bugbot produced no evidence)");
+      console.error(c.dim("Fix the findings, then rerun the review."));
       return EXIT.GATE_FAILED;
     }
     console.log(c.green("✓ local Bugbot clear (BUGBOT_CLEAR)"));

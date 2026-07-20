@@ -47,6 +47,7 @@ function makeDeps(repo, auditFiles, over = {}) {
       addComment: async () => ({ ok: true }),
     },
     resolveModels: resolveLoopModels,
+    resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,

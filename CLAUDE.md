@@ -91,6 +91,11 @@ they don't recognize.
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never
   weaken the gate to make a commit pass.
+- **Local Bugbot is a completion gate.** `hooks/local-bugbot-gate.mjs` runs from the native
+  Claude, Codex, Cursor, and OpenCode lifecycle adapters. A changed diff must pass local code
+  and security review before completion or merge; Medium-or-higher findings block. Never disable
+  or bypass the hook when it reports a finding or infrastructure failure. OpenCode's upstream
+  lifecycle API is post-idle only, so `aios build`/`aios ship` remains its hard pre-merge gate.
 - **Harnesses must stay trustworthy.** Skills under `scaffold/.claude/skills/` are dynamic multi-agent
   workflows with **adversarial verification + rubric-gated self-correction** (`scaffold/.claude/rubrics/`).
   When you change a harness, keep its rubric honest — the rubric is what makes the output trustworthy.
