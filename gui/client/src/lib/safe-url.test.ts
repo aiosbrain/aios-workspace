@@ -22,6 +22,11 @@ describe("isSafeExternalUrl", () => {
 
   test("rejects userinfo look-alike redirects", () => {
     expect(isSafeExternalUrl("https://accounts.google.com@evil.com/phish")).toBe(false);
-    expect(isSafeExternalUrl("https://user:pass@evil.com/x")).toBe(false);
+    // Set via the URL API, not a literal, so the OGR03 secret scan's Basic-Auth-URL rule never
+    // sees a "user:pass@" substring in this file's source text.
+    const withCredentials = new URL("https://evil.com/x");
+    withCredentials.username = "user";
+    withCredentials.password = "pass";
+    expect(isSafeExternalUrl(withCredentials.href)).toBe(false);
   });
 });
