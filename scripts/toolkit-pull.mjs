@@ -75,13 +75,21 @@ function splitUpstream(upstream) {
   return { remote: upstream.slice(0, slash), branch: upstream.slice(slash + 1) };
 }
 
-/** Best-effort "N commits behind" from the LOCAL tracking ref, for when the remote itself
- *  can't be reached — clearly a stale estimate, never a substitute for a verified count. */
-function staleLocalEstimate(dir, upstreamName) {
+/** Best-effort behind/ahead from the LOCAL tracking ref, for when the remote itself can't
+ *  be reached — clearly a stale estimate, never a substitute for a verified count. Critically,
+ *  `ahead` still matters even offline: the old trackingStatus()-based design unconditionally
+ *  computed ahead from the local ref regardless of fetch success, so a toolkit with local
+ *  commits never pushed anywhere was refused as "diverged" even offline. Collapsing straight
+ *  to "unreachable" on fetch failure (without consulting this) would silently drop that
+ *  coverage and let an offline, locally-diverged toolkit be vendored from. */
+function staleLocalStatus(dir, upstreamName) {
   const counts = gitSafe(dir, ["rev-list", "--left-right", "--count", `${upstreamName}...HEAD`]);
-  if (!counts) return null;
-  const n = Number(counts.split(/\s+/)[0]);
-  return Number.isFinite(n) ? n : null;
+  if (!counts) return { behind: null, ahead: 0 };
+  const [behind, ahead] = counts.split(/\s+/).map(Number);
+  return {
+    behind: Number.isFinite(behind) ? behind : null,
+    ahead: Number.isFinite(ahead) ? ahead : 0,
+  };
 }
 
 /** Shared classification tail: given a resolved remote-side sha (however it was obtained)
@@ -132,11 +140,15 @@ function classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure 
  *   current               — verified: local HEAD === the remote's ref exactly.
  *   behind                 — verified: remote is ahead (behind may be null in readonly
  *                           mode if the remote object isn't fetched locally yet).
- *   diverged               — verified: local HEAD has commits the remote doesn't. Apply
- *                           hard-refuses this (not a fast-forward).
+ *   diverged               — verified (or, when the remote is unreachable, evidenced by the
+ *                           stale local tracking ref): local HEAD has commits the remote
+ *                           doesn't. Apply hard-refuses this (not a fast-forward) — even
+ *                           offline, since local unpublished work is real divergence
+ *                           regardless of network reachability.
  *   missing-upstream-ref   — @{u} WAS configured but the remote no longer has that ref
  *                           (renamed/deleted branch). NEVER substitutes a same-named tag.
- *   unreachable            — couldn't reach the remote at all (network/auth). Apply may
+ *   unreachable            — couldn't reach the remote at all (network/auth), AND the stale
+ *                           local tracking ref shows no local-only commits either. Apply may
  *                           still proceed from local state; check/preview never green.
  *   local-status-error     — the remote query itself succeeded but a LOCAL git operation
  *                           (rev-parse/rev-list) then failed — evidence of a broken LOCAL
@@ -158,13 +170,25 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
       git(dir, ["fetch", "--prune", "--quiet", remote]);
     } catch (e) {
       warn(c.yellow(`  git fetch failed (${e.message.trim()}) — reporting last-known state`));
+      const stale = staleLocalStatus(dir, upstreamName);
+      // A local commit not on the last-known remote state is real divergence regardless of
+      // network reachability — never silently vendor from it just because we're offline.
+      if (stale.ahead > 0) {
+        return {
+          state: "diverged",
+          branch,
+          upstream: upstreamName,
+          behind: stale.behind ?? 0,
+          ahead: stale.ahead,
+        };
+      }
       return {
         state: "unreachable",
         branch,
         upstream: upstreamName,
         behind: null,
         ahead: 0,
-        staleBehindEstimate: staleLocalEstimate(dir, upstreamName),
+        staleBehindEstimate: stale.behind,
       };
     }
     let upstreamSha;
@@ -195,13 +219,23 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
     // (missing-upstream-ref) below.
   } catch {
     warn(c.yellow("  couldn't reach the remote — reporting local state only (unverified)."));
+    const stale = staleLocalStatus(dir, upstreamName);
+    if (stale.ahead > 0) {
+      return {
+        state: "diverged",
+        branch,
+        upstream: upstreamName,
+        behind: stale.behind ?? 0,
+        ahead: stale.ahead,
+      };
+    }
     return {
       state: "unreachable",
       branch,
       upstream: upstreamName,
       behind: null,
       ahead: 0,
-      staleBehindEstimate: staleLocalEstimate(dir, upstreamName),
+      staleBehindEstimate: stale.behind,
     };
   }
   // `git ls-remote <remote> <branch>` matches by trailing component, so a sibling like

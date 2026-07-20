@@ -101,6 +101,47 @@ test("acquireRemoteState: deleted upstream branch is missing-upstream-ref in BOT
   }
 });
 
+test("acquireRemoteState: an unreachable remote does NOT mask local divergence (offline + local-only commits is still diverged)", () => {
+  const root = tmpRoot("aios-pull-offline-diverged-");
+  try {
+    const { clone } = originAndClone(root);
+    // A local commit never pushed anywhere — real divergence regardless of network state.
+    writeFileSync(`${clone}/local-only.txt`, "never pushed\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "local-only work");
+    // Break the remote so both ls-remote (readonly) and fetch (apply) fail.
+    git(clone, "remote", "set-url", "origin", `${root}/does-not-exist`);
+
+    // Must NOT collapse to "unreachable" (which apply is allowed to vendor from) — the
+    // stale local tracking ref still proves this checkout has unpublished local commits,
+    // which must hard-block regardless of whether the remote itself is reachable.
+    const ro = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(ro.state, "diverged", "offline + local-only commits must still read as diverged");
+    assert.equal(ro.ahead, 1);
+
+    const apply = acquireRemoteState(clone, { mode: "apply" });
+    assert.equal(apply.state, "diverged", "apply mode must reach the same verdict");
+    assert.equal(apply.ahead, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("acquireRemoteState: an unreachable remote with NO local divergence still reads unreachable, not diverged", () => {
+  const root = tmpRoot("aios-pull-offline-clean-");
+  try {
+    const { clone } = originAndClone(root);
+    git(clone, "remote", "set-url", "origin", `${root}/does-not-exist`);
+
+    const ro = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(ro.state, "unreachable");
+    const apply = acquireRemoteState(clone, { mode: "apply" });
+    assert.equal(apply.state, "unreachable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("acquireRemoteState: same-named TAG never substitutes for the tracked branch (no false green)", () => {
   const root = tmpRoot("aios-pull-tagfallback-");
   try {
