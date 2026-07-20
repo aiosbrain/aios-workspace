@@ -95,8 +95,14 @@ test("Medium+ matcher is strict while Low remains advisory", async () => {
   assert.equal(hasFindingsAtOrAbove("- High-priority follow-up", "medium"), false);
 
   const prompts = [];
+  // A fixture repo with a deterministic commit pair: the ambient checkout's
+  // HEAD~1 is not reviewable under CI's shallow merge-commit checkout.
+  const repo = fixture();
+  appendFileSync(path.join(repo, "tracked.txt"), "regression\n");
+  git(repo, "add", "tracked.txt");
+  git(repo, "commit", "-qm", "change");
   const blocked = await runLocalBugbotReview({
-    worktree: REPO,
+    worktree: repo,
     baseSha: "HEAD~1",
     branch: "feat/test",
     failOn: "medium",
