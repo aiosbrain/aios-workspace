@@ -16,6 +16,75 @@ import { cmdUpdate } from "./update.mjs";
 
 const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
 
+/**
+ * The toolkit-upgrade subsection of onboarding — extracted so its sequencing can be unit
+ * tested with a stubbed `cmdUpdate` (via the `cmdUpdate` option), without shelling real
+ * git per assertion. `cmdUpdate` never throws its own expected-failure type (`UpdateError`
+ * — it's always caught internally and converted into a returned result), but code it calls
+ * into can still throw something genuinely unexpected, so both read-only calls are guarded
+ * regardless.
+ *
+ * `--check` and `--preview` are read-only: `--preview` implies `--no-pull`, so neither
+ * mutates the toolkit checkout, spawns a child, or exits. Their structured results —
+ * `.applyAllowed`/`.reasons`, not console text — decide whether to offer the apply
+ * confirmation at all: a conflicted, dirty, uninspectable, or diverged toolkit is skipped
+ * with one clear warning rather than offered and then having apply refuse it after the
+ * user already confirmed.
+ */
+export async function runToolkitUpgrade(
+  repo,
+  cfg,
+  inspection,
+  { confirm, clack, cmdUpdate: cmdUpdateFn = cmdUpdate }
+) {
+  if (!inspection.toolkit) return;
+  if (inspection.toolkit.git.dirty || inspection.toolkit.relation === "diverged") {
+    clack.log.warn(
+      `Toolkit checkout ${inspection.toolkit.path} is ${inspection.toolkit.git.dirty ? "dirty" : "not fast-forward compatible"}; it will not be modified or used to upgrade this workspace.`
+    );
+    return;
+  }
+
+  let checkResult, previewResult;
+  try {
+    checkResult = await cmdUpdateFn(repo, cfg, ["--check", "--from", inspection.toolkit.path]);
+    previewResult = await cmdUpdateFn(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
+  } catch (error) {
+    clack.log.warn(
+      `Toolkit upgrade check failed unexpectedly (${error.message}) — skipping for now, run \`aios update\` later.`
+    );
+    return;
+  }
+
+  const blocked = checkResult?.applyAllowed === false || previewResult?.applyAllowed === false;
+  if (blocked) {
+    const reasons = [
+      ...new Set([...(checkResult?.reasons || []), ...(previewResult?.reasons || [])]),
+    ];
+    clack.log.warn(
+      `Toolkit isn't safe to update right now${reasons.length ? ` (${reasons.join("; ")})` : ""} — skipping the upgrade offer. Resolve it, then run \`aios update\` later.`
+    );
+    return;
+  }
+
+  if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
+    let applyResult;
+    try {
+      applyResult = await cmdUpdateFn(repo, cfg, ["--from", inspection.toolkit.path]);
+    } catch (error) {
+      clack.log.warn(
+        `Managed-file update failed unexpectedly (${error.message}) — finish it with \`aios update\` after onboarding.`
+      );
+      return;
+    }
+    if (applyResult.exitStatus) {
+      clack.log.warn(
+        "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
+      );
+    }
+  }
+}
+
 /** Guided onboarding, isolated from the main CLI so basic command loading stays small and dependency-free. */
 export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction }) {
   if (args.includes("--inspect")) {
@@ -102,24 +171,7 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     return;
   }
 
-  if (inspection.toolkit?.git.dirty || inspection.toolkit?.relation === "diverged") {
-    clack.log.warn(
-      `Toolkit checkout ${inspection.toolkit.path} is ${inspection.toolkit.git.dirty ? "dirty" : "not fast-forward compatible"}; it will not be modified or used to upgrade this workspace.`
-    );
-  } else if (inspection.toolkit) {
-    // --check and --preview are read-only: preview implies --no-pull, so neither mutates the
-    // toolkit checkout, re-execs, or exits this process. The apply MAY pull + hand off to the
-    // freshly-pulled CLI in a child process; cmdUpdate returns that child's exit status.
-    await cmdUpdate(repo, cfg, ["--check", "--from", inspection.toolkit.path]);
-    await cmdUpdate(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
-    if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
-      const status = await cmdUpdate(repo, cfg, ["--from", inspection.toolkit.path]);
-      if (status)
-        clack.log.warn(
-          "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
-        );
-    }
-  }
+  await runToolkitUpgrade(repo, cfg, inspection, { confirm, clack });
 
   const backedUp = backupConfig(repo);
   if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);

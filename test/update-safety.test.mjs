@@ -209,7 +209,10 @@ test("update --no-pull refuses to vendor from a toolkit left conflicted by a fai
       { encoding: "utf8" }
     );
     assert.notEqual(res.status, 0, "must refuse, not vendor conflict markers");
-    assert.match(res.stderr, /unresolved conflict/);
+    // An unmerged index (from the failed stash-pop) also shows as "dirty" in `git status
+    // --porcelain`, so the source-cleanliness gate catches it before the conflict-marker
+    // message ever fires — still a refusal either way, just via a more general check.
+    assert.match(res.stderr, /dirty|unresolved conflict/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -306,18 +309,20 @@ test("cmdUpdate --preview never pulls, never re-execs, never exits (onboarding-s
     );
 
     // Call cmdUpdate as a LIBRARY (exactly how onboard-command.mjs does) — code after the
-    // call must still run: preview must not process.exit(), and must return a 0 status.
+    // call must still run: preview must not process.exit(), and must return a structured
+    // result with exitStatus 0 (cmdUpdate returns an object, not a bare number, so the
+    // caller reads .exitStatus rather than string-matching the return value).
     const code =
       `import { cmdUpdate } from ${JSON.stringify(UPDATE_MODULE)};\n` +
-      `const status = await cmdUpdate(${JSON.stringify(workspace)}, {}, ` +
+      `const result = await cmdUpdate(${JSON.stringify(workspace)}, {}, ` +
       `["--preview", "--from", ${JSON.stringify(clone)}]);\n` +
-      `console.log("SURVIVED status=" + status);\n`;
+      `console.log("SURVIVED exitStatus=" + result.exitStatus);\n`;
     const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
       env: { ...process.env, MARKER: marker },
       encoding: "utf8",
     });
     assert.equal(res.status, 0, res.stderr);
-    assert.match(res.stdout, /SURVIVED status=0/, "caller survived and got a success status");
+    assert.match(res.stdout, /SURVIVED exitStatus=0/, "caller survived and got a success status");
     assert.equal(git(clone, "rev-parse", "HEAD"), headBefore, "preview must NOT pull the toolkit");
     assert.ok(!existsSync(marker), "preview must NOT re-exec the pulled CLI");
     assert.match(res.stdout, /preview only/, "still prints the preview classification");
@@ -379,36 +384,79 @@ test("interactive CLI still self-updates and propagates the re-exec child's fail
 
 test("update against an already-current same source runs twice in a row without hanging or looping", () => {
   const root = mkdtempSync(path.join(tmpdir(), "aios-norecurse-"));
+  // A DISPOSABLE local clone of the real toolkit, not the live worktree directly and not a
+  // stub — exercises the actual real code (`--vendor-apply-only` is now structurally
+  // non-recursive, so there is no env-var guard to prove works; this test instead proves
+  // the hand-off completes normally, twice, without hanging) without ever risking a git
+  // fetch/fast-forward against the developer's/CI's actual working checkout, and without
+  // depending on the worktree being clean at test-run time (every other test in this file
+  // already uses a synthetic/disposable fixture — this is the one that didn't, previously).
+  const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+  const disposableToolkit = path.join(root, "toolkit");
   try {
-    // A REAL toolkit checkout (this repo itself), not a stub — exercises the actual recursive
-    // spawn (parent sets AIOS_UPDATE_VENDOR_CHILD, the child inherits it and must not spawn
-    // again) rather than a synthetic aios.mjs that just writes a marker and exits.
-    const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+    execFileSync("git", [
+      "clone",
+      "--local",
+      "--no-hardlinks",
+      "-q",
+      toolkitRoot,
+      disposableToolkit,
+    ]);
+    git(disposableToolkit, "config", "user.email", "t@t.t");
+    git(disposableToolkit, "config", "user.name", "t");
+    const headBefore = git(toolkitRoot, "rev-parse", "HEAD");
+
     const workspace = path.join(root, "workspace");
     mkdirSync(workspace, { recursive: true });
     writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
 
     // First run: nothing synced yet, so this vendors for real. Bounded timeout — a
     // reintroduced infinite-recursion bug must fail loudly and fast, never hang CI.
+    // --no-pull: the disposable clone is already current with itself; no network needed.
     const first = spawnSync(
       process.execPath,
-      [CLI, "update", "--no-install", "--from", toolkitRoot, "--repo", workspace],
+      [
+        CLI,
+        "update",
+        "--no-pull",
+        "--no-install",
+        "--from",
+        disposableToolkit,
+        "--repo",
+        workspace,
+      ],
       { encoding: "utf8", timeout: 30_000 }
     );
     assert.notEqual(first.signal, "SIGTERM", "first run must not time out (no infinite loop)");
     assert.equal(first.status, 0, first.stderr);
 
-    // Second run: workspace is now current — the exact "already-current, same source" case
-    // that used to run in-process. Under the unconditional design it still spawns a child,
-    // but that child must recognize itself as the vendor child and NOT spawn a grandchild.
+    // Second run: workspace is now current — the exact "already-current, same source" case.
+    // The hand-off to --vendor-apply-only is unconditional and structurally non-recursive
+    // (no env-var guard to defeat), so this just proves it completes normally twice in a
+    // row rather than hanging or erroring on the second, redundant sync.
     const second = spawnSync(
       process.execPath,
-      [CLI, "update", "--no-install", "--from", toolkitRoot, "--repo", workspace],
+      [
+        CLI,
+        "update",
+        "--no-pull",
+        "--no-install",
+        "--from",
+        disposableToolkit,
+        "--repo",
+        workspace,
+      ],
       { encoding: "utf8", timeout: 30_000 }
     );
     assert.notEqual(second.signal, "SIGTERM", "second run must not time out (no infinite loop)");
     assert.equal(second.status, 0, second.stderr);
     assert.match(second.stdout, /already up to date|synced to/, "completed normally, not stuck");
+
+    assert.equal(
+      git(toolkitRoot, "rev-parse", "HEAD"),
+      headBefore,
+      "the REAL toolkit checkout this test runs from must be untouched"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

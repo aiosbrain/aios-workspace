@@ -4,30 +4,45 @@
  * `aios update` re-vendors governance FROM a toolkit checkout into the workspace. But the
  * workspace CLI is a thin shim that forwards to that same checkout, so if the checkout is
  * stale, every command runs stale code AND the re-vendor copies stale governance. This
- * module is the git half of `aios update`: report how far behind the toolkit is, fast-forward
- * its tracked branch, and reconcile deps — so the re-vendor that follows works from the
- * newest toolkit.
+ * module is the git half of `aios update`: classify the toolkit's remote status, fast-forward
+ * its tracked branch, pin an immutable snapshot of the result, and reconcile deps — so the
+ * re-vendor that follows works from a coherent, frozen view of the newest toolkit.
  *
- * Safety: `--check` is truly read-only — it reads the remote via `ls-remote` (no fetch, so no
- * ref/FETCH_HEAD writes) and never greens an unverified remote. A dirty toolkit tree is never
- * clobbered (refuse, or stash+restore with `stash`); a non-fast-forward is refused, not
- * auto-merged; `npm ci` never runs through a SYMLINKED node_modules (worktree layout), and an
- * install interrupted before it ran self-heals on the next run via a recorded lockfile hash.
+ * Safety:
+ *  - `--check`/`--preview` are truly read-only w.r.t. the toolkit repo — `acquireRemoteState`
+ *    reads the remote via `ls-remote` in that mode (no fetch, so no ref/FETCH_HEAD writes) and
+ *    never greens an unverified or locally-uninspectable remote.
+ *  - Apply mode's fetch always `--prune`s, so a branch deleted/renamed upstream is detected
+ *    (a stale local tracking ref is never silently trusted as current).
+ *  - A dirty toolkit tree is never clobbered (refuse, or stash+restore with `stash`) and a
+ *    `git status`/`git fetch`/`rev-parse`/`rev-list` failure is never treated as "clean" or
+ *    "current" — every one of those is a distinct, non-green state.
+ *  - A non-fast-forward is refused, not auto-merged.
+ *  - The clean, fast-forwarded checkout is pinned into an immutable `git worktree` snapshot
+ *    BEFORE any stash is restored, so `--stash` and the vendor step's coherency guarantee
+ *    compose correctly — nothing downstream of the pull ever reads a value that could still
+ *    change.
+ *  - `npm ci` never runs through a SYMLINKED node_modules (worktree layout), and an install
+ *    interrupted before it ran self-heals on the next run via a recorded lockfile hash.
  *
  * Zero dependencies (git + npm shelled out; Node >= 18).
  */
 
+import os from "node:os";
 import path from "node:path";
-import { existsSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, die, sha256 } from "./cli-common.mjs";
+import { c, sha256, UpdateError } from "./cli-common.mjs";
 
 /** Run git in `dir`; returns trimmed stdout. Throws on non-zero (caller may catch). */
 function git(dir, gitArgs) {
   return execFileSync("git", ["-C", dir, ...gitArgs], { encoding: "utf8" }).trim();
 }
 
-/** Same, but returns "" instead of throwing (for best-effort status queries). */
+/** Same, but returns "" instead of throwing — ONLY for values where "" is itself a
+ *  meaningful, safe answer (e.g. "no branch name"). Never use this where a git failure
+ *  must be distinguished from a legitimate empty/zero result — see acquireRemoteState
+ *  and sourceCleanliness, which both use direct try/catch for exactly that reason. */
 function gitSafe(dir, gitArgs) {
   try {
     return git(dir, gitArgs);
@@ -36,104 +51,231 @@ function gitSafe(dir, gitArgs) {
   }
 }
 
-/** `true` if the toolkit working tree has uncommitted changes (tracked or untracked). */
-export function isDirty(dir) {
-  return gitSafe(dir, ["status", "--porcelain"]).length > 0;
-}
-
 /**
- * Branch + upstream + how far HEAD is behind/ahead of its tracking ref. Call after a fetch
- * so the counts reflect the remote. `upstream` is null when the branch has no tracking ref
- * (a detached HEAD or a local-only branch) — those can't be pulled.
+ * Tri-state — NOT a boolean — because "couldn't determine" must never be conflated with
+ * "clean". A plain `git status --porcelain` failure (corrupted .git, permissions, git
+ * itself missing) used to be swallowed into `false` (looked clean) by the old boolean
+ * `isDirty()`; that was a fail-open bug in a safety-critical check. Callers must treat
+ * "inspection-error" as blocking, identically to "dirty".
  */
-export function trackingStatus(dir) {
-  const branch = gitSafe(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
-  const upstream = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-  if (!upstream) return { branch, upstream: null, behind: 0, ahead: 0 };
-  // `--left-right --count @{u}...HEAD` → "<behind>\t<ahead>".
-  const counts = gitSafe(dir, ["rev-list", "--left-right", "--count", `${upstream}...HEAD`]);
-  const [behind = "0", ahead = "0"] = counts.split(/\s+/);
-  return { branch, upstream, behind: Number(behind) || 0, ahead: Number(ahead) || 0 };
-}
-
-/**
- * Read the remote head WITHOUT fetching — `git ls-remote` writes no refs and no FETCH_HEAD, so
- * `--check` stays truly read-only w.r.t. the toolkit repo (a plain `git fetch` would mutate
- * `refs/remotes/*` + FETCH_HEAD). Returns { upstream, branch, behind, ahead, remoteVerified }.
- * `behind` is null when the remote demonstrably differs but its objects aren't local (so an
- * exact count would need a fetch); `remoteVerified` is false when the remote was unreachable —
- * callers MUST NOT print a green verdict in that case (stale local tracking must not read green).
- */
-export function remoteStatus(dir, warn = () => {}) {
-  const branch = gitSafe(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
-  const upstream = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-  // No upstream configured is NOT "offline" — there's simply no remote to be behind. Report it
-  // as verified/up-to-date (behind 0) so a matching workspace can still read green, distinct from
-  // an unreachable remote. `upstream: null` still tells the caller to skip the pull.
-  if (!upstream) {
-    return { branch, upstream: null, behind: 0, ahead: 0, remoteVerified: true, noUpstream: true };
+export function sourceCleanliness(dir) {
+  try {
+    const out = git(dir, ["status", "--porcelain"]);
+    return out.length > 0 ? "dirty" : "clean";
+  } catch {
+    return "inspection-error";
   }
+}
+
+/** Parse "remote/branch" from an @{u}-style upstream ref string. Branch names can contain
+ *  slashes, so only the FIRST slash splits off the remote name. Single source of truth —
+ *  previously hand-split independently in two now-removed functions. */
+function splitUpstream(upstream) {
   const slash = upstream.indexOf("/");
-  const remote = upstream.slice(0, slash);
-  const remoteBranch = upstream.slice(slash + 1);
-  const out = gitSafe(dir, ["ls-remote", remote, remoteBranch]);
-  if (!out) {
+  return { remote: upstream.slice(0, slash), branch: upstream.slice(slash + 1) };
+}
+
+/** Best-effort "N commits behind" from the LOCAL tracking ref, for when the remote itself
+ *  can't be reached — clearly a stale estimate, never a substitute for a verified count. */
+function staleLocalEstimate(dir, upstreamName) {
+  const counts = gitSafe(dir, ["rev-list", "--left-right", "--count", `${upstreamName}...HEAD`]);
+  if (!counts) return null;
+  const n = Number(counts.split(/\s+/)[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Shared classification tail: given a resolved remote-side sha (however it was obtained)
+ *  and local HEAD, decide current/behind/diverged — or local-status-error if a LOCAL git
+ *  op fails, which is never conflated with an unreachable remote. `onCountFailure` lets
+ *  the two callers assign different meaning to "the rev-list count itself failed": in
+ *  readonly mode the remote object simply isn't fetched locally yet (expected, → still
+ *  "behind", count unknown); in apply mode (called AFTER a real fetch) the same failure
+ *  means something local is actually broken (→ "local-status-error"). */
+function classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure }) {
+  let localHead;
+  try {
+    localHead = git(dir, ["rev-parse", "HEAD"]);
+  } catch {
+    return { state: "local-status-error", branch, upstream: upstreamName, behind: null, ahead: 0 };
+  }
+  if (remoteSha === localHead) {
+    return { state: "current", branch, upstream: upstreamName, behind: 0, ahead: 0 };
+  }
+  let counts;
+  try {
+    counts = git(dir, ["rev-list", "--left-right", "--count", `${remoteSha}...HEAD`]);
+  } catch {
+    return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
+  }
+  const [behind = "0", ahead = "0"] = counts.split(/\s+/);
+  const aheadN = Number(ahead) || 0;
+  if (aheadN > 0) {
+    return {
+      state: "diverged",
+      branch,
+      upstream: upstreamName,
+      behind: Number(behind) || 0,
+      ahead: aheadN,
+    };
+  }
+  return { state: "behind", branch, upstream: upstreamName, behind: Number(behind) || 0, ahead: 0 };
+}
+
+/**
+ * The single owner of "how does this toolkit checkout relate to its remote" — used
+ * IDENTICALLY by `--check`/`--preview` (mode: "readonly", ls-remote, zero writes) and
+ * apply (mode: "apply", a real `--prune`d fetch). Returns one of seven discriminated
+ * states; `behind`/`ahead` are only meaningful for "current"/"behind"/"diverged".
+ *
+ *   no-upstream          — branch never had @{u} configured (not "offline"; nothing to
+ *                           be behind). May read "current" if the workspace stamp matches.
+ *   current               — verified: local HEAD === the remote's ref exactly.
+ *   behind                 — verified: remote is ahead (behind may be null in readonly
+ *                           mode if the remote object isn't fetched locally yet).
+ *   diverged               — verified: local HEAD has commits the remote doesn't. Apply
+ *                           hard-refuses this (not a fast-forward).
+ *   missing-upstream-ref   — @{u} WAS configured but the remote no longer has that ref
+ *                           (renamed/deleted branch). NEVER substitutes a same-named tag.
+ *   unreachable            — couldn't reach the remote at all (network/auth). Apply may
+ *                           still proceed from local state; check/preview never green.
+ *   local-status-error     — the remote query itself succeeded but a LOCAL git operation
+ *                           (rev-parse/rev-list) then failed — evidence of a broken LOCAL
+ *                           repo, not network unavailability. Always hard-blocks (never
+ *                           treated as acceptable-offline).
+ */
+export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
+  const branch = gitSafe(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
+  const upstreamName = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  if (!upstreamName) {
+    return { state: "no-upstream", branch, upstream: null, behind: 0, ahead: 0 };
+  }
+  const { remote, branch: remoteBranch } = splitUpstream(upstreamName);
+
+  if (mode === "apply") {
+    try {
+      // --prune is the fix for a deleted/renamed upstream branch: without it, a plain
+      // fetch leaves the stale local tracking ref in place, silently trusted as current.
+      git(dir, ["fetch", "--prune", "--quiet", remote]);
+    } catch (e) {
+      warn(c.yellow(`  git fetch failed (${e.message.trim()}) — reporting last-known state`));
+      return {
+        state: "unreachable",
+        branch,
+        upstream: upstreamName,
+        behind: null,
+        ahead: 0,
+        staleBehindEstimate: staleLocalEstimate(dir, upstreamName),
+      };
+    }
+    let upstreamSha;
+    try {
+      // Resolves the ref OBJECT (fails if --prune just removed it), unlike
+      // --symbolic-full-name which only prints the configured name without verifying
+      // the tracking ref still exists.
+      upstreamSha = git(dir, ["rev-parse", upstreamName]);
+    } catch {
+      return {
+        state: "missing-upstream-ref",
+        branch,
+        upstream: upstreamName,
+        behind: null,
+        ahead: 0,
+      };
+    }
+    return classifyAgainst(dir, upstreamSha, branch, upstreamName, {
+      onCountFailure: "local-status-error",
+    });
+  }
+
+  // readonly: ls-remote only — zero writes, no ref/FETCH_HEAD mutation.
+  let out;
+  try {
+    out = git(dir, ["ls-remote", remote, remoteBranch]); // direct try/catch — NOT gitSafe,
+    // so "threw" (unreachable) is distinguishable from "succeeded, zero matching lines"
+    // (missing-upstream-ref) below.
+  } catch {
     warn(c.yellow("  couldn't reach the remote — reporting local state only (unverified)."));
-    return { branch, upstream, behind: null, ahead: 0, remoteVerified: false };
+    return {
+      state: "unreachable",
+      branch,
+      upstream: upstreamName,
+      behind: null,
+      ahead: 0,
+      staleBehindEstimate: staleLocalEstimate(dir, upstreamName),
+    };
   }
   // `git ls-remote <remote> <branch>` matches by trailing component, so a sibling like
-  // `refs/heads/hotfix/<branch>` (or a same-named tag) can appear too — pick the EXACT ref, not
-  // just line 0, or the count is computed against the wrong sha.
+  // `refs/heads/hotfix/<branch>` can appear too — pick the EXACT ref, not just line 0.
   const wantHead = `refs/heads/${remoteBranch}`;
-  const wantTag = `refs/tags/${remoteBranch}`;
   let remoteSha = null;
-  let tagSha = null;
   for (const l of out.split("\n")) {
     const [sha, ref] = l.split(/\s+/);
     if (ref === wantHead) {
       remoteSha = sha;
       break;
     }
-    if (ref === wantTag) tagSha = sha;
   }
-  remoteSha = remoteSha || tagSha;
   if (!remoteSha) {
-    // Remote reachable but no exact branch/tag match (renamed/deleted upstream, odd layout):
-    // we know it isn't confirmably current, but won't invent a false green.
-    return { branch, upstream, behind: null, ahead: 0, remoteVerified: true };
-  }
-  const localHead = gitSafe(dir, ["rev-parse", "HEAD"]);
-  if (remoteSha === localHead)
-    return { branch, upstream, behind: 0, ahead: 0, remoteVerified: true };
-  // Exact counts need the remote object present locally (a prior fetch). Without one, we still
-  // KNOW it differs — report behind:null rather than fetching (which would mutate refs).
-  const counts = gitSafe(dir, ["rev-list", "--left-right", "--count", `${remoteSha}...HEAD`]);
-  if (counts && !counts.toLowerCase().includes("fatal")) {
-    const [behind = "0", ahead = "0"] = counts.split(/\s+/);
+    // Reachable, but no exact branch match — renamed/deleted upstream, or empty output.
+    // NEVER substitute a same-named tag's sha here (that was the tag-fallback false-green).
     return {
+      state: "missing-upstream-ref",
       branch,
-      upstream,
-      behind: Number(behind) || 0,
-      ahead: Number(ahead) || 0,
-      remoteVerified: true,
+      upstream: upstreamName,
+      behind: null,
+      ahead: 0,
     };
   }
-  return { branch, upstream, behind: null, ahead: 0, remoteVerified: true };
+  return classifyAgainst(dir, remoteSha, branch, upstreamName, { onCountFailure: "behind" });
 }
 
-/** Fetch the toolkit's tracked remote (quietly). Best-effort — offline still lets us report local state. */
-export function fetchToolkit(dir, warn = () => {}) {
-  try {
-    // Fetch the remote the current branch actually tracks — a bare `git fetch` hits only the
-    // default remote, which can leave @{u} stale when the branch tracks a different remote
-    // (e.g. `upstream/main` on a fork with `origin` as the default).
-    const upstream = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-    const remote = upstream.includes("/") ? upstream.split("/")[0] : null;
-    git(dir, remote ? ["fetch", "--quiet", remote] : ["fetch", "--quiet"]);
-    return true;
-  } catch (e) {
-    warn(c.yellow(`  git fetch failed (${e.message.trim()}) — reporting last-known state`));
-    return false;
+/** Human-readable line for an acquireRemoteState() result. One function, used by both the
+ *  plain-apply log line and the --check verdict's "why" text — no more duplicated
+ *  if/else chains to silently diverge. Returns { tone, text }; callers apply color. */
+export function remoteMessage(rs) {
+  switch (rs.state) {
+    case "no-upstream":
+      return {
+        tone: "dim",
+        text: `toolkit branch ${rs.branch} has no upstream — skipping git pull.`,
+      };
+    case "current":
+      return { tone: "green", text: `toolkit up to date — ${rs.branch} at ${rs.upstream}.` };
+    case "behind":
+      return {
+        tone: "yellow",
+        text:
+          rs.behind == null
+            ? `toolkit differs from ${rs.upstream} (behind — exact count unknown).`
+            : `toolkit is ${rs.behind} commit${rs.behind === 1 ? "" : "s"} behind ${rs.upstream}.`,
+      };
+    case "diverged":
+      return {
+        tone: "yellow",
+        text: `toolkit branch ${rs.branch} has ${rs.ahead} local commit(s) not on ${rs.upstream} — not a fast-forward.`,
+      };
+    case "missing-upstream-ref":
+      return {
+        tone: "yellow",
+        text: `toolkit's tracked branch ${rs.upstream} no longer exists on the remote (renamed or deleted?) — could not confirm current.`,
+      };
+    case "unreachable":
+      return {
+        tone: "yellow",
+        text:
+          `couldn't verify the toolkit's remote (offline?) — status unconfirmed` +
+          (rs.staleBehindEstimate != null
+            ? ` (local tracking last showed ${rs.staleBehindEstimate} commit(s) behind — stale)`
+            : "") +
+          ".",
+      };
+    case "local-status-error":
+      return {
+        tone: "red",
+        text: `couldn't validate the local toolkit repository state (a git index/ref query failed) — refusing to trust it.`,
+      };
+    default:
+      return { tone: "yellow", text: `toolkit remote status: ${rs.state}.` };
   }
 }
 
@@ -141,10 +283,14 @@ export function fetchToolkit(dir, warn = () => {}) {
  * Paths left UNMERGED in the toolkit index — the state a conflicted `git stash pop` (or any
  * half-finished merge) leaves behind, where files on disk hold `<<<<<<<` markers. Vendoring
  * from a checkout in this state would copy those markers into executable governance files,
- * so callers must refuse. Empty array when the checkout is clean (or isn't a git repo).
+ * so callers must refuse. Throws on a genuine git failure (corrupted index, not a repo) —
+ * callers (vendorSafety) must treat that as unsafe, not as "no unmerged paths". Only ever
+ * meaningful against a live checkout with a possible in-progress merge — never called
+ * against an immutable pinned snapshot (a fresh checkout of a finalized commit cannot have
+ * an in-progress merge by construction).
  */
 export function unmergedPaths(dir) {
-  const out = gitSafe(dir, ["diff", "--name-only", "--diff-filter=U"]);
+  const out = git(dir, ["diff", "--name-only", "--diff-filter=U"]);
   return out ? out.split("\n").filter(Boolean) : [];
 }
 
@@ -155,6 +301,62 @@ export function fastForward(dir) {
   // merge commit in someone's toolkit checkout — surfaced to the user to resolve by hand.
   git(dir, ["merge", "--ff-only", "@{u}"]);
   return gitSafe(dir, ["rev-parse", "HEAD"]) !== before;
+}
+
+/**
+ * A real, complete, git-native checkout of `dir` at the exact commit `sha`, in a fresh
+ * disposable temp directory — shares the object store (cheap, no data duplication),
+ * registered as its own git worktree (safe under concurrent `aios update` runs — that's
+ * what worktrees are designed for), detached (nothing can commit to it, nobody else holds
+ * a reference to its path). Once created, NOTHING can mutate it: there is no revalidation
+ * to do downstream, because nothing mutable is ever read from it again. This is what makes
+ * the vendor-apply step's coherency guarantee implementable — the merge, catalog
+ * generation, and metadata read all operate against this snapshot, never against the live
+ * (mutable) `dir` again.
+ */
+export function createPinnedSnapshot(dir, sha) {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "aios-vendor-snapshot-"));
+  // -c core.hooksPath=/dev/null: `git worktree add` runs the repo's post-checkout hook like
+  // any other checkout — in this toolkit that hook auto-hydrates config, wires asks, and
+  // even runs `npm run build:loop` (see docs/architecture on worktree tooling). Every one of
+  // those side effects is not just wasted work but actively wrong here: this "worktree" is a
+  // disposable, internal read-only snapshot for vendoring, not a workspace a human or agent
+  // is about to work in. Disable hooks for this one invocation rather than let them fire.
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-C",
+      dir,
+      "worktree",
+      "add",
+      "--detach",
+      "--quiet",
+      tmp,
+      sha,
+    ],
+    { stdio: "ignore" }
+  );
+  return tmp;
+}
+
+/** Remove a snapshot created by createPinnedSnapshot — best-effort, never throws. */
+export function removePinnedSnapshot(dir, snapshotDir) {
+  if (!snapshotDir) return;
+  try {
+    execFileSync(
+      "git",
+      ["-c", "core.hooksPath=/dev/null", "-C", dir, "worktree", "remove", "--force", snapshotDir],
+      { stdio: "ignore" }
+    );
+  } catch {
+    try {
+      rmSync(snapshotDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort cleanup; a leftover temp dir is not a correctness issue */
+    }
+  }
 }
 
 function lockfileHash(dir) {
@@ -187,6 +389,8 @@ function installedLockPath(dir) {
  * in a git worktree that path is a symlink to the primary checkout's shared install — following
  * it would erase the shared target. Detect the symlink with lstat and skip. Prefers `npm ci`
  * (reproducible), falls back to `npm install`. Records the new hash only AFTER npm succeeds.
+ * Always operates on the LIVE checkout (`dir`), never the pinned snapshot — dependency
+ * installation is a shared-install concern unrelated to vendor coherency.
  */
 function reconcileDeps(dir, { log, warn }) {
   const nm = path.join(dir, "node_modules");
@@ -258,15 +462,25 @@ function reconcileDeps(dir, { log, warn }) {
 }
 
 /**
- * Bring the toolkit checkout at `dir` current: read remote status → report → fast-forward →
- * reconcile deps. Returns { behind, pulled, installed, upstream, remoteVerified } — `behind` is
- * null when the remote differs but its count is unknown; `remoteVerified` is false when the
- * remote was unreachable (callers must not green-light either).
+ * Bring the toolkit checkout at `dir` current: classify remote status → report → (dirty
+ * gate →) fast-forward → pin an immutable snapshot → reconcile deps. Returns
+ * `{ behind, pulled, installed, upstream, remoteState, sourceClean, srcHead, snapshotDir }`.
  *
- * Modes: `check`/`dryRun` report via `ls-remote` and never write (no fetch, no fast-forward, no
- * install); `stash` auto-stashes a dirty tree and restores it; `noInstall` skips the dep
- * reconcile. Hard-stops (die) on a dirty tree without `stash`, on a non-fast-forward, and on a
- * conflicted stash restore — never clobber a checkout.
+ * Modes: `check`/`dryRun` classify via `ls-remote` and never write anything (no fetch, no
+ * fast-forward, no stash, no snapshot, no install — `srcHead`/`snapshotDir` are `null` in
+ * this mode, since there is nothing to pin). `stash` auto-stashes a dirty tree and restores
+ * it; `noInstall` skips the dependency reconcile.
+ *
+ * Throws `UpdateError` (never exits) on: a non-fast-forward (`diverged`), a
+ * locally-uninspectable repo (`local-status-error` or a `sourceCleanliness` inspection
+ * error), a dirty tree without `stash`, a fast-forward/snapshot failure, or a conflicted
+ * stash restore — never clobber a checkout, and never leave the caller unable to recover
+ * (a `restoreFailed` always preserves the stash and discards any snapshot taken).
+ *
+ * The snapshot is captured in the ONLY safe window: after `fastForward()` succeeds
+ * (or immediately, if nothing needed pulling) but BEFORE the `finally` block pops the
+ * stash — so a `--stash` run's later-restored dirty tree can never affect what gets
+ * vendored, and vendoring never reads `dir` again after this point.
  */
 export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   const { stash = false, noInstall = false, dryRun = false, check = false } = opts;
@@ -274,69 +488,51 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   const warn = io.warn || (() => {});
   const readOnly = check || dryRun;
 
-  // READ-ONLY modes never fetch (fetch mutates refs + FETCH_HEAD). ls-remote reads the remote
-  // head with zero writes. APPLY mode fetches — it's about to fast-forward, so ref updates are
-  // expected — then counts from the freshly-updated tracking ref.
-  const st = readOnly
-    ? remoteStatus(dir, warn)
-    : (() => {
-        const fetched = fetchToolkit(dir, warn);
-        return { ...trackingStatus(dir), remoteVerified: fetched };
-      })();
+  const remoteState = acquireRemoteState(dir, { mode: readOnly ? "readonly" : "apply", warn });
+  const { tone, text } = remoteMessage(remoteState);
+  log(c[tone] ? c[tone](`  ${text}`) : `  ${text}`);
+
   const ret = (extra) => ({
-    behind: st.behind,
+    behind: remoteState.behind,
     pulled: 0,
     installed: false,
-    upstream: st.upstream,
-    remoteVerified: st.remoteVerified,
+    upstream: remoteState.upstream,
+    remoteState,
+    sourceClean: null,
+    srcHead: null,
+    snapshotDir: null,
     ...extra,
   });
 
-  if (!st.upstream) {
-    log(c.dim(`  toolkit branch ${st.branch} has no upstream — skipping git pull.`));
-    return ret();
-  }
+  if (readOnly) return ret();
 
-  // A verified, zero-behind remote is the only green. An unverified remote (offline) or an
-  // unknown count (differs, objects not local) must NOT read as "up to date".
-  if (st.remoteVerified && st.behind === 0) {
-    log(c.green(`  toolkit up to date — ${st.branch} at ${st.upstream}.`));
-  } else if (!st.remoteVerified) {
-    log(c.yellow(`  toolkit remote status unverified (offline?) — ${st.branch}, local HEAD only.`));
-  } else if (st.behind === null) {
-    log(c.yellow(`  toolkit differs from ${st.upstream} (behind — run \`aios update\` to fetch).`));
-  } else {
-    log(
-      c.yellow(
-        `  toolkit is ${st.behind} commit${st.behind === 1 ? "" : "s"} behind ${st.upstream}` +
-          (st.ahead ? ` (and ${st.ahead} ahead)` : "") +
-          "."
-      )
+  // APPLY mode from here on.
+  if (remoteState.state === "diverged") {
+    throw new UpdateError(
+      `toolkit branch ${remoteState.branch} has ${remoteState.ahead} local commit(s) not on ` +
+        `${remoteState.upstream} — not a fast-forward. Reconcile it by hand (rebase/merge), ` +
+        `then re-run \`aios update\`.`
+    );
+  }
+  if (remoteState.state === "local-status-error") {
+    throw new UpdateError(
+      `couldn't validate the local toolkit repository state at ${dir} (a git index/ref query ` +
+        `failed) — refusing to trust it. Check \`git -C ${dir} status\` by hand.`
     );
   }
 
-  if (readOnly) return ret();
-
-  // APPLY mode. Only a KNOWN positive behind-count is a fast-forward; null/unverified means we
-  // couldn't confirm the remote — vendor from the local toolkit as-is (nothing to pull).
-  const behindPositive = typeof st.behind === "number" && st.behind > 0;
-  if (!behindPositive) {
-    let installed = false;
-    if (!noInstall) installed = reconcileDeps(dir, { log, warn }); // still repairs an interrupted install
-    return ret({ installed });
-  }
-
-  if (st.ahead > 0) {
-    die(
-      `toolkit branch ${st.branch} has ${st.ahead} local commit(s) not on ${st.upstream} — ` +
-        `not a fast-forward. Reconcile it by hand (rebase/merge), then re-run \`aios update\`.`
+  const sourceClean = sourceCleanliness(dir);
+  if (sourceClean === "inspection-error") {
+    throw new UpdateError(
+      `couldn't determine whether the toolkit checkout at ${dir} is clean (a \`git status\` ` +
+        `query failed) — refusing to trust it.`
     );
   }
 
   let stashed = false;
-  if (isDirty(dir)) {
+  if (sourceClean === "dirty") {
     if (!stash) {
-      die(
+      throw new UpdateError(
         `toolkit working tree is dirty — refusing to pull over uncommitted changes.\n` +
           `  Commit or stash them in ${dir}, or re-run with --stash to auto-stash + restore.`
       );
@@ -347,14 +543,20 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   }
 
   let pulled = 0;
+  let srcHead = null;
+  let snapshotDir = null;
   let restoreFailed = false;
   let ffError = null;
   try {
-    if (fastForward(dir)) pulled = st.behind;
+    if (remoteState.state === "behind" && fastForward(dir)) pulled = remoteState.behind ?? 0;
+    // Clean window: fast-forward (if any) is done, stash (if any) has not been popped yet.
+    // This is the only point in the whole flow where `dir` is guaranteed both current and
+    // clean — pin it now, before anything downstream (including the stash restore below)
+    // can dirty it again.
+    srcHead = git(dir, ["rev-parse", "HEAD"]);
+    snapshotDir = createPinnedSnapshot(dir, srcHead);
   } catch (e) {
-    // Surface an unexpected merge failure as a normal error message (the stash restore in
-    // `finally` still runs) instead of letting a raw stack escape to the user.
-    ffError = e;
+    ffError = e; // covers fast-forward failure AND snapshot-creation failure identically
   } finally {
     if (stashed) {
       try {
@@ -369,27 +571,34 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
     }
   }
   if (ffError) {
-    die(
+    if (snapshotDir) removePinnedSnapshot(dir, snapshotDir);
+    throw new UpdateError(
       `fast-forwarding the toolkit checkout failed (${String(ffError.message || ffError).trim()}).\n` +
         `  Nothing was re-vendored${stashed ? (restoreFailed ? "; restoring your stash ALSO conflicted (it is preserved — git -C " + dir + " stash list)" : "; your stashed changes were restored") : ""}.\n` +
         `  Reconcile ${dir} by hand, then re-run \`aios update\`.`
     );
   }
   if (restoreFailed) {
-    die(
+    // The pull (and snapshot) landed, but the user's stash couldn't be reapplied cleanly —
+    // never vendor in this state, even though a valid snapshot exists, because the
+    // checkout itself needs the user's attention first.
+    if (snapshotDir) removePinnedSnapshot(dir, snapshotDir);
+    throw new UpdateError(
       `restoring your stashed toolkit changes hit a conflict in ${dir}.\n` +
         `  The pull landed, but your local edits couldn't be reapplied cleanly, so the update is\n` +
         `  aborted before installing or re-vendoring. Resolve the conflict (git -C ${dir} status;\n` +
         `  your stash is preserved), then re-run \`aios update\`.`
     );
   }
-  log(
-    c.green(
-      `  pulled ${pulled} commit${pulled === 1 ? "" : "s"} → toolkit at ${gitSafe(dir, ["rev-parse", "--short", "HEAD"])}.`
-    )
-  );
+  if (pulled > 0) {
+    log(
+      c.green(
+        `  pulled ${pulled} commit${pulled === 1 ? "" : "s"} → toolkit at ${srcHead.slice(0, 12)}.`
+      )
+    );
+  }
 
   let installed = false;
   if (!noInstall) installed = reconcileDeps(dir, { log, warn });
-  return ret({ pulled, installed });
+  return ret({ pulled, installed, sourceClean, srcHead, snapshotDir });
 }
