@@ -98,6 +98,22 @@ export function assertGitToolkitSource(dir) {
 }
 
 /**
+ * The ONLY remote states an apply may proceed under — the one allowlist shared by every
+ * gate that decides "is this source safe to vendor/pull from" (buildResult's applyAllowed
+ * in update.mjs AND pullToolkitCheckout's apply-mode refusals below). Allowlist, never a
+ * blocklist: any state a future acquireRemoteState change adds blocks by construction
+ * everywhere at once, instead of silently defaulting to allowed at whichever gate forgot
+ * to learn the new name.
+ */
+export const REMOTE_APPLY_ALLOW_STATES = Object.freeze([
+  "current",
+  "behind",
+  "no-upstream",
+  "unreachable",
+  "missing-upstream-ref",
+]);
+
+/**
  * Tri-state — NOT a boolean — because "couldn't determine" must never be conflated with
  * "clean". A plain `git status --porcelain` failure (corrupted .git, permissions, git
  * itself missing) used to be swallowed into `false` (looked clean) by the old boolean
@@ -687,7 +703,12 @@ function reconcileDeps(dir, { log, warn, lockChanged = true }) {
   const recordMarker = () => {
     if (!marker) return;
     try {
-      writeFileSync(marker, `${currentKey}\n`);
+      // Recompute from disk at write time, never reuse the pre-npm key: a lockfile-less
+      // `npm install` GENERATES package-lock.json, so recording the stale "no-lockfile"
+      // sentinel here would mismatch the very next run's hash and force a second
+      // destructive reinstall before converging. The key must describe the state npm
+      // actually left behind.
+      writeFileSync(marker, `${lockfileHash(dir) ?? "no-lockfile"}\n`);
     } catch {
       /* metadata is best-effort; a missing marker just means a redundant reconcile next run */
     }
@@ -698,21 +719,32 @@ function reconcileDeps(dir, { log, warn, lockChanged = true }) {
   }
   if (stored === null && !lockChanged) {
     // Pre-marker-era install (see doc above): nothing this run changed the lockfile, so the
-    // existing node_modules isn't pending — record it instead of destructively reinstalling.
-    // But only when the install is verifiably COMPLETE: npm writes
+    // existing node_modules isn't pending — seed the marker instead of destructively
+    // reinstalling. Seed only when the install is verifiably COMPLETE: npm (v7+) writes
     // `node_modules/.package-lock.json` as the last step of a finished install, so its
-    // absence means the previous (never-markered) install was interrupted mid-`npm ci` —
-    // seeding the marker then would record a broken node_modules as healthy forever.
+    // presence proves this node_modules is a whole npm install.
     if (existsSync(path.join(nm, ".package-lock.json"))) {
       log(c.dim("  deps unchanged — recording the install marker (first marker-tracked run)."));
       recordMarker();
       return false;
     }
+    // No completion artifact means UNVERIFIABLE, not broken: pnpm/yarn/bun and npm ≤6
+    // never write it, so a healthy non-npm install lands here too. The update NEVER
+    // destroys what it can't verify — `npm ci` deletes node_modules first, and offline
+    // that wipes a working install unrecoverably (the exact catastrophe the seed path
+    // exists to prevent). Warn, leave node_modules alone, and record NO marker, so a
+    // genuinely interrupted `npm ci` is re-evaluated every run (and self-heals the moment
+    // the lockfile moves or the owner runs `npm ci` by hand) instead of being recorded
+    // healthy forever. npm is the only SUPPORTED manager (see docs/design-self-update.md,
+    // "supported source envelope") — other managers' installs are tolerated, not managed.
     warn(
       c.yellow(
-        "  node_modules looks incomplete (no .package-lock.json — an interrupted install?) — reinstalling."
+        "  can't verify this node_modules is a complete npm install (no .package-lock.json —\n" +
+          "  a non-npm install, or an interrupted `npm ci`?) — leaving it untouched.\n" +
+          `  If toolkit deps misbehave, run \`npm ci\` in ${dir} yourself.`
       )
     );
+    return false;
   }
   const cmd = currentHash ? "ci" : "install";
   // Re-check right before npm runs (TOCTOU): if node_modules became a symlink since the lstat
@@ -834,26 +866,43 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   // and an uninspectable repo (local-status-error) stays fail-closed — both fall through
   // to the throws below. Deps still reconcile (npm is independent of git cleanliness),
   // and a REAL pull over a dirty tree below still requires --stash.
+  // ALLOWLIST (same shape as REMOTE_APPLY_ALLOW_STATES, same reason): the no-op set is the
+  // allow states minus "behind" (behind means there IS something to pull), plus the one
+  // self-update-only exemption — ahead-only "diverged" with a POSITIVELY-known behind of 0
+  // (committed local work is strictly safer than the uncommitted WIP the no-op already
+  // tolerates). `behind === 0` is strict: an unknown count (null) must fail closed into the
+  // refusals below, never coerce to "nothing to pull". A null remoteState (`localOnly`)
+  // classified nothing — there is nothing to pull by definition.
   const selfUpdateNothingToPull =
     selfUpdate &&
-    remoteState?.state !== "behind" &&
-    remoteState?.state !== "local-status-error" &&
-    !(remoteState?.state === "diverged" && (remoteState.behind ?? 0) > 0);
-  if (!selfUpdateNothingToPull) {
-    if (remoteState?.state === "diverged") {
+    (remoteState == null ||
+      (remoteState.state !== "behind" && REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state)) ||
+      (remoteState.state === "diverged" && remoteState.behind === 0));
+  if (
+    !selfUpdateNothingToPull &&
+    remoteState &&
+    !REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state)
+  ) {
+    if (remoteState.state === "diverged") {
       throw new UpdateError(
         `toolkit branch ${remoteState.branch} has ${remoteState.ahead} local commit(s) not on ` +
           `${remoteState.upstream} — not a fast-forward. Reconcile it by hand (rebase/merge), ` +
           `then re-run \`aios update\`.`
       );
     }
-    if (remoteState?.state === "local-status-error") {
+    if (remoteState.state === "local-status-error") {
       throw new UpdateError(
         `couldn't validate the local toolkit repository state at ${dir} ` +
           `(${remoteState.detail || "a git index/ref query failed"}) — refusing to trust it. ` +
           `Check \`git -C ${dir} status\` by hand.`
       );
     }
+    // A state this code doesn't know (a future classifier addition): fail closed with the
+    // real name rather than sailing into a pull/vendor under unvalidated conditions.
+    throw new UpdateError(
+      `the toolkit remote state '${remoteState.state}' isn't one apply knows to be safe — ` +
+        `refusing to proceed. Run \`aios update --check\` for the full diagnosis.`
+    );
   }
 
   if (selfUpdateNothingToPull) {

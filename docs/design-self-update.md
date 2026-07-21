@@ -76,9 +76,18 @@ pull didn't move the lockfile — `npm ci` deletes `node_modules` before install
 treating "no marker yet" as "install pending" would destroy a healthy install on the first
 post-upgrade run (offline, unrecoverably). Seeding trusts the install only when npm's own
 completed-install artifact (`node_modules/.package-lock.json`) is present — an interrupted
-`npm ci` never writes it, so a broken pre-marker install reinstalls instead of being
-recorded healthy forever. A source with **no lockfile at all** records a `no-lockfile`
-sentinel in the marker (not "nothing"), so a stale marker converges after one reinstall
+`npm ci` never writes it, so a broken pre-marker install is never recorded healthy. When
+the artifact is ABSENT, the state is **unverifiable, not broken** — pnpm/yarn/bun and
+npm ≤6 never write it, so a healthy non-npm install lands in the same bucket as an
+interrupted `npm ci`. The rule is **never destroy what can't be verified**: warn, leave
+`node_modules` untouched, record no marker (so the case re-evaluates every run and
+self-heals the moment the lockfile moves or the owner runs `npm ci`). npm is the only
+*supported* manager (see the supported source envelope below); other managers' installs
+are tolerated, never destructively "repaired". A source with **no lockfile at all**
+records a `no-lockfile` sentinel in the marker (not "nothing"); the marker key is
+recomputed **from disk after npm returns** — a lockfile-less `npm install` generates
+`package-lock.json`, and recording the pre-npm sentinel over it would force a second
+destructive reinstall — so a stale marker genuinely converges after one reinstall
 instead of re-running `npm install` on every apply forever. Toolkit deps aren't needed for scaffolding or
 `aios` sync, so a sync-only tester never eats a surprise install. Skipped for a
 freshly-cloned source (already latest) or with `--no-install`. (2) **vendor half**
@@ -253,11 +262,35 @@ than a plain `behind` — previously that fell through to `behind`/`applyAllowed
 onboarding could offer an apply that the apply-mode fetch would then hard-refuse as
 diverged *after* the user confirmed.
 
-Every apply-capable source must also be a **real git checkout**: a non-git toolkit copy
-(unpacked tarball) is refused up front by `assertGitToolkitSource` with the actual
-diagnosis, instead of failing deep with a misleading cleanliness error — and a non-git dir
-nested *inside* another repository is refused before any git operation (stash/fetch/
-snapshot) could silently act on that **enclosing** repo.
+### The supported source envelope (normative)
+
+A toolkit source is **supported** only when it is ALL of:
+
+1. **a real git checkout that is its own toplevel** — not an unpacked tarball, not a plain
+   copy, not a non-git dir nested inside some other repository;
+2. **npm-managed** — `node_modules` produced by npm v7+, with the committed
+   `package-lock.json` the toolkit ships. Other package managers are *tolerated* (their
+   installs are never destroyed or "repaired") but never managed;
+3. reachable at a single stable path (`--from` / `$AIOS_TOOLKIT_DIR` / the running
+   checkout / the default clone path).
+
+Everything outside the envelope gets **one honest structural refusal, not handling**. This
+is the design's convergence rule: refusals don't breed edge cases the way handling does,
+so hardening rounds must shrink toward the envelope boundary instead of chasing the
+combinatorial input space beyond it.
+
+The envelope gate lives at **one choke point**: `resolveSource` (`scripts/update.mjs`)
+calls `assertGitToolkitSource` on the winning local candidate, so every flow that touches
+a source — check/preview/apply, **`--contribute`**, and onboarding — refuses a non-git
+copy with the actual diagnosis before any git subprocess can run against it (or, worse,
+resolve an **enclosing** repository and stash/fetch/branch/push there).
+`pullToolkitCheckout` keeps its own assert as a backstop for direct callers. A refused
+winning candidate is never silently skipped in favor of the next candidate — updating
+from a different source than the one the user configured would be worse than the refusal.
+Because the gate runs in every mode, a structurally-unusable source is an **expected
+failure even under `--check`** (structured `mode: "error"`, `exitStatus: 1`) — the one
+deliberate exception to check-mode's exit-0 reporting rule below: there is no meaningful
+"report" about a directory the tool cannot even interrogate.
 
 Two more local states classify as `local-status-error` rather than slipping through as
 `no-upstream`: a **detached HEAD** (`--abbrev-ref HEAD` → literal `"HEAD"` — a paused
@@ -300,15 +333,21 @@ is no coherent sha that could truthfully represent an uncommitted diff.
 `.applyAllowed`/`.reasons` directly instead of parsing console text or interpreting a `0`/`1`
 that can't disambiguate "safe" from "conflicted" from "dirty" from "diverged" (`--check`
 intentionally returns `exitStatus: 0` even when non-green, since check mode reports rather
-than fails hard). `applyAllowed` blocks not only on the pre-flight signals (remote state,
+than fails hard — except for a source outside the supported envelope, per the envelope
+section above, where there is nothing coherent to report on). `applyAllowed` blocks not
+only on the pre-flight signals (remote state,
 source cleanliness, vendor safety) but also on a **failed apply itself** — a vendor child
 that dies without writing its result file leaves every pre-flight signal green, and
 `applyAllowed: true` on that result would lie to any caller reading the contract. The
-remote-state gate is an **allowlist** (`current`/`behind`/`no-upstream`/`unreachable`/
-`missing-upstream-ref`), not a blocklist — any state a future classifier change adds blocks
-by construction instead of silently defaulting to allowed. Two more fail-closed rules: an
-apply-capable result whose safety signals were ALL never computed reads `applyAllowed:
-false` (whatever branch produced it evaluated nothing — this is why the toolkit-self
+remote-state gate is an **allowlist** — `REMOTE_APPLY_ALLOW_STATES`
+(`current`/`behind`/`no-upstream`/`unreachable`/`missing-upstream-ref`), exported by
+`toolkit-pull.mjs` beside the classifier that owns the vocabulary and shared by BOTH
+gates that consume it (`buildResult`'s `applyAllowed` and `pullToolkitCheckout`'s
+apply-mode refusals, including the self-update nothing-to-pull no-op) — so any state a
+future classifier change adds blocks by construction at every gate at once, and the two
+files can't drift. Two more fail-closed rules: a result whose safety signals were ALL
+never computed reads `applyAllowed: false` for **every** mode, present and future (no
+mode list — a mode list would itself be a blocklist; this is why the toolkit-self
 `--no-pull` no-op still reports real cleanliness), and a `contribute` result never
 advertises apply permission at all (it isn't an apply). Every
 *expected* failure (dirty tree, unresolved conflict, bad `--from`, an
@@ -316,9 +355,13 @@ unknown/incompatible flag, a non-fast-forward, an uninspectable local repo, a wo
 symlinked/escaping managed destination, and every `--contribute` refusal) throws
 `UpdateError` (`scripts/cli-common.mjs`) rather than exiting; `cmdUpdate` is the one place
 that catches it and converts it into a printed message plus a non-zero result. Managed-write
-containment (`assertDestPathSafe`) additionally runs as a **pre-flight scan over every
-managed + seed destination before the first write**, so one bad destination refuses the
-whole apply all-or-nothing instead of dying mid-loop over a half-vendored workspace. On the
+containment (`assertDestPathSafe`) additionally runs as a **pre-flight scan over the
+complete write+delete set before the first write** — `plannedDestRels` enumerates every
+destination the apply could touch (managed + seed writes, the `.aios-incoming`/
+`.aios-merge` conflict sidecars, and upstream-deletion targets) via the same helpers the
+write loop itself calls (`entryFiles`, `deletionCandidates`), so the scanned set and the
+touched set cannot drift, and one bad destination refuses the whole apply all-or-nothing
+instead of dying mid-loop over a half-vendored workspace. On the
 apply side, ONE `finally` owns the pinned snapshot's entire lifetime — every exit path
 (refusal, plain system error, normal return) removes the snapshot worktree, so no new exit
 can reintroduce the leak class of hand-placed cleanup calls. A genuinely

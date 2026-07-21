@@ -26,6 +26,7 @@ import {
   conflictMarkerPaths,
   vendorSafety,
   assertDestPathSafe,
+  plannedDestRels,
 } from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
 import { git, initRepo, advance, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
@@ -47,14 +48,25 @@ function cleanupPullResult(dir, result) {
 }
 
 /** Put a fake `npm` first on PATH that records each call and exits 0. Returns { ranFile, env }. */
-function fakeNpm(root) {
+function fakeNpm(root, { realistic = false } = {}) {
   const bin = path.join(root, "fakebin");
   mkdirSync(bin, { recursive: true });
   const ranFile = path.join(root, "npm-ran.log");
-  writeFileSync(
-    path.join(bin, "npm"),
-    `#!/bin/sh\necho "$@" >> ${JSON.stringify(ranFile)}\nexit 0\n`
-  );
+  // `realistic` mimics real npm's on-disk side effects (npm runs with cwd = the toolkit
+  // dir): a lockfile-less `npm install` GENERATES package-lock.json, and every completed
+  // install writes node_modules/.package-lock.json. The default stub stays side-effect-free
+  // — but any test asserting marker-convergence behavior must use realistic, or it tests
+  // the stub, not npm (the round-7 lesson: the plain stub masked a two-reinstall loop).
+  const script = realistic
+    ? `#!/bin/sh
+echo "$@" >> ${JSON.stringify(ranFile)}
+if [ "$1" = "install" ] && [ ! -f package-lock.json ]; then printf '{"generated":true}\\n' > package-lock.json; fi
+mkdir -p node_modules
+printf '{}\\n' > node_modules/.package-lock.json
+exit 0
+`
+    : `#!/bin/sh\necho "$@" >> ${JSON.stringify(ranFile)}\nexit 0\n`;
+  writeFileSync(path.join(bin, "npm"), script);
   chmodSync(path.join(bin, "npm"), 0o755);
   return { ranFile, binPath: `${bin}${path.delimiter}${process.env.PATH}` };
 }
@@ -1455,7 +1467,7 @@ test("R7-6: --contribute throws UpdateError (structured result), never process.e
   }
 });
 
-test("R7-7: a pre-marker node_modules WITHOUT npm's completed-install artifact reinstalls (never seeded as healthy)", () => {
+test("R7-7/R8: a pre-marker node_modules WITHOUT npm's completed-install artifact is left untouched — never seeded healthy, never destructively reinstalled", () => {
   const root = mkdtempSync(path.join(tmpdir(), "aios-r7-interrupted-"));
   const prevPath = process.env.PATH;
   let result;
@@ -1463,20 +1475,30 @@ test("R7-7: a pre-marker node_modules WITHOUT npm's completed-install artifact r
     const { clone } = originAndToolkitClone(root, {
       extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
     });
-    // An interrupted `npm ci`: node_modules exists but .package-lock.json (npm's own
-    // completed-install artifact) was never written. Seeding the marker here would record
-    // the broken install as healthy forever.
+    // No .package-lock.json means UNVERIFIABLE, not broken: this shape is BOTH an
+    // interrupted `npm ci` AND a healthy pnpm/yarn/bun install (none of them write npm's
+    // artifact). The update must neither record it healthy (the original R7-7 bug) nor
+    // destroy it (`npm ci` deletes node_modules first — offline that wipes a working
+    // non-npm install unrecoverably). Envelope rule: warn, leave it alone, no marker.
     mkdirSync(path.join(clone, "node_modules"), { recursive: true });
     writeFileSync(path.join(clone, "node_modules", "HALF-INSTALLED"), "partial\n");
 
     const { ranFile, binPath } = fakeNpm(root);
     process.env.PATH = binPath;
-    result = pullToolkitCheckout(clone, {}, NOOP_IO);
+    const warnings = [];
+    result = pullToolkitCheckout(clone, {}, { log: () => {}, warn: (m) => warnings.push(m) });
 
-    assert.ok(existsSync(ranFile), "npm reinstalls the incomplete node_modules");
-    assert.match(readFileSync(ranFile, "utf8"), /ci/);
+    assert.ok(!existsSync(ranFile), "npm is never run against an unverifiable node_modules");
+    assert.ok(
+      existsSync(path.join(clone, "node_modules", "HALF-INSTALLED")),
+      "the existing node_modules is left untouched"
+    );
     const marker = path.join(clone, ".git", "aios-installed-lock");
-    assert.ok(existsSync(marker), "the marker records the SUCCESSFUL reinstall");
+    assert.ok(
+      !existsSync(marker),
+      "no marker — the state is re-evaluated every run, not recorded healthy"
+    );
+    assert.match(warnings.join("\n"), /can't verify/i, "the owner is told, with the manual fix");
   } finally {
     process.env.PATH = prevPath;
     cleanupPullResult(path.join(root, "toolkit"), result);
@@ -1570,6 +1592,223 @@ test("R7-10: readonly classification fails closed when the stale divergence esti
       "previously a plain 'behind' — applyAllowed:true, then apply refused as diverged after the user confirmed"
     );
     assert.match(rs.detail, /tracking ref is missing/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Round 8 (post-#361 delta review): envelope choke point + all-or-nothing closure ----
+// The round-8 rule change: the supported source envelope (docs/design-self-update.md) is
+// enforced at ONE choke point (resolveSource), invariants live on shared enumerations
+// (plannedDestRels/deletionCandidates, REMOTE_APPLY_ALLOW_STATES), and the update never
+// destroys what it can't verify (the non-npm node_modules rule, tested in R7-7/R8 above).
+
+test("R8-1: --contribute refuses a nested non-git source at the choke point — never touches the enclosing repo", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-contribute-"));
+  try {
+    // A toolkit-shaped non-git copy nested inside an unrelated repository: previously
+    // --contribute's git ops (fetch/worktree/branch/push) resolved the ENCLOSING repo —
+    // the exact hazard R7-9 closed for update/apply but not for contribute.
+    const host = path.join(root, "host-repo");
+    mkdirSync(host, { recursive: true });
+    initRepo(host);
+    writeFileSync(path.join(host, "unrelated.txt"), "host repo WIP\n");
+    git(host, "add", "-A");
+    git(host, "commit", "-qm", "host init");
+    const nested = path.join(host, "toolkit-copy");
+    mkdirSync(path.join(nested, "scaffold"), { recursive: true });
+    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "hooks"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    writeFileSync(path.join(workspace, "hooks", "team-ops-guard.sh"), "#!/bin/sh\n# local\n");
+
+    const result = await cmdUpdate(workspace, {}, [
+      "--contribute",
+      "hooks/team-ops-guard.sh",
+      "--from",
+      nested,
+    ]);
+    assert.equal(result.mode, "error", "structured envelope refusal, not a crash");
+    assert.match(result.reasons.join("\n"), /enclosing/i);
+    assert.equal(
+      git(host, "branch", "--list").includes("contribute"),
+      false,
+      "no contribute/* branch was ever created in the enclosing repo"
+    );
+    assert.equal(git(host, "stash", "list"), "", "nothing was ever stashed in the enclosing repo");
+    assert.equal(
+      readFileSync(path.join(host, "unrelated.txt"), "utf8"),
+      "host repo WIP\n",
+      "the enclosing repo's files are untouched"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-2: the pre-flight scan covers upstream-DELETION targets — a symlinked deletion dest refuses before any write", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-deletion-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        "scaffold/.claude/skills/keep.md": "v1\n",
+        "scaffold/.claude/skills/doomed.md": "v1\n",
+      },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    // First apply stamps the base (both skills vendored).
+    const first = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      clone,
+      "--stamp-source",
+      clone,
+    ]);
+    assert.equal(first.exitStatus, 0);
+    assert.ok(existsSync(path.join(workspace, ".claude/skills/doomed.md")));
+
+    // Upstream deletes doomed.md and touches keep.md; the clone pulls it.
+    rmSync(path.join(origin, "scaffold/.claude/skills/doomed.md"));
+    writeFileSync(path.join(origin, "scaffold/.claude/skills/keep.md"), "v2\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "delete doomed, touch keep");
+    git(clone, "pull", "-q");
+
+    // The workspace owner replaced the doomed dest with a symlink. The deletion target is
+    // absent from src by definition, so an entryFiles-only scan would pass, vendor keep.md
+    // (v2), then die mid-loop in applyDeletions — the half-vendored/no-stamp state.
+    const outside = path.join(root, "outside-target");
+    writeFileSync(outside, "outside\n");
+    rmSync(path.join(workspace, ".claude/skills/doomed.md"));
+    symlinkSync(outside, path.join(workspace, ".claude/skills/doomed.md"));
+
+    const second = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      clone,
+      "--stamp-source",
+      clone,
+    ]);
+    assert.equal(second.mode, "error", "structured refusal, not a crash");
+    assert.match(second.reasons.join("\n"), /symlink/);
+    assert.equal(
+      readFileSync(path.join(workspace, ".claude/skills/keep.md"), "utf8"),
+      "v1\n",
+      "NOTHING was vendored before the refusal — all-or-nothing includes deletion targets"
+    );
+    assert.equal(readFileSync(outside, "utf8"), "outside\n", "the symlink target is untouched");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-3: plannedDestRels enumerates the COMPLETE write+delete set (files, sidecars, deletions)", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-planned-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        "scaffold/.claude/skills/keep.md": "v1\n",
+        "scaffold/.claude/skills/doomed.md": "v1\n",
+      },
+    });
+    const baseSha = git(clone, "rev-parse", "HEAD");
+    rmSync(path.join(origin, "scaffold/.claude/skills/doomed.md"));
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "delete doomed");
+    git(clone, "pull", "-q");
+
+    const planned = plannedDestRels(clone, baseSha);
+    assert.ok(planned.includes(".claude/skills/keep.md"), "managed write");
+    assert.ok(planned.includes(".claude/skills/keep.md.aios-incoming"), "conflict sidecar");
+    assert.ok(planned.includes(".claude/skills/keep.md.aios-merge"), "merge sidecar");
+    assert.ok(planned.includes(".claude/skills/doomed.md"), "upstream-deletion target");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-4: a lockfile-less reinstall converges after ONE install with REAL npm behavior (lockfile gets generated)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-realnpm-"));
+  const prevPath = process.env.PATH;
+  let r1, r2;
+  try {
+    const { clone } = originAndToolkitClone(root); // NO package-lock.json anywhere
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    writeFileSync(path.join(clone, "node_modules", ".package-lock.json"), "{}\n");
+    writeFileSync(path.join(clone, ".git", "aios-installed-lock"), "stale-old-hash\n");
+    // package-lock.json is generated INTO the source by npm; keep git clean about it.
+    writeFileSync(path.join(clone, ".git", "info", "exclude"), "package-lock.json\n");
+
+    // realistic: `npm install` generates package-lock.json (what real npm does) — the
+    // marker must record the POST-npm state, or run 2 mismatches and reinstalls again.
+    const { ranFile, binPath } = fakeNpm(root, { realistic: true });
+    process.env.PATH = binPath;
+    r1 = pullToolkitCheckout(clone, {}, NOOP_IO);
+    cleanupPullResult(clone, r1);
+    assert.ok(existsSync(ranFile), "first run reconciles (npm install)");
+    assert.ok(existsSync(path.join(clone, "package-lock.json")), "npm generated a lockfile");
+    const marker = readFileSync(path.join(clone, ".git", "aios-installed-lock"), "utf8").trim();
+    assert.notEqual(
+      marker,
+      "no-lockfile",
+      "the marker records the post-npm state, not the stale pre-npm key"
+    );
+    assert.notEqual(marker, "stale-old-hash");
+
+    rmSync(ranFile, { force: true });
+    r2 = pullToolkitCheckout(clone, {}, NOOP_IO);
+    assert.ok(!existsSync(ranFile), "second run skips npm — converged after exactly ONE reinstall");
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), r2);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-5: a non-git source is an envelope refusal in EVERY mode — --check included (structured, documented exception)", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-envelope-"));
+  try {
+    const tarball = path.join(root, "toolkit-copy");
+    mkdirSync(path.join(tarball, "scaffold"), { recursive: true });
+    mkdirSync(path.join(tarball, "scripts"), { recursive: true });
+    writeFileSync(path.join(tarball, "scripts", "aios.mjs"), "// entry\n");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const result = await cmdUpdate(workspace, {}, ["--check", "--from", tarball]);
+    assert.equal(result.mode, "error", "envelope refusal is structured even under --check");
+    assert.equal(result.exitStatus, 1);
+    assert.equal(result.applyAllowed, false);
+    assert.match(result.reasons.join("\n"), /not a git checkout/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-6: the toolkit-self branch honors --expect-src-head instead of silently ignoring it", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-selfpin-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const head = git(clone, "rev-parse", "HEAD");
+
+    const mismatch = await cmdUpdate(clone, {}, [
+      "--no-pull",
+      "--expect-src-head",
+      "0000000000000000000000000000000000000000",
+    ]);
+    assert.equal(mismatch.mode, "error", "a stale pin refuses even on the self no-op branch");
+    assert.match(mismatch.reasons.join("\n"), /doesn't match/);
+
+    const match = await cmdUpdate(clone, {}, ["--no-pull", "--expect-src-head", head]);
+    assert.equal(match.exitStatus, 0);
+    assert.equal(match.srcHead, head, "toolkit-self results now carry srcHead");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

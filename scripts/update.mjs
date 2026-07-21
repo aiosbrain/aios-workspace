@@ -84,6 +84,8 @@ import {
   sourceCleanliness,
   removePinnedSnapshot,
   remoteMessage,
+  assertGitToolkitSource,
+  REMOTE_APPLY_ALLOW_STATES,
 } from "./toolkit-pull.mjs";
 
 const DEFAULT_REPO = "https://github.com/aiosbrain/aios-workspace.git";
@@ -166,6 +168,15 @@ function resolveSource(args, cfg, warn) {
   for (const dir of candidates) {
     if (looksLikeToolkit(dir)) {
       const resolved = path.resolve(dir);
+      // THE source-trust choke point: every flow that touches a toolkit source (check/
+      // preview/apply, --contribute, onboarding) resolves through here, so the supported-
+      // envelope gate lives here — a source must be a real git checkout that is its own
+      // toplevel (docs/design-self-update.md, "supported source envelope"). Refusing the
+      // winning candidate (not falling through to the next) is deliberate: silently
+      // updating from a DIFFERENT source than the one the user configured would be worse
+      // than the refusal. pullToolkitCheckout keeps its own assert as a backstop for
+      // direct callers.
+      assertGitToolkitSource(resolved);
       return { dir: resolved, ephemeral: false, stampSource: resolved };
     }
   }
@@ -524,16 +535,30 @@ function applyFile(
   }
 }
 
-/** Propagate upstream deletions/renames for a dir entry (files gone since baseSha). */
-function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r) {
+/**
+ * Files a dir entry would DELETE from the workspace: present at baseSha, gone from the
+ * current source, and not excluded. THE one enumeration of deletion targets — shared by
+ * applyDeletions (the write loop) and plannedDestRels (the pre-flight containment scan),
+ * so the scan can never cover a different deletion set than the loop actually touches.
+ * Returns [{ srcRel, destRel }].
+ */
+function deletionCandidates(toolkitDir, srcRoot, entry, baseSha) {
   const baseFiles = lsTree(toolkitDir, baseSha, entry.src); // srcRel paths at base
-  if (!baseFiles.length) return;
+  if (!baseFiles.length) return [];
   const exclude = new Set((entry.exclude || []).map((rel) => `${entry.src}/${rel}`));
   const present = new Set(entryFiles(srcRoot, entry).map((f) => f.srcRel));
+  const out = [];
   for (const srcRel of baseFiles) {
     if (exclude.has(srcRel)) continue; // excluded files are never synced — never "deleted" either
     if (present.has(srcRel)) continue; // still shipped — not a deletion
-    const destRel = entry.dest + srcRel.slice(entry.src.length);
+    out.push({ srcRel, destRel: entry.dest + srcRel.slice(entry.src.length) });
+  }
+  return out;
+}
+
+/** Propagate upstream deletions/renames for a dir entry (files gone since baseSha). */
+function applyDeletions({ toolkitDir, srcRoot, repo, baseSha, entry, force, dryRun }, r) {
+  for (const { srcRel, destRel } of deletionCandidates(toolkitDir, srcRoot, entry, baseSha)) {
     assertDestPathSafe(repo, destRel, "delete");
     const destAbs = path.join(repo, destRel);
     const mine = readIf(destAbs);
@@ -582,6 +607,38 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
   }
   applySeeds(srcRoot, repo, r, { dryRun });
   return r;
+}
+
+/**
+ * EVERY workspace-relative destination a vendor apply could possibly touch — the complete
+ * write+delete set, enumerated as data BEFORE anything executes:
+ *   - each managed/seed file's destRel (writes);
+ *   - each managed file's two conflict sidecars (`.aios-incoming`/`.aios-merge` — written
+ *     on merge conflicts and no-base fallbacks);
+ *   - each dir entry's upstream-deletion targets (present at baseSha, gone from src —
+ *     via the same `deletionCandidates` enumeration applyDeletions itself iterates).
+ * This is what makes the pre-flight containment scan genuinely all-or-nothing: it derives
+ * from the same helpers the write loop calls (`entryFiles`, `deletionCandidates`), so the
+ * scanned set and the touched set cannot drift. Exported for tests.
+ */
+export function plannedDestRels(srcDir, baseSha) {
+  const out = [];
+  for (const entry of MANAGED_PATHS) {
+    for (const file of entryFiles(srcDir, entry)) {
+      out.push(file.destRel, `${file.destRel}.aios-incoming`, `${file.destRel}.aios-merge`);
+    }
+    if (entry.kind === "dir") {
+      // In cmdVendorApplyOnly the snapshot IS the toolkit checkout (toolkitDir === srcRoot),
+      // so the snapshot's own history serves the baseSha lsTree.
+      for (const { destRel } of deletionCandidates(srcDir, srcDir, entry, baseSha)) {
+        out.push(destRel);
+      }
+    }
+  }
+  for (const entry of SEED_IF_ABSENT) {
+    for (const file of entryFiles(srcDir, entry)) out.push(file.destRel);
+  }
+  return out;
 }
 
 /** The `.aios-toolkit-version` body. Line 1 is the sha (parsed as the merge base). */
@@ -652,19 +709,12 @@ function buildResult({
   changedCount = 0,
   reasons = [],
 }) {
-  // ALLOWLIST, not a blocklist: these are the only remote states apply proceeds under
-  // (verified-current/behind, deliberately-untracked, or acceptable-offline where the stale
-  // ref positively rules out local-only commits). Any OTHER state — including any state a
-  // future acquireRemoteState change adds — blocks by construction, so a new classifier
-  // state can never silently default to "allowed" the way a blocklist would let it.
-  const REMOTE_ALLOW_STATES = [
-    "current",
-    "behind",
-    "no-upstream",
-    "unreachable",
-    "missing-upstream-ref",
-  ];
-  const remoteBlocks = remoteState ? !REMOTE_ALLOW_STATES.includes(remoteState.state) : false;
+  // ALLOWLIST, not a blocklist — and the ONE allowlist: REMOTE_APPLY_ALLOW_STATES is
+  // exported by toolkit-pull.mjs beside the classifier that owns the vocabulary, and
+  // pullToolkitCheckout's apply-mode refusals gate on the same constant, so a future
+  // classifier state blocks by construction at every gate at once and the two files can
+  // never drift.
+  const remoteBlocks = remoteState ? !REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state) : false;
   const sourceBlocks = sourceClean != null && sourceClean !== "clean";
   const vendorBlocks = vs != null && !vs.safe;
   // mode === "error" is cmdUpdate's outer catch converting a thrown UpdateError into a
@@ -677,15 +727,15 @@ function buildResult({
   // and `applyAllowed: true` on a failed apply would lie to every programmatic caller
   // reading the documented `.applyAllowed` contract.
   const errorBlocks = mode === "error" || (mode === "apply" && exitStatus !== 0);
-  // …and the same principle one more time, generalized: an apply-capable result whose
-  // safety signals were ALL never computed (remote, cleanliness, vendor safety) must not
-  // read as allowed — whatever branch produced it evaluated nothing. `contribute` is not
-  // an apply at all (it pushes a PR), so its result never advertises apply permission.
-  const unevaluated =
-    ["check", "preview", "apply"].includes(mode) &&
-    remoteState == null &&
-    sourceClean == null &&
-    vs == null;
+  // …and the same principle one more time, generalized: a result whose safety signals
+  // were ALL never computed (remote, cleanliness, vendor safety) must not read as allowed
+  // — whatever branch produced it evaluated nothing. Deliberately NOT gated on a mode
+  // list: a mode list is a blocklist in disguise, and a future mode string missing from
+  // it would read applyAllowed:true from nothing — the exact fail-open this clause
+  // exists to close. All-null signals fail closed for every mode, present and future.
+  // `contribute` is not an apply at all (it pushes a PR), so its result never advertises
+  // apply permission.
+  const unevaluated = remoteState == null && sourceClean == null && vs == null;
   const nonApplyMode = mode === "contribute";
   return {
     exitStatus,
@@ -822,18 +872,18 @@ async function cmdVendorApplyOnly(repo, args) {
   // a symlinked catalog destination is refused before anything is written.
   for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
     assertDestPathSafe(repo, rel, "regenerate catalog");
-  // PRE-FLIGHT containment scan over every managed + seed destination — all-or-nothing.
-  // The per-file asserts inside mergeManaged remain as a backstop, but they fire mid-write-
-  // loop: one bad destination there would leave every earlier file already vendored (a
-  // partial apply with no stamp). Refusing up front, before the first write, keeps a
-  // symlinked/escaping destination from ever producing a half-applied workspace.
-  for (const entry of [...MANAGED_PATHS, ...SEED_IF_ABSENT]) {
-    if (!existsSync(path.join(srcDir, entry.src))) continue;
-    for (const file of entryFiles(srcDir, entry)) assertDestPathSafe(repo, file.destRel);
-  }
   const baseSha = existsSync(stampPath)
     ? readFileSync(stampPath, "utf8").split(/\s/)[0]
     : undefined;
+  // PRE-FLIGHT containment scan over the COMPLETE write+delete set — all-or-nothing.
+  // plannedDestRels enumerates everything the apply below could touch (managed + seed
+  // writes, conflict sidecars, upstream-deletion targets) via the same helpers the write
+  // loop itself calls, so the scan can't cover a different set than the loop touches. The
+  // per-file asserts inside mergeManaged remain as a backstop, but they fire mid-write-
+  // loop: one bad destination there would leave every earlier file already vendored (a
+  // partial apply with no stamp). Refusing up front, before the first write, keeps a
+  // symlinked/escaping destination from ever producing a half-applied workspace.
+  for (const destRel of plannedDestRels(srcDir, baseSha)) assertDestPathSafe(repo, destRel);
   const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
   const shortSha = sha.slice(0, 12);
@@ -1019,6 +1069,19 @@ async function cmdUpdateInner(repo, cfg, args) {
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
   if (looksLikeToolkit(repo)) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
+    // The consent pin must never be silently ignored on ANY branch that can return
+    // success: this flag is only meaningful for a two-step preview→apply over a
+    // WORKSPACE, and this branch is the toolkit itself. Accepting-then-ignoring it would
+    // let a pinned-apply recipe report exit 0 against a source the user never previewed —
+    // so validate it against this checkout's actual HEAD and refuse a mismatch.
+    const selfExpectHead = argValue(args, "--expect-src-head");
+    if (selfExpectHead && gitSha(repo) !== selfExpectHead) {
+      throw new UpdateError(
+        `--expect-src-head ${selfExpectHead.slice(0, 12)} doesn't match this toolkit checkout's ` +
+          `HEAD (${gitSha(repo).slice(0, 12)}) — the source moved since it was previewed. ` +
+          `Re-run the preview and confirm against the new state.`
+      );
+    }
     if (check || preview) {
       // Both read-only modes must report the same remote/local safety signals that apply
       // enforces — one shared assessment (ls-remote only; vendorSafety catches an
@@ -1033,6 +1096,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         remoteState: a.remoteState,
         sourceClean: a.sourceClean,
         vendorSafety: a.vs,
+        srcHead: gitSha(repo),
         reasons: a.reasons,
       });
     }
@@ -1041,7 +1105,12 @@ async function cmdUpdateInner(repo, cfg, args) {
       // would have nothing to derive applyAllowed from (and now fails closed on that) —
       // cleanliness is the one cheap, local signal this branch can truthfully report.
       console.log(color.dim("  --no-pull — nothing to re-vendor in the toolkit checkout."));
-      return buildResult({ mode, exitStatus: 0, sourceClean: sourceCleanliness(repo) });
+      return buildResult({
+        mode,
+        exitStatus: 0,
+        sourceClean: sourceCleanliness(repo),
+        srcHead: gitSha(repo),
+      });
     }
     // selfUpdate: nothing is vendored here, so a current-but-dirty checkout is a no-op
     // success (the everyday state of an actively-developed checkout), no snapshot is
@@ -1177,6 +1246,22 @@ async function cmdUpdateInner(repo, cfg, args) {
     // via --no-pull, or is a freshly-cloned ephemeral checkout (already current). Both
     // paths run through pullToolkitCheckout (throws UpdateError on its own failures), so
     // the clean gate, --stash handling, and snapshot pinning are one implementation —
+    // The consent pin for two-step preview→apply flows (onboarding): the caller passes
+    // the sha its preview reported, and a source that has since moved refuses instead of
+    // silently vendoring content the user never saw. Checked HERE, before
+    // pullToolkitCheckout builds (and then tears down) an entire snapshot worktree just
+    // to report the mismatch — a moved HEAD refuses identically either way (a pull that
+    // moves HEAD past the pin is by definition not what was previewed), this is just the
+    // cheap seat for the same refusal. The post-snapshot check below stays as the
+    // authoritative TOCTOU backstop against the sha the snapshot actually pinned.
+    const expectHead = argValue(args, "--expect-src-head");
+    if (expectHead && gitSha(srcDir) !== expectHead) {
+      throw new UpdateError(
+        `the toolkit source moved since it was previewed (previewed ${expectHead.slice(0, 12)}, ` +
+          `now ${gitSha(srcDir).slice(0, 12)}) — re-run the preview and confirm against the new state.`
+      );
+    }
+
     // `localOnly` just skips the remote classification and fast-forward.
     const snapshotSource =
       noPull || ephemeral
@@ -1224,14 +1309,15 @@ async function cmdUpdateInner(repo, cfg, args) {
         );
       }
 
-      // The consent pin for two-step preview→apply flows (onboarding): the caller passes
-      // the sha its preview reported, and a source that has since moved refuses instead of
-      // silently vendoring content the user never saw.
-      const expectHead = argValue(args, "--expect-src-head");
-      if (expectHead && snapshotSource.srcHead && snapshotSource.srcHead !== expectHead) {
+      // Authoritative consent-pin backstop against the sha the snapshot ACTUALLY pinned
+      // (the early check above ran against the live checkout pre-pull). FAIL-CLOSED on a
+      // missing srcHead: apply-mode pullToolkitCheckout always sets it or throws, so a
+      // null here means an invariant broke upstream — refuse rather than silently skip
+      // the one comparison the pin exists for.
+      if (expectHead && snapshotSource.srcHead !== expectHead) {
         throw new UpdateError(
           `the toolkit source moved since it was previewed (previewed ${expectHead.slice(0, 12)}, ` +
-            `now ${snapshotSource.srcHead.slice(0, 12)}) — re-run the preview and confirm against the new state.`
+            `now ${(snapshotSource.srcHead ?? "unknown").slice(0, 12)}) — re-run the preview and confirm against the new state.`
         );
       }
 
