@@ -27,7 +27,12 @@ import {
   postReplySend,
 } from "./api";
 import { ageLabel, presentSendState } from "./presenters";
-import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
+import {
+  gmailThreadRef,
+  immutableReplySnapshot,
+  LatestReplyReview,
+  retainLastGood,
+} from "./view-state";
 import {
   channelForItem,
   filterInboxView,
@@ -827,6 +832,27 @@ describe("detail request sequencing", () => {
     resolveA("detail-A");
     await loadA;
     expect(accepted).toEqual(["detail-B"]);
+  });
+});
+
+describe("reply review sequencing", () => {
+  test("selection, channel, and newer-review changes invalidate an in-flight reply check", () => {
+    const reviews = new LatestReplyReview("gmail");
+    const selected = reviews.begin("gmail-a", "gmail:thread-a");
+    expect(reviews.accepts(selected, "gmail-a", "gmail:thread-a")).toBe(true);
+    reviews.invalidate();
+    expect(reviews.accepts(selected, "gmail-a", "gmail:thread-a")).toBe(false);
+
+    const channel = reviews.begin("gmail-a", "gmail:thread-a");
+    reviews.selectChannel("slack");
+    expect(reviews.accepts(channel, "gmail-a", "gmail:thread-a")).toBe(false);
+
+    reviews.selectChannel("gmail");
+    const slower = reviews.begin("gmail-a", "gmail:thread-a");
+    const newer = reviews.begin("gmail-a", "gmail:thread-a");
+    expect(reviews.accepts(slower, "gmail-a", "gmail:thread-a")).toBe(false);
+    expect(reviews.accepts(newer, "gmail-b", "gmail:thread-b")).toBe(false);
+    expect(reviews.accepts(newer, "gmail-a", "gmail:thread-a")).toBe(true);
   });
 });
 

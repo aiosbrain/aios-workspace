@@ -1,6 +1,46 @@
 import type { postReplyCheck } from "./api";
 import type { InboxDetail, ReplyConfirmationSnapshot } from "./types";
 
+interface ReplyReviewRequest {
+  itemId: string;
+  threadRef: string;
+  channel: string;
+  generation: number;
+}
+
+/** Prevent an async reply check from reopening confirmation after selection/channel has changed. */
+export class LatestReplyReview {
+  private channel: string;
+  private generation = 0;
+
+  constructor(channel: string) {
+    this.channel = channel;
+  }
+
+  selectChannel(channel: string) {
+    if (channel === this.channel) return;
+    this.channel = channel;
+    this.generation++;
+  }
+
+  invalidate() {
+    this.generation++;
+  }
+
+  begin(itemId: string, threadRef: string): ReplyReviewRequest {
+    return { itemId, threadRef, channel: this.channel, generation: ++this.generation };
+  }
+
+  accepts(request: ReplyReviewRequest, itemId: string | null, threadRef: string | null): boolean {
+    return (
+      request.generation === this.generation &&
+      request.channel === this.channel &&
+      request.itemId === itemId &&
+      request.threadRef === threadRef
+    );
+  }
+}
+
 export function retainLastGood<T>(
   current: T | null,
   outcome: { ok: true; value: T } | { ok: false }

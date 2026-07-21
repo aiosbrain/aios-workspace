@@ -28,7 +28,12 @@ import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notificat
 import { LatestDetailRequest } from "./detail-request";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { ApiError } from "../../lib/api";
-import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
+import {
+  gmailThreadRef,
+  immutableReplySnapshot,
+  LatestReplyReview,
+  retainLastGood,
+} from "./view-state";
 import {
   filterInboxView,
   LatestInboxRequest,
@@ -84,8 +89,10 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
   const ackSettled = useRef(new Set<string>());
   const detailRequests = useRef(new LatestDetailRequest());
   const inboxRequests = useRef(new LatestInboxRequest(channel));
+  const replyReviews = useRef(new LatestReplyReview(channel));
   // Render-time invalidation prevents an old channel response from landing before the next effect.
   inboxRequests.current.select(channel);
+  replyReviews.current.selectChannel(channel);
   selectedRef.current = selectedId;
   const displayedView = view ? filterInboxView(view, channel) : null;
   const { selectedId: displayedSelectedId, detail: displayedDetail } = visibleInboxSelection(
@@ -136,6 +143,7 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
       if (nextId !== selectedRef.current) {
         selectedRef.current = nextId;
         detailRequests.current.select(nextId);
+        replyReviews.current.invalidate();
         setSelectedId(nextId);
         detailRef.current = null;
         setDetail(null);
@@ -234,6 +242,7 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
     (id: string) => {
       selectedRef.current = id;
       detailRequests.current.select(id);
+      replyReviews.current.invalidate();
       setSelectedId(id);
       detailRef.current = null;
       setDetail(null);
@@ -292,11 +301,23 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
 
   const onReviewReply = useCallback(
     async (id: string, body: string) => {
-      const threadRef = gmailThreadRef(detail);
-      if (!threadRef || detail?.item?.id !== id) {
+      const currentDetail = detailRef.current;
+      const threadRef = gmailThreadRef(currentDetail);
+      if (!threadRef || selectedRef.current !== id || currentDetail?.item?.id !== id) {
         throw new Error("Select the Gmail message again before reviewing this reply.");
       }
+      const request = replyReviews.current.begin(id, threadRef);
       const checked = await postReplyCheck(api, id, body);
+      const latestDetail = detailRef.current;
+      if (
+        !replyReviews.current.accepts(
+          request,
+          latestDetail?.item?.id === selectedRef.current ? selectedRef.current : null,
+          gmailThreadRef(latestDetail)
+        )
+      ) {
+        throw new Error("Selection changed while the reply was checked. Review it again.");
+      }
       if (!checked.ok) throw new Error(checked.error);
       const snapshot = immutableReplySnapshot(id, body, checked);
       setReplySnapshot(snapshot);
@@ -304,7 +325,7 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
       setReplyDialogError(null);
       setReplyRecoveryError(null);
     },
-    [api, detail]
+    [api]
   );
 
   const sendConfirmed = useCallback(
