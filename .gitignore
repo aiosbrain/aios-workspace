@@ -13,6 +13,8 @@ dist/
 coverage/
 gui/client/coverage/
 test/ux/evidence/
+evals/results/
+evals/scratch/
 .aios/
 
 .env.keys
