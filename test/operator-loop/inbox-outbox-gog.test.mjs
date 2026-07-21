@@ -56,7 +56,7 @@ function enqueueInputFor(commandId, bytes) {
 
 // -- (2) querySent is fail-closed on a gog search outage -------------------------------------------
 
-test("createGogSendClient.querySent throws OutboxReconcileError on an exec outage", () => {
+test("createGogSendClient.querySent throws OutboxReconcileError on an exec outage", async () => {
   const client = createGogSendClient(loop, {
     commandId: "cmd-1",
     runGog() {
@@ -64,21 +64,21 @@ test("createGogSendClient.querySent throws OutboxReconcileError on an exec outag
       throw e;
     },
   });
-  assert.throws(
+  await assert.rejects(
     () => client.querySent(),
     (e) => e instanceof loop.OutboxReconcileError
   );
 });
 
-test("createGogSendClient.querySent throws OutboxReconcileError on non-JSON output", () => {
+test("createGogSendClient.querySent throws OutboxReconcileError on non-JSON output", async () => {
   const client = createGogSendClient(loop, { commandId: "cmd-1", runGog: () => "not json" });
-  assert.throws(
+  await assert.rejects(
     () => client.querySent(),
     (e) => e instanceof loop.OutboxReconcileError
   );
 });
 
-test("wired through the outbox, a search outage fails closed: outcome_unknown, ZERO sends", () => {
+test("wired through the outbox, a search outage fails closed: outcome_unknown, ZERO sends", async () => {
   let sends = 0;
   const bytes = buildOutboundBytes({
     commandId: "cmd-1",
@@ -96,14 +96,14 @@ test("wired through the outbox, a search outage fails closed: outcome_unknown, Z
   });
   const journal = loop.createInMemoryOutboxJournal();
   const ob = loop.createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved(enqueueInputFor("cmd-1", bytes));
+  const cmd = await ob.sendApproved(enqueueInputFor("cmd-1", bytes));
   assert.equal(cmd.state, "outcome_unknown");
   assert.equal(sends, 0, "a Sent-search outage must never fall through to a send");
 });
 
 // -- (3) reconcile is robust to subject edits (stable body marker) ---------------------------------
 
-test("querySent finds the message by its stable body marker despite a subject edit", () => {
+test("querySent finds the message by its stable body marker despite a subject edit", async () => {
   const commandId = "cmd-subj-edit";
   const marker = commandMarker(commandId);
   // The fake Sent folder holds the THREAD under an EDITED subject, but the body marker is intact.
@@ -125,14 +125,14 @@ test("querySent finds the message by its stable body marker despite a subject ed
       return JSON.stringify(query.includes(marker) ? sentFolder : []);
     },
   });
-  const q = client.querySent();
+  const q = await client.querySent();
   assert.equal(q.found, true);
   assert.equal(q.thread_id, "tid-9");
   // Honest naming: a thread id is never journaled as a message id.
   assert.equal(q.message_id, undefined);
 });
 
-test("reconcile-first with the body marker prevents a duplicate after a timeout", () => {
+test("reconcile-first with the body marker prevents a duplicate after a timeout", async () => {
   const commandId = "cmd-dup";
   const bytes = buildOutboundBytes({
     commandId,
@@ -159,10 +159,10 @@ test("reconcile-first with the body marker prevents a duplicate after a timeout"
   });
   const journal = loop.createInMemoryOutboxJournal();
   const ob = loop.createOutbox({ client, journal: journal.append, now });
-  const c1 = ob.sendApproved(enqueueInputFor(commandId, bytes));
+  const c1 = await ob.sendApproved(enqueueInputFor(commandId, bytes));
   assert.equal(c1.state, "outcome_unknown"); // timeout classified as unknown, not failed
   assert.equal(sends, 1);
-  const c2 = ob.attempt(commandId); // reconcile-first finds the landed message via marker
+  const c2 = await ob.attempt(commandId); // reconcile-first finds the landed message via marker
   assert.equal(c2.state, "reconciled");
   // gog's Sent search returns threads: the reconcile carries the thread id, never a fabricated
   // message id (native_message_id stays unset).
@@ -173,7 +173,7 @@ test("reconcile-first with the body marker prevents a duplicate after a timeout"
 
 // -- (4) send transmits exactly the checked bytes --------------------------------------------------
 
-test("send parses the exact bytes and passes those fields to gog (aligned)", () => {
+test("send parses the exact bytes and passes those fields to gog (aligned)", async () => {
   const commandId = "cmd-align";
   const bytes = buildOutboundBytes({
     commandId,
@@ -190,7 +190,7 @@ test("send parses the exact bytes and passes those fields to gog (aligned)", () 
       return JSON.stringify({ id: "mid-align", threadId: "tid-align" });
     },
   });
-  const r = client.send(bytes);
+  const r = await client.send(bytes);
   assert.equal(r.message_id, "mid-align");
   // The recipients/subject/body handed to gog come straight from the checked bytes.
   const toIdx = sentArgs.indexOf("--to");
@@ -203,7 +203,7 @@ test("send parses the exact bytes and passes those fields to gog (aligned)", () 
   assert.ok(sentArgs[bodyIdx + 1].includes(commandMarker(commandId)));
 });
 
-test("GUI transport adds only the server-derived native thread id and never reply-all", () => {
+test("GUI transport adds only the server-derived native thread id and never reply-all", async () => {
   const commandId = "cmd-thread";
   const bytes = buildOutboundBytes({
     commandId,
@@ -222,7 +222,7 @@ test("GUI transport adds only the server-derived native thread id and never repl
       return JSON.stringify({ id: "mid-thread", threadId: "gmail-native-thread" });
     },
   });
-  client.send(bytes);
+  await client.send(bytes);
   assert.equal(sentArgs[sentArgs.indexOf("--thread-id") + 1], "gmail-native-thread");
   assert.equal(sentArgs[sentArgs.indexOf("-a") + 1], "primary");
   assert.equal(sentArgs.includes("--reply-all"), false);
@@ -232,7 +232,7 @@ test("GUI transport adds only the server-derived native thread id and never repl
 
 // -- (1) credential gate ---------------------------------------------------------------------------
 
-test("resolveGogCredential: env override selects file mode; default is keyring", () => {
+test("resolveGogCredential: env override selects file mode; default is keyring", async () => {
   const fileMode = resolveGogCredential({ AIOS_GOG_TOKEN_FILE: "/tmp/tok" });
   assert.equal(fileMode.mode, "file");
   assert.equal(fileMode.tokenPath, "/tmp/tok");
@@ -270,7 +270,7 @@ test("gogTokenSecurityGate: an insecure FILE token fails closed on POSIX", (t) =
   assert.equal(missingGate.ok, false, "a missing token file must fail the gate closed");
 });
 
-test("gogTokenSecurityGate: a keyring-backed credential is a named skip (not a false pass)", () => {
+test("gogTokenSecurityGate: a keyring-backed credential is a named skip (not a false pass)", async () => {
   // Force the keyring branch by pointing at a config-less env and simulating via resolveGogCredential.
   const cred = resolveGogCredential({});
   if (cred.mode !== "keyring") {
@@ -284,7 +284,7 @@ test("gogTokenSecurityGate: a keyring-backed credential is a named skip (not a f
   assert.match(gate.reason, /keyring|OS keyring/i);
 });
 
-test("gogTokenSecurityGate: win32 unsupported-platform skip is preserved", () => {
+test("gogTokenSecurityGate: win32 unsupported-platform skip is preserved", async () => {
   const gate = gogTokenSecurityGate(loop, {
     env: { AIOS_GOG_TOKEN_FILE: "/whatever" },
     platform: "win32",
@@ -296,7 +296,7 @@ test("gogTokenSecurityGate: win32 unsupported-platform skip is preserved", () =>
 
 // -- (5) lane separation: capability events never contaminate the outbox replay --------------------
 
-test("mixed-lane journal: only outbox-lane events reach foldOutboxState (old journals included)", () => {
+test("mixed-lane journal: only outbox-lane events reach foldOutboxState (old journals included)", async () => {
   const mk = (kind, correlation_id, payload) => ({
     kind,
     correlation_id,
@@ -346,4 +346,88 @@ test("mixed-lane journal: only outbox-lane events reach foldOutboxState (old jou
   assert.equal(folded.get("cmd-legacy").state, "outcome_unknown");
   assert.equal(folded.has("cap-handle-1"), false, "capability handles must not fold as commands");
   assert.equal(folded.has("cap-handle-2"), false, "legacy capability events must be excluded too");
+});
+
+// -- (7) the transport must not block the shared GUI event loop ------------------------------------
+
+test("the GOG send client yields to the event loop instead of blocking it", async () => {
+  const commandId = "cmd-nonblocking";
+  const bytes = buildOutboundBytes({
+    commandId,
+    to: ["john@john-ellison.com"],
+    subject: "hi",
+    body: "yo",
+  });
+  // A transport that resolves on a later macrotask, like a real subprocess round-trip.
+  const client = createGogSendClient(loop, {
+    commandId,
+    runGog(args) {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(args[1] === "search" ? "[]" : JSON.stringify({ id: "m-1", threadId: "t-1" }));
+        }, 5);
+      });
+    },
+  });
+
+  // If the send blocked the loop, this timer could not run while it was in flight.
+  let loopTicked = false;
+  const ticker = setInterval(() => {
+    loopTicked = true;
+  }, 1);
+
+  const journal = loop.createInMemoryOutboxJournal();
+  const ob = loop.createOutbox({ client, journal: journal.append, now });
+  const cmd = await ob.sendApproved(enqueueInputFor(commandId, bytes));
+  clearInterval(ticker);
+
+  assert.equal(cmd.state, "sent");
+  assert.equal(cmd.native_message_id, "m-1");
+  assert.equal(loopTicked, true, "the event loop must stay live across an in-flight gog send");
+});
+
+test("a promise-rejecting gog send is still classified as timeout vs hard failure", async () => {
+  const bytes = buildOutboundBytes({
+    commandId: "cmd-async-timeout",
+    to: ["john@john-ellison.com"],
+    subject: "hi",
+    body: "yo",
+  });
+  // execFile signals its timeout kill via SIGTERM on the rejected promise — an UNKNOWN outcome.
+  const timedOut = createGogSendClient(loop, {
+    commandId: "cmd-async-timeout",
+    runGog(args) {
+      if (args[1] === "search") return Promise.resolve("[]");
+      return Promise.reject(
+        Object.assign(new Error("killed"), { killed: true, signal: "SIGTERM" })
+      );
+    },
+  });
+  const journal = loop.createInMemoryOutboxJournal();
+  const ob = loop.createOutbox({ client: timedOut, journal: journal.append, now });
+  const cmd = await ob.sendApproved(enqueueInputFor("cmd-async-timeout", bytes));
+  assert.equal(cmd.state, "outcome_unknown", "a killed send is unknown, never a clean failure");
+
+  // A definitive rejection stays a hard failure.
+  const failed = createGogSendClient(loop, {
+    commandId: "cmd-async-failed",
+    runGog(args) {
+      if (args[1] === "search") return Promise.resolve("[]");
+      return Promise.reject(new Error("gog: invalid recipient"));
+    },
+  });
+  const journal2 = loop.createInMemoryOutboxJournal();
+  const ob2 = loop.createOutbox({ client: failed, journal: journal2.append, now });
+  const cmd2 = await ob2.sendApproved(
+    enqueueInputFor(
+      "cmd-async-failed",
+      buildOutboundBytes({
+        commandId: "cmd-async-failed",
+        to: ["john@john-ellison.com"],
+        subject: "hi",
+        body: "yo",
+      })
+    )
+  );
+  assert.equal(cmd2.state, "failed");
 });

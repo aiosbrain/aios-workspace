@@ -6,22 +6,33 @@
  * same argv builder. Account and thread id are server/CLI options, never browser fields.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export function commandMarker(commandId) {
   return `aios-outbox-cmd:${commandId}`;
 }
 
-/** Bounded runner: both Sent search and send have a 60-second ceiling. */
-export function defaultRunGog(args) {
-  return execFileSync("gog", args, {
+/**
+ * Bounded runner: both Sent search and send have a 60-second ceiling.
+ *
+ * Deliberately ASYNC. The GUI server (gui/server/index.mjs) runs one `http.createServer` event loop
+ * shared with the inbox and outbox polling routes, so a synchronous spawn here would freeze every
+ * other request for up to two minutes across the two calls a send makes. The command lock, not the
+ * blocking call, is what serializes concurrent sends.
+ */
+export async function defaultRunGog(args) {
+  const { stdout } = await execFileAsync("gog", args, {
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
     timeout: 60_000,
+    maxBuffer: 10 * 1024 * 1024,
   });
+  return stdout;
 }
 
 function isTimeoutError(error) {
@@ -45,10 +56,10 @@ export function createGogSendClient(
 ) {
   const acct = account ? ["-a", account] : [];
   return {
-    querySent() {
+    async querySent() {
       let out;
       try {
-        out = runGog([
+        out = await runGog([
           "gmail",
           "search",
           `in:sent "${marker}"`,
@@ -74,7 +85,7 @@ export function createGogSendClient(
       }
       return { found: false };
     },
-    send(exactOutboundBytes) {
+    async send(exactOutboundBytes) {
       const message = loop.parseOutboundMessage(exactOutboundBytes);
       const args = ["gmail", "send", "--to", message.to.join(",")];
       if (message.cc.length) args.push("--cc", message.cc.join(","));
@@ -85,7 +96,7 @@ export function createGogSendClient(
 
       let out;
       try {
-        out = runGog(args);
+        out = await runGog(args);
       } catch (error) {
         if (isTimeoutError(error)) {
           throw new loop.OutboxTimeoutError(`gog send timed out: ${errorMessage(error)}`);

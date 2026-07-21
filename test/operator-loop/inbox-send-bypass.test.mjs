@@ -69,11 +69,11 @@ const ALLOW = { verdict: "allow", rule_id: "allow.origin-confined", explanation:
 
 // -- the gated path: every inbox send goes PDP-allow -> outbox -> gog ------------------------------
 
-test("gated: an inbox send only reaches gog through an allow decision + the outbox", () => {
+test("gated: an inbox send only reaches gog through an allow decision + the outbox", async () => {
   const { client, sends } = instrumentedGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved({
+  const cmd = await ob.sendApproved({
     command_id: "cmd-1",
     reply_request: baseRequest(),
     exact_outbound_bytes: bytes("cmd-1"),
@@ -83,12 +83,12 @@ test("gated: an inbox send only reaches gog through an allow decision + the outb
   assert.equal(sends.length, 1, "exactly one gated send reached the transport");
 });
 
-test("bypass attempt 1: a deny/needs_promotion decision can NEVER reach gog", () => {
+test("bypass attempt 1: a deny/needs_promotion decision can NEVER reach gog", async () => {
   const { client, sends } = instrumentedGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   for (const verdict of ["deny", "needs_promotion"]) {
-    assert.throws(
+    await assert.rejects(
       () =>
         ob.sendApproved({
           command_id: `c-${verdict}`,
@@ -102,7 +102,7 @@ test("bypass attempt 1: a deny/needs_promotion decision can NEVER reach gog", ()
   assert.equal(sends.length, 0, "no non-allow decision ever reached the transport");
 });
 
-test("bypass attempt 2: a recipient-mutated command cannot reach gog", () => {
+test("bypass attempt 2: a recipient-mutated command cannot reach gog", async () => {
   const { client, sends } = instrumentedGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
@@ -113,25 +113,25 @@ test("bypass attempt 2: a recipient-mutated command cannot reach gog", () => {
     exact_outbound_bytes: bytes("cmd-1", ["mallory@evil.test"]),
     decision: ALLOW,
   });
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("cmd-1"),
     (e) => e instanceof OutboxRejectedError && e.reason === "recipient-mismatch"
   );
   assert.equal(sends.length, 0);
 });
 
-test("bypass attempt 3: you cannot attempt a command that was never enqueued (no allow decision)", () => {
+test("bypass attempt 3: you cannot attempt a command that was never enqueued (no allow decision)", async () => {
   const { client, sends } = instrumentedGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("never-enqueued"),
     (e) => e instanceof OutboxRejectedError
   );
   assert.equal(sends.length, 0);
 });
 
-test("seam instrumentation: the outbox is the sole caller of the injected send client", () => {
+test("seam instrumentation: the outbox is the sole caller of the injected send client", async () => {
   // Structural assertion: the send client is INJECTED into the outbox and nothing else in the inbox
   // barrel holds a reference to it. If any code reached gog without the outbox, it would need this
   // same injected client — the outbox is the only holder, so the PDP + pre-send checks are
@@ -148,7 +148,7 @@ test("seam instrumentation: the outbox is the sole caller of the injected send c
   assert.equal(sends.length, 0);
 });
 
-test("UNCLAIMED surface named: the ambient gog CLI is NOT gated at G5 (G6b/I-15 owns cannot-bypass)", () => {
+test("UNCLAIMED surface named: the ambient gog CLI is NOT gated at G5 (G6b/I-15 owns cannot-bypass)", async () => {
   // This is the honest claim boundary. We assert nothing about the ambient CLI — we NAME it so the
   // scope is explicit in the test output, exactly as the spec requires.
   const unclaimed =

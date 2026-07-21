@@ -460,14 +460,20 @@ export function prepareGmailReply(
   return { ok: true, draft, decision };
 }
 
-/** Execute only a fully prepared draft through the existing idempotent outbox. */
-export function executePreparedGmailReply(input: {
+/**
+ * Execute only a fully prepared draft through the existing idempotent outbox.
+ *
+ * Async because the transport is: a real GOG send spawns a subprocess, and the GUI server cannot
+ * block its event loop on it. The command lock — held by the caller across this call — is what keeps
+ * concurrent confirmations of one command serialized.
+ */
+export async function executePreparedGmailReply(input: {
   preparation: Extract<GmailReplyPreparation, { ok: true }>;
   client: OutboxSendClient;
   journal: AppendOutboxEvent;
   priorEvents?: readonly OutboxEvent[];
   now?: () => number;
-}): OutboxCommand {
+}): Promise<OutboxCommand> {
   const outbox = createOutbox({
     client: input.client,
     journal: input.journal,

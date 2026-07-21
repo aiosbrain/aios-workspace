@@ -377,7 +377,7 @@ export async function cmdInbox(repo, cfg, args) {
     });
     let cmd;
     try {
-      cmd = outbox.sendApproved({
+      cmd = await outbox.sendApproved({
         command_id: draft.command_id,
         reply_request: draft.request,
         exact_outbound_bytes: bytes,

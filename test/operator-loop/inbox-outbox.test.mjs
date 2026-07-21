@@ -142,13 +142,13 @@ function fakeGog({ behavior = {}, preSent = {} } = {}) {
 
 // -- pure pre-send checks --------------------------------------------------------------------------
 
-test("checkPreSend: origin-confined reply to approved recipients passes", () => {
+test("checkPreSend: origin-confined reply to approved recipients passes", async () => {
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: outboundBytes() };
   const r = checkPreSend(cmd, ALLOW, { kind: "direct" });
   assert.equal(r.ok, true);
 });
 
-test("checkPreSend: a non-allow decision is rejected (not-allowed)", () => {
+test("checkPreSend: a non-allow decision is rejected (not-allowed)", async () => {
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: outboundBytes() };
   for (const verdict of ["deny", "needs_promotion"]) {
     const r = checkPreSend(cmd, { verdict, rule_id: "x", explanation: "y" }, { kind: "direct" });
@@ -157,14 +157,14 @@ test("checkPreSend: a non-allow decision is rejected (not-allowed)", () => {
   }
 });
 
-test("checkPreSend is deterministic (same inputs -> same verdict)", () => {
+test("checkPreSend is deterministic (same inputs -> same verdict)", async () => {
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: outboundBytes() };
   const a = checkPreSend(cmd, ALLOW, { kind: "direct" });
   const b = checkPreSend(cmd, ALLOW, { kind: "direct" });
   assert.deepEqual(a, b);
 });
 
-test("recipient sets: approved vs outbound are parsed from structured fields only", () => {
+test("recipient sets: approved vs outbound are parsed from structured fields only", async () => {
   assert.deepEqual([...approvedRecipientSet(baseRequest())].sort(), [
     "alice@acme.test",
     "bob@acme.test",
@@ -177,7 +177,7 @@ test("recipient sets: approved vs outbound are parsed from structured fields onl
 
 // -- prompt-injection fixtures (on exact outbound bytes) -------------------------------------------
 
-test("injection: header injection (smuggled Bcc via a duplicate/extra header) is rejected", () => {
+test("injection: header injection (smuggled Bcc via a duplicate/extra header) is rejected", async () => {
   // A header-injection smuggle: an extra Bcc line appended after the canonical headers.
   const bytes = outboundBytes({ extraHeaders: ["Bcc: attacker@evil.test"] });
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
@@ -188,7 +188,7 @@ test("injection: header injection (smuggled Bcc via a duplicate/extra header) is
   assert.ok(["recipient-mismatch", "header-injection"].includes(r.reason), r.reason);
 });
 
-test("injection: CRLF control char smuggled into a header value is header-injection", () => {
+test("injection: CRLF control char smuggled into a header value is header-injection", async () => {
   const bytes = outboundBytes({ subject: "hi\r\nBcc: attacker@evil.test" });
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
   const r = checkPreSend(cmd, ALLOW, { kind: "direct" });
@@ -198,7 +198,7 @@ test("injection: CRLF control char smuggled into a header value is header-inject
   assert.ok(["header-injection", "recipient-mismatch"].includes(r.reason), r.reason);
 });
 
-test("injection: a disallowed arbitrary header is header-injection", () => {
+test("injection: a disallowed arbitrary header is header-injection", async () => {
   const bytes = outboundBytes({ extraHeaders: ["X-Evil-Header: exfiltrate"] });
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
   const r = checkPreSend(cmd, ALLOW, { kind: "direct" });
@@ -206,7 +206,7 @@ test("injection: a disallowed arbitrary header is header-injection", () => {
   assert.equal(r.reason, "header-injection");
 });
 
-test("injection: quoted-thread smuggling (a To:/Bcc: line in the body) is rejected, never expands recipients", () => {
+test("injection: quoted-thread smuggling (a To:/Bcc: line in the body) is rejected, never expands recipients", async () => {
   const body = "Sure.\n\n> On Tue, mallory wrote:\n> Bcc: attacker@evil.test please add\n";
   const bytes = outboundBytes({ body });
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
@@ -217,7 +217,7 @@ test("injection: quoted-thread smuggling (a To:/Bcc: line in the body) is reject
   assert.deepEqual([...outboundRecipientSet(bytes)].sort(), ["alice@acme.test", "bob@acme.test"]);
 });
 
-test("injection: an admin-context leak marker in the outbound bytes is rejected", () => {
+test("injection: an admin-context leak marker in the outbound bytes is rejected", async () => {
   for (const marker of ADMIN_CONTEXT_MARKERS) {
     const bytes = outboundBytes({ body: `Here you go.\n${marker}\n` });
     const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
@@ -227,7 +227,7 @@ test("injection: an admin-context leak marker in the outbound bytes is rejected"
   }
 });
 
-test("recipient mutation between PDP decision and send is rejected on the exact-bytes check", () => {
+test("recipient mutation between PDP decision and send is rejected on the exact-bytes check", async () => {
   // PDP approved {alice,bob}; the bytes were mutated to send to mallory instead.
   const bytes = outboundBytes({ to: ["alice@acme.test", "mallory@evil.test"] });
   const cmd = { reply_request: baseRequest(), exact_outbound_bytes: bytes };
@@ -238,11 +238,11 @@ test("recipient mutation between PDP decision and send is rejected on the exact-
 
 // -- outbox lifecycle: at-most-once across the matrix ----------------------------------------------
 
-test("happy path: enqueue -> attempt -> sent, one send, native receipt journaled", () => {
+test("happy path: enqueue -> attempt -> sent, one send, native receipt journaled", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved(enqueueInput());
+  const cmd = await ob.sendApproved(enqueueInput());
   assert.equal(cmd.state, "sent");
   assert.equal(cmd.native_message_id, "mid-cmd-1");
   assert.equal(counter.total, 1);
@@ -256,20 +256,20 @@ test("happy path: enqueue -> attempt -> sent, one send, native receipt journaled
   assert.ok(!blob.includes("Thanks, sounds good"));
 });
 
-test("double-enqueue with the same command_id is idempotent: exactly one send", () => {
+test("double-enqueue with the same command_id is idempotent: exactly one send", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   ob.enqueue(enqueueInput());
   ob.enqueue(enqueueInput()); // no-op
-  const cmd = ob.attempt("cmd-1");
-  ob.attempt("cmd-1"); // terminal -> no-op
+  const cmd = await ob.attempt("cmd-1");
+  await ob.attempt("cmd-1"); // terminal -> no-op
   assert.equal(cmd.state, "sent");
   assert.equal(counter.total, 1);
   assert.equal(ob.sendCount("cmd-1"), 1);
 });
 
-test("enqueue refuses a non-allow decision (deny / needs_promotion) -> zero sends", () => {
+test("enqueue refuses a non-allow decision (deny / needs_promotion) -> zero sends", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
@@ -288,23 +288,23 @@ test("enqueue refuses a non-allow decision (deny / needs_promotion) -> zero send
   assert.equal(counter.total, 0);
 });
 
-test("timeout then retry: reconcile-first finds the message in Sent, no duplicate send", () => {
+test("timeout then retry: reconcile-first finds the message in Sent, no duplicate send", async () => {
   const { client, counter, sent } = fakeGog({ behavior: { "cmd-1": { kind: "timeout" } } });
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  const c1 = ob.sendApproved(enqueueInput());
+  const c1 = await ob.sendApproved(enqueueInput());
   assert.equal(c1.state, "outcome_unknown");
   assert.equal(counter.total, 1);
   assert.ok(sent.has("cmd-1")); // the timed-out send actually landed
   // Retry: reconcile-first queries Sent BEFORE resending -> reconciled, no second send.
-  const c2 = ob.attempt("cmd-1");
+  const c2 = await ob.attempt("cmd-1");
   assert.equal(c2.state, "reconciled");
   assert.equal(c2.native_message_id, "mid-cmd-1");
   assert.equal(counter.total, 1, "reconcile-first must not resend");
   assert.equal(ob.sendCount("cmd-1"), 1);
 });
 
-test("crash between attempt and receipt: recovery reconciles, no duplicate send", () => {
+test("crash between attempt and receipt: recovery reconciles, no duplicate send", async () => {
   // Journal that throws right after the action-attempt is written (simulating a crash before the
   // receipt/outcome are persisted). The send itself reached Gmail.
   const events = [];
@@ -338,7 +338,7 @@ test("crash between attempt and receipt: recovery reconciles, no duplicate send"
   const ob1 = createOutbox({ client: countingClient, journal: crashingJournal, now });
   ob1.enqueue(enqueueInput());
   crashArmed = true;
-  assert.throws(() => ob1.attempt("cmd-1"), /simulated crash before receipt/);
+  await assert.rejects(() => ob1.attempt("cmd-1"), /simulated crash before receipt/);
   // The send happened (message in Sent) but the process "crashed" before persisting the receipt.
   assert.equal(sendCalls, 1);
   assert.ok(sentStore.has("cmd-1"));
@@ -354,57 +354,57 @@ test("crash between attempt and receipt: recovery reconciles, no duplicate send"
   const folded = foldOutboxState(events);
   assert.equal(folded.get("cmd-1").state, "attempting");
   recovered.enqueue(enqueueInput());
-  const c = recovered.attempt("cmd-1");
+  const c = await recovered.attempt("cmd-1");
   assert.equal(c.state, "reconciled");
   assert.equal(sendCalls, 1, "recovery must not resend after a crash");
 });
 
-test("partial failure (multi-recipient): message exists, state failed, never resends", () => {
+test("partial failure (multi-recipient): message exists, state failed, never resends", async () => {
   const { client, counter } = fakeGog({
     behavior: { "cmd-1": { kind: "ok", rejected_recipients: ["bob@acme.test"] } },
   });
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved(enqueueInput());
+  const cmd = await ob.sendApproved(enqueueInput());
   assert.equal(cmd.state, "failed");
   assert.deepEqual(cmd.rejected_recipients, ["bob@acme.test"]);
   assert.equal(cmd.native_message_id, "mid-cmd-1");
   // A retry reconcile-first finds the created message -> reconciled, NO resend to the accepted set.
-  const retry = ob.attempt("cmd-1");
+  const retry = await ob.attempt("cmd-1");
   assert.equal(retry.state, "reconciled");
   assert.equal(counter.total, 1, "partial failure must not resend");
 });
 
-test("duplicate native receipt: reconcile is idempotent, one receipt journaled", () => {
+test("duplicate native receipt: reconcile is idempotent, one receipt journaled", async () => {
   const { client } = fakeGog({
     preSent: { "cmd-1": { message_id: "mid-cmd-1", thread_id: "tid-cmd-1" } },
   });
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   ob.enqueue(enqueueInput());
-  const a = ob.reconcile("cmd-1");
+  const a = await ob.reconcile("cmd-1");
   assert.equal(a.state, "reconciled");
-  const b = ob.reconcile("cmd-1"); // duplicate native receipt / duplicate reconcile
+  const b = await ob.reconcile("cmd-1"); // duplicate native receipt / duplicate reconcile
   assert.equal(b.state, "reconciled");
   const receipts = journal.events.filter((e) => e.kind === "native-receipt");
   assert.equal(receipts.length, 1, "a duplicate receipt must not double-journal");
 });
 
-test("hard send failure -> failed, message never created, retry may resend safely", () => {
+test("hard send failure -> failed, message never created, retry may resend safely", async () => {
   const { client, counter } = fakeGog({ behavior: { "cmd-1": { kind: "fail" } } });
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved(enqueueInput());
+  const cmd = await ob.sendApproved(enqueueInput());
   assert.equal(cmd.state, "failed");
   assert.equal(counter.total, 1);
 });
 
-test("native receipt reconciliation: sent fixture reaches reconciled with the Gmail id journaled", () => {
+test("native receipt reconciliation: sent fixture reaches reconciled with the Gmail id journaled", async () => {
   const { client } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  ob.sendApproved(enqueueInput());
-  const c = ob.reconcile("cmd-1");
+  await ob.sendApproved(enqueueInput());
+  const c = await ob.reconcile("cmd-1");
   assert.equal(c.native_message_id, "mid-cmd-1");
   // Read the journal fixture back: a native-receipt event carries the Gmail message id.
   const recovered = foldOutboxState(journal.events);
@@ -413,7 +413,7 @@ test("native receipt reconciliation: sent fixture reaches reconciled with the Gm
 
 // -- reconcile-first FAIL CLOSED on a Sent-query outage (never a blind resend) ----------------------
 
-test("reconcile-first search outage fails closed: outcome_unknown, ZERO sends", () => {
+test("reconcile-first search outage fails closed: outcome_unknown, ZERO sends", async () => {
   const journal = createInMemoryOutboxJournal();
   let sends = 0;
   const client = {
@@ -426,7 +426,7 @@ test("reconcile-first search outage fails closed: outcome_unknown, ZERO sends", 
     },
   };
   const ob = createOutbox({ client, journal: journal.append, now });
-  const cmd = ob.sendApproved(enqueueInput());
+  const cmd = await ob.sendApproved(enqueueInput());
   assert.equal(cmd.state, "outcome_unknown");
   assert.equal(sends, 0, "a Sent-query outage must NEVER fall through to a send");
   // Only a content-free reconcile_unavailable outcome is journaled — no action-attempt, no receipt.
@@ -437,7 +437,7 @@ test("reconcile-first search outage fails closed: outcome_unknown, ZERO sends", 
   assert.equal(journal.events[0].data.status, "reconcile_unavailable");
 });
 
-test("outage during retry never duplicates: timeout -> search-down (no resend) -> search-up reconciles", () => {
+test("outage during retry never duplicates: timeout -> search-down (no resend) -> search-up reconciles", async () => {
   const journal = createInMemoryOutboxJournal();
   let sends = 0;
   let searchState = "ok-empty"; // ok-empty | down | found
@@ -456,17 +456,17 @@ test("outage during retry never duplicates: timeout -> search-down (no resend) -
   };
   const ob = createOutbox({ client, journal: journal.append, now });
   // Attempt 1: search empty -> send -> timeout (message actually landed). counter=1.
-  const c1 = ob.sendApproved(enqueueInput());
+  const c1 = await ob.sendApproved(enqueueInput());
   assert.equal(c1.state, "outcome_unknown");
   assert.equal(sends, 1);
   // Attempt 2: the Sent search is temporarily DOWN -> fail closed, NO resend.
   searchState = "down";
-  const c2 = ob.attempt("cmd-1");
+  const c2 = await ob.attempt("cmd-1");
   assert.equal(c2.state, "outcome_unknown");
   assert.equal(sends, 1, "must not resend while the Sent query is unavailable");
   // Attempt 3: search recovers and finds the landed message -> reconciled, still one send.
   searchState = "found";
-  const c3 = ob.attempt("cmd-1");
+  const c3 = await ob.attempt("cmd-1");
   assert.equal(c3.state, "reconciled");
   assert.equal(c3.native_message_id, "mid-1");
   assert.equal(sends, 1, "at-most-once across the whole outage sequence");
@@ -474,7 +474,7 @@ test("outage during retry never duplicates: timeout -> search-down (no resend) -
 
 // -- exact-bytes alignment: what is checked is parsed back into what is sent ------------------------
 
-test("parseOutboundMessage returns exactly the fields a field-based transport sends", () => {
+test("parseOutboundMessage returns exactly the fields a field-based transport sends", async () => {
   const body = "Hi there.\n\n-- \naios-outbox-cmd:cmd-42";
   const bytes =
     ["To: a@x.test, b@x.test", "Cc: c@x.test", "Subject: Re: hello"].join("\n") +
@@ -495,39 +495,39 @@ test("parseOutboundMessage returns exactly the fields a field-based transport se
 
 // -- delegation capability scoping -----------------------------------------------------------------
 
-test("delegated send without a scoped capability handle is rejected (ambient-delegation)", () => {
+test("delegated send without a scoped capability handle is rejected (ambient-delegation)", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   const req = { ...baseRequest(), delegations: [{ id: "d1", capability: "send" }] };
   ob.enqueue(enqueueInput({ reply_request: req }));
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("cmd-1", { kind: "direct" }),
     (e) => e instanceof OutboxRejectedError && e.reason === "ambient-delegation"
   );
   assert.equal(counter.total, 0);
 });
 
-test("delegated send WITH a scoped capability handle proceeds", () => {
+test("delegated send WITH a scoped capability handle proceeds", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   const req = { ...baseRequest(), delegations: [{ id: "d1", capability: "send" }] };
   ob.enqueue(enqueueInput({ reply_request: req }));
-  const cmd = ob.attempt("cmd-1", { kind: "delegated", capabilityHandle: "cap-handle-xyz" });
+  const cmd = await ob.attempt("cmd-1", { kind: "delegated", capabilityHandle: "cap-handle-xyz" });
   assert.equal(cmd.state, "sent");
   assert.equal(counter.total, 1);
 });
 
 // -- recipient-mutation is caught at attempt time (not just the pure check) ------------------------
 
-test("attempt rejects a recipient-mutated command with zero sends", () => {
+test("attempt rejects a recipient-mutated command with zero sends", async () => {
   const { client, counter } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
   const bytes = outboundBytes({ to: ["mallory@evil.test"] });
   ob.enqueue(enqueueInput({ exact_outbound_bytes: bytes }));
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("cmd-1"),
     (e) => e instanceof OutboxRejectedError && e.reason === "recipient-mismatch"
   );
@@ -536,7 +536,7 @@ test("attempt rejects a recipient-mutated command with zero sends", () => {
 
 // -- global at-most-once + no-misdirection assertion across the whole matrix -----------------------
 
-test("EXIT: zero duplicate/misdirected sends across the full matrix", () => {
+test("EXIT: zero duplicate/misdirected sends across the full matrix", async () => {
   const behavior = {
     ok1: { kind: "ok" },
     to1: { kind: "timeout" },
@@ -548,25 +548,25 @@ test("EXIT: zero duplicate/misdirected sends across the full matrix", () => {
   const ob = createOutbox({ client, journal: journal.append, now });
 
   // ok: send once, retry no-ops
-  ob.sendApproved(
+  await ob.sendApproved(
     enqueueInput({ command_id: "ok1", exact_outbound_bytes: outboundBytes({ commandId: "ok1" }) })
   );
-  ob.attempt("ok1");
+  await ob.attempt("ok1");
   // timeout: send once, retry reconciles
-  ob.sendApproved(
+  await ob.sendApproved(
     enqueueInput({ command_id: "to1", exact_outbound_bytes: outboundBytes({ commandId: "to1" }) })
   );
-  ob.attempt("to1");
+  await ob.attempt("to1");
   // partial: send once, retry reconciles
-  ob.sendApproved(
+  await ob.sendApproved(
     enqueueInput({
       command_id: "part1",
       exact_outbound_bytes: outboundBytes({ commandId: "part1" }),
     })
   );
-  ob.attempt("part1");
+  await ob.attempt("part1");
   // fail: send once (no message created)
-  ob.sendApproved(
+  await ob.sendApproved(
     enqueueInput({
       command_id: "fail1",
       exact_outbound_bytes: outboundBytes({ commandId: "fail1" }),
@@ -579,10 +579,10 @@ test("EXIT: zero duplicate/misdirected sends across the full matrix", () => {
   ob.enqueue(
     enqueueInput({ command_id: "dup1", exact_outbound_bytes: outboundBytes({ commandId: "dup1" }) })
   );
-  ob.attempt("dup1");
-  ob.attempt("dup1");
+  await ob.attempt("dup1");
+  await ob.attempt("dup1");
   // misdirected: rejected, zero sends
-  assert.throws(() =>
+  await assert.rejects(() =>
     ob.sendApproved(
       enqueueInput({
         command_id: "bad1",
@@ -641,7 +641,7 @@ test("gateway credential wrapper: a 0600 gateway-owned token passes; wrong mode 
 
 // -- eventual-consistency guard: an empty Sent search right after an attempt proves nothing ---------
 
-test("retry after a timeout with an empty Sent search is DEFERRED inside the propagation window", () => {
+test("retry after a timeout with an empty Sent search is DEFERRED inside the propagation window", async () => {
   // Gmail's full-text Sent search is eventually consistent: a message that DID land can be invisible
   // to `in:sent` for minutes. A retry that trusts the empty search would double-send.
   let clock = 1_000_000;
@@ -655,13 +655,13 @@ test("retry after a timeout with an empty Sent search is DEFERRED inside the pro
   };
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now: () => clock });
-  const c1 = ob.sendApproved(enqueueInput());
+  const c1 = await ob.sendApproved(enqueueInput());
   assert.equal(c1.state, "outcome_unknown");
   assert.equal(sends, 1);
   // 30s later the search still shows nothing — that proves NOTHING; the retry must refuse to resend
   // with a typed, operator-readable deferral naming the earliest safe retry time.
   clock += 30_000;
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("cmd-1"),
     (e) =>
       e instanceof OutboxRetryDeferredError &&
@@ -671,12 +671,12 @@ test("retry after a timeout with an empty Sent search is DEFERRED inside the pro
   assert.equal(sends, 1, "no resend inside the eventual-consistency window");
   // Past the window an empty Sent search is trustworthy — the retry may genuinely resend.
   clock += DEFAULT_RECONCILE_MIN_DELAY_MS + 1_000;
-  const c2 = ob.attempt("cmd-1");
+  const c2 = await ob.attempt("cmd-1");
   assert.equal(c2.state, "outcome_unknown"); // this attempt times out too, but it WAS authorized
   assert.equal(sends, 2);
 });
 
-test("restart: the folded attempt timestamp still defers a too-early retry (no blind resend)", () => {
+test("restart: the folded attempt timestamp still defers a too-early retry (no blind resend)", async () => {
   // Crash after an attempt whose outcome never resolved: the journal holds the action-attempt ts.
   const attemptAt = new Date(1_000_000).toISOString();
   const priorEvents = [
@@ -703,18 +703,18 @@ test("restart: the folded attempt timestamp still defers a too-early retry (no b
     priorEvents,
   });
   ob.enqueue(enqueueInput());
-  assert.throws(
+  await assert.rejects(
     () => ob.attempt("cmd-1"),
     (e) => e instanceof OutboxRetryDeferredError
   );
   assert.equal(sends, 0, "recovery must not resend inside the window");
 });
 
-test("outbox journal events carry the lane discriminator (lane: outbox)", () => {
+test("outbox journal events carry the lane discriminator (lane: outbox)", async () => {
   const { client } = fakeGog();
   const journal = createInMemoryOutboxJournal();
   const ob = createOutbox({ client, journal: journal.append, now });
-  ob.sendApproved(enqueueInput());
+  await ob.sendApproved(enqueueInput());
   assert.ok(journal.events.length > 0);
   for (const ev of journal.events) {
     assert.equal(ev.data.lane, "outbox", `${ev.kind} must be lane-stamped`);

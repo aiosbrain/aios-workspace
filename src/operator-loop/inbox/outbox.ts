@@ -152,18 +152,26 @@ export interface SentQuery {
   thread_id?: string;
 }
 
+/** A client method may answer synchronously or with a promise; the outbox awaits either. */
+export type Awaitable<T> = T | Promise<T>;
+
 /**
  * The gog send surface, injected. In CI this is a recorded-fixture fake (no live Gmail); production
  * wraps the real `gog gmail send` behind the gateway credential wrapper. `send` MUST throw
  * `OutboxTimeoutError` on an unknown-outcome timeout and `OutboxSendError` on a definitive failure.
+ *
+ * Both methods are `Awaitable` so a real transport can be non-blocking. The GUI server shares one
+ * event loop with the inbox/outbox polling routes, so a synchronous subprocess transport freezes
+ * every other request for the length of the send; the shipped GOG adapter is async for that reason.
+ * A synchronous client (every test fake) still satisfies the contract unchanged.
  */
 export interface OutboxSendClient {
   /** Reconcile-first: is a message carrying this command's stable marker already in Sent? MUST throw
    *  `OutboxReconcileError` on a search outage / transport error (NEVER return `{ found: false }` on
    *  error — that is indistinguishable from a confirmed "not sent" and would risk a duplicate send). */
-  querySent(commandId: string): SentQuery;
+  querySent(commandId: string): Awaitable<SentQuery>;
   /** Send the EXACT bytes. Throws `OutboxTimeoutError` / `OutboxSendError` per above. */
-  send(exactOutboundBytes: string): OutboxSendResult;
+  send(exactOutboundBytes: string): Awaitable<OutboxSendResult>;
 }
 
 // -- injected journal seam (I-02) ------------------------------------------------------------------
@@ -569,12 +577,12 @@ interface Entry {
 export interface Outbox {
   /** Idempotent on `command_id`; requires an `allow` decision (else throws `OutboxRejectedError`). */
   enqueue(input: EnqueueInput): OutboxCommand;
-  /** Reconcile-first send. At-most-once per command. Throws typed pre-send rejections. */
-  attempt(commandId: string, authority?: SendAuthority): OutboxCommand;
+  /** Reconcile-first send. At-most-once per command. Rejects with typed pre-send rejections. */
+  attempt(commandId: string, authority?: SendAuthority): Promise<OutboxCommand>;
   /** Match native Gmail receipts back to the command; duplicate receipts are idempotent. */
-  reconcile(commandId: string): OutboxCommand;
+  reconcile(commandId: string): Promise<OutboxCommand>;
   /** Enqueue + attempt in one step - THE inbox send path. */
-  sendApproved(input: EnqueueInput, authority?: SendAuthority): OutboxCommand;
+  sendApproved(input: EnqueueInput, authority?: SendAuthority): Promise<OutboxCommand>;
   get(commandId: string): OutboxCommand | undefined;
   /** Actual native send-client invocations for a command (test/audit: proves at-most-once). */
   sendCount(commandId: string): number;
@@ -635,7 +643,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     return command;
   }
 
-  function attempt(commandId: string, authority: SendAuthority = DIRECT_AUTHORITY): OutboxCommand {
+  async function attempt(
+    commandId: string,
+    authority: SendAuthority = DIRECT_AUTHORITY
+  ): Promise<OutboxCommand> {
     const entry = requireEntry(commandId);
     const cmd = entry.command;
 
@@ -662,7 +673,7 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     // command `outcome_unknown` (retryable) — no send happens this pass.
     let q: SentQuery;
     try {
-      q = deps.client.querySent(commandId);
+      q = await deps.client.querySent(commandId);
     } catch (err) {
       if (err instanceof OutboxReconcileError) {
         cmd.state = "outcome_unknown";
@@ -714,7 +725,7 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     let result: OutboxSendResult;
     try {
       entry.sendCount += 1;
-      result = deps.client.send(cmd.exact_outbound_bytes);
+      result = await deps.client.send(cmd.exact_outbound_bytes);
     } catch (err) {
       if (err instanceof OutboxTimeoutError) {
         cmd.state = "outcome_unknown";
@@ -751,14 +762,14 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     return cmd;
   }
 
-  function reconcile(commandId: string): OutboxCommand {
+  async function reconcile(commandId: string): Promise<OutboxCommand> {
     const entry = requireEntry(commandId);
     const cmd = entry.command;
     if (cmd.state === "reconciled") return cmd; // duplicate reconcile is idempotent
     // Fail closed: a Sent-query outage leaves the command unchanged (never a spurious reconcile).
     let q: SentQuery;
     try {
-      q = deps.client.querySent(commandId);
+      q = await deps.client.querySent(commandId);
     } catch (err) {
       if (err instanceof OutboxReconcileError) return cmd;
       throw err;
@@ -782,7 +793,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     return cmd;
   }
 
-  function sendApproved(input: EnqueueInput, authority?: SendAuthority): OutboxCommand {
+  async function sendApproved(
+    input: EnqueueInput,
+    authority?: SendAuthority
+  ): Promise<OutboxCommand> {
     enqueue(input);
     return attempt(input.command_id, authority);
   }

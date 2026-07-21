@@ -292,7 +292,7 @@ export async function replySend(repo, id, payload, deps = {}) {
     });
     let command;
     try {
-      command = loop.executePreparedGmailReply({
+      command = await loop.executePreparedGmailReply({
         preparation,
         client,
         journal: loop.createDurableOutboxJournal(repo),
