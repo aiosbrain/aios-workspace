@@ -3,7 +3,11 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createGogSendClient, gogTokenSecurityGate } from "../../scripts/inbox-gog-adapter.mjs";
+import {
+  createGogSendClient,
+  gogTokenSecurityGate,
+  gogTransportAccount,
+} from "../../scripts/inbox-gog-adapter.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LOOP_DIST = path.join(SCRIPT_DIR, "..", "..", "dist", "operator-loop", "index.js");
@@ -284,7 +288,9 @@ export async function replySend(repo, id, payload, deps = {}) {
       .map(loop.journalEventToOutboxEvent);
     const makeClient = deps.createGogSendClient ?? createGogSendClient;
     const client = makeClient(loop, {
-      account: draft.transport.account,
+      // The gog CLI alias, NOT `draft.transport.account` — that is an observation identity label
+      // (default "primary"), and passing it to `gog -a` breaks every call on a default-account gog.
+      account: gogTransportAccount(deps.env ?? process.env),
       threadId: draft.transport.thread_id,
       commandId: draft.command_id,
       marker: loop.gmailReplyCommandMarker(draft.command_id),

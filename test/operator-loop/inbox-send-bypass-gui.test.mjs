@@ -63,7 +63,11 @@ function dependencies(item, trace, instrumentedLoop = loop) {
     },
     createGogSendClient(_compiled, options) {
       trace.push("transport");
-      assert.equal(options.account, "primary");
+      // The gog CLI alias, not the observation's identity label — see outbox-api.test.mjs. A live
+      // send proved that passing "primary" to `gog -a` fails closed and strands the reply.
+      assert.equal(options.account, null);
+      // The thread id is still server-derived from the observation, which is what stops the browser
+      // choosing a destination thread.
       assert.equal(options.threadId, "thread-1");
       return {
         querySent: () => ({ found: false }),

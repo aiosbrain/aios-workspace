@@ -343,3 +343,61 @@ test("the outbox lane stamp is authoritative and cannot be relabelled by event d
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("an email subject falls back to the snippet, other object kinds never do", () => {
+  // The gog writer has always stored an EMAIL thread's subject in `snippet` and only added
+  // `metadata.subject` later, so rows already on disk must stay replyable. For any other kind
+  // `snippet` may be body-ish text that must never reach a Subject header.
+  assert.equal(loop.observationSubject({ subject: "From metadata" }), "From metadata");
+  assert.equal(
+    loop.observationSubject({}, { object_kind: "email", snippet: "From snippet" }),
+    "From snippet"
+  );
+  assert.equal(
+    loop.observationSubject({ subject: "Wins" }, { object_kind: "email", snippet: "Loses" }),
+    "Wins"
+  );
+  assert.equal(
+    loop.observationSubject({}, { object_kind: "calendar-event", snippet: "Standup notes" }),
+    null
+  );
+  assert.equal(loop.observationSubject({}, { object_kind: "email", snippet: "   " }), null);
+  assert.equal(loop.observationSubject(null), null);
+});
+
+test("a projected gog email carries its subject from metadata, or from snippet for older rows", () => {
+  const ts = "2026-07-21T00:00:00.000Z";
+  const base = {
+    connection_id: "gog:primary",
+    account: "primary",
+    tenant: "example.test",
+    object_kind: "email",
+    thread_id: "t-1",
+    participants: [{ id: "sender@example.test", role: "from" }],
+    ts,
+  };
+  const withMetadata = loop.projectObservations({
+    enriched: [
+      loop.buildObservation({
+        ...base,
+        native_id: "m-1",
+        snippet: "Subject in snippet",
+        metadata: { subject: "Subject in metadata" },
+      }),
+    ],
+  });
+  assert.equal([...withMetadata.values()][0].subject, "Subject in metadata");
+
+  // A row written before `metadata.subject` existed — must not become unrepliable.
+  const legacyShape = loop.projectObservations({
+    enriched: [
+      loop.buildObservation({
+        ...base,
+        native_id: "m-2",
+        snippet: "Only in snippet",
+        metadata: {},
+      }),
+    ],
+  });
+  assert.equal([...legacyShape.values()][0].subject, "Only in snippet");
+});

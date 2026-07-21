@@ -19,6 +19,24 @@ export function commandMarker(commandId) {
 }
 
 /**
+ * The gog CLI account ALIAS to pass as `-a`, or null to use gog's own default account.
+ *
+ * This is deliberately NOT the observation's `account` field. That field is an identity LABEL the
+ * ingest writer stamps (it defaults to the literal "primary") and it drives dedup plus the
+ * account-mismatch refusal — it is not a gog auth alias. Passing it to `-a` blindly makes every gog
+ * call fail with "No auth for gmail primary." on a workspace whose gog uses an unnamed default
+ * account, which fails closed as `reconcile_unavailable` and leaves the reply stuck at "Confirming…"
+ * with no send and no clear reason.
+ *
+ * Multi-account selection is out of scope here: set `AIOS_GOG_CLI_ACCOUNT` when gog has a named
+ * alias for the sending mailbox, otherwise gog's default account is used.
+ */
+export function gogTransportAccount(env = process.env) {
+  const alias = env.AIOS_GOG_CLI_ACCOUNT;
+  return typeof alias === "string" && alias.trim() ? alias.trim() : null;
+}
+
+/**
  * Bounded runner: both Sent search and send have a 60-second ceiling.
  *
  * Deliberately ASYNC. The GUI server (gui/server/index.mjs) runs one `http.createServer` event loop

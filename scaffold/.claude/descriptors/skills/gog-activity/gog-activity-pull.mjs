@@ -217,10 +217,15 @@ export function enrichEmailThread(thread, opts = {}) {
     participants: sender ? [sender] : [],
     revision: { op: "create", revision: 0, ts },
     ts,
+    // NOTE: for email this writer has always put the SUBJECT in `snippet` (no body is ever pulled).
+    // `metadata.subject` is the explicit, unambiguous home — `snippet` is kept as-is because the
+    // ranker and the queue presenter already read it. Consumers that need a real subject (the reply
+    // path) must read `metadata.subject` and fall back to `snippet` only for `object_kind: "email"`.
     snippet: typeof thread.subject === "string" ? thread.subject : null,
     cursor: null,
     metadata: {
       messageCount: typeof thread.messageCount === "number" ? thread.messageCount : null,
+      subject: typeof thread.subject === "string" ? thread.subject : null,
     },
   };
 }

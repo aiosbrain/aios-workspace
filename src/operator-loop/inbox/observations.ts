@@ -463,11 +463,22 @@ export interface ProjectedItem {
 
 /** Read a non-empty `metadata.subject` off an observation, or null when the adapter carried none. */
 export function observationSubject(
-  metadata: Record<string, unknown> | null | undefined
+  metadata: Record<string, unknown> | null | undefined,
+  fallback?: { object_kind?: string; snippet?: string | null }
 ): string | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
-  const raw = metadata.subject;
-  return typeof raw === "string" && raw.trim() ? raw : null;
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const raw = metadata.subject;
+    if (typeof raw === "string" && raw.trim()) return raw;
+  }
+  // Back-compat: the gog writer has always stored an EMAIL thread's subject in `snippet` (it never
+  // pulls a body), and rows already on disk predate `metadata.subject`. That fallback is correct
+  // for `email` specifically and is deliberately NOT applied to other object kinds, where `snippet`
+  // may legitimately be body-ish text that must never become a Subject header.
+  if (fallback?.object_kind === "email") {
+    const snippet = fallback.snippet;
+    if (typeof snippet === "string" && snippet.trim()) return snippet;
+  }
+  return null;
 }
 
 /** Map a legacy `source` + `ref` to a scope-free object identity, or null if unmappable. Mirrors the
@@ -544,7 +555,7 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
         thread_id: o.thread_id,
         participants: o.participants,
         snippet: o.snippet,
-        subject: observationSubject(o.metadata),
+        subject: observationSubject(o.metadata, { object_kind: o.object_kind, snippet: o.snippet }),
         deleted: false,
         revisions: [],
         ts: o.ts,
@@ -563,7 +574,9 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
     } else {
       if (o.participants.length) item.participants = o.participants;
       item.snippet = o.snippet ?? item.snippet;
-      item.subject = observationSubject(o.metadata) ?? item.subject;
+      item.subject =
+        observationSubject(o.metadata, { object_kind: o.object_kind, snippet: o.snippet }) ??
+        item.subject;
     }
   }
 

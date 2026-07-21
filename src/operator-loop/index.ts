@@ -509,6 +509,7 @@ export {
   writeObservation,
   legacyToObjectRef,
   projectObservations,
+  observationSubject,
   type AccountTenantIdentity,
   type ObjectKind,
   type RevisionOp,

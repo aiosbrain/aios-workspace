@@ -129,7 +129,12 @@ test("send journals PDP first, passes native account/thread, and duplicate confi
     assert.equal(first.body.state, "sent");
     assert.equal(second.body.ok, true);
     assert.equal(sends, 1);
-    assert.equal(clientOptions.account, "primary");
+    // Was `assert.equal(clientOptions.account, "primary")`. A live send disproved that expectation:
+    // "primary" is the observation's identity LABEL, and passing it as `gog -a` fails with
+    // "No auth for gmail primary" on a default-account gog, stranding every reply at "Confirming…".
+    // The transport takes the CLI alias (`AIOS_GOG_CLI_ACCOUNT`), null meaning gog's own default.
+    assert.equal(clientOptions.account, null);
+    // The THREAD id still comes from the server-derived observation — that part was always right.
     assert.equal(clientOptions.threadId, "native-thread-1");
 
     const events = loop.readJournalSegments(repo).events;
@@ -425,6 +430,36 @@ test("the outbox projection is bounded and reports what it truncated", async () 
       result.body.commands.some((command) => command.command_id === "command-000"),
       false
     );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("the gog CLI account alias is decoupled from the observation identity label", async () => {
+  const repo = workspace();
+  const current = inboxItem();
+  let seenAccount = "unset";
+  try {
+    const check = await checked(repo, current, "Hello");
+    // The observation's `account` is the literal identity label "primary". Passing it to `gog -a`
+    // fails on a workspace whose gog uses an unnamed default account ("No auth for gmail primary"),
+    // which fails closed as reconcile_unavailable and strands the reply at "Confirming…".
+    await replySend(
+      repo,
+      current.id,
+      { command_id: check.command_id, digest: check.digest, body: check.preview.body },
+      deps(current, {
+        createGogSendClient: (_loop, opts) => {
+          seenAccount = opts.account;
+          return {
+            querySent: () => ({ found: false }),
+            send: () => ({ message_id: "m-1", thread_id: "t-1" }),
+          };
+        },
+      })
+    );
+    assert.equal(seenAccount, null, "no alias configured → gog's default account, never 'primary'");
+    assert.equal(current.observation.account, "primary", "the identity label is unchanged");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
