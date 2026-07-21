@@ -312,12 +312,19 @@ export function recordHumanAck(
  * composition (loop index.ts) injects this into `sendNotification` / `recordHumanAck`; the `inbox`
  * domain never value-imports the journal from another domain — this stays same-domain (journal.js).
  */
-export function createDurableNotifyJournal(root: string): NotifyDeps["appendEvent"] {
+export function createDurableNotifyJournal(
+  root: string,
+  opts: { lockRetries?: number } = {}
+): NotifyDeps["appendEvent"] {
   return (input) =>
-    appendInboxEvent(root, {
-      kind: input.kind,
-      correlation_id: input.correlation_id,
-      ts: input.ts,
-      payload: input.payload,
-    });
+    appendInboxEvent(
+      root,
+      {
+        kind: input.kind,
+        correlation_id: input.correlation_id,
+        ts: input.ts,
+        payload: input.payload,
+      },
+      opts.lockRetries === undefined ? {} : { lockRetries: opts.lockRetries }
+    );
 }

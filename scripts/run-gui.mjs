@@ -20,6 +20,15 @@ const WORKSPACE_ENV_NAMES = new Set([
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "LINEAR_API_KEY",
+  // Telegram alert lane (AIO-386). The GUI notifier starts automatically and addresses ONE chat, so
+  // an ambient value from a different workspace would send THIS workspace's ask ids, count and repo
+  // label to the PREVIOUS workspace's chat. The unscoped names ride along because the CLI still
+  // honours them, and the GUI server shells out to it.
+  "AIOS_TELEGRAM_BOT_TOKEN",
+  "AIOS_TELEGRAM_CHAT_ID",
+  "AIOS_TELEGRAM_DISABLED",
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID",
 ]);
 
 function flag(args, name) {

@@ -46,6 +46,7 @@ export function CommsView() {
   // here, so an app-chosen default can't be mistaken for the human having read the ask.
   const humanSelected = useRef(new Set<string>());
   const detailRequests = useRef(new LatestDetailRequest());
+  const queueGeneration = useRef(0);
   selectedRef.current = selectedId;
 
   const loadDetail = useCallback(
@@ -68,8 +69,15 @@ export function CommsView() {
   );
 
   const load = useCallback(async () => {
+    // Poll- and action-triggered loads overlap. Without a generation gate an older call can fetch
+    // queue snapshot A, wait on its detail, and then commit A *after* a newer call already
+    // committed B — momentarily resurrecting an item the operator just archived or resolved. The
+    // detail request has its own gate; this one covers the queue commit.
+    const generation = ++queueGeneration.current;
+    const current = () => generation === queueGeneration.current;
     try {
       const next = await fetchInbox(api);
+      if (!current()) return;
       setError(null);
 
       // Content-free notifications: seed the seen-set silently on the first load, then only banner a
@@ -94,8 +102,10 @@ export function CommsView() {
       // Detail is fetched after the queue, so reconcile its newer selected-row and lane projection
       // into the queue before committing either surface.
       const refreshedDetail = nextId ? await loadDetail(nextId) : undefined;
+      if (!current()) return;
       setView(reconcileDetailNotify(next, nextId, refreshedDetail));
     } catch (e) {
+      if (!current()) return;
       setError((e as Error).message);
     }
   }, [api, loadDetail]);

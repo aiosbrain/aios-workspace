@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -536,37 +536,62 @@ test("a live-pid lock is reclaimed once it outlives any legitimate hold", () => 
   }
 });
 
-// A future-dated lock (forward clock jump, restored backup, hand-edited file) must not become
-// permanently unbreakable — that is the very deadlock the age-based reclaim exists to prevent.
-// Its recorded stamp is distrusted and the filesystem mtime is used instead.
-test("a future-dated lock is not honoured as immortal", () => {
+// A future-dated lock must not become permanently unbreakable — that is the deadlock the age-based
+// reclaim exists to prevent. Both timestamps are exercised, because a forward clock jump that was
+// later reset (or a restored backup) leaves `acquired_at` AND mtime ahead of now.
+//
+// mtime is set explicitly rather than raced against the wall clock: `mtimeMs` has sub-millisecond
+// precision while `Date.now()` truncates to whole ms, so a "just created, therefore old enough"
+// assertion is inherently flaky.
+test("a future-dated lock is aged from mtime, and is reclaimable when mtime is future too", () => {
   const repo = workspace();
+  const lockFile = path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME);
+  const YEAR_MS = 365 * 24 * 60 * 60_000;
   try {
     const held = acquireTelegramNotifyLock(repo, {
       pid: 43_001,
       token: "from-the-future",
       // Stamped a year ahead: under a naive age test this lock would never expire, ever.
-      now: () => new Date(Date.now() + 365 * 24 * 60 * 60_000),
+      now: () => new Date(Date.now() + YEAR_MS),
     });
     assert.equal(typeof held, "function");
 
-    // A fresh file is still young by mtime, so a live incumbent legitimately keeps the lock.
+    // acquired_at is disbelieved, so aging falls back to mtime — which is genuinely fresh, so a
+    // live incumbent legitimately keeps the lock.
     assert.equal(
       acquireTelegramNotifyLock(repo, { pid: 43_002, token: "early", probe: () => {} }),
       null
     );
 
-    // Once the age threshold is met on the machine's own clock it IS reclaimable — the future
-    // stamp bought no immunity.
-    const reclaimed = acquireTelegramNotifyLock(repo, {
+    // Age mtime past the window: reclaimable despite the future acquired_at stamp.
+    const old = new Date(Date.now() - 60 * 60_000);
+    utimesSync(lockFile, old, old);
+    const viaMtime = acquireTelegramNotifyLock(repo, {
       pid: 43_002,
       token: "reclaimer",
       probe: () => {},
-      staleMs: 0,
     });
-    assert.equal(typeof reclaimed, "function");
-    reclaimed();
-    assert.equal(existsSync(path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME)), false);
+    assert.equal(typeof viaMtime, "function", "stale mtime must be reclaimable");
+    viaMtime();
+
+    // Now the harder case: BOTH timestamps in the future. Neither can age the lock, so rather than
+    // waiting months for the clock to catch up it is treated as reclaimable immediately.
+    const future = new Date(Date.now() + YEAR_MS);
+    const stuck = acquireTelegramNotifyLock(repo, {
+      pid: 43_003,
+      token: "stuck",
+      now: () => future,
+    });
+    assert.equal(typeof stuck, "function");
+    utimesSync(lockFile, future, future);
+    const rescued = acquireTelegramNotifyLock(repo, {
+      pid: 43_004,
+      token: "rescuer",
+      probe: () => {},
+    });
+    assert.equal(typeof rescued, "function", "an unageable lock must not deadlock forever");
+    rescued();
+    assert.equal(existsSync(lockFile), false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

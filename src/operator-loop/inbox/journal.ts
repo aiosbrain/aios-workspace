@@ -107,8 +107,15 @@ export interface AppendResult {
   path: string;
 }
 
+/** Thrown as `error.code` when the journal lock could not be taken within the allowed retries. */
+export const JOURNAL_LOCK_BUSY = "INBOX_JOURNAL_LOCK_BUSY";
+
 export interface AppendOptions {
   segmentMaxBytes?: number;
+  /** Lock acquisition retries. `0` makes the append non-blocking: it throws `JOURNAL_LOCK_BUSY`
+   *  immediately rather than parking the thread on `Atomics.wait`. Required for any caller running
+   *  on a server event loop, where a synchronous retry stalls every other request. */
+  lockRetries?: number;
 }
 
 export interface JournalWarning {
@@ -182,12 +189,17 @@ function sleepSync(ms: number): void {
  * its rename and abort if reclaimed, so a reclaimer's appends are never overwritten. The lock is
  * always released while the token still matches (never delete a reclaimer's lock).
  */
-export function withInboxLock<T>(root: string, fn: (ownsLock: () => boolean) => T): T {
+export function withInboxLock<T>(
+  root: string,
+  fn: (ownsLock: () => boolean) => T,
+  opts: { retries?: number } = {}
+): T {
   const lockPath = lockPathOf(root);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const token = randomUUID();
+  const maxRetries = Math.max(0, opts.retries ?? LOCK_RETRIES);
   let fd: number | null = null;
-  for (let attempt = 0; attempt <= LOCK_RETRIES && fd === null; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries && fd === null; attempt++) {
     try {
       fd = openSync(lockPath, "wx");
     } catch (e) {
@@ -206,10 +218,16 @@ export function withInboxLock<T>(root: string, fn: (ownsLock: () => boolean) => 
         }
         continue;
       }
-      if (attempt < LOCK_RETRIES) sleepSync(LOCK_DELAY_MS);
+      // `sleepSync` is `Atomics.wait` — it parks the whole thread. A caller on a server event loop
+      // must pass `retries: 0` and handle JOURNAL_LOCK_BUSY rather than stall every other request.
+      if (attempt < maxRetries) sleepSync(LOCK_DELAY_MS);
     }
   }
-  if (fd === null) throw new Error(`inbox: could not acquire journal lock (${lockPath})`);
+  if (fd === null) {
+    throw Object.assign(new Error(`inbox: could not acquire journal lock (${lockPath})`), {
+      code: JOURNAL_LOCK_BUSY,
+    });
+  }
   const ownsLock = (): boolean => {
     try {
       if (!readFileSync(lockPath, "utf8").includes(token)) return false;
@@ -443,38 +461,43 @@ export function appendInboxEvent(
   const body = validateEventInput(input);
   const segMax = opts.segmentMaxBytes ?? SEGMENT_MAX_BYTES;
   mkdirSync(inboxDir(root), { recursive: true });
-  return withInboxLock(root, () => {
-    const seq = nextSeq(root);
-    const event: InboxEvent = {
-      schema_version: INBOX_SCHEMA_VERSION,
-      id: input.id ?? randomUUID(),
-      seq,
-      ts: input.ts ?? new Date().toISOString(),
-      kind: body.kind,
-      correlation_id: body.correlation_id,
-      causation_id: body.causation_id,
-      payload: body.payload,
-    };
-    const line = serializeEvent(event) + "\n";
-    const lineBytes = Buffer.byteLength(line, "utf8");
+  const lockOpts = opts.lockRetries === undefined ? {} : { retries: opts.lockRetries };
+  return withInboxLock(
+    root,
+    () => {
+      const seq = nextSeq(root);
+      const event: InboxEvent = {
+        schema_version: INBOX_SCHEMA_VERSION,
+        id: input.id ?? randomUUID(),
+        seq,
+        ts: input.ts ?? new Date().toISOString(),
+        kind: body.kind,
+        correlation_id: body.correlation_id,
+        causation_id: body.causation_id,
+        payload: body.payload,
+      };
+      const line = serializeEvent(event) + "\n";
+      const lineBytes = Buffer.byteLength(line, "utf8");
 
-    const segs = listSegments(root);
-    let index = segs.length ? (segs[segs.length - 1] as { index: number }).index : 1;
-    if (segs.length) {
-      const active = segs[segs.length - 1] as { index: number; path: string };
-      let activeSize = 0;
-      try {
-        activeSize = statSync(active.path).size;
-      } catch {
-        activeSize = 0;
+      const segs = listSegments(root);
+      let index = segs.length ? (segs[segs.length - 1] as { index: number }).index : 1;
+      if (segs.length) {
+        const active = segs[segs.length - 1] as { index: number; path: string };
+        let activeSize = 0;
+        try {
+          activeSize = statSync(active.path).size;
+        } catch {
+          activeSize = 0;
+        }
+        // Rotate only when the active segment is non-empty (never leave an empty segment behind).
+        if (activeSize > 0 && activeSize + lineBytes > segMax) index = active.index + 1;
       }
-      // Rotate only when the active segment is non-empty (never leave an empty segment behind).
-      if (activeSize > 0 && activeSize + lineBytes > segMax) index = active.index + 1;
-    }
-    const target = segmentPath(root, index);
-    appendFileSync(target, line);
-    return { id: event.id, seq, segment: index, path: target };
-  });
+      const target = segmentPath(root, index);
+      appendFileSync(target, line);
+      return { id: event.id, seq, segment: index, path: target };
+    },
+    lockOpts
+  );
 }
 
 // ── rewrite (compaction primitive) ─────────────────────────────────────────────────────────────────

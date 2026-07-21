@@ -640,3 +640,55 @@ test("ADVERSARIAL — a rotated (superseded) epoch is rejected; the current epoc
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The journal lock is shared with the CLI, connectors and compaction, and its default backoff is
+// `sleepSync` (Atomics.wait, up to 40 x 25ms). On the single-threaded GUI server that would freeze
+// every other HTTP request and WebSocket agent stream. An ack is never urgent, so a contended
+// journal must report busy immediately instead of parking the thread.
+test("ack never blocks on the journal lock — it reports notify-busy instead", async () => {
+  const id = "ask-journal-busy";
+  let requestedRetries;
+  const busy = Object.assign(new Error("journal busy"), { code: "INBOX_JOURNAL_LOCK_BUSY" });
+  const loop = {
+    buildInbox: () => ({
+      items: [
+        {
+          id,
+          origin: "agent-event",
+          bucket: "needs-you",
+          attention_state: "surfaced",
+          ask: { id, status: "open" },
+        },
+      ],
+    }),
+    readJournalSegments: () => ({ events: [] }),
+    foldNotificationState: () =>
+      new Map([
+        [id, { delivery_attempts: 1, last_delivery_at: "2026-07-21T01:00:00.000Z", acked: false }],
+      ]),
+    createDurableNotifyJournal: (_repo, opts) => {
+      requestedRetries = opts?.lockRetries;
+      return () => {
+        throw busy;
+      };
+    },
+    recordHumanAck: (askId, deps) => deps.appendEvent({ kind: "human-ack" }),
+  };
+
+  const result = await ackInboxAsk("/tmp/fixture", id, {
+    loadLoopFn: async () => loop,
+    notifyCoordinator: {
+      async runExclusive(operation) {
+        return { acquired: true, value: await operation() };
+      },
+    },
+  });
+  assert.equal(requestedRetries, 0, "the ack append must be non-blocking");
+  assert.deepEqual(result, {
+    ok: false,
+    status: 503,
+    recorded: false,
+    reason: "notify-busy",
+    retryAfter: 1,
+  });
+});

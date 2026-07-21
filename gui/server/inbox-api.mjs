@@ -275,10 +275,21 @@ export async function ackInboxAsk(
     if (state.acked) {
       return { ok: true, status: 200, recorded: false, reason: "already-acked" };
     }
-    loop.recordHumanAck(id, {
-      appendEvent: loop.createDurableNotifyJournal(repo),
-      now: now(),
-    });
+    // `lockRetries: 0` keeps the append OFF the blocking path. The journal lock is shared with the
+    // CLI, connectors and compaction; its default backoff is `sleepSync` (Atomics.wait, up to
+    // 40 x 25ms), which on this single-threaded server would freeze every other HTTP request and
+    // WebSocket agent stream. An ack is never urgent — report busy and let the client retry.
+    try {
+      loop.recordHumanAck(id, {
+        appendEvent: loop.createDurableNotifyJournal(repo, { lockRetries: 0 }),
+        now: now(),
+      });
+    } catch (error) {
+      if (error?.code === "INBOX_JOURNAL_LOCK_BUSY") {
+        return { ok: false, status: 503, recorded: false, reason: "notify-busy", retryAfter: 1 };
+      }
+      throw error;
+    }
     return { ok: true, status: 200, recorded: true };
   });
   if (!guarded.acquired) {

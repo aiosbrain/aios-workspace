@@ -17,6 +17,8 @@ export const TELEGRAM_NOTIFY_LOCK_BASENAME = path.join(
   "telegram-notify.lock"
 );
 export const DEFAULT_NOTIFY_LOCK_STALE_MS = 5 * 60_000;
+/** Slack allowed before a timestamp is treated as "from the future" — see the aging rules below. */
+export const FUTURE_SKEW_TOLERANCE_MS = 1_000;
 
 function validOwner(value) {
   return (
@@ -110,14 +112,22 @@ export function acquireTelegramNotifyLock(
       // the rest of the owner record, where mtime can be perturbed by copies, restores, and clock
       // skew. A malformed record has no timestamp to trust, so it falls back to mtime.
       //
-      // A record stamped in the FUTURE (forward clock jump, restored backup, hand-edited file) is
-      // not trustworthy and must not be honoured: its age would never reach the threshold,
-      // resurrecting exactly the permanent deadlock rule 2 exists to prevent. Fall back to mtime,
-      // which the filesystem stamps on this machine's clock.
+      // Age the lock from the first timestamp we can actually believe.
+      //
+      // A timestamp in the FUTURE is not believable — a forward clock jump that was later reset, or
+      // a restored file that kept a future mtime, leaves `acquired_at` AND `mtime` both ahead of
+      // now. Honouring either would keep the age below the threshold until the clock caught up
+      // (potentially months), resurrecting exactly the permanent deadlock rule 2 exists to prevent.
+      // When neither timestamp is believable the lock simply cannot be aged, so it is reclaimable.
+      //
+      // The tolerance absorbs ordinary jitter: `mtimeMs` carries sub-millisecond precision while
+      // `Date.now()` truncates to whole milliseconds, so a lock created microseconds ago can read as
+      // marginally "future". Real clock jumps and restores are orders of magnitude larger.
+      const believable = (value) =>
+        Number.isFinite(value) && value <= acquiredMs + FUTURE_SKEW_TOLERANCE_MS;
       const ownerMs = Date.parse(existing.value?.acquired_at ?? "");
-      const trustworthy = Number.isFinite(ownerMs) && ownerMs <= acquiredMs;
-      const bornMs = trustworthy ? ownerMs : modifiedMs;
-      const expired = acquiredMs - bornMs >= staleMs;
+      const bornMs = believable(ownerMs) ? ownerMs : believable(modifiedMs) ? modifiedMs : null;
+      const expired = bornMs === null || acquiredMs - bornMs >= staleMs;
       if (validOwner(existing.value)) {
         try {
           probe(existing.value.pid, 0);
