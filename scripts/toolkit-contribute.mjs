@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync, readFileSync, mkdirSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, die } from "./cli-common.mjs";
+import { c, UpdateError } from "./cli-common.mjs";
 import { MANAGED_PATHS } from "./toolkit-manifest.mjs";
 
 /** Strip the merge sidecar suffixes so `--contribute foo.md.aios-incoming` maps to foo.md. */
@@ -84,17 +84,18 @@ function ghAvailable() {
 export async function cmdContribute(repo, srcInfo, args, rawPath) {
   const color = c;
   if (!rawPath || rawPath.startsWith("--")) {
-    die("usage: aios update --contribute <path/to/managed-file> [--dry-run]");
+    throw new UpdateError("usage: aios update --contribute <path/to/managed-file> [--dry-run]");
   }
   const target = contributeTarget(rawPath);
   if (!target) {
-    die(
+    throw new UpdateError(
       `${rawPath} isn't a toolkit-managed file — only governance files synced by \`aios update\`\n` +
         `  can be contributed upstream (see scripts/toolkit-manifest.mjs). Personal content stays local.`
     );
   }
   const localAbs = path.join(repo, target.destRel);
-  if (!existsSync(localAbs)) die(`${target.destRel} doesn't exist in this workspace.`);
+  if (!existsSync(localAbs))
+    throw new UpdateError(`${target.destRel} doesn't exist in this workspace.`);
   const content = readFileSync(localAbs, "utf8");
   const branch = contributeBranch(target.destRel, content);
   const dryRun = args.includes("--dry-run");
@@ -128,14 +129,17 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
   }
 
   if (ephemeral) {
-    die(
+    throw new UpdateError(
       "no local toolkit checkout with push access — `--contribute` needs your aios-workspace\n" +
         "  clone. Point at it with `--from /path/to/aios-workspace` or set AIOS_TOOLKIT_DIR."
     );
   }
-  if (!hasRemote(toolkitDir)) die(`toolkit at ${toolkitDir} has no \`origin\` remote to push to.`);
+  if (!hasRemote(toolkitDir))
+    throw new UpdateError(`toolkit at ${toolkitDir} has no \`origin\` remote to push to.`);
   if (!ghAvailable())
-    die("`gh` (GitHub CLI) is required to open the PR — install it or open the PR by hand.");
+    throw new UpdateError(
+      "`gh` (GitHub CLI) is required to open the PR — install it or open the PR by hand."
+    );
 
   // Work in a throwaway worktree off origin/main so the primary checkout is untouched.
   const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" });
@@ -148,7 +152,9 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
     copyFileSync(localAbs, destInToolkit);
     const status = git(wt, "status", "--porcelain").trim();
     if (!status) {
-      die(`${target.destRel} already matches the toolkit — nothing to contribute.`);
+      throw new UpdateError(
+        `${target.destRel} already matches the toolkit — nothing to contribute.`
+      );
     }
     git(wt, "add", "--", target.srcRel);
     const subject = `chore(toolkit): contribute ${path.basename(target.srcRel)} from a workspace`;

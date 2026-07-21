@@ -28,7 +28,8 @@ import {
   assertDestPathSafe,
 } from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
-import { git, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
+import { git, initRepo, advance, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
+import { UpdateError } from "../scripts/cli-common.mjs";
 
 // Regressions for the adversarial review rounds on `aios update` (code-review-pr343.md's 8
 // findings, then two further build-readiness rounds on the follow-up refactor). Each rebuilds
@@ -954,8 +955,14 @@ test("first apply on a pre-marker checkout seeds the install marker instead of r
       extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
     });
     // A healthy install that predates marker tracking: node_modules exists, no marker.
+    // `.package-lock.json` is npm's own completed-install artifact — its presence is what
+    // lets the seed path trust the install (an interrupted `npm ci` never writes it).
     mkdirSync(path.join(clone, "node_modules"), { recursive: true });
     writeFileSync(path.join(clone, "node_modules", "SENTINEL"), "healthy\n");
+    writeFileSync(
+      path.join(clone, "node_modules", ".package-lock.json"),
+      '{"lockfileVersion":3}\n'
+    );
 
     const { ranFile, binPath } = fakeNpm(root);
     process.env.PATH = binPath;
@@ -1223,6 +1230,346 @@ test("half-configured branch tracking is refused WITH the broken config key name
       /branch\.main/,
       "the apply refusal surfaces the same actionable detail"
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Round 7 (code-review-56d58d0.md): the ten verified findings -------------------------
+// 1) assertDestPathSafe must throw UpdateError and refuse BEFORE any write (no partial
+//    vendor, no unstructured --check crash);
+// 2) a two-step preview→apply flow must be pinnable to the previewed sha;
+// 3) the pinned snapshot must never leak past a failed apply (one finally owns it);
+// 4) self-update with committed-ahead-only local work is a no-op success, not a refusal;
+// 5) --no-pull in the toolkit checkout must report a real signal, never applyAllowed:true
+//    from nothing;
+// 6) --contribute must throw UpdateError, never process.exit, and never claim applyAllowed;
+// 7) an interrupted pre-marker install must reinstall, not be seeded as healthy;
+// 8) a lockfile-less source must converge its install marker (no reinstall loop);
+// 9) a non-git toolkit source is refused up front with the real diagnosis (and never runs
+//    git against an enclosing repo);
+// 10) readonly classification fails closed when the divergence estimate itself fails.
+
+test("R7-1: a symlinked managed destination refuses the whole vendor before any write", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-preflight-"));
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        "scaffold/scripts/aios.mjs": "// managed shim\n",
+        "hooks/team-ops-guard.sh": "#!/bin/sh\n",
+      },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "hooks"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    // The symlinked dest (hooks/team-ops-guard.sh) sorts AFTER scripts/aios.mjs in
+    // MANAGED_PATHS — without the pre-flight, scripts/aios.mjs would already be vendored
+    // by the time the per-file assert fired mid-loop.
+    const outside = path.join(root, "outside-target");
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, path.join(workspace, "hooks", "team-ops-guard.sh"));
+
+    const result = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      clone,
+      "--stamp-source",
+      clone,
+    ]);
+    assert.equal(result.mode, "error", "structured error result, not a crash");
+    assert.equal(result.exitStatus, 1);
+    assert.equal(result.applyAllowed, false);
+    assert.match(result.reasons.join("\n"), /destination is a symlink/);
+    assert.ok(
+      !existsSync(path.join(workspace, "scripts", "aios.mjs")),
+      "no managed file was written before the refusal — all-or-nothing"
+    );
+    assert.equal(readFileSync(outside, "utf8"), "outside\n", "the symlink target is untouched");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-1b: read-only --check with a symlinked seed destination returns a structured error, not a crash", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-checksafe-"));
+  try {
+    // Ship a seed file so missingSeedPaths walks it; symlink its workspace destination.
+    const { SEED_IF_ABSENT } = await import("../scripts/toolkit-manifest.mjs");
+    const seedEntry = SEED_IF_ABSENT.find((e) => e.kind !== "dir");
+    assert.ok(seedEntry, "a file-kind seed entry exists");
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { [seedEntry.src]: "seed body\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, path.dirname(seedEntry.dest)), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const outside = path.join(root, "outside-seed");
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, path.join(workspace, seedEntry.dest));
+
+    // In-process: previously this THREW a plain Error out of cmdUpdate (dispatcher crash).
+    const result = await cmdUpdate(workspace, {}, ["--check", "--from", clone]);
+    assert.equal(result.mode, "error");
+    assert.equal(result.applyAllowed, false);
+    assert.match(result.reasons.join("\n"), /symlink/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-2: --expect-src-head refuses an apply whose source moved since the preview", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-pin-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const preview = await cmdUpdate(workspace, {}, ["--preview", "--from", clone]);
+    assert.ok(preview.srcHead, "preview reports the sha it classified");
+
+    // The source moves between preview and apply. (--no-pull applies localOnly — no remote
+    // classification — so the pin, not a 'diverged' refusal, is what must catch this.)
+    advance(clone, "moved after preview\n");
+
+    const apply = await cmdUpdate(workspace, {}, [
+      "--from",
+      clone,
+      "--no-pull",
+      "--expect-src-head",
+      preview.srcHead,
+    ]);
+    assert.equal(apply.mode, "error");
+    assert.match(apply.reasons.join("\n"), /moved since it was previewed/);
+    assert.ok(
+      !existsSync(path.join(workspace, ".aios-toolkit-version")),
+      "nothing was vendored or stamped"
+    );
+    // No snapshot worktree may survive the refusal (the finally owns the lifetime).
+    const worktrees = git(clone, "worktree", "list", "--porcelain");
+    assert.ok(!worktrees.includes("aios-vendor-snapshot-"), "no leaked snapshot worktree");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-3: a refused hand-off (pre-protocol source) leaves no snapshot worktree behind", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-leak-"));
+  try {
+    // The snapshot's own update.mjs predates the hand-off protocol (no flag string) — the
+    // refusal fires AFTER the snapshot is pinned, so it exercises the cleanup finally.
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "scripts/update.mjs": "// ancient CLI, no hand-off support\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const result = await cmdUpdate(workspace, {}, ["--from", clone]);
+    assert.equal(result.mode, "error");
+    assert.match(result.reasons.join("\n"), /predates the self-update hand-off protocol/);
+    const worktrees = git(clone, "worktree", "list", "--porcelain");
+    assert.ok(
+      !worktrees.includes("aios-vendor-snapshot-"),
+      "the pinned snapshot was removed on the failure path"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-4: self-update with committed local work (ahead-only) is a no-op success, not a refusal", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-ahead-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    advance(clone, "committed local work\n"); // ahead 1, behind 0 — the normal dev state
+    const result = pullToolkitCheckout(clone, { selfUpdate: true, noInstall: true }, NOOP_IO);
+    assert.equal(result.pulled, 0);
+    assert.equal(result.snapshotDir, null, "self-update pins no snapshot");
+    assert.equal(result.remoteState.state, "diverged", "the classification itself is honest");
+
+    // Ahead AND behind still refuses — that genuinely needs a (impossible) fast-forward.
+    advance(origin, "remote moved too\n");
+    assert.throws(
+      () => pullToolkitCheckout(clone, { selfUpdate: true, noInstall: true }, NOOP_IO),
+      /not a fast-forward/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-5: --no-pull in the toolkit checkout reports real cleanliness, never allowed-from-nothing", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-nopull-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const clean = await cmdUpdate(clone, {}, ["--no-pull"]);
+    assert.equal(clean.sourceClean, "clean", "the signal is actually evaluated now");
+    assert.equal(clean.applyAllowed, true);
+
+    writeFileSync(path.join(clone, "wip.txt"), "wip\n"); // untracked → dirty
+    const dirty = await cmdUpdate(clone, {}, ["--no-pull"]);
+    assert.equal(dirty.sourceClean, "dirty");
+    assert.equal(dirty.applyAllowed, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-6: --contribute throws UpdateError (structured result), never process.exit, never applyAllowed", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-contribute-"));
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "hooks/team-ops-guard.sh": "#!/bin/sh\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "hooks"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    writeFileSync(path.join(workspace, "hooks", "team-ops-guard.sh"), "#!/bin/sh\n# local edit\n");
+
+    // Expected failure (not a managed file): previously die() killed the host process here.
+    const bad = await cmdUpdate(workspace, {}, [
+      "--contribute",
+      "not-managed.txt",
+      "--from",
+      clone,
+    ]);
+    assert.equal(bad.mode, "error");
+    assert.equal(bad.exitStatus, 1);
+    assert.equal(bad.applyAllowed, false);
+    assert.match(bad.reasons.join("\n"), /isn't a toolkit-managed file/);
+
+    // Success path (--dry-run): a contribute result never advertises apply permission.
+    const plan = await cmdUpdate(workspace, {}, [
+      "--contribute",
+      "hooks/team-ops-guard.sh",
+      "--dry-run",
+      "--from",
+      clone,
+    ]);
+    assert.equal(plan.mode, "contribute");
+    assert.equal(plan.exitStatus, 0);
+    assert.equal(plan.applyAllowed, false, "contribute is not an apply");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-7: a pre-marker node_modules WITHOUT npm's completed-install artifact reinstalls (never seeded as healthy)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-interrupted-"));
+  const prevPath = process.env.PATH;
+  let result;
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
+    });
+    // An interrupted `npm ci`: node_modules exists but .package-lock.json (npm's own
+    // completed-install artifact) was never written. Seeding the marker here would record
+    // the broken install as healthy forever.
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    writeFileSync(path.join(clone, "node_modules", "HALF-INSTALLED"), "partial\n");
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    result = pullToolkitCheckout(clone, {}, NOOP_IO);
+
+    assert.ok(existsSync(ranFile), "npm reinstalls the incomplete node_modules");
+    assert.match(readFileSync(ranFile, "utf8"), /ci/);
+    const marker = path.join(clone, ".git", "aios-installed-lock");
+    assert.ok(existsSync(marker), "the marker records the SUCCESSFUL reinstall");
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-8: a lockfile-less source converges its install marker instead of reinstalling forever", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-nolock-"));
+  const prevPath = process.env.PATH;
+  let r1, r2;
+  try {
+    const { clone } = originAndToolkitClone(root); // NO package-lock.json anywhere
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    writeFileSync(path.join(clone, "node_modules", ".package-lock.json"), "{}\n");
+    // A stale marker from an earlier lockfile'd era: previously this mismatched forever
+    // (the marker write was gated on a non-null lockfile hash).
+    writeFileSync(path.join(clone, ".git", "aios-installed-lock"), "stale-old-hash\n");
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    r1 = pullToolkitCheckout(clone, {}, NOOP_IO);
+    cleanupPullResult(clone, r1);
+    assert.ok(existsSync(ranFile), "first run reconciles (npm install)");
+    assert.match(readFileSync(ranFile, "utf8"), /install/);
+    assert.equal(
+      readFileSync(path.join(clone, ".git", "aios-installed-lock"), "utf8").trim(),
+      "no-lockfile",
+      "the marker converges on the sentinel"
+    );
+
+    rmSync(ranFile, { force: true });
+    r2 = pullToolkitCheckout(clone, {}, NOOP_IO);
+    assert.ok(!existsSync(ranFile), "second run skips npm — no reinstall loop");
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), r2);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-9: a non-git toolkit source is refused up front with the real diagnosis", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-nongit-"));
+  try {
+    // Standalone non-git copy (unpacked tarball shape).
+    const tarball = path.join(root, "toolkit-copy");
+    mkdirSync(path.join(tarball, "scaffold"), { recursive: true });
+    mkdirSync(path.join(tarball, "scripts"), { recursive: true });
+    writeFileSync(path.join(tarball, "scripts", "aios.mjs"), "// entry\n");
+    assert.throws(
+      () => pullToolkitCheckout(tarball, { localOnly: true }, NOOP_IO),
+      (e) => e instanceof UpdateError && /not a git checkout/.test(e.message),
+      "honest refusal, not a misleading cleanliness error"
+    );
+
+    // The same copy nested INSIDE another repository: git ops would resolve the ENCLOSING
+    // repo (previously --stash could stash that repo's unrelated WIP).
+    const host = path.join(root, "host-repo");
+    mkdirSync(host, { recursive: true });
+    initRepo(host);
+    writeFileSync(path.join(host, "unrelated.txt"), "host repo WIP\n");
+    const nested = path.join(host, "toolkit-copy");
+    mkdirSync(path.join(nested, "scaffold"), { recursive: true });
+    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
+    assert.throws(
+      () => pullToolkitCheckout(nested, { localOnly: true, stash: true }, NOOP_IO),
+      (e) => e instanceof UpdateError && /enclosing/i.test(e.message),
+      "refused before any git op could act on the enclosing repository"
+    );
+    assert.equal(
+      readFileSync(path.join(host, "unrelated.txt"), "utf8"),
+      "host repo WIP\n",
+      "the enclosing repo's WIP was never stashed or touched"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R7-10: readonly classification fails closed when the stale divergence estimate itself fails", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r7-readonly-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    advance(origin, "remote moved\n"); // remote sha exists but is NOT fetched locally
+    git(clone, "update-ref", "-d", "refs/remotes/origin/main"); // pruned tracking ref
+    const rs = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(
+      rs.state,
+      "local-status-error",
+      "previously a plain 'behind' — applyAllowed:true, then apply refused as diverged after the user confirmed"
+    );
+    assert.match(rs.detail, /tracking ref is missing/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

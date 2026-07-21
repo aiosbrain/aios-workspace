@@ -248,12 +248,17 @@ function pathEntryExists(p) {
  * (`dest: "../something"` from a bad edit or merge) and workspace-side symlinks
  * (`.claude/rules -> ~/dotfiles/...`) silently redirecting managed writes outside the
  * repo the update believes it is operating on.
+ *
+ * Throws `UpdateError` — these refusals are EXPECTED failures (a workspace-side symlink is
+ * a diagnosable local condition, not a bug), so they must flow through cmdUpdate's
+ * structured-result contract (`applyAllowed: false` + a reason) instead of escaping as a
+ * raw crash from `--check` or killing the vendor child without a result file.
  */
 export function assertDestPathSafe(repo, destRel, verb = "vendor") {
   const root = path.resolve(repo);
   const destAbs = path.resolve(root, destRel);
   if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
-    throw new Error(`refusing to ${verb} path outside the workspace: ${destRel}`);
+    throw new UpdateError(`refusing to ${verb} path outside the workspace: ${destRel}`);
   }
   const parentRel = path.relative(root, path.dirname(destAbs));
   let current = root;
@@ -267,7 +272,7 @@ export function assertDestPathSafe(repo, destRel, verb = "vendor") {
       throw error;
     }
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(
+      throw new UpdateError(
         `refusing to ${verb} ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
       );
     }
@@ -278,10 +283,10 @@ export function assertDestPathSafe(repo, destRel, verb = "vendor") {
   // `scripts/aios.mjs -> /tmp/shared` cannot redirect an update outside the workspace.
   try {
     if (lstatSync(destAbs).isSymbolicLink()) {
-      throw new Error(`refusing to ${verb} ${destRel}: destination is a symlink`);
+      throw new UpdateError(`refusing to ${verb} ${destRel}: destination is a symlink`);
     }
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    if (error instanceof UpdateError || error?.code !== "ENOENT") throw error;
   }
 }
 
@@ -608,7 +613,11 @@ const UPDATE_HIDDEN_BOOL_FLAGS = new Set(["--vendor-apply-only"]);
 // slow operation), but means the parent process can't read the child's stdout at all, so
 // there is no other channel to get `changedCount`/`vendorSafety` back across the process
 // boundary. Internal only, alongside --vendor-apply-only.
-const UPDATE_HIDDEN_VALUE_FLAGS = new Set(["--result-file", "--stamp-source"]);
+// --expect-src-head: refuse the apply if the resolved source's HEAD differs from the sha a
+// prior --preview reported (result.srcHead) — the consent pin for two-step preview→apply
+// flows (onboarding), so a source that moved between the two steps can never vendor content
+// the user didn't see.
+const UPDATE_HIDDEN_VALUE_FLAGS = new Set(["--result-file", "--stamp-source", "--expect-src-head"]);
 const UPDATE_VALUE_FLAGS = new Set(["--from", "--repo", "--contribute"]);
 
 function assertKnownUpdateFlags(args) {
@@ -638,13 +647,24 @@ function buildResult({
   remoteState = null,
   sourceClean = null,
   vendorSafety: vs = null,
+  srcHead = null,
   applied = false,
   changedCount = 0,
   reasons = [],
 }) {
-  const remoteBlocks = remoteState
-    ? ["diverged", "local-status-error"].includes(remoteState.state)
-    : false;
+  // ALLOWLIST, not a blocklist: these are the only remote states apply proceeds under
+  // (verified-current/behind, deliberately-untracked, or acceptable-offline where the stale
+  // ref positively rules out local-only commits). Any OTHER state — including any state a
+  // future acquireRemoteState change adds — blocks by construction, so a new classifier
+  // state can never silently default to "allowed" the way a blocklist would let it.
+  const REMOTE_ALLOW_STATES = [
+    "current",
+    "behind",
+    "no-upstream",
+    "unreachable",
+    "missing-upstream-ref",
+  ];
+  const remoteBlocks = remoteState ? !REMOTE_ALLOW_STATES.includes(remoteState.state) : false;
   const sourceBlocks = sourceClean != null && sourceClean !== "clean";
   const vendorBlocks = vs != null && !vs.safe;
   // mode === "error" is cmdUpdate's outer catch converting a thrown UpdateError into a
@@ -657,13 +677,30 @@ function buildResult({
   // and `applyAllowed: true` on a failed apply would lie to every programmatic caller
   // reading the documented `.applyAllowed` contract.
   const errorBlocks = mode === "error" || (mode === "apply" && exitStatus !== 0);
+  // …and the same principle one more time, generalized: an apply-capable result whose
+  // safety signals were ALL never computed (remote, cleanliness, vendor safety) must not
+  // read as allowed — whatever branch produced it evaluated nothing. `contribute` is not
+  // an apply at all (it pushes a PR), so its result never advertises apply permission.
+  const unevaluated =
+    ["check", "preview", "apply"].includes(mode) &&
+    remoteState == null &&
+    sourceClean == null &&
+    vs == null;
+  const nonApplyMode = mode === "contribute";
   return {
     exitStatus,
     mode,
     remoteState,
     sourceClean,
     vendorSafety: vs,
-    applyAllowed: !remoteBlocks && !sourceBlocks && !vendorBlocks && !errorBlocks,
+    srcHead,
+    applyAllowed:
+      !remoteBlocks &&
+      !sourceBlocks &&
+      !vendorBlocks &&
+      !errorBlocks &&
+      !unevaluated &&
+      !nonApplyMode,
     applied,
     changedCount,
     reasons,
@@ -785,6 +822,15 @@ async function cmdVendorApplyOnly(repo, args) {
   // a symlinked catalog destination is refused before anything is written.
   for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
     assertDestPathSafe(repo, rel, "regenerate catalog");
+  // PRE-FLIGHT containment scan over every managed + seed destination — all-or-nothing.
+  // The per-file asserts inside mergeManaged remain as a backstop, but they fire mid-write-
+  // loop: one bad destination there would leave every earlier file already vendored (a
+  // partial apply with no stamp). Refusing up front, before the first write, keeps a
+  // symlinked/escaping destination from ever producing a half-applied workspace.
+  for (const entry of [...MANAGED_PATHS, ...SEED_IF_ABSENT]) {
+    if (!existsSync(path.join(srcDir, entry.src))) continue;
+    for (const file of entryFiles(srcDir, entry)) assertDestPathSafe(repo, file.destRel);
+  }
   const baseSha = existsSync(stampPath)
     ? readFileSync(stampPath, "utf8").split(/\s/)[0]
     : undefined;
@@ -991,8 +1037,11 @@ async function cmdUpdateInner(repo, cfg, args) {
       });
     }
     if (noPull) {
+      // Even a no-op needs an honest signal: with every safety field null, buildResult
+      // would have nothing to derive applyAllowed from (and now fails closed on that) —
+      // cleanliness is the one cheap, local signal this branch can truthfully report.
       console.log(color.dim("  --no-pull — nothing to re-vendor in the toolkit checkout."));
-      return buildResult({ mode, exitStatus: 0 });
+      return buildResult({ mode, exitStatus: 0, sourceClean: sourceCleanliness(repo) });
     }
     // selfUpdate: nothing is vendored here, so a current-but-dirty checkout is a no-op
     // success (the everyday state of an actively-developed checkout), no snapshot is
@@ -1067,6 +1116,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         remoteState,
         sourceClean,
         vendorSafety: vs,
+        srcHead: sha,
         reasons,
       });
     }
@@ -1116,6 +1166,7 @@ async function cmdUpdateInner(repo, cfg, args) {
         remoteState,
         sourceClean,
         vendorSafety: vs,
+        srcHead: sha,
         changedCount,
         reasons: a.reasons,
       });
@@ -1132,94 +1183,117 @@ async function cmdUpdateInner(repo, cfg, args) {
         ? pullToolkitCheckout(srcDir, { ...pullOpts, localOnly: true, noInstall: true }, io)
         : pullToolkitCheckout(srcDir, pullOpts, io);
 
-    const entrypoint = path.join(snapshotSource.snapshotDir, "scripts", "aios.mjs");
-    if (!existsSync(entrypoint)) {
-      removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
-      throw new UpdateError(
-        `the pinned toolkit snapshot is missing its CLI entrypoint (${entrypoint}) — the toolkit checkout may be corrupted.`
-      );
-    }
-
-    // The child below is the SNAPSHOT's own CLI, so the snapshot must understand the
-    // hand-off flags — a snapshot of a toolkit that predates --vendor-apply-only would
-    // reject them via its own assertKnownUpdateFlags and die with an opaque "unknown
-    // flag". That happens for real sources the state table lets proceed without a
-    // fast-forward to current main: a pinned AIOS_TOOLKIT_DIR/--from at an old commit,
-    // or an offline/no-upstream checkout. Probe the snapshot's update.mjs for the flag
-    // and refuse with a message naming the actual problem + the fix. A snapshot with NO
-    // scripts/update.mjs can't be probed (real toolkits always ship it; test stubs
-    // don't) — let those through to the entrypoint, which speaks for itself. If a future
-    // change adds a hand-off flag an older POST-protocol toolkit won't know, extend this
-    // probe to cover that flag too.
-    const snapshotUpdateModule = path.join(snapshotSource.snapshotDir, "scripts", "update.mjs");
-    if (
-      existsSync(snapshotUpdateModule) &&
-      !readFileSync(snapshotUpdateModule, "utf8").includes("--vendor-apply-only")
-    ) {
-      removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
-      throw new UpdateError(
-        `the toolkit source (${stampSource}) predates the self-update hand-off protocol — its own ` +
-          `CLI doesn't understand --vendor-apply-only, so this toolkit can't drive it.\n` +
-          `  Bring that checkout up to date first (git -C ${srcDir} pull), then re-run \`aios update\`.`
-      );
-    }
-
-    // stdio: "inherit" gives live progress output for what can be a slow operation, but
-    // means this process can't read the child's return value at all — only its exit
-    // outcome. --result-file is the one side-channel back (see cmdUpdate).
-    const resultDir = mkdtempSync(path.join(os.tmpdir(), "aios-vendor-result-"));
-    const resultFile = path.join(resultDir, "result.json");
-    const passthrough = [
-      "update",
-      "--vendor-apply-only",
-      "--from",
-      snapshotSource.snapshotDir,
-      "--repo",
-      repo,
-      "--result-file",
-      resultFile,
-      "--stamp-source",
-      stampSource,
-    ];
-    if (args.includes("--force")) passthrough.push("--force");
-    const res = spawnSync(process.execPath, [entrypoint, ...passthrough], { stdio: "inherit" });
-
-    let exitStatus, reasons;
-    if (res.error) {
-      exitStatus = 1;
-      reasons = [`couldn't launch the vendor step (${res.error.message})`];
-      console.error(color.red(`error: couldn't launch the vendor step (${res.error.message})`));
-    } else if (res.signal) {
-      exitStatus = 1;
-      reasons = [`the vendor step was terminated (signal ${res.signal})`];
-      console.error(color.red(`error: the vendor step was terminated (signal ${res.signal})`));
-    } else {
-      exitStatus = res.status ?? 1;
-      reasons = exitStatus ? ["the vendor step failed — see output above"] : [];
-    }
-
-    // Best-effort: if the child's result file is missing/unparseable (e.g. it crashed
-    // before writing it, or res.error fired before it ever ran), fall back to the
-    // exit-code-only synthesis above rather than throwing here.
-    let childResult = null;
+    // From here the pinned snapshot exists on disk (a registered git worktree in the
+    // user's toolkit checkout). ONE finally owns its whole lifetime: every exit — the
+    // UpdateError refusals below, a plain system error (mkdtempSync ENOSPC, an
+    // uninspectable probe read), or the normal return — runs the same cleanup, so no new
+    // exit path can ever reintroduce the leak class this block used to have (three
+    // hand-placed removePinnedSnapshot calls, each covering only the throws above it).
+    let resultDir = null;
     try {
-      childResult = JSON.parse(readFileSync(resultFile, "utf8"));
-    } catch {
-      /* fall back to exit-code-only reasons/changedCount below */
-    }
-    rmSync(resultDir, { recursive: true, force: true });
-    removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
+      const entrypoint = path.join(snapshotSource.snapshotDir, "scripts", "aios.mjs");
+      if (!existsSync(entrypoint)) {
+        throw new UpdateError(
+          `the pinned toolkit snapshot is missing its CLI entrypoint (${entrypoint}) — the toolkit checkout may be corrupted.`
+        );
+      }
 
-    return buildResult({
-      mode: "apply",
-      exitStatus,
-      remoteState: snapshotSource.remoteState,
-      sourceClean: snapshotSource.sourceClean,
-      vendorSafety: childResult?.vendorSafety ?? null,
-      applied: exitStatus === 0,
-      changedCount: childResult?.changedCount ?? 0,
-      reasons: childResult?.reasons?.length ? childResult.reasons : reasons,
-    });
+      // The child below is the SNAPSHOT's own CLI, so the snapshot must understand the
+      // hand-off flags — a snapshot of a toolkit that predates --vendor-apply-only would
+      // reject them via its own assertKnownUpdateFlags and die with an opaque "unknown
+      // flag". That happens for real sources the state table lets proceed without a
+      // fast-forward to current main: a pinned AIOS_TOOLKIT_DIR/--from at an old commit,
+      // or an offline/no-upstream checkout. Probe the snapshot's update.mjs for the flag
+      // and refuse with a message naming the actual problem + the fix. A snapshot with NO
+      // scripts/update.mjs can't be probed (real toolkits always ship it; test stubs
+      // don't) — let those through to the entrypoint, which speaks for itself. If a future
+      // change adds a hand-off flag an older POST-protocol toolkit won't know, extend this
+      // probe to cover that flag too.
+      const snapshotUpdateModule = path.join(snapshotSource.snapshotDir, "scripts", "update.mjs");
+      if (
+        existsSync(snapshotUpdateModule) &&
+        !readFileSync(snapshotUpdateModule, "utf8").includes("--vendor-apply-only")
+      ) {
+        const fixHint = ephemeral
+          ? `Set toolkit_repo in aios.yaml (or AIOS_TOOLKIT_DIR/--from) to a toolkit at or after the hand-off protocol — the cloned source itself is a throwaway temp dir.`
+          : `Bring that checkout up to date first (git -C ${srcDir} pull), then re-run \`aios update\`.`;
+        throw new UpdateError(
+          `the toolkit source (${stampSource}) predates the self-update hand-off protocol — its own ` +
+            `CLI doesn't understand --vendor-apply-only, so this toolkit can't drive it.\n` +
+            `  ${fixHint}`
+        );
+      }
+
+      // The consent pin for two-step preview→apply flows (onboarding): the caller passes
+      // the sha its preview reported, and a source that has since moved refuses instead of
+      // silently vendoring content the user never saw.
+      const expectHead = argValue(args, "--expect-src-head");
+      if (expectHead && snapshotSource.srcHead && snapshotSource.srcHead !== expectHead) {
+        throw new UpdateError(
+          `the toolkit source moved since it was previewed (previewed ${expectHead.slice(0, 12)}, ` +
+            `now ${snapshotSource.srcHead.slice(0, 12)}) — re-run the preview and confirm against the new state.`
+        );
+      }
+
+      // stdio: "inherit" gives live progress output for what can be a slow operation, but
+      // means this process can't read the child's return value at all — only its exit
+      // outcome. --result-file is the one side-channel back (see cmdUpdate).
+      resultDir = mkdtempSync(path.join(os.tmpdir(), "aios-vendor-result-"));
+      const resultFile = path.join(resultDir, "result.json");
+      const passthrough = [
+        "update",
+        "--vendor-apply-only",
+        "--from",
+        snapshotSource.snapshotDir,
+        "--repo",
+        repo,
+        "--result-file",
+        resultFile,
+        "--stamp-source",
+        stampSource,
+      ];
+      if (args.includes("--force")) passthrough.push("--force");
+      const res = spawnSync(process.execPath, [entrypoint, ...passthrough], { stdio: "inherit" });
+
+      let exitStatus, reasons;
+      if (res.error) {
+        exitStatus = 1;
+        reasons = [`couldn't launch the vendor step (${res.error.message})`];
+        console.error(color.red(`error: couldn't launch the vendor step (${res.error.message})`));
+      } else if (res.signal) {
+        exitStatus = 1;
+        reasons = [`the vendor step was terminated (signal ${res.signal})`];
+        console.error(color.red(`error: the vendor step was terminated (signal ${res.signal})`));
+      } else {
+        exitStatus = res.status ?? 1;
+        reasons = exitStatus ? ["the vendor step failed — see output above"] : [];
+      }
+
+      // Best-effort: if the child's result file is missing/unparseable (e.g. it crashed
+      // before writing it, or res.error fired before it ever ran), fall back to the
+      // exit-code-only synthesis above rather than throwing here.
+      let childResult = null;
+      try {
+        childResult = JSON.parse(readFileSync(resultFile, "utf8"));
+      } catch {
+        /* fall back to exit-code-only reasons/changedCount below */
+      }
+
+      return buildResult({
+        mode: "apply",
+        exitStatus,
+        remoteState: snapshotSource.remoteState,
+        sourceClean: snapshotSource.sourceClean,
+        vendorSafety: childResult?.vendorSafety ?? null,
+        srcHead: snapshotSource.srcHead,
+        applied: exitStatus === 0,
+        changedCount: childResult?.changedCount ?? 0,
+        reasons: childResult?.reasons?.length ? childResult.reasons : reasons,
+      });
+    } finally {
+      if (resultDir) rmSync(resultDir, { recursive: true, force: true });
+      removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
+    }
   } finally {
     if (ephemeral) rmSync(srcDir, { recursive: true, force: true });
   }
