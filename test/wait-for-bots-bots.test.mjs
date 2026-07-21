@@ -93,6 +93,28 @@ console.log("substantive current-head evidence");
   );
   check("rate-limit/review-limit stubs are rejected", stub.ready === false);
 
+  const commandAcknowledgment = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: [
+          "<details>",
+          "<summary>Action performed</summary>",
+          "Review triggered.",
+          "> Note: CodeRabbit is an incremental review system and will review the latest changes.",
+          "</details>",
+        ].join("\n"),
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    headTime
+  );
+  check("review-command acknowledgments are rejected", commandAcknowledgment.ready === false);
+
   const review = checkBotReady(
     BOT,
     config,

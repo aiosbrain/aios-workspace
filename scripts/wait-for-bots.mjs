@@ -38,6 +38,9 @@ export const BOT_CONFIG = {
       /prepaid credits/i,
       /review was skipped/i,
       /unable to review/i,
+      /<summary>\s*Action performed\s*<\/summary>/i,
+      /\bReview triggered\./i,
+      /incremental review system/i,
     ],
   },
 };
