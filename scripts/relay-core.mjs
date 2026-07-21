@@ -219,10 +219,14 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
       if (code === 0 || (code === null && (text || finalResult))) {
         if (opts.resultEventBundle) {
           // Cursor's result event can contain the accumulated assistant narration on
-          // long agent runs. The last assistant message is the protocol terminal;
-          // fall back to result only for providers that emit no assistant message.
+          // long agent runs. Expose both event shapes so strict callers can accept an
+          // exact token from either while scanning both for contradictions.
           const terminal = lastAssistantText ?? finalResult;
-          resolve({ transcript: text.trim(), result: terminal?.trim() ?? null });
+          resolve({
+            transcript: text.trim(),
+            result: terminal?.trim() ?? null,
+            eventResult: finalResult?.trim() ?? null,
+          });
         } else {
           resolve(text.trim());
         }

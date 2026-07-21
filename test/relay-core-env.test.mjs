@@ -89,7 +89,8 @@ console.log("callCursorAgent can return the transcript and terminal result separ
   check(
     "strict protocol callers retain streamed evidence and the terminal verdict",
     out.transcript.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL) &&
-      out.result === "TERMINAL_RESULT"
+      out.result === "TERMINAL_RESULT" &&
+      out.eventResult.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL)
   );
 }
 

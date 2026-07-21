@@ -236,6 +236,18 @@ test("terminal clear ignores progress prose but cannot override a streamed findi
     });
     assert.equal(progressOnly.ok, true);
 
+    const resultOnlyClear = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: "Still checking validators.",
+        eventResult: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(resultOnlyClear.ok, true);
+
     const contradictory = await runLocalPrePrReview({
       worktree: repo,
       baseSha,

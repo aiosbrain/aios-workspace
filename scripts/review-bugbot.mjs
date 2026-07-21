@@ -609,15 +609,19 @@ export async function runLocalPrePrReview({
       response && typeof response === "object" && !Array.isArray(response)
         ? {
             transcript: String(response.transcript ?? ""),
-            terminal: response.result == null ? "" : String(response.result),
+            terminals: [response.result, response.eventResult]
+              .filter((value) => value != null)
+              .map(String),
           }
-        : { transcript: String(response ?? ""), terminal: String(response ?? "") };
-    const evidence = [bundled.transcript, bundled.terminal]
+        : { transcript: String(response ?? ""), terminals: [String(response ?? "")] };
+    const evidence = [bundled.transcript, ...bundled.terminals]
       .filter(Boolean)
       .filter((value, index, values) => values.indexOf(value) === index)
       .join("\n\n--- terminal result ---\n\n");
-    const finding = detectBugbotBlocked(bundled.terminal) || hasFindingsAtOrAbove(evidence, failOn);
-    const error = !finding && !detectBugbotClear(bundled.terminal);
+    const terminalBlocked = bundled.terminals.some(detectBugbotBlocked);
+    const terminalClear = bundled.terminals.some(detectBugbotClear);
+    const finding = terminalBlocked || hasFindingsAtOrAbove(evidence, failOn);
+    const error = !finding && !terminalClear;
     return {
       ok: !finding && !error,
       finding,
@@ -626,7 +630,7 @@ export async function runLocalPrePrReview({
         ? evidence
         : error
           ? `${evidence}\n\n(review protocol error: expected terminal result to be exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
-          : bundled.terminal,
+          : BUGBOT_CLEAR_TOKEN,
     };
   };
 
