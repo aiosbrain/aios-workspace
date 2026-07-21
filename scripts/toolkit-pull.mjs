@@ -30,14 +30,29 @@
 
 import os from "node:os";
 import path from "node:path";
-import { existsSync, readFileSync, writeFileSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  lstatSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, sha256, UpdateError } from "./cli-common.mjs";
+import { c, sha256, UpdateError, gitEnv } from "./cli-common.mjs";
 
 /** Run git in `dir`; returns trimmed stdout. Throws on non-zero (caller may catch).
- *  `opts` passes through to execFileSync (used for `timeout` on network probes). */
+ *  `opts` passes through to execFileSync (used for `timeout` on network probes).
+ *  Runs with `gitEnv()` — an inherited GIT_DIR/GIT_WORK_TREE (git sets these for every
+ *  hook it runs) would otherwise override `-C dir` and answer about the WRONG repo,
+ *  failing the containment probes open. */
 function git(dir, gitArgs, opts = {}) {
-  return execFileSync("git", ["-C", dir, ...gitArgs], { encoding: "utf8", ...opts }).trim();
+  return execFileSync("git", ["-C", dir, ...gitArgs], {
+    encoding: "utf8",
+    env: gitEnv(),
+    ...opts,
+  }).trim();
 }
 
 /** Same, but returns "" instead of throwing — ONLY for values where "" is itself a
@@ -51,6 +66,59 @@ function gitSafe(dir, gitArgs) {
     return "";
   }
 }
+
+/**
+ * Refuse a toolkit source dir that is not itself a git checkout — BEFORE any other git
+ * operation runs against it. Two distinct failure shapes, both previously misdiagnosed
+ * deep in the flow: a standalone non-git copy (unpacked tarball) failed with
+ * "couldn't determine whether the toolkit checkout is clean", and — far worse — a non-git
+ * dir sitting INSIDE another repository made every `git -C dir` call silently resolve the
+ * ENCLOSING repo, so `--stash` could stash away that unrelated repo's WIP mid-run. The
+ * pinned-snapshot design requires a real git checkout (there is no coherent sha that could
+ * represent a non-git tree), so refuse honestly and up front.
+ */
+export function assertGitToolkitSource(dir) {
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  let top;
+  try {
+    top = git(dir, ["rev-parse", "--show-toplevel"]);
+  } catch {
+    throw new UpdateError(
+      `the toolkit source at ${dir} is not a git checkout — aios update vendors from a pinned ` +
+        `git snapshot, so a plain copy/tarball of the toolkit can't be used.\n` +
+        `  Clone it instead (git clone <toolkit repo>), or point --from/AIOS_TOOLKIT_DIR at a real checkout.`
+    );
+  }
+  if (real(top) !== real(dir)) {
+    throw new UpdateError(
+      `the toolkit source at ${dir} is not itself a git checkout — it sits inside the repository ` +
+        `at ${top}, and running git operations there (stash/fetch/snapshot) would act on that ` +
+        `ENCLOSING repo instead. Clone the toolkit as its own checkout and point --from at it.`
+    );
+  }
+}
+
+/**
+ * The ONLY remote states an apply may proceed under — the one allowlist shared by every
+ * gate that decides "is this source safe to vendor/pull from" (buildResult's applyAllowed
+ * in update.mjs AND pullToolkitCheckout's apply-mode refusals below). Allowlist, never a
+ * blocklist: any state a future acquireRemoteState change adds blocks by construction
+ * everywhere at once, instead of silently defaulting to allowed at whichever gate forgot
+ * to learn the new name.
+ */
+export const REMOTE_APPLY_ALLOW_STATES = Object.freeze([
+  "current",
+  "behind",
+  "no-upstream",
+  "unreachable",
+  "missing-upstream-ref",
+]);
 
 /**
  * Tri-state — NOT a boolean — because "couldn't determine" must never be conflated with
@@ -227,12 +295,26 @@ function classifyAgainst(
           ahead: stale.ahead,
         };
       }
-      // stale.ahead === null (estimate itself failed) deliberately falls through to
-      // `onCountFailure` here rather than blocking: this branch only runs in readonly
-      // mode with the REMOTE REACHABLE (ls-remote succeeded; the count failed because
-      // the remote object was never fetched). Apply mode re-verifies with a real fetch,
-      // which either restores the tracking ref and classifies for real, or fails and
-      // hits the offline fallbacks below — which DO fail closed on null.
+      // stale.ahead === null: the estimate itself failed (tracking ref pruned/missing), so
+      // local-only commits can't be ruled out. This used to fall through to a plain
+      // "behind" (applyAllowed true) on the theory that apply re-verifies — but that
+      // produced the exact offered-then-refused sequence the consolidation exists to
+      // eliminate: readonly said "behind", onboarding offered the apply, apply's real
+      // fetch restored the ref and hard-refused as diverged AFTER the user confirmed.
+      // Fail closed here too; apply's own fetch is the documented way to resolve it.
+      if (stale.ahead === null) {
+        return {
+          state: "local-status-error",
+          branch,
+          upstream: upstreamName,
+          behind: null,
+          ahead: 0,
+          detail:
+            "the remote is reachable but the local tracking ref is missing, so local-only " +
+            "commits can't be ruled out — run `git fetch` in the toolkit checkout (a real " +
+            "`aios update` apply fetches automatically)",
+        };
+      }
     }
     return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
   }
@@ -477,10 +559,12 @@ export function remoteMessage(rs) {
  * half-finished merge) leaves behind, where files on disk hold `<<<<<<<` markers. Vendoring
  * from a checkout in this state would copy those markers into executable governance files,
  * so callers must refuse. Throws on a genuine git failure (corrupted index, not a repo) —
- * callers (vendorSafety) must treat that as unsafe, not as "no unmerged paths". Only ever
- * meaningful against a live checkout with a possible in-progress merge — never called
- * against an immutable pinned snapshot (a fresh checkout of a finalized commit cannot have
- * an in-progress merge by construction).
+ * callers (vendorSafety) must treat that as unsafe, not as "no unmerged paths". It runs
+ * against BOTH kinds of source: the live checkout (check/preview) where an in-progress
+ * merge is a real possibility, and the pinned snapshot (cmdVendorApplyOnly's vendorSafety
+ * gate) where a fresh checkout of a finalized commit can't have one by construction — the
+ * probe is kept there anyway because the fail-closed contract ("uninspectable == unsafe")
+ * matters as much as the positive check.
  */
 export function unmergedPaths(dir) {
   const out = git(dir, ["diff", "--name-only", "--diff-filter=U"]);
@@ -617,23 +701,64 @@ function reconcileDeps(dir, { log, warn, lockChanged = true }) {
   }
   const marker = installedLockPath(dir);
   const currentHash = lockfileHash(dir);
+  // A lockfile-less source is a real, recordable install state — use a sentinel rather
+  // than skipping the marker write. Gating the write on a non-null hash meant a source
+  // whose lockfile disappeared could NEVER refresh a stale marker: every run re-ran a full
+  // `npm install` forever, and offline that throw hard-blocked the whole update.
+  const currentKey = currentHash ?? "no-lockfile";
   const stored = marker && existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
-  if (currentHash === stored) {
+  const recordMarker = () => {
+    if (!marker) return;
+    try {
+      // Recompute from disk at write time, never reuse the pre-npm key: a lockfile-less
+      // `npm install` GENERATES package-lock.json, so recording the stale "no-lockfile"
+      // sentinel here would mismatch the very next run's hash and force a second
+      // destructive reinstall before converging. The key must describe the state npm
+      // actually left behind.
+      writeFileSync(marker, `${lockfileHash(dir) ?? "no-lockfile"}\n`);
+    } catch {
+      /* metadata is best-effort; a missing marker just means a redundant reconcile next run */
+    }
+  };
+  if (currentKey === stored) {
     log(c.dim("  deps unchanged — skipping reinstall."));
     return false;
   }
-  if (stored === null && !lockChanged) {
-    // Pre-marker-era install (see doc above): nothing this run changed the lockfile, so the
-    // existing node_modules isn't pending — record it instead of destructively reinstalling.
-    log(c.dim("  deps unchanged — recording the install marker (first marker-tracked run)."));
-    if (marker && currentHash) {
-      try {
-        writeFileSync(marker, `${currentHash}\n`);
-      } catch {
-        /* metadata is best-effort; a missing marker just means a redundant check next run */
-      }
+  if (stored === null) {
+    // Pre-marker era (no install this code ever managed). Two orthogonal questions:
+    //
+    // (1) Is the existing node_modules VERIFIABLY a complete npm install? npm (v7+)
+    // writes `node_modules/.package-lock.json` as the last step of a finished install.
+    // No artifact means UNVERIFIABLE, not broken: pnpm/yarn/bun and npm ≤6 never write
+    // it, so a healthy non-npm install is indistinguishable from an interrupted `npm ci`.
+    // The update NEVER destroys what it can't verify — `npm ci` deletes node_modules
+    // first, and offline that wipes a working install unrecoverably. This rule holds
+    // UNCONDITIONALLY, including when this run's pull moved the lockfile (gating it on
+    // !lockChanged would make the promised tolerance last exactly until the first
+    // lockfile-moving pull). Warn, leave it alone, record NO marker, so the state is
+    // re-evaluated every run and self-heals when the owner runs `npm ci` by hand. npm is
+    // the only SUPPORTED manager (docs/design-self-update.md, "supported source
+    // envelope") — other managers' installs are tolerated, never "repaired".
+    if (!existsSync(path.join(nm, ".package-lock.json"))) {
+      warn(
+        c.yellow(
+          "  can't verify this node_modules is a complete npm install (no .package-lock.json —\n" +
+            "  a non-npm install, or an interrupted `npm ci`?) — leaving it untouched.\n" +
+            `  If toolkit deps misbehave, run \`npm ci\` in ${dir} yourself.`
+        )
+      );
+      return false;
     }
-    return false;
+    // (2) Verified npm install, but does it need a reinstall? Only if THIS run's pull
+    // moved the lockfile — otherwise the healthy pre-marker install just gets its marker
+    // seeded (first marker-tracked run). A verified install with a moved lockfile falls
+    // through to the normal reinstall below, exactly like a recorded-but-mismatched
+    // marker would.
+    if (!lockChanged) {
+      log(c.dim("  deps unchanged — recording the install marker (first marker-tracked run)."));
+      recordMarker();
+      return false;
+    }
   }
   const cmd = currentHash ? "ci" : "install";
   // Re-check right before npm runs (TOCTOU): if node_modules became a symlink since the lstat
@@ -666,13 +791,7 @@ function reconcileDeps(dir, { log, warn, lockChanged = true }) {
   }
   // Record success only AFTER npm returns 0 — an interrupted install leaves the marker stale so
   // the next run repairs it.
-  if (marker && currentHash) {
-    try {
-      writeFileSync(marker, `${currentHash}\n`);
-    } catch {
-      /* metadata is best-effort; a missing marker just means a redundant reconcile next run */
-    }
-  }
+  recordMarker();
   return true;
 }
 
@@ -714,6 +833,12 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   const warn = io.warn || (() => {});
   const readOnly = check || dryRun;
 
+  // Every mode (read-only included) runs git against `dir` — refuse a non-git source with
+  // the real diagnosis before any of those calls can misfire or, worse, act on an
+  // enclosing repository. Throws UpdateError, so --check surfaces it as a structured
+  // error result rather than a crash.
+  assertGitToolkitSource(dir);
+
   // `localOnly` (--no-pull / an ephemeral fresh clone): skip remote classification and the
   // fast-forward entirely — the caller explicitly wants the checkout's current committed
   // state. Everything else (clean gate, --stash, snapshot pinning) applies identically, so
@@ -745,27 +870,63 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   if (readOnly) return ret({ sourceClean: sourceCleanliness(dir) });
 
   // APPLY mode from here on.
-  if (remoteState?.state === "diverged") {
+  // `selfUpdate` (run inside the toolkit checkout itself): nothing is ever vendored, so
+  // when there is also nothing to pull, the local tree's state gates nothing — the
+  // pre-hardening "up to date" no-op exit, preserved for the primary dogfood path
+  // (`aios update` in an actively-developed checkout). That covers BOTH kinds of WIP:
+  // uncommitted changes AND committed local work (ahead-only "diverged", behind 0) — the
+  // committed state is strictly safer than the uncommitted one and must not fare worse.
+  // A diverged checkout that is ALSO behind still needs a real (impossible) fast-forward,
+  // and an uninspectable repo (local-status-error) stays fail-closed — both fall through
+  // to the throws below. Deps still reconcile (npm is independent of git cleanliness),
+  // and a REAL pull over a dirty tree below still requires --stash.
+  // ALLOWLIST (same shape as REMOTE_APPLY_ALLOW_STATES, same reason): the no-op set is the
+  // allow states minus "behind" (behind means there IS something to pull), plus the one
+  // self-update-only exemption — ahead-only "diverged" with a POSITIVELY-known behind of 0
+  // (committed local work is strictly safer than the uncommitted WIP the no-op already
+  // tolerates). `behind === 0` is strict: an unknown count (null) must fail closed into the
+  // refusals below, never coerce to "nothing to pull". A null remoteState (`localOnly`)
+  // classified nothing — there is nothing to pull by definition.
+  const selfUpdateNothingToPull =
+    selfUpdate &&
+    (remoteState == null ||
+      (remoteState.state !== "behind" && REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state)) ||
+      (remoteState.state === "diverged" && remoteState.behind === 0));
+  if (
+    !selfUpdateNothingToPull &&
+    remoteState &&
+    !REMOTE_APPLY_ALLOW_STATES.includes(remoteState.state)
+  ) {
+    if (remoteState.state === "diverged") {
+      throw new UpdateError(
+        `toolkit branch ${remoteState.branch} has ${remoteState.ahead} local commit(s) not on ` +
+          `${remoteState.upstream} — not a fast-forward. Reconcile it by hand (rebase/merge), ` +
+          `then re-run \`aios update\`.`
+      );
+    }
+    if (remoteState.state === "local-status-error") {
+      throw new UpdateError(
+        `couldn't validate the local toolkit repository state at ${dir} ` +
+          `(${remoteState.detail || "a git index/ref query failed"}) — refusing to trust it. ` +
+          `Check \`git -C ${dir} status\` by hand.`
+      );
+    }
+    // A state this code doesn't know (a future classifier addition): fail closed with the
+    // real name rather than sailing into a pull/vendor under unvalidated conditions.
     throw new UpdateError(
-      `toolkit branch ${remoteState.branch} has ${remoteState.ahead} local commit(s) not on ` +
-        `${remoteState.upstream} — not a fast-forward. Reconcile it by hand (rebase/merge), ` +
-        `then re-run \`aios update\`.`
-    );
-  }
-  if (remoteState?.state === "local-status-error") {
-    throw new UpdateError(
-      `couldn't validate the local toolkit repository state at ${dir} ` +
-        `(${remoteState.detail || "a git index/ref query failed"}) — refusing to trust it. ` +
-        `Check \`git -C ${dir} status\` by hand.`
+      `the toolkit remote state '${remoteState.state}' isn't one apply knows to be safe — ` +
+        `refusing to proceed. Run \`aios update --check\` for the full diagnosis.`
     );
   }
 
-  // `selfUpdate` (run inside the toolkit checkout itself): nothing is ever vendored, so
-  // when there is also nothing to pull, a dirty tree gates nothing — the pre-hardening
-  // "up to date" no-op exit, preserved for the primary dogfood path (`aios update` in an
-  // actively-developed checkout with WIP). Deps still reconcile (npm is independent of
-  // git cleanliness), and a REAL pull over a dirty tree below still requires --stash.
-  if (selfUpdate && remoteState?.state !== "behind") {
+  if (selfUpdateNothingToPull) {
+    if (remoteState?.state === "diverged") {
+      log(
+        c.dim(
+          `  ${remoteState.ahead} local commit(s) ahead of ${remoteState.upstream} — nothing to pull.`
+        )
+      );
+    }
     let installed = false;
     if (!noInstall) {
       try {
