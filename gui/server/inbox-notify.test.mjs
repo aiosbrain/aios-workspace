@@ -535,3 +535,39 @@ test("a live-pid lock is reclaimed once it outlives any legitimate hold", () => 
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// A future-dated lock (forward clock jump, restored backup, hand-edited file) must not become
+// permanently unbreakable — that is the very deadlock the age-based reclaim exists to prevent.
+// Its recorded stamp is distrusted and the filesystem mtime is used instead.
+test("a future-dated lock is not honoured as immortal", () => {
+  const repo = workspace();
+  try {
+    const held = acquireTelegramNotifyLock(repo, {
+      pid: 43_001,
+      token: "from-the-future",
+      // Stamped a year ahead: under a naive age test this lock would never expire, ever.
+      now: () => new Date(Date.now() + 365 * 24 * 60 * 60_000),
+    });
+    assert.equal(typeof held, "function");
+
+    // A fresh file is still young by mtime, so a live incumbent legitimately keeps the lock.
+    assert.equal(
+      acquireTelegramNotifyLock(repo, { pid: 43_002, token: "early", probe: () => {} }),
+      null
+    );
+
+    // Once the age threshold is met on the machine's own clock it IS reclaimable — the future
+    // stamp bought no immunity.
+    const reclaimed = acquireTelegramNotifyLock(repo, {
+      pid: 43_002,
+      token: "reclaimer",
+      probe: () => {},
+      staleMs: 0,
+    });
+    assert.equal(typeof reclaimed, "function");
+    reclaimed();
+    assert.equal(existsSync(path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME)), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

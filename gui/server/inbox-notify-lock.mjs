@@ -109,8 +109,14 @@ export function acquireTelegramNotifyLock(
       // Age from the owner's OWN recorded timestamp when it has one — it is written atomically with
       // the rest of the owner record, where mtime can be perturbed by copies, restores, and clock
       // skew. A malformed record has no timestamp to trust, so it falls back to mtime.
+      //
+      // A record stamped in the FUTURE (forward clock jump, restored backup, hand-edited file) is
+      // not trustworthy and must not be honoured: its age would never reach the threshold,
+      // resurrecting exactly the permanent deadlock rule 2 exists to prevent. Fall back to mtime,
+      // which the filesystem stamps on this machine's clock.
       const ownerMs = Date.parse(existing.value?.acquired_at ?? "");
-      const bornMs = Number.isFinite(ownerMs) ? ownerMs : modifiedMs;
+      const trustworthy = Number.isFinite(ownerMs) && ownerMs <= acquiredMs;
+      const bornMs = trustworthy ? ownerMs : modifiedMs;
       const expired = acquiredMs - bornMs >= staleMs;
       if (validOwner(existing.value)) {
         try {
