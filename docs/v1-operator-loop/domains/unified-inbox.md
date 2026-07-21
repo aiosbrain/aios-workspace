@@ -73,8 +73,18 @@ workspace lock; timeout/shutdown terminate the full connector process group befo
 Public freshness comes from the last successful ingestion refresh, never from a source event's occurrence
 time.
 
-Telegram remains **outbound-only** until a separately gated inbound contract is proven. The GUI
-server owns the production notify loop: on a bounded cadence it projects only open
+Telegram remains **outbound-only** until a separately gated inbound contract is proven.
+
+The GUI lane activates **only** on the AIOS-scoped credentials `AIOS_TELEGRAM_BOT_TOKEN` +
+`AIOS_TELEGRAM_CHAT_ID`; `AIOS_TELEGRAM_DISABLED=1` is the immediate stop. It deliberately ignores
+the bare `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` fallbacks that `loadTelegramConfig` accepts for
+the CLI: this notifier starts automatically with the GUI, and those generic names routinely belong
+to a different bot in a shared environment (Hermes is the workspace's Telegram gateway), so
+honouring them would push AIOS ask alerts through someone else's bot and chat the first time
+`npm run gui` ran. When only the unscoped pair is present the lane stays `disabled` and says so in
+`notify.lane.last_error`, naming the variables to set — never a credential.
+
+The GUI server owns the production notify loop: on a bounded cadence it projects only open
 `agent-event` asks in `needs-you` (plus protected open asks), folds the durable notification
 journal, and sends one content-free Bot API alert for each ask with no recorded delivery. Telegram
 acceptance is journaled as `delivery-attempted`; a failed request journals no delivery and the
@@ -82,8 +92,18 @@ durable ask remains the source of truth. The loop and the GUI acknowledgment end
 operator-local cross-process lock so two GUI servers do not concurrently send or acknowledge the
 same ask.
 
-A `human-ack` means the corresponding delivered ask detail was visible while the GUI document
-was visible and focused. List/detail GETs and background polling are never acknowledgment evidence.
+A `human-ack` means a HUMAN saw the ask — it is what clears that ask from `aios inbox --overdue`,
+the only net that catches a silently-failed alert, so the bar is an act of the operator's rather
+than an act of the app's. The client records one only when **the operator selected that ask**
+(pointer click or keyboard activation of a queue row) *and* its delivered detail was committed to a
+visible, focused document. The queue auto-selects the highest-ranked row on load and whenever a
+selection is dropped; that is the app choosing, and it is explicitly **not** evidence — otherwise a
+GUI merely left open and focused would disarm the recovery net for an ask nobody read. List/detail
+GETs and background polling are likewise never evidence.
+
+Responding in the channel of origin is the other way an ask stops nagging, and it needs no ack: a
+replied or archived ask leaves `open` status, and the recovery view skips every non-open ask.
+
 The server records an ack only when the item is still an open agent ask, at least one delivery is
 journaled, and no effective later ack exists. Unknown, closed, non-agent, never-delivered, and
 already-acked items do not append an ack. The honest delivery guarantee is one recorded successful
@@ -205,7 +225,7 @@ explicit allow is granted:
 - unrelated admin context — denied.
 
 Group-thread, quoting/attachment, mixed-tier, and unknown-participant rules are enumerated; an
-  unknown or unverifiable participant is treated as outside the origin set (deny). The full **Sol r2
+unknown or unverifiable participant is treated as outside the origin set (deny). The full **Sol r2
 reply-policy fixture matrix** (e.g. reply-same-sender → content-free Telegram) lives in
 `test/operator-loop/inbox-reply-policy.test.mjs`, with
 `test/operator-loop/comms-sender.test.mjs` untouched.

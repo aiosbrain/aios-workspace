@@ -41,6 +41,9 @@ export function CommsView() {
   const detailRef = useRef<InboxDetail | null>(null);
   const ackInFlight = useRef(new Set<string>());
   const ackSettled = useRef(new Set<string>());
+  // Asks the OPERATOR chose (click / keyboard). `load()`'s auto-selection deliberately never adds
+  // here, so an app-chosen default can't be mistaken for the human having read the ask.
+  const humanSelected = useRef(new Set<string>());
   const detailRequests = useRef(new LatestDetailRequest());
   selectedRef.current = selectedId;
 
@@ -103,6 +106,7 @@ export function CommsView() {
         !shouldAcknowledgeDeliveredAsk({
           id,
           selectedId: selectedRef.current,
+          humanSelected: humanSelected.current.has(id),
           detail: candidate,
           visibilityState: document.visibilityState,
           hasFocus: document.hasFocus(),
@@ -115,10 +119,13 @@ export function CommsView() {
       ackInFlight.current.add(id);
       try {
         const result = await postAskAck(api, id);
-        if (result.recorded || result.reason === "already-acked") {
+        // `notify-busy` is transient — the notifier holds the coordination lock for this tick — so
+        // leave it unsettled and let the next poll or focus retry. `never-delivered` may also still
+        // become deliverable. Every other outcome is terminal for this ask.
+        if (result.reason !== "notify-busy" && result.reason !== "never-delivered") {
           ackSettled.current.add(id);
-          await load();
         }
+        if (result.recorded || result.reason === "already-acked") await load();
       } catch {
         // A later focus/detail refresh may retry. The queue remains the durable source of truth.
       } finally {
@@ -128,8 +135,9 @@ export function CommsView() {
     [api, load]
   );
 
-  // Effects run after React commits the detail panel. That render—not the GET or poll that supplied
-  // it—is the human evidence required before the local acknowledgment POST is allowed.
+  // Effects run after React commits the detail panel. That render is a NECESSARY condition for the
+  // acknowledgment POST — never a sufficient one: `shouldAcknowledgeDeliveredAsk` additionally
+  // requires that the operator, not `load()`'s auto-selection, chose this ask.
   useEffect(() => {
     const id = detail?.item?.id;
     if (id) void ackIfHuman(id, detail);
@@ -156,6 +164,9 @@ export function CommsView() {
 
   const onSelect = useCallback(
     (id: string) => {
+      // The ONLY path that records human evidence. Queue rows are <button>s, so this covers both a
+      // pointer click and keyboard activation of a focused row.
+      humanSelected.current.add(id);
       selectedRef.current = id;
       detailRequests.current.select(id);
       setSelectedId(id);

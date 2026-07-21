@@ -41,9 +41,23 @@ function readOwner(lockPath) {
 /**
  * Acquire the repo-scoped Telegram notify/ack lock.
  *
- * A valid live owner always wins, regardless of age. A malformed/incomplete file is reclaimable
- * only after the stale threshold so another process cannot steal the lock between exclusive create
- * and metadata flush. Release re-verifies the exact owner bytes.
+ * Reclaim rules, in order:
+ *   1. A valid owner whose pid is DEAD (probe → ESRCH) is reclaimed immediately.
+ *   2. Any owner — valid and live included — is reclaimed once the file is older than `staleMs`.
+ *   3. Otherwise the incumbent wins. A malformed/incomplete file is therefore also protected until
+ *      the threshold, so another process cannot steal the lock between exclusive create and
+ *      metadata flush.
+ *
+ * Rule 2 exists because liveness alone is not proof of ownership: after an unclean exit the OS may
+ * recycle the recorded pid for an unrelated process, and a probe-only policy would then treat the
+ * lock as held forever — silently killing every alert and every acknowledgment until a human
+ * deleted the file. Every legitimate hold is bounded far below the threshold (the notifier sends at
+ * most `maxSendsPerTick` messages, each capped by TELEGRAM_REQUEST_TIMEOUT_MS), so an age-based
+ * reclaim cannot preempt a healthy holder. The residual risk if one somehow overruns is a duplicate
+ * content-free alert — strictly better than a permanent deadlock.
+ *
+ * Release re-verifies the exact owner bytes, so a process that lost its lock to rule 2 never
+ * unlinks its successor's file.
  */
 export function acquireTelegramNotifyLock(
   repo,
@@ -92,14 +106,21 @@ export function acquireTelegramNotifyLock(
         return null;
       }
 
+      // Age from the owner's OWN recorded timestamp when it has one — it is written atomically with
+      // the rest of the owner record, where mtime can be perturbed by copies, restores, and clock
+      // skew. A malformed record has no timestamp to trust, so it falls back to mtime.
+      const ownerMs = Date.parse(existing.value?.acquired_at ?? "");
+      const bornMs = Number.isFinite(ownerMs) ? ownerMs : modifiedMs;
+      const expired = acquiredMs - bornMs >= staleMs;
       if (validOwner(existing.value)) {
         try {
           probe(existing.value.pid, 0);
-          return null;
+          // The pid answers. Yield unless the file has outlived any legitimate hold — see rule 2.
+          if (!expired) return null;
         } catch (probeError) {
           if (probeError?.code !== "ESRCH") return null;
         }
-      } else if (acquiredMs - modifiedMs < staleMs) {
+      } else if (!expired) {
         return null;
       }
 

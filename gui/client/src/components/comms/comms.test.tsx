@@ -575,16 +575,26 @@ describe("human acknowledgment evidence", () => {
     },
   };
 
+  const check = (overrides: Partial<Parameters<typeof shouldAcknowledgeDeliveredAsk>[0]> = {}) =>
+    shouldAcknowledgeDeliveredAsk({
+      id: item.id,
+      selectedId: item.id,
+      humanSelected: true,
+      detail,
+      visibilityState: "visible",
+      hasFocus: true,
+      ...overrides,
+    });
+
+  // An acknowledgment clears the ask from `aios inbox --overdue` — the only net that catches a
+  // silently-failed phone alert. The queue auto-selects items[0] on load, so if that counted as
+  // evidence, a GUI merely left open and focused would disarm the net for an ask nobody read.
+  test("an app-chosen selection is never human evidence", () => {
+    expect(check({ humanSelected: false })).toBe(false);
+    expect(check({ humanSelected: true })).toBe(true);
+  });
+
   test("requires selected, visible, focused, delivered-unacked detail", () => {
-    const check = (overrides: Partial<Parameters<typeof shouldAcknowledgeDeliveredAsk>[0]> = {}) =>
-      shouldAcknowledgeDeliveredAsk({
-        id: item.id,
-        selectedId: item.id,
-        detail,
-        visibilityState: "visible",
-        hasFocus: true,
-        ...overrides,
-      });
     expect(check()).toBe(true);
     expect(check({ visibilityState: "hidden" })).toBe(false);
     expect(check({ hasFocus: false })).toBe(false);

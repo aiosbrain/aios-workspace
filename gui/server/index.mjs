@@ -1632,7 +1632,6 @@ const inboxRefresher = createInboxRefresher({ repo });
 const notifyCoordinator = createTelegramNotifyCoordinator({ repo });
 const telegramNotifier = createTelegramNotifier({ repo, notifyCoordinator });
 installInboxRefreshShutdown({
-  refresher: inboxRefresher,
   stoppables: [telegramNotifier, inboxRefresher],
   server,
   webSocketServer: wss,

@@ -152,7 +152,9 @@ export function buildNotifyView(loop, repo, itemIds, laneSnapshot = null) {
         last_ack_at: state.last_ack_at,
       };
     }
-    const overdueView = loop.buildOverdue(repo);
+    // Reuse the events we just read: `buildOverdue` would otherwise re-read and re-fold the whole
+    // journal, doubling the file I/O on a surface the GUI polls every 15s.
+    const overdueView = loop.buildOverdue(repo, { eventsOverride: journal.events });
     const overdue = {};
     for (const row of overdueView.items ?? []) {
       if (!ids.has(row.ask_id)) continue;
@@ -225,7 +227,15 @@ export async function getInboxDetail(repo, id, { refresh = null, notifyLane = nu
 
 /**
  * Record human acknowledgment only for a currently open, delivered agent ask.
- * The shared notify coordinator makes the delivery check and ack append one critical section.
+ * The shared notify coordinator makes the delivery check and ack append one critical section,
+ * so an ack can never interleave with the notifier's send loop.
+ *
+ * It deliberately does NOT also take the asks-store `withLock`. That lock backs off with
+ * `sleepSync` (Atomics.wait, asks/store.ts) — on this single-threaded server that would stall ALL
+ * HTTP and WebSocket agent streaming for up to a second whenever an ack raced a reply. The race it
+ * would close is benign anyway: if a reply resolves the ask between the status check and the
+ * append, the worst case is an ack event for a just-resolved ask, and `overdueView` already skips
+ * every non-open ask, so the recovery view is unaffected either way.
  */
 export async function ackInboxAsk(
   repo,
@@ -244,35 +254,32 @@ export async function ackInboxAsk(
       typeof loop.readJournalSegments !== "function" ||
       typeof loop.foldNotificationState !== "function" ||
       typeof loop.recordHumanAck !== "function" ||
-      typeof loop.createDurableNotifyJournal !== "function" ||
-      typeof loop.withLock !== "function"
+      typeof loop.createDurableNotifyJournal !== "function"
     ) {
       return { ok: false, status: 503, recorded: false, reason: "notify-unavailable" };
     }
-    return loop.withLock(repo, () => {
-      const item = loop.buildInbox(repo).items.find((row) => row.id === id);
-      if (
-        !item ||
-        !isActiveInboxItem(item) ||
-        item.origin !== "agent-event" ||
-        item.ask?.status !== "open"
-      ) {
-        return { ok: false, status: 404, recorded: false, reason: "not-acknowledgeable" };
-      }
-      const journal = loop.readJournalSegments(repo);
-      const state = loop.foldNotificationState(journal.events).get(id);
-      if (!state || state.delivery_attempts <= 0 || !state.last_delivery_at) {
-        return { ok: true, status: 200, recorded: false, reason: "never-delivered" };
-      }
-      if (state.acked) {
-        return { ok: true, status: 200, recorded: false, reason: "already-acked" };
-      }
-      loop.recordHumanAck(id, {
-        appendEvent: loop.createDurableNotifyJournal(repo),
-        now: now(),
-      });
-      return { ok: true, status: 200, recorded: true };
+    const item = loop.buildInbox(repo).items.find((row) => row.id === id);
+    if (
+      !item ||
+      !isActiveInboxItem(item) ||
+      item.origin !== "agent-event" ||
+      item.ask?.status !== "open"
+    ) {
+      return { ok: false, status: 404, recorded: false, reason: "not-acknowledgeable" };
+    }
+    const journal = loop.readJournalSegments(repo);
+    const state = loop.foldNotificationState(journal.events).get(id);
+    if (!state || state.delivery_attempts <= 0 || !state.last_delivery_at) {
+      return { ok: true, status: 200, recorded: false, reason: "never-delivered" };
+    }
+    if (state.acked) {
+      return { ok: true, status: 200, recorded: false, reason: "already-acked" };
+    }
+    loop.recordHumanAck(id, {
+      appendEvent: loop.createDurableNotifyJournal(repo),
+      now: now(),
     });
+    return { ok: true, status: 200, recorded: true };
   });
   if (!guarded.acquired) {
     return { ok: false, status: 503, recorded: false, reason: "notify-busy", retryAfter: 1 };

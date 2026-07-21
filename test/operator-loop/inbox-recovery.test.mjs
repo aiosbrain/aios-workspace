@@ -642,3 +642,81 @@ test("renderOverdueText / buildOverdueView — stable machine surface + one row 
   const empty = renderOverdueText(buildOverdueView({ asks: [], events: [], now: NOW }));
   assert.ok(/none/.test(empty));
 });
+
+// The GUI notifier holds a cross-process lock across the send and shares it with the ack path, so
+// an un-timeouted socket would not merely delay one alert — it would block acknowledgment and GUI
+// shutdown for as long as the peer kept the connection open.
+test("fetchTelegramTransport — a stalled Bot API call aborts and reports a redacted failure", async () => {
+  const realFetch = globalThis.fetch;
+  let sawSignal = null;
+  globalThis.fetch = (_url, init) => {
+    sawSignal = init.signal;
+    // Never settles on its own: only the abort signal can end this call.
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason));
+    });
+  };
+  // `AbortSignal.timeout` schedules an UNREF'd timer, so with a hung socket and nothing else
+  // pending the test runner's loop would drain before it fires. Production always has a live server
+  // handle; this stands in for one.
+  const keepAlive = setTimeout(() => {}, 1_000);
+  try {
+    const transport = fetchTelegramTransport("SECRET_TOKEN", 20);
+    const res = await transport({ chat_id: "42", text: "1 ask waiting" });
+    assert.equal(res.ok, false, "a stalled send must resolve as a failure, not hang");
+    assert.ok(sawSignal, "the request must carry an abort signal");
+    assert.equal(sawSignal.aborted, true, "the signal must actually fire on timeout");
+    // Redaction still holds on the timeout path: no token, no URL, no message body.
+    assert.match(res.description, /^transport-error:/);
+    assert.doesNotMatch(res.description, /SECRET_TOKEN/);
+    assert.doesNotMatch(res.description, /api\.telegram\.org/);
+  } finally {
+    clearTimeout(keepAlive);
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("buildOverdue reuses caller-supplied events instead of re-reading the journal", () => {
+  const root = ws();
+  try {
+    const askId = "ask_events-override";
+    const created = new Date(NOW.getTime() - WINDOW_MS * 3).toISOString();
+    // An ask that IS overdue per the durable store...
+    const asks = [
+      {
+        id: askId,
+        status: "open",
+        severity: "blocker",
+        source: "claude-code",
+        title: "t",
+        createdAt: created,
+      },
+    ];
+    const onDisk = buildOverdue(root, { now: NOW, asksOverride: asks });
+    assert.equal(onDisk.items.length, 1, "no journal on disk → overdue by creation time");
+
+    // ...is cleared when the caller passes events carrying an honest human-ack. If the override were
+    // ignored and the journal re-read, this would still report one overdue row.
+    const withAck = buildOverdue(root, {
+      now: NOW,
+      asksOverride: asks,
+      eventsOverride: [
+        {
+          kind: "delivery-attempted",
+          correlation_id: askId,
+          ts: created,
+          payload: { lane: "telegram", at: created },
+        },
+        {
+          kind: "human-ack",
+          correlation_id: askId,
+          ts: NOW.toISOString(),
+          payload: { lane: "telegram", at: NOW.toISOString() },
+        },
+      ],
+    });
+    assert.equal(withAck.items.length, 0, "eventsOverride was ignored — journal re-read instead");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

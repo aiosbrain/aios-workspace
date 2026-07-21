@@ -395,3 +395,143 @@ test("lock fails closed for a live owner, reclaims a dead owner, and releases by
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// The GUI notifier starts automatically with the server. `loadTelegramConfig` also accepts bare
+// TELEGRAM_* names, which in a shared environment routinely belong to a DIFFERENT bot (Hermes is
+// the workspace's Telegram gateway) — honouring them would push AIOS ask alerts through someone
+// else's bot the first time `npm run gui` ran.
+test("unscoped TELEGRAM_* credentials never activate the GUI lane, and the status says why", async () => {
+  const repo = workspace();
+  try {
+    let calls = 0;
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => loopFor([askItem("ask-unscoped")]),
+      env: { TELEGRAM_BOT_TOKEN: "someone-elses-bot", TELEGRAM_CHAT_ID: "someone-elses-chat" },
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      transport: async () => {
+        calls++;
+        return { ok: true, status: 200 };
+      },
+    });
+
+    await notifier.tick();
+    assert.equal(calls, 0, "an unscoped token must never reach the wire");
+    assert.equal(realLoop.readJournalSegments(repo).events.length, 0);
+    const snapshot = notifier.snapshot();
+    assert.equal(snapshot.status, "disabled");
+    assert.match(snapshot.last_error, /AIOS_TELEGRAM_BOT_TOKEN/);
+    // Content-free: the guidance names env vars, never the credentials themselves.
+    assert.doesNotMatch(snapshot.last_error, /someone-elses/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("repeated failures back off exponentially instead of hot-looping the Bot API", async () => {
+  const repo = workspace();
+  try {
+    let current = new Date("2026-07-21T00:00:00.000Z");
+    let calls = 0;
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => loopFor([askItem("ask-backoff")]),
+      env: configuredEnv,
+      now: () => new Date(current),
+      transport: async () => {
+        calls++;
+        return { ok: false, status: 401 };
+      },
+    });
+
+    await notifier.tick();
+    assert.equal(calls, 1);
+
+    // First retry opens after 1x the base window.
+    current = new Date(current.getTime() + DEFAULT_FAILURE_RETRY_MS + 1);
+    await notifier.tick();
+    assert.equal(calls, 2);
+
+    // The second retry must NOT open after another 1x — the window has doubled.
+    current = new Date(current.getTime() + DEFAULT_FAILURE_RETRY_MS + 1);
+    await notifier.tick();
+    assert.equal(calls, 2, "backoff did not grow after the second consecutive failure");
+
+    current = new Date(current.getTime() + DEFAULT_FAILURE_RETRY_MS + 1);
+    await notifier.tick();
+    assert.equal(calls, 3);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// A latched failure reports a broken lane forever and trains the operator to ignore the one
+// indicator that says outbound alerting is down.
+test("lane status clears once the failed ask is gone and nothing is outstanding", async () => {
+  const repo = workspace();
+  try {
+    let items = [askItem("ask-transient")];
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => loopFor(items),
+      env: configuredEnv,
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      transport: async () => ({ ok: false, status: 503 }),
+    });
+
+    await notifier.tick();
+    assert.equal(notifier.snapshot().status, "failed");
+
+    // The operator answers the ask: it stops being a blocking item, so nothing is waiting to go out.
+    items = [];
+    await notifier.tick();
+    const snapshot = notifier.snapshot();
+    assert.equal(snapshot.status, "configured");
+    assert.equal(snapshot.last_error, null);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// Liveness alone is not proof of ownership: after an unclean exit the OS may recycle the recorded
+// pid for an unrelated process. A probe-only policy would then hold the lock forever, silently
+// killing every alert and every acknowledgment until a human deleted the file.
+test("a live-pid lock is reclaimed once it outlives any legitimate hold", () => {
+  const repo = workspace();
+  try {
+    const held = acquireTelegramNotifyLock(repo, {
+      pid: 42_001,
+      token: "incumbent",
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+    });
+    assert.equal(typeof held, "function");
+
+    // Same live pid, inside the window → the incumbent still wins.
+    assert.equal(
+      acquireTelegramNotifyLock(repo, {
+        pid: 42_002,
+        token: "early",
+        probe: () => {},
+        now: () => new Date("2026-07-21T00:01:00.000Z"),
+      }),
+      null
+    );
+
+    // Same live pid, past the stale threshold → reclaimed rather than deadlocked forever.
+    const reclaimed = acquireTelegramNotifyLock(repo, {
+      pid: 42_002,
+      token: "reclaimer",
+      probe: () => {},
+      now: () => new Date("2026-07-21T00:30:00.000Z"),
+    });
+    assert.equal(typeof reclaimed, "function");
+
+    // The preempted owner must not unlink its successor's lock.
+    held();
+    assert.equal(existsSync(path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME)), true);
+    reclaimed();
+    assert.equal(existsSync(path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME)), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

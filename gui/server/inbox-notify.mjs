@@ -5,9 +5,40 @@ import { createTelegramNotifyCoordinator } from "./inbox-notify-lock.mjs";
 export const DEFAULT_NOTIFY_TICK_MS = 60_000;
 export const DEFAULT_FAILURE_RETRY_MS = 5 * 60_000;
 export const DEFAULT_MAX_SENDS_PER_TICK = 3;
+/** Ceiling on the exponential retry backoff — a hard failure (revoked token) must not hot-loop
+ *  against the Bot API every 5 minutes forever. */
+export const MAX_FAILURE_RETRY_MS = 60 * 60_000;
 const MIN_NOTIFY_TICK_MS = 15_000;
 const MAX_NOTIFY_TICK_MS = 15 * 60_000;
 const MAX_RETRY_ENTRIES = 1_000;
+
+/**
+ * The GUI's outbound lane reads ONLY the AIOS-scoped Telegram vars.
+ *
+ * `loadTelegramConfig` also accepts bare `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`, which is right
+ * for the CLI but wrong here: this notifier starts automatically with the GUI, and those generic
+ * names commonly belong to a DIFFERENT bot in a shared environment (Hermes is the workspace's
+ * Telegram gateway). Honouring them would silently push AIOS ask alerts through someone else's bot
+ * and chat the first time `npm run gui` ran. Opting in is therefore explicit: name the vars for AIOS.
+ */
+export function scopedTelegramEnv(env = {}) {
+  return {
+    AIOS_TELEGRAM_BOT_TOKEN: env.AIOS_TELEGRAM_BOT_TOKEN,
+    AIOS_TELEGRAM_CHAT_ID: env.AIOS_TELEGRAM_CHAT_ID,
+    AIOS_TELEGRAM_DISABLED: env.AIOS_TELEGRAM_DISABLED,
+  };
+}
+
+/** True when the lane is dormant only because the credentials use the unscoped names. Lets the
+ *  status say WHY instead of looking indistinguishable from "no Telegram configured at all". */
+function hasUnscopedTelegramCredentials(env = {}) {
+  const present = (v) => typeof v === "string" && v.trim().length > 0;
+  return (
+    present(env.TELEGRAM_BOT_TOKEN) &&
+    present(env.TELEGRAM_CHAT_ID) &&
+    !(present(env.AIOS_TELEGRAM_BOT_TOKEN) && present(env.AIOS_TELEGRAM_CHAT_ID))
+  );
+}
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LOOP_DIST = path.join(SCRIPT_DIR, "..", "..", "dist", "operator-loop", "index.js");
 
@@ -45,12 +76,17 @@ export function isBlockingInboxItem(item) {
   );
 }
 
-function pruneRetryMap(retryAfter, eligibleIds) {
+function pruneRetryMap(retryAfter, failures, eligibleIds) {
   for (const id of retryAfter.keys()) {
     if (!eligibleIds.has(id)) retryAfter.delete(id);
   }
   while (retryAfter.size > MAX_RETRY_ENTRIES) {
     retryAfter.delete(retryAfter.keys().next().value);
+  }
+  // The failure counter only exists to shape the backoff of a pending retry; drop it in lockstep so
+  // a long-lived process cannot accumulate counters for asks that are long gone.
+  for (const id of failures.keys()) {
+    if (!retryAfter.has(id)) failures.delete(id);
   }
 }
 
@@ -86,6 +122,7 @@ export function createTelegramNotifier({
   const retryMs = boundedPositive(failureRetryMs, DEFAULT_FAILURE_RETRY_MS);
   const sendLimit = boundedPositive(maxSendsPerTick, DEFAULT_MAX_SENDS_PER_TICK, 10);
   const retryAfter = new Map();
+  const failures = new Map();
   let timer = null;
   let inFlight = null;
   const state = {
@@ -97,6 +134,29 @@ export function createTelegramNotifier({
 
   const snapshot = () => ({ ...state });
 
+  /** Exponential, capped backoff. Without it a permanently rejected send (revoked token) retries
+   *  every ask on a flat 5-minute cadence for the life of the process. */
+  const scheduleRetry = (id, atMs) => {
+    const attempt = (failures.get(id) ?? 0) + 1;
+    failures.set(id, attempt);
+    retryAfter.set(id, atMs + Math.min(MAX_FAILURE_RETRY_MS, retryMs * 2 ** (attempt - 1)));
+  };
+
+  const clearRetry = (id) => {
+    retryAfter.delete(id);
+    failures.delete(id);
+  };
+
+  /** The lane is only "failed" while something is actually waiting to go out. Once every failed ask
+   *  has been answered or archived there is nothing outstanding, so a latched failure would report a
+   *  broken lane forever — and train the operator to ignore the one indicator that matters. */
+  const settleIdleStatus = () => {
+    if (retryAfter.size > 0) return;
+    if (state.status !== "failed" && state.status !== "degraded") return;
+    state.status = state.last_delivery_at ? "delivery_ok" : "configured";
+    state.last_error = null;
+  };
+
   const runTick = async () => {
     const loop = await loadLoop();
     if (!loopAvailable(loop)) {
@@ -105,10 +165,13 @@ export function createTelegramNotifier({
       return snapshot();
     }
 
-    const cfg = loop.loadTelegramConfig(env);
+    const cfg = loop.loadTelegramConfig(scopedTelegramEnv(env));
     if (!cfg?.enabled || !cfg.token || !cfg.chatId) {
       state.status = "disabled";
-      state.last_error = null;
+      // Content-free: names the env vars to set, never a token, chat id, or ask detail.
+      state.last_error = hasUnscopedTelegramCredentials(env)
+        ? "set AIOS_TELEGRAM_BOT_TOKEN and AIOS_TELEGRAM_CHAT_ID to enable the AIOS alert lane"
+        : null;
       return snapshot();
     }
     if (state.status === "disabled" || state.status === "unavailable") {
@@ -116,11 +179,14 @@ export function createTelegramNotifier({
       state.last_error = null;
     }
 
-    const guarded = await notifyCoordinator.runExclusive(async () => {
+    // A failure to acquire means another healthy process owns send/ack coordination this tick. That
+    // is contention, not a lane failure, so there is deliberately nothing to branch on: the status
+    // is left exactly as the last tick that DID run left it.
+    await notifyCoordinator.runExclusive(async () => {
       const view = loop.buildInbox(repo);
       const eligible = view.items.filter(isBlockingInboxItem);
       const eligibleIds = new Set(eligible.map((item) => item.id));
-      pruneRetryMap(retryAfter, eligibleIds);
+      pruneRetryMap(retryAfter, failures, eligibleIds);
 
       const journal = loop.readJournalSegments(repo);
       const delivered = loop.foldNotificationState(journal.events);
@@ -131,7 +197,10 @@ export function createTelegramNotifier({
         .sort((a, b) => itemTime(a) - itemTime(b) || a.id.localeCompare(b.id))
         .slice(0, sendLimit);
 
-      if (candidates.length === 0) return;
+      if (candidates.length === 0) {
+        settleIdleStatus();
+        return;
+      }
       const appendEvent = loop.createDurableNotifyJournal(repo);
       let deliveredThisTick = false;
       let failedThisTick = false;
@@ -141,7 +210,7 @@ export function createTelegramNotifier({
         try {
           const current = loop.buildInbox(repo).items.find((row) => row.id === item.id);
           if (!isBlockingInboxItem(current)) {
-            retryAfter.delete(item.id);
+            clearRetry(item.id);
             continue;
           }
           state.last_attempt_at = attemptedAt.toISOString();
@@ -163,18 +232,18 @@ export function createTelegramNotifier({
               acked: false,
               last_ack_at: null,
             });
-            retryAfter.delete(item.id);
+            clearRetry(item.id);
             deliveredThisTick = true;
             state.last_delivery_at = attemptedAt.toISOString();
           } else if (result.status === "disabled") {
             disabledThisTick = true;
             break;
           } else {
-            retryAfter.set(item.id, attemptedAt.getTime() + retryMs);
+            scheduleRetry(item.id, attemptedAt.getTime());
             failedThisTick = true;
           }
         } catch {
-          retryAfter.set(item.id, attemptedAt.getTime() + retryMs);
+          scheduleRetry(item.id, attemptedAt.getTime());
           failedThisTick = true;
         }
       }
@@ -190,11 +259,12 @@ export function createTelegramNotifier({
       } else if (deliveredThisTick) {
         state.status = "delivery_ok";
         state.last_error = null;
+      } else {
+        // Every candidate was skipped (each had already stopped being a blocking ask).
+        settleIdleStatus();
       }
     });
 
-    // Busy means another healthy process owns send/ack coordination. It is not a lane failure.
-    if (!guarded.acquired) return snapshot();
     return snapshot();
   };
 

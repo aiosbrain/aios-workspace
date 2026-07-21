@@ -295,8 +295,14 @@ test("unknown and concurrent acknowledgments fail closed without duplicate event
   }
 });
 
-test("human acknowledgment is appended inside the ask-store lifecycle lock", async () => {
-  let underAskLock = false;
+// The ack append is serialized by the async notify coordinator ALONE. It must never also take the
+// asks-store `withLock`: that lock backs off with `sleepSync` (Atomics.wait), which on this
+// single-threaded server would stall all HTTP and WebSocket agent streaming for up to a second
+// whenever an ack raced a reply. The race it would close is benign — `overdueView` skips every
+// non-open ask, so an ack landing on a just-resolved ask changes nothing the operator sees.
+test("human acknowledgment is serialized by the notify coordinator, never the blocking ask lock", async () => {
+  let underNotifyCoordinator = false;
+  let askLockTaken = false;
   let recorded = 0;
   const id = "ask-lock-proof";
   const loop = {
@@ -325,21 +331,26 @@ test("human acknowledgment is appended inside the ask-store lifecycle lock", asy
       ]),
     createDurableNotifyJournal: () => () => {},
     recordHumanAck: () => {
-      assert.equal(underAskLock, true);
+      assert.equal(
+        underNotifyCoordinator,
+        true,
+        "ack appended outside the notify critical section"
+      );
       recorded++;
     },
     withLock: (_repo, operation) => {
-      underAskLock = true;
-      try {
-        return operation();
-      } finally {
-        underAskLock = false;
-      }
+      askLockTaken = true;
+      return operation();
     },
   };
   const notifyCoordinator = {
     async runExclusive(operation) {
-      return { acquired: true, value: await operation() };
+      underNotifyCoordinator = true;
+      try {
+        return { acquired: true, value: await operation() };
+      } finally {
+        underNotifyCoordinator = false;
+      }
     },
   };
 
@@ -349,6 +360,30 @@ test("human acknowledgment is appended inside the ask-store lifecycle lock", asy
   });
   assert.equal(result.recorded, true);
   assert.equal(recorded, 1);
+  assert.equal(askLockTaken, false, "the sleepSync asks-store lock must not be on the ack path");
+});
+
+// A lane that reports "busy" is contended, not broken: the notifier holds the coordinator for this
+// tick. The route must say so distinctly (503 + notify-busy) so the client can retry rather than
+// silently swallow it as a transport failure.
+test("ack under coordinator contention reports notify-busy, not a failure", async () => {
+  const result = await ackInboxAsk("/tmp/fixture", "ask-busy", {
+    loadLoopFn: async () => {
+      throw new Error("loop must not be loaded when the lock is unavailable");
+    },
+    notifyCoordinator: {
+      async runExclusive() {
+        return { acquired: false };
+      },
+    },
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    status: 503,
+    recorded: false,
+    reason: "notify-busy",
+    retryAfter: 1,
+  });
 });
 
 test("reconcile throttle — at most once per 30s, and an ask decision bypasses the wait", () => {
