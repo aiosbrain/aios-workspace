@@ -299,12 +299,24 @@ export async function cmdInbox(repo, cfg, args) {
     //    ONLY the fields gog transmits (To/Cc/Bcc/Subject + body); the stable reconcile marker lives
     //    in the BODY (robust to subject edits). These exact bytes are what `send` parses + transmits.
     const to = draft.request.recipients.map((r) => r.address);
-    const bytes = loop.buildGmailReplyOutboundBytes({
-      commandId: draft.command_id,
-      to,
-      subject: String(draft.message.subject ?? ""),
-      body: String(draft.message.body ?? ""),
-    });
+    let bytes;
+    try {
+      bytes = loop.buildGmailReplyOutboundBytes({
+        commandId: draft.command_id,
+        to,
+        subject: String(draft.message.subject ?? ""),
+        body: String(draft.message.body ?? ""),
+      });
+    } catch (e) {
+      // The shared builder validates the body (empty, NUL, reserved marker, >100 KiB). Report it the
+      // way every other CLI rejection reports, not as an uncaught stack trace.
+      if (e?.name !== "GmailReplyValidationError") throw e;
+      if (asJson)
+        console.log(JSON.stringify({ ok: false, reason: e.code, detail: e.message }, null, 2));
+      else console.error(c.red(`✗ draft rejected (${e.code}): ${e.message}`));
+      process.exitCode = 1;
+      return;
+    }
 
     // 3) Outbox pre-send checks on the EXACT bytes (recipient-set equality, injection, admin leak).
     const preCheck = loop.checkPreSend(

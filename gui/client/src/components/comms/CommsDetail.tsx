@@ -239,7 +239,8 @@ export function CommsDetail({
           </section>
         ) : null}
 
-        <SentSection commands={sentCommands} />
+        {/* Gmail send history belongs to a Gmail thread — an agent-ask item has none. */}
+        {item.origin === "thread-state" && <SentSection commands={sentCommands} />}
       </div>
     </div>
   );

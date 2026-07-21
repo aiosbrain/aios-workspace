@@ -1028,7 +1028,11 @@ export function createDurableOutboxJournal(root: string): AppendOutboxEvent {
     appendInboxEvent(root, {
       kind: event.kind,
       correlation_id: event.command_id,
-      payload: event.data ?? {},
+      // Stamp the lane explicitly. `isOutboxLaneJournalEvent` only falls back to payload-shape
+      // heuristics for journals written before this stamp existed; without it every untagged
+      // `action-attempt` in the journal — whatever wrote it — folds into outbox state and into the
+      // `priorEvents` that drive send idempotency.
+      payload: { lane: "outbox", ...(event.data ?? {}) },
       ...(event.at ? { ts: event.at } : {}),
     });
   };

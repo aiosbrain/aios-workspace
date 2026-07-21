@@ -37,7 +37,8 @@ function gmailItem() {
       native_id: "message-1",
       thread_id: "thread-1",
       participants: [{ id: "sender@example.test", display: null, role: "from" }],
-      snippet: "Subject",
+      snippet: "Body preview text.",
+      subject: "Subject",
       deleted: false,
       revisions: [],
       ts: "2026-07-21T00:00:00.000Z",
@@ -148,6 +149,9 @@ test("GUI confirmed send crosses identity, PDP, credential, lock, replay, and ou
       dependencies(item, trace, instrumentedLoop)
     );
     assert.equal(sent.body.ok, true);
+    // The PDP DECIDES here, but its decision is only journaled after the lock is held (see
+    // `bufferedPdpJournal`) — a refusal writes nothing, and two racing confirmations of one command
+    // cannot both record an authorization.
     assert.deepEqual(trace, [
       "identity",
       "pdp",

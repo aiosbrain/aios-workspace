@@ -676,3 +676,60 @@ describe("content-free notifications", () => {
     }
   });
 });
+
+describe("Gmail send history scoping (AIO-392 review findings)", () => {
+  const commandFor = (
+    threadRef: string,
+    state: OutboxCommand["state"] = "sent"
+  ): OutboxCommand => ({
+    command_id: `cmd-${threadRef}-${state}`,
+    state,
+    thread_ref: threadRef,
+    native_message_id: null,
+    native_thread_id: null,
+    last_attempt_at: "2026-07-21T00:00:00.000Z",
+  });
+
+  test("an agent-ask item renders no Gmail send history", () => {
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item: agentAsk("ask-1", { title: "Needs a decision", why: "blocker" }),
+          agentContext: null,
+          replyability: null,
+          pendingApprovals: [],
+          generated_at: "2026-07-21T00:00:00.000Z",
+          freshness: null,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+        sentCommands={[commandFor("gmail:native-thread-1")]}
+      />
+    );
+    // The Sent list belongs to a Gmail thread; an agent ask has none.
+    expect(html).not.toContain("Sent (");
+  });
+
+  test("only the selected thread's sends reach the detail pane", () => {
+    // CommsView scopes by thread_ref before this point; assert the contract the pane relies on.
+    const all = [
+      commandFor("gmail:native-thread-1"),
+      commandFor("gmail:other-thread"),
+      commandFor("gmail:other-thread", "reconciled"),
+    ];
+    const scoped = all.filter((c) => c.thread_ref === "gmail:native-thread-1");
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={gmailDetail(true)}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+        onReviewReply={async () => {}}
+        sentCommands={scoped}
+      />
+    );
+    expect(html).toContain("Sent (1)");
+    expect(html).not.toContain("Sent (3)");
+  });
+});

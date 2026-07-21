@@ -69,9 +69,13 @@ export function CommsView() {
   const [localCommand, setLocalCommand] = useState<OutboxCommand | null>(null);
   const [retryPlan, setRetryPlan] = useState<RetryPlan | null>(null);
   const [failedReply, setFailedReply] = useState<RecoverableReply | null>(null);
-  const [replyRecoveryError, setReplyRecoveryError] = useState<string | null>(null);
+  // Carries its own thread ref: a recovery message can outlive `failedReply` (an uncertain send holds
+  // outcome_unknown rather than failing), so it cannot be scoped by that state.
+  const [replyRecovery, setReplyRecovery] = useState<{
+    threadRef: string;
+    message: string;
+  } | null>(null);
   const [replyResetKey, setReplyResetKey] = useState(0);
-  const [, setOutboxError] = useState<string | null>(null);
 
   const seenBlocking = useRef<Set<string> | null>(null);
   const selectedRef = useRef<string | null>(null);
@@ -135,11 +139,10 @@ export function CommsView() {
     try {
       const next = await fetchOutbox(api);
       setOutbox((current) => retainLastGood(current, { ok: true, value: next }));
-      setOutboxError(null);
-    } catch (outboxFailure) {
+    } catch {
       // Independent from inbox polling: keep the last-good outbox projection and leave the queue live.
+      // Send status is already surfaced per-command, so a poll blip needs no separate banner.
       setOutbox((current) => retainLastGood(current, { ok: false }));
-      setOutboxError((outboxFailure as Error).message);
     }
   }, [api]);
 
@@ -221,7 +224,7 @@ export function CommsView() {
       setReplyThreadRef(threadRef);
       setReplyDialogError(null);
       setFailedReply(null);
-      setReplyRecoveryError(null);
+      setReplyRecovery(null);
     },
     [api, detail]
   );
@@ -233,7 +236,7 @@ export function CommsView() {
       attempts: number,
       fromDialog: boolean
     ) => {
-      setReplyRecoveryError(null);
+      setReplyRecovery(null);
       if (fromDialog) {
         setReplyDialogBusy(true);
         setReplyDialogError(null);
@@ -265,7 +268,7 @@ export function CommsView() {
           setReplyThreadRef(null);
           setRetryPlan(null);
           setFailedReply(null);
-          setReplyRecoveryError(null);
+          setReplyRecovery(null);
           setReplyResetKey((value) => value + 1);
           void load();
           void loadOutbox();
@@ -319,16 +322,21 @@ export function CommsView() {
           setReplyDialogError((sendError as Error).message);
           return;
         }
+        // A transport/HTTP error on a BACKGROUND retry says nothing about whether the earlier attempt
+        // reached Gmail — this path is only ever entered from `outcome_unknown`. Calling it "failed"
+        // would both contradict the reconcile-first design and offer a Try again that duplicates a
+        // message that may already have been delivered. Hold outcome_unknown and stop retrying.
         setLocalCommand({
           command_id: snapshot.command_id,
-          state: "failed",
+          state: "outcome_unknown",
           thread_ref: threadRef,
           native_message_id: null,
           native_thread_id: null,
           last_attempt_at: new Date().toISOString(),
         });
-        setRetryPlan(null);
-        setFailedReply({ snapshot, threadRef });
+        setRetryPlan({ snapshot, threadRef, attempts, retryAt, exhausted: true });
+        setFailedReply(null);
+        setReplyRecovery({ threadRef, message: (sendError as Error).message });
       } finally {
         if (fromDialog) setReplyDialogBusy(false);
       }
@@ -356,7 +364,7 @@ export function CommsView() {
     setRetryPlan(null);
     setLocalCommand(terminal);
     setFailedReply(null);
-    setReplyRecoveryError(null);
+    setReplyRecovery(null);
     setReplyResetKey((value) => value + 1);
   }, [outbox, retryPlan]);
 
@@ -372,15 +380,20 @@ export function CommsView() {
   const selectedCommand = durableCompletesLocal
     ? durableCommand
     : (localForThread ?? durableCommand);
-  const durableSentCommands =
-    outbox?.commands.filter(
-      (command) => command.state === "sent" || command.state === "reconciled"
-    ) ?? [];
+  // Scoped to the selected thread: the Sent list belongs to the message being read, not to every
+  // Gmail thread the workspace has ever replied to.
+  const durableSentCommands = selectedThreadRef
+    ? (outbox?.commands.filter(
+        (command) =>
+          command.thread_ref === selectedThreadRef &&
+          (command.state === "sent" || command.state === "reconciled")
+      ) ?? [])
+    : [];
   const sentCommands =
-    localCommand &&
-    (localCommand.state === "sent" || localCommand.state === "reconciled") &&
-    !durableSentCommands.some((command) => command.command_id === localCommand.command_id)
-      ? [localCommand, ...durableSentCommands]
+    localForThread &&
+    (localForThread.state === "sent" || localForThread.state === "reconciled") &&
+    !durableSentCommands.some((command) => command.command_id === localForThread.command_id)
+      ? [localForThread, ...durableSentCommands]
       : durableSentCommands;
   const canTryReplyAgain =
     selectedCommand?.state === "failed" &&
@@ -410,7 +423,7 @@ export function CommsView() {
           replyResetKey={replyResetKey}
           recoveryExhausted={recoveryExhausted}
           replyRecoveryError={
-            failedReply?.threadRef === selectedThreadRef ? replyRecoveryError : null
+            replyRecovery?.threadRef === selectedThreadRef ? replyRecovery.message : null
           }
           onReviewReply={onReviewReply}
           onTryReplyAgain={
@@ -418,7 +431,10 @@ export function CommsView() {
               ? () => {
                   void onReviewReply(failedReply.snapshot.itemId, failedReply.snapshot.body).catch(
                     (reviewError) => {
-                      setReplyRecoveryError((reviewError as Error).message);
+                      setReplyRecovery({
+                        threadRef: failedReply.threadRef,
+                        message: (reviewError as Error).message,
+                      });
                     }
                   );
                 }

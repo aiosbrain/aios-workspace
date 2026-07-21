@@ -8,7 +8,15 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import type { InboxItem } from "./cli.js";
 import type { ProjectedItem } from "./observations.js";
@@ -51,6 +59,7 @@ export type GmailReplyErrorCode =
   | "missing-thread-id"
   | "missing-account"
   | "missing-tenant"
+  | "missing-subject"
   | "account-mismatch"
   | "invalid-sender"
   | "empty-body"
@@ -155,7 +164,13 @@ export function configuredGmailAccount(env: NodeJS.ProcessEnv = process.env): st
   return required(env.GOG_ACCOUNT) || "primary";
 }
 
-/** Sanitize and bound the Gmail subject without allowing a header delimiter through. */
+/**
+ * Sanitize and bound the Gmail subject without allowing a header delimiter through.
+ *
+ * The input MUST be the observation's native subject. It is deliberately NOT the observation's
+ * `snippet` — that field is a BODY excerpt (see `toRankInput`, which maps `snippet` to `body`), and
+ * replying with it would put message body text in the Subject header of every reply.
+ */
 export function deriveGmailReplySubject(subject: unknown): string {
   const cleaned = (typeof subject === "string" ? subject : "").replace(/[\r\n]+/gu, " ").trim();
   const reply = cleaned
@@ -196,16 +211,28 @@ export function gmailReplyCommandMarker(commandId: string): string {
   return `${RESERVED_OUTBOX_MARKER}${commandId}`;
 }
 
-/** Build the exact RFC822-shaped bytes consumed by both `checkPreSend` and the GOG adapter. */
+/**
+ * Build the exact RFC822-shaped bytes consumed by both `checkPreSend` and the GOG adapter.
+ *
+ * Cc/Bcc are carried because `parseOutboundMessage` + `checkPreSend` both validate those headers and
+ * the GOG adapter builds `--cc`/`--bcc` argv from them. The GUI reply path never populates them (the
+ * browser cannot choose recipients), but the CLI draft path may.
+ */
 export function buildGmailReplyOutboundBytes(input: {
   commandId: string;
   to: readonly string[];
+  cc?: readonly string[];
+  bcc?: readonly string[];
   subject: string;
   body: string;
 }): string {
   validateGmailReplyBody(input.body);
+  const headers = [`To: ${input.to.join(", ")}`];
+  if (input.cc?.length) headers.push(`Cc: ${input.cc.join(", ")}`);
+  if (input.bcc?.length) headers.push(`Bcc: ${input.bcc.join(", ")}`);
+  headers.push(`Subject: ${input.subject}`);
   const footer = `\n\n-- \n${gmailReplyCommandMarker(input.commandId)}`;
-  return `To: ${input.to.join(", ")}\nSubject: ${input.subject}\n\n${input.body}${footer}\n`;
+  return `${headers.join("\n")}\n\n${input.body}${footer}\n`;
 }
 
 /** Validate item provenance and derive every immutable Gmail destination field server-side. */
@@ -237,6 +264,7 @@ export function deriveGmailReplyIdentity(
   const threadId = required(observation.thread_id);
   const account = required(observation.account);
   const tenant = required(observation.tenant);
+  const nativeSubject = required(observation.subject);
   if (!nativeId) {
     throw new GmailReplyValidationError("missing-native-id", "Gmail message identity is missing.");
   }
@@ -248,6 +276,15 @@ export function deriveGmailReplyIdentity(
   }
   if (!tenant) {
     throw new GmailReplyValidationError("missing-tenant", "Gmail tenant identity is missing.");
+  }
+  // Fail closed rather than fall back to `snippet`: the snippet is a body excerpt, so substituting it
+  // would send body text as the Subject header. An item whose adapter carried no subject is simply
+  // not natively replyable and falls back to the "Open in Gmail" affordance.
+  if (!nativeSubject) {
+    throw new GmailReplyValidationError(
+      "missing-subject",
+      "This message does not carry a verified Gmail subject."
+    );
   }
   const connectionId = required(observation.connection_id);
   if (connectionId !== `gog:${account}`) {
@@ -292,7 +329,7 @@ export function deriveGmailReplyIdentity(
     thread_id: threadId,
     thread_ref: threadRef,
     recipients,
-    subject: deriveGmailReplySubject(observation.snippet),
+    subject: deriveGmailReplySubject(nativeSubject),
   };
 }
 
@@ -518,13 +555,30 @@ function readLock(lockPath: string): { token?: string; pid?: number; created_at?
   }
 }
 
-function removeLockIfTokenMatches(lockPath: string, token: string): void {
-  const current = readLock(lockPath);
-  if (current?.token !== token) return;
+function unlinkLock(lockPath: string): void {
   try {
     unlinkSync(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function removeLockIfTokenMatches(lockPath: string, token: string): void {
+  const current = readLock(lockPath);
+  if (current?.token !== token) return;
+  unlinkLock(lockPath);
+}
+
+/**
+ * Age of a lock whose contents we could not read. `openSync(…, "wx")` creates the file BEFORE it is
+ * written, so a crash in between leaves a zero-byte lock with no token — falling back to mtime is
+ * what keeps that from wedging the command forever.
+ */
+function lockAgeMsFromMtime(lockPath: string, nowMs: number): number {
+  try {
+    return nowMs - statSync(lockPath).mtimeMs;
+  } catch {
+    return Number.POSITIVE_INFINITY;
   }
 }
 
@@ -566,10 +620,20 @@ export function acquireOutboxCommandLock(
       if (fd != null) closeSync(fd);
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const holder = readLock(lockPath);
-      const createdAt = holder?.created_at ? Date.parse(holder.created_at) : Number.NaN;
+      if (!holder?.token) {
+        // An unreadable/zero-byte lock carries no owner to compare against, so token-matched removal
+        // can never reclaim it. Age it by mtime instead and unlink once stale — otherwise a crash
+        // between create and write wedges this command permanently.
+        if (lockAgeMsFromMtime(lockPath, now()) > staleMs) {
+          unlinkLock(lockPath);
+          continue;
+        }
+        throw new OutboxSendInProgressError();
+      }
+      const createdAt = holder.created_at ? Date.parse(holder.created_at) : Number.NaN;
       const stale = !Number.isFinite(createdAt) || now() - createdAt > staleMs;
-      const dead = !holder?.pid || !processIsAlive(holder.pid);
-      if ((stale || dead) && holder?.token) {
+      const dead = !holder.pid || !processIsAlive(holder.pid);
+      if (stale || dead) {
         removeLockIfTokenMatches(lockPath, holder.token);
         continue;
       }

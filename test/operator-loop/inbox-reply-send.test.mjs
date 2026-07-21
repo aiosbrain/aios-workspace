@@ -32,7 +32,8 @@ function item(overrides = {}, observationOverrides = {}) {
         { id: "sender@example.test", display: "Duplicate", role: "from" },
         { id: "other@example.test", display: "Other", role: "to" },
       ],
-      snippet: "Quarterly review",
+      snippet: "Hi there, please see the numbers attached before Friday.",
+      subject: "Quarterly review",
       deleted: false,
       revisions: [{ op: "create", revision: 0, ts: "2026-07-21T00:00:00.000Z" }],
       ts: "2026-07-21T00:00:00.000Z",
@@ -170,7 +171,7 @@ test("confirmation digest changes with body, recipient, subject, account, item, 
   const variants = [
     draft(item(), "different body"),
     draft(item({}, { participants: [{ id: "other@example.test", role: "from" }] })),
-    draft(item({}, { snippet: "Different subject" })),
+    draft(item({}, { subject: "Different subject" })),
     draft(item({ account: "secondary" }, { account: "secondary", connection_id: "gog:secondary" })),
     draft(item({ id: "thread-item-2" })),
     draft(item({}, { thread_id: "thread-2" })),
@@ -198,6 +199,122 @@ test("command lock rejects a live holder, recovers stale/dead owners, and releas
     assert.equal(readFileSync(second.path, "utf8").includes("replacement-token"), true);
     const recovered = loop.acquireOutboxCommandLock(root, COMMAND);
     recovered.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the reply subject comes from the native subject, never from the body snippet", () => {
+  // `snippet` is a BODY excerpt (`toRankInput` maps it to `body`). Deriving the subject from it would
+  // put message body text in the Subject header of every reply.
+  const built = draft(
+    item({}, { subject: "Quarterly review", snippet: "Hi there, numbers attached before Friday." })
+  );
+  assert.equal(built.subject, "Re: Quarterly review");
+  assert.ok(built.exact_outbound_bytes.includes("Subject: Re: Quarterly review\n"));
+  assert.equal(built.exact_outbound_bytes.includes("numbers attached"), false);
+});
+
+test("an item carrying no native subject is not replyable rather than falling back to the snippet", () => {
+  for (const missing of [undefined, null, "", "   "]) {
+    const current = item({}, { subject: missing });
+    assert.throws(
+      () => loop.deriveGmailReplyIdentity(current, "primary"),
+      (error) => error instanceof loop.GmailReplyValidationError && error.code === "missing-subject"
+    );
+    assert.deepEqual(loop.isGmailReplyable(current, "primary"), {
+      replyable: false,
+      code: "missing-subject",
+    });
+  }
+});
+
+test("outbound bytes carry Cc/Bcc so the pre-send check and GOG argv stay in agreement", () => {
+  const bytes = loop.buildGmailReplyOutboundBytes({
+    commandId: COMMAND,
+    to: ["a@example.test"],
+    cc: ["c@example.test"],
+    bcc: ["b@example.test"],
+    subject: "Re: Hello",
+    body: "Body",
+  });
+  assert.ok(
+    bytes.startsWith(
+      "To: a@example.test\nCc: c@example.test\nBcc: b@example.test\nSubject: Re: Hello\n"
+    )
+  );
+  const parsed = loop.parseOutboundMessage(bytes);
+  assert.deepEqual(parsed.cc, ["c@example.test"]);
+  assert.deepEqual(parsed.bcc, ["b@example.test"]);
+  // Omitting them keeps the original To/Subject-only shape byte-for-byte.
+  const plain = loop.buildGmailReplyOutboundBytes({
+    commandId: COMMAND,
+    to: ["a@example.test"],
+    subject: "Re: Hello",
+    body: "Body",
+  });
+  assert.ok(plain.startsWith("To: a@example.test\nSubject: Re: Hello\n\nBody"));
+});
+
+test("a zero-byte lock left by a crash between create and write is reclaimed once stale", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aio392-lock-corrupt-"));
+  try {
+    const held = loop.acquireOutboxCommandLock(root, COMMAND);
+    // Exactly what `openSync(path, "wx")` leaves behind if the process dies before it writes.
+    writeFileSync(held.path, "", "utf8");
+
+    // Still fresh: an unreadable lock must not be stolen from a peer that may be mid-send.
+    assert.throws(
+      () => loop.acquireOutboxCommandLock(root, COMMAND, { staleMs: 60_000 }),
+      (error) => error instanceof loop.OutboxSendInProgressError
+    );
+
+    // Past the stale window it is reclaimed by mtime — without this the command wedges forever.
+    const recovered = loop.acquireOutboxCommandLock(root, COMMAND, { staleMs: -1 });
+    recovered.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durable outbox events are stamped lane:outbox so foreign action-attempts never fold in", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aio392-lane-"));
+  try {
+    loop.createDurableOutboxJournal(root)({
+      kind: "action-attempt",
+      command_id: COMMAND,
+      at: "2026-07-21T00:00:00.000Z",
+      data: { attempt: 1 },
+    });
+    const written = loop
+      .readJournalSegments(root)
+      .events.filter((e) => e.kind === "action-attempt");
+    assert.equal(written.length, 1);
+    assert.equal(written[0].payload.lane, "outbox");
+    assert.equal(written[0].payload.attempt, 1);
+    assert.equal(loop.isOutboxLaneJournalEvent(written[0]), true);
+
+    // An action-attempt belonging to any other lane must not reach the outbox fold — it would
+    // otherwise enter `priorEvents` and corrupt send idempotency.
+    assert.equal(
+      loop.isOutboxLaneJournalEvent({
+        kind: "action-attempt",
+        correlation_id: COMMAND,
+        ts: "2026-07-21T00:00:00.000Z",
+        payload: { lane: "agent" },
+      }),
+      false
+    );
+    // Pre-stamp journals keep replaying through the documented back-compat heuristic.
+    assert.equal(
+      loop.isOutboxLaneJournalEvent({
+        kind: "action-attempt",
+        correlation_id: COMMAND,
+        ts: "2026-07-21T00:00:00.000Z",
+        payload: {},
+      }),
+      true
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

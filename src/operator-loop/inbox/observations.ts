@@ -448,11 +448,26 @@ export interface ProjectedItem {
   thread_id: string | null;
   participants: ObservationParticipant[];
   snippet: string | null;
+  /**
+   * The native subject line, when the adapter carried one in `metadata.subject`. Distinct from
+   * `snippet`, which is a BODY excerpt — the reply path needs the real subject and must fail closed
+   * rather than substitute the body preview.
+   */
+  subject: string | null;
   deleted: boolean;
   revisions: ObservationRevision[];
   ts: string;
   /** Where the item's identity came from: an enriched observation, or a legacy-only record. */
   origin: "enriched" | "legacy";
+}
+
+/** Read a non-empty `metadata.subject` off an observation, or null when the adapter carried none. */
+export function observationSubject(
+  metadata: Record<string, unknown> | null | undefined
+): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const raw = metadata.subject;
+  return typeof raw === "string" && raw.trim() ? raw : null;
 }
 
 /** Map a legacy `source` + `ref` to a scope-free object identity, or null if unmappable. Mirrors the
@@ -529,6 +544,7 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
         thread_id: o.thread_id,
         participants: o.participants,
         snippet: o.snippet,
+        subject: observationSubject(o.metadata),
         deleted: false,
         revisions: [],
         ts: o.ts,
@@ -547,6 +563,7 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
     } else {
       if (o.participants.length) item.participants = o.participants;
       item.snippet = o.snippet ?? item.snippet;
+      item.subject = observationSubject(o.metadata) ?? item.subject;
     }
   }
 
@@ -570,6 +587,7 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
       thread_id: null,
       participants: [],
       snippet: typeof rec.summary === "string" ? rec.summary : null,
+      subject: null,
       deleted: false,
       revisions: [{ op: "create", revision: 0, ts }],
       ts,

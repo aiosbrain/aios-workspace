@@ -21,6 +21,7 @@
         "thread_id": null,
         "participants": [],
         "snippet": "alice@acme.com:msg-2",
+        "subject": null,
         "deleted": false,
         "revisions": [
           {
@@ -54,6 +55,7 @@
         "thread_id": null,
         "participants": [],
         "snippet": "bob@acme.com:msg-1",
+        "subject": null,
         "deleted": false,
         "revisions": [
           {
@@ -87,6 +89,7 @@
         "thread_id": null,
         "participants": [],
         "snippet": "alice@acme.com:msg-1",
+        "subject": null,
         "deleted": false,
         "revisions": [
           {
@@ -120,6 +123,7 @@
         "thread_id": null,
         "participants": [],
         "snippet": "legacy record",
+        "subject": null,
         "deleted": false,
         "revisions": [
           {

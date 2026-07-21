@@ -13,6 +13,10 @@ const DIGEST_RE = /^[0-9a-f]{64}$/i;
 // Includes JSON framing, command id, and digest while keeping the only large field (body) at 100 KiB.
 export const REPLY_REQUEST_MAX_BYTES = 112 * 1024;
 
+// The outbox projection is newest-first; the UI needs the active command plus recent sent history,
+// not the journal's entire lifetime.
+export const OUTBOX_PROJECTION_LIMIT = 50;
+
 let loopPromise;
 export function loadOutboxLoop() {
   if (!loopPromise) loopPromise = import(pathToFileURL(LOOP_DIST).href).catch(() => null);
@@ -150,14 +154,31 @@ export async function replyCheck(repo, id, payload, deps = {}) {
   }
 }
 
-function durablePdpJournal(loop, repo, commandId, threadRef) {
+/**
+ * Buffer the PDP's decision records and write them only once the command lock is held.
+ *
+ * Deciding and recording are separated for two reasons: a reply the PDP refuses leaves no durable
+ * trace at all (it was never authorized), and two racing confirmations of one command can't both
+ * write a `pdp-decision` row — which matters because `projectOutboxCommands` joins each command's
+ * thread_ref from exactly those rows.
+ */
+function bufferedPdpJournal(loop, repo, commandId, threadRef) {
+  const pending = [];
   return {
-    record(event) {
-      loop.appendInboxEvent(repo, {
-        kind: "pdp-decision",
-        correlation_id: commandId,
-        payload: { lane: "outbox", thread_ref: threadRef, ...event },
-      });
+    sink: {
+      record(event) {
+        pending.push(event);
+      },
+    },
+    flush() {
+      for (const event of pending) {
+        loop.appendInboxEvent(repo, {
+          kind: "pdp-decision",
+          correlation_id: commandId,
+          payload: { lane: "outbox", thread_ref: threadRef, ...event },
+        });
+      }
+      pending.length = 0;
     },
   };
 }
@@ -207,10 +228,9 @@ export async function replySend(repo, id, payload, deps = {}) {
     };
   }
 
-  const preparation = loop.prepareGmailReply(
-    draft,
-    durablePdpJournal(loop, repo, draft.command_id, draft.thread_ref)
-  );
+  // Decide now (side-effect-free), record under the lock. A refusal never touches the journal.
+  const pdpJournal = bufferedPdpJournal(loop, repo, draft.command_id, draft.thread_ref);
+  const preparation = loop.prepareGmailReply(draft, pdpJournal.sink);
   if (!preparation.ok) {
     return {
       status: 409,
@@ -254,6 +274,9 @@ export async function replySend(repo, id, payload, deps = {}) {
   }
 
   try {
+    // The authorization record lands here, under the lock, not at decision time.
+    pdpJournal.flush();
+
     // The final replay happens after lock acquisition and the lock remains held through both GOG calls.
     const journalRead = loop.readJournalSegments(repo);
     const priorEvents = journalRead.events
@@ -341,7 +364,7 @@ export async function replySend(repo, id, payload, deps = {}) {
   }
 }
 
-/** Content-free durable outbox projection. */
+/** Content-free durable outbox projection, bounded so a long-lived journal can't grow the payload. */
 export async function getOutbox(repo, deps = {}) {
   const loop = deps.loop ?? (await (deps.loadLoop ?? loadOutboxLoop)());
   if (!loop) {
@@ -350,12 +373,17 @@ export async function getOutbox(repo, deps = {}) {
       body: { ok: false, error: "The compiled inbox send pipeline is unavailable." },
     };
   }
-  const commands = loop.projectOutboxCommands(loop.readJournalSegments(repo).events);
+  const all = loop.projectOutboxCommands(loop.readJournalSegments(repo).events);
+  // Already sorted newest-first by last_attempt_at. The UI only ever needs the active command plus
+  // recent sent history; older commands stay in the journal and remain readable via the inbox CLI.
+  const commands = all.slice(0, OUTBOX_PROJECTION_LIMIT);
   return {
     status: 200,
     body: {
       commands,
       count: commands.length,
+      total: all.length,
+      truncated: all.length > commands.length,
       generated_at: new Date((deps.now ?? Date.now)()).toISOString(),
     },
   };

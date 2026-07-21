@@ -6,6 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import * as loop from "../../dist/operator-loop/index.js";
 import {
+  OUTBOX_PROJECTION_LIMIT,
   REPLY_REQUEST_MAX_BYTES,
   getOutbox,
   handleOutboxApi,
@@ -38,7 +39,8 @@ function inboxItem(overrides = {}) {
       native_id: "message-1",
       thread_id: "native-thread-1",
       participants: [{ id: "sender@example.test", display: "Sender", role: "from" }],
-      snippet: "Current subject",
+      snippet: "Body preview that must never become the subject.",
+      subject: "Current subject",
       deleted: false,
       revisions: [],
       ts: "2026-07-21T00:00:00.000Z",
@@ -391,4 +393,39 @@ test("routes are token-gated, claim reply paths before generic detail, and retur
   });
   assert.equal(invalid.claimed, true);
   assert.equal(invalid.status, 400);
+});
+
+test("the outbox projection is bounded and reports what it truncated", async () => {
+  const repo = workspace();
+  try {
+    const total = OUTBOX_PROJECTION_LIMIT + 5;
+    const journal = loop.createDurableOutboxJournal(repo);
+    for (let i = 0; i < total; i += 1) {
+      journal({
+        kind: "action-attempt",
+        command_id: `command-${String(i).padStart(3, "0")}`,
+        // Ascending timestamps: the projection sorts newest-first, so the newest must survive.
+        at: new Date(Date.UTC(2026, 6, 21, 0, i)).toISOString(),
+        data: { attempt: 1 },
+      });
+    }
+
+    const result = await getOutbox(repo, { loop, now: () => 1_750_000_000_000 });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.commands.length, OUTBOX_PROJECTION_LIMIT);
+    assert.equal(result.body.count, OUTBOX_PROJECTION_LIMIT);
+    assert.equal(result.body.total, total);
+    assert.equal(result.body.truncated, true);
+    // Newest-first: the most recent command is kept and the oldest is the one dropped.
+    assert.equal(
+      result.body.commands[0].command_id,
+      `command-${String(total - 1).padStart(3, "0")}`
+    );
+    assert.equal(
+      result.body.commands.some((command) => command.command_id === "command-000"),
+      false
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

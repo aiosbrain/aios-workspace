@@ -109,8 +109,11 @@ export interface OutboxCommand {
 }
 
 export interface OutboxView {
+  /** Newest-first and server-bounded; `truncated` marks older commands left in the journal. */
   commands: OutboxCommand[];
   count: number;
+  total?: number;
+  truncated?: boolean;
   generated_at: string;
 }
 
