@@ -30,17 +30,9 @@
 
 import os from "node:os";
 import path from "node:path";
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  lstatSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, sha256, UpdateError, gitEnv } from "./cli-common.mjs";
+import { c, sha256, UpdateError, gitEnv, safeReal } from "./cli-common.mjs";
 
 /** Run git in `dir`; returns trimmed stdout. Throws on non-zero (caller may catch).
  *  `opts` passes through to execFileSync (used for `timeout` on network probes).
@@ -78,13 +70,6 @@ function gitSafe(dir, gitArgs) {
  * represent a non-git tree), so refuse honestly and up front.
  */
 export function assertGitToolkitSource(dir) {
-  const real = (p) => {
-    try {
-      return realpathSync(p);
-    } catch {
-      return path.resolve(p);
-    }
-  };
   let top;
   try {
     top = git(dir, ["rev-parse", "--show-toplevel"]);
@@ -95,7 +80,7 @@ export function assertGitToolkitSource(dir) {
         `  Clone it instead (git clone <toolkit repo>), or point --from/AIOS_TOOLKIT_DIR at a real checkout.`
     );
   }
-  if (real(top) !== real(dir)) {
+  if (safeReal(top) !== safeReal(dir)) {
     throw new UpdateError(
       `the toolkit source at ${dir} is not itself a git checkout — it sits inside the repository ` +
         `at ${top}, and running git operations there (stash/fetch/snapshot) would act on that ` +
@@ -204,44 +189,75 @@ function staleLocalStatus(dir, upstreamName) {
   };
 }
 
-/** The one implementation of "the remote couldn't be queried — classify from the stale
- *  local tracking ref": diverged when local-only commits are POSITIVELY present, hard-block
- *  (local-status-error) when the estimate itself failed (missing tracking ref — divergence
- *  can't be ruled out), unreachable only when the estimate positively shows no local-only
- *  commits. Shared by the apply-mode fetch catch and the readonly ls-remote catch so the
- *  offline-divergence rule can never drift between them. */
-function offlineFallbackState(dir, branch, upstreamName, warn) {
+/**
+ * THE one implementation of "a verified count wasn't available — classify from the stale
+ * local tracking ref". Two callers reach this from different directions (the apply-mode
+ * fetch catch / readonly ls-remote catch, and the readonly rev-list-count catch), and the
+ * RULE must be identical for both, because the thing it decides is identical: can
+ * local-only commits be ruled out?
+ *
+ *   ahead > 0     → `diverged`             (local-only commits POSITIVELY present)
+ *   ahead === null → `local-status-error`  (the estimate itself failed — divergence can't
+ *                                           be ruled out, so fail closed)
+ *   otherwise      → null                  (positively no local-only commits; the caller
+ *                                           decides what "no divergence" means in its
+ *                                           context — unreachable vs. behind)
+ *
+ * Only the caller-specific colouring is parameterized (`detail`, an optional `warn`): the
+ * verdict is not. Do not re-inline this — the two copies it replaces had already drifted
+ * in message text, which is exactly how the underlying rule drifts next.
+ */
+function staleAheadTriage(dir, branch, upstreamName, { detail, warn } = {}) {
   const stale = staleLocalStatus(dir, upstreamName);
   // A local commit not on the last-known remote state is real divergence regardless of
   // network reachability — never silently vendor from it just because we're offline.
   if (stale.ahead > 0) {
     return {
-      state: "diverged",
-      branch,
-      upstream: upstreamName,
-      behind: stale.behind ?? 0,
-      ahead: stale.ahead,
+      verdict: {
+        state: "diverged",
+        branch,
+        upstream: upstreamName,
+        behind: stale.behind ?? 0,
+        ahead: stale.ahead,
+      },
+      stale,
     };
   }
-  // ahead === null: the divergence estimate itself failed (tracking ref missing — e.g.
-  // pruned by an earlier fetch while the upstream branch was renamed). With the remote
-  // also unreachable there is now NO evidence ruling out local-only commits; "unreachable"
-  // would let apply proceed and vendor a possibly-diverged checkout. Fail closed instead.
+  // The divergence estimate itself failed (tracking ref missing — e.g. pruned by an
+  // earlier fetch while the upstream branch was renamed). There is now NO evidence ruling
+  // out local-only commits, so anything that lets apply proceed would vendor a
+  // possibly-diverged checkout. Fail closed.
   if (stale.ahead === null) {
-    warn(
-      c.yellow(
-        "  …and the local tracking ref is missing, so local-only commits can't be ruled out."
-      )
-    );
+    warn?.();
     return {
-      state: "local-status-error",
-      branch,
-      upstream: upstreamName,
-      behind: null,
-      ahead: 0,
-      detail: "the remote is unreachable and the local tracking ref is missing",
+      verdict: {
+        state: "local-status-error",
+        branch,
+        upstream: upstreamName,
+        behind: null,
+        ahead: 0,
+        detail,
+      },
+      stale,
     };
   }
+  return { verdict: null, stale };
+}
+
+/** The remote couldn't be queried at all: triage against the stale ref, and when it
+ *  positively shows no local-only commits, report `unreachable` (carrying the stale behind
+ *  estimate so callers can say "possibly N behind" without claiming it as verified). */
+function offlineFallbackState(dir, branch, upstreamName, warn) {
+  const { verdict, stale } = staleAheadTriage(dir, branch, upstreamName, {
+    detail: "the remote is unreachable and the local tracking ref is missing",
+    warn: () =>
+      warn(
+        c.yellow(
+          "  …and the local tracking ref is missing, so local-only commits can't be ruled out."
+        )
+      ),
+  });
+  if (verdict) return verdict;
   return {
     state: "unreachable",
     branch,
@@ -285,36 +301,21 @@ function classifyAgainst(
     counts = git(dir, ["rev-list", "--left-right", "--count", `${remoteSha}...HEAD`]);
   } catch {
     if (checkStaleAheadOnCountFailure) {
-      const stale = staleLocalStatus(dir, upstreamName);
-      if (stale.ahead > 0) {
-        return {
-          state: "diverged",
-          branch,
-          upstream: upstreamName,
-          behind: stale.behind ?? 0,
-          ahead: stale.ahead,
-        };
-      }
-      // stale.ahead === null: the estimate itself failed (tracking ref pruned/missing), so
-      // local-only commits can't be ruled out. This used to fall through to a plain
-      // "behind" (applyAllowed true) on the theory that apply re-verifies — but that
-      // produced the exact offered-then-refused sequence the consolidation exists to
-      // eliminate: readonly said "behind", onboarding offered the apply, apply's real
-      // fetch restored the ref and hard-refused as diverged AFTER the user confirmed.
-      // Fail closed here too; apply's own fetch is the documented way to resolve it.
-      if (stale.ahead === null) {
-        return {
-          state: "local-status-error",
-          branch,
-          upstream: upstreamName,
-          behind: null,
-          ahead: 0,
-          detail:
-            "the remote is reachable but the local tracking ref is missing, so local-only " +
-            "commits can't be ruled out — run `git fetch` in the toolkit checkout (a real " +
-            "`aios update` apply fetches automatically)",
-        };
-      }
+      // Same triage as the offline path, via the same helper — the rule ("can local-only
+      // commits be ruled out?") is identical; only the diagnosis differs, because here the
+      // remote IS reachable and it's the local ref that's missing. A null estimate used to
+      // fall through to a plain "behind" (applyAllowed true) on the theory that apply
+      // re-verifies — but that produced the exact offered-then-refused sequence the
+      // consolidation exists to eliminate: readonly said "behind", onboarding offered the
+      // apply, apply's real fetch restored the ref and hard-refused as diverged AFTER the
+      // user confirmed. Fail closed here too.
+      const { verdict } = staleAheadTriage(dir, branch, upstreamName, {
+        detail:
+          "the remote is reachable but the local tracking ref is missing, so local-only " +
+          "commits can't be ruled out — run `git fetch` in the toolkit checkout (a real " +
+          "`aios update` apply fetches automatically)",
+      });
+      if (verdict) return verdict;
     }
     return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
   }

@@ -234,3 +234,36 @@ test("R7-2: the confirmed apply is pinned to exactly the previewed state (--no-p
   assert.equal(infos.length, 1, "the user is told the toolkit itself is still behind");
   assert.match(infos[0], /behind its remote/);
 });
+
+test("AIO-466: the upgrade offer is fail-closed — a preview without an explicit applyAllowed:true never offers", async () => {
+  for (const [label, previewResult] of [
+    ["missing applyAllowed", { reasons: [], srcHead: "abc123" }],
+    ["undefined applyAllowed", { applyAllowed: undefined, reasons: [] }],
+    ["truthy-but-not-true", { applyAllowed: "yes", reasons: [] }],
+  ]) {
+    const { clack, warnings } = fakeClack();
+    let confirmed = false;
+    let applied = false;
+    const cmdUpdate = async (repo, cfg, args) => {
+      if (args[0] === "--preview") return previewResult;
+      applied = true;
+      return { exitStatus: 0, applied: true, changedCount: 1, reasons: [] };
+    };
+    await runToolkitUpgrade(
+      "/ws",
+      {},
+      { toolkit: { path: "/tk", git: { dirty: false }, relation: "behind" } },
+      {
+        confirm: async () => {
+          confirmed = true;
+          return true;
+        },
+        clack,
+        cmdUpdate,
+      }
+    );
+    assert.equal(confirmed, false, `${label}: the apply must never even be offered`);
+    assert.equal(applied, false, `${label}: nothing is applied`);
+    assert.equal(warnings.length, 1, `${label}: the skip is explained`);
+  }
+});

@@ -32,13 +32,13 @@ import {
   writeFileSync,
   renameSync,
   mkdirSync,
-  realpathSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseJsonl } from "./analyze/parse-claude.mjs";
 import { discoverClaude } from "./analyze/sources.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
+import { safeReal } from "./cli-common.mjs";
 
 // Local ANSI helper (mirrors aios.mjs `c`; relay-core's `c` omits bold).
 const c = {
@@ -159,15 +159,6 @@ export function classifyCommand(command) {
   const prefix = commandPrefix(command);
   if (!prefix) return { kind: "complex" };
   return { kind: "propose", prefix, entry: `Bash(${prefix}:*)` };
-}
-
-function safeReal(p) {
-  if (!p) return null;
-  try {
-    return realpathSync(p);
-  } catch {
-    return path.resolve(p);
-  }
 }
 
 function walkJsonl(dir, out = []) {
