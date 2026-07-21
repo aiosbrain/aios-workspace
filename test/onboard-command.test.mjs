@@ -201,3 +201,36 @@ test("no toolkit found at all: no-op, zero calls, zero warnings", async () => {
   assert.equal(called, false);
   assert.deepEqual(warnings, []);
 });
+
+test("R7-2: the confirmed apply is pinned to exactly the previewed state (--no-pull + --expect-src-head)", async () => {
+  const { clack, warnings } = fakeClack();
+  const infos = [];
+  clack.log.info = (m) => infos.push(m);
+  const applyCalls = [];
+  const cmdUpdate = async (repo, cfg, args) => {
+    if (args[0] === "--preview")
+      return {
+        applyAllowed: true,
+        reasons: [],
+        srcHead: "abc123def4567890",
+        remoteState: { state: "behind", behind: 3 },
+      };
+    applyCalls.push(args);
+    return { exitStatus: 0, applied: true, changedCount: 1, reasons: [] };
+  };
+  await runToolkitUpgrade(
+    "/ws",
+    {},
+    { toolkit: { path: "/tk", git: { dirty: false }, relation: "behind" } },
+    { confirm: async () => true, clack, cmdUpdate }
+  );
+  assert.equal(applyCalls.length, 1);
+  const args = applyCalls[0];
+  assert.ok(args.includes("--no-pull"), "apply must not fast-forward past the previewed head");
+  const pinIdx = args.indexOf("--expect-src-head");
+  assert.ok(pinIdx >= 0, "apply passes the consent pin");
+  assert.equal(args[pinIdx + 1], "abc123def4567890", "pinned to the sha the preview reported");
+  assert.deepEqual(warnings, []);
+  assert.equal(infos.length, 1, "the user is told the toolkit itself is still behind");
+  assert.match(infos[0], /behind its remote/);
+});

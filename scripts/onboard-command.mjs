@@ -21,15 +21,21 @@ const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
  * tested with a stubbed `cmdUpdate` (via the `cmdUpdate` option), without shelling real
  * git per assertion. `cmdUpdate` never throws its own expected-failure type (`UpdateError`
  * — it's always caught internally and converted into a returned result), but code it calls
- * into can still throw something genuinely unexpected, so both read-only calls are guarded
- * regardless.
+ * into can still throw something genuinely unexpected, so both the preview and the apply
+ * call are guarded regardless.
  *
- * `--check` and `--preview` are read-only: `--preview` implies `--no-pull`, so neither
- * mutates the toolkit checkout, spawns a child, or exits. Their structured results —
- * `.applyAllowed`/`.reasons`, not console text — decide whether to offer the apply
- * confirmation at all: a conflicted, dirty, uninspectable, or diverged toolkit is skipped
- * with one clear warning rather than offered and then having apply refuse it after the
- * user already confirmed.
+ * ONE read-only `--preview` call (which implies `--no-pull` — no mutation, no child, no
+ * exit) both gates and describes the upgrade: its structured result —
+ * `.applyAllowed`/`.reasons`, not console text — decides whether to offer the apply
+ * confirmation at all (a conflicted, dirty, uninspectable, or diverged toolkit is skipped
+ * with one clear warning), and its merge report is what the user actually confirms.
+ *
+ * The confirmed apply is pinned to EXACTLY what was previewed: it passes `--no-pull` (the
+ * preview classified the checkout's current HEAD, so the apply must not fast-forward past
+ * it) plus `--expect-src-head <previewed sha>` (refused if the checkout moved between the
+ * two steps). Consent binds to the report the user saw, never to whatever the source
+ * happens to contain by apply time; if the toolkit's remote had newer commits, we say so
+ * and leave pulling them to a plain `aios update` after onboarding.
  */
 export async function runToolkitUpgrade(
   repo,
@@ -68,9 +74,14 @@ export async function runToolkitUpgrade(
   }
 
   if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
+    // --no-pull + --expect-src-head: apply exactly the state the user just previewed and
+    // confirmed. Without the pin, apply would fast-forward the toolkit first and vendor a
+    // NEWER head — a different (possibly larger) change set than the approved report.
+    const applyArgs = ["--from", inspection.toolkit.path, "--no-pull"];
+    if (previewResult?.srcHead) applyArgs.push("--expect-src-head", previewResult.srcHead);
     let applyResult;
     try {
-      applyResult = await cmdUpdateFn(repo, cfg, ["--from", inspection.toolkit.path]);
+      applyResult = await cmdUpdateFn(repo, cfg, applyArgs);
     } catch (error) {
       clack.log.warn(
         `Managed-file update failed unexpectedly (${error.message}) — finish it with \`aios update\` after onboarding.`
@@ -80,6 +91,10 @@ export async function runToolkitUpgrade(
     if (applyResult.exitStatus) {
       clack.log.warn(
         "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
+      );
+    } else if (previewResult?.remoteState?.state === "behind") {
+      clack.log.info(
+        "The toolkit checkout itself is behind its remote — run `aios update` after onboarding to pull the newest toolkit."
       );
     }
   }

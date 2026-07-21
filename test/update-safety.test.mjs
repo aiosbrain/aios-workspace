@@ -47,6 +47,11 @@ test("update run from a toolkit subdir (gui/) resolves UP to the toolkit, not th
     mkdirSync(path.join(tk, "scripts"), { recursive: true });
     mkdirSync(path.join(tk, "gui"), { recursive: true });
     writeFileSync(path.join(tk, "scripts", "aios.mjs"), "// entry\n");
+    // A toolkit source must be a real git checkout (non-git copies are refused up front) —
+    // this test is about subdir→root resolution, so give the stub a minimal repo.
+    initRepo(tk);
+    git(tk, "add", "-A");
+    git(tk, "commit", "-q", "-m", "stub toolkit");
     // From gui/: no markers there, so it walks up to the toolkit root and self-updates
     // (never treats gui/ as a workspace to re-vendor into).
     const res = spawnSync(process.execPath, [CLI, "update", "--check", "--no-pull"], {
