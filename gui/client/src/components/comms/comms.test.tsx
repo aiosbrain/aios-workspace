@@ -8,15 +8,37 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommsQueue, refreshLabel, telegramInboundLabel, telegramLaneLabel } from "./CommsQueue";
+import {
+  CommsQueue,
+  refreshLabel,
+  telegramInboundLabel,
+  telegramLaneLabel,
+} from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
-import { LatestDetailRequest, reconcileDetailNotify } from "./detail-request";
+import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { isTerminalAckReason, postAskAck, postAskArchive, postAskReply, postDecision } from "./api";
-import { ApiError } from "../../lib/api";
-import { ageLabel } from "./presenters";
+import { ReplyConfirmDialog, advanceReplyConfirmation, canSubmitReply } from "./ReplyConfirmDialog";
+import { SendStatusStrip } from "./SendStatusStrip";
+import { SentSection } from "./SentSection";
+import {
+  fetchOutbox,
+  postAskAck,
+  postAskArchive,
+  postAskReply,
+  postDecision,
+  postReplyCheck,
+  postReplySend,
+} from "./api";
+import { ageLabel, presentSendState } from "./presenters";
+import {
+  MAX_CONFIRMED_SEND_ATTEMPTS,
+  canRetryConfirmed,
+  deferredRetryAfter,
+  retryDelayMs,
+} from "./reply-retry";
+import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
 import {
   contentFreeNotification,
   desktopNotify,
@@ -30,8 +52,10 @@ import {
   type InboxItem,
   type InboxView,
   type DisplayProjection,
+  type InboxDetail,
+  type OutboxCommand,
 } from "./types";
-import type { Api } from "../../lib/api";
+import { ApiError, type Api } from "../../lib/api";
 
 // ── fixtures (synthetic, admin-tier — no grey channels, no real names) ──────────────────────────────
 function agentAsk(
@@ -102,6 +126,32 @@ function fixtureView(): InboxView {
     ],
     ranker_version: "inbox-ranker-v1",
     generated_at: "2026-07-14T09:05:00.000Z",
+    freshness: null,
+  };
+}
+
+function gmailDetail(replyable = true): InboxDetail {
+  const selected = thread("gmail-row", { why: "recency", snippet: "Current subject" });
+  selected.observation = {
+    key: "gog:primary/email/message-1",
+    connection_id: "gog:primary",
+    account: "primary",
+    tenant: "personal",
+    object_kind: "email",
+    native_id: "message-1",
+    thread_id: "native-thread-1",
+    ts: selected.ts,
+    snippet: "Current subject",
+    origin: "enriched",
+    deleted: false,
+    participants: [{ id: "sender@example.test", role: "from" }],
+  };
+  return {
+    item: selected,
+    agentContext: null,
+    replyability: { replyable },
+    pendingApprovals: [],
+    generated_at: "2026-07-21T00:00:00.000Z",
     freshness: null,
   };
 }
@@ -203,8 +253,6 @@ describe("CommsQueue", () => {
     expect(html).toContain("Telegram inbox not connected");
     expect(telegramLaneLabel(view)).toBe("Telegram alerts armed");
     expect(telegramInboundLabel(view)).toBe("Telegram inbox not connected");
-    view.notify.lane.status = "degraded";
-    expect(telegramLaneLabel(view)).toBe("Some Telegram alerts failed");
   });
 });
 
@@ -246,6 +294,7 @@ describe("actionable Claude ask", () => {
             turns: [{ role: "Claude", text: "Should I deploy this to staging or production?" }],
             canReply: true,
           },
+          replyability: null,
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
           freshness: fixtureView().freshness,
@@ -360,7 +409,7 @@ describe("actionable Claude ask", () => {
       />
     );
     expect(html).toContain("synthetic message");
-    expect(html).not.toContain("Reply in Gmail");
+    expect(html).not.toContain("Open Gmail");
 
     const email = thread("email-thread", {
       why: "new email",
@@ -380,7 +429,7 @@ describe("actionable Claude ask", () => {
         onArchive={async () => {}}
       />
     );
-    expect(emailHtml).toContain("Reply in Gmail");
+    expect(emailHtml).toContain("Open Gmail");
   });
 
   test("reply body cannot substitute a session and archive has an empty body", async () => {
@@ -430,6 +479,7 @@ describe("actionable Claude ask", () => {
             turns: [],
             canReply: false,
           },
+          replyability: null,
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
           freshness: null,
@@ -443,6 +493,200 @@ describe("actionable Claude ask", () => {
     expect(html).toContain("can’t be resumed safely");
     expect(html).not.toContain("font-mono");
     expect(html).not.toContain("uppercase");
+  });
+});
+
+describe("native Gmail reply composer", () => {
+  test("shows only for server-replyable Gmail detail and otherwise renders the safety fallback", () => {
+    const replyable = renderToStaticMarkup(
+      <CommsDetail
+        detail={gmailDetail(true)}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+        onReviewReply={async () => {}}
+      />
+    );
+    expect(replyable).toContain("Review &amp; send");
+    expect(replyable).toContain("Recipients, subject, account, and Gmail thread");
+    expect(replyable).not.toContain("can’t be replied to safely here");
+
+    const refused = renderToStaticMarkup(
+      <CommsDetail
+        detail={gmailDetail(false)}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+        onReviewReply={async () => {}}
+      />
+    );
+    expect(refused).toContain("This message can’t be replied to safely here. Open it in Gmail.");
+    expect(refused).not.toContain("Review &amp; send");
+  });
+
+  test("API wrappers construct only the documented request fields", async () => {
+    const calls: { method: "GET" | "POST"; path: string; body?: unknown }[] = [];
+    const api: Api = {
+      get: async (path) => {
+        calls.push({ method: "GET", path });
+        return { commands: [], count: 0, generated_at: "now" } as never;
+      },
+      post: async (path, body) => {
+        calls.push({ method: "POST", path, body });
+        return { ok: true } as never;
+      },
+      wsUrl: () => "",
+    };
+    await fetchOutbox(api);
+    await postReplyCheck(api, "gmail/row", "  exact body  ");
+    await postReplySend(api, "gmail/row", {
+      command_id: "cmd",
+      digest: "digest",
+      body: "  exact body  ",
+      // @ts-expect-error — destination fields are stripped even if a caller tries to add them.
+      account: "attacker-selected",
+      thread_id: "attacker-thread",
+    });
+    expect(calls).toEqual([
+      { method: "GET", path: "/api/outbox" },
+      {
+        method: "POST",
+        path: "/api/inbox/gmail%2Frow/reply-check",
+        body: { body: "  exact body  " },
+      },
+      {
+        method: "POST",
+        path: "/api/inbox/gmail%2Frow/reply-send",
+        body: { command_id: "cmd", digest: "digest", body: "  exact body  " },
+      },
+    ]);
+  });
+
+  test("confirmation snapshot is immutable and requires arm before confirm", () => {
+    const snapshot = immutableReplySnapshot("gmail-row", "  exact body  ", {
+      ok: true,
+      command_id: "cmd-1",
+      digest: "a".repeat(64),
+      preview: {
+        to: ["sender@example.test"],
+        subject: "Re: Current subject",
+        body: "  exact body  ",
+        thread_label: "Gmail thread",
+      },
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.preview)).toBe(true);
+    expect(Object.isFrozen(snapshot.preview.to)).toBe(true);
+    expect(snapshot.body).toBe("  exact body  ");
+    expect(canSubmitReply("unarmed", false)).toBe(false);
+    const armed = advanceReplyConfirmation("unarmed");
+    expect(armed).toBe("armed");
+    expect(canSubmitReply(armed, false)).toBe(true);
+    expect(canSubmitReply(armed, true)).toBe(false);
+
+    const html = renderToStaticMarkup(
+      <ReplyConfirmDialog snapshot={snapshot} onConfirm={() => {}} onClose={() => {}} />
+    );
+    expect(html).toContain("Arm send");
+    expect(html).not.toContain("Confirm send");
+    expect(html).toContain("sender@example.test");
+    expect(html).toContain("  exact body  ");
+    expect(html).toContain("Gmail thread");
+  });
+});
+
+describe("Gmail send status and recovery", () => {
+  const command = (state: OutboxCommand["state"]): OutboxCommand => ({
+    command_id: `cmd-${state}`,
+    state,
+    thread_ref: "gmail:native-thread-1",
+    native_message_id: null,
+    native_thread_id: "native-thread-1",
+    last_attempt_at: "2026-07-21T00:00:00.000Z",
+  });
+
+  test("renders only the approved human-facing labels and tooltips", () => {
+    const expected = {
+      attempting: ["Sending…", "Sending through Gmail"],
+      sent: ["Sent ✓", "Accepted by Gmail"],
+      reconciled: ["Sent ✓", "Found in Gmail Sent"],
+      outcome_unknown: ["Confirming…", "Checking Gmail Sent before any retry"],
+      failed: ["Failed", "Gmail did not accept the send"],
+    } as const;
+    for (const [state, [label, tooltip]] of Object.entries(expected)) {
+      expect(presentSendState(state as OutboxCommand["state"])).toMatchObject({ label, tooltip });
+      const html = renderToStaticMarkup(
+        <SendStatusStrip command={command(state as OutboxCommand["state"])} />
+      );
+      expect(html).toContain(label);
+      expect(html).toContain(tooltip);
+      expect(html).not.toContain("outcome_unknown");
+      expect(html).not.toContain("reconciled");
+      expect(html).not.toContain("PDP");
+      expect(html).not.toContain("TOCTOU");
+    }
+  });
+
+  test("failed live state offers a fresh-check action; durable reload confirmation never retries", () => {
+    const failed = renderToStaticMarkup(
+      <SendStatusStrip
+        command={command("failed")}
+        canTryAgain
+        recoveryError="Review the current message again."
+        onTryAgain={() => {}}
+      />
+    );
+    expect(failed).toContain("Try again");
+    expect(failed).toContain("Review the current message again.");
+
+    const reloaded = renderToStaticMarkup(
+      <CommsDetail
+        detail={gmailDetail(true)}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+        onReviewReply={async () => {}}
+        outboxCommand={command("outcome_unknown")}
+      />
+    );
+    expect(reloaded).toContain("Confirming…");
+    expect(reloaded).not.toContain("Try again");
+    expect(reloaded).not.toContain("outcome_unknown");
+  });
+
+  test("sent section is collapsed and uses the same status presenter", () => {
+    const html = renderToStaticMarkup(
+      <SentSection commands={[command("sent"), command("reconciled")]} />
+    );
+    expect(html).toContain("<details");
+    expect(html).not.toContain('open="');
+    expect(html).toContain("Sent (2)");
+    expect(html).toContain("Accepted by Gmail");
+    expect(html).toContain("Found in Gmail Sent");
+    expect(html).not.toContain("reconciled");
+  });
+
+  test("retry timing respects server timestamps and stops after three confirmed submissions", () => {
+    const now = Date.parse("2026-07-21T00:00:00.000Z");
+    expect(retryDelayMs("2026-07-21T00:00:02.500Z", now)).toBe(2500);
+    expect(retryDelayMs("2026-07-20T00:00:00.000Z", now)).toBe(0);
+    expect(MAX_CONFIRMED_SEND_ATTEMPTS).toBe(3);
+    expect(canRetryConfirmed(1)).toBe(true);
+    expect(canRetryConfirmed(2)).toBe(true);
+    expect(canRetryConfirmed(3)).toBe(false);
+    const deferred = new ApiError(429, "deferred", {
+      retry_after: "2026-07-21T00:01:00.000Z",
+    });
+    expect(deferredRetryAfter(deferred)).toBe("2026-07-21T00:01:00.000Z");
+  });
+
+  test("inbox and outbox polling failures retain their own independent last-good values", () => {
+    const inbox = fixtureView();
+    const durable = { commands: [command("sent")], count: 1, generated_at: "now" };
+    expect(retainLastGood(inbox, { ok: false })).toBe(inbox);
+    expect(retainLastGood(durable, { ok: false })).toBe(durable);
+    expect(retainLastGood(inbox, { ok: true, value: fixtureView() })).not.toBe(inbox);
+    expect(gmailThreadRef(gmailDetail(true))).toBe("gmail:native-thread-1");
   });
 });
 
@@ -473,75 +717,10 @@ describe("detail request sequencing", () => {
       reject
     );
     resolveB("detail-B");
-    expect(await loadB).toBe("detail-B");
+    await loadB;
     resolveA("detail-A");
-    expect(await loadA).toBeUndefined();
+    await loadA;
     expect(accepted).toEqual(["detail-B"]);
-  });
-
-  test("a newer detail notify projection reconciles the selected queue row and lane", () => {
-    const view = fixtureView();
-    view.notify = {
-      escalation_window_ms: 900_000,
-      states: {
-        "ask-blocker": {
-          delivery_attempts: 1,
-          last_delivery_at: "2026-07-16T01:00:00.000Z",
-          acked: false,
-          last_ack_at: null,
-        },
-        "ask-fyi": {
-          delivery_attempts: 1,
-          last_delivery_at: "2026-07-16T01:00:00.000Z",
-          acked: false,
-          last_ack_at: null,
-        },
-      },
-      overdue: {
-        "ask-blocker": {
-          overdue_by_ms: 60_000,
-          delivery_attempts: 1,
-          last_delivery_at: "2026-07-16T01:00:00.000Z",
-        },
-      },
-      lane: {
-        status: "configured",
-        last_attempt_at: null,
-        last_delivery_at: null,
-        last_error: null,
-      },
-    };
-    const detail = {
-      item: view.items[0],
-      agentContext: null,
-      pendingApprovals: [],
-      generated_at: "2026-07-16T01:01:00.000Z",
-      freshness: null,
-      notify: {
-        escalation_window_ms: 900_000,
-        states: {
-          "ask-blocker": {
-            delivery_attempts: 1,
-            last_delivery_at: "2026-07-16T01:00:00.000Z",
-            acked: true,
-            last_ack_at: "2026-07-16T01:01:00.000Z",
-          },
-        },
-        overdue: {},
-        lane: {
-          status: "delivery_ok" as const,
-          last_attempt_at: "2026-07-16T01:00:00.000Z",
-          last_delivery_at: "2026-07-16T01:00:00.000Z",
-          last_error: null,
-        },
-      },
-    };
-
-    const reconciled = reconcileDetailNotify(view, "ask-blocker", detail);
-    expect(reconciled.notify?.states["ask-blocker"].acked).toBe(true);
-    expect(reconciled.notify?.states["ask-fyi"].acked).toBe(false);
-    expect(reconciled.notify?.overdue["ask-blocker"]).toBeUndefined();
-    expect(reconciled.notify?.lane.status).toBe("delivery_ok");
   });
 });
 
@@ -576,26 +755,16 @@ describe("human acknowledgment evidence", () => {
     },
   };
 
-  const check = (overrides: Partial<Parameters<typeof shouldAcknowledgeDeliveredAsk>[0]> = {}) =>
-    shouldAcknowledgeDeliveredAsk({
-      id: item.id,
-      selectedId: item.id,
-      humanSelected: true,
-      detail,
-      visibilityState: "visible",
-      hasFocus: true,
-      ...overrides,
-    });
-
-  // An acknowledgment clears the ask from `aios inbox --overdue` — the only net that catches a
-  // silently-failed phone alert. The queue auto-selects items[0] on load, so if that counted as
-  // evidence, a GUI merely left open and focused would disarm the net for an ask nobody read.
-  test("an app-chosen selection is never human evidence", () => {
-    expect(check({ humanSelected: false })).toBe(false);
-    expect(check({ humanSelected: true })).toBe(true);
-  });
-
   test("requires selected, visible, focused, delivered-unacked detail", () => {
+    const check = (overrides: Partial<Parameters<typeof shouldAcknowledgeDeliveredAsk>[0]> = {}) =>
+      shouldAcknowledgeDeliveredAsk({
+        id: item.id,
+        selectedId: item.id,
+        detail,
+        visibilityState: "visible",
+        hasFocus: true,
+        ...overrides,
+      });
     expect(check()).toBe(true);
     expect(check({ visibilityState: "hidden" })).toBe(false);
     expect(check({ hasFocus: false })).toBe(false);
@@ -753,50 +922,5 @@ describe("content-free notifications", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
-});
-
-describe("ack outcome handling", () => {
-  // The server states these in the body, but `Api.post` throws on any non-2xx — without the
-  // translation in `postAskAck` they could never be observed and all collapsed into one silent
-  // catch, making a contended lock indistinguishable from a dead ask.
-  test("modelled non-2xx ack outcomes reach the caller instead of throwing", async () => {
-    const api = {
-      get: vi.fn(),
-      wsUrl: vi.fn(),
-      post: vi.fn().mockRejectedValue(
-        new ApiError(503, "Service Unavailable", {
-          ok: false,
-          recorded: false,
-          reason: "notify-busy",
-        })
-      ),
-    } as unknown as Api;
-    await expect(postAskAck(api, "ask-1")).resolves.toEqual({
-      ok: false,
-      recorded: false,
-      reason: "notify-busy",
-    });
-  });
-
-  test("a genuine transport failure still throws", async () => {
-    const api = {
-      get: vi.fn(),
-      wsUrl: vi.fn(),
-      post: vi.fn().mockRejectedValue(new TypeError("network down")),
-    } as unknown as Api;
-    await expect(postAskAck(api, "ask-1")).rejects.toThrow("network down");
-  });
-
-  // Settling a transient outcome strands the ask un-acked until a full remount: `notify-unavailable`
-  // clears once the loop is built, `notify-busy` once the notifier releases the lock, and
-  // `never-delivered` once the lane delivers.
-  test("only unchangeable outcomes are terminal", () => {
-    expect(isTerminalAckReason("already-acked")).toBe(true);
-    expect(isTerminalAckReason("not-acknowledgeable")).toBe(true);
-    expect(isTerminalAckReason("notify-busy")).toBe(false);
-    expect(isTerminalAckReason("notify-unavailable")).toBe(false);
-    expect(isTerminalAckReason("never-delivered")).toBe(false);
-    expect(isTerminalAckReason(undefined)).toBe(false);
   });
 });

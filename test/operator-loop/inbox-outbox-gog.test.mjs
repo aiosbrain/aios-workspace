@@ -22,12 +22,13 @@ import path from "node:path";
 import * as loop from "../../dist/operator-loop/index.js";
 import {
   createGogSendClient,
-  buildOutboundBytes,
   commandMarker,
   resolveGogCredential,
   gogTokenSecurityGate,
   isOutboxLaneEvent,
 } from "../../scripts/inbox.mjs";
+
+const buildOutboundBytes = loop.buildGmailReplyOutboundBytes;
 
 const now = () => 1_700_000_000_000;
 
@@ -200,6 +201,33 @@ test("send parses the exact bytes and passes those fields to gog (aligned)", () 
   assert.ok(sentArgs[bodyIdx + 1].startsWith("hello world"));
   // The stable marker is present in the body actually sent (so reconcile can find it).
   assert.ok(sentArgs[bodyIdx + 1].includes(commandMarker(commandId)));
+});
+
+test("GUI transport adds only the server-derived native thread id and never reply-all", () => {
+  const commandId = "cmd-thread";
+  const bytes = buildOutboundBytes({
+    commandId,
+    to: ["sender@example.test"],
+    subject: "Re: threaded",
+    body: "hello",
+  });
+  let sentArgs = null;
+  const client = createGogSendClient(loop, {
+    account: "primary",
+    commandId,
+    threadId: "gmail-native-thread",
+    runGog(args) {
+      if (args[1] === "search") return "[]";
+      sentArgs = args;
+      return JSON.stringify({ id: "mid-thread", threadId: "gmail-native-thread" });
+    },
+  });
+  client.send(bytes);
+  assert.equal(sentArgs[sentArgs.indexOf("--thread-id") + 1], "gmail-native-thread");
+  assert.equal(sentArgs[sentArgs.indexOf("-a") + 1], "primary");
+  assert.equal(sentArgs.includes("--reply-all"), false);
+  assert.equal(sentArgs.includes("--cc"), false);
+  assert.equal(sentArgs.includes("--bcc"), false);
 });
 
 // -- (1) credential gate ---------------------------------------------------------------------------

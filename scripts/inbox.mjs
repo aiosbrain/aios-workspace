@@ -24,11 +24,19 @@
  */
 
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
-import os from "node:os";
 import { c, die } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
+import { createGogSendClient, gogTokenSecurityGate } from "./inbox-gog-adapter.mjs";
+
+// Preserve the existing test/CLI helper surface while the process-facing implementation lives in
+// one shared adapter used by both terminal and GUI sends.
+export {
+  commandMarker,
+  createGogSendClient,
+  gogTokenSecurityGate,
+  resolveGogCredential,
+} from "./inbox-gog-adapter.mjs";
 
 const INBOX_SUBCOMMANDS = [
   "list",
@@ -67,214 +75,6 @@ export function isOutboxLaneEvent(ev) {
  *  {command_id, at, data} shape so `foldOutboxState` can derive lifecycle state. */
 function journalToOutboxEvent(ev) {
   return { kind: ev.kind, command_id: ev.correlation_id, at: ev.ts, data: ev.payload ?? {} };
-}
-
-/**
- * The STABLE reconcile marker for a command. Embedded in the message BODY (not the subject), so a
- * later subject edit never breaks reconcile-first. gog full-text search over Sent finds it. The
- * token is distinctive so it cannot collide with ordinary prose.
- */
-export function commandMarker(commandId) {
-  return `aios-outbox-cmd:${commandId}`;
-}
-
-/**
- * Build the canonical outbound bytes checked by `checkPreSend` AND sent, verbatim, by gog. The bytes
- * contain ONLY the fields gog actually transmits — To/Cc/Bcc/Subject headers + body — so the checked
- * bytes equal the sent content (no fabricated `From`/`Message-Id` headers gog would replace). The
- * stable command marker is appended as a body footer line. Recipients are the PDP-approved addresses.
- */
-export function buildOutboundBytes({ commandId, to, cc = [], bcc = [], subject, body }) {
-  const headers = [`To: ${to.join(", ")}`];
-  if (cc.length) headers.push(`Cc: ${cc.join(", ")}`);
-  if (bcc.length) headers.push(`Bcc: ${bcc.join(", ")}`);
-  headers.push(`Subject: ${subject}`);
-  const footer = `\n\n-- \n${commandMarker(commandId)}`;
-  return headers.join("\n") + "\n\n" + body + footer + "\n";
-}
-
-/** Default gog runner: shells the `gog` binary and returns stdout. Injected in tests. A bounded
- *  timeout means a hung send surfaces as a timeout error (→ outcome_unknown, reconcile-first). */
-function defaultRunGog(args) {
-  return execFileSync("gog", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
-  });
-}
-
-/** True when an exec error looks like a timeout/kill (unknown outcome) rather than a clean failure. */
-function isTimeoutError(e) {
-  return Boolean(e && (e.code === "ETIMEDOUT" || e.killed === true || e.signal === "SIGTERM"));
-}
-
-/**
- * A real gog-backed outbox send client (I-11). It honors the `OutboxSendClient` contract:
- *   • `querySent` is RECONCILE-FIRST + FAIL-CLOSED: it searches Sent for the stable body marker; on
- *     ANY exec/parse error it throws `OutboxReconcileError` (never returns `{found:false}` on error,
- *     which would risk a duplicate send). Robust to subject edits (marker lives in the body). gog's
- *     search returns THREADS, so a reconcile-found command carries a `thread_id` only — no message id
- *     is fabricated from a thread id.
- *   • `send` sends EXACTLY the checked bytes: it parses `exact_outbound_bytes` via the loop's
- *     `parseOutboundMessage` and passes those recipients/subject/body to `gog gmail send` — no
- *     separate message object can diverge from what `checkPreSend` validated.
- * Credential/claim scope (G5): gog holds its own OS-keyring OAuth token — this wraps the send behind
- * the loop; it does not yet make the ambient CLI un-bypassable (that is G6b/I-15).
- */
-export function createGogSendClient(loop, { account, commandId, runGog = defaultRunGog } = {}) {
-  const acct = account ? ["-a", account] : [];
-  const marker = commandMarker(commandId);
-  return {
-    querySent() {
-      let out;
-      try {
-        out = runGog([
-          "gmail",
-          "search",
-          `in:sent "${marker}"`,
-          "--json",
-          "--results-only",
-          "--max",
-          "1",
-          ...acct,
-        ]);
-      } catch (e) {
-        // Search outage: we do NOT know whether a prior send landed. Fail closed.
-        throw new loop.OutboxReconcileError(`gog Sent search failed: ${e.message}`);
-      }
-      let arr;
-      try {
-        arr = JSON.parse(out);
-      } catch (e) {
-        throw new loop.OutboxReconcileError(`gog Sent search returned non-JSON: ${e.message}`);
-      }
-      if (Array.isArray(arr) && arr.length > 0) {
-        // `gog gmail search` returns THREAD objects — `id` is a THREAD id, not a message id.
-        // Fetching the real message id would take a second `gog gmail thread get` round-trip, so
-        // journal honestly: thread id only, and NO fabricated `message_id` (a reconciled command
-        // keeps `native_message_id` null and carries `native_thread_id`).
-        return { found: true, thread_id: arr[0].threadId || arr[0].id };
-      }
-      return { found: false };
-    },
-    send(exactOutboundBytes) {
-      // Parse the EXACT checked bytes → the fields gog transmits. Checked bytes === sent content.
-      const msg = loop.parseOutboundMessage(exactOutboundBytes);
-      const args = ["gmail", "send", "--to", msg.to.join(",")];
-      if (msg.cc.length) args.push("--cc", msg.cc.join(","));
-      if (msg.bcc.length) args.push("--bcc", msg.bcc.join(","));
-      args.push("--subject", msg.subject, "--body", msg.body, "--json", "--results-only", ...acct);
-      let out;
-      try {
-        out = runGog(args);
-      } catch (e) {
-        // A timeout/kill is an UNKNOWN outcome (the message may have landed) → reconcile-first on the
-        // next attempt. A clean failure means no message was created.
-        if (isTimeoutError(e))
-          throw new loop.OutboxTimeoutError(`gog send timed out: ${e.message}`);
-        throw new loop.OutboxSendError(`gog send failed: ${e.message}`);
-      }
-      let r = {};
-      try {
-        r = JSON.parse(out);
-      } catch {
-        throw new loop.OutboxSendError("gog send returned non-JSON output");
-      }
-      const message_id = r.id || r.messageId || r.message_id || "";
-      const thread_id = r.threadId || r.thread_id || message_id;
-      if (!message_id) throw new loop.OutboxSendError("gog send returned no message id");
-      return { message_id, thread_id };
-    },
-  };
-}
-
-/** Candidate gog config.json locations (macOS + XDG linux). First readable one wins. */
-function gogConfigCandidates() {
-  const home = os.homedir();
-  return [
-    path.join(home, "Library", "Application Support", "gogcli", "config.json"),
-    path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "gogcli", "config.json"),
-    path.join(home, ".config", "gog", "config.json"),
-  ];
-}
-
-/**
- * Resolve how the gog send credential is stored, so the send path can apply the right gate:
- *   • `{ mode:"file", tokenPath }` — an explicit on-disk token file (env override, or a file-backend
- *     config). This is what `assertGatewayTokenSecurity` guards; missing/insecure → fail closed.
- *   • `{ mode:"keyring", reason }` — the token lives in the OS keyring (gog default `auto`). There is
- *     NO plaintext file to chmod; the file-mode gate is inapplicable and the OS keyring ACL is the
- *     boundary. Honest named skip, not a false pass.
- * Never reads the secret itself — only the config's backend field + an explicit file path.
- */
-export function resolveGogCredential(env = process.env) {
-  const override = env.AIOS_GOG_TOKEN_FILE;
-  if (override && override.trim()) {
-    return { mode: "file", tokenPath: override.trim(), source: "AIOS_GOG_TOKEN_FILE" };
-  }
-  for (const cfgPath of gogConfigCandidates()) {
-    let raw;
-    try {
-      raw = readFileSync(cfgPath, "utf8");
-    } catch {
-      continue;
-    }
-    let cfg = {};
-    try {
-      cfg = JSON.parse(raw);
-    } catch {
-      /* unreadable config → fall through to the keyring default with a reason */
-      return {
-        mode: "keyring",
-        reason: `gog config at ${cfgPath} is unparseable — assuming OS-keyring backend (no token file to guard)`,
-      };
-    }
-    const backend = String(cfg.keyring_backend ?? "auto").toLowerCase();
-    if (backend === "file" || backend === "plaintext") {
-      const tokenPath = cfg.token_file || cfg.credentials_file || cfg.token_path || null;
-      if (tokenPath) return { mode: "file", tokenPath: String(tokenPath), source: `${cfgPath}` };
-      // File backend declared but path not discoverable → treat as an insecure/missing credential.
-      return {
-        mode: "file-unknown",
-        reason: `gog config declares a file backend but no token path is discoverable in ${cfgPath}`,
-      };
-    }
-    return {
-      mode: "keyring",
-      reason: `gog credential is OS-keyring-backed (keyring_backend=${backend}) — file mode/uid gate N/A; OS keyring ACL is the boundary`,
-    };
-  }
-  return {
-    mode: "keyring",
-    reason: "no gog config found — assuming OS-keyring backend (no token file to guard)",
-  };
-}
-
-/**
- * The pre-send credential gate: wire `assertGatewayTokenSecurity` into the real send path.
- * Returns `{ ok, skipped, reason }`. FAIL CLOSED on a supported POSIX platform when a token FILE is
- * in play and it is missing/insecure. A keyring-backed credential is a named skip (the OS keyring is
- * the boundary). The unsupported-platform (win32) skip from `assertGatewayTokenSecurity` is preserved.
- */
-export function gogTokenSecurityGate(loop, { env = process.env, platform } = {}) {
-  const cred = resolveGogCredential(env);
-  if (cred.mode === "keyring") {
-    return { ok: true, skipped: true, reason: cred.reason };
-  }
-  if (cred.mode === "file-unknown") {
-    // A file backend we cannot locate is treated as missing → fail closed on POSIX.
-    const r = loop.assertGatewayTokenSecurity(
-      "/nonexistent-gog-token",
-      platform ? { platform } : {}
-    );
-    if (r.skipped) return { ok: true, skipped: true, reason: r.reason };
-    return { ok: false, skipped: false, reason: cred.reason };
-  }
-  // mode === "file": strictly assert the on-disk token.
-  const r = loop.assertGatewayTokenSecurity(cred.tokenPath, platform ? { platform } : {});
-  if (r.skipped) return { ok: true, skipped: true, reason: `${r.reason} (${cred.tokenPath})` };
-  if (!r.ok) return { ok: false, skipped: false, reason: `${r.reason} (${cred.tokenPath})` };
-  return { ok: true, skipped: false, reason: `${r.reason} (${cred.tokenPath})` };
 }
 
 function editDistance(a, b) {
@@ -499,7 +299,7 @@ export async function cmdInbox(repo, cfg, args) {
     //    ONLY the fields gog transmits (To/Cc/Bcc/Subject + body); the stable reconcile marker lives
     //    in the BODY (robust to subject edits). These exact bytes are what `send` parses + transmits.
     const to = draft.request.recipients.map((r) => r.address);
-    const bytes = buildOutboundBytes({
+    const bytes = loop.buildGmailReplyOutboundBytes({
       commandId: draft.command_id,
       to,
       subject: String(draft.message.subject ?? ""),

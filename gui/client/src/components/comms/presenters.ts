@@ -4,7 +4,34 @@
  * fixture harness); these functions never reshape the underlying contract, they only read it.
  */
 
-import type { InboxItem } from "./types";
+import type { InboxItem, OutboxState } from "./types";
+
+export interface SendPresentation {
+  label: "Sending…" | "Sent ✓" | "Confirming…" | "Failed";
+  tooltip: string;
+  tone: "pending" | "success" | "danger";
+}
+
+/** The only user-facing vocabulary for durable/local Gmail send state. */
+export function presentSendState(state: OutboxState): SendPresentation {
+  if (state === "sent") {
+    return { label: "Sent ✓", tooltip: "Accepted by Gmail", tone: "success" };
+  }
+  if (state === "reconciled") {
+    return { label: "Sent ✓", tooltip: "Found in Gmail Sent", tone: "success" };
+  }
+  if (state === "outcome_unknown") {
+    return {
+      label: "Confirming…",
+      tooltip: "Checking Gmail Sent before any retry",
+      tone: "pending",
+    };
+  }
+  if (state === "failed") {
+    return { label: "Failed", tooltip: "Gmail did not accept the send", tone: "danger" };
+  }
+  return { label: "Sending…", tooltip: "Sending through Gmail", tone: "pending" };
+}
 
 /** The row's primary label — a runtime/ask title for agents, a sender/account for threads. */
 export function itemLabel(item: InboxItem): string {

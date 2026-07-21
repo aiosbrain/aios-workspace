@@ -1,7 +1,7 @@
 /**
  * inbox-api.mjs — the GUI server half of the Unified Inbox comms section (I-14 / AIO-395, G6a).
  *
- * Three localhost-only, admin-tier routes the GUI server (gui/server/index.mjs) mounts:
+ * The core localhost-only, admin-tier inbox routes the GUI server (gui/server/index.mjs) mounts:
  *
  *   • GET  /api/inbox            → the I-09 read-only unified queue plus GUI ingestion freshness.
  *                                  Ranking is served IN-PROCESS from the same compiled read model
@@ -9,16 +9,16 @@
  *                                  substitutes ingestion freshness for occurrence-derived staleness.
  *   • GET  /api/inbox/:id        → one item's detail plus any PENDING capability approvals (I-03 display
  *                                  projections) the operator could scoped-confirm from that item.
- *   • POST /api/inbox/:id/decision → the ONLY mutating call in this issue. Carries `{ handle, digest,
- *                                  decision }` and nothing else; brokers the human decision through the
- *                                  I-03 coordinator seam and lets the OWNING RUNTIME validate + durably
- *                                  consume its own record. The digest the human saw must match the
- *                                  runtime's stored request digest — a tamper is rejected before broker.
+ *   • POST /api/inbox/:id/decision → scoped capability confirmation. Carries `{ handle, digest,
+ *                                    decision }` and nothing else; brokers the human decision through
+ *                                    the I-03 coordinator seam and lets the OWNING RUNTIME validate +
+ *                                    durably consume its own record. The digest the human saw must match
+ *                                    the runtime's stored request digest — a tamper is rejected.
  *
- * Tier safety: read-only over admin-tier local state; nothing syncs to the Team Brain; `sender.ts` is
- * untouched. The compiled operator-loop (buildInbox / brokerDecision / durable journal) is imported
- * lazily and guarded so `npm run gui` starts even before `npm run build:loop`. The capability store is
- * plain ESM (no dist dependency) — the AUTHORITY that validates + consumes.
+ * Tier safety: admin-tier local state; nothing syncs to the Team Brain; `sender.ts` is untouched. The
+ * compiled operator-loop (buildInbox / brokerDecision / durable journal) is imported lazily and guarded
+ * so `npm run gui` starts even before `npm run build:loop`. The capability store is plain ESM (no dist
+ * dependency) — the AUTHORITY that validates + consumes.
  */
 
 import path from "node:path";
@@ -193,7 +193,9 @@ export async function getInboxDetail(repo, id, { refresh = null, notifyLane = nu
   const view = await getInboxView(repo, { refresh, notifyLane });
   const item = view.items.find((i) => i.id === id) ?? null;
   const pendingApprovals = readPendingApprovals(repo);
+  const loop = await loadLoop();
   let agentContext = null;
+  let replyability = null;
   if (item?.origin === "agent-event" && item.ask?.status === "open") {
     try {
       agentContext = projectClaudeAskContext(repo, item.ask);
@@ -207,9 +209,19 @@ export async function getInboxDetail(repo, id, { refresh = null, notifyLane = nu
       };
     }
   }
+  if (item?.origin === "thread-state") {
+    const checked =
+      loop && typeof loop.isGmailReplyable === "function"
+        ? loop.isGmailReplyable(item, loop.configuredGmailAccount())
+        : { replyable: false };
+    // The detail surface needs only the affordance decision. Its internal refusal code stays on the
+    // server and the browser never receives participant/account validation detail.
+    replyability = { replyable: checked.replyable === true };
+  }
   return {
     item,
     agentContext,
+    replyability,
     pendingApprovals,
     generated_at: view.generated_at,
     freshness: view.freshness,
