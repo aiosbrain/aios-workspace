@@ -42,6 +42,26 @@ console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
     "generic confidence prose is ignored",
     !hasUnstructuredSeverityClaim("Medium confidence after reviewing the validators", "medium")
   );
+  check(
+    "risk classification prose is ignored",
+    !hasUnstructuredSeverityClaim("Low risk change", "low")
+  );
+  check(
+    "covered regression evidence is ignored",
+    !hasUnstructuredSeverityClaim("Medium regression covered by tests", "medium")
+  );
+  check(
+    "risk classification with a concrete bypass still blocks",
+    hasUnstructuredSeverityClaim("High risk change exposes an auth bypass", "medium")
+  );
+  check(
+    "severity-leading unresolved regression still blocks",
+    hasUnstructuredSeverityClaim("Medium correctness regression in retry handling", "medium")
+  );
+  check(
+    "negated mitigation does not hide a concrete bypass",
+    hasUnstructuredSeverityClaim("High auth bypass is not mitigated", "medium")
+  );
 }
 
 console.log("detectBugbotClear");

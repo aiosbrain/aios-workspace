@@ -383,11 +383,27 @@ export function hasUnstructuredSeverityClaim(text, failOn = "high") {
   );
   const concreteRisk =
     /\b(?:finding|issue|bug|bypass|vulnerab\w*|regress\w*|risk|leak|inject\w*|unsafe|incorrect|failure|error|race|auth\w*|security|correctness|data[ -]loss)\b/i;
+  const resolvedEvidence =
+    /\b(?:fixed|resolved|mitigated|prevented|guarded)\b|\bcovered\s+by\s+(?:tests?|coverage|validators?)\b/i;
+  const riskClassification = new RegExp(
+    `^\\s*(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?\\s+risk\\s+(?:change|level|profile|classification)\\b`,
+    "i"
+  );
+  const concreteIssueBeyondRisk =
+    /\b(?:finding|issue|bug|bypass|vulnerab\w*|regress\w*|leak|inject\w*|unsafe|incorrect|failure|error|race|auth\w*|security|correctness|data[ -]loss)\b/i;
 
   return String(text ?? "")
     .split("\n")
     .some((line) => {
       if (!concreteRisk.test(line)) return false;
+      const resolution = resolvedEvidence.exec(line);
+      if (resolution) {
+        const prefix = line.slice(0, resolution.index);
+        const resolutionNegated =
+          /\b(?:not|never)\b(?:\s+\w+){0,3}\s*$|\bwithout\b(?:\s+\w+){0,2}\s*$/i.test(prefix);
+        if (!resolutionNegated) return false;
+      }
+      if (riskClassification.test(line) && !concreteIssueBeyondRisk.test(line)) return false;
       if (startsWithSeverity.test(line)) return true;
       const match = assertiveSeverity.exec(line);
       if (!match) return false;
