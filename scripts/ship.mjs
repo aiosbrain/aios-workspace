@@ -1666,15 +1666,19 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
 
   // ── 5. PR ────────────────────────────────────────────────────────────────────
   let prNumber;
+  let reusedPr = false;
   if (state.prNumber) {
     prNumber = state.prNumber;
     record("pr", { resumed: true, pr: prNumber });
     progress(`pr: resumed from checkpoint (#${prNumber})`);
   } else {
     try {
-      prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+      const prResult = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
         throwOnError: true,
+        returnMetadata: true,
       });
+      prNumber = typeof prResult === "object" && prResult !== null ? prResult.number : prResult;
+      reusedPr = typeof prResult === "object" && prResult !== null && prResult.reused === true;
     } catch (e) {
       record("pr", { error: e.message });
       writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
@@ -1686,7 +1690,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { code: SHIP_EXIT.PR_FAILED, records };
     }
     record("pr", { pr: prNumber });
-    saveState({ prNumber });
+    // `cmdPr` always pushes. Reusing an already-labelled PR therefore advances its head
+    // without an automatic incremental review; require an explicit current-head refresh.
+    saveState({ prNumber, codeRabbitRefreshRequired: reusedPr });
     progress(`pr: opened #${prNumber}`);
   }
 
@@ -1718,7 +1724,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       progress("review: checkpointed CLEAR is stale — re-running the exact-head review round");
       // The pre-PR step immediately above has already refreshed Local Bugbot for this exact
       // head/base. Only the stale consolidation/remote-review checkpoint needs invalidation.
-      invalidateReviewEvidence({}, { preserveLocalBugbot: true });
+      invalidateReviewEvidence(
+        {
+          codeRabbitRefreshRequired:
+            !!state.reviewCodeRabbitRequired && state.codeRabbitHead !== snapshot?.head,
+        },
+        { preserveLocalBugbot: true }
+      );
       state.reviewClear = false;
     }
   }
@@ -1782,7 +1794,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
 
       // CodeRabbit is opt-in for Standard PRs and mandatory for Safety PRs. The configured
-      // positive label both proves operator intent and triggers the initial review.
+      // positive label both proves operator intent and triggers the initial review. Reused PRs
+      // and later fix pushes explicitly request a new review because incremental review is off.
       if (reviewPolicy.codeRabbitRequired) {
         let labels;
         try {

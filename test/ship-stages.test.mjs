@@ -567,6 +567,32 @@ console.log("fix push requests a fresh CodeRabbit review on the next round");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("reused PR push requests a fresh CodeRabbit review on the first round");
+{
+  const deps = makeDeps({
+    cmdPr: async () => ({ number: 77, reused: true }),
+  });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["coderabbit"] }),
+    deps,
+  });
+  const requestIndex = deps.ghCalls.findIndex(
+    (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+  );
+  const labelIndex = deps.ghCalls.findIndex(
+    (call) => call.includes("pr view") && call.includes("--json labels")
+  );
+  check("reused PR still converges", code === SHIP_EXIT.OK);
+  check("fresh review is requested on round one", requestIndex >= 0);
+  check(
+    "request follows positive-label verification",
+    labelIndex >= 0 && requestIndex > labelIndex
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log("GPT review failure → MERGE_BLOCKED (requested reviewer evidence missing)");
 {
   const deps = makeDeps({

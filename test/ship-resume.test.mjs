@@ -498,6 +498,12 @@ console.log("stale CodeRabbit head cannot satisfy a resumed CLEAR checkpoint");
   check("exits OK after current-head CodeRabbit evidence", r.code === SHIP_EXIT.OK);
   check("exact local Bugbot evidence remains reusable", deps.counters.local === 0);
   check("CodeRabbit wait reruns", waits === 1);
+  check(
+    "stale CodeRabbit evidence triggers an explicit current-head review request",
+    deps.ghCalls.some(
+      (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+    )
+  );
   check("consolidation reruns", deps.counters.review === 1);
   check("fresh CodeRabbit head is checkpointed", ss.store.state?.codeRabbitHead === "fakehead");
   rmSync(deps.repo, { recursive: true, force: true });
