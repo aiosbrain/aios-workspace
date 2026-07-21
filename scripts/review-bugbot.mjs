@@ -595,7 +595,7 @@ export async function runLocalPrePrReview({
     return {
       ok: false,
       error: true,
-      output: `refusing to send untracked content to Bugbot; stage intended files first: ${withheldUntrackedFiles.join(", ")}`,
+      output: `refusing to send untracked content to Bugbot; stage the files you intend to have reviewed, or gitignore them if they are machine-local (build output, runtime/session state): ${withheldUntrackedFiles.join(", ")}`,
     };
   }
   if (reviewTooLarge) {

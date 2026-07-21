@@ -339,7 +339,7 @@ export function evaluateLocalBugbotGate({
   if (snapshot.withheldUntrackedFiles.length) {
     return {
       status: "error",
-      reason: `refusing to send untracked content to Bugbot; stage intended files first: ${snapshot.withheldUntrackedFiles.join(", ")}`,
+      reason: `refusing to send untracked content to Bugbot; stage the files you intend to have reviewed, or gitignore them if they are machine-local (build output, runtime/session state): ${snapshot.withheldUntrackedFiles.join(", ")}`,
       fingerprint: snapshot.fingerprint,
     };
   }
