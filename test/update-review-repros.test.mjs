@@ -20,6 +20,7 @@ import {
   pullToolkitCheckout,
   acquireRemoteState,
   removePinnedSnapshot,
+  assertGitToolkitSource,
 } from "../scripts/toolkit-pull.mjs";
 import {
   cmdUpdate,
@@ -1998,6 +1999,90 @@ test("R8-11: --expect-src-head's contract is binary — refused with read-only m
     const noPin = await cmdUpdate(workspace, {}, ["--expect-src-head", head, "--from", clone]);
     assert.equal(noPin.mode, "error", "a pull would move past the pinned state");
     assert.match(noPin.reasons.join("\n"), /requires --no-pull/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-12: an inherited GIT_DIR can't defeat the envelope probe (git sets it for every hook it runs)", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-gitenv-"));
+  const prevGitDir = process.env.GIT_DIR;
+  const prevWorkTree = process.env.GIT_WORK_TREE;
+  try {
+    const host = path.join(root, "host-repo");
+    mkdirSync(host, { recursive: true });
+    initRepo(host);
+    writeFileSync(path.join(host, "unrelated.txt"), "host\n");
+    git(host, "add", "-A");
+    git(host, "commit", "-qm", "host init");
+
+    // A toolkit-shaped NON-git dir, standalone (not even nested).
+    const copy = path.join(root, "toolkit-copy");
+    mkdirSync(path.join(copy, "scaffold"), { recursive: true });
+    mkdirSync(path.join(copy, "scripts"), { recursive: true });
+    writeFileSync(path.join(copy, "scripts", "aios.mjs"), "// entry\n");
+
+    // `git -C <dir>` does NOT override an inherited GIT_DIR: without scrubbing,
+    // `rev-parse --show-toplevel` answers <dir> itself, so the containment probe reads
+    // "this dir IS its own git toplevel" for a directory that is not a repo at all —
+    // fail-OPEN, and every later git op then lands on the GIT_DIR repo.
+    process.env.GIT_DIR = path.join(host, ".git");
+    delete process.env.GIT_WORK_TREE;
+
+    assert.throws(
+      () => assertGitToolkitSource(copy),
+      (e) => e instanceof UpdateError && /not a git checkout/.test(e.message),
+      "the probe resolves from -C alone, never from an inherited git environment"
+    );
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const result = await cmdUpdate(workspace, {}, ["--check", "--from", copy]);
+    assert.equal(result.mode, "error", "end-to-end: the envelope still refuses under GIT_DIR");
+    assert.match(result.reasons.join("\n"), /not a git checkout/);
+  } finally {
+    if (prevGitDir === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = prevGitDir;
+    if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+    else process.env.GIT_WORK_TREE = prevWorkTree;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-13: the vendor child is spawned with a scrubbed git env (old snapshots' unsanitized git calls can't inherit GIT_DIR)", () => {
+  // The child runs the SNAPSHOT's own update.mjs, which may predate the git-env
+  // hardening — scrubbing must therefore happen at the spawn boundary, not only at our
+  // own call sites, or the process that actually writes the workspace + version stamp
+  // resolves against the wrong repository.
+  const src = readFileSync(UPDATE_MODULE, "utf8");
+  const spawnCall = src.slice(src.indexOf("spawnSync(process.execPath"));
+  const spawnOpts = spawnCall.slice(0, spawnCall.indexOf("});") + 3);
+  assert.match(spawnOpts, /env:\s*gitEnv\(\)/, "the hand-off spawn passes a scrubbed env");
+});
+
+test("R8-14: --check/--preview run the SAME containment pre-flight as apply — no offer-then-refuse", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-previewcontain-"));
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "hooks/team-ops-guard.sh": "#!/bin/sh\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "hooks"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    // A MANAGED (not seed) destination replaced by a symlink: previously --check/--preview
+    // never ran the managed-dest containment scan, so applyAllowed came back true,
+    // onboarding offered the apply, and only the apply refused — after the user confirmed.
+    const outside = path.join(root, "outside-target");
+    writeFileSync(outside, "outside\n");
+    symlinkSync(outside, path.join(workspace, "hooks", "team-ops-guard.sh"));
+
+    for (const mode of ["--check", "--preview"]) {
+      const result = await cmdUpdate(workspace, {}, [mode, "--from", clone]);
+      assert.equal(result.applyAllowed, false, `${mode} must not advertise an apply that refuses`);
+      assert.match(result.reasons.join("\n"), /symlink/, `${mode} names the real blocker`);
+    }
+    assert.equal(readFileSync(outside, "utf8"), "outside\n", "read-only modes wrote nothing");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

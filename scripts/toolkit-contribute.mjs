@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync, readFileSync, mkdirSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, UpdateError } from "./cli-common.mjs";
+import { c, UpdateError, gitEnv } from "./cli-common.mjs";
 import { MANAGED_PATHS } from "./toolkit-manifest.mjs";
 
 /** Strip the merge sidecar suffixes so `--contribute foo.md.aios-incoming` maps to foo.md. */
@@ -61,7 +61,10 @@ export function contributeBranch(destRel, content) {
 
 function hasRemote(dir) {
   try {
-    execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { stdio: "ignore" });
+    execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], {
+      stdio: "ignore",
+      env: gitEnv(),
+    });
     return true;
   } catch {
     return false;
@@ -142,7 +145,8 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
     );
 
   // Work in a throwaway worktree off origin/main so the primary checkout is untouched.
-  const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" });
+  const git = (dir, ...a) =>
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", env: gitEnv() });
   git(toolkitDir, "fetch", "origin", "main", "-q");
   const wt = mkdtempSync(path.join(os.tmpdir(), "aios-contribute-"));
   try {

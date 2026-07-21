@@ -87,11 +87,44 @@ export function slugify(s, { maxLen, fallback } = {}) {
   return out;
 }
 
+/**
+ * Environment for a git subprocess that must resolve the repository **from its `-C`
+ * argument alone** — every repo-redirecting variable removed.
+ *
+ * `git -C <dir>` does NOT override an inherited `GIT_DIR`/`GIT_WORK_TREE`: with `GIT_DIR`
+ * set, `git -C <non-git-dir> rev-parse --show-toplevel` cheerfully answers `<non-git-dir>`
+ * (verified), so a containment probe reads as "this dir is its own git toplevel" when it
+ * is not a repository at all — a FAIL-OPEN on exactly the gate that exists to stop git
+ * operations landing on an unrelated repo. Git exports these itself when it runs a hook,
+ * so anything invoking the toolkit from a hook (or `rebase --exec`, `bisect run`, a husky
+ * wrapper, some CI harnesses) inherits them without the user ever setting one by hand.
+ *
+ * Use for EVERY git invocation whose answer is about a specific directory. Deliberately
+ * not applied to `git clone` (no repo to resolve) — but harmless there too.
+ */
+export function gitEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+  ])
+    delete env[key];
+  return env;
+}
+
 /** Read a single git config value for a repo, or "" if unset/unavailable. */
 export function gitConfig(repo, key) {
   try {
     return execFileSync("git", ["-C", repo, "config", "--get", key], {
       encoding: "utf8",
+      env: gitEnv(),
     }).trim();
   } catch {
     return "";

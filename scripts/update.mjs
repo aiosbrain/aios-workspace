@@ -73,7 +73,7 @@ import {
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { c, UpdateError } from "./cli-common.mjs";
+import { c, UpdateError, gitEnv } from "./cli-common.mjs";
 import { MANAGED_PATHS, SEED_IF_ABSENT, VERSION_FILE } from "./toolkit-manifest.mjs";
 import { decideMerge, threeWayMerge, gitShow, lsTree } from "./toolkit-merge.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
@@ -114,8 +114,11 @@ export function gitSha(dir) {
   try {
     // Full sha (not --short): the version stamp is a merge base for future syncs,
     // and a full sha survives shallow/ephemeral clones where short shas can collide.
+    // gitEnv(): an inherited GIT_DIR would make this report ANOTHER repo's HEAD — and
+    // this sha becomes the workspace's stamped 3-way merge base.
     return execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
       encoding: "utf8",
+      env: gitEnv(),
     }).trim();
   } catch {
     return "unknown";
@@ -212,7 +215,7 @@ export function dirtyManagedPaths(repo) {
     const out = execFileSync(
       "git",
       ["-C", repo, "status", "--porcelain", "--", ...MANAGED_PATHS.map((e) => e.dest)],
-      { encoding: "utf8" }
+      { encoding: "utf8", env: gitEnv() }
     );
     const set = new Set();
     for (const line of out.split("\n")) {
@@ -648,6 +651,14 @@ export function plannedDestRels(srcDir, baseSha) {
   return out;
 }
 
+/** The workspace's pinned merge base — line 1 of the version stamp, or undefined when the
+ *  workspace has never been stamped (first apply). One reader, so the apply pre-flight and
+ *  the read-only pre-flight can never disagree about which base they're reasoning from. */
+function readStampBaseSha(repo) {
+  const stampPath = path.join(repo, VERSION_FILE);
+  return existsSync(stampPath) ? readFileSync(stampPath, "utf8").split(/\s/)[0] : undefined;
+}
+
 /** The `.aios-toolkit-version` body. Line 1 is the sha (parsed as the merge base). */
 function stampBody(sha, meta, srcDir) {
   const lines = [sha, `toolkit-version ${meta.version}`];
@@ -821,10 +832,21 @@ function printMergeReport(color, r, { preview = false } = {}) {
  * --preview so a new signal (or a wording fix) lands in every mode at once instead of
  * drifting across three hand-built copies.
  */
-function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false }) {
+function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo = null }) {
   const pullInfo = skipRemote
     ? null
     : pullToolkitCheckout(srcDir, { ...pullOpts, check: true, dryRun: true, noInstall: true }, io);
+  // Run the SAME containment pre-flight the apply runs (`repo` is set only for a real
+  // workspace target — a toolkit-self assessment vendors nothing, so it has no
+  // destinations to contain). Without this, `--check`/`--preview` computed
+  // `applyAllowed: true` for a workspace whose managed destination is a symlink, and
+  // onboarding offered an apply that then refused — the offer-then-refuse class this
+  // whole change set exists to eliminate. Throwing (rather than folding into `reasons`)
+  // matches the contract already set by `missingSeedPaths`, whose identical refusal has
+  // always surfaced read-only as a structured `mode: "error"` result.
+  if (repo)
+    for (const destRel of plannedDestRels(srcDir, readStampBaseSha(repo)))
+      assertDestPathSafe(repo, destRel);
   const vs = vendorSafety(srcDir);
   const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
   const remoteState = pullInfo?.remoteState ?? null;
@@ -888,9 +910,7 @@ async function cmdVendorApplyOnly(repo, args) {
   // a symlinked catalog destination is refused before anything is written.
   for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
     assertDestPathSafe(repo, rel, "regenerate catalog");
-  const baseSha = existsSync(stampPath)
-    ? readFileSync(stampPath, "utf8").split(/\s/)[0]
-    : undefined;
+  const baseSha = readStampBaseSha(repo);
   // PRE-FLIGHT containment scan over the COMPLETE write+delete set — all-or-nothing.
   // plannedDestRels enumerates everything the apply below could touch (managed + seed
   // writes, conflict sidecars, upstream-deletion targets) via the same helpers the write
@@ -1182,7 +1202,7 @@ async function cmdUpdateInner(repo, cfg, args) {
   try {
     if (check) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
       const { remoteState, sourceClean, vs } = a;
 
       const sha = gitSha(srcDir);
@@ -1236,7 +1256,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       // preview never pulls (implies --no-pull) and never writes — it operates directly
       // against the live srcDir, same honest point-in-time scope as --check. No snapshot
       // is needed since nothing is ever written.
-      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral });
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral, repo });
       const { remoteState, sourceClean, vs } = a;
       if (!vs.safe) {
         console.warn(
@@ -1381,7 +1401,16 @@ async function cmdUpdateInner(repo, cfg, args) {
         stampSource,
       ];
       if (args.includes("--force")) passthrough.push("--force");
-      const res = spawnSync(process.execPath, [entrypoint, ...passthrough], { stdio: "inherit" });
+      // env: gitEnv() — the child runs the SNAPSHOT's own CLI, which may predate the
+      // git-env hardening entirely. Scrubbing at the spawn boundary closes the inherited
+      // GIT_DIR/GIT_WORK_TREE hole for EVERY snapshot version, including old ones whose
+      // internal git calls are unsanitized; sanitizing only our own call sites would
+      // protect the parent and leave the child (the process that actually writes the
+      // workspace and the version stamp) resolving against the wrong repository.
+      const res = spawnSync(process.execPath, [entrypoint, ...passthrough], {
+        stdio: "inherit",
+        env: gitEnv(),
+      });
 
       let exitStatus, reasons;
       if (res.error) {

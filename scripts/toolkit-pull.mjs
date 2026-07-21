@@ -40,12 +40,19 @@ import {
   rmSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, sha256, UpdateError } from "./cli-common.mjs";
+import { c, sha256, UpdateError, gitEnv } from "./cli-common.mjs";
 
 /** Run git in `dir`; returns trimmed stdout. Throws on non-zero (caller may catch).
- *  `opts` passes through to execFileSync (used for `timeout` on network probes). */
+ *  `opts` passes through to execFileSync (used for `timeout` on network probes).
+ *  Runs with `gitEnv()` — an inherited GIT_DIR/GIT_WORK_TREE (git sets these for every
+ *  hook it runs) would otherwise override `-C dir` and answer about the WRONG repo,
+ *  failing the containment probes open. */
 function git(dir, gitArgs, opts = {}) {
-  return execFileSync("git", ["-C", dir, ...gitArgs], { encoding: "utf8", ...opts }).trim();
+  return execFileSync("git", ["-C", dir, ...gitArgs], {
+    encoding: "utf8",
+    env: gitEnv(),
+    ...opts,
+  }).trim();
 }
 
 /** Same, but returns "" instead of throwing — ONLY for values where "" is itself a
