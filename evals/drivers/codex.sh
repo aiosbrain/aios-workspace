@@ -18,8 +18,17 @@ else
   HARNESS_TRACE_FILE="$HARNESS_TRACE_FILE" \
     python3 "$HARNESS_ROOT/evals/lib/exec_timeout.py" "$HARNESS_TIMEOUT" "$STDOUT" "$STDERR" -- "$@"
   STATUS=$?
-  UNAVAILABLE_REASON=$(grep -Eio 'not authenticated|not logged in|please log in|invalid api key|unauthorized|authentication required|rate limit exceeded|insufficient quota|quota exceeded' \
-    "$STDOUT" "$STDERR" 2>/dev/null | head -1 || true)
+  # Only reclassify as "unavailable" when the process already failed AND produced no
+  # structured turn output at all — i.e. it never got past startup. This keeps a
+  # transient mid-run auth/rate-limit log line that the run recovers from (STATUS=0,
+  # or real "type" events already in stdout) from being misreported, and confines the
+  # keyword scan to stderr so legitimate agent transcript content (e.g. a security-
+  # review scenario discussing "unauthorized access") in stdout is never matched.
+  UNAVAILABLE_REASON=""
+  if [ "$STATUS" -ne 0 ] && ! grep -q '"type"' "$STDOUT" 2>/dev/null; then
+    UNAVAILABLE_REASON=$(grep -Eio 'not authenticated|not logged in|please log in|invalid api key|unauthorized|authentication required|rate limit exceeded|insufficient quota|quota exceeded' \
+      "$STDERR" 2>/dev/null | head -1 || true)
+  fi
   [ -z "$UNAVAILABLE_REASON" ] || STATUS=127
 fi
 

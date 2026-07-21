@@ -16,6 +16,23 @@ usage() {
   echo "usage: bash evals/run.sh --runtime <claude|codex|opencode|mock> --scenario <id|all> --runs <n> [--model id] [--judge <runtime|none>]" >&2
 }
 
+# Filesystem-level fingerprint of a scenario's forbidden_paths, independent of git
+# visibility: install-harness.sh routinely adds its own scaffolding dirs (.harness/,
+# .claude/, etc.) to .git/info/exclude, which would make a git-diff/status-based
+# tamper check structurally blind to edits under those same paths.
+fingerprint_forbidden() {
+  WORKSPACE_ARG=$1
+  PATHS_JSON=$2
+  printf '%s' "$PATHS_JSON" | jq -r '.[]' | while IFS= read -r REL; do
+    TARGET="$WORKSPACE_ARG/$REL"
+    if [ -e "$TARGET" ]; then
+      find "$TARGET" -type f -print0 2>/dev/null | xargs -0 cksum 2>/dev/null | sort
+    else
+      printf '%s: absent\n' "$REL"
+    fi
+  done
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --runtime) RUNTIME=${2:-}; shift 2 ;;
@@ -50,10 +67,12 @@ if [ "$SCENARIO" = all ]; then
   for MANIFEST in "$ROOT"/evals/scenarios/*/manifest.json; do
     [ -f "$MANIFEST" ] || continue
     CANDIDATE_DIR=$(dirname "$MANIFEST")
-    if [ -x "$CANDIDATE_DIR/setup.sh" ] && [ -x "$CANDIDATE_DIR/grade.sh" ] && [ -f "$CANDIDATE_DIR/prompt.md" ]; then
+    CANDIDATE_SEMANTIC=$(jq -r '.semantic_required // false' "$MANIFEST" 2>/dev/null || echo false)
+    if [ -x "$CANDIDATE_DIR/setup.sh" ] && [ -x "$CANDIDATE_DIR/grade.sh" ] && [ -f "$CANDIDATE_DIR/prompt.md" ] \
+      && { [ "$CANDIDATE_SEMANTIC" != true ] || [ -f "$CANDIDATE_DIR/rubric.md" ]; }; then
       SCENARIOS+=("$(basename "$CANDIDATE_DIR")")
     else
-      echo "skipping incomplete scenario (missing setup.sh/grade.sh/prompt.md): $(basename "$CANDIDATE_DIR")" >&2
+      echo "skipping incomplete scenario (missing setup.sh/grade.sh/prompt.md, or rubric.md for a semantic scenario): $(basename "$CANDIDATE_DIR")" >&2
     fi
   done
 else
@@ -102,6 +121,9 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
     : > "$WORK_TRACE"
     git -C "$WORKSPACE" diff HEAD --binary > "$BEFORE_DIFF"
 
+    FORBIDDEN_PATHS=$(jq -c '.forbidden_paths // []' "$SCENARIO_DIR/manifest.json")
+    FORBIDDEN_BEFORE=$(fingerprint_forbidden "$WORKSPACE" "$FORBIDDEN_PATHS")
+
     DRIVER="$ROOT/evals/drivers/$RUNTIME.sh"
     HARNESS_ROOT="$ROOT" HARNESS_WORKSPACE="$WORKSPACE" HARNESS_SCENARIO="$SCENARIO_ID" \
       HARNESS_PROMPT_FILE="$SCENARIO_DIR/prompt.md" HARNESS_TRACE_FILE="$WORK_TRACE" \
@@ -119,6 +141,8 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
     fi
 
     git -C "$WORKSPACE" diff HEAD --binary > "$AFTER_DIFF"
+    FORBIDDEN_AFTER=$(fingerprint_forbidden "$WORKSPACE" "$FORBIDDEN_PATHS")
+    if [ "$FORBIDDEN_BEFORE" = "$FORBIDDEN_AFTER" ]; then FORBIDDEN_HIT=false; else FORBIDDEN_HIT=true; fi
     "$SCENARIO_DIR/grade.sh" "$WORKSPACE" "$TRACE" "$BEFORE_DIFF" > "$GRADE"
     GRADE_STATUS=$?
     [ "$GRADE_STATUS" -eq 0 ] && jq -e '.deterministic_pass | type == "boolean"' "$GRADE" >/dev/null 2>&1 || \
@@ -142,9 +166,6 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
 
     CHANGED_PATHS=$( { git -C "$WORKSPACE" diff --name-only --no-renames -z HEAD; git -C "$WORKSPACE" ls-files --others --exclude-standard -z; } \
       | jq -Rsc 'split("\u0000") | map(select(length > 0)) | unique')
-    FORBIDDEN_PATHS=$(jq -c '.forbidden_paths // []' "$SCENARIO_DIR/manifest.json")
-    FORBIDDEN_HIT=$(jq -n --argjson changed "$CHANGED_PATHS" --argjson forbidden "$FORBIDDEN_PATHS" \
-      '[$changed[] | select(IN($forbidden[]))] | length > 0')
 
     DETERMINISTIC=$(jq -r '.deterministic_pass' "$GRADE")
     JUDGE_STATUS=$(jq -r '.status' "$JUDGE_RECORD")
