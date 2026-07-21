@@ -282,7 +282,10 @@ test("unknown and concurrent acknowledgments fail closed without duplicate event
       },
     });
     const results = await Promise.all([ackInboxAsk(dir, id), ackInboxAsk(dir, id)]);
-    assert.equal(results.some((result) => result.recorded), true);
+    assert.equal(
+      results.some((result) => result.recorded),
+      true
+    );
     assert.equal(
       readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
       1
@@ -290,6 +293,62 @@ test("unknown and concurrent acknowledgments fail closed without duplicate event
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("human acknowledgment is appended inside the ask-store lifecycle lock", async () => {
+  let underAskLock = false;
+  let recorded = 0;
+  const id = "ask-lock-proof";
+  const loop = {
+    buildInbox: () => ({
+      items: [
+        {
+          id,
+          origin: "agent-event",
+          bucket: "needs-you",
+          attention_state: "surfaced",
+          ask: { id, status: "open" },
+        },
+      ],
+    }),
+    readJournalSegments: () => ({ events: [] }),
+    foldNotificationState: () =>
+      new Map([
+        [
+          id,
+          {
+            delivery_attempts: 1,
+            last_delivery_at: "2026-07-21T01:00:00.000Z",
+            acked: false,
+          },
+        ],
+      ]),
+    createDurableNotifyJournal: () => () => {},
+    recordHumanAck: () => {
+      assert.equal(underAskLock, true);
+      recorded++;
+    },
+    withLock: (_repo, operation) => {
+      underAskLock = true;
+      try {
+        return operation();
+      } finally {
+        underAskLock = false;
+      }
+    },
+  };
+  const notifyCoordinator = {
+    async runExclusive(operation) {
+      return { acquired: true, value: await operation() };
+    },
+  };
+
+  const result = await ackInboxAsk("/tmp/fixture", id, {
+    loadLoopFn: async () => loop,
+    notifyCoordinator,
+  });
+  assert.equal(result.recorded, true);
+  assert.equal(recorded, 1);
 });
 
 test("reconcile throttle — at most once per 30s, and an ask decision bypasses the wait", () => {

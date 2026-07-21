@@ -2,12 +2,7 @@
 
 import { Bot, CalendarDays, Mail, Send, Terminal } from "lucide-react";
 import { cn } from "../../lib/cn";
-import {
-  deriveAskState,
-  type AskOverdueState,
-  type InboxItem,
-  type InboxView,
-} from "./types";
+import { deriveAskState, type AskOverdueState, type InboxItem, type InboxView } from "./types";
 import { itemLabel, itemSnippet, ageLabel } from "./presenters";
 
 export function sourceFor(item: InboxItem) {
@@ -35,6 +30,7 @@ export function telegramLaneLabel(view: InboxView) {
   if (status === "disabled") return "Telegram alerts off";
   if (status === "configured") return "Telegram alerts armed";
   if (status === "delivery_ok") return "Telegram alert delivered";
+  if (status === "degraded") return "Some Telegram alerts failed";
   if (status === "failed") return "Telegram alerts failed";
   if (status === "unavailable") return "Telegram alerts unavailable";
   return "Telegram sends alerts only";

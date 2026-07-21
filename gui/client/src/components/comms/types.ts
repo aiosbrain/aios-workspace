@@ -53,15 +53,10 @@ export interface InboxItem {
 }
 
 export type ConnectorSourceStatus =
-  | "unknown"
-  | "ready"
-  | "degraded"
-  | "failed"
-  | "unavailable"
-  | "outbound_only";
+  "unknown" | "ready" | "degraded" | "failed" | "unavailable" | "outbound_only";
 
 export interface TelegramNotifyLane {
-  status: "disabled" | "configured" | "delivery_ok" | "failed" | "unavailable";
+  status: "disabled" | "configured" | "delivery_ok" | "degraded" | "failed" | "unavailable";
   last_attempt_at: string | null;
   last_delivery_at: string | null;
   last_error: string | null;

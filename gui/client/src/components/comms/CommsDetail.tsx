@@ -203,15 +203,15 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
         {item.origin === "thread-state" &&
           (item.observation?.object_kind === "email" ||
             item.observation?.object_kind === "calendar-event") && (
-          <a
-            className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            href="https://mail.google.com/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <ExternalLink size={13} /> Reply in Gmail
-          </a>
-        )}
+            <a
+              className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              href="https://mail.google.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={13} /> Reply in Gmail
+            </a>
+          )}
       </div>
     </div>
   );

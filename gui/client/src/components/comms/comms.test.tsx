@@ -8,15 +8,10 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  CommsQueue,
-  refreshLabel,
-  telegramInboundLabel,
-  telegramLaneLabel,
-} from "./CommsQueue";
+import { CommsQueue, refreshLabel, telegramInboundLabel, telegramLaneLabel } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
-import { LatestDetailRequest } from "./detail-request";
+import { LatestDetailRequest, reconcileDetailNotify } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
 import { postAskAck, postAskArchive, postAskReply, postDecision } from "./api";
@@ -207,6 +202,8 @@ describe("CommsQueue", () => {
     expect(html).toContain("Telegram inbox not connected");
     expect(telegramLaneLabel(view)).toBe("Telegram alerts armed");
     expect(telegramInboundLabel(view)).toBe("Telegram inbox not connected");
+    view.notify.lane.status = "degraded";
+    expect(telegramLaneLabel(view)).toBe("Some Telegram alerts failed");
   });
 });
 
@@ -475,10 +472,75 @@ describe("detail request sequencing", () => {
       reject
     );
     resolveB("detail-B");
-    await loadB;
+    expect(await loadB).toBe("detail-B");
     resolveA("detail-A");
-    await loadA;
+    expect(await loadA).toBeUndefined();
     expect(accepted).toEqual(["detail-B"]);
+  });
+
+  test("a newer detail notify projection reconciles the selected queue row and lane", () => {
+    const view = fixtureView();
+    view.notify = {
+      escalation_window_ms: 900_000,
+      states: {
+        "ask-blocker": {
+          delivery_attempts: 1,
+          last_delivery_at: "2026-07-16T01:00:00.000Z",
+          acked: false,
+          last_ack_at: null,
+        },
+        "ask-fyi": {
+          delivery_attempts: 1,
+          last_delivery_at: "2026-07-16T01:00:00.000Z",
+          acked: false,
+          last_ack_at: null,
+        },
+      },
+      overdue: {
+        "ask-blocker": {
+          overdue_by_ms: 60_000,
+          delivery_attempts: 1,
+          last_delivery_at: "2026-07-16T01:00:00.000Z",
+        },
+      },
+      lane: {
+        status: "configured",
+        last_attempt_at: null,
+        last_delivery_at: null,
+        last_error: null,
+      },
+    };
+    const detail = {
+      item: view.items[0],
+      agentContext: null,
+      pendingApprovals: [],
+      generated_at: "2026-07-16T01:01:00.000Z",
+      freshness: null,
+      notify: {
+        escalation_window_ms: 900_000,
+        states: {
+          "ask-blocker": {
+            delivery_attempts: 1,
+            last_delivery_at: "2026-07-16T01:00:00.000Z",
+            acked: true,
+            last_ack_at: "2026-07-16T01:01:00.000Z",
+          },
+        },
+        overdue: {},
+        lane: {
+          status: "delivery_ok" as const,
+          last_attempt_at: "2026-07-16T01:00:00.000Z",
+          last_delivery_at: "2026-07-16T01:00:00.000Z",
+          last_error: null,
+        },
+      },
+    };
+
+    const reconciled = reconcileDetailNotify(view, "ask-blocker", detail);
+    expect(reconciled.notify?.states["ask-blocker"].acked).toBe(true);
+    expect(reconciled.notify?.states["ask-fyi"].acked).toBe(false);
+    expect(reconciled.notify?.overdue["ask-blocker"]).toBeUndefined();
+    expect(reconciled.notify?.lane.status).toBe("delivery_ok");
   });
 });
 

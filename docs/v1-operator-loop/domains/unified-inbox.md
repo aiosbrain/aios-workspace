@@ -92,8 +92,9 @@ journal failure or process death remains an unavoidable ambiguous duplicate wind
 provider has no idempotency key.
 
 Outbound notify status is exposed separately from connector freshness:
-`notify.lane.status = disabled | configured | delivery_ok | failed | unavailable`. It never
-contains configuration, token, chat id, ask content, or raw provider errors. Telegram inbound
+`notify.lane.status = disabled | configured | delivery_ok | degraded | failed | unavailable`;
+`degraded` means a bounded tick delivered at least one alert and failed at least one other alert.
+It never contains configuration, token, chat id, ask content, or raw provider errors. Telegram inbound
 freshness continues to report the legacy alerts-only/unavailable state; no `getUpdates` poller,
 webhook ingestion, Telegram conversation projection, or reply affordance ships under this
 outbound contract.

@@ -39,9 +39,9 @@ function itemTime(item) {
 export function isBlockingInboxItem(item) {
   return Boolean(
     item &&
-      item.origin === "agent-event" &&
-      item.ask?.status === "open" &&
-      (item.bucket === "needs-you" || item.protected === true)
+    item.origin === "agent-event" &&
+    item.ask?.status === "open" &&
+    (item.bucket === "needs-you" || item.protected === true)
   );
 }
 
@@ -57,13 +57,13 @@ function pruneRetryMap(retryAfter, eligibleIds) {
 function loopAvailable(loop) {
   return Boolean(
     loop &&
-      typeof loop.buildInbox === "function" &&
-      typeof loop.readJournalSegments === "function" &&
-      typeof loop.foldNotificationState === "function" &&
-      typeof loop.loadTelegramConfig === "function" &&
-      typeof loop.projectNotification === "function" &&
-      typeof loop.sendNotification === "function" &&
-      typeof loop.createDurableNotifyJournal === "function"
+    typeof loop.buildInbox === "function" &&
+    typeof loop.readJournalSegments === "function" &&
+    typeof loop.foldNotificationState === "function" &&
+    typeof loop.loadTelegramConfig === "function" &&
+    typeof loop.projectNotification === "function" &&
+    typeof loop.sendNotification === "function" &&
+    typeof loop.createDurableNotifyJournal === "function"
   );
 }
 
@@ -133,10 +133,18 @@ export function createTelegramNotifier({
 
       if (candidates.length === 0) return;
       const appendEvent = loop.createDurableNotifyJournal(repo);
+      let deliveredThisTick = false;
+      let failedThisTick = false;
+      let disabledThisTick = false;
       for (const item of candidates) {
         const attemptedAt = now();
-        state.last_attempt_at = attemptedAt.toISOString();
         try {
+          const current = loop.buildInbox(repo).items.find((row) => row.id === item.id);
+          if (!isBlockingInboxItem(current)) {
+            retryAfter.delete(item.id);
+            continue;
+          }
+          state.last_attempt_at = attemptedAt.toISOString();
           const projection = loop.projectNotification({
             ask_id: item.id,
             count: 1,
@@ -156,23 +164,32 @@ export function createTelegramNotifier({
               last_ack_at: null,
             });
             retryAfter.delete(item.id);
-            state.status = "delivery_ok";
+            deliveredThisTick = true;
             state.last_delivery_at = attemptedAt.toISOString();
-            state.last_error = null;
           } else if (result.status === "disabled") {
-            state.status = "disabled";
-            state.last_error = null;
+            disabledThisTick = true;
             break;
           } else {
             retryAfter.set(item.id, attemptedAt.getTime() + retryMs);
-            state.status = "failed";
-            state.last_error = "telegram delivery failed";
+            failedThisTick = true;
           }
         } catch {
           retryAfter.set(item.id, attemptedAt.getTime() + retryMs);
-          state.status = "failed";
-          state.last_error = "telegram delivery failed";
+          failedThisTick = true;
         }
+      }
+      if (disabledThisTick) {
+        state.status = "disabled";
+        state.last_error = null;
+      } else if (deliveredThisTick && failedThisTick) {
+        state.status = "degraded";
+        state.last_error = "some telegram deliveries failed";
+      } else if (failedThisTick) {
+        state.status = "failed";
+        state.last_error = "telegram delivery failed";
+      } else if (deliveredThisTick) {
+        state.status = "delivery_ok";
+        state.last_error = null;
       }
     });
 

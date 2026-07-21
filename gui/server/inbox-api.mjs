@@ -215,13 +215,9 @@ export async function getInboxDetail(repo, id, { refresh = null, notifyLane = nu
       ? {
           ...view.notify,
           states:
-            item && view.notify.states[item.id]
-              ? { [item.id]: view.notify.states[item.id] }
-              : {},
+            item && view.notify.states[item.id] ? { [item.id]: view.notify.states[item.id] } : {},
           overdue:
-            item && view.notify.overdue[item.id]
-              ? { [item.id]: view.notify.overdue[item.id] }
-              : {},
+            item && view.notify.overdue[item.id] ? { [item.id]: view.notify.overdue[item.id] } : {},
         }
       : null,
   };
@@ -248,32 +244,35 @@ export async function ackInboxAsk(
       typeof loop.readJournalSegments !== "function" ||
       typeof loop.foldNotificationState !== "function" ||
       typeof loop.recordHumanAck !== "function" ||
-      typeof loop.createDurableNotifyJournal !== "function"
+      typeof loop.createDurableNotifyJournal !== "function" ||
+      typeof loop.withLock !== "function"
     ) {
       return { ok: false, status: 503, recorded: false, reason: "notify-unavailable" };
     }
-    const item = loop.buildInbox(repo).items.find((row) => row.id === id);
-    if (
-      !item ||
-      !isActiveInboxItem(item) ||
-      item.origin !== "agent-event" ||
-      item.ask?.status !== "open"
-    ) {
-      return { ok: false, status: 404, recorded: false, reason: "not-acknowledgeable" };
-    }
-    const journal = loop.readJournalSegments(repo);
-    const state = loop.foldNotificationState(journal.events).get(id);
-    if (!state || state.delivery_attempts <= 0 || !state.last_delivery_at) {
-      return { ok: true, status: 200, recorded: false, reason: "never-delivered" };
-    }
-    if (state.acked) {
-      return { ok: true, status: 200, recorded: false, reason: "already-acked" };
-    }
-    loop.recordHumanAck(id, {
-      appendEvent: loop.createDurableNotifyJournal(repo),
-      now: now(),
+    return loop.withLock(repo, () => {
+      const item = loop.buildInbox(repo).items.find((row) => row.id === id);
+      if (
+        !item ||
+        !isActiveInboxItem(item) ||
+        item.origin !== "agent-event" ||
+        item.ask?.status !== "open"
+      ) {
+        return { ok: false, status: 404, recorded: false, reason: "not-acknowledgeable" };
+      }
+      const journal = loop.readJournalSegments(repo);
+      const state = loop.foldNotificationState(journal.events).get(id);
+      if (!state || state.delivery_attempts <= 0 || !state.last_delivery_at) {
+        return { ok: true, status: 200, recorded: false, reason: "never-delivered" };
+      }
+      if (state.acked) {
+        return { ok: true, status: 200, recorded: false, reason: "already-acked" };
+      }
+      loop.recordHumanAck(id, {
+        appendEvent: loop.createDurableNotifyJournal(repo),
+        now: now(),
+      });
+      return { ok: true, status: 200, recorded: true };
     });
-    return { ok: true, status: 200, recorded: true };
   });
   if (!guarded.acquired) {
     return { ok: false, status: 503, recorded: false, reason: "notify-busy", retryAfter: 1 };

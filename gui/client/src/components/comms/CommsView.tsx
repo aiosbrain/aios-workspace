@@ -20,7 +20,7 @@ import {
   postDecision,
 } from "./api";
 import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notification";
-import { LatestDetailRequest } from "./detail-request";
+import { LatestDetailRequest, reconcileDetailNotify } from "./detail-request";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import type { DisplayProjection, InboxDetail, InboxView } from "./types";
 
@@ -46,7 +46,7 @@ export function CommsView() {
 
   const loadDetail = useCallback(
     async (id: string) => {
-      await detailRequests.current.load(
+      return detailRequests.current.load(
         id,
         () => fetchInboxItem(api, id),
         (next) => {
@@ -87,10 +87,10 @@ export function CommsView() {
         detailRef.current = null;
         setDetail(null);
       }
-      // Keep queue and selected-detail notify projections on one poll generation. The detail is
-      // refreshed first, so the list never advances to delivered/overdue state beside stale detail.
-      if (nextId) await loadDetail(nextId);
-      setView(next);
+      // Detail is fetched after the queue, so reconcile its newer selected-row and lane projection
+      // into the queue before committing either surface.
+      const refreshedDetail = nextId ? await loadDetail(nextId) : undefined;
+      setView(reconcileDetailNotify(next, nextId, refreshedDetail));
     } catch (e) {
       setError((e as Error).message);
     }

@@ -10,10 +10,7 @@ import {
   createTelegramNotifier,
   isBlockingInboxItem,
 } from "./inbox-notify.mjs";
-import {
-  TELEGRAM_NOTIFY_LOCK_BASENAME,
-  acquireTelegramNotifyLock,
-} from "./inbox-notify-lock.mjs";
+import { TELEGRAM_NOTIFY_LOCK_BASENAME, acquireTelegramNotifyLock } from "./inbox-notify-lock.mjs";
 
 function workspace() {
   return mkdtempSync(path.join(tmpdir(), "inbox-notify-"));
@@ -58,10 +55,7 @@ test("blocking predicate matches only open actionable agent asks", () => {
   assert.equal(isBlockingInboxItem(askItem("a")), true);
   assert.equal(isBlockingInboxItem(askItem("b", { protected: false, bucket: "fyi" })), false);
   assert.equal(isBlockingInboxItem(askItem("c", { origin: "thread-state" })), false);
-  assert.equal(
-    isBlockingInboxItem(askItem("d", { ask: { id: "d", status: "resolved" } })),
-    false
-  );
+  assert.equal(isBlockingInboxItem(askItem("d", { ask: { id: "d", status: "resolved" } })), false);
 });
 
 test("eligible ask sends content-free text once and dedupes across notifier restart", async () => {
@@ -180,12 +174,46 @@ test("disabled and non-blocking queues are silent", async () => {
 
     const fyi = createTelegramNotifier({
       repo,
-      loadLoop: async () =>
-        loopFor([askItem("fyi", { protected: false, bucket: "fyi" })]),
+      loadLoop: async () => loopFor([askItem("fyi", { protected: false, bucket: "fyi" })]),
       env: configuredEnv,
       transport,
     });
     await fyi.tick();
+    assert.equal(calls, 0);
+    assert.equal(realLoop.readJournalSegments(repo).events.length, 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("candidate is rechecked immediately before transport", async () => {
+  const repo = workspace();
+  try {
+    let reads = 0;
+    let calls = 0;
+    const open = askItem("ask-closed-before-send");
+    const closed = askItem("ask-closed-before-send", {
+      ask: { id: "ask-closed-before-send", status: "archived" },
+    });
+    const loop = {
+      ...realLoop,
+      buildInbox: () => ({
+        items: reads++ === 0 ? [open] : [closed],
+        ranker_version: "test",
+        generated_at: new Date().toISOString(),
+      }),
+    };
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => loop,
+      env: configuredEnv,
+      transport: async () => {
+        calls++;
+        return { ok: true, status: 200 };
+      },
+    });
+
+    await notifier.tick();
     assert.equal(calls, 0);
     assert.equal(realLoop.readJournalSegments(repo).events.length, 0);
   } finally {
@@ -200,12 +228,7 @@ test("per-tick send cap drains remaining asks on the next tick", async () => {
     const notifier = createTelegramNotifier({
       repo,
       loadLoop: async () =>
-        loopFor([
-          askItem("ask-1"),
-          askItem("ask-2"),
-          askItem("ask-3"),
-          askItem("ask-4"),
-        ]),
+        loopFor([askItem("ask-1"), askItem("ask-2"), askItem("ask-3"), askItem("ask-4")]),
       env: configuredEnv,
       maxSendsPerTick: 2,
       transport: async (request) => {
@@ -251,6 +274,38 @@ test("failed send journals nothing, uses retry backoff, and exposes a generic er
     current = new Date(current.getTime() + DEFAULT_FAILURE_RETRY_MS + 1);
     await notifier.tick();
     assert.equal(calls, 2);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("mixed send outcomes report a degraded lane without hiding the successful delivery", async () => {
+  const repo = workspace();
+  try {
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => loopFor([askItem("ask-a"), askItem("ask-b")]),
+      env: configuredEnv,
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      transport: async (request) => ({
+        ok: request.deep_link.endsWith("ask-a"),
+        status: request.deep_link.endsWith("ask-a") ? 200 : 503,
+      }),
+    });
+
+    await notifier.tick();
+    assert.deepEqual(notifier.snapshot(), {
+      status: "degraded",
+      last_attempt_at: "2026-07-21T00:00:00.000Z",
+      last_delivery_at: "2026-07-21T00:00:00.000Z",
+      last_error: "some telegram deliveries failed",
+    });
+    assert.equal(
+      realLoop
+        .readJournalSegments(repo)
+        .events.filter((event) => event.kind === "delivery-attempted").length,
+      1
+    );
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
