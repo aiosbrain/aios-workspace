@@ -5,11 +5,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mapAssistantMessage } from "./claude-code.mjs";
 
-test("synthetic API-error message (billing) emits a typed error carrying the real text", () => {
+// Shape per the installed SDK's own sdk.d.ts (SDKAssistantMessage.error: SDKAssistantMessageError),
+// not the Claude Code CLI's separate on-disk transcript format (which uses different,
+// undocumented field names for the same event).
+test("SDK error-flagged message (billing) emits a typed error carrying the real text", () => {
   const message = {
-    isApiErrorMessage: true,
+    type: "assistant",
     error: "billing_error",
-    apiErrorStatus: 400,
     message: {
       model: "<synthetic>",
       role: "assistant",
@@ -21,20 +23,34 @@ test("synthetic API-error message (billing) emits a typed error carrying the rea
   ]);
 });
 
-test("synthetic message with no text content falls back to a generic error message", () => {
-  const message = { isApiErrorMessage: true, message: { model: "<synthetic>", content: [] } };
+test("error-flagged message with no text content falls back to the error enum value", () => {
+  const message = { error: "rate_limit", message: { model: "<synthetic>", content: [] } };
   assert.deepEqual(mapAssistantMessage(message), [
-    { type: "error", message: "The runtime returned an error with no message." },
+    { type: "error", message: "Runtime error: rate_limit" },
   ]);
 });
 
-test("synthetic model without the isApiErrorMessage flag is still treated as an error", () => {
-  const message = {
-    message: { model: "<synthetic>", content: [{ type: "text", text: "Prompt is too long" }] },
-  };
-  assert.deepEqual(mapAssistantMessage(message), [
-    { type: "error", message: "Prompt is too long" },
-  ]);
+test("every documented SDKAssistantMessageError enum value is treated as an error", () => {
+  const values = [
+    "authentication_failed",
+    "oauth_org_not_allowed",
+    "billing_error",
+    "rate_limit",
+    "overloaded",
+    "invalid_request",
+    "model_not_found",
+    "server_error",
+    "unknown",
+    "max_output_tokens",
+  ];
+  for (const error of values) {
+    const message = { error, message: { content: [{ type: "text", text: `msg:${error}` }] } };
+    assert.deepEqual(
+      mapAssistantMessage(message),
+      [{ type: "error", message: `msg:${error}` }],
+      error
+    );
+  }
 });
 
 test("normal assistant message with tool_use emits tool_use, not error", () => {

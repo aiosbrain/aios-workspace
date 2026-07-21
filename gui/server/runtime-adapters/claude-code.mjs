@@ -106,23 +106,25 @@ function resolveModel(model) {
  * Translate one SDK "assistant" message into WS-shaped events. Pure and testable
  * independent of the live `query()` stream.
  *
- * A synthetic assistant message (`model: "<synthetic>"`, `isApiErrorMessage: true` —
- * how the SDK reports billing errors, rate limits, etc.) never streams through
- * stream_event/content_block_delta; its text block is the ONLY place the underlying
- * failure is carried, so it's surfaced as a typed `error` event. A normal turn's text
- * always arrives via delta first — forwarding it again here would render it twice — so
- * every other assistant message keeps relying on the streamed deltas and this branch
- * only ever emits `tool_use`.
+ * `SDKAssistantMessage.error` (sdk.d.ts) is the SDK's own documented field for this —
+ * an enum (`billing_error`, `rate_limit`, `overloaded`, ...) set directly on the
+ * message when the turn failed at the API level. A message carrying it never streams
+ * through stream_event/content_block_delta, so its `text` content block is the ONLY
+ * place the human-readable failure reason (e.g. "Credit balance is too low") lives —
+ * it's surfaced as a typed `error` event, falling back to the enum value itself if no
+ * text is present. A normal turn's text always arrives via delta first — forwarding it
+ * again here would render it twice — so every other assistant message keeps relying on
+ * the streamed deltas and this branch only ever emits `tool_use`.
  */
 export function mapAssistantMessage(message) {
   const content = message.message?.content || [];
-  if (message.isApiErrorMessage || message.message?.model === "<synthetic>") {
+  if (message.error) {
     const text = content
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("\n")
       .trim();
-    return [{ type: "error", message: text || "The runtime returned an error with no message." }];
+    return [{ type: "error", message: text || `Runtime error: ${message.error}` }];
   }
   return content
     .filter((block) => block.type === "tool_use")
