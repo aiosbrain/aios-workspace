@@ -88,6 +88,7 @@ test("Medium+ matcher is strict while Low remains advisory", async () => {
   assert.equal(hasFindingsAtOrAbove("Medium — stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("Medium - stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("**[Medium]** scripts/x.mjs:1 — stale", "medium"), true);
+  assert.equal(hasFindingsAtOrAbove("**High Severity**\n\nUnsafe retry loop.", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("| High | x | unsafe |", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("- Low: wording", "medium"), false);
   assert.equal(hasFindingsAtOrAbove("No Critical, High, or Medium findings.", "medium"), false);
@@ -270,6 +271,23 @@ test("terminal clear ignores progress prose but cannot override a streamed findi
     assert.equal(contradictory.ok, false);
     assert.equal(contradictory.finding, true);
     assert.match(contradictory.output, /streamed correctness regression/);
+
+    const legacyContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript:
+                "**High Severity**\n\nThis retry loop has no upper bound and can hang the process.",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(legacyContradiction.ok, false);
+    assert.equal(legacyContradiction.finding, true);
+    assert.match(legacyContradiction.output, /High Severity/);
 
     const unstructuredContradiction = await runLocalPrePrReview({
       worktree: repo,

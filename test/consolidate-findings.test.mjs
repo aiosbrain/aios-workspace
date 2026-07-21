@@ -180,6 +180,10 @@ console.log("severity extractors");
     extractLocalBugbotSeverities(readFix("local-bugbot-high.md")) === "High"
   );
   check(
+    "Local Bugbot legacy High Severity heading → High",
+    extractLocalBugbotSeverities("**High Severity**\n\nUnsafe retry loop.") === "High"
+  );
+  check(
     "clear Local Bugbot → null",
     extractLocalBugbotSeverities(readFix("local-bugbot-clear.md")) === null
   );

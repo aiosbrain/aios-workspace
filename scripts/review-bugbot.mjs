@@ -339,6 +339,10 @@ export function hasFindingsAtOrAbove(text, failOn = "high") {
   const threshold = SEVERITY_RANK[canonical];
   const severity = "(Critical|High|Medium|Low)";
   const patterns = [
+    new RegExp(
+      `^\\s*(?:(?:[-*]|\\d+[.)]|#{1,6})\\s+)?${MD}\`?${severity}\\s+Severity\`?${MD}\\s*(?::|—|-\\s+|$)`,
+      "i"
+    ),
     new RegExp(`^\\s*(?:[-*]|\\d+[.)])\\s*${MD}\`?${severity}\`?${MD}\\s*(?::|—|-\\s+)`, "i"),
     new RegExp(`^\\s*(?:[-*]|\\d+[.)])\\s*${MD}\\[${severity}\\]${MD}`, "i"),
     new RegExp(`^\\s*\\|\\s*${MD}\`?${severity}\`?${MD}\\s*\\|`, "i"),
