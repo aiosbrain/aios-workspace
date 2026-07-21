@@ -4,16 +4,25 @@
 # ../aios-engineering-harness/evals/CONTRACT.md for what's core vs. repo-specific.
 #
 # Usage:
-#   scripts/sync-eval-lab.sh              dry-run: show what would change
+#   scripts/sync-eval-lab.sh              dry-run: show what would change vs. the source's
+#                                          current HEAD
 #   scripts/sync-eval-lab.sh --apply      copy the core files + stamp the version marker
+#   scripts/sync-eval-lab.sh --check      local dev tool: fails if a vendored core file has
+#                                          drifted from the exact commit evals/.eval-lab-version
+#                                          says it was synced from (i.e. someone hand-edited a
+#                                          core file instead of going through this script).
+#                                          Not wired into CI — it needs a sibling harness
+#                                          checkout with that commit reachable, which a bare
+#                                          CI runner doesn't have.
 #
 # Source repo path defaults to a sibling checkout; override with EVAL_LAB_SOURCE.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${EVAL_LAB_SOURCE:-$ROOT/../aios-engineering-harness}"
+MODE=${1:-}
 APPLY=false
-[ "${1:-}" = "--apply" ] && APPLY=true
+[ "$MODE" = "--apply" ] && APPLY=true
 
 if [ ! -d "$SOURCE/evals" ]; then
   echo "eval-lab source not found at $SOURCE (set EVAL_LAB_SOURCE)" >&2
@@ -37,6 +46,37 @@ CORE_FILES=(
   "evals/drivers/opencode.sh"
 )
 
+if [ "$MODE" = "--check" ]; then
+  PINNED_SHA=$(awk -F= '$1 == "source_commit" { print $2 }' "$ROOT/evals/.eval-lab-version" 2>/dev/null)
+  if [ -z "$PINNED_SHA" ] || [ "$PINNED_SHA" = "unknown" ]; then
+    echo "no usable source_commit in evals/.eval-lab-version — run --apply at least once first" >&2
+    exit 2
+  fi
+  if ! git -C "$SOURCE" cat-file -e "$PINNED_SHA" 2>/dev/null; then
+    echo "pinned commit $PINNED_SHA isn't reachable in $SOURCE (fetch it, or point EVAL_LAB_SOURCE elsewhere)" >&2
+    exit 2
+  fi
+  DRIFTED=false
+  for REL in "${CORE_FILES[@]}"; do
+    DEST_FILE="$ROOT/$REL"
+    PINNED_BLOB=$(git -C "$SOURCE" show "$PINNED_SHA:$REL" 2>/dev/null)
+    if [ -z "$PINNED_BLOB" ]; then
+      echo "warning: $REL didn't exist at pinned commit $PINNED_SHA, skipping" >&2
+      continue
+    fi
+    if [ ! -f "$DEST_FILE" ] || [ "$(cat "$DEST_FILE" 2>/dev/null)" != "$PINNED_BLOB" ]; then
+      echo "drifted from pinned commit: $REL" >&2
+      DRIFTED=true
+    fi
+  done
+  if [ "$DRIFTED" = true ]; then
+    echo "one or more core files were hand-edited since the last sync-eval-lab.sh --apply" >&2
+    exit 1
+  fi
+  echo "no drift from pinned commit $PINNED_SHA"
+  exit 0
+fi
+
 CHANGED=false
 for REL in "${CORE_FILES[@]}"; do
   SRC_FILE="$SOURCE/$REL"
@@ -51,8 +91,7 @@ for REL in "${CORE_FILES[@]}"; do
   CHANGED=true
   if [ "$APPLY" = true ]; then
     mkdir -p "$(dirname "$DEST_FILE")"
-    cp "$SRC_FILE" "$DEST_FILE"
-    chmod --reference="$SRC_FILE" "$DEST_FILE" 2>/dev/null || true
+    cp -p "$SRC_FILE" "$DEST_FILE"
     echo "synced: $REL"
   else
     echo "would sync: $REL"

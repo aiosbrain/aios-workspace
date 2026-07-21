@@ -97,3 +97,30 @@ onboarding dogfood runs (`docs/pre-ship/dogfood/*`) or real incidents surface a 
 scaffold/CLI as a black box) + `grade.sh` (deterministic where possible) + `rubric.md`
 (only where judgment is genuinely required) + a `drivers/mock.sh` case proving the
 grading pipeline itself is sound before ever pointing it at a real runtime.
+
+## Known limitations (deferred, not this round)
+
+Carried over from the vendored core (see `aios-engineering-harness/evals/README.md`'s
+own "Known limitations" section) — matters more here, since `onboarding-skill-install-
+review-honesty` specifically tests adversarial honesty:
+
+- **`HARNESS_*` env vars are visible to the evaluated agent's own process** (inherited
+  transitively through `exec_timeout.py`'s `subprocess.Popen`). A reward-hacking agent
+  could in principle run `env`, notice it's under evaluation, and locate the trace file.
+  Closing this fully requires redesigning how each runtime's hook mechanism receives its
+  config instead of reading it from the CLI subprocess's own env — bigger than a
+  bugfix, tracked as a follow-up in the harness repo.
+- **A tamper staged then reverted only in the worktree is invisible** to both
+  `CHANGED_PATHS` and `fingerprint_forbidden` (both read the worktree, not the index) —
+  an agent that stages a forbidden-path edit and later `git restore`s only the working
+  copy leaves the tamper sitting in the index, undetected until a later commit.
+- **`judge.sh` is a single-sample judge** (no retry/quorum), unlike this repo's other two
+  LLM-judges (`test/ux/judge.mjs`, `spec-eval.mjs`), both of which were hardened after a
+  single-sample verdict proved flippable. A live (non-mock) verdict from this lab
+  inherits that same flip risk until it gets the same hardening.
+- **`sync-eval-lab.sh --apply` always overwrites core files verbatim** rather than a
+  3-way merge — correct today, since the current core/adapter split (see
+  `../aios-engineering-harness/evals/CONTRACT.md`) means no core file should ever carry
+  a local edit; if that assumption ever needs to change, this script would need the same
+  3-way-merge treatment `scripts/toolkit-merge.mjs` gives the rest of the vendored
+  toolkit.

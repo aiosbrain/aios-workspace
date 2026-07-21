@@ -22,9 +22,10 @@ cleanup_scratch() {
 }
 
 # Filesystem-level fingerprint of a scenario's forbidden_paths, independent of git
-# visibility: install-harness.sh routinely adds its own scaffolding dirs (.harness/,
-# .claude/, etc.) to .git/info/exclude, which would make a git-diff/status-based
-# tamper check structurally blind to edits under those same paths.
+# visibility: a consumer's install-harness.sh may add its own scaffolding dirs to
+# .git/info/exclude (this repo's does, for .harness/, .claude/, etc.), which would
+# make a git-diff/status-based tamper check structurally blind to edits under
+# those same paths.
 fingerprint_forbidden() {
   WORKSPACE_ARG=$1
   PATHS_JSON=$2
