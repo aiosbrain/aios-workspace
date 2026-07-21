@@ -254,6 +254,7 @@ export function buildSecurityReviewPrompt({
     `List findings by severity when any ${blocking} finding exists and OMIT the clear token.`,
     `If there are NO ${blocking} findings, your entire response MUST be exactly ${BUGBOT_CLEAR_TOKEN}.`,
     "Do not add a summary, heading, explanation, table, advisory note, or code fence to a clear response.",
+    `Emit no preamble or narration before the verdict: ${BUGBOT_CLEAR_TOKEN} must be the FINAL line of your response, on a line of its own, with nothing after it.`,
   ].join("\n");
 }
 
@@ -294,6 +295,7 @@ export function buildBugbotPrompt({
     `List findings by severity when any ${blocking} finding exists and OMIT the clear token.`,
     `If there are NO ${blocking} findings, your entire response MUST be exactly ${BUGBOT_CLEAR_TOKEN}.`,
     "Do not add a summary, heading, explanation, table, advisory note, or code fence to a clear response.",
+    `Emit no preamble or narration before the verdict: ${BUGBOT_CLEAR_TOKEN} must be the FINAL line of your response, on a line of its own, with nothing after it.`,
   ].join("\n");
 }
 
@@ -361,7 +363,22 @@ export function hasCriticalOrHighFindings(text) {
   return hasFindingsAtOrAbove(text, "high");
 }
 
-/** True only when the review response is the exact machine clear token. */
+/**
+ * True only when the review response is the exact machine clear token.
+ *
+ * DELIBERATELY strict — a bare token and nothing else. Prose accompanying a clear verdict
+ * is refused (see the `None.\nBUGBOT_CLEAR` and `No Critical issues found.\n\nBUGBOT_CLEAR`
+ * cases in test/review-bugbot.test.mjs + test/fix-ladder.test.mjs), because a model that
+ * narrates alongside the token may be hedging — describing a real problem informally, in a
+ * shape `hasFindingsAtOrAbove` cannot parse, while still signing off. Relaxing this to
+ * "the last line is the token" would let exactly that through.
+ *
+ * The flake this strictness caused (AIO-468: the reviewer nondeterministically prefaces
+ * the token with "Reviewing the diff for bugs.", producing a protocol error that blocks a
+ * merge) is fixed WITHOUT weakening the verdict: `runPass` re-asks once on a protocol
+ * error, and both prompts now demand the token as a bare final line. Do not trade this
+ * predicate's strictness for convergence — fix the caller instead.
+ */
 export function detectBugbotClear(text) {
   return String(text ?? "").trim() === BUGBOT_CLEAR_TOKEN;
 }
@@ -593,23 +610,47 @@ export async function runLocalPrePrReview({
   }
 
   const runPass = async (label, makePrompt) => {
-    const output = await reviewPrompt({
-      label,
-      prompt: makePrompt(reviewDiff),
-      worktree,
-      timeoutMs,
-      model,
-      readOnly,
-    });
-    const finding = detectBugbotBlocked(output) || hasFindingsAtOrAbove(output, failOn);
-    const error = !finding && !detectBugbotClear(output);
+    const classify = (output) => {
+      // Findings FIRST: a response listing a fail-on-or-above finding is blocked even if
+      // it also ends with the clear token. Order is load-bearing — never invert it.
+      const finding = detectBugbotBlocked(output) || hasFindingsAtOrAbove(output, failOn);
+      const error = !finding && !detectBugbotClear(output);
+      return { finding, error };
+    };
+    const once = async () => {
+      const output = await reviewPrompt({
+        label,
+        prompt: makePrompt(reviewDiff),
+        worktree,
+        timeoutMs,
+        model,
+        readOnly,
+      });
+      return { output, ...classify(output) };
+    };
+
+    let pass = await once();
+    // Retry ONCE on a protocol error only — NEVER on a finding. This is the fix for
+    // AIO-468, and it is deliberately at the caller rather than in `detectBugbotClear`:
+    // a protocol error is the ABSENCE of a readable verdict, so re-asking is not a second
+    // chance to pass. A real finding is captured by `finding` and short-circuits here
+    // untouched — re-asking after a finding WOULD be a bypass, and must never be added.
+    // Same precedent as `retryReviewTimeoutOnce` above. Without this, one malformed
+    // response hard-blocks a merge (observed ~3 runs in 6), which pressures operators
+    // toward bypassing the one gate that must never be bypassed.
+    if (pass.error) {
+      process.stderr.write(
+        `[local-bugbot] ${label}: unreadable verdict — re-asking once (protocol error, not a finding)\n`
+      );
+      pass = await once();
+    }
     return {
-      ok: !finding && !error,
-      finding,
-      error,
-      output: error
-        ? `${output}\n\n(review protocol error: expected exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
-        : output,
+      ok: !pass.finding && !pass.error,
+      finding: pass.finding,
+      error: pass.error,
+      output: pass.error
+        ? `${pass.output}\n\n(review protocol error in the ${label} pass: expected ${BUGBOT_CLEAR_TOKEN} or ${BUGBOT_BLOCKED_TOKEN} as the final line, or a structured finding)`
+        : pass.output,
     };
   };
 
