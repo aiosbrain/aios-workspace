@@ -29,6 +29,10 @@ const fakeBin = path.join(dir, "fake-agent.mjs");
 writeFileSync(
   fakeBin,
   [
+    "if (process.argv.join(' ').includes('transcript-only')) {",
+    "  console.log(JSON.stringify({ type: 'text', text: 'BUGBOT_CLEAR' }));",
+    "  process.exit(0);",
+    "}",
     "const key = process.env.ANTHROPIC_API_KEY ?? '<unset>';",
     "const text = 'ANTHROPIC_API_KEY=' + key;",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));",
@@ -91,6 +95,18 @@ console.log("callCursorAgent can return the transcript and terminal result separ
     out.transcript.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL) &&
       out.result === "TERMINAL_RESULT" &&
       out.eventResult.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL)
+  );
+}
+
+console.log("callCursorAgent falls back to an exact transcript for text-only providers");
+{
+  const out = await callCursorAgent("transcript-only", 30000, {
+    extraArgs: [],
+    resultEventBundle: true,
+  });
+  check(
+    "text-only exact token becomes the terminal candidate",
+    out.transcript === "BUGBOT_CLEAR" && out.result === "BUGBOT_CLEAR" && out.eventResult === null
   );
 }
 

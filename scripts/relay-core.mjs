@@ -221,7 +221,7 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
           // Cursor's result event can contain the accumulated assistant narration on
           // long agent runs. Expose both event shapes so strict callers can accept an
           // exact token from either while scanning both for contradictions.
-          const terminal = lastAssistantText ?? finalResult;
+          const terminal = lastAssistantText ?? finalResult ?? (text || null);
           resolve({
             transcript: text.trim(),
             result: terminal?.trim() ?? null,
