@@ -31,6 +31,7 @@ import { readHostHealth, unhealthyInboxItems } from "./inbox/host-health.js";
 import {
   appendInboxEvent,
   readJournalSegments,
+  inboxJournalLockHeld,
   INBOX_DIR_REL,
   type InboxEvent,
 } from "./inbox/journal.js";
@@ -411,6 +412,7 @@ export {
   validateEventInput,
   parseEventLine,
   readJournalSegments,
+  inboxJournalLockHeld,
   listSegments,
   rewriteSegments,
   readSnapshot as readInboxSnapshot,

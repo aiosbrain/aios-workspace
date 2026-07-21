@@ -183,6 +183,21 @@ function sleepSync(ms: number): void {
 }
 
 /**
+ * True iff a live (non-stale) writer currently holds the journal lock.
+ *
+ * Advisory only — a caller must still handle `JOURNAL_LOCK_BUSY`, because the lock can be taken
+ * between this probe and the append. Its purpose is to let an ASYNC caller yield to its event loop
+ * and re-check, instead of taking the synchronous `sleepSync` backoff that would park the thread.
+ */
+export function inboxJournalLockHeld(root: string): boolean {
+  try {
+    return Date.now() - statSync(lockPathOf(root)).mtimeMs <= LOCK_STALE_MS;
+  } catch {
+    return false; // no lockfile (or unreadable) — nothing is holding it
+  }
+}
+
+/**
  * Run `fn` while holding an exclusive lockfile in the inbox dir. Bounded retries; a stale lock
  * (mtime older than LOCK_STALE_MS) is reclaimed. `fn` receives `ownsLock()` — true iff the lockfile
  * still carries this holder's fresh token. Any rewrite (compaction) must re-verify ownership before

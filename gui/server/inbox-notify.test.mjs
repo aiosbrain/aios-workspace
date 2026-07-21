@@ -596,3 +596,77 @@ test("a future-dated lock is aged from mtime, and is reclaimable when mtime is f
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// The ack path was made non-blocking, but the SEND path appends the same `delivery-attempted`
+// record through the same shared journal lock — and does it while holding the cross-process notify
+// coordinator. Left on the journal's default backoff (`sleepSync`/Atomics.wait) a contended journal
+// would park the whole server thread, stalling HTTP, WebSocket agent streams and ack retries alike.
+test("send path never parks the thread on a contended journal", async () => {
+  const repo = workspace();
+  try {
+    let held = true;
+    let yields = 0;
+    let sends = 0;
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => ({
+        ...loopFor([askItem("ask-journal")]),
+        inboxJournalLockHeld: () => held,
+      }),
+      env: configuredEnv,
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      // Every wait is an async yield, never a synchronous park.
+      delay: async () => {
+        yields++;
+        if (yields >= 3) held = false; // the other writer finishes mid-wait
+      },
+      transport: async () => {
+        sends++;
+        return { ok: true, status: 200 };
+      },
+    });
+
+    await notifier.tick();
+    assert.ok(yields > 0, "a contended journal must be waited on, not ignored");
+    assert.equal(sends, 1, "the send proceeds once the journal frees up");
+    assert.equal(
+      realLoop.readJournalSegments(repo).events.filter((e) => e.kind === "delivery-attempted")
+        .length,
+      1,
+      "the delivery record must be durably journalled"
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// If the journal is STILL contended after the wait budget, sending anyway would mean the Bot API
+// accepted a message we cannot record — and the ask would be alerted again later. Defer instead.
+test("a journal contended past the wait budget defers the send rather than duplicating it", async () => {
+  const repo = workspace();
+  try {
+    let sends = 0;
+    const notifier = createTelegramNotifier({
+      repo,
+      loadLoop: async () => ({
+        ...loopFor([askItem("ask-stuck")]),
+        inboxJournalLockHeld: () => true, // never frees
+      }),
+      env: configuredEnv,
+      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      delay: async () => {},
+      transport: async () => {
+        sends++;
+        return { ok: true, status: 200 };
+      },
+    });
+
+    await notifier.tick();
+    assert.equal(sends, 0, "must not send a message it cannot record");
+    assert.equal(realLoop.readJournalSegments(repo).events.length, 0);
+    // The ask stays queued and the lane is not falsely reported healthy.
+    assert.notEqual(notifier.snapshot().status, "delivery_ok");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

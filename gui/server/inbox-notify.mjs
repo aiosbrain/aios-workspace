@@ -8,6 +8,9 @@ export const DEFAULT_MAX_SENDS_PER_TICK = 3;
 /** Ceiling on the exponential retry backoff — a hard failure (revoked token) must not hot-loop
  *  against the Bot API every 5 minutes forever. */
 export const MAX_FAILURE_RETRY_MS = 60 * 60_000;
+/** Async (event-loop-yielding) wait for a contended inbox journal before a send. ~1s total. */
+const JOURNAL_WAIT_ATTEMPTS = 40;
+const JOURNAL_WAIT_STEP_MS = 25;
 const MIN_NOTIFY_TICK_MS = 15_000;
 const MAX_NOTIFY_TICK_MS = 15 * 60_000;
 const MAX_RETRY_ENTRIES = 1_000;
@@ -114,6 +117,7 @@ export function createTelegramNotifier({
   maxSendsPerTick = DEFAULT_MAX_SENDS_PER_TICK,
   schedule = setInterval,
   cancelSchedule = clearInterval,
+  delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()),
   notifyCoordinator = createTelegramNotifyCoordinator({ repo }),
 } = {}) {
   if (!repo) throw new Error("repo is required");
@@ -145,6 +149,22 @@ export function createTelegramNotifier({
   const clearRetry = (id) => {
     retryAfter.delete(id);
     failures.delete(id);
+  };
+
+  /**
+   * Yield (asynchronously) until no live writer holds the inbox journal lock.
+   *
+   * Deliberately NOT the journal's own retry: that backs off with `sleepSync` (Atomics.wait), which
+   * parks the entire thread. This runs on the GUI server's event loop, so it must give the loop back
+   * between probes. Returns false if the budget is exhausted while still contended.
+   */
+  const waitForJournalIdle = async (loop) => {
+    if (typeof loop.inboxJournalLockHeld !== "function") return true; // older loop build — proceed
+    for (let attempt = 0; attempt <= JOURNAL_WAIT_ATTEMPTS; attempt++) {
+      if (!loop.inboxJournalLockHeld(repo)) return true;
+      if (attempt < JOURNAL_WAIT_ATTEMPTS) await delay(JOURNAL_WAIT_STEP_MS);
+    }
+    return !loop.inboxJournalLockHeld(repo);
   };
 
   /** The lane is only "failed" while something is actually waiting to go out. Once every failed ask
@@ -201,16 +221,32 @@ export function createTelegramNotifier({
         settleIdleStatus();
         return;
       }
-      const appendEvent = loop.createDurableNotifyJournal(repo);
+      // `lockRetries: 0` keeps the append OFF the blocking path. The journal lock is shared with the
+      // CLI, connector ingestion and compaction, and its default backoff is `sleepSync`
+      // (Atomics.wait) — on this single-threaded server that would stall every HTTP request and
+      // WebSocket agent stream, while this tick also holds the cross-process notify coordinator.
+      const appendEvent = loop.createDurableNotifyJournal(repo, { lockRetries: 0 });
       let deliveredThisTick = false;
       let failedThisTick = false;
       let disabledThisTick = false;
+      let deferredThisTick = false;
       for (const item of candidates) {
         const attemptedAt = now();
         try {
           const current = loop.buildInbox(repo).items.find((row) => row.id === item.id);
           if (!isBlockingInboxItem(current)) {
             clearRetry(item.id);
+            continue;
+          }
+          // Wait for the journal BEFORE the wire call, never after. `sendNotification` appends its
+          // `delivery-attempted` record synchronously once Telegram accepts, so a contended journal
+          // at that moment would either park the whole server thread (the blocking default) or lose
+          // the record and re-alert later (a duplicate). Yielding here is async — the event loop
+          // keeps serving — and it leaves the append overwhelmingly likely to succeed first try.
+          if (!(await waitForJournalIdle(loop))) {
+            // Still contended after the budget: defer this ask rather than send-and-maybe-not-record.
+            scheduleRetry(item.id, attemptedAt.getTime());
+            deferredThisTick = true;
             continue;
           }
           state.last_attempt_at = attemptedAt.toISOString();
@@ -259,8 +295,10 @@ export function createTelegramNotifier({
       } else if (deliveredThisTick) {
         state.status = "delivery_ok";
         state.last_error = null;
-      } else {
-        // Every candidate was skipped (each had already stopped being a blocking ask).
+      } else if (!deferredThisTick) {
+        // Every candidate was skipped (each had already stopped being a blocking ask). A DEFERRED
+        // candidate is different: the ask is still pending on a contended journal, so the lane's
+        // last known state must stand rather than be settled as idle.
         settleIdleStatus();
       }
     });
