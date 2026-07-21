@@ -978,6 +978,41 @@ export {
   type TokenSecurityOptions,
 } from "./inbox/outbox-credential.js";
 
+// Unified inbox — native Gmail reply preparation for the GUI (AIO-392). This typed boundary derives
+// every destination field from an enriched observation, binds confirmation to the exact checked bytes
+// plus native account/thread, and serializes confirmed sends with a cross-process command lock.
+export {
+  MAX_REPLY_BODY_BYTES,
+  GMAIL_REPLY_SUBJECT_CODE_POINTS,
+  OUTBOX_COMMAND_LOCK_STALE_MS,
+  OUTBOX_COMMAND_LOCKS_REL,
+  RESERVED_OUTBOX_MARKER,
+  GmailReplyValidationError,
+  OutboxSendInProgressError,
+  configuredGmailAccount,
+  deriveGmailReplySubject,
+  validateGmailReplyBody,
+  gmailReplyCommandMarker,
+  buildGmailReplyOutboundBytes,
+  deriveGmailReplyIdentity,
+  isGmailReplyable,
+  confirmationDigest,
+  buildGmailReplyDraft,
+  prepareGmailReply,
+  executePreparedGmailReply,
+  isOutboxLaneJournalEvent,
+  journalEventToOutboxEvent,
+  projectOutboxCommands,
+  acquireOutboxCommandLock,
+  type GmailReplyErrorCode,
+  type GmailReplyIdentity,
+  type GmailReplyDraft,
+  type GmailReplyPreparation,
+  type OutboxCommandSummary,
+  type InboxJournalEventLike,
+  type OutboxCommandLock,
+} from "./inbox/reply-send.js";
+
 /**
  * Composition point (Constitution §4) for AIO-392: bridge the outbox seam's content-free,
  * command-keyed `OutboxEvent` onto the durable I-02 `inbox-events.ndjson` journal. Returns an

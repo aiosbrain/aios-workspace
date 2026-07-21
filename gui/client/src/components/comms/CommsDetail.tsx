@@ -5,17 +5,39 @@
 
 import { useEffect, useState } from "react";
 import { Archive, Bot, ExternalLink, Mail, Send, ShieldAlert } from "lucide-react";
-import type { DisplayProjection, InboxDetail } from "./types";
+import type { DisplayProjection, InboxDetail, OutboxCommand } from "./types";
 import { itemLabel, ageLabel } from "./presenters";
+import { ReplyComposer } from "./ReplyComposer";
+import { SendStatusStrip } from "./SendStatusStrip";
+import { SentSection } from "./SentSection";
 
 export interface CommsDetailProps {
   detail: InboxDetail | null;
   onScopedConfirm: (projection: DisplayProjection) => void;
   onReply: (id: string, message: string) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
+  outboxCommand?: OutboxCommand | null;
+  sentCommands?: OutboxCommand[];
+  replyResetKey?: number;
+  recoveryExhausted?: boolean;
+  replyRecoveryError?: string | null;
+  onReviewReply?: (id: string, body: string) => Promise<void>;
+  onTryReplyAgain?: () => void;
 }
 
-export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: CommsDetailProps) {
+export function CommsDetail({
+  detail,
+  onScopedConfirm,
+  onReply,
+  onArchive,
+  outboxCommand = null,
+  sentCommands = [],
+  replyResetKey = 0,
+  recoveryExhausted = false,
+  replyRecoveryError = null,
+  onReviewReply,
+  onTryReplyAgain,
+}: CommsDetailProps) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<"reply" | "archive" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -56,6 +78,16 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
           <span className="flex items-center gap-1 text-[11px] text-primary">
             <ShieldAlert size={12} /> Protected
           </span>
+        )}
+
+        {item.origin === "thread-state" && (
+          <SendStatusStrip
+            command={outboxCommand}
+            canTryAgain={Boolean(onTryReplyAgain)}
+            recoveryExhausted={recoveryExhausted}
+            recoveryError={replyRecoveryError}
+            onTryAgain={onTryReplyAgain}
+          />
         )}
         <span className="text-[11px] text-muted-foreground">
           {item.source || item.account || item.origin} · {ageLabel(item.ts)}
@@ -189,17 +221,25 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
           </div>
         )}
 
-        {/* Reply composition is deferred: the operator continues the thread in Gmail (content-free link). */}
-        {item.origin === "thread-state" && (
-          <a
-            className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            href="https://mail.google.com/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <ExternalLink size={13} /> Reply in Gmail
-          </a>
-        )}
+        {item.origin === "thread-state" && detail.replyability?.replyable && onReviewReply ? (
+          <ReplyComposer itemId={item.id} resetKey={replyResetKey} onReview={onReviewReply} />
+        ) : item.origin === "thread-state" ? (
+          <section className="max-w-3xl border-t border-border-visible pt-4">
+            <p className="text-[12px] text-muted-foreground">
+              This message can’t be replied to safely here. Open it in Gmail.
+            </p>
+            <a
+              className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              href="https://mail.google.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={13} /> Open Gmail
+            </a>
+          </section>
+        ) : null}
+
+        <SentSection commands={sentCommands} />
       </div>
     </div>
   );

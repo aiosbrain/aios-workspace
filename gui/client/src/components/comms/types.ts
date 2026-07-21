@@ -26,13 +26,17 @@ export interface Ask {
 /** A projected comms/thread observation on a `thread-state` row. Open shape. */
 export interface ProjectedItem {
   key: string;
+  connection_id?: string | null;
   account: string | null;
+  tenant?: string | null;
   object_kind: string;
   native_id?: string;
+  thread_id?: string | null;
   ts: string;
   snippet?: string;
-  origin?: string;
   deleted?: boolean;
+  revisions?: unknown[];
+  origin?: "enriched" | "legacy";
   participants?: { id: string; display?: string; role?: string }[];
   [k: string]: unknown;
 }
@@ -86,10 +90,70 @@ export interface InboxDetail {
     turns: { role: "You" | "Claude"; text: string }[];
     canReply: boolean;
   } | null;
+  replyability: { replyable: boolean } | null;
   pendingApprovals: DisplayProjection[];
   generated_at: string;
   freshness: InboxView["freshness"];
 }
+
+export type OutboxState =
+  "queued" | "attempting" | "sent" | "failed" | "outcome_unknown" | "reconciled";
+
+export interface OutboxCommand {
+  command_id: string;
+  state: OutboxState;
+  thread_ref: string | null;
+  native_message_id: string | null;
+  native_thread_id: string | null;
+  last_attempt_at: string | null;
+}
+
+export interface OutboxView {
+  commands: OutboxCommand[];
+  count: number;
+  generated_at: string;
+}
+
+export interface ReplyPreview {
+  to: string[];
+  subject: string;
+  body: string;
+  thread_label: string;
+}
+
+export type ReplyCheckResult =
+  | { ok: true; command_id: string; digest: string; preview: ReplyPreview }
+  | { ok: false; stage: "pdp" | "pre_send"; code: string; error: string };
+
+export interface ReplyConfirmationSnapshot {
+  readonly itemId: string;
+  readonly body: string;
+  readonly command_id: string;
+  readonly digest: string;
+  readonly preview: {
+    readonly to: readonly string[];
+    readonly subject: string;
+    readonly body: string;
+    readonly thread_label: string;
+  };
+}
+
+export type ReplySendResult =
+  | {
+      ok: true;
+      command_id: string;
+      state: "sent" | "reconciled";
+      native_message_id: string | null;
+      native_thread_id: string | null;
+    }
+  | {
+      ok: false;
+      command_id: string;
+      state: "failed" | "outcome_unknown";
+      code: string;
+      error: string;
+      retry_after?: string | null;
+    };
 
 // ── ask-card display state vocabulary (I-13 Q3) ─────────────────────────────────────────────────────
 //

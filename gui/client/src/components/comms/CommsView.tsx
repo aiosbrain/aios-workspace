@@ -2,8 +2,9 @@
  * CommsView (I-14 / AIO-395) — the quiet three-pane `comms` workspace inside the AIOS shell.
  *
  * Data comes from the coordinator's LOCAL read-model API (`/api/inbox`), which mirrors `aios inbox --json`
- * exactly. Read-only except the single scoped-confirm POST. A new blocking ask fires a content-free
- * desktop/Tauri notification (I-05 projection rule). Admin-tier local; nothing syncs to the Team Brain.
+ * exactly. Mutations are limited to scoped decisions, resumable-agent replies, archive, and the gated
+ * native Gmail reply flow. A new blocking ask fires a content-free desktop/Tauri notification (I-05
+ * projection rule). Admin-tier local; nothing syncs to the Team Brain.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,22 +12,66 @@ import { useConnection } from "../../state/cockpit";
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { fetchInbox, fetchInboxItem, postAskArchive, postAskReply, postDecision } from "./api";
+import { ReplyConfirmDialog } from "./ReplyConfirmDialog";
+import {
+  fetchInbox,
+  fetchInboxItem,
+  fetchOutbox,
+  postAskArchive,
+  postAskReply,
+  postDecision,
+  postReplyCheck,
+  postReplySend,
+} from "./api";
 import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notification";
 import { LatestDetailRequest } from "./detail-request";
-import type { DisplayProjection, InboxDetail, InboxView } from "./types";
+import { ApiError } from "../../lib/api";
+import { canRetryConfirmed, deferredRetryAfter, retryDelayMs } from "./reply-retry";
+import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
+import type {
+  DisplayProjection,
+  InboxDetail,
+  InboxView,
+  OutboxCommand,
+  OutboxView,
+  ReplyConfirmationSnapshot,
+} from "./types";
 
 const POLL_MS = 15_000;
+
+interface RetryPlan {
+  snapshot: ReplyConfirmationSnapshot;
+  threadRef: string;
+  attempts: number;
+  retryAt: string | null;
+  exhausted: boolean;
+}
+
+interface RecoverableReply {
+  snapshot: ReplyConfirmationSnapshot;
+  threadRef: string;
+}
 
 export function CommsView() {
   const { api } = useConnection();
   const [view, setView] = useState<InboxView | null>(null);
   const [detail, setDetail] = useState<InboxDetail | null>(null);
+  const [outbox, setOutbox] = useState<OutboxView | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [projection, setProjection] = useState<DisplayProjection | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [replySnapshot, setReplySnapshot] = useState<ReplyConfirmationSnapshot | null>(null);
+  const [replyThreadRef, setReplyThreadRef] = useState<string | null>(null);
+  const [replyDialogBusy, setReplyDialogBusy] = useState(false);
+  const [replyDialogError, setReplyDialogError] = useState<string | null>(null);
+  const [localCommand, setLocalCommand] = useState<OutboxCommand | null>(null);
+  const [retryPlan, setRetryPlan] = useState<RetryPlan | null>(null);
+  const [failedReply, setFailedReply] = useState<RecoverableReply | null>(null);
+  const [replyRecoveryError, setReplyRecoveryError] = useState<string | null>(null);
+  const [replyResetKey, setReplyResetKey] = useState(0);
+  const [, setOutboxError] = useState<string | null>(null);
 
   const seenBlocking = useRef<Set<string> | null>(null);
   const selectedRef = useRef<string | null>(null);
@@ -53,7 +98,7 @@ export function CommsView() {
     try {
       const next = await fetchInbox(api);
       setError(null);
-      setView(next);
+      setView((current) => retainLastGood(current, { ok: true, value: next }));
 
       // Content-free notifications: seed the seen-set silently on the first load, then only banner a
       // genuinely NEW blocking ask thereafter.
@@ -75,6 +120,7 @@ export function CommsView() {
       }
       if (nextId) void loadDetail(nextId);
     } catch (e) {
+      setView((current) => retainLastGood(current, { ok: false }));
       setError((e as Error).message);
     }
   }, [api, loadDetail]);
@@ -84,6 +130,24 @@ export function CommsView() {
     const t = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(t);
   }, [load]);
+
+  const loadOutbox = useCallback(async () => {
+    try {
+      const next = await fetchOutbox(api);
+      setOutbox((current) => retainLastGood(current, { ok: true, value: next }));
+      setOutboxError(null);
+    } catch (outboxFailure) {
+      // Independent from inbox polling: keep the last-good outbox projection and leave the queue live.
+      setOutbox((current) => retainLastGood(current, { ok: false }));
+      setOutboxError((outboxFailure as Error).message);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    void loadOutbox();
+    const timer = setInterval(() => void loadOutbox(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [loadOutbox]);
 
   const onSelect = useCallback(
     (id: string) => {
@@ -144,6 +208,188 @@ export function CommsView() {
     [api, load]
   );
 
+  const onReviewReply = useCallback(
+    async (id: string, body: string) => {
+      const threadRef = gmailThreadRef(detail);
+      if (!threadRef || detail?.item?.id !== id) {
+        throw new Error("Select the Gmail message again before reviewing this reply.");
+      }
+      const checked = await postReplyCheck(api, id, body);
+      if (!checked.ok) throw new Error(checked.error);
+      const snapshot = immutableReplySnapshot(id, body, checked);
+      setReplySnapshot(snapshot);
+      setReplyThreadRef(threadRef);
+      setReplyDialogError(null);
+      setFailedReply(null);
+      setReplyRecoveryError(null);
+    },
+    [api, detail]
+  );
+
+  const sendConfirmed = useCallback(
+    async (
+      snapshot: ReplyConfirmationSnapshot,
+      threadRef: string,
+      attempts: number,
+      fromDialog: boolean
+    ) => {
+      setReplyRecoveryError(null);
+      if (fromDialog) {
+        setReplyDialogBusy(true);
+        setReplyDialogError(null);
+      }
+      setLocalCommand({
+        command_id: snapshot.command_id,
+        state: "attempting",
+        thread_ref: threadRef,
+        native_message_id: null,
+        native_thread_id: null,
+        last_attempt_at: new Date().toISOString(),
+      });
+      try {
+        const result = await postReplySend(api, snapshot.itemId, {
+          command_id: snapshot.command_id,
+          digest: snapshot.digest,
+          body: snapshot.body,
+        });
+        if (result.ok) {
+          setLocalCommand({
+            command_id: result.command_id,
+            state: result.state,
+            thread_ref: threadRef,
+            native_message_id: result.native_message_id,
+            native_thread_id: result.native_thread_id,
+            last_attempt_at: new Date().toISOString(),
+          });
+          setReplySnapshot(null);
+          setReplyThreadRef(null);
+          setRetryPlan(null);
+          setFailedReply(null);
+          setReplyRecoveryError(null);
+          setReplyResetKey((value) => value + 1);
+          void load();
+          void loadOutbox();
+          return;
+        }
+
+        setReplySnapshot(null);
+        setReplyThreadRef(null);
+        setLocalCommand({
+          command_id: result.command_id,
+          state: result.state,
+          thread_ref: threadRef,
+          native_message_id: null,
+          native_thread_id: null,
+          last_attempt_at: new Date().toISOString(),
+        });
+        if (result.state === "outcome_unknown") {
+          const exhausted = !canRetryConfirmed(attempts);
+          setRetryPlan({
+            snapshot,
+            threadRef,
+            attempts,
+            retryAt: result.retry_after ?? null,
+            exhausted,
+          });
+          setFailedReply(null);
+        } else {
+          setRetryPlan(null);
+          setFailedReply({ snapshot, threadRef });
+        }
+        void loadOutbox();
+      } catch (sendError) {
+        const retryAt = deferredRetryAfter(sendError);
+        if (sendError instanceof ApiError && sendError.status === 429) {
+          const exhausted = !canRetryConfirmed(attempts);
+          setReplySnapshot(null);
+          setReplyThreadRef(null);
+          setLocalCommand({
+            command_id: snapshot.command_id,
+            state: "outcome_unknown",
+            thread_ref: threadRef,
+            native_message_id: null,
+            native_thread_id: null,
+            last_attempt_at: new Date().toISOString(),
+          });
+          setRetryPlan({ snapshot, threadRef, attempts, retryAt, exhausted });
+          return;
+        }
+        if (fromDialog) {
+          setLocalCommand(null);
+          setReplyDialogError((sendError as Error).message);
+          return;
+        }
+        setLocalCommand({
+          command_id: snapshot.command_id,
+          state: "failed",
+          thread_ref: threadRef,
+          native_message_id: null,
+          native_thread_id: null,
+          last_attempt_at: new Date().toISOString(),
+        });
+        setRetryPlan(null);
+        setFailedReply({ snapshot, threadRef });
+      } finally {
+        if (fromDialog) setReplyDialogBusy(false);
+      }
+    },
+    [api, load, loadOutbox]
+  );
+
+  useEffect(() => {
+    if (!retryPlan || retryPlan.exhausted) return;
+    const timer = setTimeout(() => {
+      setRetryPlan(null);
+      void sendConfirmed(retryPlan.snapshot, retryPlan.threadRef, retryPlan.attempts + 1, false);
+    }, retryDelayMs(retryPlan.retryAt));
+    return () => clearTimeout(timer);
+  }, [retryPlan, sendConfirmed]);
+
+  useEffect(() => {
+    if (!retryPlan) return;
+    const terminal = outbox?.commands.find(
+      (command) =>
+        command.command_id === retryPlan.snapshot.command_id &&
+        (command.state === "sent" || command.state === "reconciled")
+    );
+    if (!terminal) return;
+    setRetryPlan(null);
+    setLocalCommand(terminal);
+    setFailedReply(null);
+    setReplyRecoveryError(null);
+    setReplyResetKey((value) => value + 1);
+  }, [outbox, retryPlan]);
+
+  const selectedThreadRef = gmailThreadRef(detail);
+  const durableCommand =
+    outbox?.commands.find((command) => command.thread_ref === selectedThreadRef) ?? null;
+  const localForThread = localCommand?.thread_ref === selectedThreadRef ? localCommand : null;
+  const durableCompletesLocal = Boolean(
+    localForThread &&
+    durableCommand?.command_id === localForThread.command_id &&
+    (durableCommand.state === "sent" || durableCommand.state === "reconciled")
+  );
+  const selectedCommand = durableCompletesLocal
+    ? durableCommand
+    : (localForThread ?? durableCommand);
+  const durableSentCommands =
+    outbox?.commands.filter(
+      (command) => command.state === "sent" || command.state === "reconciled"
+    ) ?? [];
+  const sentCommands =
+    localCommand &&
+    (localCommand.state === "sent" || localCommand.state === "reconciled") &&
+    !durableSentCommands.some((command) => command.command_id === localCommand.command_id)
+      ? [localCommand, ...durableSentCommands]
+      : durableSentCommands;
+  const canTryReplyAgain =
+    selectedCommand?.state === "failed" &&
+    failedReply?.threadRef === selectedThreadRef &&
+    failedReply.snapshot.itemId === detail?.item?.id;
+  const recoveryExhausted = Boolean(
+    retryPlan?.exhausted && retryPlan.threadRef === selectedThreadRef
+  );
+
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -159,6 +405,25 @@ export function CommsView() {
           onScopedConfirm={setProjection}
           onReply={onReply}
           onArchive={onArchive}
+          outboxCommand={selectedCommand}
+          sentCommands={sentCommands}
+          replyResetKey={replyResetKey}
+          recoveryExhausted={recoveryExhausted}
+          replyRecoveryError={
+            failedReply?.threadRef === selectedThreadRef ? replyRecoveryError : null
+          }
+          onReviewReply={onReviewReply}
+          onTryReplyAgain={
+            canTryReplyAgain && failedReply
+              ? () => {
+                  void onReviewReply(failedReply.snapshot.itemId, failedReply.snapshot.body).catch(
+                    (reviewError) => {
+                      setReplyRecoveryError((reviewError as Error).message);
+                    }
+                  );
+                }
+              : undefined
+          }
         />
       </div>
 
@@ -171,6 +436,24 @@ export function CommsView() {
           onClose={() => {
             setProjection(null);
             setDialogError(null);
+          }}
+        />
+      )}
+
+      {replySnapshot && replyThreadRef && (
+        <ReplyConfirmDialog
+          snapshot={replySnapshot}
+          busy={replyDialogBusy}
+          error={replyDialogError}
+          onConfirm={() => {
+            if (replyDialogBusy) return;
+            void sendConfirmed(replySnapshot, replyThreadRef, 1, true);
+          }}
+          onClose={() => {
+            if (replyDialogBusy) return;
+            setReplySnapshot(null);
+            setReplyThreadRef(null);
+            setReplyDialogError(null);
           }}
         />
       )}

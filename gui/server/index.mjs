@@ -99,6 +99,7 @@ import {
   getInboxView,
   replyInboxAsk,
 } from "./inbox-api.mjs";
+import { handleOutboxApi } from "./outbox-api.mjs";
 import { createInboxRefresher, installInboxRefreshShutdown } from "./inbox-refresh.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
@@ -599,6 +600,9 @@ const server = http.createServer((req, res) => {
     return res.end("method not allowed");
   }
   // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
+  // Native Gmail reply/outbox routes are matched before the generic inbox detail/action routes.
+  if (handleOutboxApi(req, res, url, { repo, token: TOKEN })) return;
+
   // GET /api/inbox → the I-09 ranked queue plus honest GUI ingestion freshness. Occurrence-based
   // read-model staleness is intentionally not published as ingestion freshness. `?raw=1` keeps raw order.
   // Admin-tier local state — nothing here syncs to the Team Brain.
@@ -619,8 +623,8 @@ const server = http.createServer((req, res) => {
       });
     return;
   }
-  // POST /api/inbox/:id/decision → the ONLY mutating call: scoped-confirmation over an I-03 capability
-  // handle. Body carries ONLY { handle, digest, decision }; the owning runtime validates + consumes.
+  // POST /api/inbox/:id/decision → scoped-confirmation over an I-03 capability handle. Body carries
+  // ONLY { handle, digest, decision }; the owning runtime validates + consumes.
   // Matched BEFORE the generic detail route ([^/]+ can't span the trailing "/decision").
   const inboxDecision = url.pathname.match(/^\/api\/inbox\/([^/]+)\/decision$/);
   if (inboxDecision && req.method === "POST") {
