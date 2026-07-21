@@ -292,13 +292,18 @@ export function createTelegramNotifier({
       } else if (failedThisTick) {
         state.status = "failed";
         state.last_error = "telegram delivery failed";
+      } else if (deferredThisTick) {
+        // An alert that could not be journalled was NOT sent. Reporting the lane as ready here would
+        // read as "armed" while nothing goes out — the operator's only signal that outbound alerting
+        // has stalled. Content-free: names the contended resource, never an ask or a credential.
+        state.status = "degraded";
+        state.last_error = "inbox journal busy — alerts deferred";
       } else if (deliveredThisTick) {
         state.status = "delivery_ok";
         state.last_error = null;
-      } else if (!deferredThisTick) {
-        // Every candidate was skipped (each had already stopped being a blocking ask). A DEFERRED
-        // candidate is different: the ask is still pending on a contended journal, so the lane's
-        // last known state must stand rather than be settled as idle.
+      } else {
+        // Every candidate was skipped — each had already stopped being a blocking ask, so there is
+        // genuinely nothing outstanding and a latched failure may clear.
         settleIdleStatus();
       }
     });

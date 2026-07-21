@@ -31,6 +31,29 @@ function validOwner(value) {
   );
 }
 
+/**
+ * Per-process memo of locks whose timestamps cannot be believed: lockPath -> {raw, at}.
+ *
+ * Only consulted when neither `acquired_at` nor mtime is usable, where the file itself can no longer
+ * tell us how old it is. Measuring instead from OUR first sighting of those exact bytes separates
+ * the two indistinguishable causes: a backward clock correction resolves within seconds (the holder
+ * finishes and releases, so the window never elapses and we never steal), while a corrupt or
+ * restored stamp persists across ticks until the window does elapse and the lane recovers.
+ *
+ * Keyed on the raw bytes, so a replacement lock restarts the window rather than inheriting it.
+ */
+const unageableSightings = new Map();
+
+function unageableFor(lockPath, raw, nowMs) {
+  const seen = unageableSightings.get(lockPath);
+  if (!seen || seen.raw !== raw) {
+    unageableSightings.set(lockPath, { raw, at: nowMs });
+    return 0;
+  }
+  // A backward clock jump can put `nowMs` behind the sighting; never report a negative age.
+  return Math.max(0, nowMs - seen.at);
+}
+
 function readOwner(lockPath) {
   const raw = readFileSync(lockPath, "utf8");
   try {
@@ -89,6 +112,8 @@ export function acquireTelegramNotifyLock(
       } finally {
         closeSync(fd);
       }
+      // We own it now; any prior unageable sighting describes a file that no longer exists.
+      unageableSightings.delete(lockPath);
       return () => {
         try {
           if (readFileSync(lockPath, "utf8") === owner) unlinkSync(lockPath);
@@ -108,37 +133,43 @@ export function acquireTelegramNotifyLock(
         return null;
       }
 
-      // Age from the owner's OWN recorded timestamp when it has one — it is written atomically with
-      // the rest of the owner record, where mtime can be perturbed by copies, restores, and clock
-      // skew. A malformed record has no timestamp to trust, so it falls back to mtime.
+      // Age the lock from the first timestamp we can believe — the owner's own `acquired_at`
+      // (written atomically with the record) ahead of mtime (perturbed by copies and restores).
       //
-      // Age the lock from the first timestamp we can actually believe.
-      //
-      // A timestamp in the FUTURE is not believable — a forward clock jump that was later reset, or
-      // a restored file that kept a future mtime, leaves `acquired_at` AND `mtime` both ahead of
-      // now. Honouring either would keep the age below the threshold until the clock caught up
-      // (potentially months), resurrecting exactly the permanent deadlock rule 2 exists to prevent.
-      // When neither timestamp is believable the lock simply cannot be aged, so it is reclaimable.
-      //
-      // The tolerance absorbs ordinary jitter: `mtimeMs` carries sub-millisecond precision while
-      // `Date.now()` truncates to whole milliseconds, so a lock created microseconds ago can read as
-      // marginally "future". Real clock jumps and restores are orders of magnitude larger.
+      // A timestamp in the FUTURE is not believable, and BOTH can be: a forward clock jump that was
+      // later reset, or a restored file. The tolerance absorbs ordinary jitter — `mtimeMs` carries
+      // sub-millisecond precision while `Date.now()` truncates to whole ms, so a lock created
+      // microseconds ago can read as marginally "future".
       const believable = (value) =>
         Number.isFinite(value) && value <= acquiredMs + FUTURE_SKEW_TOLERANCE_MS;
       const ownerMs = Date.parse(existing.value?.acquired_at ?? "");
       const bornMs = believable(ownerMs) ? ownerMs : believable(modifiedMs) ? modifiedMs : null;
-      const expired = bornMs === null || acquiredMs - bornMs >= staleMs;
+      // When NEITHER timestamp is believable the file cannot be aged at all. Treating it as instantly
+      // reclaimable would let a BACKWARD clock correction (which makes a healthy holder's stamps look
+      // future-dated) steal the lock from a process that is mid-send — two notifiers, duplicate
+      // alerts. Treating it as never reclaimable restores the permanent deadlock. So fall back to
+      // aging it against our OWN continuous observation of it: a clock anomaly resolves in seconds
+      // and the window never elapses, while a genuinely corrupt stamp persists and eventually frees.
+      const expired =
+        bornMs === null
+          ? unageableFor(lockPath, existing.raw, acquiredMs) >= staleMs
+          : acquiredMs - bornMs >= staleMs;
+
+      // "Alive" means the pid answers OR answers with EPERM — a process owned by another user still
+      // exists, so it is a holder, not a corpse. Only ESRCH proves the owner is gone. A malformed
+      // record has no pid to probe and is therefore treated as held until it goes stale.
+      let ownerAlive = true;
       if (validOwner(existing.value)) {
         try {
           probe(existing.value.pid, 0);
-          // The pid answers. Yield unless the file has outlived any legitimate hold — see rule 2.
-          if (!expired) return null;
         } catch (probeError) {
-          if (probeError?.code !== "ESRCH") return null;
+          ownerAlive = probeError?.code !== "ESRCH";
         }
-      } else if (!expired) {
-        return null;
       }
+      // A dead owner is reclaimed at once; a live one only once the lock is genuinely stale. The age
+      // test applies uniformly — an EPERM owner must not be exempt from it, or a hung process under
+      // another account wedges the lane forever.
+      if (ownerAlive && !expired) return null;
 
       try {
         if (readFileSync(lockPath, "utf8") === existing.raw) unlinkSync(lockPath);

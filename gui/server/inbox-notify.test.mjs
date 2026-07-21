@@ -10,7 +10,11 @@ import {
   createTelegramNotifier,
   isBlockingInboxItem,
 } from "./inbox-notify.mjs";
-import { TELEGRAM_NOTIFY_LOCK_BASENAME, acquireTelegramNotifyLock } from "./inbox-notify-lock.mjs";
+import {
+  DEFAULT_NOTIFY_LOCK_STALE_MS,
+  TELEGRAM_NOTIFY_LOCK_BASENAME,
+  acquireTelegramNotifyLock,
+} from "./inbox-notify-lock.mjs";
 
 function workspace() {
   return mkdtempSync(path.join(tmpdir(), "inbox-notify-"));
@@ -536,64 +540,146 @@ test("a live-pid lock is reclaimed once it outlives any legitimate hold", () => 
   }
 });
 
-// A future-dated lock must not become permanently unbreakable — that is the deadlock the age-based
-// reclaim exists to prevent. Both timestamps are exercised, because a forward clock jump that was
-// later reset (or a restored backup) leaves `acquired_at` AND mtime ahead of now.
+// A future-dated lock must not become permanently unbreakable, but neither may it be stolen from a
+// healthy holder. A forward jump that was later reset and a BACKWARD correction are indistinguishable
+// from the file's timestamps alone, so the two cases are separated by continuous observation.
 //
 // mtime is set explicitly rather than raced against the wall clock: `mtimeMs` has sub-millisecond
-// precision while `Date.now()` truncates to whole ms, so a "just created, therefore old enough"
-// assertion is inherently flaky.
-test("a future-dated lock is aged from mtime, and is reclaimable when mtime is future too", () => {
+// precision while `Date.now()` truncates to whole ms.
+test("a future acquired_at falls back to mtime for aging", () => {
   const repo = workspace();
   const lockFile = path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME);
-  const YEAR_MS = 365 * 24 * 60 * 60_000;
   try {
     const held = acquireTelegramNotifyLock(repo, {
       pid: 43_001,
       token: "from-the-future",
-      // Stamped a year ahead: under a naive age test this lock would never expire, ever.
-      now: () => new Date(Date.now() + YEAR_MS),
+      now: () => new Date(Date.now() + 365 * 24 * 60 * 60_000),
     });
     assert.equal(typeof held, "function");
 
-    // acquired_at is disbelieved, so aging falls back to mtime — which is genuinely fresh, so a
-    // live incumbent legitimately keeps the lock.
+    // acquired_at is disbelieved; mtime is genuinely fresh, so a live incumbent keeps the lock.
     assert.equal(
       acquireTelegramNotifyLock(repo, { pid: 43_002, token: "early", probe: () => {} }),
       null
     );
 
-    // Age mtime past the window: reclaimable despite the future acquired_at stamp.
     const old = new Date(Date.now() - 60 * 60_000);
     utimesSync(lockFile, old, old);
-    const viaMtime = acquireTelegramNotifyLock(repo, {
+    const reclaimed = acquireTelegramNotifyLock(repo, {
       pid: 43_002,
       token: "reclaimer",
       probe: () => {},
     });
-    assert.equal(typeof viaMtime, "function", "stale mtime must be reclaimable");
-    viaMtime();
+    assert.equal(typeof reclaimed, "function", "stale mtime must be reclaimable");
+    reclaimed();
+    assert.equal(existsSync(lockFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
-    // Now the harder case: BOTH timestamps in the future. Neither can age the lock, so rather than
-    // waiting months for the clock to catch up it is treated as reclaimable immediately.
-    const future = new Date(Date.now() + YEAR_MS);
-    const stuck = acquireTelegramNotifyLock(repo, {
-      pid: 43_003,
-      token: "stuck",
+// Regression: treating an unageable lock as instantly reclaimable let a BACKWARD clock correction —
+// which makes a healthy holder's stamps look future-dated — steal the lock mid-send, producing two
+// concurrent notifiers and duplicate alerts.
+test("both timestamps future: not stolen on sight, reclaimable only after sustained observation", () => {
+  const repo = workspace();
+  const lockFile = path.join(repo, TELEGRAM_NOTIFY_LOCK_BASENAME);
+  const future = new Date(Date.now() + 365 * 24 * 60 * 60_000);
+  const T0 = new Date("2026-07-21T00:00:00.000Z");
+  try {
+    const held = acquireTelegramNotifyLock(repo, {
+      pid: 44_001,
+      token: "holder",
       now: () => future,
     });
-    assert.equal(typeof stuck, "function");
-    utimesSync(lockFile, future, future);
+    assert.equal(typeof held, "function");
+    utimesSync(lockFile, future, future); // neither timestamp is now believable
+
+    // First sighting: a live holder must NOT be preempted, however unbelievable its stamps.
+    assert.equal(
+      acquireTelegramNotifyLock(repo, {
+        pid: 44_002,
+        token: "racer",
+        probe: () => {},
+        now: () => T0,
+      }),
+      null,
+      "an unageable lock must not be stolen from a live holder on first sight"
+    );
+
+    // Still inside the window — a transient clock anomaly resolves long before this elapses.
+    assert.equal(
+      acquireTelegramNotifyLock(repo, {
+        pid: 44_002,
+        token: "racer",
+        probe: () => {},
+        now: () => new Date(T0.getTime() + 60_000),
+      }),
+      null
+    );
+
+    // Sustained past the window: a genuinely corrupt stamp must not wedge the lane forever.
     const rescued = acquireTelegramNotifyLock(repo, {
-      pid: 43_004,
+      pid: 44_002,
       token: "rescuer",
       probe: () => {},
+      now: () => new Date(T0.getTime() + DEFAULT_NOTIFY_LOCK_STALE_MS + 1),
     });
-    assert.equal(typeof rescued, "function", "an unageable lock must not deadlock forever");
+    assert.equal(typeof rescued, "function", "an unageable lock must eventually free the lane");
     rescued();
     assert.equal(existsSync(lockFile), false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// EPERM means the pid exists but belongs to another user — a holder, not a corpse. It must still be
+// subject to the age rule, or a hung process under another account wedges the lane permanently.
+test("an EPERM owner is treated as alive but is still aged out when stale", () => {
+  const fresh = workspace();
+  const stale = workspace();
+  const eperm = () => {
+    const error = new Error("operation not permitted");
+    error.code = "EPERM";
+    throw error;
+  };
+  try {
+    // Fresh hold by a foreign-user process: legitimately keeps the lock.
+    assert.equal(
+      typeof acquireTelegramNotifyLock(fresh, { pid: 45_001, token: "other" }),
+      "function"
+    );
+    assert.equal(
+      acquireTelegramNotifyLock(fresh, { pid: 45_002, token: "early", probe: eperm }),
+      null,
+      "a live foreign-user holder must keep a fresh lock"
+    );
+
+    // Same situation an hour later: the foreign process is hung, and EPERM must not exempt it from
+    // aging. (Aging prefers the record's own `acquired_at`, so that is what has to be old.)
+    assert.equal(
+      typeof acquireTelegramNotifyLock(stale, {
+        pid: 45_001,
+        token: "other",
+        now: () => new Date(Date.now() - 60 * 60_000),
+      }),
+      "function"
+    );
+    const reclaimed = acquireTelegramNotifyLock(stale, {
+      pid: 45_002,
+      token: "reclaimer",
+      probe: eperm,
+    });
+    assert.equal(
+      typeof reclaimed,
+      "function",
+      "a hung foreign-user holder must not wedge the lane"
+    );
+    reclaimed();
+    assert.equal(existsSync(path.join(stale, TELEGRAM_NOTIFY_LOCK_BASENAME)), false);
+  } finally {
+    rmSync(fresh, { recursive: true, force: true });
+    rmSync(stale, { recursive: true, force: true });
   }
 });
 
@@ -641,19 +727,22 @@ test("send path never parks the thread on a contended journal", async () => {
 });
 
 // If the journal is STILL contended after the wait budget, sending anyway would mean the Bot API
-// accepted a message we cannot record — and the ask would be alerted again later. Defer instead.
+// accepted a message we cannot record — and the ask would be alerted again later. Defer instead,
+// and prove the deferral is BACKED OFF rather than hot-looping the next tick.
 test("a journal contended past the wait budget defers the send rather than duplicating it", async () => {
   const repo = workspace();
   try {
     let sends = 0;
+    let held = true;
+    let current = new Date("2026-07-21T00:00:00.000Z");
     const notifier = createTelegramNotifier({
       repo,
       loadLoop: async () => ({
         ...loopFor([askItem("ask-stuck")]),
-        inboxJournalLockHeld: () => true, // never frees
+        inboxJournalLockHeld: () => held,
       }),
       env: configuredEnv,
-      now: () => new Date("2026-07-21T00:00:00.000Z"),
+      now: () => new Date(current),
       delay: async () => {},
       transport: async () => {
         sends++;
@@ -664,8 +753,22 @@ test("a journal contended past the wait budget defers the send rather than dupli
     await notifier.tick();
     assert.equal(sends, 0, "must not send a message it cannot record");
     assert.equal(realLoop.readJournalSegments(repo).events.length, 0);
-    // The ask stays queued and the lane is not falsely reported healthy.
-    assert.notEqual(notifier.snapshot().status, "delivery_ok");
+    // The lane must not read as healthy while alerts are silently not going out.
+    const snapshot = notifier.snapshot();
+    assert.equal(snapshot.status, "degraded");
+    assert.match(snapshot.last_error, /journal busy/);
+    // Content-free: no ask id, title, body or credential in the operator-facing error.
+    assert.doesNotMatch(snapshot.last_error, /ask-stuck|SECRET|chat-secret-sentinel/);
+
+    // The journal frees up, but the ask was deferred WITH backoff — an immediate tick must not fire.
+    held = false;
+    await notifier.tick();
+    assert.equal(sends, 0, "deferral must schedule a backoff, not hot-loop the next tick");
+
+    // Past the backoff window it sends.
+    current = new Date(current.getTime() + DEFAULT_FAILURE_RETRY_MS + 1);
+    await notifier.tick();
+    assert.equal(sends, 1);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

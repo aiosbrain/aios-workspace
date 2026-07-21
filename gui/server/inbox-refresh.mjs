@@ -285,8 +285,10 @@ export function installInboxRefreshShutdown({
       for (const component of stoppables) {
         try {
           await component?.stop?.();
-        } catch {
-          /* a failed stop still must not block the remaining shutdown sequence */
+        } catch (error) {
+          // A failed stop must not block the remaining shutdown sequence — but swallowing it
+          // silently hides a component that may have left a timer or child process running.
+          console.error(`[shutdown] component stop failed: ${error?.message ?? error}`);
         }
       }
     } finally {
