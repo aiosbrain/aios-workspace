@@ -1727,7 +1727,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       invalidateReviewEvidence(
         {
           codeRabbitRefreshRequired:
-            !!state.reviewCodeRabbitRequired && state.codeRabbitHead !== snapshot?.head,
+            (wantCodeRabbit && !state.reviewCodeRabbitRequired) ||
+            (!!state.reviewCodeRabbitRequired && state.codeRabbitHead !== snapshot?.head),
         },
         { preserveLocalBugbot: true }
       );
@@ -2172,7 +2173,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     ) {
       // Defense in depth against path-classification drift or eventual-consistency races between
       // the review round and merge gate. Safety can never proceed without current-head CodeRabbit.
-      invalidateReviewEvidence({}, { preserveLocalBugbot: true });
+      invalidateReviewEvidence({ codeRabbitRefreshRequired: true }, { preserveLocalBugbot: true });
       record("merge-gate", { safetyReviewPolicyStale: true });
       console.error(
         c.red(

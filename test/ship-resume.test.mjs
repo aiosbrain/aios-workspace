@@ -509,6 +509,43 @@ console.log("stale CodeRabbit head cannot satisfy a resumed CLEAR checkpoint");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("adding CodeRabbit on resume explicitly triggers its first current-head review");
+{
+  const ss = makeStateStore();
+  ss.store.state = withExactReviewEvidence({
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    simplifyDone: true,
+  });
+  let waits = 0;
+  const deps = makeDeps({ ...ss, waitForBots: () => (waits++, 0) });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true, reviewers: ["coderabbit"] }),
+    deps,
+  });
+  check("resumed review converges", r.code === SHIP_EXIT.OK);
+  check("CodeRabbit is awaited", waits === 1);
+  check(
+    "newly selected CodeRabbit receives an explicit review request",
+    deps.ghCalls.some(
+      (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+    )
+  );
+  check("new reviewer set is checkpointed", ss.store.state?.reviewers?.[0] === "coderabbit");
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log("resume with state.simplifyDone → simplify NOT re-run; ship completes");
 {
   const ss = makeStateStore();
