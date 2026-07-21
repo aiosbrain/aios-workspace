@@ -32,6 +32,7 @@ writeFileSync(
     "const key = process.env.ANTHROPIC_API_KEY ?? '<unset>';",
     "const text = 'ANTHROPIC_API_KEY=' + key;",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));",
+    "console.log(JSON.stringify({ type: 'result', result: 'TERMINAL_RESULT' }));",
   ].join("\n")
 );
 chmodSync(fakeBin, 0o755);
@@ -76,6 +77,15 @@ console.log("callCursorAgent (no env override) inherits the parent env");
 {
   const out = await callCursorAgent("review", 30000, { extraArgs: [] });
   check("Cursor child still sees the key", out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL));
+}
+
+console.log("callCursorAgent can return the terminal result without progress narration");
+{
+  const out = await callCursorAgent("review", 30000, {
+    extraArgs: [],
+    preferResultEvent: true,
+  });
+  check("strict protocol callers receive only the terminal result", out === "TERMINAL_RESULT");
 }
 
 rmSync(dir, { recursive: true, force: true });

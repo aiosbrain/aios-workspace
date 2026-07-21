@@ -481,6 +481,9 @@ async function runReviewPrompt({
           cwd: reviewCwd,
           bin: TRUSTED_CURSOR_BIN,
           env: trustedReviewerEnv(),
+          // Cursor may stream progress narration before its terminal result event. The
+          // machine protocol validates the terminal payload itself, not the transcript.
+          preferResultEvent: true,
           extraArgs: [
             ...CURSOR_REVIEW_FLAGS,
             ...(readOnly ? ["--mode", "ask"] : []),
