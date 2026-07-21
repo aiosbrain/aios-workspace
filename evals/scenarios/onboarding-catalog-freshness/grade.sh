@@ -4,24 +4,8 @@ WORKSPACE=$1
 TRACE=$2
 BEFORE_DIFF=$3
 SCENARIO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-TOOLKIT_ROOT=$(CDPATH= cd -- "$SCENARIO_DIR/../../.." && pwd)
 
-TMP_CHECK=$(mktemp -d)
-trap 'rm -rf "$TMP_CHECK"' EXIT
-mkdir -p "$TMP_CHECK/.claude"
-cp -R "$WORKSPACE/.claude/skills" "$TMP_CHECK/.claude/skills" 2>/dev/null
-[ -f "$WORKSPACE/.claude/integrations.json" ] && cp "$WORKSPACE/.claude/integrations.json" "$TMP_CHECK/.claude/integrations.json"
-
-node "$TOOLKIT_ROOT/scripts/gen-catalog.mjs" --repo "$TMP_CHECK" >/dev/null 2>&1
-GEN_STATUS=$?
-
-CATALOG_FRESH=false
-if [ "$GEN_STATUS" -eq 0 ] \
-  && [ -f "$WORKSPACE/.claude/skills/INDEX.md" ] \
-  && [ -f "$TMP_CHECK/.claude/skills/INDEX.md" ] \
-  && cmp -s "$WORKSPACE/.claude/skills/INDEX.md" "$TMP_CHECK/.claude/skills/INDEX.md"; then
-  CATALOG_FRESH=true
-fi
+CATALOG_FRESH=$(node "$SCENARIO_DIR/check-catalog-fresh.mjs" "$WORKSPACE" 2>/dev/null || echo false)
 
 NEW_SKILL_LISTED=false
 grep -q "onboarding-fixture-skill" "$WORKSPACE/.claude/skills/INDEX.md" 2>/dev/null && NEW_SKILL_LISTED=true

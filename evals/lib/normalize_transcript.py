@@ -119,14 +119,14 @@ def fixture_checks(path: str) -> list[dict[str, Any]]:
 
 def reconcile_checks(events: list[dict[str, Any]], authoritative: list[dict[str, Any]]) -> None:
     """Replace transcript check statuses in place with same-kind fixture exit codes."""
+    authoritative_kinds = [check_kind(str(entry.get("command") or "")) for entry in authoritative]
     unused = set(range(len(authoritative)))
     for event in events:
         if event.get("record_type") != "check":
             continue
         kind = check_kind(str(event.get("command") or ""))
         match = next(
-            (index for index in sorted(unused)
-             if check_kind(str(authoritative[index].get("command") or "")) == kind),
+            (index for index in sorted(unused) if authoritative_kinds[index] == kind),
             None,
         )
         if match is not None:
@@ -245,11 +245,12 @@ def opencode(record: dict[str, Any], workspace: str) -> list[dict[str, Any]]:
         records = [out]
         metadata_exit = (state.get("metadata") or {}).get("exit")
         native_status = state.get("status")
-        if is_check(command) and isinstance(metadata_exit, (int, float)) and not isinstance(metadata_exit, bool):
-            records.append({"record_type": "check", "command": command, "status": metadata_exit})
-        elif is_check(command) and native_status in {"completed", "error"}:
-            records.append({"record_type": "check", "command": command,
-                            "status": 1 if native_status == "error" else 0})
+        if is_check(command):
+            if isinstance(metadata_exit, (int, float)) and not isinstance(metadata_exit, bool):
+                records.append({"record_type": "check", "command": command, "status": metadata_exit})
+            elif native_status in {"completed", "error"}:
+                records.append({"record_type": "check", "command": command,
+                                "status": 1 if native_status == "error" else 0})
         return records
     return []
 

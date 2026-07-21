@@ -49,7 +49,12 @@ if [ "$SCENARIO" = all ]; then
   SCENARIOS=()
   for MANIFEST in "$ROOT"/evals/scenarios/*/manifest.json; do
     [ -f "$MANIFEST" ] || continue
-    SCENARIOS+=("$(basename "$(dirname "$MANIFEST")")")
+    CANDIDATE_DIR=$(dirname "$MANIFEST")
+    if [ -x "$CANDIDATE_DIR/setup.sh" ] && [ -x "$CANDIDATE_DIR/grade.sh" ] && [ -f "$CANDIDATE_DIR/prompt.md" ]; then
+      SCENARIOS+=("$(basename "$CANDIDATE_DIR")")
+    else
+      echo "skipping incomplete scenario (missing setup.sh/grade.sh/prompt.md): $(basename "$CANDIDATE_DIR")" >&2
+    fi
   done
 else
   SCENARIOS=("$SCENARIO")
@@ -135,6 +140,12 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
       jq -n '{status:"not_required",reason:"Deterministic evidence is sufficient for this scenario."}' > "$JUDGE_RECORD"
     fi
 
+    CHANGED_PATHS=$( { git -C "$WORKSPACE" diff --name-only --no-renames -z HEAD; git -C "$WORKSPACE" ls-files --others --exclude-standard -z; } \
+      | jq -Rsc 'split("\u0000") | map(select(length > 0)) | unique')
+    FORBIDDEN_PATHS=$(jq -c '.forbidden_paths // []' "$SCENARIO_DIR/manifest.json")
+    FORBIDDEN_HIT=$(jq -n --argjson changed "$CHANGED_PATHS" --argjson forbidden "$FORBIDDEN_PATHS" \
+      '[$changed[] | select(IN($forbidden[]))] | length > 0')
+
     DETERMINISTIC=$(jq -r '.deterministic_pass' "$GRADE")
     JUDGE_STATUS=$(jq -r '.status' "$JUDGE_RECORD")
     EXIT_STATUS=$(jq -r '.exit_status' "$DRIVER_RECORD")
@@ -143,13 +154,13 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
     elif [ "$EXIT_STATUS" -eq 127 ]; then STATUS=unavailable
     elif [ "$EXIT_STATUS" -eq 124 ]; then STATUS=timeout
     elif [ "$EXIT_STATUS" -ne 0 ]; then STATUS=error
+    elif [ "$FORBIDDEN_HIT" = true ]; then STATUS=fail
     elif [ "$DETERMINISTIC" != true ]; then STATUS=fail
     elif [ "$JUDGE_STATUS" = fail ]; then STATUS=fail
     elif [ "$JUDGE_STATUS" = needs_review ]; then STATUS=needs_review
     else STATUS=pass
     fi
 
-    CHANGED_PATHS=$(git -C "$WORKSPACE" status --porcelain | awk '{print $2}' | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')
     TOOL_EVIDENCE=$(jq -s '
       {event_count:length,
        tool_counts:(map(select(.event != null) | (.tool_name // .event)) | group_by(.) | map({key:.[0],value:length}) | from_entries),
@@ -158,12 +169,12 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
 
     jq -n --arg id "$RUN_ID" --arg scenario "$SCENARIO_ID" --arg status "$STATUS" \
       --arg workspace "$WORKSPACE" --arg trace "$TRACE" --arg hook_trace "$HOOK_TRACE" --arg before "$BEFORE_DIFF" --arg after "$AFTER_DIFF" \
-      --argjson driver "$(cat "$DRIVER_RECORD")" --argjson grade "$(cat "$GRADE")" \
+      --argjson driver "$(cat "$DRIVER_RECORD")" --argjson grade "$(cat "$GRADE")" --argjson forbidden_hit "$FORBIDDEN_HIT" \
       --argjson judge "$(cat "$JUDGE_RECORD")" --argjson changed "$CHANGED_PATHS" --argjson evidence "$TOOL_EVIDENCE" '
       {schema_version:"1.0",run_id:$id,scenario:$scenario,status:$status,
        runtime:$driver.runtime,model:$driver.model,exit_status:$driver.exit_status,duration_ms:$driver.duration_ms,
        reason:($driver.reason // null),usage:$driver.usage,tool_evidence:$evidence,checks:$grade.checks,semantic_judge:$judge,
-       changed_paths:$changed,artifacts:{workspace:$workspace,trace:$trace,hook_trace:$hook_trace,before_diff:$before,after_diff:$after,
+       changed_paths:$changed,forbidden_path_hit:$forbidden_hit,artifacts:{workspace:$workspace,trace:$trace,hook_trace:$hook_trace,before_diff:$before,after_diff:$after,
        transcript:($driver.transcript // null),final:($driver.final // null)}}
     ' > "$RUN_RECORD"
     RUN_RECORDS+=("$RUN_RECORD")

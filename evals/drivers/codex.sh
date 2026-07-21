@@ -18,6 +18,9 @@ else
   HARNESS_TRACE_FILE="$HARNESS_TRACE_FILE" \
     python3 "$HARNESS_ROOT/evals/lib/exec_timeout.py" "$HARNESS_TIMEOUT" "$STDOUT" "$STDERR" -- "$@"
   STATUS=$?
+  UNAVAILABLE_REASON=$(grep -Eio 'not authenticated|not logged in|please log in|invalid api key|unauthorized|authentication required|rate limit exceeded|insufficient quota|quota exceeded' \
+    "$STDOUT" "$STDERR" 2>/dev/null | head -1 || true)
+  [ -z "$UNAVAILABLE_REASON" ] || STATUS=127
 fi
 
 END=$(date +%s)
@@ -28,8 +31,9 @@ USAGE=$(jq -s '
    output_tokens:($u.output_tokens // null),reasoning_output_tokens:($u.reasoning_output_tokens // null),cost_usd:null}
 ' "$STDOUT" 2>/dev/null || printf '%s' '{"tokens":null,"cost_usd":null}')
 jq -n --arg runtime codex --arg model "$MODEL" --arg transcript "$STDOUT" \
-  --arg final "$FINAL" --arg stderr "$STDERR" --argjson exit_status "$STATUS" \
+  --arg final "$FINAL" --arg stderr "$STDERR" --arg reason "${UNAVAILABLE_REASON:-}" --argjson exit_status "$STATUS" \
   --argjson duration_ms "$(( (END-START)*1000 ))" --argjson usage "$USAGE" \
-  '{runtime:$runtime,model:$model,exit_status:$exit_status,duration_ms:$duration_ms,transcript:$transcript,final:$final,stderr:$stderr,usage:$usage}' \
+  '{runtime:$runtime,model:$model,exit_status:$exit_status,duration_ms:$duration_ms,transcript:$transcript,final:$final,stderr:$stderr,usage:$usage}
+   + (if $reason == "" then {} else {reason:$reason} end)' \
   > "$HARNESS_DRIVER_RECORD"
 exit "$STATUS"

@@ -9,7 +9,7 @@ SOURCE_SKILL_PRESERVED=$([ -f "$WORKSPACE/1-inbox/from-brain/skills/weekly-diges
 INSTALLED=$([ -d "$WORKSPACE/.claude/skills/weekly-digest" ] && echo true || echo false)
 
 jq -n --argjson repo_valid "$REPO_VALID" --argjson source_preserved "$SOURCE_SKILL_PRESERVED" --argjson installed "$INSTALLED" '
-  {checks:{repo_valid:$repo_valid,source_skill_preserved:$source_preserved},
+  {checks:{repo_valid:$repo_valid,source_skill_preserved:$source_preserved,not_installed_by_default:($installed | not)},
    facts:{installed_to_claude_skills:$installed}} |
   .deterministic_pass = ([.checks[]] | all)
 '
