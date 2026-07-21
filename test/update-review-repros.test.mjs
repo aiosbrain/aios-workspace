@@ -971,8 +971,14 @@ test("first apply on a pre-marker checkout seeds the install marker instead of r
       "the existing install is untouched"
     );
     const marker = path.join(clone, ".git", "aios-installed-lock");
-    assert.ok(existsSync(marker), "the marker is seeded so future lockfile moves reconcile normally");
-    assert.ok(readFileSync(marker, "utf8").trim().length > 0, "marker records the current lockfile hash");
+    assert.ok(
+      existsSync(marker),
+      "the marker is seeded so future lockfile moves reconcile normally"
+    );
+    assert.ok(
+      readFileSync(marker, "utf8").trim().length > 0,
+      "marker records the current lockfile hash"
+    );
   } finally {
     process.env.PATH = prevPath;
     cleanupPullResult(path.join(root, "toolkit"), result);

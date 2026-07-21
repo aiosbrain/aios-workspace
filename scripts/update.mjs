@@ -717,9 +717,7 @@ function printMergeReport(color, r, { preview = false } = {}) {
       console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
   }
 
-  return (
-    r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length
-  );
+  return r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
 }
 
 /**
