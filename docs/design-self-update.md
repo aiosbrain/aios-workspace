@@ -70,7 +70,11 @@ someone's checkout), then `npm ci` **only when the toolkit already has `node_mod
 owner uses the GUI/tests) **and** the working lockfile's hash differs from the one recorded
 at the last successful install (reconciled on every apply run, not just when the pull itself
 moved the lockfile — so an install interrupted between the pull and `npm ci` self-heals on
-the next run instead of being masked forever). Toolkit deps aren't needed for scaffolding or
+the next run instead of being masked forever). A checkout that predates marker tracking
+(node_modules present, no marker recorded) is **seeded, not reinstalled**, when the run's
+pull didn't move the lockfile — `npm ci` deletes `node_modules` before installing, so
+treating "no marker yet" as "install pending" would destroy a healthy install on the first
+post-upgrade run (offline, unrecoverably). Toolkit deps aren't needed for scaffolding or
 `aios` sync, so a sync-only tester never eats a surprise install. Skipped for a
 freshly-cloned source (already latest) or with `--no-install`. (2) **vendor half**
 (`update.mjs` / `toolkit-merge.mjs`) — the
@@ -203,6 +207,15 @@ be a slow operation) means the parent can't read the spawned child's return valu
 way; the child writes its structured result there as JSON, and the parent reads it back for
 `changedCount`/`vendorSafety` in its own returned result.
 
+**Cross-version skew.** The child is the *snapshot's* CLI, so the snapshot must understand
+the hand-off flags — a snapshot of a toolkit that predates `--vendor-apply-only` would die
+on its own flag validation with an opaque "unknown flag". Sources that apply without
+fast-forwarding to current `main` (a pinned `--from`/`$AIOS_TOOLKIT_DIR`, an
+offline/`no-upstream` checkout) can genuinely be that old, so before spawning, the parent
+probes the snapshot's `scripts/update.mjs` for the flag and refuses with an actionable
+message ("predates the self-update hand-off protocol — pull that checkout first") instead.
+Any future change to the hand-off flag set must extend the probe the same way.
+
 ### One remote-state classifier, used identically by check and apply
 
 `acquireRemoteState(dir, { mode })` (`scripts/toolkit-pull.mjs`) is the single owner of "how
@@ -221,8 +234,14 @@ classify differently:
 | `behind` | verified: remote is ahead | No | Yes — fast-forwards |
 | `diverged` | verified: local HEAD has commits the remote doesn't | No | No — hard refuse |
 | `missing-upstream-ref` | `@{u}` was configured but the remote no longer has that ref | No, never | Yes — vendors from local state, explicit non-green warning |
-| `unreachable` | couldn't reach the remote at all (network/auth) | No, never | Yes — same as above (preserves offline usability) |
-| `local-status-error` | the remote query succeeded but a LOCAL git op then failed | No, never | **No — hard refuse** (a local failure is not "acceptable offline") |
+| `unreachable` | couldn't reach the remote at all (network/auth), AND the stale local tracking ref **positively** shows no local-only commits | No, never | Yes — same as above (preserves offline usability) |
+| `local-status-error` | a LOCAL git op failed — after a successful remote query, **or** while estimating offline divergence (missing tracking ref: local-only commits can't be ruled out) | No, never | **No — hard refuse** (a local failure is not "acceptable offline") |
+
+The offline distinction matters: `--prune` can legitimately delete the local tracking ref
+(upstream renamed/removed), and a later offline run then can't count local-only commits at
+all. "Couldn't count" is never coerced to "not ahead" — an indeterminate estimate classifies
+as `local-status-error`, not `unreachable`, so apply never vendors a checkout whose
+divergence can't be ruled out.
 
 `remoteMessage(state)` is the one function producing the human-readable line for each state,
 shared by the plain-apply log and the `--check` verdict text.
@@ -255,7 +274,11 @@ is no coherent sha that could truthfully represent an uncommitted diff.
 `.applyAllowed`/`.reasons` directly instead of parsing console text or interpreting a `0`/`1`
 that can't disambiguate "safe" from "conflicted" from "dirty" from "diverged" (`--check`
 intentionally returns `exitStatus: 0` even when non-green, since check mode reports rather
-than fails hard). Every *expected* failure (dirty tree, unresolved conflict, bad `--from`, an
+than fails hard). `applyAllowed` blocks not only on the pre-flight signals (remote state,
+source cleanliness, vendor safety) but also on a **failed apply itself** — a vendor child
+that dies without writing its result file leaves every pre-flight signal green, and
+`applyAllowed: true` on that result would lie to any caller reading the contract. Every
+*expected* failure (dirty tree, unresolved conflict, bad `--from`, an
 unknown/incompatible flag, a non-fast-forward, an uninspectable local repo) throws
 `UpdateError` (`scripts/cli-common.mjs`) rather than exiting; `cmdUpdate` is the one place
 that catches it and converts it into a printed message plus a non-zero result. A genuinely

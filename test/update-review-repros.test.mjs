@@ -348,6 +348,14 @@ test("apply reconciles deps when current but the recorded install is stale (inte
       extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3,"v":1}\n' },
     });
     mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    // A marker recorded for an older, since-moved lockfile — the exact shape a killed
+    // `npm ci` leaves behind (the marker is only rewritten AFTER npm succeeds). A checkout
+    // with NO marker at all is the pre-marker-era case, which must NOT reinstall — that's
+    // covered by its own repro below.
+    writeFileSync(
+      path.join(clone, ".git", "aios-installed-lock"),
+      "stale-hash-from-interrupted-install\n"
+    );
 
     const { ranFile, binPath } = fakeNpm(root);
     process.env.PATH = binPath;
@@ -726,6 +734,9 @@ test("a pinned snapshot is not leaked when npm fails during dependency reconcili
       extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
     });
     mkdirSync(path.join(clone, "node_modules"), { recursive: true }); // real dir, not symlinked
+    // Stale marker → a reinstall is genuinely pending (a marker-less checkout would seed
+    // the marker and skip npm instead — see the pre-marker-era repro).
+    writeFileSync(path.join(clone, ".git", "aios-installed-lock"), "stale-hash\n");
     process.env.PATH = failingNpm(root);
 
     let threw = null;
@@ -924,6 +935,143 @@ test("apply --stash: the returned result reports sourceClean 'clean' (from the p
     );
   } finally {
     cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Round 5 (code review on 2026d2b): four confirmed findings ---------------------------
+// 1) pre-marker checkouts must not eat a destructive first-run `npm ci`;
+// 2) offline + missing tracking ref must fail closed, not vendor;
+// 3) a pre-protocol snapshot must be refused with an actionable message, not "unknown flag";
+// 4) a failed vendor child must never report applyAllowed: true.
+
+test("first apply on a pre-marker checkout seeds the install marker instead of running npm", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-premarker-"));
+  const prevPath = process.env.PATH;
+  let result;
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
+    });
+    // A healthy install that predates marker tracking: node_modules exists, no marker.
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    writeFileSync(path.join(clone, "node_modules", "SENTINEL"), "healthy\n");
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    result = pullToolkitCheckout(clone, {}, NOOP_IO); // apply mode, current, lockfile unmoved
+
+    assert.ok(
+      !existsSync(ranFile),
+      "npm must NOT run — `npm ci` deletes node_modules first, so offline this would destroy a working install"
+    );
+    assert.equal(result.installed, false);
+    assert.ok(
+      existsSync(path.join(clone, "node_modules", "SENTINEL")),
+      "the existing install is untouched"
+    );
+    const marker = path.join(clone, ".git", "aios-installed-lock");
+    assert.ok(existsSync(marker), "the marker is seeded so future lockfile moves reconcile normally");
+    assert.ok(readFileSync(marker, "utf8").trim().length > 0, "marker records the current lockfile hash");
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("offline + pruned tracking ref: an indeterminate divergence estimate hard-blocks, never vendors", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-pruned-ref-offline-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    // Local-only commit the classifier can no longer see once the tracking ref is gone.
+    writeFileSync(path.join(clone, "local-work.txt"), "never pushed\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "local-only");
+    // The setup an earlier `fetch --prune` leaves behind when the upstream branch was
+    // renamed/missing: config intact, refs/remotes/origin/<branch> deleted. Then offline.
+    git(clone, "update-ref", "-d", "refs/remotes/origin/main");
+    rmSync(origin, { recursive: true, force: true });
+
+    const applySt = acquireRemoteState(clone, { mode: "apply", warn: () => {} });
+    assert.equal(
+      applySt.state,
+      "local-status-error",
+      "apply: 'unreachable' here would vendor a checkout whose local-only commits can't be ruled out"
+    );
+    const readonlySt = acquireRemoteState(clone, { mode: "readonly", warn: () => {} });
+    assert.equal(readonlySt.state, "local-status-error", "readonly must agree with apply");
+
+    assert.throws(
+      () => pullToolkitCheckout(clone, {}, NOOP_IO),
+      /couldn't validate the local toolkit repository state/,
+      "apply must hard-refuse, exactly like any other uninspectable local state"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("apply from a toolkit predating the hand-off protocol fails with an actionable message, not 'unknown flag'", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-prehandoff-"));
+  try {
+    // A committed scripts/update.mjs that does NOT know --vendor-apply-only — the shape of
+    // every real pre-protocol toolkit (test stubs without update.mjs are exempt from the probe).
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        "scripts/update.mjs": "// legacy toolkit CLI — no hand-off support\n",
+      },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const res = spawnSync(process.execPath, [CLI, "update", "--from", clone, "--repo", workspace], {
+      encoding: "utf8",
+    });
+    assert.notEqual(res.status, 0, "must refuse, not spawn a child that dies on flag validation");
+    assert.match(
+      res.stderr,
+      /predates the self-update hand-off protocol/,
+      "the error must name the real problem and the fix, not echo the child's 'unknown flag'"
+    );
+    const worktrees = git(clone, "worktree", "list");
+    assert.equal(
+      worktrees.split("\n").length,
+      1,
+      `the pinned snapshot must be cleaned up on refusal, not leaked — got:\n${worktrees}`
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a vendor child that fails yields applyAllowed: false (never 'apply-safe' on a failed apply)", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-failed-apply-"));
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        // Child CLI dies before writing --result-file — the crashed-child shape.
+        "scripts/aios.mjs": "process.exit(1);\n",
+        // Passes the hand-off probe (names --vendor-apply-only) so the spawn really happens.
+        "scripts/update.mjs": "// stub that claims --vendor-apply-only support for the probe\n",
+      },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const result = await cmdUpdate(workspace, {}, ["--from", clone]);
+    assert.equal(result.mode, "apply");
+    assert.equal(result.exitStatus, 1);
+    assert.equal(result.applied, false);
+    assert.equal(
+      result.applyAllowed,
+      false,
+      "green pre-flight signals must not make a FAILED apply read as apply-safe — programmatic callers gate on .applyAllowed"
+    );
+    assert.match(result.reasons.join("\n"), /vendor step failed/);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

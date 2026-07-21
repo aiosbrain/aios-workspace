@@ -109,14 +109,20 @@ function configuredUpstream(dir, branch) {
  *  computed ahead from the local ref regardless of fetch success, so a toolkit with local
  *  commits never pushed anywhere was refused as "diverged" even offline. Collapsing straight
  *  to "unreachable" on fetch failure (without consulting this) would silently drop that
- *  coverage and let an offline, locally-diverged toolkit be vendored from. */
+ *  coverage and let an offline, locally-diverged toolkit be vendored from.
+ *
+ *  `ahead: null` (NOT 0) when the estimate itself fails — e.g. the tracking ref was pruned
+ *  by an earlier `fetch --prune` while the upstream branch was renamed/missing, then the
+ *  network went away. "Couldn't count" must never read as "not ahead": the offline callers
+ *  treat null as indeterminate and fail closed rather than vendoring a checkout whose
+ *  local-only commits can no longer be ruled out. */
 function staleLocalStatus(dir, upstreamName) {
   const counts = gitSafe(dir, ["rev-list", "--left-right", "--count", `${upstreamName}...HEAD`]);
-  if (!counts) return { behind: null, ahead: 0 };
+  if (!counts) return { behind: null, ahead: null };
   const [behind, ahead] = counts.split(/\s+/).map(Number);
   return {
     behind: Number.isFinite(behind) ? behind : null,
-    ahead: Number.isFinite(ahead) ? ahead : 0,
+    ahead: Number.isFinite(ahead) ? ahead : null,
   };
 }
 
@@ -163,6 +169,12 @@ function classifyAgainst(
           ahead: stale.ahead,
         };
       }
+      // stale.ahead === null (estimate itself failed) deliberately falls through to
+      // `onCountFailure` here rather than blocking: this branch only runs in readonly
+      // mode with the REMOTE REACHABLE (ls-remote succeeded; the count failed because
+      // the remote object was never fetched). Apply mode re-verifies with a real fetch,
+      // which either restores the tracking ref and classifies for real, or fails and
+      // hits the offline fallbacks below — which DO fail closed on null.
     }
     return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
   }
@@ -199,12 +211,16 @@ function classifyAgainst(
  *   missing-upstream-ref   — @{u} WAS configured but the remote no longer has that ref
  *                           (renamed/deleted branch). NEVER substitutes a same-named tag.
  *   unreachable            — couldn't reach the remote at all (network/auth), AND the stale
- *                           local tracking ref shows no local-only commits either. Apply may
- *                           still proceed from local state; check/preview never green.
- *   local-status-error     — the remote query itself succeeded but a LOCAL git operation
- *                           (rev-parse/rev-list) then failed — evidence of a broken LOCAL
- *                           repo, not network unavailability. Always hard-blocks (never
- *                           treated as acceptable-offline).
+ *                           local tracking ref POSITIVELY shows no local-only commits. Apply
+ *                           may still proceed from local state; check/preview never green.
+ *                           An offline checkout whose tracking ref is missing (estimate
+ *                           indeterminate) is never "unreachable" — see local-status-error.
+ *   local-status-error     — a LOCAL git operation failed: either a rev-parse/rev-list after
+ *                           a successful remote query (broken LOCAL repo), or — with the
+ *                           remote unreachable — the stale-divergence estimate itself
+ *                           (missing tracking ref), which leaves local-only commits
+ *                           impossible to rule out. Always hard-blocks (never treated as
+ *                           acceptable-offline).
  */
 export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
   let branch;
@@ -263,6 +279,25 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
           ahead: stale.ahead,
         };
       }
+      // ahead === null: the divergence estimate itself failed (tracking ref missing —
+      // e.g. pruned by an earlier fetch while the upstream branch was renamed). With the
+      // remote also unreachable there is now NO evidence ruling out local-only commits;
+      // "unreachable" would let apply proceed and vendor a possibly-diverged checkout.
+      // Fail closed instead.
+      if (stale.ahead === null) {
+        warn(
+          c.yellow(
+            "  …and the local tracking ref is missing, so local-only commits can't be ruled out."
+          )
+        );
+        return {
+          state: "local-status-error",
+          branch,
+          upstream: upstreamName,
+          behind: null,
+          ahead: 0,
+        };
+      }
       return {
         state: "unreachable",
         branch,
@@ -312,6 +347,23 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
         upstream: upstreamName,
         behind: stale.behind ?? 0,
         ahead: stale.ahead,
+      };
+    }
+    // Same fail-closed rule as the apply-mode fetch fallback: an indeterminate local
+    // estimate (missing tracking ref) with an unreachable remote must never read as
+    // apply-safe "unreachable".
+    if (stale.ahead === null) {
+      warn(
+        c.yellow(
+          "  …and the local tracking ref is missing, so local-only commits can't be ruled out."
+        )
+      );
+      return {
+        state: "local-status-error",
+        branch,
+        upstream: upstreamName,
+        behind: null,
+        ahead: 0,
       };
     }
     return {
@@ -506,6 +558,15 @@ function installedLockPath(dir) {
  * the last successful install (or none is recorded). Skips entirely when there is no
  * `node_modules` (a sync-only user never needs toolkit deps, per docs/GETTING-STARTED.md).
  *
+ * `lockChanged` (did THIS run's fast-forward move the lockfile?) exists for the no-marker
+ * case: every checkout that predates the marker has node_modules but no marker, and treating
+ * that as "install pending" would run a destructive `npm ci` (which deletes node_modules
+ * first) over a perfectly healthy install on the first post-upgrade run — offline, that
+ * wipes a working install and then fails. When no marker is recorded AND this run didn't
+ * move the lockfile, the install predates marker tracking rather than being pending: seed
+ * the marker from the current lockfile and skip npm. A recorded-but-mismatched marker still
+ * always reinstalls — that is the interrupted-install self-heal this marker exists for.
+ *
  * CRITICAL: never run npm through a SYMLINKED node_modules. `npm ci` deletes node_modules, and
  * in a git worktree that path is a symlink to the primary checkout's shared install — following
  * it would erase the shared target. Detect the symlink with lstat and skip. Prefers `npm ci`
@@ -513,7 +574,7 @@ function installedLockPath(dir) {
  * Always operates on the LIVE checkout (`dir`), never the pinned snapshot — dependency
  * installation is a shared-install concern unrelated to vendor coherency.
  */
-function reconcileDeps(dir, { log, warn }) {
+function reconcileDeps(dir, { log, warn, lockChanged = true }) {
   const nm = path.join(dir, "node_modules");
   let st = null;
   try {
@@ -539,6 +600,19 @@ function reconcileDeps(dir, { log, warn }) {
   const stored = marker && existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
   if (currentHash === stored) {
     log(c.dim("  deps unchanged — skipping reinstall."));
+    return false;
+  }
+  if (stored === null && !lockChanged) {
+    // Pre-marker-era install (see doc above): nothing this run changed the lockfile, so the
+    // existing node_modules isn't pending — record it instead of destructively reinstalling.
+    log(c.dim("  deps unchanged — recording the install marker (first marker-tracked run)."));
+    if (marker && currentHash) {
+      try {
+        writeFileSync(marker, `${currentHash}\n`);
+      } catch {
+        /* metadata is best-effort; a missing marker just means a redundant check next run */
+      }
+    }
     return false;
   }
   const cmd = currentHash ? "ci" : "install";
@@ -672,8 +746,13 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   let snapshotDir = null;
   let restoreFailed = false;
   let ffError = null;
+  let lockChanged = false;
   try {
+    // Measured in the clean window (post-stash, pre-pop) so a stashed-away local lockfile
+    // edit can't masquerade as "the pull moved the lockfile".
+    const lockBefore = lockfileHash(dir);
     if (remoteState.state === "behind" && fastForward(dir)) pulled = remoteState.behind ?? 0;
+    lockChanged = lockfileHash(dir) !== lockBefore;
     // Clean window: fast-forward (if any) is done, stash (if any) has not been popped yet.
     // This is the only point in the whole flow where `dir` is guaranteed both current and
     // clean — pin it now, before anything downstream (including the stash restore below)
@@ -726,7 +805,7 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   let installed = false;
   if (!noInstall) {
     try {
-      installed = reconcileDeps(dir, { log, warn });
+      installed = reconcileDeps(dir, { log, warn, lockChanged });
     } catch (e) {
       // The snapshot is already pinned at this point — an npm failure here must not leak
       // it (a stale git-worktree registration + orphaned temp dir accumulating across

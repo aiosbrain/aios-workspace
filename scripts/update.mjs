@@ -648,8 +648,12 @@ function buildResult({
   // result — none of the other three signals were ever computed, so they default to
   // non-blocking and would otherwise leave applyAllowed silently true after a failed
   // check/preview. When we couldn't even evaluate whether it's safe, never default to
-  // "allowed".
-  const errorBlocks = mode === "error";
+  // "allowed". The same principle covers a FAILED apply: a vendor child that died without
+  // writing its result file leaves vendorSafety null (non-blocking) while remoteState/
+  // sourceClean are green — the pre-flight signals were fine, but the apply itself failed,
+  // and `applyAllowed: true` on a failed apply would lie to every programmatic caller
+  // reading the documented `.applyAllowed` contract.
+  const errorBlocks = mode === "error" || (mode === "apply" && exitStatus !== 0);
   return {
     exitStatus,
     mode,
@@ -1138,6 +1142,30 @@ async function cmdUpdateInner(repo, cfg, args) {
       removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
       throw new UpdateError(
         `the pinned toolkit snapshot is missing its CLI entrypoint (${entrypoint}) — the toolkit checkout may be corrupted.`
+      );
+    }
+
+    // The child below is the SNAPSHOT's own CLI, so the snapshot must understand the
+    // hand-off flags — a snapshot of a toolkit that predates --vendor-apply-only would
+    // reject them via its own assertKnownUpdateFlags and die with an opaque "unknown
+    // flag". That happens for real sources the state table lets proceed without a
+    // fast-forward to current main: a pinned AIOS_TOOLKIT_DIR/--from at an old commit,
+    // or an offline/no-upstream checkout. Probe the snapshot's update.mjs for the flag
+    // and refuse with a message naming the actual problem + the fix. A snapshot with NO
+    // scripts/update.mjs can't be probed (real toolkits always ship it; test stubs
+    // don't) — let those through to the entrypoint, which speaks for itself. If a future
+    // change adds a hand-off flag an older POST-protocol toolkit won't know, extend this
+    // probe to cover that flag too.
+    const snapshotUpdateModule = path.join(snapshotSource.snapshotDir, "scripts", "update.mjs");
+    if (
+      existsSync(snapshotUpdateModule) &&
+      !readFileSync(snapshotUpdateModule, "utf8").includes("--vendor-apply-only")
+    ) {
+      removePinnedSnapshot(srcDir, snapshotSource.snapshotDir);
+      throw new UpdateError(
+        `the toolkit source (${stampSource}) predates the self-update hand-off protocol — its own ` +
+          `CLI doesn't understand --vendor-apply-only, so this toolkit can't drive it.\n` +
+          `  Bring that checkout up to date first (git -C ${srcDir} pull), then re-run \`aios update\`.`
       );
     }
 
