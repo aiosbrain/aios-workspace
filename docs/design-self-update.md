@@ -268,20 +268,34 @@ diverged *after* the user confirmed.
 
 ### The supported source envelope (normative)
 
-A toolkit source is **supported** only when it is ALL of:
+The envelope has **two tiers, with different consequences** — conflating them is what makes
+"supported" ambiguous, so state them separately.
+
+**Tier 1 — structural requirements. Violation is REFUSED.** A toolkit source must be:
 
 1. **a real git checkout that is its own toplevel** — not an unpacked tarball, not a plain
    copy, not a non-git dir nested inside some other repository;
-2. **npm-managed** — `node_modules` produced by npm v7+, with the committed
-   `package-lock.json` the toolkit ships. Other package managers are *tolerated* (their
-   installs are never destroyed or "repaired") but never managed;
-3. reachable at a single stable path (`--from` / `$AIOS_TOOLKIT_DIR` / the running
+2. reachable at a single stable path (`--from` / `$AIOS_TOOLKIT_DIR` / the running
    checkout / the default clone path).
 
-Everything outside the envelope gets **one honest structural refusal, not handling**. This
-is the design's convergence rule: refusals don't breed edge cases the way handling does,
-so hardening rounds must shrink toward the envelope boundary instead of chasing the
-combinatorial input space beyond it.
+These are load-bearing for the whole design: the pinned-snapshot model needs a real sha,
+and every containment probe is a git query about a specific directory. A source failing
+either gets **one honest structural refusal, not handling**, in every mode.
+
+**Tier 2 — the managed dependency path. Violation is TOLERATED, never refused, never
+"repaired".** Dependency reconciliation manages exactly one shape: `node_modules` produced
+by **npm v7+** against the committed `package-lock.json` the toolkit ships. Everything else
+— a pnpm/yarn/bun install, npm ≤6, a source with **no lockfile at all** — is a source the
+update still works on; it simply declines to manage the install. Concretely: an install it
+can't verify is left untouched with a warning (never `npm ci`'d), and a lockfile-less source
+records the `no-lockfile` sentinel instead of reinstalling forever. Deps are not needed for
+scaffolding or `aios` sync at all, so refusing these would break sync-only users for a
+concern they never invoke.
+
+The convergence rule follows from the split: refusals don't breed edge cases the way
+handling does, so hardening rounds shrink toward the **tier-1** boundary rather than
+chasing the combinatorial input space beyond it — while tier-2 states stay deliberately
+few and conservative (verify, or leave alone).
 
 The envelope gate lives at **one choke point**: `resolveSource` (`scripts/update.mjs`)
 calls `assertGitToolkitSource` on the winning local candidate, so every flow that touches
@@ -292,9 +306,10 @@ resolve an **enclosing** repository and stash/fetch/branch/push there).
 winning candidate is never silently skipped in favor of the next candidate — updating
 from a different source than the one the user configured would be worse than the refusal.
 Because the gate runs in every mode, a structurally-unusable source is an **expected
-failure even under `--check`** (structured `mode: "error"`, `exitStatus: 1`) — the one
-deliberate exception to check-mode's exit-0 reporting rule below: there is no meaningful
-"report" about a directory the tool cannot even interrogate.
+failure even under `--check`** (structured `mode: "error"`, `exitStatus: 1`): there is no
+meaningful "report" about a directory the tool cannot even interrogate. This is not a
+special case for `--check` — it is the general rule stated exactly once below (*report vs.
+expected failure*), of which a tier-1 violation is one instance.
 
 Two more local states classify as `local-status-error` rather than slipping through as
 `no-upstream`: a **detached HEAD** (`--abbrev-ref HEAD` → literal `"HEAD"` — a paused
@@ -335,11 +350,28 @@ is no coherent sha that could truthfully represent an uncommitted diff.
 `cmdUpdate` returns a structured object for every mode — never a bare exit code, never
 `process.exit()` — so a programmatic caller (onboarding, tests) can read
 `.applyAllowed`/`.reasons` directly instead of parsing console text or interpreting a `0`/`1`
-that can't disambiguate "safe" from "conflicted" from "dirty" from "diverged" (`--check`
-intentionally returns `exitStatus: 0` even when non-green, since check mode reports rather
-than fails hard — except for a source outside the supported envelope, per the envelope
-section above, where there is nothing coherent to report on). `applyAllowed` blocks not
-only on the pre-flight signals (remote state,
+that can't disambiguate "safe" from "conflicted" from "dirty" from "diverged".
+
+**Report vs. expected failure — the one rule that fixes `--check`'s exit status.** The
+split is not "which mode am I in" but *did the run produce a usable report at all*:
+
+- A **classifiable non-green state** is a REPORT: `exitStatus: 0`, `applyAllowed: false`,
+  and the specifics in `.reasons` — dirty tree, diverged, behind, `local-status-error`,
+  conflict markers, an unsafe vendor scan. `--check`/`--preview` exist to surface these,
+  so failing hard on them would defeat the point.
+- An **expected failure** is one where no coherent report exists, and it produces a
+  structured `mode: "error"`, `exitStatus: 1` **in every mode, `--check` included**: a
+  tier-1 envelope violation (non-git/nested source), a bad `--from`, an unknown or
+  incompatible flag (e.g. `--expect-src-head` without `--no-pull`, or with a read-only
+  mode), and a workspace-side symlinked/escaping managed or seed destination — the
+  containment pre-flight now runs in read-only modes too, precisely so a destination that
+  would refuse at apply refuses at preview instead of being offered first.
+
+So `--check` never converts a *report* into a non-zero exit, and never dresses an
+*expected failure* up as a green report. Programmatic callers should branch on
+`.applyAllowed`/`.mode`, which carry the distinction directly.
+
+`applyAllowed` blocks not only on the pre-flight signals (remote state,
 source cleanliness, vendor safety) but also on a **failed apply itself** — a vendor child
 that dies without writing its result file leaves every pre-flight signal green, and
 `applyAllowed: true` on that result would lie to any caller reading the contract. The
