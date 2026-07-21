@@ -220,6 +220,42 @@ test("noncompliant reviewer prose fails closed without a verdict model", async (
   }
 });
 
+test("terminal clear ignores progress prose but cannot override a streamed finding", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    const baseSha = git(repo, "rev-parse", "main");
+    const progressOnly = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(progressOnly.ok, true);
+
+    const contradictory = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "- Medium: streamed correctness regression",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(contradictory.ok, false);
+    assert.equal(contradictory.finding, true);
+    assert.match(contradictory.output, /streamed correctness regression/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("a concrete finding takes precedence over a sibling infrastructure error", async () => {
   const repo = fixture();
   try {

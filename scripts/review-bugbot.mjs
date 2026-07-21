@@ -481,9 +481,10 @@ async function runReviewPrompt({
           cwd: reviewCwd,
           bin: TRUSTED_CURSOR_BIN,
           env: trustedReviewerEnv(),
-          // Cursor may stream progress narration before its terminal result event. The
-          // machine protocol validates the terminal payload itself, not the transcript.
-          preferResultEvent: true,
+          // Cursor may stream progress narration before its terminal result event. Keep
+          // both: the transcript is scanned for findings and the terminal payload must
+          // independently satisfy the exact machine-verdict protocol.
+          resultEventBundle: true,
           extraArgs: [
             ...CURSOR_REVIEW_FLAGS,
             ...(readOnly ? ["--mode", "ask"] : []),
@@ -596,7 +597,7 @@ export async function runLocalPrePrReview({
   }
 
   const runPass = async (label, makePrompt) => {
-    const output = await reviewPrompt({
+    const response = await reviewPrompt({
       label,
       prompt: makePrompt(reviewDiff),
       worktree,
@@ -604,15 +605,28 @@ export async function runLocalPrePrReview({
       model,
       readOnly,
     });
-    const finding = detectBugbotBlocked(output) || hasFindingsAtOrAbove(output, failOn);
-    const error = !finding && !detectBugbotClear(output);
+    const bundled =
+      response && typeof response === "object" && !Array.isArray(response)
+        ? {
+            transcript: String(response.transcript ?? ""),
+            terminal: response.result == null ? "" : String(response.result),
+          }
+        : { transcript: String(response ?? ""), terminal: String(response ?? "") };
+    const evidence = [bundled.transcript, bundled.terminal]
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join("\n\n--- terminal result ---\n\n");
+    const finding = detectBugbotBlocked(bundled.terminal) || hasFindingsAtOrAbove(evidence, failOn);
+    const error = !finding && !detectBugbotClear(bundled.terminal);
     return {
       ok: !finding && !error,
       finding,
       error,
-      output: error
-        ? `${output}\n\n(review protocol error: expected exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
-        : output,
+      output: finding
+        ? evidence
+        : error
+          ? `${evidence}\n\n(review protocol error: expected terminal result to be exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
+          : bundled.terminal,
     };
   };
 

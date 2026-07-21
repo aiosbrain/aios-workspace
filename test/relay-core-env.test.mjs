@@ -79,13 +79,17 @@ console.log("callCursorAgent (no env override) inherits the parent env");
   check("Cursor child still sees the key", out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL));
 }
 
-console.log("callCursorAgent can return the terminal result without progress narration");
+console.log("callCursorAgent can return the transcript and terminal result separately");
 {
   const out = await callCursorAgent("review", 30000, {
     extraArgs: [],
-    preferResultEvent: true,
+    resultEventBundle: true,
   });
-  check("strict protocol callers receive only the terminal result", out === "TERMINAL_RESULT");
+  check(
+    "strict protocol callers retain streamed evidence and the terminal verdict",
+    out.transcript.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL) &&
+      out.result === "TERMINAL_RESULT"
+  );
 }
 
 rmSync(dir, { recursive: true, force: true });

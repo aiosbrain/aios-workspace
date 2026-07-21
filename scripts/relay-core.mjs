@@ -192,8 +192,8 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
         }
         // Shape 3: {type:"result", result:"..."} (final summary — Cursor + Claude Code).
         // Keep it separately even when progress text was already streamed. Strict protocol
-        // callers can prefer this terminal event without treating intermediate narration as
-        // part of the verdict; the terminal payload itself is still validated fail-closed.
+        // callers can inspect the terminal verdict independently while still scanning the
+        // complete transcript for contradictory findings.
         if (ev.type === "result" && typeof ev.result === "string") {
           finalResult = ev.result;
           if (!text) text = ev.result;
@@ -212,9 +212,12 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 
     proc.on("close", (code) => {
       clearTimeout(timer);
-      const resolvedText = opts.preferResultEvent && finalResult !== null ? finalResult : text;
-      if (code === 0 || (code === null && resolvedText)) {
-        resolve(resolvedText.trim());
+      if (code === 0 || (code === null && (text || finalResult))) {
+        if (opts.resultEventBundle) {
+          resolve({ transcript: text.trim(), result: finalResult?.trim() ?? null });
+        } else {
+          resolve(text.trim());
+        }
       } else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
         reject(
