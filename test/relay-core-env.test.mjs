@@ -32,7 +32,8 @@ writeFileSync(
     "const key = process.env.ANTHROPIC_API_KEY ?? '<unset>';",
     "const text = 'ANTHROPIC_API_KEY=' + key;",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));",
-    "console.log(JSON.stringify({ type: 'result', result: 'TERMINAL_RESULT' }));",
+    "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'TERMINAL_RESULT' }] } }));",
+    "console.log(JSON.stringify({ type: 'result', result: text + '\\nTERMINAL_RESULT' }));",
   ].join("\n")
 );
 chmodSync(fakeBin, 0o755);

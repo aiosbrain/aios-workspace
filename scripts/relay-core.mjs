@@ -163,6 +163,7 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
     const errBufs = [];
     let text = "";
     let finalResult = null;
+    let lastAssistantText = null;
 
     proc.stderr.on("data", (d) => errBufs.push(d));
 
@@ -176,12 +177,15 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
         // Shape 1: {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
         // (Cursor and Claude Code both use this; tool_use blocks are ignored.)
         if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
+          let assistantText = "";
           for (const block of ev.message.content) {
             if (block.type === "text") {
               process.stdout.write(block.text);
               text += block.text;
+              assistantText += block.text;
             }
           }
+          if (assistantText) lastAssistantText = assistantText;
           return;
         }
         // Shape 2: {type:"text", text:"..."}
@@ -214,7 +218,11 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
       clearTimeout(timer);
       if (code === 0 || (code === null && (text || finalResult))) {
         if (opts.resultEventBundle) {
-          resolve({ transcript: text.trim(), result: finalResult?.trim() ?? null });
+          // Cursor's result event can contain the accumulated assistant narration on
+          // long agent runs. The last assistant message is the protocol terminal;
+          // fall back to result only for providers that emit no assistant message.
+          const terminal = lastAssistantText ?? finalResult;
+          resolve({ transcript: text.trim(), result: terminal?.trim() ?? null });
         } else {
           resolve(text.trim());
         }
