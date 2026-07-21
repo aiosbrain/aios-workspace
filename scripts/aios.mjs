@@ -2785,10 +2785,9 @@ try {
   else if (cmd === "instincts") await cmdInstincts(repo, rest);
   else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
   else if (cmd === "update") {
-    // cmdUpdate returns an exit status instead of exiting (programmatic callers like
-    // onboarding must survive it) — the CLI maps a failed self-update re-exec onto exitCode.
-    const status = await cmdUpdate(repo, cfg, rest);
-    if (status) process.exitCode = status;
+    // cmdUpdate returns a structured result (never exits, so callers can read .applyAllowed).
+    const result = await cmdUpdate(repo, cfg, rest);
+    if (result.exitStatus) process.exitCode = result.exitStatus;
   } else if (cmd === "promote")
     await cmdPromote(repo, cfg, rest, {
       resolveMember: () => resolveMember(repo, cfg, loadDotEnv(repo)),

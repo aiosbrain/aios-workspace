@@ -39,6 +39,27 @@ export function die(msg) {
   process.exit(1);
 }
 
+/**
+ * Thrown (never exits) by the update/pull module family (toolkit-pull.mjs, update.mjs)
+ * for every expected failure that used to call `die()` — a dirty toolkit tree, a
+ * non-fast-forward branch, an unresolved conflict, a bad `--from`, an unknown flag, etc.
+ * Lives here (a shared leaf module) rather than in update.mjs so toolkit-pull.mjs can
+ * throw it without importing back through update.mjs (which already imports
+ * toolkit-pull.mjs) and creating a cycle.
+ *
+ * Exactly one place — `cmdUpdate`'s outer try/catch — catches this and converts it into
+ * a printed message + a non-zero structured result instead of exiting, so
+ * `pullToolkitCheckout`/`cmdUpdate` are safely callable in-process by programmatic
+ * callers (onboarding) and in tests. Any OTHER thrown error is a genuinely unexpected
+ * bug and is deliberately left to propagate to the CLI dispatcher's own catch-all.
+ */
+export class UpdateError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UpdateError";
+  }
+}
+
 /** Hex SHA-256 of a string/Buffer. */
 export function sha256(buf) {
   return createHash("sha256").update(buf).digest("hex");
