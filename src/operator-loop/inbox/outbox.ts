@@ -609,7 +609,8 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     // Lane discriminator: the PR-#317 capability lane journals the SAME event kinds
     // (`outcome`/`native-receipt`, keyed by capability handles) into the same durable journal.
     // Stamping `lane: "outbox"` here lets replay/read paths separate the lanes without guessing.
-    deps.journal({ kind, command_id, at: stamp(), data: { lane: "outbox", ...(data ?? {}) } });
+    // Assigned after the spread so callers can never relabel the lane of an outbox event.
+    deps.journal({ kind, command_id, at: stamp(), data: { ...(data ?? {}), lane: "outbox" } });
   };
 
   function requireEntry(commandId: string): Entry {

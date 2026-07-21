@@ -319,3 +319,27 @@ test("durable outbox events are stamped lane:outbox so foreign action-attempts n
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("the outbox lane stamp is authoritative and cannot be relabelled by event data", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aio392-lane-authoritative-"));
+  try {
+    // A caller-supplied `lane` must NOT win. A relabelled event silently drops out of the outbox
+    // projection and out of the `priorEvents` fold that enforces at-most-once.
+    loop.createDurableOutboxJournal(root)({
+      kind: "action-attempt",
+      command_id: COMMAND,
+      at: "2026-07-21T00:00:00.000Z",
+      data: { attempt: 1, lane: "capability" },
+    });
+    const written = loop
+      .readJournalSegments(root)
+      .events.filter((e) => e.kind === "action-attempt");
+    assert.equal(written.length, 1);
+    assert.equal(written[0].payload.lane, "outbox");
+    assert.equal(written[0].payload.attempt, 1);
+    assert.equal(loop.isOutboxLaneJournalEvent(written[0]), true);
+    assert.equal(loop.projectOutboxCommands(written).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

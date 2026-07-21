@@ -1032,7 +1032,11 @@ export function createDurableOutboxJournal(root: string): AppendOutboxEvent {
       // heuristics for journals written before this stamp existed; without it every untagged
       // `action-attempt` in the journal — whatever wrote it — folds into outbox state and into the
       // `priorEvents` that drive send idempotency.
-      payload: { lane: "outbox", ...(event.data ?? {}) },
+      //
+      // `lane` is assigned AFTER the spread so it is authoritative: this sink writes the outbox lane
+      // by construction, and event data must never be able to relabel its own lane (a misclassified
+      // event silently drops out of the projection and the idempotency fold).
+      payload: { ...(event.data ?? {}), lane: "outbox" },
       ...(event.at ? { ts: event.at } : {}),
     });
   };
