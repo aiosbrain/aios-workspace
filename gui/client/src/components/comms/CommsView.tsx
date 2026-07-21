@@ -14,6 +14,7 @@ import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
 import {
   fetchInbox,
   fetchInboxItem,
+  isTerminalAckReason,
   postAskAck,
   postAskArchive,
   postAskReply,
@@ -119,10 +120,11 @@ export function CommsView() {
       ackInFlight.current.add(id);
       try {
         const result = await postAskAck(api, id);
-        // `notify-busy` is transient — the notifier holds the coordination lock for this tick — so
-        // leave it unsettled and let the next poll or focus retry. `never-delivered` may also still
-        // become deliverable. Every other outcome is terminal for this ask.
-        if (result.reason !== "notify-busy" && result.reason !== "never-delivered") {
+        // Settle ONLY on outcomes that can never change for this ask; everything else stays open so
+        // the next poll or focus retries. `notify-busy` (notifier holds the lock this tick),
+        // `notify-unavailable` (loop not built/loaded yet) and `never-delivered` are all transient —
+        // settling any of them would strand the ask un-acked until a full remount.
+        if (result.recorded || isTerminalAckReason(result.reason)) {
           ackSettled.current.add(id);
         }
         if (result.recorded || result.reason === "already-acked") await load();

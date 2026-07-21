@@ -82,6 +82,17 @@ const ACK_REASONS: readonly AskAckReason[] = [
 ];
 
 /**
+ * Outcomes that can never change for this ask, so a caller may stop retrying.
+ *
+ * Everything NOT listed here is transient and must stay retryable: `notify-busy` (the notifier holds
+ * the coordination lock this tick), `notify-unavailable` (the compiled loop is not loaded yet) and
+ * `never-delivered` (the lane may still deliver) all resolve on their own.
+ */
+export function isTerminalAckReason(reason?: AskAckReason): boolean {
+  return reason === "already-acked" || reason === "not-acknowledgeable";
+}
+
+/**
  * No ask content or client timestamp is sent; the server folds the durable delivery journal.
  *
  * `not-acknowledgeable` (404), `notify-busy` (503) and `notify-unavailable` (503) are MODELLED

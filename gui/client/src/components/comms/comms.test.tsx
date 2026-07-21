@@ -14,7 +14,8 @@ import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { LatestDetailRequest, reconcileDetailNotify } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { postAskAck, postAskArchive, postAskReply, postDecision } from "./api";
+import { isTerminalAckReason, postAskAck, postAskArchive, postAskReply, postDecision } from "./api";
+import { ApiError } from "../../lib/api";
 import { ageLabel } from "./presenters";
 import {
   contentFreeNotification,
@@ -752,5 +753,50 @@ describe("content-free notifications", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("ack outcome handling", () => {
+  // The server states these in the body, but `Api.post` throws on any non-2xx — without the
+  // translation in `postAskAck` they could never be observed and all collapsed into one silent
+  // catch, making a contended lock indistinguishable from a dead ask.
+  test("modelled non-2xx ack outcomes reach the caller instead of throwing", async () => {
+    const api = {
+      get: vi.fn(),
+      wsUrl: vi.fn(),
+      post: vi.fn().mockRejectedValue(
+        new ApiError(503, "Service Unavailable", {
+          ok: false,
+          recorded: false,
+          reason: "notify-busy",
+        })
+      ),
+    } as unknown as Api;
+    await expect(postAskAck(api, "ask-1")).resolves.toEqual({
+      ok: false,
+      recorded: false,
+      reason: "notify-busy",
+    });
+  });
+
+  test("a genuine transport failure still throws", async () => {
+    const api = {
+      get: vi.fn(),
+      wsUrl: vi.fn(),
+      post: vi.fn().mockRejectedValue(new TypeError("network down")),
+    } as unknown as Api;
+    await expect(postAskAck(api, "ask-1")).rejects.toThrow("network down");
+  });
+
+  // Settling a transient outcome strands the ask un-acked until a full remount: `notify-unavailable`
+  // clears once the loop is built, `notify-busy` once the notifier releases the lock, and
+  // `never-delivered` once the lane delivers.
+  test("only unchangeable outcomes are terminal", () => {
+    expect(isTerminalAckReason("already-acked")).toBe(true);
+    expect(isTerminalAckReason("not-acknowledgeable")).toBe(true);
+    expect(isTerminalAckReason("notify-busy")).toBe(false);
+    expect(isTerminalAckReason("notify-unavailable")).toBe(false);
+    expect(isTerminalAckReason("never-delivered")).toBe(false);
+    expect(isTerminalAckReason(undefined)).toBe(false);
   });
 });
