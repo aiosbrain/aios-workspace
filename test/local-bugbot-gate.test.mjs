@@ -289,6 +289,22 @@ test("terminal clear ignores progress prose but cannot override a streamed findi
     assert.equal(legacyContradiction.finding, true);
     assert.match(legacyContradiction.output, /High Severity/);
 
+    const streamedBlockedToken = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "BUGBOT_BLOCKED",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(streamedBlockedToken.ok, false);
+    assert.equal(streamedBlockedToken.finding, true);
+    assert.match(streamedBlockedToken.output, /BUGBOT_BLOCKED/);
+
     const unstructuredContradiction = await runLocalPrePrReview({
       worktree: repo,
       baseSha,

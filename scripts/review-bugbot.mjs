@@ -669,6 +669,7 @@ export async function runLocalPrePrReview({
       // Findings FIRST: streamed or terminal Medium+ evidence blocks even if another terminal
       // shape says clear. Only the exact terminal protocol can clear an otherwise clean pass.
       const finding =
+        detectBugbotBlocked(bundled.transcript) ||
         bundled.terminals.some(detectBugbotBlocked) ||
         hasFindingsAtOrAbove(evidence, failOn) ||
         hasUnstructuredSeverityClaim(evidence, failOn);
