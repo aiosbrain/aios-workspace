@@ -21,7 +21,12 @@ import {
   acquireRemoteState,
   removePinnedSnapshot,
 } from "../scripts/toolkit-pull.mjs";
-import { conflictMarkerPaths, vendorSafety, assertDestPathSafe } from "../scripts/update.mjs";
+import {
+  cmdUpdate,
+  conflictMarkerPaths,
+  vendorSafety,
+  assertDestPathSafe,
+} from "../scripts/update.mjs";
 import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
 import { git, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
 
@@ -780,6 +785,68 @@ test("assertDestPathSafe refuses a manifest dest whose parent chain is a symlink
   }
 });
 
+test("apply --force refuses a managed destination that is itself a symlink", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-containment-final-symlink-"));
+  try {
+    const entry = MANAGED_PATHS.find((e) => e.kind !== "dir");
+    const { clone } = originAndToolkitClone(root, {
+      realEntrypoint: true,
+      extraOriginFiles: { [entry.src]: "toolkit replacement\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const outside = path.join(root, "outside-shared-file");
+    writeFileSync(outside, "must survive\n");
+    const dest = path.join(workspace, entry.dest);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    symlinkSync(outside, dest);
+
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-pull", "--force", "--from", clone, "--repo", workspace],
+      { encoding: "utf8" }
+    );
+    assert.notEqual(res.status, 0, "a final-component symlink must block apply");
+    assert.match(res.stderr, /destination is a symlink/);
+    assert.equal(readFileSync(outside, "utf8"), "must survive\n", "outside target was untouched");
+    assert.ok(!existsSync(path.join(workspace, ".aios-toolkit-version")), "no stamp was written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local-checkout apply stamps the live toolkit path, not the disposable snapshot", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-stamp-live-source-"));
+  try {
+    const entry = MANAGED_PATHS.find((e) => e.kind !== "dir");
+    const { clone } = originAndToolkitClone(root, {
+      realEntrypoint: true,
+      extraOriginFiles: { [entry.src]: "vendored content\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-pull", "--force", "--from", clone, "--repo", workspace],
+      { encoding: "utf8" }
+    );
+    assert.equal(res.status, 0, res.stderr);
+    const stamp = readFileSync(path.join(workspace, ".aios-toolkit-version"), "utf8");
+    assert.match(
+      stamp,
+      new RegExp(`^source ${clone.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}$`, "m")
+    );
+    assert.doesNotMatch(stamp, /aios-vendor-snapshot-/, "snapshot path is removed after apply");
+    assert.ok(existsSync(clone), "the stamped local source remains usable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("acquireRemoteState readonly: local-only commits are still detected as diverged even when the ls-remote sha isn't locally fetched", () => {
   const root = mkdtempSync(path.join(tmpdir(), "aios-readonly-divergence-"));
   try {
@@ -800,6 +867,44 @@ test("acquireRemoteState readonly: local-only commits are still detected as dive
       "diverged",
       "must not collapse to a plain 'behind' that would leave applyAllowed true for a checkout apply will refuse"
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("preview reports remote divergence and blocks applyAllowed without pulling", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-preview-divergence-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "local-only.txt"), "never pushed\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "local-only work");
+    const headBefore = git(clone, "rev-parse", "HEAD");
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const result = await cmdUpdate(workspace, {}, ["--preview", "--from", clone]);
+    assert.equal(result.remoteState.state, "diverged");
+    assert.equal(result.applyAllowed, false, "preview must agree with apply's divergence gate");
+    assert.equal(git(clone, "rev-parse", "HEAD"), headBefore, "preview must not pull or reset");
+    assert.deepEqual(readdirSync(workspace), ["aios.yaml"], "preview must not write the workspace");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("toolkit-self check blocks applyAllowed for a dirty checkout", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-self-check-dirty-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "scratch.txt"), "uncommitted\n");
+
+    const result = await cmdUpdate(clone, {}, ["--check"]);
+    assert.equal(result.sourceClean, "dirty");
+    assert.equal(result.applyAllowed, false, "self-check must agree with apply's dirty-tree gate");
+    assert.match(result.reasons.join("\n"), /uncommitted changes/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

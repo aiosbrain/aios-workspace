@@ -141,8 +141,9 @@ export function resolveLocalToolkitDir(dir) {
   return null;
 }
 
-/** Resolve the toolkit source dir. Returns { dir, ephemeral } — clone dirs are ephemeral.
- *  Throws UpdateError (never exits) on invalid input or an unreachable/invalid clone. */
+/** Resolve the toolkit source dir. `stampSource` remains meaningful after the pinned worktree
+ *  is removed: the live checkout path for local sources, or the clone URL for an ephemeral
+ *  fallback. Throws UpdateError (never exits) on invalid input or an invalid clone. */
 function resolveSource(args, cfg, warn) {
   // An explicit --from is a promise: if it isn't a toolkit, that's an error, not a
   // silent fall-through to some other source the user didn't ask for.
@@ -164,7 +165,10 @@ function resolveSource(args, cfg, warn) {
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
   for (const dir of candidates) {
-    if (looksLikeToolkit(dir)) return { dir: path.resolve(dir), ephemeral: false };
+    if (looksLikeToolkit(dir)) {
+      const resolved = path.resolve(dir);
+      return { dir: resolved, ephemeral: false, stampSource: resolved };
+    }
   }
   // Fall back to cloning the canonical repo.
   const url = cfg?.toolkit_repo || DEFAULT_REPO;
@@ -184,7 +188,7 @@ function resolveSource(args, cfg, warn) {
     rmSync(tmp, { recursive: true, force: true });
     throw new UpdateError(`cloned ${url} but it doesn't look like the AIOS toolkit`);
   }
-  return { dir: tmp, ephemeral: true };
+  return { dir: tmp, ephemeral: true, stampSource: url };
 }
 
 /**
@@ -233,9 +237,9 @@ function pathEntryExists(p) {
 }
 
 /**
- * Refuse a destination path that escapes the workspace root (a `../` traversal in a
- * manifest entry's `dest`, or a symlinked parent directory redirecting the write
- * elsewhere). Applies to every managed write/delete AND seed, not just seeds — a manifest
+ * Refuse a destination path that escapes the workspace root (a `../` traversal, a
+ * symlinked parent directory, or a final destination that is itself a symlink). Applies
+ * to every managed write/delete AND seed, not just seeds — a manifest
  * entry's `dest` is only as trustworthy as its source: apply mode always spawns the
  * PINNED SNAPSHOT's own `scripts/aios.mjs`, which loads that same snapshot's own
  * `toolkit-manifest.mjs`, so a `--from` pointed at an untrusted checkout could otherwise
@@ -264,6 +268,17 @@ export function assertDestPathSafe(repo, destRel, verb = "vendor") {
         `refusing to ${verb} ${destRel}: parent path is not a real workspace directory (${path.relative(root, current)})`
       );
     }
+  }
+
+  // writeFileSync/unlinkSync follow a final-component symlink even when every parent is a
+  // real directory. Reject the destination entry itself before any managed read/write so
+  // `scripts/aios.mjs -> /tmp/shared` cannot redirect an update outside the workspace.
+  try {
+    if (lstatSync(destAbs).isSymbolicLink()) {
+      throw new Error(`refusing to ${verb} ${destRel}: destination is a symlink`);
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
 }
 
@@ -447,6 +462,11 @@ function applyFile(
     writeFileSync(destAbs, content);
     if (entry.exec) chmodSync(destAbs, 0o755);
   };
+  const writeSidecar = (suffix, content) => {
+    const sidecarRel = `${destRel}${suffix}`;
+    assertDestPathSafe(repo, sidecarRel, "write conflict sidecar");
+    if (!dryRun) writeFileSync(path.join(repo, sidecarRel), content);
+  };
 
   if (force) {
     if (theirs !== undefined && theirs !== mine) {
@@ -472,7 +492,7 @@ function applyFile(
       return;
     case "fallback":
       // No baseline to reason from — surface rather than silently overwrite.
-      if (!dryRun) writeFileSync(`${destAbs}.aios-incoming`, theirs);
+      writeSidecar(".aios-incoming", theirs);
       r.conflicts.push({ path: destRel, kind: "no-base" });
       return;
     case "merge": {
@@ -487,10 +507,8 @@ function applyFile(
       } else {
         // Never write markers into the live file — it may be executed/parsed. Leave
         // `mine` in place; drop the toolkit version + the marked-up merge beside it.
-        if (!dryRun) {
-          writeFileSync(`${destAbs}.aios-incoming`, theirs);
-          writeFileSync(`${destAbs}.aios-merge`, content);
-        }
+        writeSidecar(".aios-incoming", theirs);
+        writeSidecar(".aios-merge", content);
         r.conflicts.push({ path: destRel, kind: "merge" });
       }
       return;
@@ -581,11 +599,13 @@ const UPDATE_BOOL_FLAGS = new Set([
 // hand-off only, never meant to be typed by a user. See the exact allowlist check below.
 const UPDATE_HIDDEN_BOOL_FLAGS = new Set(["--vendor-apply-only"]);
 // --result-file: the vendor-apply-only child writes its structured result here as JSON.
+// --stamp-source: the live checkout path (or clone URL for an ephemeral source) recorded in
+// the workspace stamp; --from itself is the disposable pinned snapshot and must not be stamped.
 // `stdio: "inherit"` gives the user live progress output (worth keeping — this can be a
 // slow operation), but means the parent process can't read the child's stdout at all, so
 // there is no other channel to get `changedCount`/`vendorSafety` back across the process
 // boundary. Internal only, alongside --vendor-apply-only.
-const UPDATE_HIDDEN_VALUE_FLAGS = new Set(["--result-file"]);
+const UPDATE_HIDDEN_VALUE_FLAGS = new Set(["--result-file", "--stamp-source"]);
 const UPDATE_VALUE_FLAGS = new Set(["--from", "--repo", "--contribute"]);
 
 function assertKnownUpdateFlags(args) {
@@ -661,6 +681,10 @@ async function cmdVendorApplyOnly(repo, args) {
       `--vendor-apply-only requires --from pointing at a valid toolkit checkout — got ${srcDir}.`
     );
   }
+  const stampSource = argValue(args, "--stamp-source");
+  if (!stampSource || /[\r\n]/.test(stampSource)) {
+    throw new UpdateError("--vendor-apply-only requires a single-line --stamp-source value.");
+  }
   const force = args.includes("--force");
 
   const vs = vendorSafety(srcDir);
@@ -674,13 +698,14 @@ async function cmdVendorApplyOnly(repo, args) {
   const sha = gitSha(srcDir); // srcDir IS the pinned snapshot — this trivially equals the pinned sha
   const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
   const stampPath = path.join(repo, VERSION_FILE);
+  assertDestPathSafe(repo, VERSION_FILE, "write version stamp");
   const baseSha = existsSync(stampPath)
     ? readFileSync(stampPath, "utf8").split(/\s/)[0]
     : undefined;
   const dirty = force ? new Set() : dirtyManagedPaths(repo);
 
   const shortSha = sha.slice(0, 12);
-  console.log(color.dim(`  syncing toolkit ${meta.label} from ${srcDir} (${shortSha}) …`));
+  console.log(color.dim(`  syncing toolkit ${meta.label} from ${stampSource} (${shortSha}) …`));
   const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: false });
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
@@ -760,7 +785,7 @@ async function cmdVendorApplyOnly(repo, args) {
     });
   }
 
-  writeFileSync(stampPath, stampBody(sha, meta, srcDir));
+  writeFileSync(stampPath, stampBody(sha, meta, stampSource));
   if (changedCount) {
     console.log(
       color.green(
@@ -832,16 +857,17 @@ async function cmdUpdateInner(repo, cfg, args) {
       "--repo",
       "--force",
       "--result-file",
+      "--stamp-source",
     ]);
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (a === "--from" || a === "--repo" || a === "--result-file") {
+      if (a === "--from" || a === "--repo" || a === "--result-file" || a === "--stamp-source") {
         i++; // skip the flag's value
         continue;
       }
       if (!allowed.has(a)) {
         throw new UpdateError(
-          `aios update --vendor-apply-only accepts only --from/--repo/--force/--result-file — got ${a}. ` +
+          `aios update --vendor-apply-only accepts only --from/--repo/--force/--result-file/--stamp-source — got ${a}. ` +
             `This is an internal hand-off entrypoint, not meant to be combined with other flags.`
         );
       }
@@ -878,12 +904,37 @@ async function cmdUpdateInner(repo, cfg, args) {
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
   if (looksLikeToolkit(repo)) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
-    if (noPull && !check) {
-      console.log(
-        color.dim(
-          `  ${preview ? "--preview" : "--no-pull"} — nothing to re-vendor in the toolkit checkout.`
-        )
+    if (check || preview) {
+      // Both read-only modes must report the same remote/local safety signals that apply
+      // enforces. `pullToolkitCheckout` remains strictly read-only here (ls-remote only),
+      // while vendorSafety catches an unresolved index before we advertise applyAllowed.
+      const pr = pullToolkitCheckout(
+        repo,
+        { ...pullOpts, check: true, dryRun: true, noInstall: true },
+        io
       );
+      const vs = vendorSafety(repo);
+      const reasons = [];
+      if (pr.remoteState && !["current", "no-upstream"].includes(pr.remoteState.state))
+        reasons.push(remoteMessage(pr.remoteState).text);
+      if (pr.sourceClean === "dirty") reasons.push("the toolkit checkout has uncommitted changes");
+      if (pr.sourceClean === "inspection-error")
+        reasons.push("couldn't determine whether the toolkit checkout is clean");
+      if (!vs.safe) reasons.push(vendorSafetyReason(vs));
+      if (preview) {
+        console.log(color.dim("  --preview — nothing to re-vendor in the toolkit checkout."));
+      }
+      return buildResult({
+        mode,
+        exitStatus: 0,
+        remoteState: pr.remoteState,
+        sourceClean: pr.sourceClean,
+        vendorSafety: vs,
+        reasons,
+      });
+    }
+    if (noPull) {
+      console.log(color.dim("  --no-pull — nothing to re-vendor in the toolkit checkout."));
       return buildResult({ mode, exitStatus: 0 });
     }
     const pr = pullToolkitCheckout(repo, pullOpts, io);
@@ -896,7 +947,7 @@ async function cmdUpdateInner(repo, cfg, args) {
     });
   }
 
-  const { dir: srcDir, ephemeral } = resolveSource(args, cfg, (m) => console.warn(m));
+  const { dir: srcDir, ephemeral, stampSource } = resolveSource(args, cfg, (m) => console.warn(m));
 
   // --contribute upstreams a locally-improved managed file as a toolkit PR (own flow).
   if (args.includes("--contribute")) {
@@ -913,7 +964,7 @@ async function cmdUpdateInner(repo, cfg, args) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
       const pullInfo = ephemeral ? null : pullToolkitCheckout(srcDir, pullOpts, io);
       const vs = vendorSafety(srcDir);
-      const sourceClean = sourceCleanliness(srcDir);
+      const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
       const remoteState = pullInfo?.remoteState ?? null;
 
       const sha = gitSha(srcDir);
@@ -970,8 +1021,16 @@ async function cmdUpdateInner(repo, cfg, args) {
       // preview never pulls (implies --no-pull) and never writes — it operates directly
       // against the live srcDir, same honest point-in-time scope as --check. No snapshot
       // is needed since nothing is ever written.
+      const pullInfo = ephemeral
+        ? null
+        : pullToolkitCheckout(
+            srcDir,
+            { ...pullOpts, check: true, dryRun: true, noInstall: true },
+            io
+          );
+      const remoteState = pullInfo?.remoteState ?? null;
       const vs = vendorSafety(srcDir);
-      const sourceClean = sourceCleanliness(srcDir);
+      const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
       if (!vs.safe) {
         console.warn(
           color.yellow(`  toolkit has unresolved conflicts — ${vendorSafetyReason(vs)}.`)
@@ -1035,11 +1094,14 @@ async function cmdUpdateInner(repo, cfg, args) {
         )
       );
       const reasons = [];
+      if (remoteState && !["current", "no-upstream"].includes(remoteState.state))
+        reasons.push(remoteMessage(remoteState).text);
       if (!vs.safe) reasons.push(vendorSafetyReason(vs));
       if (sourceClean !== "clean") reasons.push(`toolkit checkout is ${sourceClean}`);
       return buildResult({
         mode: "preview",
         exitStatus: 0,
+        remoteState,
         sourceClean,
         vendorSafety: vs,
         changedCount,
@@ -1093,6 +1155,8 @@ async function cmdUpdateInner(repo, cfg, args) {
       repo,
       "--result-file",
       resultFile,
+      "--stamp-source",
+      stampSource,
     ];
     if (args.includes("--force")) passthrough.push("--force");
     const res = spawnSync(process.execPath, [entrypoint, ...passthrough], { stdio: "inherit" });

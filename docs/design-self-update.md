@@ -188,10 +188,13 @@ distinguish "set by my own parent" from "set by anything else already in the env
 The fix removes the recursion instead of guarding it. `cmdUpdate`'s apply path
 unconditionally hands off — spawning the pinned snapshot's own `scripts/aios.mjs` with a
 hidden, exact-allowlisted flag, `--vendor-apply-only --from <snapshotDir> --repo <repo>
-[--force] [--result-file <path>]` (nothing else is accepted in that combination — enforced
-before any read/write). The function that flag dispatches to (`cmdVendorApplyOnly`,
-`scripts/update.mjs`) has **no hand-off logic anywhere in it** — it resolves `--from`, runs
-the merge, writes the stamp, and returns. It cannot spawn a child because there is no code
+--stamp-source <live-checkout-or-clone-url> [--force] [--result-file <path>]` (nothing else
+is accepted in that combination — enforced before any read/write). The separate source
+value keeps the disposable snapshot path out of `.aios-toolkit-version`; a local update
+records the durable live checkout path, while an ephemeral fallback records its clone URL.
+The function that flag dispatches to (`cmdVendorApplyOnly`, `scripts/update.mjs`) has **no
+hand-off logic anywhere in it** — it resolves `--from`, runs the merge, writes the stamp,
+and returns. It cannot spawn a child because there is no code
 path in it that does — not guarded against recursing, structurally incapable of it. There is
 no env var, nothing ambient, nothing left to pollute.
 

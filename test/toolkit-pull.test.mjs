@@ -88,6 +88,36 @@ test("acquireRemoteState: no-upstream is distinct from unreachable/missing-ref",
   }
 });
 
+test("acquireRemoteState: configured upstream survives a missing local tracking ref", () => {
+  const root = tmpRoot("aios-pull-missing-local-upstream-");
+  try {
+    const { clone } = originAndClone(root);
+    writeFileSync(`${clone}/local-only.txt`, "never pushed\n");
+    git(clone, "add", "-A");
+    git(clone, "commit", "-qm", "local-only work");
+
+    // Preserve branch.main.remote/merge but remove only the local tracking ref. In this
+    // state `rev-parse @{u}` fails even though the branch is still configured to track
+    // origin/main — the exact state that previously collapsed to a false no-upstream.
+    git(clone, "update-ref", "-d", "refs/remotes/origin/main");
+    assert.equal(git(clone, "config", "--get", "branch.main.remote"), "origin");
+    assert.equal(git(clone, "config", "--get", "branch.main.merge"), "refs/heads/main");
+    assert.throws(() => git(clone, "rev-parse", "@{u}"));
+
+    const readonly = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(readonly.state, "diverged", "readonly must verify origin, not report no-upstream");
+    assert.equal(readonly.upstream, "origin/main");
+    assert.equal(readonly.ahead, 1);
+
+    const apply = acquireRemoteState(clone, { mode: "apply" });
+    assert.equal(apply.state, "diverged", "apply must fetch and detect the local-only commit");
+    assert.equal(apply.upstream, "origin/main");
+    assert.equal(apply.ahead, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("acquireRemoteState: deleted upstream branch is missing-upstream-ref in BOTH modes, never a false green", () => {
   const root = tmpRoot("aios-pull-deletedref-");
   try {

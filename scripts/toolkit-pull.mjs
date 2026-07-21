@@ -67,12 +67,40 @@ export function sourceCleanliness(dir) {
   }
 }
 
-/** Parse "remote/branch" from an @{u}-style upstream ref string. Branch names can contain
- *  slashes, so only the FIRST slash splits off the remote name. Single source of truth —
- *  previously hand-split independently in two now-removed functions. */
-function splitUpstream(upstream) {
-  const slash = upstream.indexOf("/");
-  return { remote: upstream.slice(0, slash), branch: upstream.slice(slash + 1) };
+/** Read the branch's configured upstream independently of whether its local tracking ref
+ *  currently exists. `rev-parse @{u}` requires both configuration AND a resolvable ref, so
+ *  using it as the existence check turns a pruned/deleted local `refs/remotes/*` entry into
+ *  a false "no-upstream". Only the absence of both config keys means no upstream; partial
+ *  or unreadable configuration is a local-status error and must fail closed. */
+function configuredUpstream(dir, branch) {
+  const getConfig = (key) => {
+    try {
+      return { ok: true, value: git(dir, ["config", "--get", key]) };
+    } catch (error) {
+      // `git config --get` uses status 1 for a genuinely absent key. Any other failure
+      // means the repository/config could not be inspected and must not look unconfigured.
+      if (error?.status === 1) return { ok: true, value: "" };
+      return { ok: false, value: "" };
+    }
+  };
+
+  const remoteConfig = getConfig(`branch.${branch}.remote`);
+  const mergeConfig = getConfig(`branch.${branch}.merge`);
+  if (!remoteConfig.ok || !mergeConfig.ok) return { state: "error" };
+  if (!remoteConfig.value && !mergeConfig.value) return { state: "none" };
+  if (!remoteConfig.value || !mergeConfig.value) return { state: "error" };
+
+  const remote = remoteConfig.value;
+  const remoteRef = mergeConfig.value;
+  const remoteBranch = remoteRef.startsWith("refs/heads/")
+    ? remoteRef.slice("refs/heads/".length)
+    : remoteRef;
+  // Prefer Git's own display name when the tracking ref is present. When it is missing,
+  // retain the configured identity so readonly can ls-remote it and apply can fetch it.
+  const resolvedName = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  const upstreamName =
+    resolvedName || (remote === "." ? remoteBranch : `${remote}/${remoteBranch}`);
+  return { state: "configured", remote, remoteRef, upstreamName };
 }
 
 /** Best-effort behind/ahead from the LOCAL tracking ref, for when the remote itself can't
@@ -179,12 +207,42 @@ function classifyAgainst(
  *                           treated as acceptable-offline).
  */
 export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
-  const branch = gitSafe(dir, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
-  const upstreamName = gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
-  if (!upstreamName) {
+  let branch;
+  try {
+    branch = git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  } catch {
+    return { state: "local-status-error", branch: "HEAD", upstream: null, behind: null, ahead: 0 };
+  }
+
+  const upstreamConfig = configuredUpstream(dir, branch);
+  if (upstreamConfig.state === "error") {
+    return { state: "local-status-error", branch, upstream: null, behind: null, ahead: 0 };
+  }
+  if (upstreamConfig.state === "none") {
     return { state: "no-upstream", branch, upstream: null, behind: 0, ahead: 0 };
   }
-  const { remote, branch: remoteBranch } = splitUpstream(upstreamName);
+  const { remote, remoteRef } = upstreamConfig;
+  let { upstreamName } = upstreamConfig;
+
+  // `branch.<name>.remote = .` means another branch in this same repository. There is no
+  // network remote to query or fetch; classify directly against the configured merge ref.
+  if (remote === ".") {
+    let upstreamSha;
+    try {
+      upstreamSha = git(dir, ["rev-parse", remoteRef]);
+    } catch {
+      return {
+        state: "missing-upstream-ref",
+        branch,
+        upstream: upstreamName,
+        behind: null,
+        ahead: 0,
+      };
+    }
+    return classifyAgainst(dir, upstreamSha, branch, upstreamName, {
+      onCountFailure: "local-status-error",
+    });
+  }
 
   if (mode === "apply") {
     try {
@@ -216,6 +274,10 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
     }
     let upstreamSha;
     try {
+      // A configured-but-missing tracking ref should now have been restored by fetch. Ask
+      // Git for its canonical local name again before resolving the object.
+      upstreamName =
+        gitSafe(dir, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) || upstreamName;
       // Resolves the ref OBJECT (fails if --prune just removed it), unlike
       // --symbolic-full-name which only prints the configured name without verifying
       // the tracking ref still exists.
@@ -237,7 +299,7 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
   // readonly: ls-remote only — zero writes, no ref/FETCH_HEAD mutation.
   let out;
   try {
-    out = git(dir, ["ls-remote", remote, remoteBranch]); // direct try/catch — NOT gitSafe,
+    out = git(dir, ["ls-remote", remote, remoteRef]); // direct try/catch — NOT gitSafe,
     // so "threw" (unreachable) is distinguishable from "succeeded, zero matching lines"
     // (missing-upstream-ref) below.
   } catch {
@@ -261,9 +323,8 @@ export function acquireRemoteState(dir, { mode, warn = () => {} } = {}) {
       staleBehindEstimate: stale.behind,
     };
   }
-  // `git ls-remote <remote> <branch>` matches by trailing component, so a sibling like
-  // `refs/heads/hotfix/<branch>` can appear too — pick the EXACT ref, not just line 0.
-  const wantHead = `refs/heads/${remoteBranch}`;
+  // Pick the configured ref exactly, never a same-suffixed sibling or same-named tag.
+  const wantHead = remoteRef;
   let remoteSha = null;
   for (const l of out.split("\n")) {
     const [sha, ref] = l.split(/\s+/);
@@ -564,7 +625,11 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
     ...extra,
   });
 
-  if (readOnly) return ret();
+  // Read-only callers still need an honest local-cleanliness signal. In particular,
+  // `aios update --check` uses this result when it is run inside the toolkit checkout
+  // itself; returning null here would make buildResult() treat a dirty or uninspectable
+  // checkout as apply-safe even though apply mode would refuse it.
+  if (readOnly) return ret({ sourceClean: sourceCleanliness(dir) });
 
   // APPLY mode from here on.
   if (remoteState.state === "diverged") {
