@@ -96,11 +96,62 @@ test("Slack refresh runs only the toolkit adapter with a Slack-specific environm
   assert.equal(invocation.args[0], TRUSTED_SLACK_ADAPTER);
   assert.equal(invocation.args[2], "/tmp/untrusted-selected-repo");
   assert.equal(invocation.options.env.SLACK_USER_TOKEN, "fixture-token");
-  assert.equal(invocation.options.env.AIOS_API_KEY, "fixture-brain-key");
+  assert.equal("AIOS_BRAIN_URL" in invocation.options.env, false);
+  assert.equal("AIOS_API_KEY" in invocation.options.env, false);
+  assert.equal("AIOS_TEAM" in invocation.options.env, false);
   assert.equal("AWS_SECRET_ACCESS_KEY" in invocation.options.env, false);
   assert.equal("NODE_OPTIONS" in invocation.options.env, false);
   const minimal = slackConnectorEnvironment({ SECRET: "no", PATH: "/untrusted/bin" });
   assert.deepEqual(Object.keys(minimal), ["PATH"]);
+});
+
+test("Slack Brain fallback resolves in the parent and only the Slack token crosses to the child", async () => {
+  let invocation;
+  let resolverEnv;
+  const child = new FakeChild();
+  const result = runTrustedSlackAdapter("/tmp/untrusted-selected-repo", {
+    env: {
+      AIOS_BRAIN_URL: "https://brain.example.test",
+      AIOS_API_KEY: "fixture-brain-key",
+      AIOS_TEAM: "fixture-team",
+    },
+    async resolveToken({ env }) {
+      resolverEnv = env;
+      return "resolved-slack-token";
+    },
+    spawnProcess(command, args, options) {
+      invocation = { command, args, options };
+      setImmediate(() => child.emit("close", 0));
+      return child;
+    },
+    isEnabled: () => true,
+  });
+
+  assert.deepEqual(await result, { kind: "ready", slack: "ready" });
+  assert.equal(resolverEnv.AIOS_API_KEY, "fixture-brain-key");
+  assert.equal(invocation.options.env.SLACK_USER_TOKEN, "resolved-slack-token");
+  assert.equal("AIOS_BRAIN_URL" in invocation.options.env, false);
+  assert.equal("AIOS_API_KEY" in invocation.options.env, false);
+  assert.equal("AIOS_TEAM" in invocation.options.env, false);
+});
+
+test("Slack refresh reports degraded when group DMs are unavailable", async () => {
+  const child = new FakeChild();
+  const result = runTrustedSlackAdapter("/tmp/workspace", {
+    env: { SLACK_USER_TOKEN: "fixture-token" },
+    spawnProcess() {
+      setImmediate(() => {
+        child.stderr.emit(
+          "data",
+          "slack-activity-pull: group DMs unavailable (missing mpim:read)\n"
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    },
+    isEnabled: () => true,
+  });
+  assert.deepEqual(await result, { kind: "degraded", slack: "degraded" });
 });
 
 test("inbox refresh is non-overlapping and freshness advances only after a successful pull", async () => {

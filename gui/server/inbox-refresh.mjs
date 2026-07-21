@@ -2,6 +2,10 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import {
+  resolveSlackToken,
+  SLACK_MPIM_UNAVAILABLE_MARKER,
+} from "../../scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs";
 
 export const DEFAULT_INBOX_REFRESH_MS = 5 * 60_000;
 const MIN_REFRESH_MS = 60_000;
@@ -73,11 +77,12 @@ export function connectorEnvironment(source = process.env) {
   return env;
 }
 
-export function slackConnectorEnvironment(source = process.env) {
+export function slackConnectorEnvironment(
+  source = process.env,
+  slackToken = source.SLACK_USER_TOKEN
+) {
   const env = connectorEnvironment(source);
-  for (const key of ["SLACK_USER_TOKEN", "AIOS_BRAIN_URL", "AIOS_API_KEY", "AIOS_TEAM"]) {
-    if (typeof source[key] === "string" && source[key]) env[key] = source[key];
-  }
+  if (typeof slackToken === "string" && slackToken) env.SLACK_USER_TOKEN = slackToken;
   return env;
 }
 
@@ -204,11 +209,13 @@ export function runTrustedGogAdapter(
 }
 
 /** Run the reviewed Slack puller with only Slack-specific credentials crossing the child boundary. */
-export function runTrustedSlackAdapter(
+export async function runTrustedSlackAdapter(
   repo,
   {
     spawnProcess = spawn,
     env = process.env,
+    resolveToken = resolveSlackToken,
+    fetchImpl = fetch,
     timeoutMs = REFRESH_TIMEOUT_MS,
     termGraceMs = TERM_GRACE_MS,
     signal,
@@ -218,12 +225,22 @@ export function runTrustedSlackAdapter(
   } = {}
 ) {
   if (!existsSync(TRUSTED_SLACK_ADAPTER) || !isEnabled(repo)) {
-    return Promise.resolve({ kind: "unavailable", slack: "unavailable" });
+    return { kind: "unavailable", slack: "unavailable" };
   }
-  if (signal?.aborted) return Promise.resolve({ kind: "failed", slack: "failed" });
+  if (signal?.aborted) return { kind: "failed", slack: "failed" };
+
+  let slackToken;
+  try {
+    // Brain credentials stay in the GUI process. The reviewed child gets the resolved Slack token
+    // and the generic connector allowlist, but no AIOS API key or Brain routing metadata.
+    slackToken = await resolveToken({ env, fetchImpl });
+  } catch {
+    return { kind: "failed", slack: "failed" };
+  }
 
   return new Promise((resolve) => {
     let child;
+    let diagnostics = "";
     let stopping = false;
     let timedOut = false;
     let timeout;
@@ -255,8 +272,8 @@ export function runTrustedSlackAdapter(
     try {
       child = spawnProcess(process.execPath, [TRUSTED_SLACK_ADAPTER, "--repo", repo], {
         cwd: path.dirname(TRUSTED_SLACK_ADAPTER),
-        env: slackConnectorEnvironment(env),
-        stdio: ["ignore", "ignore", "ignore"],
+        env: slackConnectorEnvironment(env, slackToken),
+        stdio: ["ignore", "ignore", "pipe"],
         detached: platform !== "win32",
       });
     } catch {
@@ -264,6 +281,11 @@ export function runTrustedSlackAdapter(
       return;
     }
 
+    child.stderr?.on("data", (chunk) => {
+      if (diagnostics.length < MAX_DIAGNOSTIC_BYTES) {
+        diagnostics += String(chunk).slice(0, MAX_DIAGNOSTIC_BYTES - diagnostics.length);
+      }
+    });
     child.once("error", () => {
       clearTimers();
       signal?.removeEventListener("abort", onAbort);
@@ -274,6 +296,10 @@ export function runTrustedSlackAdapter(
       signal?.removeEventListener("abort", onAbort);
       if (timedOut || stopping || code !== 0) {
         resolve({ kind: "failed", slack: "failed" });
+        return;
+      }
+      if (diagnostics.includes(SLACK_MPIM_UNAVAILABLE_MARKER)) {
+        resolve({ kind: "degraded", slack: "degraded" });
         return;
       }
       resolve({ kind: "ready", slack: "ready" });

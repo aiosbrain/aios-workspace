@@ -69,7 +69,10 @@ export function createGogSendClient(
           `gog Sent search returned non-JSON: ${errorMessage(error)}`
         );
       }
-      if (Array.isArray(rows) && rows.length > 0) {
+      if (!Array.isArray(rows)) {
+        throw new loop.OutboxReconcileError("gog Sent search returned an unexpected JSON shape");
+      }
+      if (rows.length > 0) {
         return { found: true, thread_id: rows[0].threadId || rows[0].id };
       }
       return { found: false };

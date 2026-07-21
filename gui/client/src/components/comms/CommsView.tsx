@@ -28,7 +28,6 @@ import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notificat
 import { LatestDetailRequest } from "./detail-request";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { ApiError } from "../../lib/api";
-import { canRetryConfirmed, deferredRetryAfter, retryDelayMs } from "./reply-retry";
 import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
 import {
   filterInboxView,
@@ -50,9 +49,6 @@ const POLL_MS = 15_000;
 interface RetryPlan {
   snapshot: ReplyConfirmationSnapshot;
   threadRef: string;
-  attempts: number;
-  retryAt: string | null;
-  exhausted: boolean;
 }
 
 interface RecoverableReply {
@@ -306,19 +302,13 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
       setReplySnapshot(snapshot);
       setReplyThreadRef(threadRef);
       setReplyDialogError(null);
-      setFailedReply(null);
       setReplyRecoveryError(null);
     },
     [api, detail]
   );
 
   const sendConfirmed = useCallback(
-    async (
-      snapshot: ReplyConfirmationSnapshot,
-      threadRef: string,
-      attempts: number,
-      fromDialog: boolean
-    ) => {
+    async (snapshot: ReplyConfirmationSnapshot, threadRef: string, fromDialog: boolean) => {
       setReplyRecoveryError(null);
       if (fromDialog) {
         setReplyDialogBusy(true);
@@ -369,24 +359,18 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
           last_attempt_at: new Date().toISOString(),
         });
         if (result.state === "outcome_unknown") {
-          const exhausted = !canRetryConfirmed(attempts);
-          setRetryPlan({
-            snapshot,
-            threadRef,
-            attempts,
-            retryAt: result.retry_after ?? null,
-            exhausted,
-          });
-          setFailedReply(null);
+          // The first send may already have reached Gmail. Keep reconciling the durable outbox, but
+          // never submit the message again from a timer: another attempt requires a fresh check and
+          // an explicit human confirmation in ReplyConfirmDialog.
+          setRetryPlan({ snapshot, threadRef });
+          setFailedReply({ snapshot, threadRef });
         } else {
           setRetryPlan(null);
           setFailedReply({ snapshot, threadRef });
         }
         void loadOutbox();
       } catch (sendError) {
-        const retryAt = deferredRetryAfter(sendError);
         if (sendError instanceof ApiError && sendError.status === 429) {
-          const exhausted = !canRetryConfirmed(attempts);
           setReplySnapshot(null);
           setReplyThreadRef(null);
           setLocalCommand({
@@ -397,7 +381,8 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
             native_thread_id: null,
             last_attempt_at: new Date().toISOString(),
           });
-          setRetryPlan({ snapshot, threadRef, attempts, retryAt, exhausted });
+          setRetryPlan({ snapshot, threadRef });
+          setFailedReply({ snapshot, threadRef });
           return;
         }
         if (fromDialog) {
@@ -421,15 +406,6 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
     },
     [api, load, loadOutbox]
   );
-
-  useEffect(() => {
-    if (!retryPlan || retryPlan.exhausted) return;
-    const timer = setTimeout(() => {
-      setRetryPlan(null);
-      void sendConfirmed(retryPlan.snapshot, retryPlan.threadRef, retryPlan.attempts + 1, false);
-    }, retryDelayMs(retryPlan.retryAt));
-    return () => clearTimeout(timer);
-  }, [retryPlan, sendConfirmed]);
 
   useEffect(() => {
     if (!retryPlan) return;
@@ -469,12 +445,10 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
       ? [localCommand, ...durableSentCommands]
       : durableSentCommands;
   const canTryReplyAgain =
-    selectedCommand?.state === "failed" &&
+    (selectedCommand?.state === "failed" || selectedCommand?.state === "outcome_unknown") &&
     failedReply?.threadRef === selectedThreadRef &&
     failedReply.snapshot.itemId === detail?.item?.id;
-  const recoveryExhausted = Boolean(
-    retryPlan?.exhausted && retryPlan.threadRef === selectedThreadRef
-  );
+  const recoveryExhausted = Boolean(retryPlan?.threadRef === selectedThreadRef);
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -538,7 +512,7 @@ export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
           error={replyDialogError}
           onConfirm={() => {
             if (replyDialogBusy) return;
-            void sendConfirmed(replySnapshot, replyThreadRef, 1, true);
+            void sendConfirmed(replySnapshot, replyThreadRef, true);
           }}
           onClose={() => {
             if (replyDialogBusy) return;

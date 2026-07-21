@@ -149,8 +149,8 @@ test("Slack unread scan emits only newer inbound user messages from authoritativ
 
   const result = await collectSlackUnread({ call });
   const listCall = calls.find((entry) => entry.method === "conversations.list");
-  assert.equal(listCall.params.types, "public_channel,private_channel,im");
-  assert.doesNotMatch(listCall.params.types, /mpim/);
+  assert.equal(listCall.params.types, "public_channel,private_channel,mpim,im");
+  assert.equal(result.mpim, "ready");
   assert.equal(result.conversations, 3);
   assert.equal(result.scanned, 1);
   assert.equal(result.records.length, 1);
@@ -165,6 +165,31 @@ test("Slack unread scan emits only newer inbound user messages from authoritativ
     waitingOn: "me",
   });
   assert.equal(calls.filter((entry) => entry.method === "conversations.history").length, 1);
+});
+
+test("Slack unread scan retries without MPIM only when mpim:read is missing", async () => {
+  const types = [];
+  const result = await collectSlackUnread({
+    call: async (method, params) => {
+      if (method === "auth.test") return { ok: true, user_id: "U-ME" };
+      assert.equal(method, "conversations.list");
+      types.push(params.types);
+      if (types.length === 1) {
+        throw Object.assign(new Error("scope unavailable"), {
+          code: "missing_scope",
+          needed: "mpim:read",
+        });
+      }
+      return { ok: true, channels: [], response_metadata: { next_cursor: "" } };
+    },
+  });
+
+  assert.deepEqual(types, [
+    "public_channel,private_channel,mpim,im",
+    "public_channel,private_channel,im",
+  ]);
+  assert.equal(result.mpim, "unavailable");
+  assert.equal(result.records.length, 0);
 });
 
 test("Slack activity append is idempotent by stable ref and tolerates a fresh store", async () => {

@@ -187,15 +187,32 @@ export function createTelegramNotifyCoordinator({
   acquire = (root) => acquireTelegramNotifyLock(root),
 } = {}) {
   if (!repo) throw new Error("repo is required");
+  let tail = Promise.resolve();
+
+  const withFileLock = async (operation) => {
+    const release = acquire(repo);
+    if (!release) return { acquired: false };
+    try {
+      return { acquired: true, value: await operation() };
+    } finally {
+      release();
+    }
+  };
+
   return {
-    async runExclusive(operation) {
-      const release = acquire(repo);
-      if (!release) return { acquired: false };
-      try {
-        return { acquired: true, value: await operation() };
-      } finally {
-        release();
-      }
+    runExclusive(operation) {
+      // The GUI notifier and ask-ack route share this coordinator. Queue callers from this process
+      // before acquiring the cross-process file lock so a human ack cannot bounce as `notify-busy`
+      // merely because the notifier tick is already inside its critical section.
+      const pending = tail.then(
+        () => withFileLock(operation),
+        () => withFileLock(operation)
+      );
+      tail = pending.then(
+        () => undefined,
+        () => undefined
+      );
+      return pending;
     },
   };
 }

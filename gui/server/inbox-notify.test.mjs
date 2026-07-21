@@ -10,7 +10,11 @@ import {
   createTelegramNotifier,
   isBlockingInboxItem,
 } from "./inbox-notify.mjs";
-import { TELEGRAM_NOTIFY_LOCK_BASENAME, acquireTelegramNotifyLock } from "./inbox-notify-lock.mjs";
+import {
+  TELEGRAM_NOTIFY_LOCK_BASENAME,
+  acquireTelegramNotifyLock,
+  createTelegramNotifyCoordinator,
+} from "./inbox-notify-lock.mjs";
 
 function workspace() {
   return mkdtempSync(path.join(tmpdir(), "inbox-notify-"));
@@ -50,6 +54,36 @@ const configuredEnv = {
   AIOS_TELEGRAM_BOT_TOKEN: "fixture-bot-value",
   AIOS_TELEGRAM_CHAT_ID: "chat-secret-sentinel",
 };
+
+test("shared coordinator queues a human ack behind an active notifier operation", async () => {
+  let releaseFirst;
+  let firstEntered;
+  const entered = new Promise((resolve) => (firstEntered = resolve));
+  const gate = new Promise((resolve) => (releaseFirst = resolve));
+  let acquireCalls = 0;
+  const coordinator = createTelegramNotifyCoordinator({
+    repo: "/tmp/coordinator-fixture",
+    acquire: () => {
+      acquireCalls++;
+      return () => {};
+    },
+  });
+
+  const notifier = coordinator.runExclusive(async () => {
+    firstEntered();
+    await gate;
+    return "notified";
+  });
+  await entered;
+  const ack = coordinator.runExclusive(async () => "acked");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(acquireCalls, 1, "the ack waits in-process instead of contending for the file lock");
+
+  releaseFirst();
+  assert.deepEqual(await notifier, { acquired: true, value: "notified" });
+  assert.deepEqual(await ack, { acquired: true, value: "acked" });
+  assert.equal(acquireCalls, 2);
+});
 
 test("blocking predicate matches only open actionable agent asks", () => {
   assert.equal(isBlockingInboxItem(askItem("a")), true);

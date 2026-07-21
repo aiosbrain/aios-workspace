@@ -7,9 +7,10 @@
  *                                [--max-channels N] [--max-messages N]
  *                                [--activity-path PATH] [--dry-run]
  *
- * Authentication is the same personal connector boundary as slack.py: SLACK_USER_TOKEN first,
- * otherwise GET /api/v1/me/slack-token using AIOS_BRAIN_URL + AIOS_API_KEY (+ AIOS_TEAM). Secrets
- * are held in memory only and never printed, written, or passed in argv.
+ * Authentication is the same personal connector boundary as slack.py: SLACK_USER_TOKEN first.
+ * Standalone manual use may resolve that token through the Brain API; the GUI parent resolves it
+ * before launch so its child receives only the Slack token. Secrets are held in memory only and
+ * never printed, written, or passed in argv.
  *
  * Slack exposes last_read/unread state only on some conversation objects. We scan only objects with
  * an authoritative last_read marker and evidence of newer/unread content; missing state is skipped,
@@ -23,7 +24,18 @@ import { pathToFileURL } from "node:url";
 export const DEFAULT_TIER = "admin";
 export const ACTIVITY_BASENAME = "comms/activity.jsonl";
 export const SLACK_API = "https://slack.com/api";
+export const SLACK_MPIM_UNAVAILABLE_MARKER =
+  "slack-activity-pull: group DMs unavailable (missing mpim:read)";
 const TIERS = new Set(["admin", "team", "external"]);
+
+export class SlackApiError extends Error {
+  constructor(method, code, needed = null) {
+    super(`Slack API rejected ${method}`);
+    this.name = "SlackApiError";
+    this.code = typeof code === "string" ? code : "unknown_error";
+    this.needed = typeof needed === "string" ? needed : null;
+  }
+}
 
 function oneLine(value, max = 300) {
   const text = String(value ?? "")
@@ -106,15 +118,32 @@ export async function collectSlackUnread({
 
   const conversations = [];
   let cursor = "";
+  let conversationTypes = "public_channel,private_channel,mpim,im";
+  let mpim = "ready";
   while (conversations.length < maxChannels) {
-    const page = await call("conversations.list", {
-      // Group DMs require the separate `mpim:read` scope. Do not let one optional conversation
-      // class make Slack reject channel + 1:1 DM ingestion for otherwise correctly-scoped tokens.
-      types: "public_channel,private_channel,im",
-      exclude_archived: "true",
-      limit: String(Math.min(200, maxChannels - conversations.length)),
-      cursor: cursor || undefined,
-    });
+    let page;
+    try {
+      page = await call("conversations.list", {
+        types: conversationTypes,
+        exclude_archived: "true",
+        limit: String(Math.min(200, maxChannels - conversations.length)),
+        cursor: cursor || undefined,
+      });
+    } catch (error) {
+      const missingMpimScope =
+        conversationTypes.includes("mpim") &&
+        error?.code === "missing_scope" &&
+        String(error?.needed || "")
+          .split(",")
+          .map((scope) => scope.trim())
+          .includes("mpim:read");
+      if (!missingMpimScope) throw error;
+      // Retry this page once without MPIMs so channel and 1:1 DM ingestion still succeeds, but
+      // report the omitted class to the GUI rather than silently claiming Slack is fully ready.
+      conversationTypes = "public_channel,private_channel,im";
+      mpim = "unavailable";
+      continue;
+    }
     conversations.push(...(Array.isArray(page?.channels) ? page.channels : []));
     cursor = page?.response_metadata?.next_cursor || "";
     if (!cursor) break;
@@ -140,7 +169,7 @@ export async function collectSlackUnread({
     }
     if (records.length >= maxMessages) break;
   }
-  return { records, conversations: conversations.length, scanned };
+  return { records, conversations: conversations.length, scanned, mpim };
 }
 
 export function loadExistingRefs(activityPath) {
@@ -212,7 +241,7 @@ export function makeSlackCall(token, { fetchImpl = fetch, apiBase = SLACK_API } 
     });
     if (!response.ok) throw new Error(`Slack HTTP ${response.status} on ${method}`);
     const payload = await response.json().catch(() => null);
-    if (!payload?.ok) throw new Error(`Slack API rejected ${method}`);
+    if (!payload?.ok) throw new SlackApiError(method, payload?.error, payload?.needed);
     return payload;
   };
 }
@@ -247,6 +276,7 @@ export async function main(argv = process.argv.slice(2)) {
     maxMessages: opts.maxMessages,
   });
   const append = appendActivity(activityPath, result.records, { dryRun: opts.dryRun });
+  if (result.mpim === "unavailable") console.error(SLACK_MPIM_UNAVAILABLE_MARKER);
   console.log(
     `slack-activity-pull: ${opts.dryRun ? "would write" : "wrote"} ${append.written}, skipped ${append.skipped} (${result.scanned}/${result.conversations} conversations had unread markers) -> ${path.relative(opts.repo, activityPath)}`
   );

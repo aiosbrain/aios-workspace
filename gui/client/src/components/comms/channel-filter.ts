@@ -46,17 +46,28 @@ export class LatestInboxRequest {
 
 export function channelForItem(item: InboxItem): Exclude<CommsChannel, "all"> {
   if (item.origin === "agent-event") return "claude";
+  const observation = item.observation;
   const source = [
     item.source,
-    item.observation?.object_kind,
-    item.observation?.connection_id,
-    item.observation?.key,
+    observation?.object_kind,
+    observation?.connection_id,
+    observation?.key,
   ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
   if (source.includes("telegram")) return "telegram";
   if (source.includes("slack")) return "slack";
+  // Legacy Slack refs project as message objects whose native identity is <channel>:<timestamp>.
+  // Keep channel provenance out of connection_id, which is reserved for enriched connector
+  // identity, while still routing the existing legacy adapter output to the Slack view.
+  if (
+    observation?.origin === "legacy" &&
+    observation.object_kind === "message" &&
+    /^[CDG][A-Z0-9]+:\d+(?:\.\d+)?$/.test(String(observation.native_id || ""))
+  ) {
+    return "slack";
+  }
   if (source.includes("whatsapp") || source.includes("wacli")) return "whatsapp";
   if (source.includes("calendar")) return "calendar";
   if (source.includes("gmail") || source.includes("email") || source.includes("gog:")) {

@@ -37,20 +37,22 @@ export function SendStatusStrip({
       />
       <span className="font-medium text-foreground">{presentation.label}</span>
       <span className="text-muted-foreground">{presentation.tooltip}</span>
-      {command.state === "failed" && canTryAgain && onTryAgain && (
-        <button
-          type="button"
-          className="ml-auto rounded-md border border-border-visible bg-background px-2 py-1 text-[11px] text-foreground hover:border-primary"
-          onClick={onTryAgain}
-        >
-          Try again
-        </button>
-      )}
       {recoveryExhausted && (
         <span className="ml-auto text-[11px] text-muted-foreground">
-          Check Gmail Sent or use the inbox CLI before trying another reply.
+          Check Gmail Sent before making another attempt.
         </span>
       )}
+      {(command.state === "failed" || command.state === "outcome_unknown") &&
+        canTryAgain &&
+        onTryAgain && (
+          <button
+            type="button"
+            className="rounded-md border border-border-visible bg-background px-2 py-1 text-[11px] text-foreground hover:border-primary"
+            onClick={onTryAgain}
+          >
+            {command.state === "outcome_unknown" ? "Review before retry" : "Try again"}
+          </button>
+        )}
       {recoveryError && (
         <span className="ml-auto text-[11px] text-destructive">{recoveryError}</span>
       )}

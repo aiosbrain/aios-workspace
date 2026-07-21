@@ -94,10 +94,10 @@ test("legacy-only stream projects one item (account/tenant unknown)", () => {
   assert.equal(item.account, null);
   assert.equal(item.object_kind, "email");
   assert.equal(item.native_id, "T1");
-  assert.equal(item.connection_id, "email");
+  assert.equal(item.connection_id, null);
 });
 
-test("legacy Slack source survives projection for channel filtering", () => {
+test("legacy Slack ref remains distinguishable without occupying enriched connection identity", () => {
   const items = projectObservations({
     legacy: [
       {
@@ -110,8 +110,9 @@ test("legacy Slack source survives projection for channel filtering", () => {
     ],
   });
   const [item] = [...items.values()];
-  assert.equal(item.connection_id, "slack");
+  assert.equal(item.connection_id, null);
   assert.equal(item.object_kind, "message");
+  assert.equal(item.native_id, "C1:12345.678");
 });
 
 test("mixed stream: a legacy record + its enriched twin collapse to ONE item", () => {

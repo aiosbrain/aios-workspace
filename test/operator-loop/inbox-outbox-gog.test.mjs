@@ -78,6 +78,17 @@ test("createGogSendClient.querySent throws OutboxReconcileError on non-JSON outp
   );
 });
 
+test("createGogSendClient.querySent rejects JSON envelopes instead of assuming Sent is empty", () => {
+  const client = createGogSendClient(loop, {
+    commandId: "cmd-1",
+    runGog: () => JSON.stringify({ messages: [] }),
+  });
+  assert.throws(
+    () => client.querySent(),
+    (e) => e instanceof loop.OutboxReconcileError
+  );
+});
+
 test("wired through the outbox, a search outage fails closed: outcome_unknown, ZERO sends", () => {
   let sends = 0;
   const bytes = buildOutboundBytes({

@@ -27,12 +27,6 @@ import {
   postReplySend,
 } from "./api";
 import { ageLabel, presentSendState } from "./presenters";
-import {
-  MAX_CONFIRMED_SEND_ATTEMPTS,
-  canRetryConfirmed,
-  deferredRetryAfter,
-  retryDelayMs,
-} from "./reply-retry";
 import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
 import {
   channelForItem,
@@ -56,7 +50,7 @@ import {
   type InboxDetail,
   type OutboxCommand,
 } from "./types";
-import { ApiError, type Api } from "../../lib/api";
+import type { Api } from "../../lib/api";
 
 // ── fixtures (synthetic, admin-tier — no grey channels, no real names) ──────────────────────────────
 function agentAsk(
@@ -293,6 +287,20 @@ describe("channel projections", () => {
       "telegram-channel",
     ]);
     expect(filterInboxView(view, "slack").items.map((item) => item.id)).toEqual(["slack-channel"]);
+  });
+
+  test("routes a legacy Slack ref without overloading enriched connection identity", () => {
+    const slack = thread("legacy-slack-channel", { source: "message", snippet: "hello" });
+    slack.observation = {
+      ...slack.observation!,
+      key: 'legacy:["message","D012ABC:1721556000.001"]',
+      connection_id: null,
+      object_kind: "message",
+      native_id: "D012ABC:1721556000.001",
+      origin: "legacy",
+    };
+    expect(channelForItem(slack)).toBe("slack");
+    expect(slack.observation.connection_id).toBeNull();
   });
 
   test("queue labels the active channel and has a channel-specific empty state", () => {
@@ -752,6 +760,20 @@ describe("Gmail send status and recovery", () => {
     expect(reloaded).not.toContain("outcome_unknown");
   });
 
+  test("an ambiguous live send requires review before any human-confirmed retry", () => {
+    const ambiguous = renderToStaticMarkup(
+      <SendStatusStrip
+        command={command("outcome_unknown")}
+        canTryAgain
+        recoveryExhausted
+        onTryAgain={() => {}}
+      />
+    );
+    expect(ambiguous).toContain("Check Gmail Sent before making another attempt.");
+    expect(ambiguous).toContain("Review before retry");
+    expect(ambiguous).not.toContain("outcome_unknown");
+  });
+
   test("sent section is collapsed and uses the same status presenter", () => {
     const html = renderToStaticMarkup(
       <SentSection commands={[command("sent"), command("reconciled")]} />
@@ -762,20 +784,6 @@ describe("Gmail send status and recovery", () => {
     expect(html).toContain("Accepted by Gmail");
     expect(html).toContain("Found in Gmail Sent");
     expect(html).not.toContain("reconciled");
-  });
-
-  test("retry timing respects server timestamps and stops after three confirmed submissions", () => {
-    const now = Date.parse("2026-07-21T00:00:00.000Z");
-    expect(retryDelayMs("2026-07-21T00:00:02.500Z", now)).toBe(2500);
-    expect(retryDelayMs("2026-07-20T00:00:00.000Z", now)).toBe(0);
-    expect(MAX_CONFIRMED_SEND_ATTEMPTS).toBe(3);
-    expect(canRetryConfirmed(1)).toBe(true);
-    expect(canRetryConfirmed(2)).toBe(true);
-    expect(canRetryConfirmed(3)).toBe(false);
-    const deferred = new ApiError(429, "deferred", {
-      retry_after: "2026-07-21T00:01:00.000Z",
-    });
-    expect(deferredRetryAfter(deferred)).toBe("2026-07-21T00:01:00.000Z");
   });
 
   test("inbox and outbox polling failures retain their own independent last-good values", () => {
