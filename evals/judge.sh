@@ -20,6 +20,10 @@ if [ "$RUNTIME" = "mock" ]; then
   MOCK_JUDGE="$SCENARIO_DIR/mock-judge.sh"
   if [ -x "$MOCK_JUDGE" ]; then
     "$MOCK_JUDGE" "$ARTIFACT" > "$OUTPUT"
+    MOCK_STATUS=$?
+    if [ "$MOCK_STATUS" -ne 0 ] || ! jq -e '.status | IN("pass","fail","needs_review")' "$OUTPUT" >/dev/null 2>&1; then
+      jq -n '{status:"needs_review",reason:"The mock judge exited nonzero or returned invalid output shape."}' > "$OUTPUT"
+    fi
   else
     jq -n '{status:"fail",reason:"The mock judge has no semantic rubric for this scenario."}' > "$OUTPUT"
   fi

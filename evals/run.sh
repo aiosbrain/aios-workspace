@@ -11,9 +11,14 @@ JUDGE_MODEL=default
 TIMEOUT_OVERRIDE=""
 RESULTS_DIR=""
 MOCK_MODE=success
+KEEP_WORKSPACES=false
 
 usage() {
-  echo "usage: bash evals/run.sh --runtime <claude|codex|opencode|mock> --scenario <id|all> --runs <n> [--model id] [--judge <runtime|none>]" >&2
+  echo "usage: bash evals/run.sh --runtime <claude|codex|opencode|mock> --scenario <id|all> --runs <n> [--model id] [--judge <runtime|none>] [--keep-workspaces]" >&2
+}
+
+cleanup_scratch() {
+  [ "$KEEP_WORKSPACES" = true ] || rm -rf "$SCRATCH_DIR"
 }
 
 # Filesystem-level fingerprint of a scenario's forbidden_paths, independent of git
@@ -44,6 +49,7 @@ while [ $# -gt 0 ]; do
     --timeout) TIMEOUT_OVERRIDE=${2:-}; shift 2 ;;
     --results-dir) RESULTS_DIR=${2:-}; shift 2 ;;
     --mock-mode) MOCK_MODE=${2:-}; shift 2 ;;
+    --keep-workspaces) KEEP_WORKSPACES=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage; exit 2 ;;
   esac
@@ -79,6 +85,11 @@ else
   SCENARIOS=("$SCENARIO")
 fi
 
+if [ ${#SCENARIOS[@]} -eq 0 ]; then
+  echo "no scenarios matched (nothing under evals/scenarios/*/manifest.json is complete enough to run)" >&2
+  exit 3
+fi
+
 RUN_RECORDS=()
 for SCENARIO_ID in "${SCENARIOS[@]}"; do
   SCENARIO_DIR="$ROOT/evals/scenarios/$SCENARIO_ID"
@@ -108,6 +119,7 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
       jq -n --arg id "$RUN_ID" --arg scenario "$SCENARIO_ID" --arg runtime "$RUNTIME" \
         '{schema_version:"1.0",run_id:$id,scenario:$scenario,runtime:$runtime,status:"error",reason:"scenario setup failed"}' > "$RUN_RECORD"
       RUN_RECORDS+=("$RUN_RECORD")
+      cleanup_scratch
       continue
     fi
 
@@ -115,6 +127,7 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
       jq -n --arg id "$RUN_ID" --arg scenario "$SCENARIO_ID" --arg runtime "$RUNTIME" \
         '{schema_version:"1.0",run_id:$id,scenario:$scenario,runtime:$runtime,status:"error",reason:"harness installation failed"}' > "$RUN_RECORD"
       RUN_RECORDS+=("$RUN_RECORD")
+      cleanup_scratch
       continue
     fi
     mkdir -p "$(dirname "$WORK_TRACE")"
@@ -171,11 +184,11 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
     JUDGE_STATUS=$(jq -r '.status' "$JUDGE_RECORD")
     EXIT_STATUS=$(jq -r '.exit_status' "$DRIVER_RECORD")
     MALFORMED=$(jq -r '.malformed // false' "$DRIVER_RECORD")
-    if [ "$MALFORMED" = true ]; then STATUS=error
+    if [ "$FORBIDDEN_HIT" = true ]; then STATUS=fail
+    elif [ "$MALFORMED" = true ]; then STATUS=error
     elif [ "$EXIT_STATUS" -eq 127 ]; then STATUS=unavailable
     elif [ "$EXIT_STATUS" -eq 124 ]; then STATUS=timeout
     elif [ "$EXIT_STATUS" -ne 0 ]; then STATUS=error
-    elif [ "$FORBIDDEN_HIT" = true ]; then STATUS=fail
     elif [ "$DETERMINISTIC" != true ]; then STATUS=fail
     elif [ "$JUDGE_STATUS" = fail ]; then STATUS=fail
     elif [ "$JUDGE_STATUS" = needs_review ]; then STATUS=needs_review
@@ -200,8 +213,14 @@ for SCENARIO_ID in "${SCENARIOS[@]}"; do
     ' > "$RUN_RECORD"
     RUN_RECORDS+=("$RUN_RECORD")
     echo "$RUN_ID: $STATUS"
+    cleanup_scratch
   done
 done
+
+if [ ${#RUN_RECORDS[@]} -eq 0 ]; then
+  echo "no run records were produced; refusing to run jq -s with zero file operands (would hang reading stdin)" >&2
+  exit 3
+fi
 
 jq -s '
   {schema_version:"1.0",total:length,
@@ -211,7 +230,7 @@ jq -s '
      passed:([.[] | select(.status == "pass")] | length),duration_ms:(map(.duration_ms // 0) | add),
      tokens:(map(.usage.tokens // empty) | if length == 0 then null else add end),
      cost_usd:(map(.usage.cost_usd // empty) | if length == 0 then null else add end)})),
-   runs:map({run_id,scenario,runtime,model,status,duration_ms,tool_evidence,usage})}
+   runs:map({run_id,scenario,runtime,model,status,duration_ms,tool_evidence,usage,forbidden_path_hit})}
 ' "${RUN_RECORDS[@]}" > "$RESULTS_DIR/summary.json"
 
 echo "results: $RESULTS_DIR/summary.json"

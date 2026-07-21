@@ -1,8 +1,6 @@
 #!/bin/sh
 set -u
 WORKSPACE=$1
-TRACE=$2
-BEFORE_DIFF=$3
 SCENARIO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 CATALOG_FRESH=$(node "$SCENARIO_DIR/check-catalog-fresh.mjs" "$WORKSPACE" 2>/dev/null || echo false)

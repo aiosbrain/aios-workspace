@@ -5,11 +5,21 @@
 // "false" to stdout: whether .claude/skills/INDEX.md matches what
 // renderSkillsIndexMd(readSkills(...)) would generate right now.
 import path from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { readSkills, renderSkillsIndexMd } from "../../../scripts/gen-catalog.mjs";
 
 const workspace = process.argv[2];
-const indexPath = path.join(workspace, ".claude", "skills", "INDEX.md");
+if (
+  !workspace ||
+  !path.isAbsolute(workspace) ||
+  !existsSync(workspace) ||
+  !statSync(workspace).isDirectory()
+) {
+  console.error("check-catalog-fresh: workspace argument must be an existing absolute directory");
+  process.exit(1);
+}
+
+const indexPath = path.resolve(workspace, ".claude", "skills", "INDEX.md");
 const actual = existsSync(indexPath) ? readFileSync(indexPath, "utf8") : null;
 const expected = renderSkillsIndexMd(readSkills(workspace));
 
