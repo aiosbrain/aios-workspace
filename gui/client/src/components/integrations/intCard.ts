@@ -18,7 +18,7 @@ export const INTEGRATIONS_ROOT =
   "flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-[22px] py-[18px]";
 export const INT_HEAD = "flex items-start justify-between gap-4";
 export const INT_HEAD_H2 =
-  "m-0 font-display text-[length:var(--aios-text-h3)] font-normal tracking-[var(--aios-tracking-snug)]";
+  "m-0 font-sans text-[length:var(--aios-text-h3)] font-semibold tracking-[var(--aios-tracking-snug)]";
 export const INT_SUB = "mt-1 max-w-[60ch] text-[13px] text-muted-foreground";
 export const INT_PROGRESS = "whitespace-nowrap font-mono text-xs text-muted-foreground";
 export const INT_FOOT = "text-xs text-muted-foreground";

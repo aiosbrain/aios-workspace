@@ -32,7 +32,6 @@
   },
   "devDependencies": {
     "@fontsource/instrument-sans": "^5.2.8",
-    "@fontsource/instrument-serif": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@tailwindcss/vite": "^4.3.2",
     "@types/react": "^19.0.0",

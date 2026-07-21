@@ -55,7 +55,7 @@ export function ScopedConfirmDialog({
           <ShieldAlert size={16} className="text-primary" />
           <h2
             id="scoped-confirm-title"
-            className="flex-1 font-display text-base tracking-[var(--aios-tracking-snug)] text-foreground"
+            className="flex-1 font-sans text-base font-semibold tracking-[var(--aios-tracking-snug)] text-foreground"
           >
             Scoped confirmation
           </h2>

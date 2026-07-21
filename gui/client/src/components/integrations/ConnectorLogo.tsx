@@ -62,7 +62,7 @@ export function ConnectorLogo({
   const letter = (name || id).trim().charAt(0).toUpperCase() || "?";
   return (
     <span
-      className={`${base} bg-muted font-display text-lg leading-none ${TONE_CLASS[tone(id)]}`}
+      className={`${base} bg-muted font-sans text-lg leading-none ${TONE_CLASS[tone(id)]}`}
       aria-hidden="true"
     >
       {letter}

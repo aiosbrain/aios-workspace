@@ -25,6 +25,10 @@ export const TRUSTED_GOG_ADAPTER = path.resolve(
   SCRIPT_DIR,
   "../../scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs"
 );
+export const TRUSTED_SLACK_ADAPTER = path.resolve(
+  SCRIPT_DIR,
+  "../../scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs"
+);
 
 /** Presence is an installation/opt-in marker only. Its bytes are never loaded or executed. */
 export function gogRefreshOptInPath(repo) {
@@ -35,6 +39,18 @@ export function gogRefreshOptInPath(repo) {
     "skills",
     "gog-activity",
     "gog-activity-pull.mjs"
+  );
+}
+
+/** Presence is an installation/opt-in marker only. Its bytes are never loaded or executed. */
+export function slackRefreshOptInPath(repo) {
+  return path.join(
+    repo,
+    ".claude",
+    "descriptors",
+    "skills",
+    "slack-personal",
+    "slack-activity-pull.mjs"
   );
 }
 
@@ -52,6 +68,14 @@ const CHILD_ENV_KEYS = Object.freeze([
 export function connectorEnvironment(source = process.env) {
   const env = { PATH: SAFE_EXEC_PATH };
   for (const key of CHILD_ENV_KEYS) {
+    if (typeof source[key] === "string" && source[key]) env[key] = source[key];
+  }
+  return env;
+}
+
+export function slackConnectorEnvironment(source = process.env) {
+  const env = connectorEnvironment(source);
+  for (const key of ["SLACK_USER_TOKEN", "AIOS_BRAIN_URL", "AIOS_API_KEY", "AIOS_TEAM"]) {
     if (typeof source[key] === "string" && source[key]) env[key] = source[key];
   }
   return env;
@@ -179,9 +203,115 @@ export function runTrustedGogAdapter(
   });
 }
 
+/** Run the reviewed Slack puller with only Slack-specific credentials crossing the child boundary. */
+export function runTrustedSlackAdapter(
+  repo,
+  {
+    spawnProcess = spawn,
+    env = process.env,
+    timeoutMs = REFRESH_TIMEOUT_MS,
+    termGraceMs = TERM_GRACE_MS,
+    signal,
+    isEnabled = (root) => existsSync(slackRefreshOptInPath(root)),
+    platform = process.platform,
+    killProcess = process.kill,
+  } = {}
+) {
+  if (!existsSync(TRUSTED_SLACK_ADAPTER) || !isEnabled(repo)) {
+    return Promise.resolve({ kind: "unavailable", slack: "unavailable" });
+  }
+  if (signal?.aborted) return Promise.resolve({ kind: "failed", slack: "failed" });
+
+  return new Promise((resolve) => {
+    let child;
+    let stopping = false;
+    let timedOut = false;
+    let timeout;
+    let killTimer;
+
+    const clearTimers = () => {
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+    };
+    const terminate = (fromTimeout = false) => {
+      if (stopping) return;
+      stopping = true;
+      timedOut ||= fromTimeout;
+      try {
+        signalConnector(child, "SIGTERM", { platform, killProcess });
+      } catch {
+        // A close/error event owns settlement.
+      }
+      killTimer = setTimeout(() => {
+        try {
+          signalConnector(child, "SIGKILL", { platform, killProcess });
+        } catch {
+          // A close/error event owns settlement.
+        }
+      }, termGraceMs);
+    };
+    const onAbort = () => terminate(false);
+
+    try {
+      child = spawnProcess(process.execPath, [TRUSTED_SLACK_ADAPTER, "--repo", repo], {
+        cwd: path.dirname(TRUSTED_SLACK_ADAPTER),
+        env: slackConnectorEnvironment(env),
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: platform !== "win32",
+      });
+    } catch {
+      resolve({ kind: "failed", slack: "failed" });
+      return;
+    }
+
+    child.once("error", () => {
+      clearTimers();
+      signal?.removeEventListener("abort", onAbort);
+      resolve({ kind: "failed", slack: "failed" });
+    });
+    child.once("close", (code) => {
+      clearTimers();
+      signal?.removeEventListener("abort", onAbort);
+      if (timedOut || stopping || code !== 0) {
+        resolve({ kind: "failed", slack: "failed" });
+        return;
+      }
+      resolve({ kind: "ready", slack: "ready" });
+    });
+
+    if (signal?.aborted) terminate(false);
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => terminate(true), timeoutMs);
+  });
+}
+
+export async function runInboxAdapters(repo, { signal } = {}) {
+  const [gog, slack] = await Promise.all([
+    runTrustedGogAdapter(repo, { signal }),
+    runTrustedSlackAdapter(repo, { signal }),
+  ]);
+  const sources = {
+    gmail: gog.gmail ?? (gog.kind === "unavailable" ? "unavailable" : "failed"),
+    calendar: gog.calendar ?? (gog.kind === "unavailable" ? "unavailable" : "failed"),
+    slack: slack.slack ?? (slack.kind === "unavailable" ? "unavailable" : "failed"),
+  };
+  const values = Object.values(sources);
+  const successes = values.filter((status) => status === "ready").length;
+  const failures = values.filter((status) => status === "failed").length;
+  const kind =
+    successes === values.length
+      ? "ready"
+      : successes > 0
+        ? "degraded"
+        : failures > 0
+          ? "failed"
+          : "unavailable";
+  return { kind, ...sources };
+}
+
 export function createInboxRefresher({
   repo,
-  run = ({ signal }) => runTrustedGogAdapter(repo, { signal }),
+  run = ({ signal }) => runInboxAdapters(repo, { signal }),
   now = () => new Date(),
   intervalMs = process.env.AIOS_INBOX_REFRESH_MS,
   schedule = setInterval,
@@ -195,7 +325,12 @@ export function createInboxRefresher({
     last_attempt_at: null,
     last_success_at: null,
     error: null,
-    sources: { gmail: "unknown", calendar: "unknown", telegram: "outbound_only" },
+    sources: {
+      gmail: "unknown",
+      calendar: "unknown",
+      slack: "unknown",
+      telegram: "outbound_only",
+    },
   };
 
   const snapshot = () => ({ ...state, sources: { ...state.sources } });
@@ -209,25 +344,32 @@ export function createInboxRefresher({
     inFlight = Promise.resolve()
       .then(() => run({ signal: controller.signal }))
       .then((result) => {
+        if (result.gmail) state.sources.gmail = result.gmail;
+        if (result.calendar) state.sources.calendar = result.calendar;
+        if (result.slack) state.sources.slack = result.slack;
         if (result.kind === "unavailable") {
           state.status = "unavailable";
-          state.error = "Gmail and Calendar connector is not installed.";
-          state.sources.gmail = "unavailable";
-          state.sources.calendar = "unavailable";
+          state.error = "Inbox connectors are not installed.";
+          if (!result.gmail) state.sources.gmail = "unavailable";
+          if (!result.calendar) state.sources.calendar = "unavailable";
           return snapshot();
         }
         if (result.kind === "failed") {
           state.status = "failed";
-          state.error = "Gmail and Calendar refresh failed.";
-          state.sources.gmail = "failed";
-          state.sources.calendar = "failed";
+          state.error = "Inbox refresh failed.";
+          if (!result.gmail) state.sources.gmail = "failed";
+          if (!result.calendar) state.sources.calendar = "failed";
           return snapshot();
         }
         state.status = result.kind;
         state.sources.gmail = result.gmail ?? "ready";
         state.sources.calendar = result.calendar ?? "ready";
         // Freshness is honest: last_success_at advances only when at least one source succeeded.
-        if (state.sources.gmail === "ready" || state.sources.calendar === "ready") {
+        if (
+          state.sources.gmail === "ready" ||
+          state.sources.calendar === "ready" ||
+          state.sources.slack === "ready"
+        ) {
           state.last_success_at = now().toISOString();
         }
         state.error = result.kind === "degraded" ? "Some inbox sources could not refresh." : null;
@@ -235,9 +377,10 @@ export function createInboxRefresher({
       })
       .catch(() => {
         state.status = "failed";
-        state.error = "Gmail and Calendar refresh failed.";
+        state.error = "Inbox refresh failed.";
         state.sources.gmail = "failed";
         state.sources.calendar = "failed";
+        state.sources.slack = "failed";
         return snapshot();
       })
       .finally(() => {

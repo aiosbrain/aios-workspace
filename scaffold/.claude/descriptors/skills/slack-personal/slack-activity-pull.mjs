@@ -108,7 +108,9 @@ export async function collectSlackUnread({
   let cursor = "";
   while (conversations.length < maxChannels) {
     const page = await call("conversations.list", {
-      types: "public_channel,private_channel,mpim,im",
+      // Group DMs require the separate `mpim:read` scope. Do not let one optional conversation
+      // class make Slack reject channel + 1:1 DM ingestion for otherwise correctly-scoped tokens.
+      types: "public_channel,private_channel,im",
       exclude_archived: "true",
       limit: String(Math.min(200, maxChannels - conversations.length)),
       cursor: cursor || undefined,

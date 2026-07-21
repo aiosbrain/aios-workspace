@@ -8,12 +8,7 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  CommsQueue,
-  refreshLabel,
-  telegramInboundLabel,
-  telegramLaneLabel,
-} from "./CommsQueue";
+import { CommsQueue, refreshLabel, telegramInboundLabel, telegramLaneLabel } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { LatestDetailRequest } from "./detail-request";
@@ -39,6 +34,12 @@ import {
   retryDelayMs,
 } from "./reply-retry";
 import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
+import {
+  channelForItem,
+  filterInboxView,
+  LatestInboxRequest,
+  visibleInboxSelection,
+} from "./channel-filter";
 import {
   contentFreeNotification,
   desktopNotify,
@@ -247,12 +248,106 @@ describe("CommsQueue", () => {
     const html = renderToStaticMarkup(
       <CommsQueue view={view} selectedId="ask-blocker" onSelect={() => {}} />
     );
-    expect(html).toContain("Unacked");
-    expect(html).toContain("overdue 5m · never delivered");
+    expect(html).toContain("Alert not opened");
+    expect(html).toContain("waiting 5m · phone alert not sent");
     expect(html).toContain("Telegram alerts armed");
     expect(html).toContain("Telegram inbox not connected");
     expect(telegramLaneLabel(view)).toBe("Telegram alerts armed");
     expect(telegramInboundLabel(view)).toBe("Telegram inbox not connected");
+  });
+});
+
+describe("channel projections", () => {
+  test("separates agent, Gmail, Slack, Telegram, and WhatsApp without changing rank order", () => {
+    const claude = agentAsk("ask-channel", { title: "Claude ask", why: "open blocker" });
+    const gmail = thread("gmail-channel", { why: "email", snippet: "email" });
+    const slack = thread("slack-channel", {
+      why: "slack",
+      snippet: "slack",
+      source: "slack",
+    });
+    slack.observation!.object_kind = "slack-message";
+    const telegram = thread("telegram-channel", {
+      why: "telegram",
+      snippet: "telegram",
+      source: "telegram-chat",
+    });
+    telegram.observation!.object_kind = "telegram-chat";
+    const whatsapp = thread("whatsapp-channel", {
+      why: "whatsapp",
+      snippet: "whatsapp",
+      source: "wacli",
+    });
+    whatsapp.observation!.object_kind = "whatsapp-message";
+    const view = { ...fixtureView(), items: [claude, gmail, slack, telegram, whatsapp] };
+
+    expect(view.items.map(channelForItem)).toEqual([
+      "claude",
+      "gmail",
+      "slack",
+      "telegram",
+      "whatsapp",
+    ]);
+    expect(filterInboxView(view, "all")).toBe(view);
+    expect(filterInboxView(view, "telegram").items.map((item) => item.id)).toEqual([
+      "telegram-channel",
+    ]);
+    expect(filterInboxView(view, "slack").items.map((item) => item.id)).toEqual(["slack-channel"]);
+  });
+
+  test("queue labels the active channel and has a channel-specific empty state", () => {
+    const view = { ...fixtureView(), items: [] };
+    const html = renderToStaticMarkup(
+      <CommsQueue view={view} channel="telegram" selectedId={null} onSelect={() => {}} />
+    );
+    expect(html).toContain("Telegram");
+    expect(html).toContain("Nothing needs attention in Telegram");
+  });
+
+  test("a slower prior-channel request cannot replace the current projection", () => {
+    const requests = new LatestInboxRequest("gmail");
+    const gmailRequest = requests.begin("gmail");
+    requests.select("slack");
+    const slackRequest = requests.begin("slack");
+
+    expect(requests.accepts(gmailRequest)).toBe(false);
+    expect(requests.accepts(slackRequest)).toBe(true);
+  });
+
+  test("a failed refresh keeps the raw last-good inbox and reprojects it for the new channel", () => {
+    const raw = fixtureView();
+    const retained = retainLastGood(raw, { ok: false });
+
+    expect(filterInboxView(retained!, "gmail").items.map((item) => item.id)).toEqual([
+      "thr-vip",
+      "thr-fyi",
+    ]);
+    expect(filterInboxView(retained!, "claude").items.map((item) => item.id)).toEqual([
+      "ask-blocker",
+      "ask-fyi",
+    ]);
+  });
+
+  test("channel switches invalidate stale detail as human acknowledgment evidence", () => {
+    const raw = fixtureView();
+    const claudeDetail = {
+      item: raw.items.find((item) => item.id === "ask-blocker")!,
+      agentContext: null,
+      replyability: null,
+      pendingApprovals: [],
+      generated_at: raw.generated_at,
+      freshness: null,
+    };
+
+    const visible = visibleInboxSelection(
+      filterInboxView(raw, "claude"),
+      "ask-blocker",
+      claudeDetail
+    );
+    expect(visible.detail?.item?.id).toBe("ask-blocker");
+    expect(
+      visibleInboxSelection(filterInboxView(raw, "gmail"), "ask-blocker", claudeDetail)
+    ).toEqual({ selectedId: null, detail: null });
   });
 });
 
@@ -323,6 +418,7 @@ describe("actionable Claude ask", () => {
     const base = {
       item,
       agentContext: null,
+      replyability: null,
       pendingApprovals: [],
       generated_at: "2026-07-16T02:00:00.000Z",
       freshness: null,
@@ -354,7 +450,7 @@ describe("actionable Claude ask", () => {
         onArchive={async () => {}}
       />
     );
-    expect(never).toContain("Never delivered to your phone");
+    expect(never).toContain("phone alert was not sent");
 
     const delivered = renderToStaticMarkup(
       <CommsDetail
@@ -384,7 +480,7 @@ describe("actionable Claude ask", () => {
       />
     );
     expect(delivered).toContain("Phone alert sent");
-    expect(delivered).toContain("not acknowledged");
+    expect(delivered).toContain("has not been opened");
   });
 
   test("Telegram detail uses its own source mark and never renders a Gmail reply link", () => {
@@ -399,6 +495,7 @@ describe("actionable Claude ask", () => {
         detail={{
           item,
           agentContext: null,
+          replyability: null,
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
           freshness: null,
@@ -420,6 +517,7 @@ describe("actionable Claude ask", () => {
         detail={{
           item: email,
           agentContext: null,
+          replyability: null,
           pendingApprovals: [],
           generated_at: "2026-07-16T02:00:00.000Z",
           freshness: null,
@@ -732,6 +830,7 @@ describe("human acknowledgment evidence", () => {
   const detail = {
     item,
     agentContext: null,
+    replyability: null,
     pendingApprovals: [],
     generated_at: "2026-07-16T02:00:00.000Z",
     freshness: null,

@@ -30,6 +30,12 @@ import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { ApiError } from "../../lib/api";
 import { canRetryConfirmed, deferredRetryAfter, retryDelayMs } from "./reply-retry";
 import { gmailThreadRef, immutableReplySnapshot, retainLastGood } from "./view-state";
+import {
+  filterInboxView,
+  LatestInboxRequest,
+  visibleInboxSelection,
+  type CommsChannel,
+} from "./channel-filter";
 import type {
   DisplayProjection,
   InboxDetail,
@@ -54,7 +60,7 @@ interface RecoverableReply {
   threadRef: string;
 }
 
-export function CommsView() {
+export function CommsView({ channel = "all" }: { channel?: CommsChannel }) {
   const { api } = useConnection();
   const [view, setView] = useState<InboxView | null>(null);
   const [detail, setDetail] = useState<InboxDetail | null>(null);
@@ -81,7 +87,16 @@ export function CommsView() {
   const ackInFlight = useRef(new Set<string>());
   const ackSettled = useRef(new Set<string>());
   const detailRequests = useRef(new LatestDetailRequest());
+  const inboxRequests = useRef(new LatestInboxRequest(channel));
+  // Render-time invalidation prevents an old channel response from landing before the next effect.
+  inboxRequests.current.select(channel);
   selectedRef.current = selectedId;
+  const displayedView = view ? filterInboxView(view, channel) : null;
+  const { selectedId: displayedSelectedId, detail: displayedDetail } = visibleInboxSelection(
+    displayedView,
+    selectedId,
+    detail
+  );
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -103,8 +118,11 @@ export function CommsView() {
   );
 
   const load = useCallback(async () => {
+    const request = inboxRequests.current.begin(channel);
     try {
       const next = await fetchInbox(api);
+      if (!inboxRequests.current.accepts(request)) return;
+      const projected = filterInboxView(next, channel);
       setError(null);
 
       // Content-free notifications: seed the seen-set silently on the first load, then only banner a
@@ -117,8 +135,8 @@ export function CommsView() {
       }
 
       // Keep a selection: default to the first (highest-ranked) item.
-      const stillThere = next.items.some((i) => i.id === selectedRef.current);
-      const nextId = stillThere ? selectedRef.current : (next.items[0]?.id ?? null);
+      const stillThere = projected.items.some((i) => i.id === selectedRef.current);
+      const nextId = stillThere ? selectedRef.current : (projected.items[0]?.id ?? null);
       if (nextId !== selectedRef.current) {
         selectedRef.current = nextId;
         detailRequests.current.select(nextId);
@@ -129,12 +147,16 @@ export function CommsView() {
       // Keep queue and selected-detail notify projections on one poll generation. The detail is
       // refreshed first, so the list never advances to delivered/overdue state beside stale detail.
       if (nextId) await loadDetail(nextId);
+      if (!inboxRequests.current.accepts(request)) return;
+      // Keep the unfiltered response as the last-good value. Rendering applies the current channel,
+      // so a failed refresh can never retain rows projected for a previously selected channel.
       setView(next);
     } catch (e) {
+      if (!inboxRequests.current.accepts(request)) return;
       setView((current) => retainLastGood(current, { ok: false }));
       setError((e as Error).message);
     }
-  }, [api, loadDetail]);
+  }, [api, channel, loadDetail]);
 
   const ackIfHuman = useCallback(
     async (id: string, candidate: InboxDetail | null = detailRef.current) => {
@@ -171,14 +193,14 @@ export function CommsView() {
   // Effects run after React commits the detail panel. That render—not the GET or poll that supplied
   // it—is the human evidence required before the local acknowledgment POST is allowed.
   useEffect(() => {
-    const id = detail?.item?.id;
-    if (id) void ackIfHuman(id, detail);
-  }, [detail, ackIfHuman]);
+    const id = displayedDetail?.item?.id;
+    if (id) void ackIfHuman(id, displayedDetail);
+  }, [displayedDetail, ackIfHuman]);
 
   useEffect(() => {
     const retrySelected = () => {
-      const id = selectedRef.current;
-      if (id) void ackIfHuman(id);
+      const id = displayedDetail?.item?.id;
+      if (id) void ackIfHuman(id, displayedDetail);
     };
     window.addEventListener("focus", retrySelected);
     document.addEventListener("visibilitychange", retrySelected);
@@ -186,7 +208,7 @@ export function CommsView() {
       window.removeEventListener("focus", retrySelected);
       document.removeEventListener("visibilitychange", retrySelected);
     };
-  }, [ackIfHuman]);
+  }, [ackIfHuman, displayedDetail]);
 
   useEffect(() => {
     void load();
@@ -453,19 +475,24 @@ export function CommsView() {
   const recoveryExhausted = Boolean(
     retryPlan?.exhausted && retryPlan.threadRef === selectedThreadRef
   );
-
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-h-0 min-w-0 flex-1">
-        {view ? (
-          <CommsQueue view={view} selectedId={selectedId} onSelect={onSelect} error={error} />
+        {displayedView ? (
+          <CommsQueue
+            view={displayedView}
+            channel={channel}
+            selectedId={displayedSelectedId}
+            onSelect={onSelect}
+            error={error}
+          />
         ) : (
           <div className="flex w-[348px] shrink-0 items-center justify-center border-r border-border-visible bg-card text-[13px] text-muted-foreground">
             {error ? "Failed to load the queue." : "Loading queue…"}
           </div>
         )}
         <CommsDetail
-          detail={detail}
+          detail={displayedDetail}
           onScopedConfirm={setProjection}
           onReply={onReply}
           onArchive={onArchive}

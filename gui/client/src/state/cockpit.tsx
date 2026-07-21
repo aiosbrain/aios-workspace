@@ -36,6 +36,8 @@ export function useSession() {
   const {
     view,
     setView,
+    commsChannel,
+    setCommsChannel,
     connected,
     connectionStatus,
     messages,
@@ -47,6 +49,7 @@ export function useSession() {
     approvalMode,
     setApprovalMode,
     usage,
+    sessionUsage,
     chats,
     currentSession,
     changeModel,
@@ -62,6 +65,8 @@ export function useSession() {
   return {
     view,
     setView,
+    commsChannel,
+    setCommsChannel,
     connected,
     connectionStatus,
     messages,
@@ -73,6 +78,7 @@ export function useSession() {
     approvalMode,
     setApprovalMode,
     usage,
+    sessionUsage,
     chats,
     currentSession,
     changeModel,

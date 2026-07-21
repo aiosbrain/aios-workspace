@@ -94,6 +94,24 @@ test("legacy-only stream projects one item (account/tenant unknown)", () => {
   assert.equal(item.account, null);
   assert.equal(item.object_kind, "email");
   assert.equal(item.native_id, "T1");
+  assert.equal(item.connection_id, "email");
+});
+
+test("legacy Slack source survives projection for channel filtering", () => {
+  const items = projectObservations({
+    legacy: [
+      {
+        source: "slack",
+        tier: "admin",
+        occurredAt: "2026-07-21T10:00:00.000Z",
+        ref: "slack:C1:12345.678",
+        summary: "Slack needing reply in #ops: synthetic fixture",
+      },
+    ],
+  });
+  const [item] = [...items.values()];
+  assert.equal(item.connection_id, "slack");
+  assert.equal(item.object_kind, "message");
 });
 
 test("mixed stream: a legacy record + its enriched twin collapse to ONE item", () => {

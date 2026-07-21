@@ -1,29 +1,37 @@
 import { fmtK } from "../../lib/format";
-import { useRuntime } from "../../state/cockpit";
-import { useSession } from "../../state/cockpit";
+import { useRuntime, useSession } from "../../state/cockpit";
+import type { Usage } from "../../types/protocol";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { estimateContext } from "./context-usage";
 
-/**
- * Approximate context occupancy = the prompt fed on the latest turn (fresh input +
- * cached tokens), out of the runtime's window. Hidden entirely for runtimes that
- * don't report token usage (capabilities.tokenUsage === false).
- */
+function UsageDetails({ label, usage }: { label: string; usage: Usage }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <strong className="font-sans text-[11px] font-semibold text-foreground">{label}</strong>
+      <span>input: {fmtK(usage.input_tokens)}</span>
+      <span>cache read: {fmtK(usage.cache_read_input_tokens)}</span>
+      <span>cache write: {fmtK(usage.cache_creation_input_tokens)}</span>
+      <span>output: {fmtK(usage.output_tokens)}</span>
+    </div>
+  );
+}
+
+/** Current prompt occupancy is shown separately from cumulative session usage. */
 export function ContextMeter() {
   const { capabilities } = useRuntime();
-  const { usage } = useSession();
+  const { usage, sessionUsage } = useSession();
 
   if (!capabilities.tokenUsage || !capabilities.contextWindow) return null;
   const window = capabilities.contextWindow;
-
-  const ctx = usage
-    ? (usage.input_tokens || 0) +
-      (usage.cache_read_input_tokens || 0) +
-      (usage.cache_creation_input_tokens || 0)
-    : null;
-  const pct = ctx == null ? 0 : Math.min(100, Math.round((ctx / window) * 100));
-  // Violet through the comfortable range; warm to amber as the window fills.
+  const estimate = estimateContext(usage, window);
+  const pct = estimate.percent;
   const fill =
     pct >= 90 ? "var(--aios-amber)" : pct >= 75 ? "var(--aios-fuchsia)" : "var(--aios-violet)";
+  const label = !estimate.valid
+    ? "context estimate unavailable"
+    : estimate.tokens == null
+      ? "context (est.) —"
+      : `context (est.) ~${fmtK(estimate.tokens)} / ${fmtK(window)}`;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -36,16 +44,20 @@ export function ContextMeter() {
                 style={{ width: `${pct}%`, background: fill }}
               />
             </div>
-            <span>context (est.) {ctx == null ? "—" : `~${fmtK(ctx)} / ${fmtK(window)}`}</span>
+            <span>{label}</span>
           </div>
         </TooltipTrigger>
         <TooltipContent>
-          {usage ? (
-            <div className="flex flex-col gap-0.5 font-mono text-xs">
-              <span>input: {fmtK(usage.input_tokens)}</span>
-              <span>cache read: {fmtK(usage.cache_read_input_tokens)}</span>
-              <span>cache write: {fmtK(usage.cache_creation_input_tokens)}</span>
-              <span>output: {fmtK(usage.output_tokens)}</span>
+          {usage || sessionUsage ? (
+            <div className="flex gap-4 font-mono text-xs">
+              {usage && <UsageDetails label="Current context estimate" usage={usage} />}
+              {sessionUsage && <UsageDetails label="Session totals" usage={sessionUsage} />}
+              {!estimate.valid && (
+                <span className="max-w-[220px] font-sans text-[11px] text-muted-foreground">
+                  The runtime reported more prompt tokens than its advertised window, so the meter
+                  is intentionally hidden.
+                </span>
+              )}
             </div>
           ) : (
             <span>No usage reported yet — send a turn.</span>

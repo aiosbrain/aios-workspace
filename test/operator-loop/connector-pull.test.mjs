@@ -148,6 +148,9 @@ test("Slack unread scan emits only newer inbound user messages from authoritativ
   };
 
   const result = await collectSlackUnread({ call });
+  const listCall = calls.find((entry) => entry.method === "conversations.list");
+  assert.equal(listCall.params.types, "public_channel,private_channel,im");
+  assert.doesNotMatch(listCall.params.types, /mpim/);
   assert.equal(result.conversations, 3);
   assert.equal(result.scanned, 1);
   assert.equal(result.records.length, 1);

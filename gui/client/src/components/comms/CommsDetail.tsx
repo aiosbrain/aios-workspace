@@ -58,6 +58,11 @@ export function CommsDetail({
   }
   const item = detail.item;
   const isTelegram = item.observation?.object_kind === "telegram-chat";
+  const isEmail =
+    item.observation?.object_kind === "email" ||
+    item.source === "email" ||
+    item.source === "gmail" ||
+    item.observation?.connection_id?.startsWith("gog:");
   const Glyph = item.origin === "agent-event" ? Bot : isTelegram ? Send : Mail;
   const overdue = detail.notify?.overdue[item.id];
   const subject =
@@ -127,10 +132,10 @@ export function CommsDetail({
         )}
 
         {overdue && (
-          <p className="max-w-3xl text-[12px] text-[var(--aios-amber)]" role="status">
+          <p className="max-w-3xl text-[12px] text-muted-foreground" role="status">
             {overdue.delivery_attempts === 0
-              ? "Never delivered to your phone — surfaced by the recovery window."
-              : `Phone alert sent ${overdue.last_delivery_at ? ageLabel(overdue.last_delivery_at) : "earlier"} — not acknowledged.`}
+              ? "The phone alert was not sent; this item remains visible here."
+              : `Phone alert sent ${overdue.last_delivery_at ? ageLabel(overdue.last_delivery_at) : "earlier"} — it has not been opened.`}
           </p>
         )}
 
@@ -231,9 +236,12 @@ export function CommsDetail({
           </div>
         )}
 
-        {item.origin === "thread-state" && detail.replyability?.replyable && onReviewReply ? (
+        {item.origin === "thread-state" &&
+        isEmail &&
+        detail.replyability?.replyable &&
+        onReviewReply ? (
           <ReplyComposer itemId={item.id} resetKey={replyResetKey} onReview={onReviewReply} />
-        ) : item.origin === "thread-state" ? (
+        ) : item.origin === "thread-state" && isEmail ? (
           <section className="max-w-3xl border-t border-border-visible pt-4">
             <p className="text-[12px] text-muted-foreground">
               This message can’t be replied to safely here. Open it in Gmail.

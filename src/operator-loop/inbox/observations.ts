@@ -562,7 +562,10 @@ export function projectObservations(input: ProjectInput): Map<string, ProjectedI
     const ts = typeof rec.occurredAt === "string" ? rec.occurredAt : "";
     items.set(key, {
       key,
-      connection_id: null,
+      // Legacy connector records do not carry enriched connection identity, but their source is
+      // still authoritative channel provenance. Preserve it so the GUI can classify Slack (and
+      // other legacy adapters) instead of collapsing every message-shaped record into "Other".
+      connection_id: typeof rec.source === "string" && rec.source ? rec.source : null,
       account: null,
       tenant: null,
       object_kind: ref.object_kind,

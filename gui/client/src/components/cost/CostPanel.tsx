@@ -12,6 +12,7 @@ import {
   formFromConfig,
   type CostSettingsFormValues,
 } from "./CostSettingsForm";
+import { CostEmailImport } from "./CostEmailImport";
 
 const REV_BTN =
   "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
@@ -30,9 +31,11 @@ const currentPeriod = () => new Date().toISOString().slice(0, 7);
 function CostSettings({
   period,
   onSaved,
+  refreshKey,
 }: {
   period: string;
   onSaved: () => void | Promise<void>;
+  refreshKey: number;
 }) {
   const { api } = useConnection();
   const [form, setForm] = useState<CostSettingsFormValues>(EMPTY_FORM);
@@ -51,7 +54,7 @@ function CostSettings({
       setLoaded(false);
       setLoadError((e as Error).message);
     }
-  }, [api, period]);
+  }, [api, period, refreshKey]);
 
   useEffect(() => {
     loadConfig();
@@ -106,6 +109,7 @@ export function CostPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [configVersion, setConfigVersion] = useState(0);
 
   // `force` = the explicit Refresh button → `?force=1` bypasses the server's
   // failure backoff (an automatic poll/retry never does).
@@ -208,7 +212,18 @@ export function CostPanel() {
         </div>
       )}
 
-      {showSettings && <CostSettings period={period} onSaved={load} />}
+      {showSettings && (
+        <>
+          <CostSettings period={period} onSaved={load} refreshKey={configVersion} />
+          <CostEmailImport
+            period={period}
+            onImported={async () => {
+              setConfigVersion((version) => version + 1);
+              await load();
+            }}
+          />
+        </>
+      )}
 
       {/* actual ledger lines */}
       {data.lines.length === 0 ? (

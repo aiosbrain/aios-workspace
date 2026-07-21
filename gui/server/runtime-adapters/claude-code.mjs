@@ -221,10 +221,11 @@ export async function run({
     },
   });
 
-  // Forward token usage from whatever message carries it (assistant or result);
-  // never assume a fixed shape. The client uses the latest as a context estimate.
-  const emitUsage = (usage) => {
-    if (usage) emit({ type: "usage", usage });
+  // Assistant messages report the current prompt, while result messages can report
+  // cumulative session totals. Preserve that distinction so a session aggregate never
+  // masquerades as context-window occupancy in the GUI.
+  const emitUsage = (usage, scope) => {
+    if (usage) emit({ type: "usage", usage, scope });
   };
 
   for await (const message of q) {
@@ -243,7 +244,7 @@ export async function run({
           emit({ type: "tool_use", name: block.name, input: block.input, id: block.id });
         }
       }
-      emitUsage(message.message?.usage);
+      emitUsage(message.message?.usage, "context");
       emit({ type: "assistant_done" });
     } else if (message.type === "user") {
       for (const block of message.message?.content || []) {
@@ -260,7 +261,7 @@ export async function run({
         }
       }
     } else if (message.type === "result") {
-      emitUsage(message.usage);
+      emitUsage(message.usage, "session");
       emit({ type: "result", subtype: message.subtype, cost_usd: message.total_cost_usd });
     }
   }

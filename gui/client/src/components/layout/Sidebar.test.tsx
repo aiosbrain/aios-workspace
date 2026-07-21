@@ -17,6 +17,8 @@ function session(view: string) {
   return {
     view,
     setView: vi.fn(),
+    commsChannel: "all",
+    setCommsChannel: vi.fn(),
     connected: false,
     connectionStatus: "draft",
     chats: [],
@@ -61,6 +63,41 @@ describe("Sidebar information architecture", () => {
     expect(html).toContain("Operator Loop");
     expect(html).toContain("Team Brain Sync");
     expect(html).not.toContain("Review &amp; Push");
+  });
+
+  test("nests chat actions and history directly beneath the Chat destination", () => {
+    mocks.session.current = {
+      ...session("chat"),
+      chats: [{ id: "chat-1", title: "Nested history", updated_at: "2026-07-21T10:00:00Z" }],
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    const buildStart = html.indexOf('id="sidebar-build"');
+    const chatSection = html.indexOf('data-testid="sidebar-chat-section"');
+    const tasks = html.indexOf("Tasks", chatSection);
+
+    expect(buildStart).toBeGreaterThan(-1);
+    expect(chatSection).toBeGreaterThan(buildStart);
+    expect(html.indexOf("New chat", chatSection)).toBeGreaterThan(chatSection);
+    expect(html.indexOf("Search chats", chatSection)).toBeGreaterThan(chatSection);
+    expect(html.indexOf("Nested history", chatSection)).toBeGreaterThan(chatSection);
+    expect(tasks).toBeGreaterThan(chatSection);
+    expect(html).toContain('aria-controls="sidebar-chat-section"');
+    expect(html).toContain('aria-label="Collapse Chat"');
+    expect(html).toContain("max-h-[34vh]");
+  });
+
+  test("exposes Comms, Build, and Chat as expandable section controls", () => {
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain('aria-controls="sidebar-comms"');
+    expect(html).toContain('aria-controls="sidebar-build"');
+    expect(html).toContain('aria-controls="sidebar-chat-section"');
+    expect((html.match(/aria-expanded="true"/g) ?? []).length).toBe(3);
+    expect(html).toContain("Inbox (all)");
+    expect(html).toContain("Claude");
+    expect(html).toContain("Gmail");
+    expect(html).toContain("Slack");
+    expect(html).toContain("Telegram");
+    expect(html).toContain("WhatsApp");
   });
 });
 

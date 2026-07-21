@@ -1,28 +1,29 @@
 /** Quiet, scan-first queue. Ranking and protection still determine order; they are not UI chrome. */
 
-import { Bot, CalendarDays, Mail, Send, Terminal } from "lucide-react";
+import { Bot, CalendarDays, Hash, Mail, MessageCircle, Send, Terminal } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { deriveAskState, type AskOverdueState, type InboxItem, type InboxView } from "./types";
 import { itemLabel, itemSnippet, ageLabel } from "./presenters";
+import { COMMS_CHANNEL_LABELS, channelForItem, type CommsChannel } from "./channel-filter";
 
 export function sourceFor(item: InboxItem) {
   if (item.origin === "agent-event") {
     return { label: item.source || "Agent", Glyph: Terminal };
   }
-  if (item.observation?.object_kind === "calendar-event" || item.source === "calendar") {
-    return { label: "Calendar", Glyph: CalendarDays };
-  }
-  if (item.observation?.object_kind === "telegram-chat" || item.source === "telegram-chat") {
-    return { label: "Telegram", Glyph: Send };
-  }
-  return { label: "Gmail", Glyph: Mail };
+  const channel = channelForItem(item);
+  if (channel === "calendar") return { label: "Calendar", Glyph: CalendarDays };
+  if (channel === "telegram") return { label: "Telegram", Glyph: Send };
+  if (channel === "slack") return { label: "Slack", Glyph: Hash };
+  if (channel === "whatsapp") return { label: "WhatsApp", Glyph: MessageCircle };
+  if (channel === "gmail") return { label: "Gmail", Glyph: Mail };
+  return { label: item.source || "Other", Glyph: Mail };
 }
 
 function overdueTitle(overdue: AskOverdueState) {
   const minutes = Math.max(1, Math.floor(overdue.overdue_by_ms / 60_000));
-  if (overdue.delivery_attempts === 0) return `overdue ${minutes}m · never delivered`;
+  if (overdue.delivery_attempts === 0) return `waiting ${minutes}m · phone alert not sent`;
   const noun = overdue.delivery_attempts === 1 ? "delivery attempt" : "delivery attempts";
-  return `overdue ${minutes}m · ${overdue.delivery_attempts} ${noun}`;
+  return `waiting ${minutes}m · alert not opened after ${overdue.delivery_attempts} ${noun}`;
 }
 
 export function telegramLaneLabel(view: InboxView) {
@@ -117,10 +118,10 @@ function QueueRow({
           {item.account && <span className="truncate">· {item.account}</span>}
           {overdue && (
             <span
-              className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--aios-amber)_16%,transparent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--aios-amber)]"
+              className="shrink-0 rounded-full border border-border-visible px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
               title={overdueTitle(overdue)}
             >
-              Unacked
+              Alert not opened
             </span>
           )}
           <span className="ml-auto flex shrink-0 items-center gap-1.5 text-foreground/75">
@@ -145,11 +146,18 @@ export interface CommsQueueProps {
   view: InboxView;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  channel?: CommsChannel;
   /** A fetch error while the last-good view stays rendered (poll or detail refresh failure). */
   error?: string | null;
 }
 
-export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProps) {
+export function CommsQueue({
+  view,
+  selectedId,
+  onSelect,
+  channel = "all",
+  error,
+}: CommsQueueProps) {
   const protectedItems = view.items.filter((item) => item.protected);
   const rest = view.items.filter((item) => !item.protected);
   const freshness = refreshLabel(view);
@@ -158,7 +166,9 @@ export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProp
   return (
     <section className="flex h-full min-h-0 w-[348px] shrink-0 flex-col border-r border-border-visible bg-card max-lg:w-[316px]">
       <header className="border-b border-border-visible px-3 py-3">
-        <h1 className="text-[15px] font-semibold tracking-tight text-foreground">Inbox</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight text-foreground">
+          {COMMS_CHANNEL_LABELS[channel]}
+        </h1>
         {error && (
           <p className="mt-0.5 text-[11px] text-[var(--aios-amber)]" role="status">
             Refresh failed — showing the last good read. {error}
@@ -183,8 +193,12 @@ export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProp
         {view.items.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center px-8 text-center">
             <Mail size={18} className="mb-2 text-muted-foreground" />
-            <p className="text-[13px] font-medium text-foreground">Nothing needs attention</p>
-            <p className="mt-1 text-[12px] text-muted-foreground">New messages will appear here.</p>
+            <p className="text-[13px] font-medium text-foreground">
+              Nothing needs attention in {COMMS_CHANNEL_LABELS[channel]}
+            </p>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              New matching messages will appear here.
+            </p>
           </div>
         ) : (
           <>

@@ -40,7 +40,10 @@ export const PROVIDER_META = [
   { key: "anthropic", label: "Anthropic API" },
   { key: "cursor", label: "Cursor" },
   { key: "codex", label: "Codex" },
-  { key: "opencode", label: "Opencode" },
+  { key: "openai", label: "OpenAI API" },
+  { key: "opencode", label: "OpenCode" },
+  { key: "openrouter", label: "OpenRouter" },
+  { key: "zai", label: "Z.ai" },
 ];
 
 const LABELS = Object.fromEntries(PROVIDER_META.map((p) => [p.key, p.label]));
@@ -94,10 +97,12 @@ function line(provider, kind, amount_usd, source, period, note) {
  * @returns {{lines: object[], status: "config"|"billing"|"subscription"|"unknown"}|null}
  *          null when the provider has no actuals AND no detected activity (omitted).
  */
-function resolveProvider(key, { costs, config, period }) {
+function resolveProvider(key, { costs, config, period, providerActuals }) {
   const lines = [];
   const subUsd =
-    key === "anthropic" || key === "opencode" ? null : configSubscriptionUsd(config, key);
+    key === "anthropic" || key === "openai" || key === "openrouter"
+      ? null
+      : configSubscriptionUsd(config, key);
   const meteredUsd = configMeteredUsd(config, key, period);
 
   // 1. Explicit owner config — subscription and owner-entered metered are both
@@ -107,6 +112,26 @@ function resolveProvider(key, { costs, config, period }) {
     lines.push(line(key, "metered", meteredUsd, "config", period, "owner-entered exact spend"));
   }
   if (lines.length) return { lines, status: "config" };
+
+  const providerActual = providerActuals?.[key];
+  const providerActualUsd = usdOrNull(providerActual?.monthly_usd);
+  if (providerActualUsd != null && providerActual?.period === period) {
+    return {
+      lines: [
+        line(
+          key,
+          "metered",
+          providerActualUsd,
+          "billing",
+          period,
+          providerActual?.scope === "current_api_key"
+            ? "provider-reported usage for the current API key"
+            : "provider-reported usage"
+        ),
+      ],
+      status: "billing",
+    };
+  }
 
   // 2. Authenticated billing / provider-reported actuals for this month.
   //    A truncated billing fetch is a known-partial total — never present it as
@@ -212,7 +237,10 @@ function resolveProvider(key, { costs, config, period }) {
  *   config: parsed .aios/cost-config.json; period: YYYY-MM (defaults to now).
  * @returns {object} the CostResponse payload (actual spend only)
  */
-export function buildCostsPayload(stdout, { config = {}, period = currentPeriod() } = {}) {
+export function buildCostsPayload(
+  stdout,
+  { config = {}, period = currentPeriod(), providerActuals = {} } = {}
+) {
   let data;
   try {
     data = JSON.parse(stdout);
@@ -226,7 +254,7 @@ export function buildCostsPayload(stdout, { config = {}, period = currentPeriod(
   const unknown = [];
 
   for (const meta of PROVIDER_META) {
-    const resolved = resolveProvider(meta.key, { costs, config, period });
+    const resolved = resolveProvider(meta.key, { costs, config, period, providerActuals });
     if (!resolved) continue;
     lines.push(...resolved.lines);
     const total = resolved.lines.length

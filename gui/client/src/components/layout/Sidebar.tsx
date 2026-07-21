@@ -10,12 +10,20 @@ import {
   Repeat,
   Inbox,
   MessageSquare,
+  ChevronDown,
+  ChevronRight,
+  Bot,
+  Mail,
+  Hash,
+  Send,
+  MessageCircle,
 } from "lucide-react";
 import { useConnection, useSession } from "../../state/cockpit";
 import { groupChatsByRecency } from "../../lib/recency";
 import { shortcutLabel } from "../../lib/shortcuts";
 import { cn } from "../../lib/cn";
 import type { SessionSummary } from "../../types/protocol";
+import type { CommsChannel } from "../comms/channel-filter";
 
 const SIDE_KBD =
   "ml-auto font-mono text-[10px] text-muted-foreground bg-muted border border-border-visible rounded-sm px-[5px] py-px";
@@ -31,6 +39,8 @@ export function Sidebar() {
   const {
     view,
     setView,
+    commsChannel = "all",
+    setCommsChannel,
     connected,
     connectionStatus,
     chats,
@@ -43,6 +53,17 @@ export function Sidebar() {
     retryConnection,
   } = useSession();
   const [query, setQuery] = useState("");
+  const [commsOpen, setCommsOpen] = useState(true);
+  const [buildOpen, setBuildOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(true);
+  const commsItems: { channel: CommsChannel; label: string; Glyph: typeof Inbox }[] = [
+    { channel: "all", label: "Inbox (all)", Glyph: Inbox },
+    { channel: "claude", label: "Claude", Glyph: Bot },
+    { channel: "gmail", label: "Gmail", Glyph: Mail },
+    { channel: "slack", label: "Slack", Glyph: Hash },
+    { channel: "telegram", label: "Telegram", Glyph: Send },
+    { channel: "whatsapp", label: "WhatsApp", Glyph: MessageCircle },
+  ];
 
   const statusTitle: Record<string, string> = {
     draft: "Draft",
@@ -92,8 +113,8 @@ export function Sidebar() {
   );
 
   return (
-    <aside className="flex w-[232px] shrink-0 flex-col gap-1 border-r border-border-visible bg-card px-3 py-4">
-      <div className="flex items-center gap-2.5 px-2 pt-1 pb-3.5 font-display text-base font-normal tracking-[var(--aios-tracking-snug)]">
+    <aside className="flex h-full min-h-0 w-[232px] shrink-0 flex-col gap-1 overflow-hidden border-r border-border-visible bg-card px-3 py-4">
+      <div className="flex items-center gap-2.5 px-2 pt-1 pb-3.5 font-sans text-base font-semibold tracking-[var(--aios-tracking-snug)]">
         <span className="brand-mark h-[26px] w-[26px] shrink-0 rounded-md" />
         AIOS Workspace
         <span
@@ -129,155 +150,210 @@ export function Sidebar() {
       )}
 
       <nav
-        className="mb-2 flex shrink-0 flex-col gap-px border-b border-border-visible pb-2"
+        className="mb-2 flex min-h-0 flex-1 flex-col gap-px overflow-y-auto border-b border-border-visible pb-2"
         aria-label="Workspace"
       >
-        <div className="px-2.5 pt-1 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          Comms
-        </div>
         <button
           className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "comms" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("comms")}
-        >
-          <Inbox size={15} strokeWidth={2} /> Inbox
-        </button>
-        <div className="px-2.5 pt-2 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          Build
-        </div>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "chat" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("chat")}
-        >
-          <MessageSquare size={15} strokeWidth={2} /> Chat
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "tasks" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("tasks")}
-        >
-          <ListChecks size={15} strokeWidth={2} /> Tasks
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "maturity" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("maturity")}
-        >
-          <Activity size={15} strokeWidth={2} /> Maturity
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "cost" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("cost")}
-        >
-          <Coins size={15} strokeWidth={2} /> Cost
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "loop" && "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("loop")}
-        >
-          <Repeat size={15} strokeWidth={2} /> Operator Loop
-        </button>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "review" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("review")}
-        >
-          <UploadCloud size={15} strokeWidth={2} /> Team Brain Sync
-        </button>
-      </nav>
-
-      <div className="mb-2 flex flex-col gap-1.5">
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md bg-transparent px-2.5 py-2 text-left text-sm font-medium text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50",
+            "flex w-full cursor-pointer items-center gap-1 rounded-md px-2.5 pt-1 pb-[3px] text-left font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground hover:bg-muted hover:text-foreground",
             FOCUS_RING
           )}
-          onClick={newChat}
-          disabled={newChatDisabled}
+          onClick={() => setCommsOpen((open) => !open)}
+          aria-expanded={commsOpen}
+          aria-controls="sidebar-comms"
         >
-          <Plus size={16} /> New chat
-          <span className={SIDE_KBD}>{shortcutLabel("newChat")}</span>
+          {commsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          Comms
         </button>
-        <div
-          className={cn(
-            "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-muted-foreground hover:bg-muted focus-within:bg-muted",
-            "focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-card"
-          )}
-        >
-          <Search size={15} className="shrink-0" />
-          <input
-            className="min-w-0 flex-1 border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search chats"
-            aria-label="Search chats"
-          />
-          <span className={SIDE_KBD} title="Open command palette">
-            {shortcutLabel("palette")}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-        <div
-          className="flex items-center gap-[7px] px-2 pt-1 pb-1.5 font-mono text-[11px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground"
-          title={repo}
-        >
-          <FolderGit2 size={14} className="shrink-0" />
-          <span className="min-w-0 flex-[0_1_auto] truncate">{repoName}</span>
-        </div>
-
-        {filtered ? (
-          filtered.length ? (
-            <div className="mb-2.5 flex flex-col gap-px">{filtered.map(ChatItem)}</div>
-          ) : (
-            <div className="px-2.5 py-2 text-xs text-muted-foreground">
-              No chats match “{query}”.
-            </div>
-          )
-        ) : groups && groups.length ? (
-          groups.map((g) => (
-            <div className="mb-2.5 flex flex-col gap-px" key={g.label}>
-              <div className="px-2.5 pt-1.5 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-                {g.label}
-              </div>
-              {g.chats.map(ChatItem)}
-            </div>
-          ))
-        ) : (
-          <div className="px-2.5 py-2 text-xs text-muted-foreground">
-            No chats yet — start one above.
+        {commsOpen && (
+          <div id="sidebar-comms">
+            {commsItems.map(({ channel, label, Glyph }) => (
+              <button
+                key={channel}
+                className={cn(
+                  "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[6px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                  channel !== "all" && "pl-7",
+                  FOCUS_RING,
+                  view === "comms" &&
+                    commsChannel === channel &&
+                    "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+                )}
+                onClick={() => {
+                  setCommsChannel?.(channel);
+                  setView("comms");
+                }}
+                aria-current={view === "comms" && commsChannel === channel ? "page" : undefined}
+              >
+                <Glyph size={15} strokeWidth={2} /> {label}
+              </button>
+            ))}
           </div>
         )}
-      </div>
+        <button
+          className={cn(
+            "mt-1 flex w-full cursor-pointer items-center gap-1 rounded-md px-2.5 pt-1 pb-[3px] text-left font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground hover:bg-muted hover:text-foreground",
+            FOCUS_RING
+          )}
+          onClick={() => setBuildOpen((open) => !open)}
+          aria-expanded={buildOpen}
+          aria-controls="sidebar-build"
+        >
+          {buildOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          Build
+        </button>
+        {buildOpen && (
+          <div id="sidebar-build" className="flex flex-col">
+            <div className="flex items-center gap-0.5">
+              <button
+                className={cn(
+                  "flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                  FOCUS_RING,
+                  view === "chat" &&
+                    "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+                )}
+                onClick={() => setView("chat")}
+              >
+                <MessageSquare size={15} strokeWidth={2} /> Chat
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+                  FOCUS_RING
+                )}
+                onClick={() => setChatOpen((open) => !open)}
+                aria-expanded={chatOpen}
+                aria-controls="sidebar-chat-section"
+                aria-label={chatOpen ? "Collapse Chat" : "Expand Chat"}
+              >
+                {chatOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+            </div>
+            {chatOpen && (
+              <div
+                id="sidebar-chat-section"
+                data-testid="sidebar-chat-section"
+                className="ml-5 mb-1 flex min-h-0 flex-col gap-1 border-l border-border-visible pl-2"
+              >
+                <button
+                  className={cn(
+                    "flex w-full cursor-pointer items-center gap-2 rounded-md bg-transparent px-2 py-1.5 text-left text-[13px] font-medium text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50",
+                    FOCUS_RING
+                  )}
+                  onClick={newChat}
+                  disabled={newChatDisabled}
+                >
+                  <Plus size={14} /> New chat
+                  <span className={SIDE_KBD}>{shortcutLabel("newChat")}</span>
+                </button>
+                <div
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted focus-within:bg-muted",
+                    "focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-card"
+                  )}
+                >
+                  <Search size={14} className="shrink-0" />
+                  <input
+                    className="min-w-0 flex-1 border-none bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search chats"
+                    aria-label="Search chats"
+                  />
+                </div>
+
+                <div className="min-h-0 max-h-[34vh] overflow-y-auto pr-1">
+                  <div
+                    className="flex items-center gap-[7px] px-2 pt-1 pb-1 font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground"
+                    title={repo}
+                  >
+                    <FolderGit2 size={13} className="shrink-0" />
+                    <span className="min-w-0 flex-[0_1_auto] truncate">{repoName}</span>
+                  </div>
+
+                  {filtered ? (
+                    filtered.length ? (
+                      <div className="mb-1 flex flex-col gap-px">{filtered.map(ChatItem)}</div>
+                    ) : (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No chats match “{query}”.
+                      </div>
+                    )
+                  ) : groups && groups.length ? (
+                    groups.map((g) => (
+                      <div className="mb-1 flex flex-col gap-px" key={g.label}>
+                        <div className="px-2 pt-1 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
+                          {g.label}
+                        </div>
+                        {g.chats.map(ChatItem)}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No chats yet — start one above.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                FOCUS_RING,
+                view === "tasks" &&
+                  "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+              )}
+              onClick={() => setView("tasks")}
+            >
+              <ListChecks size={15} strokeWidth={2} /> Tasks
+            </button>
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                FOCUS_RING,
+                view === "maturity" &&
+                  "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+              )}
+              onClick={() => setView("maturity")}
+            >
+              <Activity size={15} strokeWidth={2} /> Maturity
+            </button>
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                FOCUS_RING,
+                view === "cost" &&
+                  "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+              )}
+              onClick={() => setView("cost")}
+            >
+              <Coins size={15} strokeWidth={2} /> Cost
+            </button>
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                FOCUS_RING,
+                view === "loop" &&
+                  "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+              )}
+              onClick={() => setView("loop")}
+            >
+              <Repeat size={15} strokeWidth={2} /> Operator Loop
+            </button>
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+                FOCUS_RING,
+                view === "review" &&
+                  "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+              )}
+              onClick={() => setView("review")}
+            >
+              <UploadCloud size={15} strokeWidth={2} /> Team Brain Sync
+            </button>
+          </div>
+        )}
+      </nav>
 
       <button
         className={cn(

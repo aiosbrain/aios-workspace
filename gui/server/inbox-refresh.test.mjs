@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   TRUSTED_GOG_ADAPTER,
+  TRUSTED_SLACK_ADAPTER,
   connectorEnvironment,
   createInboxRefresher,
   installInboxRefreshShutdown,
   runTrustedGogAdapter,
+  runTrustedSlackAdapter,
+  slackConnectorEnvironment,
 } from "./inbox-refresh.mjs";
 
 class FakeChild extends EventEmitter {
@@ -67,6 +70,37 @@ test("a workspace without the installation marker cannot trigger connector execu
   });
   assert.equal(result.kind, "unavailable");
   assert.equal(spawned, false);
+});
+
+test("Slack refresh runs only the toolkit adapter with a Slack-specific environment", async () => {
+  let invocation;
+  const child = new FakeChild();
+  const result = runTrustedSlackAdapter("/tmp/untrusted-selected-repo", {
+    env: {
+      HOME: "/safe/home",
+      SLACK_USER_TOKEN: "fixture-token",
+      AIOS_BRAIN_URL: "https://brain.example.test",
+      AIOS_API_KEY: "fixture-brain-key",
+      AWS_SECRET_ACCESS_KEY: "must-not-cross",
+      NODE_OPTIONS: "--require=/tmp/evil.cjs",
+    },
+    spawnProcess(command, args, options) {
+      invocation = { command, args, options };
+      setImmediate(() => child.emit("close", 0));
+      return child;
+    },
+    isEnabled: () => true,
+  });
+
+  assert.deepEqual(await result, { kind: "ready", slack: "ready" });
+  assert.equal(invocation.args[0], TRUSTED_SLACK_ADAPTER);
+  assert.equal(invocation.args[2], "/tmp/untrusted-selected-repo");
+  assert.equal(invocation.options.env.SLACK_USER_TOKEN, "fixture-token");
+  assert.equal(invocation.options.env.AIOS_API_KEY, "fixture-brain-key");
+  assert.equal("AWS_SECRET_ACCESS_KEY" in invocation.options.env, false);
+  assert.equal("NODE_OPTIONS" in invocation.options.env, false);
+  const minimal = slackConnectorEnvironment({ SECRET: "no", PATH: "/untrusted/bin" });
+  assert.deepEqual(Object.keys(minimal), ["PATH"]);
 });
 
 test("inbox refresh is non-overlapping and freshness advances only after a successful pull", async () => {
@@ -216,9 +250,10 @@ test("failed refresh stays visible without leaking connector diagnostics", async
   const state = refresher.snapshot();
   assert.equal(state.status, "failed");
   assert.equal(state.last_success_at, null);
-  assert.equal(state.error, "Gmail and Calendar refresh failed.");
+  assert.equal(state.error, "Inbox refresh failed.");
   assert.doesNotMatch(JSON.stringify(state), /secret-token|message-content/);
   assert.equal(state.sources.telegram, "outbound_only");
+  assert.equal(state.sources.slack, "failed");
 });
 
 test("total ingestion failure (Gmail AND Calendar) reports failed and never advances freshness", async () => {

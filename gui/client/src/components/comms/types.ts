@@ -98,6 +98,7 @@ export interface InboxView {
     sources: {
       gmail: ConnectorSourceStatus;
       calendar: ConnectorSourceStatus;
+      slack?: ConnectorSourceStatus;
       telegram: ConnectorSourceStatus;
     };
   } | null;
