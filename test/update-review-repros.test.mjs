@@ -1813,3 +1813,192 @@ test("R8-6: the toolkit-self branch honors --expect-src-head instead of silently
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("R8-7: the scan never asserts paths the write loop won't touch — a dropped-entirely managed dir with a local symlink squatter still applies", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-droppeddir-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root, {
+      extraOriginFiles: {
+        "scaffold/.claude/skills/keep.md": "v1\n",
+        "scaffold/.claude/commands/gone.md": "v1\n",
+      },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const first = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      clone,
+      "--stamp-source",
+      clone,
+    ]);
+    assert.equal(first.exitStatus, 0);
+    const baseSha = git(clone, "rev-parse", "HEAD");
+
+    // Upstream drops the ENTIRE commands dir; the workspace owner replaced their copy
+    // with a symlink. mergeManaged skips the whole absent entry (writes AND deletions),
+    // so the scan must too — asserting that never-touched symlink would wrongly refuse
+    // every other in-envelope update (the scanned-set ⊃ touched-set drift).
+    rmSync(path.join(origin, "scaffold/.claude/commands"), { recursive: true });
+    writeFileSync(path.join(origin, "scaffold/.claude/skills/keep.md"), "v2\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "drop commands dir, touch keep");
+    git(clone, "pull", "-q");
+
+    const outside = path.join(root, "outside-target");
+    writeFileSync(outside, "outside\n");
+    rmSync(path.join(workspace, ".claude/commands/gone.md"));
+    symlinkSync(outside, path.join(workspace, ".claude/commands/gone.md"));
+
+    assert.ok(
+      !plannedDestRels(clone, baseSha).some((p) => p.startsWith(".claude/commands/")),
+      "no planned dest under an entry absent from the snapshot"
+    );
+    const second = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      clone,
+      "--stamp-source",
+      clone,
+    ]);
+    assert.equal(second.exitStatus, 0, "the apply proceeds — the symlink is never touched");
+    assert.equal(
+      readFileSync(path.join(workspace, ".claude/skills/keep.md"), "utf8"),
+      "v2\n",
+      "in-envelope updates still landed"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-8: the envelope gate holds on the toolkit-self --no-pull branch — a nested non-git copy refuses instead of no-op'ing against the enclosing repo", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-selfenvelope-"));
+  try {
+    const host = path.join(root, "host-repo");
+    mkdirSync(host, { recursive: true });
+    initRepo(host);
+    writeFileSync(path.join(host, "unrelated.txt"), "host\n");
+    git(host, "add", "-A");
+    git(host, "commit", "-qm", "host init");
+    const nested = path.join(host, "toolkit-copy");
+    mkdirSync(path.join(nested, "scaffold"), { recursive: true });
+    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
+
+    // Previously: exit 0, "--no-pull — nothing to re-vendor", with sourceClean/srcHead
+    // silently read from the ENCLOSING repo via git -C resolution.
+    const result = await cmdUpdate(nested, {}, ["--no-pull"]);
+    assert.equal(result.mode, "error", "envelope refusal, not a wrong-repo no-op success");
+    assert.match(result.reasons.join("\n"), /enclosing/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-9: --vendor-apply-only refuses a nested non-git source — never vendors, never stamps a FOREIGN repo's sha", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-vendorenvelope-"));
+  try {
+    const host = path.join(root, "host-repo");
+    mkdirSync(host, { recursive: true });
+    initRepo(host);
+    writeFileSync(path.join(host, "unrelated.txt"), "host\n");
+    git(host, "add", "-A");
+    git(host, "commit", "-qm", "host init");
+    const nested = path.join(host, "toolkit-copy");
+    mkdirSync(path.join(nested, "scaffold", "scripts"), { recursive: true });
+    mkdirSync(path.join(nested, "scripts"), { recursive: true });
+    writeFileSync(path.join(nested, "scripts", "aios.mjs"), "// entry\n");
+    writeFileSync(path.join(nested, "scaffold", "scripts", "aios.mjs"), "// managed shim\n");
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    // Previously: exit 0, files vendored from the copy, and .aios-toolkit-version line 1
+    // stamped with the ENCLOSING host repo's HEAD — a foreign merge base corrupting every
+    // future 3-way merge. The envelope gate must hold on this entry path too.
+    const result = await cmdUpdate(workspace, {}, [
+      "--vendor-apply-only",
+      "--from",
+      nested,
+      "--stamp-source",
+      nested,
+    ]);
+    assert.equal(result.mode, "error");
+    assert.match(result.reasons.join("\n"), /enclosing/i);
+    assert.ok(
+      !existsSync(path.join(workspace, ".aios-toolkit-version")),
+      "no stamp — especially not one carrying the enclosing repo's sha"
+    );
+    assert.ok(
+      !existsSync(path.join(workspace, "scripts", "aios.mjs")),
+      "nothing was vendored from the unvetted copy"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-10: an unverifiable node_modules survives even a lockfile-moving pull — never-destroy holds unconditionally", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-lockmoved-"));
+  const prevPath = process.env.PATH;
+  let result;
+  try {
+    const { origin, clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "package-lock.json": '{"lockfileVersion":3}\n' },
+    });
+    // Pre-marker, non-npm-shaped node_modules (no completion artifact) …
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+    writeFileSync(path.join(clone, "node_modules", "PNPM-INSTALLED"), "healthy\n");
+    // … and THIS run's pull moves the lockfile (the branch that previously skipped the
+    // never-destroy rule and went straight to a destructive `npm ci`).
+    writeFileSync(path.join(origin, "package-lock.json"), '{"lockfileVersion":3,"v":2}\n');
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "bump lockfile");
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    const warnings = [];
+    result = pullToolkitCheckout(clone, {}, { log: () => {}, warn: (m) => warnings.push(m) });
+
+    assert.ok(!existsSync(ranFile), "npm never runs against the unverifiable install");
+    assert.ok(
+      existsSync(path.join(clone, "node_modules", "PNPM-INSTALLED")),
+      "the non-npm install survives the lockfile-moving pull"
+    );
+    assert.match(warnings.join("\n"), /can't verify/i);
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("R8-11: --expect-src-head's contract is binary — refused with read-only modes and without --no-pull, never accepted-and-ignored", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-r8-pincontract-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    const head = git(clone, "rev-parse", "HEAD");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const inCheck = await cmdUpdate(workspace, {}, [
+      "--check",
+      "--expect-src-head",
+      head,
+      "--from",
+      clone,
+    ]);
+    assert.equal(inCheck.mode, "error", "read-only modes apply nothing to pin");
+    assert.match(inCheck.reasons.join("\n"), /cannot be combined with --check/);
+
+    const noPin = await cmdUpdate(workspace, {}, ["--expect-src-head", head, "--from", clone]);
+    assert.equal(noPin.mode, "error", "a pull would move past the pinned state");
+    assert.match(noPin.reasons.join("\n"), /requires --no-pull/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

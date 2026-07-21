@@ -624,6 +624,13 @@ export function mergeManaged(toolkitDir, srcRoot, repo, baseSha, opts = {}) {
 export function plannedDestRels(srcDir, baseSha) {
   const out = [];
   for (const entry of MANAGED_PATHS) {
+    // Mirror mergeManaged's own entry guard EXACTLY: when an entry's src is absent from
+    // the snapshot, the write loop skips the whole entry — writes AND deletions. Without
+    // this guard the scan would enumerate baseSha "deletions" for an entry the loop never
+    // touches, and a stale symlink under a dir the toolkit dropped entirely would refuse
+    // an apply that was never going to go near it. The scanned set must equal the touched
+    // set in BOTH directions.
+    if (!existsSync(path.join(srcDir, entry.src))) continue;
     for (const file of entryFiles(srcDir, entry)) {
       out.push(file.destRel, `${file.destRel}.aios-incoming`, `${file.destRel}.aios-merge`);
     }
@@ -853,6 +860,15 @@ async function cmdVendorApplyOnly(repo, args) {
   if (!stampSource || /[\r\n]/.test(stampSource)) {
     throw new UpdateError("--vendor-apply-only requires a single-line --stamp-source value.");
   }
+  // The envelope gate must hold on THIS entry path too: --vendor-apply-only is dispatched
+  // before resolveSource and never calls pullToolkitCheckout, so without its own assert a
+  // toolkit-shaped non-git dir nested in another repository would sail through — and
+  // worse than sailing through: gitSha/vendorSafety's git calls resolve the ENCLOSING
+  // repo, so the apply would vendor from the copy but stamp the workspace with a FOREIGN
+  // repo's HEAD as the future 3-way merge base (silent, compounding corruption). The
+  // internal hand-off always passes the pinned snapshot (a real git worktree), which
+  // passes this trivially.
+  assertGitToolkitSource(srcDir);
   const force = args.includes("--force");
 
   const vs = vendorSafety(srcDir);
@@ -1057,6 +1073,26 @@ async function cmdUpdateInner(repo, cfg, args) {
     );
   }
 
+  // --expect-src-head is the consent pin for a two-step preview→apply flow: "apply
+  // EXACTLY the state I previewed." That is only coherent for a --no-pull apply — a pull
+  // is by definition moving past the pinned state, and check/preview don't apply anything
+  // to pin. Refusing the incompatible combinations up front keeps the pin's contract
+  // binary (enforced or refused — never accepted-and-ignored on some branch), the same
+  // treatment as --contribute with --check/--preview above.
+  if (argValue(args, "--expect-src-head") !== undefined) {
+    if (args.includes("--check") || args.includes("--preview") || args.includes("--dry-run")) {
+      throw new UpdateError(
+        "--expect-src-head only pins an apply — it cannot be combined with --check/--preview/--dry-run."
+      );
+    }
+    if (!args.includes("--no-pull")) {
+      throw new UpdateError(
+        '--expect-src-head requires --no-pull: the pin means "apply exactly the previewed state", ' +
+          "and a pull would move the source past it. Re-preview after pulling instead."
+      );
+    }
+  }
+
   const noPull = args.includes("--no-pull") || preview;
   const stash = args.includes("--stash");
   const noInstall = args.includes("--no-install");
@@ -1069,6 +1105,12 @@ async function cmdUpdateInner(repo, cfg, args) {
   // is ever vendored here, so any snapshot pullToolkitCheckout pins is unused — discard it.
   if (looksLikeToolkit(repo)) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
+    // The envelope gate must hold in EVERY mode on EVERY entry path (the design doc's
+    // choke-point claim). This branch never reaches resolveSource, and its --no-pull
+    // no-op returns before pullToolkitCheckout's backstop — yet it still runs git
+    // (sourceCleanliness, gitSha) against `repo`, which for a non-git toolkit copy nested
+    // inside another repository would silently resolve the ENCLOSING repo. Refuse first.
+    assertGitToolkitSource(repo);
     // The consent pin must never be silently ignored on ANY branch that can return
     // success: this flag is only meaningful for a two-step preview→apply over a
     // WORKSPACE, and this branch is the toolkit itself. Accepting-then-ignoring it would

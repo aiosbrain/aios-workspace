@@ -717,34 +717,41 @@ function reconcileDeps(dir, { log, warn, lockChanged = true }) {
     log(c.dim("  deps unchanged — skipping reinstall."));
     return false;
   }
-  if (stored === null && !lockChanged) {
-    // Pre-marker-era install (see doc above): nothing this run changed the lockfile, so the
-    // existing node_modules isn't pending — seed the marker instead of destructively
-    // reinstalling. Seed only when the install is verifiably COMPLETE: npm (v7+) writes
-    // `node_modules/.package-lock.json` as the last step of a finished install, so its
-    // presence proves this node_modules is a whole npm install.
-    if (existsSync(path.join(nm, ".package-lock.json"))) {
+  if (stored === null) {
+    // Pre-marker era (no install this code ever managed). Two orthogonal questions:
+    //
+    // (1) Is the existing node_modules VERIFIABLY a complete npm install? npm (v7+)
+    // writes `node_modules/.package-lock.json` as the last step of a finished install.
+    // No artifact means UNVERIFIABLE, not broken: pnpm/yarn/bun and npm ≤6 never write
+    // it, so a healthy non-npm install is indistinguishable from an interrupted `npm ci`.
+    // The update NEVER destroys what it can't verify — `npm ci` deletes node_modules
+    // first, and offline that wipes a working install unrecoverably. This rule holds
+    // UNCONDITIONALLY, including when this run's pull moved the lockfile (gating it on
+    // !lockChanged would make the promised tolerance last exactly until the first
+    // lockfile-moving pull). Warn, leave it alone, record NO marker, so the state is
+    // re-evaluated every run and self-heals when the owner runs `npm ci` by hand. npm is
+    // the only SUPPORTED manager (docs/design-self-update.md, "supported source
+    // envelope") — other managers' installs are tolerated, never "repaired".
+    if (!existsSync(path.join(nm, ".package-lock.json"))) {
+      warn(
+        c.yellow(
+          "  can't verify this node_modules is a complete npm install (no .package-lock.json —\n" +
+            "  a non-npm install, or an interrupted `npm ci`?) — leaving it untouched.\n" +
+            `  If toolkit deps misbehave, run \`npm ci\` in ${dir} yourself.`
+        )
+      );
+      return false;
+    }
+    // (2) Verified npm install, but does it need a reinstall? Only if THIS run's pull
+    // moved the lockfile — otherwise the healthy pre-marker install just gets its marker
+    // seeded (first marker-tracked run). A verified install with a moved lockfile falls
+    // through to the normal reinstall below, exactly like a recorded-but-mismatched
+    // marker would.
+    if (!lockChanged) {
       log(c.dim("  deps unchanged — recording the install marker (first marker-tracked run)."));
       recordMarker();
       return false;
     }
-    // No completion artifact means UNVERIFIABLE, not broken: pnpm/yarn/bun and npm ≤6
-    // never write it, so a healthy non-npm install lands here too. The update NEVER
-    // destroys what it can't verify — `npm ci` deletes node_modules first, and offline
-    // that wipes a working install unrecoverably (the exact catastrophe the seed path
-    // exists to prevent). Warn, leave node_modules alone, and record NO marker, so a
-    // genuinely interrupted `npm ci` is re-evaluated every run (and self-heals the moment
-    // the lockfile moves or the owner runs `npm ci` by hand) instead of being recorded
-    // healthy forever. npm is the only SUPPORTED manager (see docs/design-self-update.md,
-    // "supported source envelope") — other managers' installs are tolerated, not managed.
-    warn(
-      c.yellow(
-        "  can't verify this node_modules is a complete npm install (no .package-lock.json —\n" +
-          "  a non-npm install, or an interrupted `npm ci`?) — leaving it untouched.\n" +
-          `  If toolkit deps misbehave, run \`npm ci\` in ${dir} yourself.`
-      )
-    );
-    return false;
   }
   const cmd = currentHash ? "ci" : "install";
   // Re-check right before npm runs (TOCTOU): if node_modules became a symlink since the lstat

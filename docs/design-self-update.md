@@ -80,8 +80,12 @@ completed-install artifact (`node_modules/.package-lock.json`) is present — an
 the artifact is ABSENT, the state is **unverifiable, not broken** — pnpm/yarn/bun and
 npm ≤6 never write it, so a healthy non-npm install lands in the same bucket as an
 interrupted `npm ci`. The rule is **never destroy what can't be verified**: warn, leave
-`node_modules` untouched, record no marker (so the case re-evaluates every run and
-self-heals the moment the lockfile moves or the owner runs `npm ci`). npm is the only
+`node_modules` untouched, record no marker. This holds **unconditionally in the pre-marker
+state — including when this run's pull moved the lockfile** (gating it on "the lockfile
+didn't move" would make the tolerance last exactly until the first lockfile-moving pull);
+only a VERIFIED pre-marker npm install with a moved lockfile falls through to the normal
+reinstall, exactly like a recorded-but-mismatched marker. The unverifiable case re-evaluates
+every run and self-heals the moment the owner runs `npm ci`. npm is the only
 *supported* manager (see the supported source envelope below); other managers' installs
 are tolerated, never destructively "repaired". A source with **no lockfile at all**
 records a `no-lockfile` sentinel in the marker (not "nothing"); the marker key is
@@ -381,7 +385,12 @@ for the same answer) and was dropped. The confirmed apply is **pinned to exactly
 previewed**: it passes `--no-pull` (the preview classified the checkout's current HEAD, so
 the apply must not fast-forward past it) plus `--expect-src-head <previewed sha>` (every
 result carries `.srcHead`; a source that moved between the two steps is refused with a
-re-preview message). Consent binds to the merge report the user actually saw — never to
+re-preview message). The pin's contract is binary — enforced or refused, never
+accepted-and-ignored: `--expect-src-head` REQUIRES `--no-pull` (a pull is by definition
+moving past the pinned state) and is refused outright with `--check`/`--preview`/`--dry-run`
+(read-only modes apply nothing to pin) — both as incompatible-flag expected failures, on
+every branch including the toolkit-self one. Consent binds to the merge report the user
+actually saw — never to
 whatever the source happens to contain by apply time; a toolkit whose remote has newer
 commits gets a "run `aios update` afterward" note instead of a silent bigger apply.
 
