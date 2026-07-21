@@ -29,7 +29,7 @@ import {
   assertDestPathSafe,
   plannedDestRels,
 } from "../scripts/update.mjs";
-import { MANAGED_PATHS } from "../scripts/toolkit-manifest.mjs";
+import { MANAGED_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
 import { git, initRepo, advance, originAndToolkitClone } from "./toolkit-test-fixtures.mjs";
 import { UpdateError } from "../scripts/cli-common.mjs";
 
@@ -1307,7 +1307,6 @@ test("R7-1b: read-only --check with a symlinked seed destination returns a struc
   const root = mkdtempSync(path.join(tmpdir(), "aios-r7-checksafe-"));
   try {
     // Ship a seed file so missingSeedPaths walks it; symlink its workspace destination.
-    const { SEED_IF_ABSENT } = await import("../scripts/toolkit-manifest.mjs");
     const seedEntry = SEED_IF_ABSENT.find((e) => e.kind !== "dir");
     assert.ok(seedEntry, "a file-kind seed entry exists");
     const { clone } = originAndToolkitClone(root, {
@@ -2083,6 +2082,38 @@ test("R8-14: --check/--preview run the SAME containment pre-flight as apply — 
       assert.match(result.reasons.join("\n"), /symlink/, `${mode} names the real blocker`);
     }
     assert.equal(readFileSync(outside, "utf8"), "outside\n", "read-only modes wrote nothing");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-466: a failing git op inside --contribute surfaces as a structured UpdateError, not a raw crash", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-466-contribute-"));
+  try {
+    // A real git toolkit (passes the envelope gate) whose `origin` is CONFIGURED but
+    // unreachable — the pre-flights only prove a remote exists, so the failure can only
+    // surface when `git fetch` actually runs. Previously that escaped cmdUpdate's
+    // UpdateError-only catch as an unstructured crash.
+    const { clone } = originAndToolkitClone(root, {
+      extraOriginFiles: { "hooks/team-ops-guard.sh": "#!/bin/sh\n" },
+    });
+    git(clone, "remote", "set-url", "origin", path.join(root, "no-such-remote.git"));
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "hooks"), { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    writeFileSync(path.join(workspace, "hooks", "team-ops-guard.sh"), "#!/bin/sh\n# local edit\n");
+
+    const result = await cmdUpdate(workspace, {}, [
+      "--contribute",
+      "hooks/team-ops-guard.sh",
+      "--from",
+      clone,
+    ]);
+    assert.equal(result.mode, "error", "structured result, not a thrown stack trace");
+    assert.equal(result.exitStatus, 1);
+    assert.equal(result.applyAllowed, false);
+    assert.match(result.reasons.join("\n"), /git fetch failed while contributing/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

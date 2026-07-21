@@ -65,7 +65,13 @@ export async function runToolkitUpgrade(
     return;
   }
 
-  if (previewResult?.applyAllowed === false) {
+  // `!== true`, not `=== false`: the apply is offered ONLY on an explicit positive
+  // permission. Every real `cmdUpdate` path derives a boolean `applyAllowed` through
+  // `buildResult`, so today the two spellings agree — but `=== false` treats a MISSING
+  // field as permission, which is the wrong default for a consent gate and would silently
+  // start offering unvetted applies the moment a result shape changed. Fail closed on
+  // anything that isn't an explicit yes.
+  if (previewResult?.applyAllowed !== true) {
     const reasons = [...new Set(previewResult?.reasons || [])];
     clack.log.warn(
       `Toolkit isn't safe to update right now${reasons.length ? ` (${reasons.join("; ")})` : ""} — skipping the upgrade offer. Resolve it, then run \`aios update\` later.`

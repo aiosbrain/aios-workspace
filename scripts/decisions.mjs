@@ -10,7 +10,7 @@
 import path from "node:path";
 import os from "node:os";
 import { readFileSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
-import { c, die } from "./cli-common.mjs";
+import { c, die, safeReal } from "./cli-common.mjs";
 import { loadOperatorLoop } from "./operator-loop-loader.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { extractDecisions, contextTagFor } from "./decision-extract.mjs";
@@ -184,14 +184,6 @@ export async function cmdDecisions(repo, cfg, args) {
       ...include.filter((t) => !FORBIDDEN_ROOTS.has(t)),
     ]);
 
-    const safeReal = (p) => {
-      if (!p) return null;
-      try {
-        return realpathSync(p);
-      } catch {
-        return path.resolve(p);
-      }
-    };
     const sinceOk = (d) => sinceMs == null || !d.createdAt || Date.parse(d.createdAt) >= sinceMs;
 
     const repoReal = safeReal(repo);
