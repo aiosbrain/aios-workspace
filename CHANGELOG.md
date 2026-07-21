@@ -20,6 +20,15 @@ This is the **individual workspace** repo. The Team Brain sync contract
   mode via a `GET /me` probe. Exposed over MCP as `brain_stakeholders`.
   (AIO-141)
 
+### Changed
+
+- **PR review evidence cleanup** — `aios ship` now treats Local Bugbot as the mandatory canonical
+  review, persisted against the exact branch head and verified base SHA. CodeRabbit is
+  `ready-for-review` label-gated, optional for Standard PRs, mandatory for safety-sensitive PRs,
+  and must provide substantive current-head text. `--reviewers` selects `coderabbit` and/or the
+  default `gpt-5.5`; the old `bugbot` name is a deprecated no-op alias. Safety-sensitive changes
+  reject `--auto-merge`.
+
 ## [0.7.0] — 2026-07-04
 
 Cognitive Ergonomics **shadow band** rollout (epic AIO-211): CE and Agentic

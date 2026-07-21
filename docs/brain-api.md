@@ -1092,9 +1092,9 @@ work.
 {
   "project": "northwind-aios",
   "event_kind": "merged",
-  "repo": "AIOS-alpha/aios-team-brain",
+  "repo": "aiosbrain/aios-team-brain",
   "merged_sha": "abc123...",
-  "pr_url": "https://github.com/AIOS-alpha/aios-team-brain/pull/42",
+  "pr_url": "https://github.com/aiosbrain/aios-team-brain/pull/42",
   "pr_title": "W1.2.1 Add per-member cost aggregation",
   "pr_body": "AIOS-Work: W1.2.1",
   "work_keys": ["W1.2.1"],

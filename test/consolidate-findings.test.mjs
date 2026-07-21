@@ -13,11 +13,12 @@ import {
   postValidate,
   computeVerdict,
   defaultOutPath,
-  extractBugbotSeverities,
+  extractLocalBugbotSeverities,
   extractGptSeverities,
   extractCodeRabbitSeverities,
   stripFrontmatter,
   GPT_REVIEW_CAP,
+  filterCurrentHeadCodeRabbit,
 } from "../scripts/consolidate-findings.mjs";
 import { DIFF_CAP } from "../scripts/build.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
@@ -28,6 +29,25 @@ import { fileURLToPath } from "node:url";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const FIX = path.join(DIR, "fixtures", "consolidate");
 const readFix = (f) => readFileSync(path.join(FIX, f), "utf8");
+const LOCAL_BUGBOT_CLEAR = path.join(FIX, "local-bugbot-clear.md");
+const LOCAL_BUGBOT_HIGH = path.join(FIX, "local-bugbot-high.md");
+const latestCommit = () => JSON.stringify({ sha: "head123", committed_at: "2026-07-01T00:00:00Z" });
+const consolidateArgs = (
+  pr = "44",
+  slug = "acme/repo",
+  extra = [],
+  localBugbotReviewPath = LOCAL_BUGBOT_CLEAR
+) => [
+  "--pr",
+  pr,
+  "--issue",
+  "AIO-161",
+  "--repo",
+  slug,
+  "--local-bugbot-review",
+  localBugbotReviewPath,
+  ...extra,
+];
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -57,6 +77,8 @@ function makeRunGh(responses, calls) {
     calls.push(argv);
     if (argv[0] === "pr" && argv[1] === "checks") return responses.checks; // {code,stdout,stderr}
     if (argv[0] === "pr" && argv[1] === "diff") return responses.prDiff ?? "";
+    if (argv[0] === "api" && argv[1].endsWith("/commits"))
+      return responses.latestCommit ?? latestCommit();
     if (argv[0] === "api" && argv[1].includes("/issues/")) return responses.issueComments ?? "[]";
     if (argv[0] === "api" && argv[1].endsWith("/comments")) return responses.inlineComments ?? "[]";
     if (argv[0] === "api" && argv[1].endsWith("/reviews")) return responses.reviews ?? "[]";
@@ -154,12 +176,12 @@ console.log("parseCheckResults");
 console.log("severity extractors");
 {
   check(
-    "Bugbot **High Severity** → High",
-    extractBugbotSeverities(JSON.parse(readFix("bugbot-inline.json"))) === "High"
+    "Local Bugbot structured High → High",
+    extractLocalBugbotSeverities(readFix("local-bugbot-high.md")) === "High"
   );
   check(
-    "clean Bugbot → null",
-    extractBugbotSeverities(JSON.parse(readFix("bugbot-inline-clean.json"))) === null
+    "clear Local Bugbot → null",
+    extractLocalBugbotSeverities(readFix("local-bugbot-clear.md")) === null
   );
   check("GPT `High` bullet → High", extractGptSeverities(readFix("gpt-review.md")) === "High");
   check(
@@ -168,7 +190,7 @@ console.log("severity extractors");
   );
   const pre = preExtractSeverities({
     checks: parseCheckResults(readFix("pr-checks-pass.json")),
-    bugbot: JSON.parse(readFix("bugbot-inline.json")),
+    localBugbot: readFix("local-bugbot-high.md"),
     coderabbit: JSON.parse(readFix("coderabbit-comments.json")),
     gpt: readFix("gpt-review.md"),
   });
@@ -253,12 +275,17 @@ console.log("gatherInputs — exact argv, no shell; PR diff in the prompt");
       checks: passChecks(),
       prDiff: readFix("pr-diff.txt"),
       issueComments: "[]",
-      inlineComments: readFix("bugbot-inline.json"),
+      inlineComments: readFix("coderabbit-comments.json"),
       reviews: "[]",
     },
     calls
   );
-  const inputs = gatherInputs({ runGh, slug: "acme/repo", pr: "44" });
+  const inputs = gatherInputs({
+    runGh,
+    slug: "acme/repo",
+    pr: "44",
+    localBugbotReviewPath: LOCAL_BUGBOT_CLEAR,
+  });
   check(
     "checks argv exact",
     JSON.stringify(calls[0]) ===
@@ -281,23 +308,32 @@ console.log("gatherInputs — exact argv, no shell; PR diff in the prompt");
     );
   }
   check(
+    "latest-commit argv exact",
+    calls[1][0] === "api" && calls[1][1] === "repos/acme/repo/pulls/44/commits"
+  );
+  check(
     "diff argv exact",
-    JSON.stringify(calls[1]) === JSON.stringify(["pr", "diff", "44", "--repo", "acme/repo"])
+    JSON.stringify(calls[2]) === JSON.stringify(["pr", "diff", "44", "--repo", "acme/repo"])
   );
   check(
     "issue-comments api argv",
-    calls[2][0] === "api" &&
-      calls[2][1] === "repos/acme/repo/issues/44/comments" &&
-      calls[2][2] === "--jq"
+    calls[3][0] === "api" &&
+      calls[3][1] === "repos/acme/repo/issues/44/comments" &&
+      calls[3][2] === "--jq"
   );
-  check("inline-comments api argv", calls[3][1] === "repos/acme/repo/pulls/44/comments");
-  check("reviews api argv", calls[4][1] === "repos/acme/repo/pulls/44/reviews");
+  check("inline-comments api argv", calls[4][1] === "repos/acme/repo/pulls/44/comments");
+  check("reviews api argv", calls[5][1] === "repos/acme/repo/pulls/44/reviews");
+  check("no Cursor query remains", !calls.flat().some((value) => /cursor/i.test(String(value))));
   check("PR diff captured", inputs.prDiff.includes("while (true)"));
+  check("Local Bugbot artifact captured", inputs.localBugbotMarkdown.includes("BUGBOT_CLEAR"));
 
   const prompt = buildConsolidatePrompt(REVIEWER, { ...inputs, issue: "AIO-161" });
   check("prompt includes the reviewer body", prompt.includes("AIOS Workspace Code Reviewer"));
   check("prompt includes the PR diff (Major 1)", prompt.includes("while (true)"));
-  check("prompt asks for source tags", prompt.includes("(source: Bugbot|CodeRabbit|GPT-5.5)"));
+  check(
+    "prompt asks for source tags",
+    prompt.includes("(source: Local Bugbot|CodeRabbit|GPT-5.5)")
+  );
 }
 
 // ── PR diff is capped at DIFF_CAP with a marker ─────────────────────────────────
@@ -308,6 +344,7 @@ console.log("gatherInputs — PR diff capped at DIFF_CAP");
     runGh: makeRunGh({ checks: passChecks(), prDiff: big }, []),
     slug: "a/b",
     pr: "1",
+    localBugbotReviewPath: LOCAL_BUGBOT_CLEAR,
   });
   check(
     "diff clipped to cap + marker",
@@ -331,7 +368,7 @@ console.log("CLEAR path");
     calls
   );
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       runGh,
       readReviewerPrompt: () => REVIEWER,
       callAgent: async () => readFix("agent-clear.md"),
@@ -347,8 +384,8 @@ console.log("BLOCKED path");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
-      runGh: makeRunGh({ checks: passChecks(), inlineComments: readFix("bugbot-inline.json") }, []),
+    cmdConsolidateFindings(repo, consolidateArgs(), {
+      runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
       callAgent: async () => readFix("agent-blocked.md"),
     })
@@ -363,9 +400,9 @@ console.log("fail-closed max-severity inheritance");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
-      // Bugbot fixture has **High Severity**, but the model returns a CLEAR doc.
-      runGh: makeRunGh({ checks: passChecks(), inlineComments: readFix("bugbot-inline.json") }, []),
+    cmdConsolidateFindings(repo, consolidateArgs("44", "acme/repo", [], LOCAL_BUGBOT_HIGH), {
+      // Local Bugbot has a structured High, but the model returns a CLEAR doc.
+      runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
       callAgent: async () => readFix("agent-clear.md"),
     })
@@ -381,7 +418,7 @@ console.log("CI-red as data (Major 2)");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       // pr checks returns a NON-zero object (red board); model says CLEAR.
       runGh: makeRunGh({ checks: failChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
@@ -397,7 +434,7 @@ console.log("pending CI fails closed → 3");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       // gh pr checks returns a still-running board; model claims CLEAR. Must NOT pass through.
       runGh: makeRunGh({ checks: pendingChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
@@ -422,7 +459,7 @@ console.log("CI evidence unavailable (gh failure) → 1");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       // gh pr checks exits non-zero with EMPTY stdout (auth/network/invalid repo); model CLEAR.
       runGh: makeRunGh(
         { checks: { code: 1, stdout: "", stderr: "auth failed" }, inlineComments: "[]" },
@@ -439,13 +476,13 @@ console.log("CI evidence unavailable (gh failure) → 1");
   );
 }
 
-// ── H1: a High present ONLY in a submitted PR review → BLOCKED even on a CLEAR model ─────
-console.log("H1: High only in a submitted review → 3");
+// ── Current-head CodeRabbit review evidence remains fail-closed ─────────────────
+console.log("current-head CodeRabbit High in a submitted review → 3");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
-      // No inline/issue comments; the ONLY High lives in a submitted Bugbot review body.
+    cmdConsolidateFindings(repo, consolidateArgs(), {
+      // No inline/issue comments; the only High lives in a fresh CodeRabbit review body.
       runGh: makeRunGh(
         {
           checks: passChecks(),
@@ -453,9 +490,10 @@ console.log("H1: High only in a submitted review → 3");
           issueComments: "[]",
           reviews: JSON.stringify([
             {
-              user: "cursor[bot]",
+              user: "coderabbitai[bot]",
               state: "COMMENTED",
-              body: "**High Severity**\n\nUnbounded retry loop can hang the process.",
+              body: "**Major** potential issue: unbounded retry loop can hang the process.",
+              submitted_at: "2026-07-01T00:01:00Z",
             },
           ]),
         },
@@ -466,27 +504,26 @@ console.log("H1: High only in a submitted review → 3");
     })
   );
   const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
-  check("review-only High → returns 3 (not 0/CLEAR)", code === 3);
-  check("review-only High → file verdict BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
-  check("review-only High → no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+  check("fresh review-only High → returns 3 (not 0/CLEAR)", code === 3);
+  check("fresh review-only High → file verdict BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
+  check("fresh review-only High → no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
 }
 
-// ── H1: a High present ONLY in a Bugbot ISSUE comment → BLOCKED even on a CLEAR model ─────
-console.log("H1: High only in a Bugbot issue comment → 3");
+// ── Stale CodeRabbit records cannot satisfy or contaminate current-head evidence ─────────
+console.log("stale CodeRabbit issue comment is discarded");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
-      // No inline comments / no reviews; the ONLY High lives in a Bugbot ISSUE comment.
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       runGh: makeRunGh(
         {
           checks: passChecks(),
           inlineComments: "[]",
           issueComments: JSON.stringify([
             {
-              user: "cursor[bot]",
-              body: "**High Severity**\n\nMissing null guard before dereference.",
-              created_at: "2026-07-01T00:00:00Z",
+              user: "coderabbitai[bot]",
+              body: "**Major** potential issue: missing null guard before dereference.",
+              created_at: "2026-06-30T23:59:59Z",
             },
           ]),
           reviews: "[]",
@@ -498,9 +535,20 @@ console.log("H1: High only in a Bugbot issue comment → 3");
     })
   );
   const out = readFileSync(defaultOutPath(repo, "AIO-161", 1), "utf8");
-  check("issue-comment-only High → returns 3 (not 0/CLEAR)", code === 3);
-  check("issue-comment-only High → file verdict BLOCKED", /##\s*Verdict\s*\n+\s*BLOCKED/.test(out));
-  check("issue-comment-only High → no BUGBOT_CLEAR", !out.includes("BUGBOT_CLEAR"));
+  check("stale issue comment does not block a clean current head", code === 0);
+  check("stale issue comment is absent from consolidated output", !out.includes("null guard"));
+}
+
+console.log("filterCurrentHeadCodeRabbit");
+{
+  const records = [
+    { user: "coderabbitai[bot]", body: "old", created_at: "2026-06-30T23:59:59Z" },
+    { user: "coderabbitai[bot]", body: "fresh", created_at: "2026-07-01T00:00:00Z" },
+    { user: "someone", body: "fresh human", created_at: "2026-07-01T00:01:00Z" },
+  ];
+  const filtered = filterCurrentHeadCodeRabbit(records, "2026-07-01T00:00:00Z");
+  check("keeps only CodeRabbit records at or after the latest commit", filtered.length === 1);
+  check("keeps the fresh record", filtered[0]?.body === "fresh");
 }
 
 // ── M2: gh error PROSE (contains "fail") is NOT a red board → fail closed, returns 1 ─────
@@ -508,7 +556,7 @@ console.log("M2: gh error prose → 1 (not a spurious red board)");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       // gh pr checks exits non-zero with an auth-error MESSAGE (not a checks table). The word
       // "failed" must NOT be read as red CI (exit 3) — no board data ⇒ unavailable ⇒ exit 1.
       runGh: makeRunGh(
@@ -538,7 +586,7 @@ console.log("no checks reported (benign) → proceeds");
 {
   const repo = freshRepo();
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       // gh exits non-zero but the stderr says no CI is configured — treat as a green board.
       runGh: makeRunGh(
         {
@@ -562,9 +610,9 @@ console.log("verdict reconciliation (stale model verdict)");
   // the persisted file MUST say BLOCKED, not the model's stale CLEAR.
   const repo = freshRepo();
   const staleClear =
-    "## Findings\n\n[High] scripts/x.mjs:1 — boom (source: Bugbot)\n\n## Verdict\n\nCLEAR\n";
+    "## Findings\n\n[High] scripts/x.mjs:1 — boom (source: Local Bugbot)\n\n## Verdict\n\nCLEAR\n";
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
       callAgent: async () => staleClear,
@@ -585,7 +633,7 @@ console.log("verdict reconciliation (stale model verdict)");
   const repo = freshRepo();
   const staleBlocked = "## Findings\n\n- No blocking issues found.\n\n## Verdict\n\nBLOCKED\n";
   const code = await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo"], {
+    cmdConsolidateFindings(repo, consolidateArgs(), {
       runGh: makeRunGh({ checks: passChecks(), inlineComments: "[]" }, []),
       readReviewerPrompt: () => REVIEWER,
       callAgent: async () => staleBlocked,
@@ -602,30 +650,22 @@ console.log("output path");
 {
   const repo = freshRepo();
   await quiet(() =>
-    cmdConsolidateFindings(
-      repo,
-      ["--pr", "9", "--issue", "AIO-161", "--round", "2", "--repo", "a/b"],
-      {
-        runGh: makeRunGh({ checks: passChecks() }, []),
-        readReviewerPrompt: () => REVIEWER,
-        callAgent: async () => readFix("agent-clear.md"),
-      }
-    )
+    cmdConsolidateFindings(repo, consolidateArgs("9", "a/b", ["--round", "2"]), {
+      runGh: makeRunGh({ checks: passChecks() }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
   );
   check("writes findings-r2.md", existsSync(defaultOutPath(repo, "AIO-161", 2)));
 
   const repo2 = freshRepo();
   const outFile = path.join(repo2, "custom-findings.md");
   await quiet(() =>
-    cmdConsolidateFindings(
-      repo2,
-      ["--pr", "9", "--issue", "AIO-161", "--out", outFile, "--repo", "a/b"],
-      {
-        runGh: makeRunGh({ checks: passChecks() }, []),
-        readReviewerPrompt: () => REVIEWER,
-        callAgent: async () => readFix("agent-clear.md"),
-      }
-    )
+    cmdConsolidateFindings(repo2, consolidateArgs("9", "a/b", ["--out", outFile]), {
+      runGh: makeRunGh({ checks: passChecks() }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callAgent: async () => readFix("agent-clear.md"),
+    })
   );
   check("--out overrides the default path", existsSync(outFile));
 }
@@ -638,7 +678,7 @@ console.log("config-driven model call");
   writeFileSync(path.join(repo, ".aios", "loop-models.yaml"), "consolidate_effort: high\n");
   let recorded = null;
   await quiet(() =>
-    cmdConsolidateFindings(repo, ["--pr", "9", "--issue", "AIO-161", "--repo", "a/b"], {
+    cmdConsolidateFindings(repo, consolidateArgs("9", "a/b"), {
       runGh: makeRunGh({ checks: passChecks() }, []),
       readReviewerPrompt: () => REVIEWER,
       callAgent: async (_p, _t, opts) => {
@@ -655,18 +695,14 @@ console.log("config-driven model call");
 
   let lightRecorded = null;
   await quiet(() =>
-    cmdConsolidateFindings(
-      repo,
-      ["--pr", "9", "--issue", "AIO-161", "--repo", "a/b", "--loop-profile", "light"],
-      {
-        runGh: makeRunGh({ checks: passChecks() }, []),
-        readReviewerPrompt: () => REVIEWER,
-        callPromptModel: async (call) => {
-          lightRecorded = call;
-          return readFix("agent-clear.md");
-        },
-      }
-    )
+    cmdConsolidateFindings(repo, consolidateArgs("9", "a/b", ["--loop-profile", "light"]), {
+      runGh: makeRunGh({ checks: passChecks() }, []),
+      readReviewerPrompt: () => REVIEWER,
+      callPromptModel: async (call) => {
+        lightRecorded = call;
+        return readFix("agent-clear.md");
+      },
+    })
   );
   check(
     "light profile routes consolidation through OpenRouter mini",
@@ -694,6 +730,18 @@ console.log("bad args → 1");
     })
   );
   check("bad --issue → 1", badIssue === 1);
+  const missingArtifact = await quiet(() =>
+    cmdConsolidateFindings(
+      repo,
+      consolidateArgs("9", "a/b", [], path.join(repo, "missing-local-bugbot.md")),
+      {
+        runGh: makeRunGh({ checks: passChecks() }, []),
+        readReviewerPrompt: () => REVIEWER,
+        callAgent: async () => readFix("agent-clear.md"),
+      }
+    )
+  );
+  check("missing local Bugbot artifact → 1", missingArtifact === 1);
 }
 
 // ── --help → returns 0 ───────────────────────────────────────────────────────────
@@ -713,6 +761,7 @@ console.log("GPT review capped at GPT_REVIEW_CAP");
     runGh: makeRunGh({ checks: passChecks() }, []),
     slug: "a/b",
     pr: "1",
+    localBugbotReviewPath: LOCAL_BUGBOT_CLEAR,
     gptReviewPath: big,
   });
   check(

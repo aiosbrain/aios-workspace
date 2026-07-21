@@ -120,15 +120,15 @@ The same adversarial discipline drives an end-to-end build loop:
 - **`aios pr`** pushes the current worktree branch and opens a GitHub PR **idempotently** (an
   already-open PR for the head branch is reused), always carrying the `AIO-<n>` key in the title so
   the repo automations fire. `aios build --pr` chains it after the pre-ship gates.
-- **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, bot
-  comments/reviews, and an optional GPT-5.5 review into **one severity-ranked, fail-closed finding
+- **`aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>`** merges CI checks, the PR diff,
+  mandatory Local Bugbot, current-head CodeRabbit comments/reviews, and an optional GPT-5.5 review into **one severity-ranked, fail-closed finding
   list** (`VERDICT=CLEAR|BLOCKED`; red or still-pending CI can never be CLEAR), which
   `aios build --findings <file>` then fixes from.
 
 The pipeline is tunable and hardened for unattended runs: a **per-step model/effort/timeout config**
 (`.aios/loop-models.yaml`, gitignored) with fail-closed cross-family diversity + Claude-runner
-guards; **review resilience** (auto-retry once on timeout, diff-size-adaptive review timeouts); a
-**require-all bot gate** (`wait-for-bots` exits 2 on a missing bot — `--any` to opt out); and a
+guards; **review resilience** (auto-retry once on timeout, diff-size-adaptive review timeouts);
+mandatory exact-head Local Bugbot plus label-gated current-head CodeRabbit for selected/safety PRs; and a
 **fenced builder** (no push/PR policy + `GIT_CEILING_DIRECTORIES` + a primary-checkout tripwire,
 with `ANTHROPIC_API_KEY` stripped from the builder child so it stays on login auth). Overnight
 operation on an always-on host: [`docs/hermes-runbook.md`](./hermes-runbook.md).

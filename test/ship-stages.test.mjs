@@ -108,12 +108,16 @@ function makeDeps(over = {}) {
     gitExec: (argv) => {
       gitCalls.push(argv.join(" "));
       if (argv[0] === "status") return ""; // clean primary
+      if (argv[0] === "rev-parse") return "fakehead\n";
       return "";
     },
     ghExec: (argv) => {
       ghCalls.push(argv.join(" "));
       const a = argv.join(" ");
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
+      if (a.includes("pr view") && a.includes("--json labels")) {
+        return { code: 0, stdout: "ready-for-review\n", stderr: "" };
+      }
       if (a.includes("--name-only")) return { code: 0, stdout: "scripts/aios.mjs", stderr: "" };
       if (a.includes("pr diff")) return { code: 0, stdout: "diff --git a b", stderr: "" };
       if (a.includes("pr merge")) return { code: 0, stdout: "", stderr: "" };
@@ -152,7 +156,7 @@ function optsFor(o = {}) {
     auto: false,
     autoMerge: false,
     maxFixRounds: 3,
-    reviewers: ["bugbot", "gpt-5.5"],
+    reviewers: ["gpt-5.5"],
     planRunner: "cli",
     dryRun: false,
     skipSpecGate: false,
@@ -402,7 +406,31 @@ console.log("changed-path metadata unavailable at merge gate → MERGE_BLOCKED (
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
-console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → bugbot wait skipped");
+console.log("merge-time safety reclassification cannot bypass CodeRabbit");
+{
+  let nameOnlyReads = 0;
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("--name-only")) {
+      deps.ghCalls.push(a);
+      nameOnlyReads++;
+      return {
+        code: 0,
+        stdout: nameOnlyReads === 1 ? "scripts/aios.mjs" : "hooks/pretooluse-secrets.sh",
+        stderr: "",
+      };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("safety policy drift blocks", code === SHIP_EXIT.SAFETY_BLOCKED);
+  check("merge is never issued", !deps.ghCalls.some((call) => call.includes("pr merge")));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("deprecated bugbot alias is a no-op; CodeRabbit is explicitly selectable");
 {
   const deps = makeDeps();
   let wfbCalled = false;
@@ -413,8 +441,8 @@ console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → 
     opts: optsFor({ reviewers: ["bugbot"] }),
     deps,
   });
-  check("bugbot-only run still OK", code === SHIP_EXIT.OK);
-  check("wait-for-bots ran for bugbot", wfbCalled === true);
+  check("deprecated-alias-only run still keeps mandatory local review", code === SHIP_EXIT.OK);
+  check("deprecated alias does not select a remote bot", wfbCalled === false);
   check(
     "no GPT review audit file when gpt-5.5 dropped",
     !deps.auditFiles.some((n) => n.startsWith("review-gpt"))
@@ -427,11 +455,11 @@ console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → 
   const { code: code2 } = await runShip({
     repo: deps2.repo,
     issue: "AIO-163",
-    opts: optsFor({ reviewers: ["gpt-5.5"] }),
+    opts: optsFor({ reviewers: ["coderabbit", "gpt-5.5"] }),
     deps: deps2,
   });
-  check("gpt-only run still OK", code2 === SHIP_EXIT.OK);
-  check("wait-for-bots skipped when bugbot dropped", wfb2 === false);
+  check("CodeRabbit + GPT run still OK", code2 === SHIP_EXIT.OK);
+  check("CodeRabbit selection runs wait-for-bots", wfb2 === true);
   check(
     "GPT review audit file written when gpt-5.5 kept",
     deps2.auditFiles.some((n) => n.startsWith("review-gpt"))
@@ -439,23 +467,102 @@ console.log("--reviewers bugbot → GPT review skipped; --reviewers gpt-5.5 → 
   rmSync(deps2.repo, { recursive: true, force: true });
 }
 
-console.log(
-  "bugbot gate: wait-for-bots gets --repo <slug>; timeout (2) fails closed → MERGE_BLOCKED"
-);
+console.log("CodeRabbit gate: wait-for-bots gets --repo <slug>; timeout fails closed");
 {
   const deps = makeDeps();
   let wfbArgs = null;
   deps.waitForBots = (argv) => ((wfbArgs = argv), 2); // timeout → missing evidence → fail closed
-  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["coderabbit"] }),
+    deps,
+  });
   check(
     "timeout (exit 2) blocks merge (requested reviewer missing)",
     code === SHIP_EXIT.MERGE_BLOCKED
   );
   check("wait-for-bots received --repo slug", wfbArgs.join(" ").includes("--repo acme/repo"));
-  check("wait-for-bots gated on cursor[bot]", wfbArgs.join(" ").includes("--bots cursor[bot]"));
   check(
-    "merge never issued when Bugbot timed out",
+    "wait-for-bots gates only on CodeRabbit",
+    wfbArgs.join(" ").includes("--bots coderabbitai[bot]")
+  );
+  check(
+    "merge never issued when CodeRabbit timed out",
     !deps.ghCalls.some((c) => c.includes("pr merge"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("explicit CodeRabbit without ready-for-review label blocks immediately");
+{
+  const deps = makeDeps();
+  let waited = false;
+  const baseGh = deps.ghExec;
+  deps.waitForBots = () => ((waited = true), 0);
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("pr view") && a.includes("--json labels")) {
+      deps.ghCalls.push(a);
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["coderabbit"] }),
+    deps,
+  });
+  check("missing label blocks", code === SHIP_EXIT.MERGE_BLOCKED);
+  check("wait command is not started without the trigger label", waited === false);
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("safety surface rejects --auto-merge before review evidence can bypass the operator");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("--name-only")) {
+      deps.ghCalls.push(a);
+      return { code: 0, stdout: "hooks/pretooluse-secrets.sh", stderr: "" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ autoMerge: true }),
+    deps,
+  });
+  check("safety auto-merge is rejected", code === SHIP_EXIT.SAFETY_BLOCKED);
+  check("merge is never issued", !deps.ghCalls.some((call) => call.includes("pr merge")));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("fix push requests a fresh CodeRabbit review on the next round");
+{
+  let consolidationRound = 0;
+  let waits = 0;
+  const deps = makeDeps({
+    cmdConsolidateFindings: async () => (++consolidationRound === 1 ? 3 : 0),
+    waitForBots: () => (waits++, 0),
+  });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["coderabbit"] }),
+    deps,
+  });
+  check("ship converges after the fix", code === SHIP_EXIT.OK);
+  check("CodeRabbit is awaited for both reviewed heads", waits === 2);
+  check(
+    "fresh review is explicitly requested after the push",
+    deps.ghCalls.some(
+      (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+    )
   );
   rmSync(deps.repo, { recursive: true, force: true });
 }
@@ -500,14 +607,19 @@ console.log("GPT review with unavailable diff → MERGE_BLOCKED (fail closed)");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
-console.log("bugbot gate: unexpected non-zero exit (1) → MERGE_BLOCKED, merge never issued");
+console.log("CodeRabbit gate: unexpected non-zero exit → MERGE_BLOCKED");
 {
   const deps = makeDeps();
   deps.waitForBots = () => 1; // usage/auth/repo-detection failure → gate could not run
-  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ reviewers: ["coderabbit"] }),
+    deps,
+  });
   check("code MERGE_BLOCKED on wait-for-bots exit 1", code === SHIP_EXIT.MERGE_BLOCKED);
   check(
-    "merge never issued when Bugbot gate could not run",
+    "merge never issued when CodeRabbit gate could not run",
     !deps.ghCalls.some((c) => c.includes("pr merge"))
   );
   rmSync(deps.repo, { recursive: true, force: true });
@@ -648,42 +760,23 @@ console.log("simplify --no-simplify → stage skipped entirely");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
-console.log("simplify kept a cleanup → re-push + reviewHead updated + CI re-polled; still OK");
+console.log("simplify kept a cleanup → re-push + exact-head review invalidated");
 {
   let prCalls = 0;
-  let polls = 0;
-  let sleeps = 0;
   const states = [];
-  const pendingChecks = JSON.stringify([{ name: "test", state: "PENDING", bucket: "pending" }]);
-  const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
   const deps = makeDeps({
     runSimplify: async () => ({ changed: true, ok: true, reverted: false, output: "tidied" }),
     cmdPr: async () => (prCalls++, 77),
     writeState: (_issue, st) => states.push(JSON.parse(JSON.stringify(st))),
-    sleep: async () => sleeps++,
     gitExec: (argv) => (argv[0] === "rev-parse" ? "newhead" : ""),
   });
-  const baseGh = deps.ghExec;
-  deps.ghExec = (argv) => {
-    const a = argv.join(" ");
-    if (a.includes("pr checks")) {
-      polls++;
-      // First two polls pending (post-push), then green.
-      return {
-        code: polls <= 2 ? 8 : 0,
-        stdout: polls <= 2 ? pendingChecks : greenChecks,
-        stderr: "",
-      };
-    }
-    return baseGh(argv);
-  };
   const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
-  check("run reaches OK", code === SHIP_EXIT.OK);
+  check("run pauses for a fresh review", code === SHIP_EXIT.MERGE_BLOCKED);
   check("PR re-pushed after cleanup (pr called twice)", prCalls === 2);
-  check("CI re-polled until green (≥3 checks reads)", polls >= 3);
-  check("poll loop actually slept between pending reads", sleeps >= 1);
   const last = states.findLast((s) => s.simplifyDone);
-  check("simplifyDone persisted with updated reviewHead", last && last.reviewHead === "newhead");
+  check("simplifyDone persisted", last?.simplifyDone === true);
+  check("prior CLEAR head is invalidated", last?.reviewClear === false && last?.reviewHead == null);
+  check("prior local artifact is invalidated", last?.localBugbotReviewPath == null);
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

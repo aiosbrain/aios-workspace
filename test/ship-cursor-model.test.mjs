@@ -60,6 +60,7 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0, // CLEAR
@@ -80,7 +81,7 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
       return "- `Low` `f`: nit";
     },
     waitForBots: () => 0,
-    gitExec: () => "",
+    gitExec: (argv) => (argv[0] === "rev-parse" ? "fakehead\n" : ""),
     ghExec: (argv) => {
       const a = argv.join(" ");
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };

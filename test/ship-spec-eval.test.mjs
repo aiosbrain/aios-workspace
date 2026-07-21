@@ -68,6 +68,7 @@ function makeDeps(over = {}) {
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,

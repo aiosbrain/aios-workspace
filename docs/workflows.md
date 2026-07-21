@@ -143,14 +143,16 @@ For a PR-based flow, `aios build --pr` is one stage of a resilient loop that sur
 overnight runs on an always-on host (see the [Hermes runbook](./hermes-runbook.md)):
 
 ```
-aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate-findings → aios build --findings <file>
+aios build … --pr → Local Bugbot → [CodeRabbit] → GPT-5.5 → consolidate-findings → fix
 ```
 
-- **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback
-  (require-all by default; exit 2 on a missing bot at timeout — `--any` opts back into
-  proceed-on-timeout, `--bots <list>` gates on a subset).
-- **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the bot
-  comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
+- **Local Bugbot** is mandatory, saved as markdown, and scoped to the exact branch head plus
+  verified base SHA. Any fix commit or base movement forces a fresh local review.
+- **`scripts/wait-for-bots.mjs`** waits only for substantive current-head CodeRabbit comments or
+  reviews. It is used when `coderabbit` is selected and always for safety-sensitive PRs; the
+  `ready-for-review` label is required. A successful check run alone is not evidence.
+- **`aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>`** merges CI checks, the PR diff, mandatory Local Bugbot,
+  current-head CodeRabbit comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
   `.aios/loop/<issue>/findings-r<N>.md`, using `.claude/agents/code-reviewer.md` as its (single,
   un-forked) prompt. A deterministic **fail-closed** pass forces `BLOCKED` on red **or still-pending**
   CI or a dropped source-level Critical/High. Exit `0` CLEAR · `3` BLOCKED · `1` error (red/pending
