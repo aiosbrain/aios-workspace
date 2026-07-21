@@ -82,7 +82,6 @@ import {
   pullToolkitCheckout,
   unmergedPaths,
   sourceCleanliness,
-  createPinnedSnapshot,
   removePinnedSnapshot,
   remoteMessage,
 } from "./toolkit-pull.mjs";
@@ -239,12 +238,16 @@ function pathEntryExists(p) {
 /**
  * Refuse a destination path that escapes the workspace root (a `../` traversal, a
  * symlinked parent directory, or a final destination that is itself a symlink). Applies
- * to every managed write/delete AND seed, not just seeds — a manifest
- * entry's `dest` is only as trustworthy as its source: apply mode always spawns the
- * PINNED SNAPSHOT's own `scripts/aios.mjs`, which loads that same snapshot's own
- * `toolkit-manifest.mjs`, so a `--from` pointed at an untrusted checkout could otherwise
- * define a `MANAGED_PATHS`/`SEED_IF_ABSENT` entry targeting `../../.ssh/authorized_keys`
- * or `.git/hooks/*` with no containment check at all before this fix.
+ * to every managed write/delete AND seed, not just seeds.
+ *
+ * SCOPE — accident prevention, not a security boundary. The toolkit source
+ * (`--from`/`$AIOS_TOOLKIT_DIR`) is TRUSTED CODE: apply mode executes the pinned
+ * snapshot's own `scripts/aios.mjs`, so a genuinely malicious source runs arbitrary code
+ * before any containment check could matter — no check here can defend against that, and
+ * none claims to. What this DOES protect against is real: a mistaken manifest entry
+ * (`dest: "../something"` from a bad edit or merge) and workspace-side symlinks
+ * (`.claude/rules -> ~/dotfiles/...`) silently redirecting managed writes outside the
+ * repo the update believes it is operating on.
  */
 export function assertDestPathSafe(repo, destRel, verb = "vendor") {
   const root = path.resolve(repo);
@@ -668,6 +671,82 @@ function buildResult({
 }
 
 /**
+ * The one renderer for a mergeManaged() result — used by the real apply
+ * (cmdVendorApplyOnly) and --preview, with `preview` selecting the mode-appropriate
+ * conflict hints. Returns changedCount. One implementation so report categories and
+ * conflict wording can't drift between the two modes.
+ */
+function printMergeReport(color, r, { preview = false } = {}) {
+  const report = (label, arr, tone = color.green) => {
+    if (!arr.length) return;
+    console.log(tone(`  ${label}: ${arr.length}`));
+    for (const p of arr.slice(0, 20)) console.log(color.dim(`    ${p}`));
+    if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
+  };
+  report("created", r.created);
+  report("seeded (missing starter files)", r.seeded);
+  report("updated", r.updated);
+  report("merged (local edits + toolkit changes combined)", r.merged);
+  report("removed (deleted upstream)", r.deleted);
+  report("skipped — uncommitted local changes", r.skippedDirty, color.yellow);
+  if (r.skippedDirty.length) {
+    console.warn(
+      color.dim(
+        "  Commit them (then re-run), `git checkout -- <path>` to take the toolkit version, " +
+          "or re-run with --force to overwrite."
+      )
+    );
+  }
+
+  if (r.conflicts.length) {
+    console.warn(color.yellow(`  ${r.conflicts.length} conflict(s) — NOT applied:`));
+    for (const cf of r.conflicts.slice(0, 20)) {
+      const how =
+        cf.kind === "merge"
+          ? preview
+            ? "both sides changed — applying would create .aios-incoming and .aios-merge sidecars"
+            : `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
+          : cf.kind === "deleted-upstream"
+            ? "removed upstream but you modified it — delete it or upstream your change"
+            : preview
+              ? "no sync baseline — applying would create an .aios-incoming sidecar"
+              : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
+      console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
+    }
+    if (r.conflicts.length > 20)
+      console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
+  }
+
+  return (
+    r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length
+  );
+}
+
+/**
+ * The one read-only safety assessment of a toolkit source — remote state (via a strictly
+ * read-only pullToolkitCheckout), vendor safety, source cleanliness, and the reasons list
+ * built from them. Shared by the toolkit-self check/preview block, workspace --check, and
+ * --preview so a new signal (or a wording fix) lands in every mode at once instead of
+ * drifting across three hand-built copies.
+ */
+function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false }) {
+  const pullInfo = skipRemote
+    ? null
+    : pullToolkitCheckout(srcDir, { ...pullOpts, check: true, dryRun: true, noInstall: true }, io);
+  const vs = vendorSafety(srcDir);
+  const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
+  const remoteState = pullInfo?.remoteState ?? null;
+  const reasons = [];
+  if (remoteState && !["current", "no-upstream"].includes(remoteState.state))
+    reasons.push(remoteMessage(remoteState).text);
+  if (sourceClean === "dirty") reasons.push("the toolkit checkout has uncommitted changes");
+  if (sourceClean === "inspection-error")
+    reasons.push("couldn't determine whether the toolkit checkout is clean");
+  if (!vs.safe) reasons.push(vendorSafetyReason(vs));
+  return { remoteState, sourceClean, vs, reasons };
+}
+
+/**
  * `--vendor-apply-only <srcDir=snapshot> --repo <repo> [--force]` — the structurally
  * non-recursive vendor step. Has NO hand-off logic anywhere in it: it cannot spawn a
  * child, so there is nothing for an ambient environment variable or a stray flag to
@@ -703,6 +782,11 @@ async function cmdVendorApplyOnly(repo, args) {
   const meta = toolkitMeta(srcDir); // unmodified — reads the snapshot's own frozen files
   const stampPath = path.join(repo, VERSION_FILE);
   assertDestPathSafe(repo, VERSION_FILE, "write version stamp");
+  // gen-catalog (spawned below) writes these fixed destinations with no containment checks
+  // of its own — assert them here, at the same chokepoint as every other managed write, so
+  // a symlinked catalog destination is refused before anything is written.
+  for (const rel of [".claude/skills/INDEX.md", ".claude/INTEGRATIONS.md", "RESOLVER.md"])
+    assertDestPathSafe(repo, rel, "regenerate catalog");
   const baseSha = existsSync(stampPath)
     ? readFileSync(stampPath, "utf8").split(/\s/)[0]
     : undefined;
@@ -714,58 +798,23 @@ async function cmdVendorApplyOnly(repo, args) {
 
   // Regenerate the derived catalogs from the just-synced skills so INDEX.md,
   // INTEGRATIONS.md, and RESOLVER.md's generated block never drift after an update.
-  try {
-    execFileSync(
-      process.execPath,
-      [path.join(srcDir, "scripts", "gen-catalog.mjs"), "--repo", repo],
-      {
-        stdio: "inherit",
-      }
-    );
-  } catch {
-    console.warn(
-      color.yellow("  gen-catalog failed — re-run `npm run aios -- update` or regenerate manually")
-    );
-  }
-
-  const report = (label, arr, tone = color.green) => {
-    if (!arr.length) return;
-    console.log(tone(`  ${label}: ${arr.length}`));
-    for (const p of arr.slice(0, 20)) console.log(color.dim(`    ${p}`));
-    if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
-  };
-  report("created", r.created);
-  report("seeded (missing starter files)", r.seeded);
-  report("updated", r.updated);
-  report("merged (local edits + toolkit changes combined)", r.merged);
-  report("removed (deleted upstream)", r.deleted);
-  report("skipped — uncommitted local changes", r.skippedDirty, color.yellow);
-  if (r.skippedDirty.length) {
-    console.warn(
-      color.dim(
-        "  Commit them (then re-run), `git checkout -- <path>` to take the toolkit version, " +
-          "or re-run with --force to overwrite."
-      )
-    );
-  }
-
-  if (r.conflicts.length) {
-    console.warn(color.yellow(`  ${r.conflicts.length} conflict(s) — NOT applied:`));
-    for (const cf of r.conflicts.slice(0, 20)) {
-      const how =
-        cf.kind === "merge"
-          ? `both sides changed — see ${cf.path}.aios-merge, take ${cf.path}.aios-incoming, or edit in place`
-          : cf.kind === "deleted-upstream"
-            ? "removed upstream but you modified it — delete it or upstream your change"
-            : `no sync baseline — see ${cf.path}.aios-incoming, or re-run --force if you have no local edits`;
-      console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
+  // A snapshot without the script ships no catalogs to regenerate — skip. A script that
+  // RAN and FAILED is an incomplete apply: recorded, and the stamp write below is skipped
+  // so `--check` keeps reporting the workspace behind until a re-run succeeds.
+  const catalogScript = path.join(srcDir, "scripts", "gen-catalog.mjs");
+  let catalogFailed = false;
+  if (existsSync(catalogScript)) {
+    try {
+      execFileSync(process.execPath, [catalogScript, "--repo", repo], { stdio: "inherit" });
+    } catch {
+      catalogFailed = true;
+      console.warn(
+        color.yellow("  gen-catalog failed — catalogs may be stale; fix and re-run `aios update`.")
+      );
     }
-    if (r.conflicts.length > 20)
-      console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
   }
 
-  const changedCount =
-    r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
+  const changedCount = printMergeReport(color, r);
 
   if (r.conflicts.length) {
     // Leave the stamp at the old base so a re-run re-surfaces the conflicts once resolved.
@@ -786,6 +835,24 @@ async function cmdVendorApplyOnly(repo, args) {
       changedCount,
       vendorSafety: vs,
       reasons: [`${r.conflicts.length} conflict(s) — not applied for those files`],
+    });
+  }
+
+  if (catalogFailed) {
+    // Same honesty model as conflicts: an incomplete apply is never stamped — a fresh
+    // stamp would make `--check` report "up to date" over drifted catalogs forever.
+    console.warn(
+      color.yellow(
+        `  catalogs were not regenerated — version stays pinned at ${(baseSha || "(none)").slice(0, 12)} until a re-run succeeds.`
+      )
+    );
+    return buildResult({
+      mode: "vendor-apply-only",
+      exitStatus: 0,
+      applied: true,
+      changedCount,
+      vendorSafety: vs,
+      reasons: ["catalog regeneration failed — version not stamped; re-run `aios update`"],
     });
   }
 
@@ -910,38 +977,29 @@ async function cmdUpdateInner(repo, cfg, args) {
     console.log(color.blue("aios update") + color.dim(`  toolkit checkout ${repo}`));
     if (check || preview) {
       // Both read-only modes must report the same remote/local safety signals that apply
-      // enforces. `pullToolkitCheckout` remains strictly read-only here (ls-remote only),
-      // while vendorSafety catches an unresolved index before we advertise applyAllowed.
-      const pr = pullToolkitCheckout(
-        repo,
-        { ...pullOpts, check: true, dryRun: true, noInstall: true },
-        io
-      );
-      const vs = vendorSafety(repo);
-      const reasons = [];
-      if (pr.remoteState && !["current", "no-upstream"].includes(pr.remoteState.state))
-        reasons.push(remoteMessage(pr.remoteState).text);
-      if (pr.sourceClean === "dirty") reasons.push("the toolkit checkout has uncommitted changes");
-      if (pr.sourceClean === "inspection-error")
-        reasons.push("couldn't determine whether the toolkit checkout is clean");
-      if (!vs.safe) reasons.push(vendorSafetyReason(vs));
+      // enforces — one shared assessment (ls-remote only; vendorSafety catches an
+      // unresolved index before we advertise applyAllowed).
+      const a = assessReadOnlySource(repo, { pullOpts, io });
       if (preview) {
         console.log(color.dim("  --preview — nothing to re-vendor in the toolkit checkout."));
       }
       return buildResult({
         mode,
         exitStatus: 0,
-        remoteState: pr.remoteState,
-        sourceClean: pr.sourceClean,
-        vendorSafety: vs,
-        reasons,
+        remoteState: a.remoteState,
+        sourceClean: a.sourceClean,
+        vendorSafety: a.vs,
+        reasons: a.reasons,
       });
     }
     if (noPull) {
       console.log(color.dim("  --no-pull — nothing to re-vendor in the toolkit checkout."));
       return buildResult({ mode, exitStatus: 0 });
     }
-    const pr = pullToolkitCheckout(repo, pullOpts, io);
+    // selfUpdate: nothing is vendored here, so a current-but-dirty checkout is a no-op
+    // success (the everyday state of an actively-developed checkout), no snapshot is
+    // pinned, and only a REAL pull still requires a clean tree or --stash.
+    const pr = pullToolkitCheckout(repo, { ...pullOpts, selfUpdate: true }, io);
     if (pr.snapshotDir) removePinnedSnapshot(repo, pr.snapshotDir);
     return buildResult({
       mode,
@@ -966,10 +1024,8 @@ async function cmdUpdateInner(repo, cfg, args) {
   try {
     if (check) {
       // ephemeral (freshly cloned) sources are trivially current — no remote check needed.
-      const pullInfo = ephemeral ? null : pullToolkitCheckout(srcDir, pullOpts, io);
-      const vs = vendorSafety(srcDir);
-      const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
-      const remoteState = pullInfo?.remoteState ?? null;
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral });
+      const { remoteState, sourceClean, vs } = a;
 
       const sha = gitSha(srcDir);
       const meta = toolkitMeta(srcDir);
@@ -989,12 +1045,8 @@ async function cmdUpdateInner(repo, cfg, args) {
       const remoteCurrent =
         !remoteState || remoteState.state === "current" || remoteState.state === "no-upstream";
 
-      const reasons = [];
-      if (remoteState && !remoteCurrent) reasons.push(remoteMessage(remoteState).text);
-      if (sourceClean === "dirty") reasons.push("the toolkit checkout has uncommitted changes");
-      if (sourceClean === "inspection-error")
-        reasons.push("couldn't determine whether the toolkit checkout is clean");
-      if (!vs.safe) reasons.push(vendorSafetyReason(vs));
+      // Check-only extras (stamp match, missing seeds) append to the shared assessment.
+      const reasons = [...a.reasons];
       if (!matches)
         reasons.push(
           `this workspace is on ${haveVer ? `v${haveVer}` : short(have)}, local toolkit ${meta.label} (${short(sha)})`
@@ -1025,16 +1077,8 @@ async function cmdUpdateInner(repo, cfg, args) {
       // preview never pulls (implies --no-pull) and never writes — it operates directly
       // against the live srcDir, same honest point-in-time scope as --check. No snapshot
       // is needed since nothing is ever written.
-      const pullInfo = ephemeral
-        ? null
-        : pullToolkitCheckout(
-            srcDir,
-            { ...pullOpts, check: true, dryRun: true, noInstall: true },
-            io
-          );
-      const remoteState = pullInfo?.remoteState ?? null;
-      const vs = vendorSafety(srcDir);
-      const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
+      const a = assessReadOnlySource(srcDir, { pullOpts, io, skipRemote: ephemeral });
+      const { remoteState, sourceClean, vs } = a;
       if (!vs.safe) {
         console.warn(
           color.yellow(`  toolkit has unresolved conflicts — ${vendorSafetyReason(vs)}.`)
@@ -1062,46 +1106,12 @@ async function cmdUpdateInner(repo, cfg, args) {
 
       const r = mergeManaged(srcDir, srcDir, repo, baseSha, { dirty, force, dryRun: true });
 
-      const report = (label, arr, tone = color.green) => {
-        if (!arr.length) return;
-        console.log(tone(`  ${label}: ${arr.length}`));
-        for (const p of arr.slice(0, 20)) console.log(color.dim(`    ${p}`));
-        if (arr.length > 20) console.log(color.dim(`    … and ${arr.length - 20} more`));
-      };
-      report("created", r.created);
-      report("seeded (missing starter files)", r.seeded);
-      report("updated", r.updated);
-      report("merged (local edits + toolkit changes combined)", r.merged);
-      report("removed (deleted upstream)", r.deleted);
-      report("skipped — uncommitted local changes", r.skippedDirty, color.yellow);
-
-      if (r.conflicts.length) {
-        console.warn(color.yellow(`  ${r.conflicts.length} conflict(s) — NOT applied:`));
-        for (const cf of r.conflicts.slice(0, 20)) {
-          const how =
-            cf.kind === "merge"
-              ? "both sides changed — applying would create .aios-incoming and .aios-merge sidecars"
-              : cf.kind === "deleted-upstream"
-                ? "removed upstream but you modified it — delete it or upstream your change"
-                : "no sync baseline — applying would create an .aios-incoming sidecar";
-          console.warn(color.dim(`    ✗ ${cf.path} — ${how}`));
-        }
-        if (r.conflicts.length > 20)
-          console.warn(color.dim(`    … and ${r.conflicts.length - 20} more`));
-      }
-
-      const changedCount =
-        r.created.length + r.seeded.length + r.updated.length + r.merged.length + r.deleted.length;
+      const changedCount = printMergeReport(color, r, { preview: true });
       console.log(
         color.dim(
           `  preview only — ${changedCount} managed file(s) would change; no files or conflict sidecars were written.`
         )
       );
-      const reasons = [];
-      if (remoteState && !["current", "no-upstream"].includes(remoteState.state))
-        reasons.push(remoteMessage(remoteState).text);
-      if (!vs.safe) reasons.push(vendorSafetyReason(vs));
-      if (sourceClean !== "clean") reasons.push(`toolkit checkout is ${sourceClean}`);
       return buildResult({
         mode: "preview",
         exitStatus: 0,
@@ -1109,33 +1119,20 @@ async function cmdUpdateInner(repo, cfg, args) {
         sourceClean,
         vendorSafety: vs,
         changedCount,
-        reasons,
+        reasons: a.reasons,
       });
     }
 
     // APPLY mode from here. Every path below ends with a pinned, immutable snapshot to
     // hand off to --vendor-apply-only — whether the source was actually pulled, skipped
-    // via --no-pull, or is a freshly-cloned ephemeral checkout (already current).
-    let snapshotSource;
-    if (noPull || ephemeral) {
-      const sourceClean = sourceCleanliness(srcDir);
-      if (sourceClean === "inspection-error") {
-        throw new UpdateError(
-          `couldn't determine whether the toolkit checkout at ${srcDir} is clean — refusing to trust it.`
-        );
-      }
-      if (sourceClean === "dirty") {
-        throw new UpdateError(
-          `toolkit working tree is dirty — refusing to vendor from it with --no-pull.\n` +
-            `  Commit or discard the changes in ${srcDir} first.`
-        );
-      }
-      const srcHead = gitSha(srcDir);
-      const snapshotDir = createPinnedSnapshot(srcDir, srcHead);
-      snapshotSource = { sourceClean, srcHead, snapshotDir, remoteState: null };
-    } else {
-      snapshotSource = pullToolkitCheckout(srcDir, pullOpts, io); // throws UpdateError on its own failures
-    }
+    // via --no-pull, or is a freshly-cloned ephemeral checkout (already current). Both
+    // paths run through pullToolkitCheckout (throws UpdateError on its own failures), so
+    // the clean gate, --stash handling, and snapshot pinning are one implementation —
+    // `localOnly` just skips the remote classification and fast-forward.
+    const snapshotSource =
+      noPull || ephemeral
+        ? pullToolkitCheckout(srcDir, { ...pullOpts, localOnly: true, noInstall: true }, io)
+        : pullToolkitCheckout(srcDir, pullOpts, io);
 
     const entrypoint = path.join(snapshotSource.snapshotDir, "scripts", "aios.mjs");
     if (!existsSync(entrypoint)) {

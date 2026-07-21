@@ -19,13 +19,12 @@ const CLEAN_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "behind" }
 const DIRTY_TOOLKIT = { path: "/tk", git: { dirty: true }, relation: "behind" };
 const DIVERGED_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "diverged" };
 
-test("safe check + preview: apply is offered and called", async () => {
+test("safe preview: apply is offered and called (no redundant --check round-trip)", async () => {
   const { clack, warnings } = fakeClack();
   const calls = [];
   const cmdUpdate = async (repo, cfg, args) => {
     calls.push(args[0]);
-    if (args[0] === "--check" || args[0] === "--preview")
-      return { applyAllowed: true, reasons: [] };
+    if (args[0] === "--preview") return { applyAllowed: true, reasons: [] };
     return { exitStatus: 0, applied: true, changedCount: 3, reasons: [] };
   };
   let confirmCalled = false;
@@ -34,7 +33,10 @@ test("safe check + preview: apply is offered and called", async () => {
     return true;
   };
   await runToolkitUpgrade("/ws", {}, { toolkit: CLEAN_TOOLKIT }, { confirm, clack, cmdUpdate });
-  assert.deepEqual(calls, ["--check", "--preview", "--from"]);
+  // --preview alone gates the offer: applyAllowed is derived identically in --check and
+  // --preview, so a leading --check call was pure duplication (a second ls-remote + a
+  // second full vendor-safety scan for the same answer).
+  assert.deepEqual(calls, ["--preview", "--from"]);
   assert.equal(confirmCalled, true);
   assert.deepEqual(warnings, []);
 });
@@ -52,34 +54,32 @@ test("user declines the confirmation: apply is never called", async () => {
     { toolkit: CLEAN_TOOLKIT },
     { confirm: async () => false, clack, cmdUpdate }
   );
-  assert.deepEqual(calls, ["--check", "--preview"]);
+  assert.deepEqual(calls, ["--preview"]);
 });
 
-test("check reports a conflict: apply is NOT offered, one warning naming the reason, no crash", async () => {
+test("preview reports a conflict: apply is NOT offered, one warning naming the reason, no crash", async () => {
   const { clack, warnings } = fakeClack();
   const calls = [];
   const cmdUpdate = async (repo, cfg, args) => {
     calls.push(args[0]);
-    if (args[0] === "--check") {
+    if (args[0] === "--preview") {
       return { applyAllowed: false, reasons: ["the toolkit has 1 file(s) with conflict markers"] };
     }
-    if (args[0] === "--preview") return { applyAllowed: true, reasons: [] };
     throw new Error("apply must never be reached");
   };
   const confirm = async () => {
     throw new Error("confirm must never be reached — apply should have been suppressed");
   };
   await runToolkitUpgrade("/ws", {}, { toolkit: CLEAN_TOOLKIT }, { confirm, clack, cmdUpdate });
-  assert.deepEqual(calls, ["--check", "--preview"]);
+  assert.deepEqual(calls, ["--preview"]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /conflict markers/);
   assert.match(warnings[0], /skipping the upgrade offer/);
 });
 
-test("preview reports dirty/unsafe (check was fine): apply is still suppressed", async () => {
+test("preview reports dirty/unsafe: apply is still suppressed", async () => {
   const { clack, warnings } = fakeClack();
   const cmdUpdate = async (repo, cfg, args) => {
-    if (args[0] === "--check") return { applyAllowed: true, reasons: [] };
     if (args[0] === "--preview")
       return { applyAllowed: false, reasons: ["toolkit checkout is dirty"] };
     throw new Error("apply must never be reached");

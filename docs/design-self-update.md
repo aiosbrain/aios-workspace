@@ -56,7 +56,7 @@ aios update --check      # dry-run: how far behind is the toolkit / this workspa
 aios update --preview    # classify every managed-file change (implies --no-pull; no writes)
 aios update --dry-run    # alias for --preview, UNLESS combined with --contribute (see below)
 aios update --no-pull    # skip the git pull + npm ci; only re-vendor governance (the old behavior)
-aios update --stash      # auto-stash a dirty toolkit tree, pull, then restore it
+aios update --stash      # auto-stash a dirty toolkit tree, pull (or just pin, with --no-pull), then restore it
 aios update --no-install # skip npm ci even if the toolkit lockfile changed
 aios update --from DIR   # use a specific toolkit checkout as the source
 aios update --force      # take the toolkit version for every managed file
@@ -243,6 +243,16 @@ all. "Couldn't count" is never coerced to "not ahead" — an indeterminate estim
 as `local-status-error`, not `unreachable`, so apply never vendors a checkout whose
 divergence can't be ruled out.
 
+Two more local states classify as `local-status-error` rather than slipping through as
+`no-upstream`: a **detached HEAD** (`--abbrev-ref HEAD` → literal `"HEAD"` — a paused
+rebase/bisect or a checkout pinned at a sha; without the check it would green straight
+through and vendor whatever ancient commit is parked there), and **half-configured
+tracking** (exactly one of `branch.<b>.remote`/`branch.<b>.merge` set). Both carry a
+`detail` field naming the exact problem and the one-command fix, surfaced in the refusal
+message and `--check` reasons. The readonly probe (`git ls-remote`) runs with a 30s
+timeout so a dropping network can't hang `--check`/`--preview`/onboarding for git's
+default transport duration; a timeout lands in the same catch as any unreachable remote.
+
 `remoteMessage(state)` is the one function producing the human-readable line for each state,
 shared by the plain-apply log and the `--check` verdict text.
 
@@ -289,9 +299,21 @@ in-process, directly, by both `scripts/onboard-command.mjs` and the test suite �
 routing error-path assertions through a spawned child just to survive a `process.exit`.
 
 `onboard-command.mjs`'s toolkit-upgrade subsection (`runToolkitUpgrade`) reads exactly this:
-if either `--check` or `--preview`'s `applyAllowed` is `false`, the apply confirmation is
-never offered — one clear warning built from `.reasons`, and the rest of onboarding
-continues regardless (a toolkit-upgrade problem never aborts onboarding wholesale).
+if `--preview`'s `applyAllowed` is `false`, the apply confirmation is never offered — one
+clear warning built from `.reasons`, and the rest of onboarding continues regardless (a
+toolkit-upgrade problem never aborts onboarding wholesale). Preview alone gates the offer:
+`applyAllowed` is derived identically in `--check` and `--preview`, so a leading `--check`
+call was pure duplication (a second `ls-remote` round-trip + a second vendor-safety scan
+for the same answer) and was dropped.
+
+Two more honesty rules on the apply side: run **inside the toolkit checkout itself**
+(self-update), a current-but-dirty tree is a **no-op success** — nothing is pulled and
+nothing is ever vendored, so WIP gates nothing and no snapshot is pinned; only a real pull
+still demands a clean tree or `--stash`. And a **failed `gen-catalog`** leaves the version
+stamp **unwritten** (same model as merge conflicts — the failure lands in `.reasons`, the
+stamp stays at the old base, and `--check` keeps reporting the workspace behind until a
+re-run succeeds); its three fixed destinations are containment-checked at the same
+chokepoint as every other managed write.
 
 ### `--contribute` stays mutually exclusive with read-only modes
 

@@ -45,9 +45,12 @@ export async function runToolkitUpgrade(
     return;
   }
 
-  let checkResult, previewResult;
+  // One read-only pass: --preview computes the same gating signals --check would
+  // (`applyAllowed` is derived identically in both modes) AND shows the user the actual
+  // merge report — running --check first only added a second `git ls-remote` round-trip
+  // and a second full vendor-safety scan to learn the same answer.
+  let previewResult;
   try {
-    checkResult = await cmdUpdateFn(repo, cfg, ["--check", "--from", inspection.toolkit.path]);
     previewResult = await cmdUpdateFn(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
   } catch (error) {
     clack.log.warn(
@@ -56,11 +59,8 @@ export async function runToolkitUpgrade(
     return;
   }
 
-  const blocked = checkResult?.applyAllowed === false || previewResult?.applyAllowed === false;
-  if (blocked) {
-    const reasons = [
-      ...new Set([...(checkResult?.reasons || []), ...(previewResult?.reasons || [])]),
-    ];
+  if (previewResult?.applyAllowed === false) {
+    const reasons = [...new Set(previewResult?.reasons || [])];
     clack.log.warn(
       `Toolkit isn't safe to update right now${reasons.length ? ` (${reasons.join("; ")})` : ""} — skipping the upgrade offer. Resolve it, then run \`aios update\` later.`
     );

@@ -1075,3 +1075,149 @@ test("a vendor child that fails yields applyAllowed: false (never 'apply-safe' o
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- Round 6 (fast-follows from the 2026d2b review): self-update no-op, detached HEAD,
+// --no-pull --stash, catalog stamp honesty, half-configured tracking ---------------------
+
+test("self-update: a current-but-dirty toolkit checkout is a no-op success, not a refusal", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-self-dirty-noop-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "wip.txt"), "uncommitted work\n");
+
+    const result = await cmdUpdate(clone, {}, []);
+    assert.equal(
+      result.exitStatus,
+      0,
+      "nothing is pulled and nothing is vendored — WIP in the checkout gates nothing"
+    );
+    assert.equal(readFileSync(path.join(clone, "wip.txt"), "utf8"), "uncommitted work\n");
+    assert.equal(
+      git(clone, "worktree", "list").split("\n").length,
+      1,
+      "the self-update no-op must not pin (or leak) a snapshot worktree"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("self-update: a BEHIND toolkit with a dirty tree still refuses the pull without --stash", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-self-dirty-behind-"));
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(origin, "note.txt"), "advance\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-qm", "advance");
+    writeFileSync(path.join(clone, "wip.txt"), "uncommitted work\n");
+
+    const result = await cmdUpdate(clone, {}, []);
+    assert.equal(result.mode, "error", "a real pull over a dirty tree must still be refused");
+    assert.match(result.reasons.join("\n"), /dirty/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detached HEAD toolkit checkout is refused, never greened as no-upstream", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-detached-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    git(clone, "checkout", "-q", "--detach");
+
+    const st = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(st.state, "local-status-error", "detached HEAD is not 'no-upstream'");
+    assert.match(st.detail, /detached HEAD/);
+
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+    const result = await cmdUpdate(workspace, {}, ["--check", "--from", clone]);
+    assert.equal(
+      result.applyAllowed,
+      false,
+      "a checkout pinned at an arbitrary sha must never be advertised as apply-safe"
+    );
+    assert.match(result.reasons.join("\n"), /detached HEAD/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--no-pull --stash: the dirty toolkit is stashed, committed state vendored, WIP restored", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-nopull-stash-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    writeFileSync(path.join(clone, "wip.txt"), "uncommitted\n");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const result = await cmdUpdate(workspace, {}, ["--no-pull", "--stash", "--from", clone]);
+    assert.equal(result.exitStatus, 0, "the user explicitly asked for auto-stash — honor it");
+    assert.equal(
+      readFileSync(path.join(clone, "wip.txt"), "utf8"),
+      "uncommitted\n",
+      "the WIP is restored after the snapshot is pinned"
+    );
+    assert.equal(
+      git(clone, "worktree", "list").split("\n").length,
+      1,
+      "no leaked snapshot worktree"
+    );
+
+    const refused = await cmdUpdate(workspace, {}, ["--no-pull", "--from", clone]);
+    assert.equal(refused.mode, "error", "without --stash the dirty source is still refused");
+    assert.match(refused.reasons.join("\n"), /dirty/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed gen-catalog leaves the version stamp unwritten (never 'up to date' over drifted catalogs)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-catalog-fail-"));
+  try {
+    const { clone } = originAndToolkitClone(root, {
+      realEntrypoint: true, // the child must run the REAL cmdVendorApplyOnly for this to prove anything
+      extraOriginFiles: { "scripts/gen-catalog.mjs": "process.exit(1);\n" },
+    });
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
+
+    const res = spawnSync(
+      process.execPath,
+      [CLI, "update", "--no-install", "--from", clone, "--repo", workspace],
+      { encoding: "utf8" }
+    );
+    assert.equal(res.status, 0, res.stderr); // same reasons-not-crash model as merge conflicts
+    assert.ok(
+      !existsSync(path.join(workspace, ".aios-toolkit-version")),
+      "an apply whose catalogs failed to regenerate must NOT be stamped — --check would report 'up to date' over drifted catalogs forever"
+    );
+    assert.match(res.stdout + res.stderr, /catalog/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("half-configured branch tracking is refused WITH the broken config key named", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-halfconfig-"));
+  try {
+    const { clone } = originAndToolkitClone(root);
+    git(clone, "config", "--unset", "branch.main.merge");
+
+    const st = acquireRemoteState(clone, { mode: "readonly" });
+    assert.equal(st.state, "local-status-error", "half-configured tracking stays fail-closed");
+    assert.match(st.detail, /branch\.main\.merge/, "the error must name the missing key");
+    assert.match(st.detail, /set-upstream-to|unset-upstream/, "…and the one-command fix");
+
+    assert.throws(
+      () => pullToolkitCheckout(clone, {}, NOOP_IO),
+      /branch\.main/,
+      "the apply refusal surfaces the same actionable detail"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
