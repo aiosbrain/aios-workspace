@@ -93,6 +93,7 @@ import {
 import { searchSessions } from "./sessions-search.mjs";
 // Unified Inbox comms section (I-14 / AIO-395): the local read-model queue + the scoped-confirm broker.
 import {
+  ackInboxAsk,
   archiveInboxAsk,
   decideInbox,
   getInboxDetail,
@@ -100,6 +101,8 @@ import {
   replyInboxAsk,
 } from "./inbox-api.mjs";
 import { createInboxRefresher, installInboxRefreshShutdown } from "./inbox-refresh.mjs";
+import { createTelegramNotifier } from "./inbox-notify.mjs";
+import { createTelegramNotifyCoordinator } from "./inbox-notify-lock.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -608,7 +611,11 @@ const server = http.createServer((req, res) => {
       return res.end("unauthorized");
     }
     const raw = /^(1|true|raw)$/i.test(url.searchParams.get("raw") || "");
-    getInboxView(repo, { raw, refresh: inboxRefresher.snapshot() })
+    getInboxView(repo, {
+      raw,
+      refresh: inboxRefresher.snapshot(),
+      notifyLane: telegramNotifier.snapshot(),
+    })
       .then((view) => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(view));
@@ -652,7 +659,7 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  const inboxAskAction = url.pathname.match(/^\/api\/inbox\/([^/]+)\/(reply|archive)$/);
+  const inboxAskAction = url.pathname.match(/^\/api\/inbox\/([^/]+)\/(reply|archive|ack)$/);
   if (inboxAskAction && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
@@ -671,16 +678,20 @@ const server = http.createServer((req, res) => {
         /* action returns its own 400 */
       }
       const [, encodedId, action] = inboxAskAction;
+      const id = decodeURIComponent(encodedId);
       const operation =
         action === "reply"
-          ? replyInboxAsk(repo, decodeURIComponent(encodedId), payload, {
+          ? replyInboxAsk(repo, id, payload, {
               query: sdkQuery,
               getSessionInfo: sdkGetSessionInfo,
             })
-          : archiveInboxAsk(repo, decodeURIComponent(encodedId));
+          : action === "archive"
+            ? archiveInboxAsk(repo, id)
+            : ackInboxAsk(repo, id, { notifyCoordinator });
       operation
-        .then((result) => {
-          res.writeHead(200, { "Content-Type": "application/json" });
+        .then(({ status, retryAfter, ...result }) => {
+          if (retryAfter) res.setHeader("Retry-After", String(retryAfter));
+          res.writeHead(status || 200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
         })
         .catch((e) => {
@@ -699,6 +710,7 @@ const server = http.createServer((req, res) => {
     }
     getInboxDetail(repo, decodeURIComponent(inboxDetail[1]), {
       refresh: inboxRefresher.snapshot(),
+      notifyLane: telegramNotifier.snapshot(),
     })
       .then((detail) => {
         res.writeHead(detail.item ? 200 : 404, { "Content-Type": "application/json" });
@@ -1617,10 +1629,18 @@ wss.on("connection", (ws, req) => {
 });
 
 const inboxRefresher = createInboxRefresher({ repo });
-installInboxRefreshShutdown({ refresher: inboxRefresher, server, webSocketServer: wss });
+const notifyCoordinator = createTelegramNotifyCoordinator({ repo });
+const telegramNotifier = createTelegramNotifier({ repo, notifyCoordinator });
+installInboxRefreshShutdown({
+  refresher: inboxRefresher,
+  stoppables: [telegramNotifier, inboxRefresher],
+  server,
+  webSocketServer: wss,
+});
 
 server.listen(port, "127.0.0.1", () => {
   inboxRefresher.start();
+  telegramNotifier.start();
   console.log("");
   console.log("  aios-workspace GUI");
   console.log(`  repo:  ${repo}`);

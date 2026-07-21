@@ -59,3 +59,14 @@ export function postAskReply(api: Api, id: string, message: string): Promise<Ask
 export function postAskArchive(api: Api, id: string): Promise<AskActionResult> {
   return api.post<AskActionResult>(`/api/inbox/${encodeURIComponent(id)}/archive`, {});
 }
+
+export interface AskAckResult {
+  ok: boolean;
+  recorded: boolean;
+  reason?: "never-delivered" | "already-acked" | "not-acknowledgeable" | "notify-busy";
+}
+
+/** No ask content or client timestamp is sent; the server folds the durable delivery journal. */
+export function postAskAck(api: Api, id: string): Promise<AskAckResult> {
+  return api.post<AskAckResult>(`/api/inbox/${encodeURIComponent(id)}/ack`);
+}

@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  ackInboxAsk,
   getInboxView,
   getInboxDetail,
   decideInbox,
@@ -31,7 +32,12 @@ import {
   capabilityTargets,
   loadRecord,
 } from "../../gui/server/runtime-adapters/capability-store.mjs";
-import { buildObservation, appendObservations } from "../../dist/operator-loop/index.js";
+import {
+  appendObservations,
+  buildObservation,
+  createDurableNotifyJournal,
+  readJournalSegments,
+} from "../../dist/operator-loop/index.js";
 
 // Issue a capability handle exactly as the WS gateway does (index.mjs) — with explicit `targetResources`,
 // so the persisted record's request digest is self-consistent (the runtime's own integrity gate). `extra`
@@ -166,6 +172,121 @@ test("GET /api/inbox/:id threads ingestion freshness exactly like the list endpo
     // The contract declares freshness non-optional — without a refresher it is an explicit null.
     const bare = await getInboxDetail(dir, id);
     assert.equal(bare.freshness, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("notify journal projects as a sibling without changing queue parity", async () => {
+  const dir = ws();
+  try {
+    const id = addAsk(dir, "idle", "blocker", "notify sibling");
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const cliView = JSON.parse(cli(dir, "inbox", ["--json"]));
+    const lane = {
+      status: "delivery_ok",
+      last_attempt_at: "2026-07-21T01:00:00.000Z",
+      last_delivery_at: "2026-07-21T01:00:00.000Z",
+      last_error: null,
+    };
+    const view = await getInboxView(dir, { notifyLane: lane });
+    assert.deepEqual(queueProjection(view), queueProjection(cliView));
+    assert.deepEqual(view.notify.lane, lane);
+    assert.equal(view.notify.states[id].delivery_attempts, 1);
+    assert.equal(view.notify.states[id].acked, false);
+
+    const detail = await getInboxDetail(dir, id, { notifyLane: lane });
+    assert.deepEqual(detail.notify.lane, lane);
+    assert.deepEqual(Object.keys(detail.notify.states), [id]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ack is honest, idempotent, and never records before a delivery", async () => {
+  const dir = ws();
+  try {
+    const id = addAsk(dir, "idle", "blocker", "ack me");
+    const never = await ackInboxAsk(dir, id);
+    assert.deepEqual(never, {
+      ok: true,
+      status: 200,
+      recorded: false,
+      reason: "never-delivered",
+    });
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      0
+    );
+
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const recorded = await ackInboxAsk(dir, id, {
+      now: () => new Date("2026-07-21T01:01:00.000Z"),
+    });
+    assert.equal(recorded.recorded, true);
+    const again = await ackInboxAsk(dir, id);
+    assert.equal(again.recorded, false);
+    assert.equal(again.reason, "already-acked");
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      1
+    );
+    const view = await getInboxView(dir);
+    assert.equal(view.notify.states[id].acked, true);
+    assert.equal(view.notify.overdue[id], undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("unknown and concurrent acknowledgments fail closed without duplicate events", async () => {
+  const dir = ws();
+  try {
+    const unknown = await ackInboxAsk(dir, "missing");
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.reason, "not-acknowledgeable");
+
+    const id = addAsk(dir, "idle", "blocker", "race ack");
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const results = await Promise.all([ackInboxAsk(dir, id), ackInboxAsk(dir, id)]);
+    assert.equal(results.some((result) => result.recorded), true);
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      1
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

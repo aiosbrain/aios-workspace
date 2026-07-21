@@ -9,8 +9,9 @@ entry point — read it first, then follow the table in §5 to go deeper on any 
 ## 1. What it is
 
 The Unified Inbox aggregates every demand on the operator's attention — blocking questions from
-agent workstreams ("asks") *and* observations from external channels (Gmail, calendar, Telegram,
-in future WhatsApp/M365) — into one ranked, drainable, journal-backed local queue (`aios inbox`).
+agent workstreams ("asks") *and* observations from currently readable external channels (Gmail and
+calendar; Telegram remains an outbound alert lane until its inbound gate passes) — into one ranked,
+drainable, journal-backed local queue (`aios inbox`).
 It replaces "check five tools on five different schedules" with one queue the operator drains on
 their own cadence. Everything it stores is admin-tier and local; nothing about a message's content
 ever leaves the machine except through an explicit, policy-approved send (e.g. a Gmail reply).
@@ -51,7 +52,9 @@ quoting). `outbox.ts` is the first real privileged action — an idempotent, rec
 send that only proceeds under a PDP `allow`. `notify-telegram.ts` is a content-free interrupt lane
 (it can carry an ask id, a count, a deep link — never a message body or sender name). `recovery.ts`
 is the safety net: `aios inbox --overdue` surfaces any ask whose Telegram interrupt silently failed,
-because the durable asks queue is the source of truth, not the notification.
+because the durable asks queue is the source of truth, not the notification. The localhost GUI
+server drives that notify lane on a bounded cadence and exposes a delivered-ask acknowledgment
+endpoint; the React Comms view shows the same overdue state without changing the ranked item shape.
 
 **Audit, retention, host/coordinator** — `audit.ts` is a tamper-evident hash chain of
 *authorization* events (who allowed what), storing only digests, never content, so it survives
@@ -146,6 +149,7 @@ alter the asks store, the brain, or any external surface.
 | Cold-start seeding | `src/operator-loop/inbox/seeding.ts` | `test/operator-loop/inbox-seeding.test.mjs` |
 | Host / coordinator deployment (Fly) | [`../host/provisioning-runbook.md`](../host/provisioning-runbook.md) | `test/operator-loop/inbox-host-daemon.test.mjs`, `inbox-host-health.test.mjs`, `inbox-host-isolation.test.mjs`, `inbox-host-manifest.test.mjs`, `inbox-host-nonce.test.mjs`, `inbox-identity-seam.test.mjs`, `inbox-remote-contract.test.mjs` |
 | GUI API (localhost-only routes) | `gui/server/inbox-api.mjs` | `test/operator-loop/inbox-gui-api.test.mjs` |
+| GUI Comms surface + Telegram notify/ack | `gui/client/src/components/comms/`, `gui/server/inbox-notify.mjs` | `gui/client/src/components/comms/comms.test.tsx`, `gui/server/inbox-notify.test.mjs` |
 | Data governance, retention, audit anchor | [`inbox-governance/README.md`](./inbox-governance/README.md), [`inbox-governance/data-inventory.md`](./inbox-governance/data-inventory.md) | `test/operator-loop/inbox-audit.test.mjs` |
 
 ## 6. Status honesty
@@ -153,12 +157,11 @@ alter the asks store, the brain, or any external surface.
 - **The CLI, journal, read model, ranking, state machines, capability handle, reply PDP, Gmail
   outbox, Telegram notify lane, recovery view, and the governance/audit package are all built and
   tested** per the table above.
-- **A cockpit (GUI) surface for the unified inbox beyond the localhost API in `gui/server/inbox-api.mjs`
-  is not built.** The original PRD lists a full Cockpit-rendered view (grouped by source/severity,
-  with resolve/reply actions, extended to WhatsApp/Telegram/X) as **"P2 — Proposed, depends on
-  EE12/EE13 being picked up"** — i.e. still design/vision stage, not started. Early HTML design
-  studies for that surface (`2-work/unified-inbox/ux-variants/`, AIO-398) were removed from the
-  repo as misplaced artifacts; they survive in git history if the P2 work picks them back up.
+- **The cockpit Comms surface is built** in `gui/client/src/components/comms/`: it renders the
+  ranked queue, item detail, pending approvals, Gmail reply/archive actions, connector freshness,
+  and desktop notifications over the localhost GUI API. Telegram's GUI role is currently the
+  separate content-free ask-alert lane plus overdue/ack status; Telegram conversations and replies
+  remain unavailable until their own inbound and policy contracts ship.
 - **The Fly coordinator deployment is a standing residual.** Per
   [`../host/provisioning-runbook.md`](../host/provisioning-runbook.md), the live deploy is
   merge-gated behind PR #321 and was flagged at-risk for the Jul 29 demo, with "run the full demo

@@ -11,9 +11,17 @@ import { useConnection } from "../../state/cockpit";
 import { CommsQueue } from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { fetchInbox, fetchInboxItem, postAskArchive, postAskReply, postDecision } from "./api";
+import {
+  fetchInbox,
+  fetchInboxItem,
+  postAskAck,
+  postAskArchive,
+  postAskReply,
+  postDecision,
+} from "./api";
 import { notifyNewBlockingAsks, desktopNotify, isBlockingAsk } from "./notification";
 import { LatestDetailRequest } from "./detail-request";
+import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import type { DisplayProjection, InboxDetail, InboxView } from "./types";
 
 const POLL_MS = 15_000;
@@ -30,6 +38,9 @@ export function CommsView() {
 
   const seenBlocking = useRef<Set<string> | null>(null);
   const selectedRef = useRef<string | null>(null);
+  const detailRef = useRef<InboxDetail | null>(null);
+  const ackInFlight = useRef(new Set<string>());
+  const ackSettled = useRef(new Set<string>());
   const detailRequests = useRef(new LatestDetailRequest());
   selectedRef.current = selectedId;
 
@@ -38,7 +49,10 @@ export function CommsView() {
       await detailRequests.current.load(
         id,
         () => fetchInboxItem(api, id),
-        setDetail,
+        (next) => {
+          detailRef.current = next;
+          setDetail(next);
+        },
         (e) => {
           // Keep the last-good detail on a failed refresh — blanking to the placeholder mid-read
           // would look like the item vanished. The error surfaces in the queue header instead.
@@ -53,7 +67,6 @@ export function CommsView() {
     try {
       const next = await fetchInbox(api);
       setError(null);
-      setView(next);
 
       // Content-free notifications: seed the seen-set silently on the first load, then only banner a
       // genuinely NEW blocking ask thereafter.
@@ -71,13 +84,69 @@ export function CommsView() {
         selectedRef.current = nextId;
         detailRequests.current.select(nextId);
         setSelectedId(nextId);
+        detailRef.current = null;
         setDetail(null);
       }
-      if (nextId) void loadDetail(nextId);
+      // Keep queue and selected-detail notify projections on one poll generation. The detail is
+      // refreshed first, so the list never advances to delivered/overdue state beside stale detail.
+      if (nextId) await loadDetail(nextId);
+      setView(next);
     } catch (e) {
       setError((e as Error).message);
     }
   }, [api, loadDetail]);
+
+  const ackIfHuman = useCallback(
+    async (id: string, candidate: InboxDetail | null = detailRef.current) => {
+      if (typeof document === "undefined") return;
+      if (
+        !shouldAcknowledgeDeliveredAsk({
+          id,
+          selectedId: selectedRef.current,
+          detail: candidate,
+          visibilityState: document.visibilityState,
+          hasFocus: document.hasFocus(),
+        })
+      ) {
+        return;
+      }
+      if (ackInFlight.current.has(id) || ackSettled.current.has(id)) return;
+
+      ackInFlight.current.add(id);
+      try {
+        const result = await postAskAck(api, id);
+        if (result.recorded || result.reason === "already-acked") {
+          ackSettled.current.add(id);
+          await load();
+        }
+      } catch {
+        // A later focus/detail refresh may retry. The queue remains the durable source of truth.
+      } finally {
+        ackInFlight.current.delete(id);
+      }
+    },
+    [api, load]
+  );
+
+  // Effects run after React commits the detail panel. That render—not the GET or poll that supplied
+  // it—is the human evidence required before the local acknowledgment POST is allowed.
+  useEffect(() => {
+    const id = detail?.item?.id;
+    if (id) void ackIfHuman(id, detail);
+  }, [detail, ackIfHuman]);
+
+  useEffect(() => {
+    const retrySelected = () => {
+      const id = selectedRef.current;
+      if (id) void ackIfHuman(id);
+    };
+    window.addEventListener("focus", retrySelected);
+    document.addEventListener("visibilitychange", retrySelected);
+    return () => {
+      window.removeEventListener("focus", retrySelected);
+      document.removeEventListener("visibilitychange", retrySelected);
+    };
+  }, [ackIfHuman]);
 
   useEffect(() => {
     void load();
@@ -90,6 +159,7 @@ export function CommsView() {
       selectedRef.current = id;
       detailRequests.current.select(id);
       setSelectedId(id);
+      detailRef.current = null;
       setDetail(null);
       void loadDetail(id);
     },

@@ -8,12 +8,18 @@
 import { describe, test, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommsQueue, refreshLabel } from "./CommsQueue";
+import {
+  CommsQueue,
+  refreshLabel,
+  telegramInboundLabel,
+  telegramLaneLabel,
+} from "./CommsQueue";
 import { CommsDetail } from "./CommsDetail";
+import { shouldAcknowledgeDeliveredAsk } from "./ack-evidence";
 import { LatestDetailRequest } from "./detail-request";
 import { AskCard } from "./AskCard";
 import { ScopedConfirmDialog } from "./ScopedConfirmDialog";
-import { postAskArchive, postAskReply, postDecision } from "./api";
+import { postAskAck, postAskArchive, postAskReply, postDecision } from "./api";
 import { ageLabel } from "./presenters";
 import {
   contentFreeNotification,
@@ -165,6 +171,43 @@ describe("CommsQueue", () => {
     // The queue itself still renders from the last good read.
     expect(html).toContain("Approve deploy of feat/inbox-adapter");
   });
+
+  test("renders overdue chip and independent outbound/inbound Telegram status", () => {
+    const view = fixtureView();
+    view.notify = {
+      escalation_window_ms: 900_000,
+      states: {},
+      overdue: {
+        "ask-blocker": {
+          overdue_by_ms: 300_000,
+          delivery_attempts: 0,
+          last_delivery_at: null,
+        },
+      },
+      lane: {
+        status: "configured",
+        last_attempt_at: null,
+        last_delivery_at: null,
+        last_error: null,
+      },
+    };
+    view.freshness = {
+      status: "ready",
+      last_attempt_at: "2026-07-14T09:04:59.000Z",
+      last_success_at: "2026-07-14T09:05:00.000Z",
+      error: null,
+      sources: { gmail: "ready", calendar: "ready", telegram: "unavailable" },
+    };
+    const html = renderToStaticMarkup(
+      <CommsQueue view={view} selectedId="ask-blocker" onSelect={() => {}} />
+    );
+    expect(html).toContain("Unacked");
+    expect(html).toContain("overdue 5m · never delivered");
+    expect(html).toContain("Telegram alerts armed");
+    expect(html).toContain("Telegram inbox not connected");
+    expect(telegramLaneLabel(view)).toBe("Telegram alerts armed");
+    expect(telegramInboundLabel(view)).toBe("Telegram inbox not connected");
+  });
 });
 
 describe("AskCard", () => {
@@ -225,6 +268,123 @@ describe("actionable Claude ask", () => {
     expect(html).not.toContain("uppercase");
   });
 
+  test("renders delivered and never-delivered recovery evidence", () => {
+    const item = agentAsk("ask-overdue", {
+      title: "Needs acknowledgment",
+      why: "open blocker",
+    });
+    const base = {
+      item,
+      agentContext: null,
+      pendingApprovals: [],
+      generated_at: "2026-07-16T02:00:00.000Z",
+      freshness: null,
+    };
+    const never = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          ...base,
+          notify: {
+            escalation_window_ms: 900_000,
+            states: {},
+            overdue: {
+              [item.id]: {
+                overdue_by_ms: 60_000,
+                delivery_attempts: 0,
+                last_delivery_at: null,
+              },
+            },
+            lane: {
+              status: "configured",
+              last_attempt_at: null,
+              last_delivery_at: null,
+              last_error: null,
+            },
+          },
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(never).toContain("Never delivered to your phone");
+
+    const delivered = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          ...base,
+          notify: {
+            escalation_window_ms: 900_000,
+            states: {},
+            overdue: {
+              [item.id]: {
+                overdue_by_ms: 60_000,
+                delivery_attempts: 1,
+                last_delivery_at: "2026-07-16T01:00:00.000Z",
+              },
+            },
+            lane: {
+              status: "delivery_ok",
+              last_attempt_at: "2026-07-16T01:00:00.000Z",
+              last_delivery_at: "2026-07-16T01:00:00.000Z",
+              last_error: null,
+            },
+          },
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(delivered).toContain("Phone alert sent");
+    expect(delivered).toContain("not acknowledged");
+  });
+
+  test("Telegram detail uses its own source mark and never renders a Gmail reply link", () => {
+    const item = thread("telegram-thread", {
+      why: "new Telegram message",
+      snippet: "synthetic message",
+      source: "telegram-chat",
+    });
+    item.observation!.object_kind = "telegram-chat";
+    const html = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item,
+          agentContext: null,
+          pendingApprovals: [],
+          generated_at: "2026-07-16T02:00:00.000Z",
+          freshness: null,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(html).toContain("synthetic message");
+    expect(html).not.toContain("Reply in Gmail");
+
+    const email = thread("email-thread", {
+      why: "new email",
+      snippet: "synthetic email",
+    });
+    const emailHtml = renderToStaticMarkup(
+      <CommsDetail
+        detail={{
+          item: email,
+          agentContext: null,
+          pendingApprovals: [],
+          generated_at: "2026-07-16T02:00:00.000Z",
+          freshness: null,
+        }}
+        onScopedConfirm={() => {}}
+        onReply={async () => {}}
+        onArchive={async () => {}}
+      />
+    );
+    expect(emailHtml).toContain("Reply in Gmail");
+  });
+
   test("reply body cannot substitute a session and archive has an empty body", async () => {
     const calls: { path: string; body: unknown }[] = [];
     const api: Api = {
@@ -241,6 +401,20 @@ describe("actionable Claude ask", () => {
       { path: "/api/inbox/ask%2Fa/reply", body: { message: "Use staging" } },
       { path: "/api/inbox/ask%2Fa/archive", body: {} },
     ]);
+  });
+
+  test("ack posts no client content or timestamp", async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const api: Api = {
+      get: async () => ({}) as never,
+      post: async (path, body) => {
+        calls.push({ path, body });
+        return { ok: true, recorded: true } as never;
+      },
+      wsUrl: () => "",
+    };
+    await postAskAck(api, "ask/a");
+    expect(calls).toEqual([{ path: "/api/inbox/ask%2Fa/ack", body: undefined }]);
   });
 
   test("an unresumable active ask still offers archive without noisy terminal chrome", () => {
@@ -305,6 +479,79 @@ describe("detail request sequencing", () => {
     resolveA("detail-A");
     await loadA;
     expect(accepted).toEqual(["detail-B"]);
+  });
+});
+
+describe("human acknowledgment evidence", () => {
+  const item = agentAsk("ask-ack", {
+    title: "Delivered ask",
+    why: "open blocker",
+  });
+  const detail = {
+    item,
+    agentContext: null,
+    pendingApprovals: [],
+    generated_at: "2026-07-16T02:00:00.000Z",
+    freshness: null,
+    notify: {
+      escalation_window_ms: 900_000,
+      states: {
+        [item.id]: {
+          delivery_attempts: 1,
+          last_delivery_at: "2026-07-16T01:00:00.000Z",
+          acked: false,
+          last_ack_at: null,
+        },
+      },
+      overdue: {},
+      lane: {
+        status: "delivery_ok" as const,
+        last_attempt_at: "2026-07-16T01:00:00.000Z",
+        last_delivery_at: "2026-07-16T01:00:00.000Z",
+        last_error: null,
+      },
+    },
+  };
+
+  test("requires selected, visible, focused, delivered-unacked detail", () => {
+    const check = (overrides: Partial<Parameters<typeof shouldAcknowledgeDeliveredAsk>[0]> = {}) =>
+      shouldAcknowledgeDeliveredAsk({
+        id: item.id,
+        selectedId: item.id,
+        detail,
+        visibilityState: "visible",
+        hasFocus: true,
+        ...overrides,
+      });
+    expect(check()).toBe(true);
+    expect(check({ visibilityState: "hidden" })).toBe(false);
+    expect(check({ hasFocus: false })).toBe(false);
+    expect(check({ selectedId: "another" })).toBe(false);
+    expect(check({ detail: null })).toBe(false);
+    expect(
+      check({
+        detail: {
+          ...detail,
+          notify: { ...detail.notify, states: {} },
+        },
+      })
+    ).toBe(false);
+    expect(
+      check({
+        detail: {
+          ...detail,
+          notify: {
+            ...detail.notify,
+            states: {
+              [item.id]: {
+                ...detail.notify.states[item.id],
+                acked: true,
+              },
+            },
+          },
+        },
+      })
+    ).toBe(false);
   });
 });
 

@@ -264,9 +264,10 @@ export function createInboxRefresher({
   return { refresh, snapshot, start, stop };
 }
 
-/** Install once: stop the connector child before the localhost server accepts process shutdown. */
+/** Install once: stop background components before the localhost server accepts process shutdown. */
 export function installInboxRefreshShutdown({
   refresher,
+  stoppables = [refresher],
   server,
   webSocketServer,
   processRef = process,
@@ -276,7 +277,7 @@ export function installInboxRefreshShutdown({
     if (stopping) return;
     stopping = true;
     try {
-      await refresher.stop();
+      for (const component of stoppables) await component?.stop?.();
     } finally {
       for (const client of webSocketServer?.clients ?? []) client.terminate?.();
       webSocketServer?.close?.();

@@ -22,6 +22,14 @@ external channels and given a durable, replayable spine. It supersedes the visio
 [`prd-unified-agent-inbox.md`](../../prd-unified-agent-inbox.md) — that PRD argued the shape of the
 whole; this spec is the buildable contract.
 
+## Delivery metadata
+
+- **Deps:** AIO-386 depends on the shipped inbox journal/recovery/Telegram domain from PR #320 and
+  the shipped AIO-392 outbox line from PR #321 plus its follow-up hardening. No unmerged code slice
+  is a prerequisite for the outbound GUI notify/ack work.
+- **Build-with:** Opus-class implementation at high effort. The work crosses durable journal
+  semantics, cross-process coordination, localhost API behavior, and GUI lifecycle evidence.
+
 ## Reuse (shipped, KEEP)
 - **Asks store lock discipline** (`src/operator-loop/asks/store.ts`) — the `O_CREAT|O_EXCL`
   lockfile, stale-lock reclaim, and 7-day GC. The `inbox-events.ndjson` journal writer copies this
@@ -29,7 +37,8 @@ whole; this spec is the buildable contract.
   after asks compaction).
 - **Comms sender** (`src/operator-loop/comms/sender.ts`) — the tier-gated `dispatchOnEvent` and its
   four gates. **Untouched, byte-for-byte** by this epic; the reply PDP is a *new, separate* contract
-  layered beside it, never a modification of it. `comms-sender.test.mjs` stays green unchanged.
+  layered beside it, never a modification of it.
+  `test/operator-loop/comms-sender.test.mjs` stays green unchanged.
 - **GOG → activity writer** (`scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`)
   — the current activity writer whose `tier: admin` default caused the v3 reply deadlock. The
   enriched observation record is emitted *alongside* the legacy `activity.jsonl` (which stays
@@ -62,11 +71,32 @@ its bytes are never loaded or executed. A selected workspace never supplies conn
 and the child receives a minimal environment allowlist. Scheduled and manual/cron pulls share an atomic
 workspace lock; timeout/shutdown terminate the full connector process group before another pull can run.
 Public freshness comes from the last successful ingestion refresh, never from a source event's occurrence
-time. The Telegram integration is deliberately
-**outbound-only**: it sends
-content-free Bot API notifications, but no `getUpdates` poller or webhook ingestion contract is
-shipped. Until that inbound contract exists, the GUI labels Telegram as alerts-only and must not
-project Telegram conversations into the inbox.
+time.
+
+Telegram remains **outbound-only** until a separately gated inbound contract is proven. The GUI
+server owns the production notify loop: on a bounded cadence it projects only open
+`agent-event` asks in `needs-you` (plus protected open asks), folds the durable notification
+journal, and sends one content-free Bot API alert for each ask with no recorded delivery. Telegram
+acceptance is journaled as `delivery-attempted`; a failed request journals no delivery and the
+durable ask remains the source of truth. The loop and the GUI acknowledgment endpoint share an
+operator-local cross-process lock so two GUI servers do not concurrently send or acknowledge the
+same ask.
+
+A `human-ack` means the corresponding delivered ask detail was visible while the GUI document
+was visible and focused. List/detail GETs and background polling are never acknowledgment evidence.
+The server records an ack only when the item is still an open agent ask, at least one delivery is
+journaled, and no effective later ack exists. Unknown, closed, non-agent, never-delivered, and
+already-acked items do not append an ack. The honest delivery guarantee is one recorded successful
+send per ask during normal concurrent operation; Telegram acceptance immediately before a local
+journal failure or process death remains an unavoidable ambiguous duplicate window because the
+provider has no idempotency key.
+
+Outbound notify status is exposed separately from connector freshness:
+`notify.lane.status = disabled | configured | delivery_ok | failed | unavailable`. It never
+contains configuration, token, chat id, ask content, or raw provider errors. Telegram inbound
+freshness continues to report the legacy alerts-only/unavailable state; no `getUpdates` poller,
+webhook ingestion, Telegram conversation projection, or reply affordance ships under this
+outbound contract.
 
 ## Contract
 
@@ -174,9 +204,10 @@ explicit allow is granted:
 - unrelated admin context — denied.
 
 Group-thread, quoting/attachment, mixed-tier, and unknown-participant rules are enumerated; an
-unknown or unverifiable participant is treated as outside the origin set (deny). The full **Sol r2
+  unknown or unverifiable participant is treated as outside the origin set (deny). The full **Sol r2
 reply-policy fixture matrix** (e.g. reply-same-sender → content-free Telegram) lives in
-`test/operator-loop/inbox-reply-policy.test.mjs`, with `comms-sender.test.mjs` untouched.
+`test/operator-loop/inbox-reply-policy.test.mjs`, with
+`test/operator-loop/comms-sender.test.mjs` untouched.
 
 ### 6. Observation record
 The enriched adapter-observation record is a **versioned** type carrying account/tenant identity,
@@ -231,7 +262,7 @@ Every Sol r1+r2 verification item maps to a named test file (naming follows
 |---|---|
 | Journal replay byte-equivalence (incl. post-asks-GC) + truncation at every byte boundary | `test/operator-loop/inbox-journal-replay.test.mjs` |
 | Legacy-record compat + multi-account collision fixtures (dual-read) | `test/operator-loop/inbox-observations-dualread.test.mjs` |
-| Reply-policy fixture matrix (reply-same-sender → content-free Telegram), `comms-sender.test.mjs` untouched | `test/operator-loop/inbox-reply-policy.test.mjs` |
+| Reply-policy fixture matrix (reply-same-sender → content-free Telegram), `test/operator-loop/comms-sender.test.mjs` untouched | `test/operator-loop/inbox-reply-policy.test.mjs` |
 | Capability tamper / replay-before-and-after-restart / rotation / crash-after-consume / crash-after-action / `outcome_unknown` idempotency-class retry | `test/operator-loop/inbox-capability.test.mjs` |
 | G5 bypass tests scoped to the claimed surface ("inbox path gated") | `test/operator-loop/inbox-send-bypass.test.mjs` |
 | G3 recovery: Telegram disabled, token revoked, API-success-without-ack, coordinator restart, phone offline | `test/operator-loop/inbox-recovery.test.mjs` |
