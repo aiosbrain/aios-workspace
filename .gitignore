@@ -35,3 +35,7 @@ docs/pre-ship/.spec-fix-log.txt
 !/.opencode/opencode.json
 /opencode.json
 /.mcp.json
+
+# Agent runtime session state (omo run-continuation records) — written into the
+# repo root on every session; machine-local, never source of truth.
+.omo/
