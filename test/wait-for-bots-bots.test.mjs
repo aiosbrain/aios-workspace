@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // CodeRabbit-only selector and evidence contract. No live gh/network.
 
-import { BOT_CONFIG, checkBotReady, isSubstantive, selectBots } from "../scripts/wait-for-bots.mjs";
+import {
+  BOT_CONFIG,
+  checkBotReady,
+  hasVisibleReviewText,
+  isSubstantive,
+  selectBots,
+} from "../scripts/wait-for-bots.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -45,6 +51,11 @@ console.log("substantive current-head evidence");
 {
   check("long review text is substantive", isSubstantive(substantive));
   check("HTML-only text is not substantive", !isSubstantive("<!-- internal status only -->"));
+  check("short inline finding has visible review text", hasVisibleReviewText("Handle null here."));
+  check(
+    "HTML-only inline text has no visible review text",
+    !hasVisibleReviewText("<!-- internal status only -->")
+  );
 
   const fresh = checkBotReady(
     BOT,
@@ -91,6 +102,29 @@ console.log("substantive current-head evidence");
     headTime
   );
   check("fresh submitted review satisfies the gate", review.ready && review.signal === "review");
+
+  const shortInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [{ user: BOT, body: "Handle null here.", created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    headTime
+  );
+  check(
+    "fresh short inline finding satisfies the gate",
+    shortInline.ready && shortInline.signal === "inline-comment"
+  );
+
+  const shortIssue = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: "Review started.", created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    [],
+    headTime
+  );
+  check("short top-level status text does not satisfy the gate", shortIssue.ready === false);
 
   const noText = checkBotReady(BOT, config, [], [], [], headTime);
   check("a successful check run alone cannot satisfy the gate", noText.ready === false);

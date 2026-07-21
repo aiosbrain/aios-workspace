@@ -170,6 +170,14 @@ export function isSubstantive(body) {
   return stripped.length > 100;
 }
 
+export function hasVisibleReviewText(body) {
+  // Inline review comments are findings attached to a specific diff location and are
+  // often intentionally terse. Require visible human-readable text, but do not apply
+  // the long-form summary threshold used for top-level comments and review bodies.
+  const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
+  return /[\p{L}\p{N}]/u.test(stripped);
+}
+
 /**
  * Determine if a bot has posted a substantive signal after latestPush.
  * Checks only issue comments, inline PR comments, and submitted PR reviews. Check runs
@@ -195,7 +203,9 @@ export function checkBotReady(botUser, config, issueComments, pullComments, revi
     if (c.user !== botUser) continue;
     if (!after(c.created_at)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
-    if (isSubstantive(c.body)) return { ready: true, signal: "inline-comment", preview: c.body };
+    if (hasVisibleReviewText(c.body)) {
+      return { ready: true, signal: "inline-comment", preview: c.body };
+    }
   }
 
   // PR reviews (submitted review objects)
