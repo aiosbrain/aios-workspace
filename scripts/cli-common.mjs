@@ -16,7 +16,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -117,6 +117,26 @@ export function gitEnv(extra = {}) {
   ])
     delete env[key];
   return env;
+}
+
+/**
+ * Canonicalize a path for COMPARISON — resolving symlinks when the path exists, falling
+ * back to a plain absolute resolve when it doesn't (a not-yet-created destination is still
+ * comparable). Returns `null` for a falsy input so an unset path can never collide with a
+ * real one: `path.resolve("")` is the CWD, which would silently compare equal to whatever
+ * the process happens to be running in.
+ *
+ * The one implementation. Containment and identity checks (is this dir its own git
+ * toplevel? is this cwd inside the repo?) must agree across macOS `/var` → `/private/var`,
+ * worktree symlinks, and `~` expansion, so they cannot each carry their own copy.
+ */
+export function safeReal(p) {
+  if (!p) return null;
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 /** Read a single git config value for a repo, or "" if unset/unavailable. */

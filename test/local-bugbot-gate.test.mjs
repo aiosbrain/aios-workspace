@@ -26,6 +26,8 @@ import {
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   BUGBOT_CLEAR_TOKEN,
+  buildBugbotPrompt,
+  buildSecurityReviewPrompt,
   captureBranchDiff,
   hasFindingsAtOrAbove,
   REQUIRED_BUGBOT_MODEL,
@@ -198,8 +200,13 @@ test("noncompliant reviewer prose fails closed without a verdict model", async (
     });
     assert.equal(review.ok, false);
     assert.equal(review.error, true);
-    assert.equal(calls.length, 2);
+    // 3, not 2, since AIO-468: the code pass returns an unreadable verdict and is re-asked
+    // ONCE (the security pass answers cleanly first time, so it is asked once). The
+    // fail-closed outcome above is unchanged — a re-ask that stays unreadable still blocks.
+    assert.equal(calls.length, 3);
     assert.match(review.output, /review protocol error/);
+    // The retry must reuse the SAME review pass, never introduce a separate
+    // verdict-normalization model call to launder noncompliant prose into a verdict.
     assert.ok(calls.every((call) => !call.label.includes("verdict normalization")));
 
     const blocked = await runLocalPrePrReview({
@@ -1057,5 +1064,121 @@ test("manual check-exit mode returns non-zero on an infrastructure failure", () 
     assert.equal(JSON.parse(child.stdout).status, "error");
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- AIO-468: an unreadable verdict is re-asked once; a FINDING never is ----------------
+// The reviewing model nondeterministically prefaces the clear token with narration
+// ("Reviewing the diff for bugs."), which `detectBugbotClear` rejects by design (prose
+// alongside a verdict may be a hedge). That produced a protocol error, and the hook treats
+// a protocol error as a hard block — so the gate false-blocked ~3 runs in 6. The cure is at
+// the caller: re-ask ONCE when there is no readable verdict. The verdict predicate itself
+// stays strict, and a real finding is never re-asked (that would be a bypass).
+
+function narrationThenToken() {
+  return `Reviewing the diff for bugs. I'll check a few areas the diff may have truncated.\n${BUGBOT_CLEAR_TOKEN}`;
+}
+
+test("AIO-468: an unreadable verdict is re-asked once and can then clear", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        // First attempt of each pass narrates (unreadable); the re-ask answers bare.
+        const attempt = calls.filter((label) => label === input.label).length;
+        return attempt === 1 ? narrationThenToken() : BUGBOT_CLEAR_TOKEN;
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, true, "a re-asked, readable clear verdict passes the gate");
+    assert.equal(calls.length, 4, "each of the two passes was asked exactly twice");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: a Medium finding is NEVER re-asked (re-asking a finding would be a bypass)", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        return "- Medium: real regression";
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, false, "the finding blocks");
+    assert.equal(calls.length, 2, "one call per pass — a finding is a verdict, not a retry");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: two consecutive unreadable verdicts stay blocked and name the failing pass", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        return narrationThenToken(); // never becomes readable
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, false, "fail-closed: still no readable verdict after the re-ask");
+    assert.equal(calls.length, 4, "exactly one re-ask per pass — bounded, not a loop");
+    assert.match(review.output, /protocol error in the .*(code|security) review pass/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: both prompts demand the verdict as a bare final line", () => {
+  const shared = {
+    branch: "feat/x",
+    baseSha: "abc123",
+    diffStat: " a | 1 +",
+    diff: "+line",
+    logOneline: "abc feat",
+  };
+  const code = buildBugbotPrompt({ skill: "/review-bugbot", ...shared });
+  const security = buildSecurityReviewPrompt({ ...shared });
+  for (const [name, prompt] of [
+    ["code", code],
+    ["security", security],
+  ]) {
+    assert.match(
+      prompt,
+      /FINAL line of your response/,
+      `${name} prompt demands a final-line verdict`
+    );
+    assert.match(prompt, /no preamble or narration/i, `${name} prompt forbids preamble`);
   }
 });

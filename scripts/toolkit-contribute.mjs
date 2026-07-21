@@ -145,8 +145,30 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
     );
 
   // Work in a throwaway worktree off origin/main so the primary checkout is untouched.
-  const git = (dir, ...a) =>
-    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", env: gitEnv() });
+  //
+  // Every git/gh invocation below is wrapped so its failure surfaces as an UpdateError —
+  // an expected, diagnosable local condition (offline remote, no push access, an
+  // unauthenticated `gh`, a branch that already exists), not a bug in this CLI. The
+  // pre-flights above only prove that an `origin` is CONFIGURED and `gh` is INSTALLED;
+  // whether either actually works is only discoverable by trying. Without this, those
+  // failures escaped `cmdUpdate`'s UpdateError-only catch as an unstructured crash, which
+  // contradicted the documented never-exits contract for `--contribute` and gave the user
+  // a stack trace instead of the stderr git actually printed.
+  const runGit = (dir, ...a) => {
+    try {
+      return execFileSync("git", ["-C", dir, ...a], {
+        encoding: "utf8",
+        env: gitEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const detail = String(error?.stderr || error?.message || error)
+        .trim()
+        .split("\n")[0];
+      throw new UpdateError(`git ${a[0]} failed while contributing ${target.destRel}: ${detail}`);
+    }
+  };
+  const git = runGit;
   git(toolkitDir, "fetch", "origin", "main", "-q");
   const wt = mkdtempSync(path.join(os.tmpdir(), "aios-contribute-"));
   try {
@@ -168,24 +190,37 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
       `Review the change; once merged, \`aios update\` converges instead of re-flagging it.`;
     git(wt, "commit", "-q", "-m", `${subject}\n\n${body}`);
     git(wt, "push", "-q", "-u", "origin", branch);
-    const url = execFileSync(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        "aiosbrain/aios-workspace",
-        "--base",
-        "main",
-        "--head",
-        branch,
-        "--title",
-        subject,
-        "--body",
-        body,
-      ],
-      { cwd: wt, encoding: "utf8" }
-    ).trim();
+    let url;
+    try {
+      url = execFileSync(
+        "gh",
+        [
+          "pr",
+          "create",
+          "--repo",
+          "aiosbrain/aios-workspace",
+          "--base",
+          "main",
+          "--head",
+          branch,
+          "--title",
+          subject,
+          "--body",
+          body,
+        ],
+        { cwd: wt, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+      ).trim();
+    } catch (error) {
+      // The branch IS pushed at this point — say so, so the user can open the PR by hand
+      // rather than assuming the whole contribution was lost.
+      const detail = String(error?.stderr || error?.message || error)
+        .trim()
+        .split("\n")[0];
+      throw new UpdateError(
+        `the branch ${branch} was pushed, but \`gh pr create\` failed: ${detail}\n` +
+          `  Open the PR by hand from that branch (gh auth status may need attention).`
+      );
+    }
     console.log(color.green(`  opened toolkit PR: ${url}`));
     return { ...plan, url };
   } finally {
