@@ -1848,7 +1848,6 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             );
             return { code: SHIP_EXIT.MERGE_BLOCKED, records };
           }
-          saveState({ codeRabbitRefreshRequired: false });
         }
 
         const wfbCode = waitForBots([
@@ -1870,7 +1869,9 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           );
           return { code: SHIP_EXIT.MERGE_BLOCKED, records };
         }
-        saveState({ codeRabbitHead: localEvidence.head });
+        // Keep a pending refresh durable across timeouts. Only substantive current-head
+        // evidence can clear the request flag; a command acknowledgment is not evidence.
+        saveState({ codeRabbitRefreshRequired: false, codeRabbitHead: localEvidence.head });
       } else if (state.codeRabbitRefreshRequired) {
         saveState({ codeRabbitRefreshRequired: false, codeRabbitHead: null });
       }

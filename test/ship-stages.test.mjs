@@ -469,9 +469,16 @@ console.log("deprecated bugbot alias is a no-op; CodeRabbit is explicitly select
 
 console.log("CodeRabbit gate: wait-for-bots gets --repo <slug>; timeout fails closed");
 {
-  const deps = makeDeps();
+  let waitCalls = 0;
+  const deps = makeDeps({
+    cmdPr: async () => ({ number: 77, reused: true }),
+  });
   let wfbArgs = null;
-  deps.waitForBots = (argv) => ((wfbArgs = argv), 2); // timeout → missing evidence → fail closed
+  deps.waitForBots = (argv) => {
+    wfbArgs = argv;
+    waitCalls++;
+    return waitCalls === 1 ? 2 : 0;
+  }; // first timeout → missing evidence → fail closed; resume succeeds
   const { code } = await runShip({
     repo: deps.repo,
     issue: "AIO-163",
@@ -491,6 +498,23 @@ console.log("CodeRabbit gate: wait-for-bots gets --repo <slug>; timeout fails cl
     "merge never issued when CodeRabbit timed out",
     !deps.ghCalls.some((c) => c.includes("pr merge"))
   );
+
+  const resumed = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({
+      resume: true,
+      auto: true,
+      autoMerge: true,
+      reviewers: ["coderabbit"],
+    }),
+    deps,
+  });
+  const refreshRequests = deps.ghCalls.filter(
+    (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+  );
+  check("resume succeeds once substantive evidence arrives", resumed.code === SHIP_EXIT.OK);
+  check("timed-out refresh is requested again on resume", refreshRequests.length === 2);
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
