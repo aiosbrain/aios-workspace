@@ -263,6 +263,22 @@ test("terminal clear ignores progress prose but cannot override a streamed findi
     assert.equal(contradictory.ok, false);
     assert.equal(contradictory.finding, true);
     assert.match(contradictory.output, /streamed correctness regression/);
+
+    const unstructuredContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "Critical auth bypass in the callback route",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(unstructuredContradiction.ok, false);
+    assert.equal(unstructuredContradiction.finding, true);
+    assert.match(unstructuredContradiction.output, /Critical auth bypass/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

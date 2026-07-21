@@ -3,6 +3,7 @@ import {
   detectBugbotClear,
   buildBugbotPrompt,
   hasCriticalOrHighFindings,
+  hasUnstructuredSeverityClaim,
   SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
 } from "../scripts/review-bugbot.mjs";
@@ -17,6 +18,30 @@ function check(label, cond) {
     console.log(`  ${RED}✗${NC} ${label}`);
     failed++;
   }
+}
+
+console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
+{
+  check(
+    "severity-leading auth bypass blocks",
+    hasUnstructuredSeverityClaim("Critical auth bypass in the callback route", "medium")
+  );
+  check(
+    "assertive finding prose blocks",
+    hasUnstructuredSeverityClaim("Found a High correctness regression in retry handling", "medium")
+  );
+  check(
+    "progress narration is ignored",
+    !hasUnstructuredSeverityClaim("Checking for Critical or High findings", "medium")
+  );
+  check(
+    "negative result prose is ignored",
+    !hasUnstructuredSeverityClaim("There are no Critical or High security findings", "medium")
+  );
+  check(
+    "generic confidence prose is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence after reviewing the validators", "medium")
+  );
 }
 
 console.log("detectBugbotClear");

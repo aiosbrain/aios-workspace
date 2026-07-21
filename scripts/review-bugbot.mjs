@@ -356,6 +356,40 @@ export function hasFindingsAtOrAbove(text, failOn = "high") {
     });
 }
 
+/**
+ * Catch assertive severity prose that violates the structured finding dialect.
+ * Progress/negative statements remain non-findings; this deliberately requires both
+ * a gating severity and concrete risk language to avoid matching generic status text.
+ */
+export function hasUnstructuredSeverityClaim(text, failOn = "high") {
+  const canonical = canonicalSeverity(failOn);
+  if (!canonical) throw new Error(`invalid Bugbot severity: ${failOn}`);
+  const threshold = SEVERITY_RANK[canonical];
+  const names = Object.entries(SEVERITY_RANK)
+    .filter(([, rank]) => rank >= threshold)
+    .map(([name]) => name)
+    .join("|");
+  const severity = `(?:${names})`;
+  const startsWithSeverity = new RegExp(`^\\s*(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?\\b`, "i");
+  const assertiveSeverity = new RegExp(
+    `\\b(?:found|identified|confirmed|detected|observed|reports?|there\\s+(?:is|are))\\s+(?:an?\\s+)?(?:possible\\s+)?(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?\\b`,
+    "i"
+  );
+  const concreteRisk =
+    /\b(?:finding|issue|bug|bypass|vulnerab\w*|regress\w*|risk|leak|inject\w*|unsafe|incorrect|failure|error|race|auth\w*|security|correctness|data[ -]loss)\b/i;
+
+  return String(text ?? "")
+    .split("\n")
+    .some((line) => {
+      if (!concreteRisk.test(line)) return false;
+      if (startsWithSeverity.test(line)) return true;
+      const match = assertiveSeverity.exec(line);
+      if (!match) return false;
+      const prefix = line.slice(0, match.index);
+      return !/\b(?:no|not|none|without)\s*$/i.test(prefix);
+    });
+}
+
 /** True when review text lists a Critical/High finding (bullet, table row, or bracket). */
 export function hasCriticalOrHighFindings(text) {
   return hasFindingsAtOrAbove(text, "high");
@@ -620,7 +654,10 @@ export async function runLocalPrePrReview({
       .join("\n\n--- terminal result ---\n\n");
     const terminalBlocked = bundled.terminals.some(detectBugbotBlocked);
     const terminalClear = bundled.terminals.some(detectBugbotClear);
-    const finding = terminalBlocked || hasFindingsAtOrAbove(evidence, failOn);
+    const finding =
+      terminalBlocked ||
+      hasFindingsAtOrAbove(evidence, failOn) ||
+      hasUnstructuredSeverityClaim(evidence, failOn);
     const error = !finding && !terminalClear;
     return {
       ok: !finding && !error,
