@@ -27,6 +27,7 @@ import {
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   captureBranchDiff,
+  cursorReviewRetryBudgetMs,
   LOCAL_BUGBOT_DIFF_CAP,
   REQUIRED_BUGBOT_FAIL_ON,
   REQUIRED_BUGBOT_MODEL,
@@ -34,7 +35,6 @@ import {
 } from "../scripts/review-bugbot.mjs";
 
 const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
-const REVIEW_ATTEMPT_BUDGET_MULTIPLIER = 3; // first attempt + one doubled retry
 const REVIEW_PROCESS_GRACE_MS = 20_000;
 const NATIVE_HOOK_GRACE_MS = 60_000;
 const LOCK_POLL_MS = 250;
@@ -378,8 +378,7 @@ export function evaluateLocalBugbotGate({
     .digest("hex");
   if (probeOnly) return { status: "probe", fingerprint };
   const reviewTimeoutMs =
-    REVIEW_ATTEMPT_BUDGET_MULTIPLIER * REVIEW_CHILD_TIMEOUT_SECONDS * 1000 +
-    REVIEW_PROCESS_GRACE_MS;
+    cursorReviewRetryBudgetMs(REVIEW_CHILD_TIMEOUT_SECONDS * 1000) + REVIEW_PROCESS_GRACE_MS;
 
   const existing = cachedResult(file, fingerprint);
   if (existing) return existing;

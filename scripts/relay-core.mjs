@@ -162,6 +162,7 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
     const rl = createInterface({ input: proc.stdout });
     const errBufs = [];
     let text = "";
+    let lastAssistantText;
 
     proc.stderr.on("data", (d) => errBufs.push(d));
 
@@ -175,12 +176,15 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
         // Shape 1: {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
         // (Cursor and Claude Code both use this; tool_use blocks are ignored.)
         if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
+          let assistantText = "";
           for (const block of ev.message.content) {
             if (block.type === "text") {
               process.stdout.write(block.text);
               text += block.text;
+              assistantText += block.text;
             }
           }
+          if (assistantText) lastAssistantText = assistantText;
           return;
         }
         // Shape 2: {type:"text", text:"..."}
@@ -208,7 +212,9 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
     proc.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0 || (code === null && text)) {
-        resolve(text.trim());
+        const output =
+          opts.preferLastAssistant && lastAssistantText !== undefined ? lastAssistantText : text;
+        resolve(output.trim());
       } else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
         reject(

@@ -137,6 +137,32 @@ test("review timeouts retry once with a doubled per-call budget", async () => {
   );
 });
 
+test("hook deadline covers both nested review retry layers", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    let hookTimeoutMs = 0;
+    const result = evaluateLocalBugbotGate({
+      repo,
+      runReview: ({ timeoutMs }) => {
+        hookTimeoutMs = timeoutMs;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      },
+    });
+    assert.equal(result.status, "clear");
+
+    const cursorTimeoutCycleMs = 400_000 + 800_000;
+    const exhaustionBackoffMs = 2_000;
+    const processGraceMs = 20_000;
+    assert.ok(
+      hookTimeoutMs >= cursorTimeoutCycleMs * 2 + exhaustionBackoffMs + processGraceMs,
+      `hook timeout ${hookTimeoutMs}ms cannot cover the composed retry cycle`
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("pre-PR review shares the Medium+ full-worktree policy", async () => {
   const repo = fixture();
   try {
@@ -1192,6 +1218,27 @@ test("check-secrets: anchored Basic Auth pattern ignores URLs but catches real c
     const credentialUrl = ["https://svc", "s3cr3tpass@internal.example.com/x"].join(":");
     writeFileSync(path.join(dir, "leak.txt"), `HOOK=${credentialUrl}\n`);
     assert.equal(run(), 1, "a real basic-auth credential must still be flagged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("check-secrets ignores a gitignored .env but blocks the same file when tracked", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-env-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  const run = () => spawnSync("bash", [script, dir], { encoding: "utf8" });
+  try {
+    git(dir, "init", "-q");
+    writeFileSync(path.join(dir, ".gitignore"), ".env\n");
+    writeFileSync(path.join(dir, ".env"), `TOGGL_API_TOKEN=${"a".repeat(32)}\n`);
+
+    const ignored = run();
+    assert.equal(ignored.status, 0, "a gitignored local .env must not enter the content scan");
+
+    git(dir, "add", "-f", ".env");
+    const tracked = run();
+    assert.equal(tracked.status, 1, "a tracked .env must remain a hard failure");
+    assert.match(tracked.stdout, /\.env file committed/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

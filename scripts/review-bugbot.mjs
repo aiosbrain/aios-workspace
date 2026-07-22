@@ -30,6 +30,9 @@ export const CANONICAL_BUGBOT_MAIN_URL = "https://github.com/aiosbrain/aios-work
 const CURSOR_REVIEW_FLAGS = ["--force", "--trust"];
 export const LOCAL_BUGBOT_DIFF_CAP = 500_000;
 const DEFAULT_TIMEOUT = 300;
+const CURSOR_TIMEOUT_RETRY_BUDGET_MULTIPLIER = 3;
+const CURSOR_RETRIABLE_ATTEMPTS = 2;
+const CURSOR_RETRIABLE_BASE_DELAY_MS = 2_000;
 const OPENCODE_PLATFORM_CONSTRAINT =
   "Known constraints: OpenCode currently exposes only a non-blocking idle event, so its adapter uses the acknowledged prompt_async endpoint to re-prompt and aios build/ship provide the documented hard pre-merge boundary. Project-local lifecycle hooks are UX controls and cannot be tamper-proof against an actor with arbitrary worktree write access; external required CI is needed for that stronger boundary. Canonical main must be verified before declaring even a clean worktree unchanged because committed feature-branch changes are not visible in git status and the writable local origin/main ref is not a trusted proof; an offline verification failure is deliberately fail-closed. Do not report these inherent constraints unless this changeset regresses their documented mitigations.";
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
@@ -407,6 +410,13 @@ export async function retryReviewTimeoutOnce(call, timeoutMs, onRetry = () => {}
   }
 }
 
+export function cursorReviewRetryBudgetMs(timeoutMs) {
+  const timeoutCycleMs = CURSOR_TIMEOUT_RETRY_BUDGET_MULTIPLIER * timeoutMs;
+  const exhaustionBackoffMs =
+    CURSOR_RETRIABLE_BASE_DELAY_MS * (2 ** (CURSOR_RETRIABLE_ATTEMPTS - 1) - 1);
+  return CURSOR_RETRIABLE_ATTEMPTS * timeoutCycleMs + exhaustionBackoffMs;
+}
+
 // Transient exhaustion the reviewer can recover from on a retry (rate-limit contention when
 // several agents run the gate at once). NOT the same as a timeout (handled above): these fail
 // fast, so a bounded backoff is cheap against the child-timeout budget.
@@ -417,10 +427,9 @@ const RETRIABLE_REVIEW_RE = /resource_exhausted|RetriableError|\b429\b|rate.?lim
  * any other failure (including a timeout, which `retryReviewTimeoutOnce` owns) rethrows
  * immediately. Compose this AROUND the timeout retry, not inside it.
  *
- * Budget caveat: the gate SIGKILLs the child at ~REVIEW_ATTEMPT_BUDGET_MULTIPLIER ×
- * REVIEW_CHILD_TIMEOUT_SECONDS ≈ 1200s (hooks/local-bugbot-gate.mjs), and both review passes
- * retry concurrently under Promise.all. Keep `attempts` at 2–3 and `baseDelayMs` small, or the
- * parent kills the child before the backoff completes.
+ * Budget contract: `cursorReviewRetryBudgetMs` describes this outer retry composed with the
+ * timeout retry above, and the parent hook imports it when setting the child deadline. Both
+ * review passes retry concurrently under Promise.all, so their budgets are not additive.
  */
 export async function retryReviewOnRetriable(
   call,
@@ -541,6 +550,7 @@ async function runReviewPrompt({
           cwd: reviewCwd,
           bin: TRUSTED_CURSOR_BIN,
           env: trustedReviewerEnv(),
+          preferLastAssistant: true,
           extraArgs: [
             ...CURSOR_REVIEW_FLAGS,
             ...(readOnly ? ["--mode", "ask"] : []),
@@ -556,7 +566,10 @@ async function runReviewPrompt({
               )
             );
           }),
-        { attempts: 2, baseDelayMs: 2_000 },
+        {
+          attempts: CURSOR_RETRIABLE_ATTEMPTS,
+          baseDelayMs: CURSOR_RETRIABLE_BASE_DELAY_MS,
+        },
         (attempt, delayMs) => {
           console.warn(
             c.yellow(

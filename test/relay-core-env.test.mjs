@@ -32,6 +32,8 @@ writeFileSync(
     "const key = process.env.ANTHROPIC_API_KEY ?? '<unset>';",
     "const text = 'ANTHROPIC_API_KEY=' + key;",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));",
+    "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'BUGBOT_CLEAR' }] } }));",
+    "console.log(JSON.stringify({ type: 'result', result: text + 'BUGBOT_CLEAR' }));",
   ].join("\n")
 );
 chmodSync(fakeBin, 0o755);
@@ -76,6 +78,15 @@ console.log("callCursorAgent (no env override) inherits the parent env");
 {
   const out = await callCursorAgent("review", 30000, { extraArgs: [] });
   check("Cursor child still sees the key", out.includes("ANTHROPIC_API_KEY=" + PARENT_SENTINEL));
+}
+
+console.log("callCursorAgent can select Cursor's final assistant message");
+{
+  const out = await callCursorAgent("review", 30000, {
+    extraArgs: [],
+    preferLastAssistant: true,
+  });
+  check("progress narration is excluded from a verdict response", out === "BUGBOT_CLEAR");
 }
 
 rmSync(dir, { recursive: true, force: true });
