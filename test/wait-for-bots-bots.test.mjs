@@ -152,5 +152,99 @@ console.log("substantive current-head evidence");
   check("a successful check run alone cannot satisfy the gate", noText.ready === false);
 }
 
+console.log("SHA-bound evidence (latestPush carries the head sha)");
+{
+  const headSha = "69c6be75a9dac3da6815e66167e796c8996bcea1";
+  const shaPush = { sha: headSha, committedAt: headTime };
+
+  const unboundWalkthrough = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: substantive, created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "walkthrough without a head-sha reference is rejected in SHA mode",
+    unboundWalkthrough.ready === false
+  );
+
+  const boundWalkthrough = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: `${substantive}\n<!-- commit: ${headSha} -->`,
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "walkthrough referencing the head sha satisfies the gate",
+    boundWalkthrough.ready && boundWalkthrough.signal === "issue-comment"
+  );
+
+  const abbreviated = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: `${substantive}\nReviewed commits up to ${headSha.slice(0, 12)}.`,
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "a 12-char head-sha prefix in the walkthrough is accepted",
+    abbreviated.ready && abbreviated.signal === "issue-comment"
+  );
+
+  const staleInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [
+      {
+        user: BOT,
+        body: "Handle null here.",
+        created_at: "2026-07-01T00:00:01Z",
+        commit_id: "0000000000000000000000000000000000000000",
+      },
+    ],
+    [],
+    shaPush
+  );
+  check("inline comment bound to a different sha is rejected", staleInline.ready === false);
+
+  const currentInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [
+      {
+        user: BOT,
+        body: "Handle null here.",
+        created_at: "2026-07-01T00:00:01Z",
+        commit_id: headSha,
+      },
+    ],
+    [],
+    shaPush
+  );
+  check(
+    "inline comment bound to the head sha satisfies the gate",
+    currentInline.ready && currentInline.signal === "inline-comment"
+  );
+}
+
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

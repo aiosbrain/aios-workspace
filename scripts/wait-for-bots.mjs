@@ -134,10 +134,17 @@ export function getLatestPushTime(repo, pr) {
 
 export function getLatestPush(repo, pr) {
   try {
-    const raw = gh(["api", `repos/${repo}/pulls/${pr}/commits`, "--jq", ".[-1] | {sha: .sha, committedAt: .commit.committer.date}"]);
+    const raw = gh([
+      "api",
+      `repos/${repo}/pulls/${pr}/commits`,
+      "--jq",
+      ".[-1] | {sha: .sha, committedAt: .commit.committer.date}",
+    ]);
     const value = JSON.parse(raw);
     const committedAt = new Date(value.committedAt);
-    return value.sha && Number.isFinite(committedAt.getTime()) ? { sha: value.sha, committedAt } : null;
+    return value.sha && Number.isFinite(committedAt.getTime())
+      ? { sha: value.sha, committedAt }
+      : null;
   } catch {
     return null;
   }
@@ -182,7 +189,11 @@ export function isSubstantive(body) {
   // A substantive review has more than just HTML comments and stub messages
   const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
   if (stripped.length <= 100) return false;
-  return /review|walkthrough|summary|finding|issue|bug|recommend|potential|security|severity|regression|no issues|no bugs|approved/i.test(stripped) || /(?:^|\n)\s*(?:#{1,6}|[-*] |\d+[.)] |\|)/.test(stripped);
+  return (
+    /review|walkthrough|summary|finding|issue|bug|recommend|potential|security|severity|regression|no issues|no bugs|approved/i.test(
+      stripped
+    ) || /(?:^|\n)\s*(?:#{1,6}|[-*] |\d+[.)] |\|)/.test(stripped)
+  );
 }
 
 export function hasVisibleReviewText(body) {
@@ -191,7 +202,9 @@ export function hasVisibleReviewText(body) {
   // the long-form summary threshold used for top-level comments and review bodies.
   const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
   if (stripped.length < 8 || !/[\p{L}]/u.test(stripped)) return false;
-  return /issue|bug|error|unsafe|risk|fix|change|rename|potential|consider|should|must|regression|finding|nit|why|incorrect|security|handle|null/i.test(stripped);
+  return /issue|bug|error|unsafe|risk|fix|change|rename|potential|consider|should|must|regression|finding|nit|why|incorrect|security|handle|null/i.test(
+    stripped
+  );
 }
 
 /**
@@ -207,11 +220,21 @@ export function checkBotReady(botUser, config, issueComments, pullComments, revi
     return Number.isFinite(at.getTime()) && at >= boundary;
   };
   const currentSha = (record) => !latestPush?.sha || record.commit_id === latestPush.sha;
+  // Issue comments (the walkthrough summary) carry no commit_id, so in SHA mode they count
+  // only when the RAW body references the current head (CodeRabbit embeds reviewed-commit
+  // SHAs in its walkthrough markers/links). A 12+ hex-char prefix is unambiguous; anything
+  // that does not reference the head is skipped — fail closed, never accept stale.
+  const referencesHead = (body) => {
+    if (!latestPush?.sha) return true; // timestamp-only fallback mode
+    return String(body ?? "")
+      .toLowerCase()
+      .includes(String(latestPush.sha).toLowerCase().slice(0, 12));
+  };
 
   // CodeRabbit issue comments (for example, the walkthrough summary)
   for (const c of issueComments) {
     if (c.user !== botUser) continue;
-    if (latestPush?.sha) continue;
+    if (!referencesHead(c.body)) continue;
     if (!after(c.created_at)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
     if (isSubstantive(c.body)) return { ready: true, signal: "issue-comment", preview: c.body };
@@ -323,7 +346,9 @@ async function main() {
 
   const latestPush = getLatestPush(repo, prNumber) ?? getLatestPushTime(repo, prNumber);
   if (latestPush) {
-    console.log(`Latest push: ${(latestPush.committedAt ?? latestPush).toISOString()} (filtering stale pre-push comments)\n`);
+    console.log(
+      `Latest push: ${(latestPush.committedAt ?? latestPush).toISOString()} (filtering stale pre-push comments)\n`
+    );
   } else {
     console.error(
       "error: latest PR commit timestamp is unavailable — cannot verify current-head CodeRabbit evidence"

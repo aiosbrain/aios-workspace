@@ -64,7 +64,10 @@ console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
   );
   check(
     "high-level security narration is ignored",
-    !hasUnstructuredSeverityClaim("High-level review of the security surface: no concerns.", "medium")
+    !hasUnstructuredSeverityClaim(
+      "High-level review of the security surface: no concerns.",
+      "medium"
+    )
   );
   check(
     "medium confidence narration is ignored",
