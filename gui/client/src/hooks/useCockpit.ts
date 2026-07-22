@@ -14,8 +14,7 @@ import type {
 } from "../types/protocol";
 import type { UiMessage, PendingPermission } from "../types/messages";
 
-export type ViewKey =
-  "chat" | "comms" | "tasks" | "review" | "maturity" | "cost" | "loop" | "settings";
+export type ViewKey = "chat" | "tasks" | "review" | "maturity" | "cost" | "loop" | "settings";
 
 /**
  * Visible socket lifecycle. `connected` (boolean) is kept for existing consumers and is
