@@ -45,6 +45,28 @@ function check(label, cond) {
 }
 
 const PLAN_TEXT = "# Plan\n1. do the thing\n";
+const LOCAL_BUGBOT_ARTIFACT = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "consolidate",
+  "local-bugbot-clear.md"
+);
+
+function withExactReviewEvidence(state, { head = "fakehead", baseSha = "test-base" } = {}) {
+  return {
+    ...state,
+    reviewClear: true,
+    reviewHead: head,
+    reviewBaseSha: baseSha,
+    reviewSafetyRequired: false,
+    reviewCodeRabbitRequired: false,
+    reviewers: ["gpt-5.5"],
+    localBugbotReviewPath: LOCAL_BUGBOT_ARTIFACT,
+    localBugbotHead: head,
+    localBugbotBaseSha: baseSha,
+  };
+}
 
 function makeIssue() {
   return {
@@ -80,7 +102,7 @@ function makeStateStore() {
 function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-resume-"));
   seedRubric(repo);
-  const counters = { recon: 0, plan: 0, specEval: 0, build: 0, pr: 0, review: 0 };
+  const counters = { recon: 0, plan: 0, specEval: 0, build: 0, pr: 0, review: 0, local: 0 };
   const ghCalls = [];
   const gitCalls = [];
   const greenChecks = JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]);
@@ -95,6 +117,7 @@ function makeDeps(over = {}) {
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => (counters.local++, { ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => (counters.build++, BUILD_EXIT.OK),
     cmdPr: async () => (counters.pr++, 77),
     cmdConsolidateFindings: async () => (counters.review++, 0), // CLEAR
@@ -121,7 +144,11 @@ function makeDeps(over = {}) {
     ghExec: (argv) => {
       const a = argv.join(" ");
       ghCalls.push(a);
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
+      if (a.includes("pr view") && a.includes("--json labels")) {
+        return { code: 0, stdout: "ready-for-review\n", stderr: "" };
+      }
       if (a.includes("--name-only")) return { code: 0, stdout: "README.md", stderr: "" };
       if (a.includes("pr diff")) return { code: 0, stdout: "diff --git a b", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
@@ -160,7 +187,7 @@ function optsFor(o = {}) {
     auto: false,
     autoMerge: false,
     maxFixRounds: 3,
-    reviewers: ["bugbot", "gpt-5.5"],
+    reviewers: ["gpt-5.5"],
     planRunner: "cli",
     dryRun: false,
     resume: false,
@@ -404,10 +431,10 @@ console.log("stale reviewClear (branch moved since checkpoint) → review re-run
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
-console.log("resume with state.simplifyDone → simplify NOT re-run; ship completes");
+console.log("verified base movement invalidates otherwise exact local evidence");
 {
   const ss = makeStateStore();
-  ss.store.state = {
+  ss.store.state = withExactReviewEvidence({
     recon: "RECON",
     specReady: true,
     plan: PLAN_TEXT,
@@ -419,10 +446,124 @@ console.log("resume with state.simplifyDone → simplify NOT re-run; ship comple
     worktreePath: "/tmp/wt",
     prNumber: 77,
     reviewRound: 1,
-    reviewClear: true,
-    reviewHead: "fakehead",
     simplifyDone: true,
-  };
+  });
+  const deps = makeDeps({
+    ...ss,
+    resolveBugbotBase: () => ({ ok: true, baseSha: "moved-base" }),
+  });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true }),
+    deps,
+  });
+  check("exits OK after refreshing evidence", r.code === SHIP_EXIT.OK);
+  check("local Bugbot reruns once for the moved base", deps.counters.local === 1);
+  check("consolidation reruns once", deps.counters.review === 1);
+  check("new base SHA is checkpointed", ss.store.state?.reviewBaseSha === "moved-base");
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("stale CodeRabbit head cannot satisfy a resumed CLEAR checkpoint");
+{
+  const ss = makeStateStore();
+  const reviewed = withExactReviewEvidence({
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    simplifyDone: true,
+  });
+  Object.assign(reviewed, {
+    reviewers: ["coderabbit"],
+    reviewCodeRabbitRequired: true,
+    codeRabbitHead: "stale-head",
+  });
+  ss.store.state = reviewed;
+  let waits = 0;
+  const deps = makeDeps({ ...ss, waitForBots: () => (waits++, 0) });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true, reviewers: ["coderabbit"] }),
+    deps,
+  });
+  check("exits OK after current-head CodeRabbit evidence", r.code === SHIP_EXIT.OK);
+  check("exact local Bugbot evidence remains reusable", deps.counters.local === 0);
+  check("CodeRabbit wait reruns", waits === 1);
+  check(
+    "stale CodeRabbit evidence triggers an explicit current-head review request",
+    deps.ghCalls.some(
+      (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+    )
+  );
+  check("consolidation reruns", deps.counters.review === 1);
+  check("fresh CodeRabbit head is checkpointed", ss.store.state?.codeRabbitHead === "fakehead");
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("adding CodeRabbit on resume explicitly triggers its first current-head review");
+{
+  const ss = makeStateStore();
+  ss.store.state = withExactReviewEvidence({
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    simplifyDone: true,
+  });
+  let waits = 0;
+  const deps = makeDeps({ ...ss, waitForBots: () => (waits++, 0) });
+  const r = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, auto: true, autoMerge: true, reviewers: ["coderabbit"] }),
+    deps,
+  });
+  check("resumed review converges", r.code === SHIP_EXIT.OK);
+  check("CodeRabbit is awaited", waits === 1);
+  check(
+    "newly selected CodeRabbit receives an explicit review request",
+    deps.ghCalls.some(
+      (call) => call.includes("pr comment") && call.includes("@coderabbitai review")
+    )
+  );
+  check("new reviewer set is checkpointed", ss.store.state?.reviewers?.[0] === "coderabbit");
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("resume with state.simplifyDone → simplify NOT re-run; ship completes");
+{
+  const ss = makeStateStore();
+  ss.store.state = withExactReviewEvidence({
+    recon: "RECON",
+    specReady: true,
+    plan: PLAN_TEXT,
+    planReviewed: true,
+    planApproved: true,
+    followUpDone: true,
+    buildDone: true,
+    branch: "feat/AIO-163-add-ship-command",
+    worktreePath: "/tmp/wt",
+    prNumber: 77,
+    reviewRound: 1,
+    simplifyDone: true,
+  });
   let simplifyCalls = 0;
   const deps = makeDeps({
     ...ss,
@@ -439,13 +580,15 @@ console.log("resume with state.simplifyDone → simplify NOT re-run; ship comple
   });
   check("exits OK", r.code === SHIP_EXIT.OK);
   check("simplify skipped on resume (checkpoint honored)", simplifyCalls === 0);
+  check("exact-head local Bugbot artifact is reused", deps.counters.local === 0);
+  check("consolidation is not re-run", deps.counters.review === 0);
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
 console.log("resume without simplifyDone but reviewClear intact → simplify DOES run");
 {
   const ss = makeStateStore();
-  ss.store.state = {
+  ss.store.state = withExactReviewEvidence({
     recon: "RECON",
     specReady: true,
     plan: PLAN_TEXT,
@@ -457,9 +600,7 @@ console.log("resume without simplifyDone but reviewClear intact → simplify DOE
     worktreePath: "/tmp/wt",
     prNumber: 77,
     reviewRound: 1,
-    reviewClear: true,
-    reviewHead: "fakehead",
-  };
+  });
   let simplifyCalls = 0;
   const deps = makeDeps({
     ...ss,
@@ -475,7 +616,9 @@ console.log("resume without simplifyDone but reviewClear intact → simplify DOE
     deps,
   });
   check("exits OK", r.code === SHIP_EXIT.OK);
-  check("simplify ran once (review not re-run, simplify not skipped)", simplifyCalls === 1);
+  check("simplify ran once (exact review was reused)", simplifyCalls === 1);
+  check("local Bugbot did not rerun", deps.counters.local === 0);
+  check("consolidation did not rerun", deps.counters.review === 0);
   check("simplifyDone checkpointed after the pass", ss.store.state?.simplifyDone === true);
   rmSync(deps.repo, { recursive: true, force: true });
 }

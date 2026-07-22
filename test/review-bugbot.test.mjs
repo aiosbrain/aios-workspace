@@ -3,6 +3,7 @@ import {
   detectBugbotClear,
   buildBugbotPrompt,
   hasCriticalOrHighFindings,
+  hasUnstructuredSeverityClaim,
   SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
   retryReviewOnRetriable,
@@ -18,6 +19,72 @@ function check(label, cond) {
     console.log(`  ${RED}✗${NC} ${label}`);
     failed++;
   }
+}
+
+console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
+{
+  check(
+    "severity-leading auth bypass blocks",
+    hasUnstructuredSeverityClaim("Critical auth bypass in the callback route", "medium")
+  );
+  check(
+    "assertive finding prose blocks",
+    hasUnstructuredSeverityClaim("Found a High correctness regression in retry handling", "medium")
+  );
+  check(
+    "progress narration is ignored",
+    !hasUnstructuredSeverityClaim("Checking for Critical or High findings", "medium")
+  );
+  check(
+    "negative result prose is ignored",
+    !hasUnstructuredSeverityClaim("There are no Critical or High security findings", "medium")
+  );
+  check(
+    "generic confidence prose is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence after reviewing the validators", "medium")
+  );
+  check(
+    "risk classification prose is ignored",
+    !hasUnstructuredSeverityClaim("Low risk change", "low")
+  );
+  check(
+    "covered regression evidence is ignored",
+    !hasUnstructuredSeverityClaim("Medium regression covered by tests", "medium")
+  );
+  check(
+    "risk classification with a concrete bypass still blocks",
+    hasUnstructuredSeverityClaim("High risk change exposes an auth bypass", "medium")
+  );
+  check(
+    "severity-leading unresolved regression still blocks",
+    hasUnstructuredSeverityClaim("Medium correctness regression in retry handling", "medium")
+  );
+  check(
+    "negated mitigation does not hide a concrete bypass",
+    hasUnstructuredSeverityClaim("High auth bypass is not mitigated", "medium")
+  );
+  check(
+    "high-level security narration is ignored",
+    !hasUnstructuredSeverityClaim(
+      "High-level review of the security surface: no concerns.",
+      "medium"
+    )
+  );
+  check(
+    "medium confidence narration is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence the auth changes are correct.", "medium")
+  );
+  check(
+    "high-level summary narration is ignored",
+    !hasUnstructuredSeverityClaim("High-level summary: the error handling looks fine.", "medium")
+  );
+  check(
+    "medium-level accepted risk narration is ignored",
+    !hasUnstructuredSeverityClaim(
+      "Medium-level risk in the retry path is acceptable and well covered.",
+      "medium"
+    )
+  );
 }
 
 console.log("detectBugbotClear");

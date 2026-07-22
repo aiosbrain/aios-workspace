@@ -68,6 +68,7 @@ function makeDeps(over = {}) {
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,
@@ -85,6 +86,7 @@ function makeDeps(over = {}) {
     },
     ghExec: (argv) => {
       const a = argv.join(" ");
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks"))
         return {
           code: 0,

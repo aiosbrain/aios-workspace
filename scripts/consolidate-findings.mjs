@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * consolidate-findings.mjs — `aios consolidate-findings`: merge every independent review
- * of a PR (CI checks, Cursor Bugbot, CodeRabbit, an optional GPT-5.5 review) plus the PR
+ * of a PR (CI checks, mandatory Local Bugbot, current-head CodeRabbit, and an optional
+ * GPT-5.5 review) plus the PR
  * diff into ONE deterministic, severity-ranked finding list the builder can act on.
  *
  * Pipeline: gather → deterministic pre-extract → model consolidation → deterministic
@@ -37,7 +38,11 @@ import { c } from "./relay-core.mjs";
 import { callPromptModel } from "./model-call.mjs";
 import { detectRepo } from "./pr.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import { hasCriticalOrHighFindings, SEVERITY_RANK } from "./review-bugbot.mjs";
+import {
+  hasCriticalOrHighFindings,
+  hasFindingsAtOrAbove,
+  SEVERITY_RANK,
+} from "./review-bugbot.mjs";
 import { DIFF_CAP } from "./build.mjs";
 
 const ISSUE_RE = /^AIO-\d+$/;
@@ -103,6 +108,7 @@ export function parseConsolidateArgs(args) {
     issue: flag("--issue"),
     round: parseInt(flag("--round") ?? "1", 10),
     repoSlug: flag("--repo"),
+    localBugbotReview: flag("--local-bugbot-review"),
     gptReview: flag("--gpt-review"),
     out: flag("--out"),
     loopProfile: flag("--loop-profile"),
@@ -198,15 +204,13 @@ export function parseCheckResults(stdout) {
   return { checks, ciRed, ciPending, parsed: true };
 }
 
-// Bugbot posts `**High Severity**`-style headers on its inline comments.
-export function extractBugbotSeverities(comments) {
-  let max = null;
-  for (const cm of comments ?? []) {
-    if (!/cursor/i.test(cm.user ?? "")) continue;
-    const m = (cm.body ?? "").match(/\*\*(Critical|High|Medium|Low)\s+Severity\*\*/i);
-    if (m) max = maxSev(max, normSev(m[1]));
+// Local Bugbot emits the shared structured finding dialect. Ask the canonical matcher for
+// the highest threshold present so prose such as "no Critical findings" cannot false-positive.
+export function extractLocalBugbotSeverities(markdown) {
+  for (const severity of ["Critical", "High", "Medium", "Low"]) {
+    if (hasFindingsAtOrAbove(markdown, severity)) return severity;
   }
-  return max;
+  return null;
 }
 
 // GPT-5.5 review markdown lists findings as `- \`High\` \`file\`: …`.
@@ -235,9 +239,9 @@ export function extractCodeRabbitSeverities(comments) {
 
 // Deterministic pre-extraction: the highest severity each source independently reported,
 // plus whether CI is red. Feeds the fail-closed post-validation.
-export function preExtractSeverities({ checks, bugbot, coderabbit, gpt } = {}) {
+export function preExtractSeverities({ checks, localBugbot, coderabbit, gpt } = {}) {
   const sourceMax = [
-    extractBugbotSeverities(bugbot),
+    extractLocalBugbotSeverities(localBugbot),
     extractCodeRabbitSeverities(coderabbit),
     extractGptSeverities(gpt),
   ].reduce((acc, s) => maxSev(acc, s), null);
@@ -249,7 +253,17 @@ export function preExtractSeverities({ checks, bugbot, coderabbit, gpt } = {}) {
 // the consolidation instruction and every gathered input (incl. the PR diff, so plan-
 // conformance findings are grounded).
 export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
-  const { pr, issue, checks, prDiff, issueComments, inlineComments, reviews, gptMarkdown } = inputs;
+  const {
+    pr,
+    issue,
+    checks,
+    prDiff,
+    issueComments,
+    inlineComments,
+    reviews,
+    localBugbotMarkdown,
+    gptMarkdown,
+  } = inputs;
   const asJson = (v) => JSON.stringify(v ?? [], null, 2);
   const checkLines = checks?.checks?.length
     ? checks.checks
@@ -266,7 +280,7 @@ export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
     `You are CONSOLIDATING every independent review of PR #${pr ?? "?"} (${issue ?? "?"}) into ONE finding list.`,
     "Instructions:",
     "- Dedupe findings that describe the same issue across sources.",
-    "- Tag every merged finding with its origin: `(source: Bugbot|CodeRabbit|GPT-5.5)`.",
+    "- Tag every merged finding with its origin: `(source: Local Bugbot|CodeRabbit|GPT-5.5)`.",
     "- Tag any AIOS-rule / plan-conformance finding with `(plan-conformance)`.",
     "- Rank findings by severity (Critical > High > Medium > Low).",
     "- Emit EXACTLY the `## Output format` structure above, using the `[severity] file:line — …` bracket form.",
@@ -280,15 +294,19 @@ export function buildConsolidatePrompt(reviewerPrompt, inputs = {}) {
     "",
     prDiff || "(no diff)",
     "",
-    "## Bugbot + CodeRabbit issue comments",
+    "## Local Bugbot review",
+    "",
+    localBugbotMarkdown || "(missing — caller must fail before this prompt)",
+    "",
+    "## Current-head CodeRabbit issue comments",
     "",
     asJson(issueComments),
     "",
-    "## Bugbot + CodeRabbit inline diff comments",
+    "## Current-head CodeRabbit inline diff comments",
     "",
     asJson(inlineComments),
     "",
-    "## Submitted reviews",
+    "## Current-head CodeRabbit submitted reviews",
     "",
     asJson(reviews),
     "",
@@ -448,10 +466,23 @@ function safeJsonArray(s) {
   }
 }
 
-const BOT_SELECT = 'select(.user.login | test("cursor|coderabbit"))';
+const CODERABBIT_SELECT = 'select(.user.login | test("coderabbit"; "i"))';
+
+export function filterCurrentHeadCodeRabbit(records, latestCommitAt) {
+  const boundary = new Date(latestCommitAt ?? "");
+  if (!Number.isFinite(boundary.getTime())) {
+    throw new Error("latest PR commit timestamp is unavailable");
+  }
+  return (records ?? []).filter((record) => {
+    if (!/coderabbit/i.test(record.user ?? "")) return false;
+    const timestamp = record.submitted_at ?? record.created_at;
+    const at = new Date(timestamp ?? "");
+    return Number.isFinite(at.getTime()) && at >= boundary;
+  });
+}
 
 // Gather every input per code-reviewer.md §"How to gather inputs" — now INCLUDING the PR diff.
-export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
+export function gatherInputs({ runGh, slug, pr, localBugbotReviewPath, gptReviewPath } = {}) {
   // 1. CI checks (tolerate a red/pending board — it's data, not a crash).
   const checksRes = runGh(
     ["pr", "checks", String(pr), "--repo", slug, "--json", "name,state,bucket"],
@@ -467,39 +498,74 @@ export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
   const noChecksBenign = /no checks reported/i.test(checksRes.stderr ?? "");
   checks.unavailable = code !== 0 && !checks.parsed && !checks.ciRed && !noChecksBenign;
 
-  // 2. PR diff (capped at DIFF_CAP with an explicit marker so the model knows it's clipped).
+  // 2. Exact PR-head freshness boundary. Without it, stale CodeRabbit text could be reused.
+  const latestCommitRaw = runGh([
+    "api",
+    `repos/${slug}/pulls/${pr}/commits`,
+    "--jq",
+    ".[-1] | {sha: .sha, committed_at: (.commit.committer.date // .commit.author.date)}",
+  ]);
+  let latestCommit;
+  try {
+    latestCommit = JSON.parse(latestCommitRaw);
+  } catch {
+    latestCommit = null;
+  }
+  if (!latestCommit?.sha || !latestCommit?.committed_at) {
+    throw new Error("latest PR commit metadata is unavailable");
+  }
+
+  // 3. PR diff (capped at DIFF_CAP with an explicit marker so the model knows it's clipped).
   let prDiff = runGh(["pr", "diff", String(pr), "--repo", slug]);
   if ((prDiff?.length ?? 0) > DIFF_CAP) {
     prDiff = prDiff.slice(0, DIFF_CAP) + `\n\n(diff truncated at ${DIFF_CAP} chars)`;
   }
 
-  // 3-5. Bot issue comments, inline diff comments, submitted reviews (cursor|coderabbit).
-  const issueComments = safeJsonArray(
-    runGh([
-      "api",
-      `repos/${slug}/issues/${pr}/comments`,
-      "--jq",
-      `[.[] | ${BOT_SELECT} | {user: .user.login, body: .body, created_at: .created_at}]`,
-    ])
+  // 4-6. CodeRabbit issue comments, inline comments, and submitted reviews. Every record
+  // carries its timestamp and anything older than the latest commit is discarded.
+  const issueComments = filterCurrentHeadCodeRabbit(
+    safeJsonArray(
+      runGh([
+        "api",
+        `repos/${slug}/issues/${pr}/comments`,
+        "--jq",
+        `[.[] | ${CODERABBIT_SELECT} | {user: .user.login, body: .body, created_at: .created_at}]`,
+      ])
+    ),
+    latestCommit.committed_at
   );
-  const inlineComments = safeJsonArray(
-    runGh([
-      "api",
-      `repos/${slug}/pulls/${pr}/comments`,
-      "--jq",
-      `[.[] | ${BOT_SELECT} | {user: .user.login, path: .path, line: .line, body: .body}]`,
-    ])
+  const inlineComments = filterCurrentHeadCodeRabbit(
+    safeJsonArray(
+      runGh([
+        "api",
+        `repos/${slug}/pulls/${pr}/comments`,
+        "--jq",
+        `[.[] | ${CODERABBIT_SELECT} | {user: .user.login, path: .path, line: .line, body: .body, created_at: .created_at}]`,
+      ])
+    ),
+    latestCommit.committed_at
   );
-  const reviews = safeJsonArray(
-    runGh([
-      "api",
-      `repos/${slug}/pulls/${pr}/reviews`,
-      "--jq",
-      `[.[] | ${BOT_SELECT} | {user: .user.login, state: .state, body: .body}]`,
-    ])
+  const reviews = filterCurrentHeadCodeRabbit(
+    safeJsonArray(
+      runGh([
+        "api",
+        `repos/${slug}/pulls/${pr}/reviews`,
+        "--jq",
+        `[.[] | ${CODERABBIT_SELECT} | {user: .user.login, state: .state, body: .body, submitted_at: .submitted_at}]`,
+      ])
+    ),
+    latestCommit.committed_at
   );
 
-  // 6. Optional GPT-5.5 review markdown from a file (capped).
+  // 7. Mandatory Local Bugbot artifact plus optional GPT-5.5 markdown. Local evidence is never
+  // truncated: doing so could hide a structured blocker from deterministic pre-extraction.
+  if (!localBugbotReviewPath || !existsSync(localBugbotReviewPath)) {
+    throw new Error(
+      `--local-bugbot-review file not found: ${localBugbotReviewPath ?? "(missing)"}`
+    );
+  }
+  const localBugbotMarkdown = readFileSync(localBugbotReviewPath, "utf8");
+
   let gptMarkdown = null;
   if (gptReviewPath) {
     if (!existsSync(gptReviewPath))
@@ -511,7 +577,17 @@ export function gatherInputs({ runGh, slug, pr, gptReviewPath } = {}) {
     }
   }
 
-  return { pr, checks, prDiff, issueComments, inlineComments, reviews, gptMarkdown };
+  return {
+    pr,
+    checks,
+    prDiff,
+    latestCommit,
+    issueComments,
+    inlineComments,
+    reviews,
+    localBugbotMarkdown,
+    gptMarkdown,
+  };
 }
 
 // ── public entry ──────────────────────────────────────────────────────────────
@@ -520,7 +596,7 @@ function usage() {
   console.log(
     [
       "",
-      c.blue("aios consolidate-findings — merge CI + bot + GPT reviews into one finding list"),
+      c.blue("aios consolidate-findings — merge CI + Local Bugbot + CodeRabbit + GPT reviews"),
       "",
       "usage:",
       "  aios consolidate-findings --pr <n> --issue AIO-<n> [options]",
@@ -530,6 +606,7 @@ function usage() {
       "  --issue AIO-<n>     issue key (required; drives the output path)",
       "  --round N           build round (default: 1) — output is findings-r<N>.md",
       "  --repo owner/repo   GitHub target slug (default: detected from git remote)",
+      "  --local-bugbot-review <path> mandatory exact-head Local Bugbot markdown artifact",
       "  --gpt-review <path> include a GPT-5.5 review markdown file in the consolidation",
       "  --loop-profile light select the light loop model profile (forwarded by aios ship --loop light)",
       "  --out <path>        override the output path (default: .aios/loop/<issue>/findings-r<N>.md)",
@@ -562,6 +639,10 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
     console.error(c.red("error: --issue AIO-<n> is required (e.g. --issue AIO-161)."));
     return 1;
   }
+  if (!opts.localBugbotReview) {
+    console.error(c.red("error: --local-bugbot-review <path> is required."));
+    return 1;
+  }
   const round = Number.isFinite(opts.round) && opts.round > 0 ? opts.round : 1;
 
   const runGh = deps.runGh ?? defaultRunGh;
@@ -584,7 +665,13 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   // Gather. Only a NON-tolerated gh failure (auth/network on diff/comments) is an error.
   let inputs;
   try {
-    inputs = gatherInputs({ runGh, slug, pr: opts.pr, gptReviewPath: opts.gptReview });
+    inputs = gatherInputs({
+      runGh,
+      slug,
+      pr: opts.pr,
+      localBugbotReviewPath: opts.localBugbotReview,
+      gptReviewPath: opts.gptReview,
+    });
   } catch (e) {
     console.error(c.red(`error: gathering inputs failed: ${e.message}`));
     return 1;
@@ -604,12 +691,9 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   }
 
   // Deterministic pre-extraction (single severity dialect). Scan EVERY gathered textual
-  // source for BOTH bots — inline diff comments, issue comments, AND submitted PR reviews.
-  // Each extractor self-filters by bot login, so feeding the union to both is safe and means
-  // a Critical/High that appears ONLY in a Bugbot issue comment or in a submitted review (of
-  // either bot) still forces the fail-closed max-severity inheritance below. (Previously only
-  // inline comments — plus issue comments for CodeRabbit — were scanned, so a blocker present
-  // solely in a review body or a Bugbot issue comment could be model-dropped to CLEAR.)
+  // source — mandatory Local Bugbot markdown plus current-head CodeRabbit issue comments,
+  // inline comments, and submitted reviews. A blocker that the model omits still forces the
+  // fail-closed max-severity inheritance below.
   const allBotText = [
     ...(inputs.inlineComments ?? []),
     ...(inputs.issueComments ?? []),
@@ -617,7 +701,7 @@ export async function cmdConsolidateFindings(repo, args, deps = {}) {
   ];
   const { sourceMax, ciRed, ciPending } = preExtractSeverities({
     checks: inputs.checks,
-    bugbot: allBotText,
+    localBugbot: inputs.localBugbotMarkdown,
     coderabbit: allBotText,
     gpt: inputs.gptMarkdown,
   });

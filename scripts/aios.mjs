@@ -2618,15 +2618,15 @@ usage:
     [--model id] [--effort level]          override the configured author for this batch only
   aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
     [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
-  aios consolidate-findings --pr <n>    merge CI + Bugbot + CodeRabbit + GPT reviews + the PR
-    --issue AIO-<n> [--round N]         diff into one severity-ranked finding list (fail-closed)
-    [--repo owner/repo] [--gpt-review p]  → .aios/loop/<issue>/findings-r<N>.md; feed to aios build
+  aios consolidate-findings --pr <n>    merge CI + exact Local Bugbot + current-head CodeRabbit
+    --issue AIO-<n> --local-bugbot-review <path>  + GPT + PR diff; [--round N] [--repo owner/repo]
+    [--gpt-review p]                    → .aios/loop/<issue>/findings-r<N>.md; feed to aios build
     [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)
   aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
     [--base ref] [--worktree path]      requires an existing build worktree for the branch
   aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→
-    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup (plan + merge gates default on)
-    [--reviewers b,g] [--dry-run]        --dry-run prints the step plan (offline, no key needed)
+    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup; safety rejects --auto-merge
+    [--reviewers coderabbit,gpt-5.5] [--dry-run]  Local Bugbot mandatory; bugbot alias deprecated
     [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)
   aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time
     --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run

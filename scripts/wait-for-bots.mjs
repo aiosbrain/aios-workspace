@@ -2,21 +2,21 @@
 /**
  * wait-for-bots.mjs — block until async bot reviews have posted substantive feedback on a PR.
  *
- * Polls every 30s, checking both PR comments/reviews AND GitHub check runs, until
- * cursor[bot] (Bugbot) and coderabbitai[bot] (CodeRabbit) have both posted meaningful
- * signals after the PR's latest push. Rate-limit stubs and stale pre-push comments do
- * not satisfy the gate.
+ * Polls every 30s until coderabbitai[bot] has posted a substantive issue comment,
+ * inline comment, or submitted review after the PR's latest commit. Rate-limit stubs,
+ * stale pre-push comments, and successful check runs without review text do not satisfy
+ * the gate.
  *
  * Usage:
  *   node scripts/wait-for-bots.mjs --pr <number> [--repo owner/repo] [--timeout 10]
- *   node scripts/wait-for-bots.mjs --pr 44 --repo AIOS-alpha/aios-team-brain
+ *   node scripts/wait-for-bots.mjs --pr 44 --repo aiosbrain/aios-team-brain
  *
- * Can be invoked cross-repo — pass --repo explicitly to target any AIOS-alpha repo.
+ * Can be invoked cross-repo — pass --repo explicitly to target any aiosbrain repo.
  *
  * Exit codes:
- *   0 — all bots posted substantive signals (or timeout reached with --any)
+ *   0 — CodeRabbit posted a substantive current-head signal (or timeout reached with --any)
  *   1 — usage error
- *   2 — timeout reached with a bot still missing (the DEFAULT — require all bots)
+ *   2 — timeout reached with CodeRabbit still missing (the default)
  *
  * The default is require-all: a missing bot at timeout exits 2 so the caller does NOT
  * proceed to the Code Reviewer on incomplete signals. Pass --any to restore the old
@@ -29,16 +29,19 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const BOT_CONFIG = {
-  "cursor[bot]": {
-    // Satisfied by a non-stub issue comment OR a completed Bugbot check run
-    checkNamePattern: /Bugbot/i,
-    stubPatterns: [/usage limit reached/i, /couldn't run/i, /could not run/i],
-  },
+export const BOT_CONFIG = {
   "coderabbitai[bot]": {
-    // Satisfied by a non-stub issue comment (walkthrough) or inline review
-    checkNamePattern: /CodeRabbit/i,
-    stubPatterns: [/rate limited/i, /review limit reached/i, /prepaid credits/i],
+    // Only substantive text is evidence. A successful CodeRabbit check run alone is not.
+    stubPatterns: [
+      /rate limited/i,
+      /review limit reached/i,
+      /prepaid credits/i,
+      /review was skipped/i,
+      /unable to review/i,
+      /<summary>\s*Action performed\s*<\/summary>/i,
+      /\bReview triggered\./i,
+      /incremental review system/i,
+    ],
   },
 };
 
@@ -47,8 +50,8 @@ const SUMMARY_LINES = 4;
 
 // Select which bots to gate on from a --bots value (comma-separated or repeated), validating
 // each name against BOT_CONFIG. Unknown names are a usage error (throws). Absent/empty → all
-// configured bots (default behavior). Exported + pure so `aios ship` can gate on cursor[bot]
-// alone without re-implementing validation. `botsArg` may be a string, an array (repeated
+// configured bots (default behavior). Exported + pure so `aios ship` can select CodeRabbit
+// without re-implementing validation. `botsArg` may be a string, an array (repeated
 // flag), or null/undefined.
 export function selectBots(config, botsArg) {
   const keys = Object.keys(config);
@@ -71,7 +74,7 @@ function usage() {
   console.error(
     [
       "",
-      "wait-for-bots.mjs — poll until Bugbot + CodeRabbit post substantive PR feedback",
+      "wait-for-bots.mjs — poll until CodeRabbit posts substantive current-head PR feedback",
       "",
       "usage:",
       "  node scripts/wait-for-bots.mjs --pr <number> [--repo owner/repo] [--timeout 10]",
@@ -80,11 +83,11 @@ function usage() {
       "  --pr <n>          PR number (required)",
       "  --repo <slug>     owner/repo (default: detected from git remote)",
       "  --timeout <min>   max wait in minutes (default: 10)",
-      "  --bots <list>     comma-separated bots to gate on (default: all; e.g. cursor[bot])",
-      "  --any             exit 0 on timeout even if a bot is missing (default: exit 2)",
-      "  --require-all     no-op alias for the default (require all bots; exit 2 on timeout)",
+      "  --bots <list>     comma-separated bots to gate on (default: coderabbitai[bot])",
+      "  --any             exit 0 on timeout if CodeRabbit is missing (default: exit 2)",
+      "  --require-all     no-op alias for the default (exit 2 when CodeRabbit is missing)",
       "",
-      "Cross-repo: pass --repo explicitly, e.g. --repo AIOS-alpha/aios-team-brain",
+      "Cross-repo: pass --repo explicitly, e.g. --repo aiosbrain/aios-team-brain",
     ].join("\n")
   );
 }
@@ -112,17 +115,19 @@ function detectRepo() {
   }
 }
 
-function getLatestPushTime(repo, pr) {
-  // Use the PR's updated_at as a proxy for the latest push — conservative lower bound.
-  // More accurate: latest commit author date from the PR's commit list.
+export function getLatestPush(repo, pr) {
   try {
     const raw = gh([
       "api",
       `repos/${repo}/pulls/${pr}/commits`,
       "--jq",
-      ".[-1].commit.author.date",
+      ".[-1] | {sha: .sha, committedAt: .commit.committer.date}",
     ]);
-    return raw ? new Date(raw) : null;
+    const value = JSON.parse(raw);
+    const committedAt = new Date(value.committedAt);
+    return value.sha && Number.isFinite(committedAt.getTime())
+      ? { sha: value.sha, committedAt }
+      : null;
   } catch {
     return null;
   }
@@ -133,7 +138,7 @@ function fetchIssueComments(repo, pr) {
     "api",
     `repos/${repo}/issues/${pr}/comments`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
 }
@@ -144,7 +149,7 @@ function fetchPullReviewComments(repo, pr) {
     "api",
     `repos/${repo}/pulls/${pr}/comments`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
 }
@@ -154,105 +159,88 @@ function fetchPullReviews(repo, pr) {
     "api",
     `repos/${repo}/pulls/${pr}/reviews`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at}]",
+    "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
-}
-
-function fetchCheckRuns(repo, pr) {
-  try {
-    const sha = gh([
-      "pr",
-      "view",
-      String(pr),
-      "--repo",
-      repo,
-      "--json",
-      "headRefOid",
-      "--jq",
-      ".headRefOid",
-    ]);
-    if (!sha) return [];
-    const raw = gh([
-      "api",
-      `repos/${repo}/commits/${sha}/check-runs`,
-      "--jq",
-      "[.check_runs[] | {name, status, conclusion, completed_at}]",
-    ]);
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
 }
 
 function isStub(body, stubPatterns) {
   return stubPatterns.some((p) => p.test(body ?? ""));
 }
 
-function isSubstantive(body) {
+export function isSubstantive(body) {
   // A substantive review has more than just HTML comments and stub messages
   const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
-  return stripped.length > 100;
+  if (stripped.length <= 100) return false;
+  return (
+    /review|walkthrough|summary|finding|issue|bug|recommend|potential|security|severity|regression|no issues|no bugs|approved/i.test(
+      stripped
+    ) || /(?:^|\n)\s*(?:#{1,6}|[-*] |\d+[.)] |\|)/.test(stripped)
+  );
+}
+
+export function hasVisibleReviewText(body) {
+  // Inline review comments are findings attached to a specific diff location and are
+  // often intentionally terse. Require visible human-readable text, but do not apply
+  // the long-form summary threshold used for top-level comments and review bodies.
+  const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
+  if (stripped.length < 8 || !/[\p{L}]/u.test(stripped)) return false;
+  return /issue|bug|error|unsafe|risk|fix|change|rename|potential|consider|should|must|regression|finding|nit|why|incorrect|security|handle|null/i.test(
+    stripped
+  );
 }
 
 /**
  * Determine if a bot has posted a substantive signal after latestPush.
- * Checks: issue comments, inline PR comments, PR reviews, and check runs.
+ * Checks only issue comments, inline PR comments, and submitted PR reviews. Check runs
+ * are intentionally not evidence: they can complete successfully without review findings.
  */
-function checkBotReady(
-  botUser,
-  config,
-  issueComments,
-  pullComments,
-  reviews,
-  checkRuns,
-  latestPush
-) {
+export function checkBotReady(botUser, config, issueComments, pullComments, reviews, latestPush) {
+  const boundary = latestPush instanceof Date ? latestPush : latestPush?.committedAt;
   const after = (dateStr) => {
-    if (!latestPush || !dateStr) return true; // no push time → don't filter
-    return new Date(dateStr) > latestPush;
+    if (!boundary || !dateStr) return false;
+    const at = new Date(dateStr);
+    return Number.isFinite(at.getTime()) && at >= boundary;
+  };
+  const currentSha = (record) => !latestPush?.sha || record.commit_id === latestPush.sha;
+  // Issue comments (the walkthrough summary) carry no commit_id, so in SHA mode they count
+  // only when the RAW body references the current head (CodeRabbit embeds reviewed-commit
+  // SHAs in its walkthrough markers/links). A 12+ hex-char prefix is unambiguous; anything
+  // that does not reference the head is skipped — fail closed, never accept stale.
+  const referencesHead = (body) => {
+    if (!latestPush?.sha) return true; // timestamp-only fallback mode
+    return String(body ?? "")
+      .toLowerCase()
+      .includes(String(latestPush.sha).toLowerCase().slice(0, 12));
   };
 
-  // Issue comments (e.g. CodeRabbit walkthrough, Bugbot summary)
+  // CodeRabbit issue comments (for example, the walkthrough summary)
   for (const c of issueComments) {
     if (c.user !== botUser) continue;
+    if (!referencesHead(c.body)) continue;
     if (!after(c.created_at)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
     if (isSubstantive(c.body)) return { ready: true, signal: "issue-comment", preview: c.body };
   }
 
-  // Inline PR review comments (Bugbot + CodeRabbit both post here)
+  // CodeRabbit inline PR review comments
   for (const c of pullComments) {
     if (c.user !== botUser) continue;
     if (!after(c.created_at)) continue;
+    if (!currentSha(c)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
-    return { ready: true, signal: "inline-comment", preview: c.body };
+    if (hasVisibleReviewText(c.body)) {
+      return { ready: true, signal: "inline-comment", preview: c.body };
+    }
   }
 
   // PR reviews (submitted review objects)
   for (const r of reviews) {
     if (r.user !== botUser) continue;
     if (!after(r.submitted_at)) continue;
+    if (!currentSha(r)) continue;
     if (isStub(r.body, config.stubPatterns)) continue;
-    return { ready: true, signal: "review", preview: r.body };
-  }
-
-  // GitHub check runs (Bugbot often completes as a check run with no comment)
-  if (config.checkNamePattern) {
-    for (const run of checkRuns) {
-      if (!config.checkNamePattern.test(run.name)) continue;
-      if (run.status !== "completed") continue;
-      if (!after(run.completed_at)) continue;
-      // neutral / skipped = intentional skip (config/docs-only PR, or Bugbot skipping a
-      // trivial push) — counts as done, same as success.
-      if (
-        run.conclusion === "success" ||
-        run.conclusion === "neutral" ||
-        run.conclusion === "skipped"
-      ) {
-        return { ready: true, signal: `check-run:${run.conclusion}`, preview: run.name };
-      }
-    }
+    if (isSubstantive(r.body)) return { ready: true, signal: "review", preview: r.body };
   }
 
   return { ready: false };
@@ -318,7 +306,11 @@ async function main() {
     process.exit(1);
   }
 
-  const timeoutMin = parseInt(values.timeout, 10) || 10;
+  const timeoutMin = Number(values.timeout);
+  if (!Number.isFinite(timeoutMin) || timeoutMin < 0) {
+    console.error("error: --timeout must be a non-negative number of minutes");
+    process.exit(1);
+  }
   const timeoutMs = timeoutMin * 60 * 1000;
   // Default: require all bots (exit 2 on a missing bot at timeout). --any restores the
   // old proceed-anyway behavior (exit 0). --require-all is accepted but is now the default.
@@ -331,15 +323,22 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Waiting for bot reviews on PR #${prNumber} (${repo})`);
-  console.log(`Bots: ${botUsers.join(", ")}`);
+  console.log(`Waiting for CodeRabbit review evidence on PR #${prNumber} (${repo})`);
+  console.log(`Bot: ${botUsers.join(", ")}`);
   console.log(`Timeout: ${timeoutMin} min | Poll: ${POLL_INTERVAL_MS / 1000}s\n`);
 
-  const latestPush = getLatestPushTime(repo, prNumber);
+  // No timestamp-only fallback: without the head SHA the gate cannot bind evidence to the
+  // exact revision, so it fails closed rather than silently degrading to timestamps.
+  const latestPush = getLatestPush(repo, prNumber);
   if (latestPush) {
-    console.log(`Latest push: ${latestPush.toISOString()} (filtering stale pre-push comments)\n`);
+    console.log(
+      `Latest push: ${latestPush.committedAt.toISOString()} @ ${latestPush.sha.slice(0, 12)} (filtering stale evidence)\n`
+    );
   } else {
-    console.log("Latest push: unknown (not filtering by timestamp)\n");
+    console.error(
+      "error: latest PR commit timestamp is unavailable — cannot verify current-head CodeRabbit evidence"
+    );
+    process.exit(1);
   }
 
   const deadline = Date.now() + timeoutMs;
@@ -350,13 +349,12 @@ async function main() {
     const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
     process.stdout.write(`[${elapsed}s] Polling (attempt ${attempt})… `);
 
-    let issueComments, pullComments, reviews, checkRuns;
+    let issueComments, pullComments, reviews;
     try {
-      [issueComments, pullComments, reviews, checkRuns] = await Promise.all([
+      [issueComments, pullComments, reviews] = await Promise.all([
         Promise.resolve(fetchIssueComments(repo, prNumber)),
         Promise.resolve(fetchPullReviewComments(repo, prNumber)),
         Promise.resolve(fetchPullReviews(repo, prNumber)),
-        Promise.resolve(fetchCheckRuns(repo, prNumber)),
       ]);
     } catch (e) {
       console.log(`fetch error: ${e.message}`);
@@ -372,7 +370,6 @@ async function main() {
         issueComments,
         pullComments,
         reviews,
-        checkRuns,
         latestPush
       );
     }
@@ -380,10 +377,10 @@ async function main() {
     const missing = botUsers.filter((b) => !results[b].ready);
 
     if (missing.length === 0) {
-      console.log("all bots ready!\n");
-      console.log("=== Bot review summaries ===");
+      console.log("CodeRabbit ready!\n");
+      console.log("=== CodeRabbit review summary ===");
       for (const bot of botUsers) console.log(summarizeBot(bot, results[bot]));
-      console.log("\nProceeding to Code Reviewer.");
+      console.log("\nProceeding to findings consolidation.");
       process.exit(0);
     }
 
@@ -393,16 +390,15 @@ async function main() {
   }
 
   // Timeout — do a final check before giving up
-  let issueComments, pullComments, reviews, checkRuns;
+  let issueComments, pullComments, reviews;
   try {
-    [issueComments, pullComments, reviews, checkRuns] = await Promise.all([
+    [issueComments, pullComments, reviews] = await Promise.all([
       Promise.resolve(fetchIssueComments(repo, prNumber)),
       Promise.resolve(fetchPullReviewComments(repo, prNumber)),
       Promise.resolve(fetchPullReviews(repo, prNumber)),
-      Promise.resolve(fetchCheckRuns(repo, prNumber)),
     ]);
   } catch {
-    issueComments = pullComments = reviews = checkRuns = [];
+    issueComments = pullComments = reviews = [];
   }
 
   const finalResults = {};
@@ -413,7 +409,6 @@ async function main() {
       issueComments,
       pullComments,
       reviews,
-      checkRuns,
       latestPush
     );
   }
@@ -421,22 +416,22 @@ async function main() {
   const decision = decideTimeoutExit({ proceedOnTimeout, missing: finalMissing });
 
   if (finalMissing.length === 0) {
-    console.log("\n[final-check] All bots posted just before timeout.\n");
-    console.log("=== Bot review summaries ===");
+    console.log("\n[final-check] CodeRabbit posted just before timeout.\n");
+    console.log("=== CodeRabbit review summary ===");
     for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
-    console.log("\nProceeding to Code Reviewer.");
+    console.log("\nProceeding to findings consolidation.");
     process.exit(decision.code);
   }
 
   const elapsed = Math.round(timeoutMs / 1000);
   console.log(`\n[timeout after ${elapsed}s] Still waiting for: ${finalMissing.join(", ")}`);
-  console.log("=== Bot review summaries (partial) ===");
+  console.log("=== CodeRabbit review summary (partial) ===");
   for (const bot of botUsers) console.log(summarizeBot(bot, finalResults[bot]));
   if (decision.proceed) {
-    // --any: proceed to the Code Reviewer despite the missing bot(s).
-    console.log("\nProceeding to Code Reviewer (some bot results may be missing).");
+    // --any: proceed despite missing CodeRabbit evidence.
+    console.log("\nProceeding to findings consolidation without CodeRabbit evidence.");
   } else {
-    // Default: a bot is missing — do NOT proceed. Exit 2 so the caller waits/retries.
+    // Default: CodeRabbit is missing — do NOT proceed. Exit 2 so the caller waits/retries.
     console.log(
       `\nNot proceeding: ${finalMissing.join(", ")} did not post in time (pass --any to override).`
     );
