@@ -11,7 +11,7 @@ import { cn } from "../../lib/cn";
 type Section = "account" | "agent" | "integrations" | "skills" | "appearance" | "privacy";
 
 export const SET_SECTION = "mb-7";
-export const SET_SECTION_TITLE = "mb-2 font-display text-base font-normal";
+export const SET_SECTION_TITLE = "mb-2 font-sans text-base font-semibold";
 export const SET_SECTION_HINT =
   "mt-1.5 mb-3 text-[length:var(--aios-text-small)] leading-[1.55] text-muted-foreground";
 const KV_ROW =
@@ -59,7 +59,7 @@ function AccountSection() {
           {initial}
         </span>
         <div>
-          <div className="font-display text-lg">{displayName}</div>
+          <div className="font-sans text-lg font-semibold">{displayName}</div>
           {me?.email && (
             <div className="text-[length:var(--aios-text-small)] text-muted-foreground">
               {me.email}
@@ -114,7 +114,7 @@ export function SettingsView() {
   return (
     <div className="flex h-full min-h-0">
       <nav className="flex w-[200px] shrink-0 flex-col gap-0.5 border-r border-border-visible bg-card px-3 py-5">
-        <div className="px-2.5 pb-3 font-display text-lg font-normal">Settings</div>
+        <div className="px-2.5 pb-3 font-sans text-lg font-semibold">Settings</div>
         {SECTIONS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}

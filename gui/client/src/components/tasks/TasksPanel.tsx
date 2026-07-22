@@ -4,8 +4,19 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { toast } from "../ui/sonner";
 import { cn } from "../../lib/cn";
+import {
+  readTaskViewPreference,
+  TaskBoard,
+  TaskGrid,
+  TaskList,
+  TaskViewSwitcher,
+  taskViewStorage,
+  type TaskViewMode,
+  writeTaskViewPreference,
+} from "./TaskViews";
 import type {
   PushResponse,
+  TaskEditRequest,
   TaskEditResponse,
   TaskPushState,
   TaskRow,
@@ -18,14 +29,7 @@ const BTN_PRIMARY = cn(
   BTN,
   "border-transparent bg-primary font-semibold text-primary-foreground enabled:hover:bg-[var(--accent-hover)] enabled:hover:shadow-[var(--glow-violet)]"
 );
-const PANEL = "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
-const CELL_INPUT =
-  "w-full rounded-[6px] border border-transparent bg-transparent px-1.5 py-1 text-[13px] text-foreground hover:border-border-visible focus:border-[var(--accent-line)] focus:outline-none";
-
-// Brain-canonical status/priority vocabularies (docs/brain-api.md). The brain normalizes
-// an unrecognized status to `backlog` on push — surfaced in the panel copy below.
-const STATUSES = ["backlog", "ready", "in_progress", "blocked", "done"];
-const PRIORITIES = ["none", "low", "medium", "high", "urgent"];
+const PANEL = "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
 
 /** Local sync-state badge — sourced from `aios status`, never the brain. */
 function PushBadge({ push }: { push: TaskPushState | null }) {
@@ -56,8 +60,15 @@ export function TasksPanel() {
   const [data, setData] = useState<TasksResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null); // row_key currently saving
+  // Bumped only when a save FAILS. Keys the rendered view so the reload remounts the
+  // uncontrolled inputs back to the server value even when that value is unchanged — a
+  // successful save changes the edited field's own key, so the happy path never remounts.
+  const [revertNonce, setRevertNonce] = useState(0);
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<TaskViewMode>(() =>
+    readTaskViewPreference(taskViewStorage())
+  );
 
   const load = useCallback(async () => {
     setError(null);
@@ -75,7 +86,7 @@ export function TasksPanel() {
   // Persist a single-field patch (local-only write on the server), then reload so the
   // pushState badge reflects the new on-disk state.
   const saveField = useCallback(
-    async (row: TaskRow, patch: Record<string, unknown>) => {
+    async (row: TaskRow, patch: TaskEditRequest["patch"]) => {
       if (saving !== null) return;
       setSaving(row.row_key);
       try {
@@ -87,6 +98,12 @@ export function TasksPanel() {
         await load();
       } catch (e) {
         toast.error(`Edit failed: ${(e as Error).message}`, { duration: 8000 });
+        // The controls commit optimistically on blur/change. Re-hydrate the server value so
+        // a failed write never leaves a convincing-but-unsaved value in the UI. The reload
+        // returns the unchanged server value, so bump the nonce to force the uncontrolled
+        // inputs to remount and drop the user's unsaved text.
+        await load();
+        setRevertNonce((n) => n + 1);
       }
       setSaving(null);
     },
@@ -153,146 +170,48 @@ export function TasksPanel() {
 
   const pushState = data.pushState?.state ?? null;
   const pushDisabled = busy || pushState === "blocked" || pushState === "clean";
+  const changeView = (mode: TaskViewMode) => {
+    setViewMode(mode);
+    writeTaskViewPreference(mode, taskViewStorage());
+  };
 
   return (
     <div className={PANEL}>
       {/* header */}
-      <div className="flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
-        <span className="flex items-center gap-2">
-          <span className="text-foreground">{data.rel}</span>
-          {data.tier && (
-            <span className="rounded-full border border-border-visible bg-secondary px-2 py-px text-[10px] uppercase tracking-[var(--aios-tracking-wide)]">
-              {data.tier}
-            </span>
-          )}
-          <PushBadge push={data.pushState} />
-        </span>
-        <button className={BTN} onClick={load} disabled={busy}>
-          Refresh
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-base font-semibold text-foreground">Tasks</h1>
+          <span className="mt-0.5 flex min-w-0 items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            <span className="truncate text-foreground">{data.rel}</span>
+            {data.tier && (
+              <span className="rounded-full border border-border-visible bg-secondary px-2 py-px text-[10px] uppercase tracking-[var(--aios-tracking-wide)]">
+                {data.tier}
+              </span>
+            )}
+            <PushBadge push={data.pushState} />
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <TaskViewSwitcher value={viewMode} onChange={changeView} />
+          <button className={BTN} onClick={load} disabled={busy}>
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {/* task table */}
       {data.rows.length === 0 ? (
         <div className="text-xs text-muted-foreground">No task rows in this file.</div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border-visible">
-          <table className="w-full border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-border-visible text-left font-mono text-[11px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-                <th className="px-2.5 py-2">ID</th>
-                <th className="px-2.5 py-2">Task</th>
-                <th className="px-2.5 py-2">Status</th>
-                <th className="px-2.5 py-2">Assignee</th>
-                <th className="px-2.5 py-2">Priority</th>
-                <th className="px-2.5 py-2">Labels</th>
-                <th className="px-2.5 py-2">Parent</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((row) => (
-                <tr
-                  key={row.row_key}
-                  className={cn(
-                    "border-b border-border-visible/60 last:border-0",
-                    saving === row.row_key && "opacity-60"
-                  )}
-                >
-                  <td className="px-2.5 py-1.5 font-mono text-[12px] text-muted-foreground">
-                    {row.row_key}
-                  </td>
-                  {/* title is brain-canonical — read-only */}
-                  <td
-                    className="px-2.5 py-1.5 text-foreground"
-                    title="Title is edited in the brain, not here"
-                  >
-                    {row.title}
-                  </td>
-                  <td className="px-2.5 py-1.5">
-                    {STATUSES.includes(row.status) ? (
-                      <select
-                        className={CELL_INPUT}
-                        value={row.status}
-                        disabled={saving !== null}
-                        onChange={(e) => saveField(row, { status: e.target.value })}
-                      >
-                        {STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span
-                        className="text-xs text-muted-foreground"
-                        title="Status is outside the cockpit vocabulary — edit in the brain or markdown"
-                      >
-                        {row.status || "—"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-2.5 py-1.5">
-                    {/* uncontrolled (commit-on-blur); a derived key remounts it when the server
-                        value changes after a reload, so the field never shows a stale value. */}
-                    <input
-                      key={`assignee:${row.assignee}`}
-                      className={CELL_INPUT}
-                      defaultValue={row.assignee}
-                      disabled={saving !== null}
-                      onBlur={(e) =>
-                        e.target.value !== row.assignee &&
-                        saveField(row, { assignee: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td className="px-2.5 py-1.5">
-                    <select
-                      className={CELL_INPUT}
-                      value={PRIORITIES.includes(row.priority || "") ? row.priority || "" : ""}
-                      disabled={saving !== null}
-                      onChange={(e) => saveField(row, { priority: e.target.value })}
-                    >
-                      <option value="">—</option>
-                      {PRIORITIES.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-2.5 py-1.5">
-                    <input
-                      key={`labels:${(row.labels || []).join(",")}`}
-                      className={CELL_INPUT}
-                      defaultValue={(row.labels || []).join(", ")}
-                      placeholder="a, b"
-                      disabled={saving !== null}
-                      onBlur={(e) => {
-                        const next = e.target.value
-                          .split(",")
-                          .map((s) => s.trim())
-                          .filter(Boolean);
-                        if (next.join(",") !== (row.labels || []).join(","))
-                          saveField(row, { labels: next });
-                      }}
-                    />
-                  </td>
-                  <td className="px-2.5 py-1.5">
-                    <input
-                      key={`parent:${row.parent || ""}`}
-                      className={CELL_INPUT}
-                      defaultValue={row.parent || ""}
-                      disabled={saving !== null}
-                      onBlur={(e) =>
-                        e.target.value !== (row.parent || "") &&
-                        saveField(row, { parent: e.target.value || null })
-                      }
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div key={`view:${viewMode}:${revertNonce}`}>
+          {viewMode === "list" ? (
+            <TaskList rows={data.rows} saving={saving} onSave={saveField} />
+          ) : viewMode === "grid" ? (
+            <TaskGrid rows={data.rows} saving={saving} onSave={saveField} />
+          ) : (
+            <div className="min-h-[260px] overflow-x-auto">
+              <TaskBoard rows={data.rows} saving={saving} onSave={saveField} />
+            </div>
+          )}
         </div>
       )}
 

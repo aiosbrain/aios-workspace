@@ -19,6 +19,10 @@ const WORKSPACE_ENV_NAMES = new Set([
   "AIOS_TEAM",
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
+  // OpenRouter billing probe for the Cost panel (provider-costs.mjs). Fixed-listed like the other
+  // provider keys so an ambient key from a PREVIOUS workspace can't be used for this workspace's
+  // billing probe and mislabelled as its spend, even when the selected repo's .env omits it.
+  "OPENROUTER_API_KEY",
   "LINEAR_API_KEY",
   // Telegram alert lane (AIO-386). The GUI notifier starts automatically and addresses ONE chat, so
   // an ambient value from a different workspace would send THIS workspace's ask ids, count and repo

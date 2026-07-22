@@ -88,7 +88,7 @@ export function ChatView() {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
         {banners}
         <div className="m-auto flex w-full max-w-[640px] flex-col items-stretch gap-4">
-          <h1 className="mb-1 text-center font-display text-[clamp(1.4rem,1.1rem+1.2vw,1.9rem)] font-normal tracking-[var(--aios-tracking-tight)] text-foreground">
+          <h1 className="mb-1 text-center font-sans text-[clamp(1.25rem,1.05rem+0.8vw,1.65rem)] font-semibold tracking-[var(--aios-tracking-tight)] text-foreground">
             What are you working on?
           </h1>
           {composer}

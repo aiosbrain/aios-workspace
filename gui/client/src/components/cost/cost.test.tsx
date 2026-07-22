@@ -79,7 +79,16 @@ describe("CostBarChart", () => {
 
 // ── Settings form: a failed config GET must never turn into a config wipe ──────────────────────────
 
-const BLANK_FORM: CostSettingsFormValues = { claude: "", cursor: "", codex: "", anthropic: "" };
+const BLANK_FORM: CostSettingsFormValues = {
+  claude: "",
+  cursor: "",
+  codex: "",
+  opencode: "",
+  zai: "",
+  anthropic: "",
+  openai: "",
+  openrouter: "",
+};
 
 function renderForm(props: Partial<Parameters<typeof CostSettingsForm>[0]> = {}) {
   return renderToStaticMarkup(
@@ -105,7 +114,7 @@ describe("CostSettingsForm", () => {
     const html = renderForm({ loaded: false, loadError: "http 500" });
     const saveBtn = html.slice(html.lastIndexOf("<button"));
     expect(saveBtn).toContain('disabled=""'); // the attribute, not the Tailwind variant
-    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(4);
+    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(8);
     expect(html).toContain("editing is disabled so a save can’t wipe your existing entries");
     expect(html).toContain("Retry");
   });
@@ -113,7 +122,16 @@ describe("CostSettingsForm", () => {
   test("hydrated form is fully editable", () => {
     const html = renderForm({
       loaded: true,
-      form: { claude: "200", cursor: "20", codex: "", anthropic: "42.13" },
+      form: {
+        claude: "200",
+        cursor: "20",
+        codex: "",
+        opencode: "15",
+        zai: "10",
+        anthropic: "42.13",
+        openai: "10",
+        openrouter: "8.5",
+      },
     });
     const saveBtn = html.slice(html.lastIndexOf("<button"));
     expect(saveBtn).not.toContain('disabled=""');
@@ -125,8 +143,16 @@ describe("CostSettingsForm", () => {
 describe("config patch round-trip", () => {
   const CFG: CostConfigResponse = {
     ok: true,
-    subscriptions: { claude: 200, cursor: null, codex: 0 },
-    metered: { anthropic: { "2026-07": 42.13 }, cursor: {}, codex: {}, opencode: {} },
+    subscriptions: { claude: 200, cursor: null, codex: 0, opencode: 15, zai: 10 },
+    metered: {
+      anthropic: { "2026-07": 42.13 },
+      cursor: {},
+      codex: {},
+      openai: { "2026-07": 10 },
+      opencode: {},
+      openrouter: { "2026-07": 8.5 },
+      zai: {},
+    },
   };
 
   test("formFromConfig displays exactly what the server resolved", () => {
@@ -134,7 +160,11 @@ describe("config patch round-trip", () => {
       claude: "200",
       cursor: "",
       codex: "0",
+      opencode: "15",
+      zai: "10",
       anthropic: "42.13",
+      openai: "10",
+      openrouter: "8.5",
     });
   });
 
@@ -142,8 +172,12 @@ describe("config patch round-trip", () => {
     const built = buildConfigPatch(formFromConfig(CFG, "2026-07"), "2026-07");
     expect(built).toEqual({
       patch: {
-        subscriptions: { claude: 200, cursor: null, codex: 0 },
-        metered: { anthropic: { "2026-07": 42.13 } },
+        subscriptions: { claude: 200, cursor: null, codex: 0, opencode: 15, zai: 10 },
+        metered: {
+          anthropic: { "2026-07": 42.13 },
+          openai: { "2026-07": 10 },
+          openrouter: { "2026-07": 8.5 },
+        },
       },
     });
   });

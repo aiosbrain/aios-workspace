@@ -76,6 +76,7 @@ import { buildMaturityPayload } from "./maturity.mjs";
 import { buildCostsPayload } from "./costs.mjs";
 import { createAnalysisCache } from "./analysis-cache.mjs";
 import { readCostConfig, editableCostConfig, updateCostConfig } from "./cost-config.mjs";
+import { collectProviderActuals } from "./provider-costs.mjs";
 import {
   validateCadence,
   validateWindow,
@@ -532,10 +533,15 @@ const server = http.createServer((req, res) => {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    analysisCache
-      .get({ force: /^(1|true)$/i.test(url.searchParams.get("force") || "") })
-      .then(({ raw, ...meta }) => {
-        const payload = { ...buildCostsPayload(raw, { config: readCostConfig(repo) }), ...meta };
+    Promise.all([
+      analysisCache.get({ force: /^(1|true)$/i.test(url.searchParams.get("force") || "") }),
+      collectProviderActuals(),
+    ])
+      .then(([{ raw, ...meta }, providerActuals]) => {
+        const payload = {
+          ...buildCostsPayload(raw, { config: readCostConfig(repo), providerActuals }),
+          ...meta,
+        };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
       })
