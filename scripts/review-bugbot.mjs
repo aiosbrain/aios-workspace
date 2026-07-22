@@ -399,7 +399,7 @@ export function hasUnstructuredSeverityClaim(text, failOn = "high") {
     .some((line) => {
       if (!concreteRisk.test(line)) return false;
       if (/^\s*(?:high|medium|critical)(?:-level)?\s+(?:confidence|summary)\b/i.test(line)) return false;
-      if (/\\b(?:acceptable|no concerns?|looks? (?:fine|good|correct)|well covered)\\b/i.test(line)) return false;
+      if (/\b(?:acceptable|no concerns?|looks? (?:fine|good|correct)|well covered)\b/i.test(line)) return false;
       const resolution = resolvedEvidence.exec(line);
       if (resolution) {
         const prefix = line.slice(0, resolution.index);

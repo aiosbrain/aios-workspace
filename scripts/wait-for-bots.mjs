@@ -159,7 +159,7 @@ function fetchPullReviewComments(repo, pr) {
     "api",
     `repos/${repo}/pulls/${pr}/comments`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
 }
@@ -211,6 +211,7 @@ export function checkBotReady(botUser, config, issueComments, pullComments, revi
   // CodeRabbit issue comments (for example, the walkthrough summary)
   for (const c of issueComments) {
     if (c.user !== botUser) continue;
+    if (latestPush?.sha) continue;
     if (!after(c.created_at)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
     if (isSubstantive(c.body)) return { ready: true, signal: "issue-comment", preview: c.body };
