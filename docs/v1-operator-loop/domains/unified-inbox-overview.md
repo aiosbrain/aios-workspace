@@ -7,17 +7,17 @@
 > sections as v2. See [`../../release-status-v1.md`](../../release-status-v1.md).
 
 The Unified Inbox is one of the largest single features in the operator loop: roughly 8,800 lines
-across 21 TypeScript modules under `src/operator-loop/inbox/`, plus a CLI, a GUI API, a coordinator
-daemon, and a governance package. Each artifact is documented in detail, but that detail is spread
+across 21 TypeScript modules under `src/operator-loop/inbox/`, plus a CLI, a coordinator daemon,
+and a governance package. Each artifact is documented in detail, but that detail is spread
 across nine-plus separate docs written for people already inside the epic. This page is the missing
 entry point — read it first, then follow the table in §5 to go deeper on any one area.
 
 ## 1. What it is
 
 The Unified Inbox aggregates every demand on the operator's attention — blocking questions from
-agent workstreams ("asks") *and* observations from currently readable external channels (Gmail and
-calendar; Telegram remains an outbound alert lane until its inbound gate passes) — into one ranked,
-drainable, journal-backed local queue (`aios inbox`).
+agent workstreams ("asks") *and* observations from readable external channels such as Gmail and
+calendar — into one ranked, drainable, journal-backed local queue (`aios inbox`). Telegram has no
+automatic V1 GUI alert/ack lane; that integration is part of the V2 deferral.
 It replaces "check five tools on five different schedules" with one queue the operator drains on
 their own cadence. Everything it stores is admin-tier and local; nothing about a message's content
 ever leaves the machine except through an explicit, policy-approved send (e.g. a Gmail reply).
@@ -55,12 +55,11 @@ decision against a handle someone else (the owning runtime) issued and will itse
 disclosure gate that decides whether evidence from one thread may go back out to that thread's
 verified participants (default-deny on every expansion: new recipients, channel moves, cross-thread
 quoting). `outbox.ts` is the first real privileged action — an idempotent, reconcile-first Gmail
-send that only proceeds under a PDP `allow`. `notify-telegram.ts` is a content-free interrupt lane
-(it can carry an ask id, a count, a deep link — never a message body or sender name). `recovery.ts`
-is the safety net: `aios inbox --overdue` surfaces any ask whose Telegram interrupt silently failed,
-because the durable asks queue is the source of truth, not the notification. The localhost GUI
-server drives that notify lane on a bounded cadence and exposes a delivered-ask acknowledgment
-endpoint; the React Comms view shows the same overdue state without changing the ranked item shape.
+send that only proceeds under a PDP `allow`. `notify-telegram.ts` retains the content-free
+notification primitive (ask id, count, or deep link; never a message body or sender name), but no
+V1 GUI server drives it. `recovery.ts` remains active and powers the shipped `aios inbox --overdue`
+surface, where the durable asks queue remains the source of truth. No inbox acknowledgment endpoint
+or React Comms view ships in V1; that runtime wiring is deferred to V2.
 
 **Audit, retention, host/coordinator** — `audit.ts` is a tamper-evident hash chain of
 *authorization* events (who allowed what), storing only digests, never content, so it survives
@@ -76,7 +75,7 @@ actual long-running daemon that ties supervision + an internal, authenticated `/
 together; `deploy/fly/` holds the Dockerfile and Fly config for running it remotely.
 
 ```
- [gog/Gmail, Telegram, ...]        [agent asks store]
+ [ingested observations]           [agent asks store]
          |                                |
          v                                v
    observations.ts  ---dual-read--->  read-model.ts  <---  journal.ts (inbox-events.ndjson)
@@ -94,6 +93,10 @@ together; `deploy/fly/` holds the Dockerfile and Fly config for running it remot
                                         v
                               audit.ts + retention.ts
 ```
+
+`notify-telegram.ts` is retained as a domain primitive but has no automatic V1 GUI driver;
+`recovery.ts` remains active through the CLI `--overdue` path. The automatic notifier and
+acknowledgment wiring are deferred to V2.
 
 Host/coordinator (`host-supervisor.ts`, `host-health.ts`, `credential-broker.ts`,
 `device-identity.ts`, `scripts/inbox-coordinator.mjs`, `deploy/fly/`) runs alongside all of the
@@ -154,26 +157,23 @@ alter the asks store, the brain, or any external surface.
 | M365 channel | `src/operator-loop/inbox/m365-verify.ts`; runbook: [`../runbooks/m365-connect-and-verify.md`](../runbooks/m365-connect-and-verify.md) | `test/operator-loop/inbox-m365-verify.test.mjs` |
 | Cold-start seeding | `src/operator-loop/inbox/seeding.ts` | `test/operator-loop/inbox-seeding.test.mjs` |
 | Host / coordinator deployment (Fly) | [`../host/provisioning-runbook.md`](../host/provisioning-runbook.md) | `test/operator-loop/inbox-host-daemon.test.mjs`, `inbox-host-health.test.mjs`, `inbox-host-isolation.test.mjs`, `inbox-host-manifest.test.mjs`, `inbox-host-nonce.test.mjs`, `inbox-identity-seam.test.mjs`, `inbox-remote-contract.test.mjs` |
-| GUI API (localhost-only routes) | `gui/server/inbox-api.mjs` | `test/operator-loop/inbox-gui-api.test.mjs` |
-| GUI Comms surface + Telegram notify/ack | `gui/client/src/components/comms/`, `gui/server/inbox-notify.mjs` | `gui/client/src/components/comms/comms.test.tsx`, `gui/server/inbox-notify.test.mjs` |
+| GUI refresh/API/Comms + Telegram notify/ack | **Deferred to V2; no V1 Unified Inbox GUI runtime** | — |
 | Data governance, retention, audit anchor | [`inbox-governance/README.md`](./inbox-governance/README.md), [`inbox-governance/data-inventory.md`](./inbox-governance/data-inventory.md) | `test/operator-loop/inbox-audit.test.mjs` |
 
 ## 6. Status honesty
 
 - **The CLI, journal, read model, ranking, state machines, capability handle, reply PDP, Gmail
-  outbox, Telegram notify lane, recovery view, and the governance/audit package are all built and
-  tested** per the table above.
-- **The cockpit Comms surface is built** in `gui/client/src/components/comms/`: it renders the
-  ranked queue, item detail, pending approvals, Gmail reply/archive actions, connector freshness,
-  and desktop notifications over the localhost GUI API. Telegram's GUI role is currently the
-  separate content-free ask-alert lane plus overdue/ack status; Telegram conversations and replies
-  remain unavailable until their own inbound and policy contracts ship.
+  outbox, CLI recovery view, retained notification primitive, and governance/audit package are
+  built and tested** per the table above.
+- **The Unified Inbox GUI surface is not shipped in V1.** Gmail/Calendar GUI refresh, the localhost
+  inbox API, the cockpit Comms view, desktop inbox notifications, and Telegram notify/ack wiring are
+  deferred together to V2. Retained Telegram types and fixtures do not constitute an active V1
+  notification lane.
 - **The Fly coordinator deployment is a standing residual.** Per
   [`../host/provisioning-runbook.md`](../host/provisioning-runbook.md), the live deploy is
-  merge-gated behind PR #321 and was flagged at-risk for the Jul 29 demo, with "run the full demo
-  (including GUI) on John's always-on Mac" as the accepted fallback. Everything in the host/I-15
+  merge-gated behind PR #321 and was flagged at-risk for the Jul 29 demo. Everything in the host/I-15
   slice is built and tested locally against a faked supervisor; the live Fly smoke test is the
-  outstanding verification step.
+  outstanding verification step. This residual does not add a Unified Inbox GUI surface to V1.
 - **M365 is "connected and verified" only in the credential-free, fixture-transport sense.** Per
   `m365-verify.ts` and the M365 runbook, no live-tenant run has happened yet — that is a named,
   separate residual, not a documentation gap.
