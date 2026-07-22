@@ -599,28 +599,6 @@ export interface CostConfigResponse {
   metered: Record<string, Record<string, number>>;
   errors?: string[];
 }
-export interface CostEmailCandidate {
-  id: string;
-  message_id: string;
-  account: string;
-  provider: string;
-  label: string;
-  kind: "subscription" | "metered";
-  amount_usd: number | null;
-  date: string;
-  subject: string;
-  confidence: "high" | "medium";
-  reason: string;
-}
-/** POST /api/costs/email-scan — read-only, redacted gog Gmail discovery. */
-export interface CostEmailScanResponse {
-  ok: boolean;
-  period: string;
-  accounts: string[];
-  candidates: CostEmailCandidate[];
-  warnings: string[];
-  error?: string;
-}
 
 /* ---- operator loop (Loop) ---- */
 // Wire contract for the four loop routes served by gui/server/loop.mjs.

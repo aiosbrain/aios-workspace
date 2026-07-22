@@ -76,7 +76,6 @@ import { buildMaturityPayload } from "./maturity.mjs";
 import { buildCostsPayload } from "./costs.mjs";
 import { createAnalysisCache } from "./analysis-cache.mjs";
 import { readCostConfig, editableCostConfig, updateCostConfig } from "./cost-config.mjs";
-import { scanInvoiceEmails } from "./cost-email-scan.mjs";
 import { collectProviderActuals } from "./provider-costs.mjs";
 import {
   validateCadence,
@@ -550,61 +549,6 @@ const server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
       });
-    return;
-  }
-  // ── read-only Gmail invoice discovery (token-gated) ──
-  // Uses gog metadata search against configured Gmail accounts. It never
-  // downloads attachments/bodies and never writes cost config; the owner must
-  // review candidates in the GUI and save through /api/costs/config.
-  if (url.pathname === "/api/costs/email-scan") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401);
-      return res.end("unauthorized");
-    }
-    if (req.method !== "POST") {
-      res.writeHead(405);
-      return res.end("method not allowed");
-    }
-    let body = "";
-    let tooLarge = false;
-    req.on("data", (chunk) => {
-      if (tooLarge) return;
-      body += chunk;
-      if (body.length > 16_384) {
-        tooLarge = true;
-        res.writeHead(413, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: "request body too large" }));
-        req.destroy();
-      }
-    });
-    req.on("end", async () => {
-      if (tooLarge) return;
-      let payload;
-      try {
-        payload = JSON.parse(body || "{}");
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ ok: false, error: "body must be valid JSON" }));
-      }
-      try {
-        const result = await scanInvoiceEmails({
-          period: payload.period,
-          accounts: payload.accounts,
-        });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "invoice scan failed";
-        const badInput = /period|accounts|configured/.test(message);
-        res.writeHead(badInput ? 400 : 503, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            ok: false,
-            error: badInput ? message : "Gmail invoice scan failed; check gog Gmail access",
-          })
-        );
-      }
-    });
     return;
   }
   // ── cost settings (token-gated) — owner-entered actuals (AIO-457) ──

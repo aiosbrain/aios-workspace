@@ -12,7 +12,6 @@ import {
   formFromConfig,
   type CostSettingsFormValues,
 } from "./CostSettingsForm";
-import { CostEmailImport } from "./CostEmailImport";
 
 const REV_BTN =
   "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
@@ -215,13 +214,6 @@ export function CostPanel() {
       {showSettings && (
         <>
           <CostSettings period={period} onSaved={load} refreshKey={configVersion} />
-          <CostEmailImport
-            period={period}
-            onImported={async () => {
-              setConfigVersion((version) => version + 1);
-              await load();
-            }}
-          />
         </>
       )}
 

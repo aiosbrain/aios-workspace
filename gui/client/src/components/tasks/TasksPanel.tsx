@@ -60,6 +60,10 @@ export function TasksPanel() {
   const [data, setData] = useState<TasksResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null); // row_key currently saving
+  // Bumped only when a save FAILS. Keys the rendered view so the reload remounts the
+  // uncontrolled inputs back to the server value even when that value is unchanged — a
+  // successful save changes the edited field's own key, so the happy path never remounts.
+  const [revertNonce, setRevertNonce] = useState(0);
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
   const [viewMode, setViewMode] = useState<TaskViewMode>(() =>
@@ -95,8 +99,11 @@ export function TasksPanel() {
       } catch (e) {
         toast.error(`Edit failed: ${(e as Error).message}`, { duration: 8000 });
         // The controls commit optimistically on blur/change. Re-hydrate the server value so
-        // a failed write never leaves a convincing-but-unsaved value in the UI.
+        // a failed write never leaves a convincing-but-unsaved value in the UI. The reload
+        // returns the unchanged server value, so bump the nonce to force the uncontrolled
+        // inputs to remount and drop the user's unsaved text.
         await load();
+        setRevertNonce((n) => n + 1);
       }
       setSaving(null);
     },
@@ -194,13 +201,17 @@ export function TasksPanel() {
 
       {data.rows.length === 0 ? (
         <div className="text-xs text-muted-foreground">No task rows in this file.</div>
-      ) : viewMode === "list" ? (
-        <TaskList rows={data.rows} saving={saving} onSave={saveField} />
-      ) : viewMode === "grid" ? (
-        <TaskGrid rows={data.rows} saving={saving} onSave={saveField} />
       ) : (
-        <div className="min-h-[260px] overflow-x-auto">
-          <TaskBoard rows={data.rows} saving={saving} onSave={saveField} />
+        <div key={`view:${viewMode}:${revertNonce}`}>
+          {viewMode === "list" ? (
+            <TaskList rows={data.rows} saving={saving} onSave={saveField} />
+          ) : viewMode === "grid" ? (
+            <TaskGrid rows={data.rows} saving={saving} onSave={saveField} />
+          ) : (
+            <div className="min-h-[260px] overflow-x-auto">
+              <TaskBoard rows={data.rows} saving={saving} onSave={saveField} />
+            </div>
+          )}
         </div>
       )}
 
