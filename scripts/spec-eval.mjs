@@ -280,6 +280,9 @@ const SR17_TASK_HEADING_RE =
 // Top-level surfaces of this toolkit. Mixing >SR17_SURFACE_LIMIT of these in one spec is the
 // mixed-concern signal (e.g. PR #365: gui + inbox + scripts in one change). `.claude/`, config, and
 // bare filenames are intentionally NOT surfaces — they are cross-cutting and would over-trip.
+// `test/`, `docs/`, and `scaffold/` are also NOT surfaces: a thorough single-feature spec dutifully
+// names its test file, docs page, and scaffold mirror — those references measure spec completeness,
+// not mixed concerns, and counting them made SR17 hard-block well-bounded specs (2026-07-22).
 const SR17_SURFACES = [
   ["gui/client", /^gui\/client\b/],
   ["gui/server", /^gui\/server\b/],
@@ -288,9 +291,6 @@ const SR17_SURFACES = [
   ["src", /^src\b(?!\/operator-loop)/],
   ["hooks", /^hooks\b/],
   ["validation", /^validation\b/],
-  ["scaffold", /^scaffold\b/],
-  ["docs", /^docs\b/],
-  ["test", /^test\b/],
 ];
 
 // An explicit statement that the author has bounded the increment to one PR.
@@ -436,8 +436,10 @@ export function runDeterministicChecks(specText, { repo } = {}) {
   }
 
   // SR17 — increment-bounded: the spec is one reviewable PR. Blocks only when BOTH structural
-  // heuristics trip (unambiguously oversized — the mixed-concern, many-task shape); a single trip is
-  // advisory, and a bounded spec that simply omits an explicit increment statement is a gentle nudge.
+  // heuristics trip (unambiguously oversized — the mixed-concern, many-task shape) AND the author
+  // has not explicitly bounded the increment; an explicit one-PR statement downgrades the block to
+  // advisory (the author has made the call — the gate informs, it doesn't overrule). A single trip
+  // is advisory, and a bounded spec that simply omits an increment statement is a gentle nudge.
   {
     const scope = assessScopeBound(specText);
     const tooManyTasks = scope.taskCount > SR17_TASK_LIMIT;
@@ -445,8 +447,8 @@ export function runDeterministicChecks(specText, { repo } = {}) {
     if (tooManyTasks && tooManySurfaces) {
       add(
         "SR17",
-        "blocker",
-        `scope too broad for one reviewable PR: ${scope.taskCount} enumerated tasks across ${scope.surfaces.length} surfaces (${scope.surfaces.join(", ")}) — split into sequential one-PR specs, each landing on its own`
+        scope.incrementStated ? "minor" : "blocker",
+        `scope too broad for one reviewable PR: ${scope.taskCount} enumerated tasks across ${scope.surfaces.length} surfaces (${scope.surfaces.join(", ")})${scope.incrementStated ? " — increment statement present, verify the split holds" : " — split into sequential one-PR specs, each landing on its own"}`
       );
     } else if (tooManyTasks) {
       add(
