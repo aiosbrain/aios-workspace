@@ -28,11 +28,12 @@ whole; this spec is the buildable contract.
 
 ## Delivery metadata
 
-- **Deps:** AIO-386 depends on the shipped inbox journal/recovery/Telegram domain from PR #320 and
-  the shipped AIO-392 outbox line from PR #321 plus its follow-up hardening. No unmerged code slice
-  is a prerequisite for the outbound GUI notify/ack work.
-- **Build-with:** Opus-class implementation at high effort. The work crosses durable journal
-  semantics, cross-process coordination, localhost API behavior, and GUI lifecycle evidence.
+- **V1 delivery:** the inbox journal, read model, ranking, recovery view, reply policy, and outbox
+  are consumed through `aios inbox` and the operator-loop modules. The former AIO-386 GUI
+  refresh/API/Comms/Telegram notify-and-ack lane is a V2 dependency, not a shipped V1 surface.
+- **Build-with:** Opus-class implementation at high effort. The V1 work crosses durable journal
+  semantics, cross-process coordination, and CLI/operator-loop integration; GUI lifecycle evidence
+  belongs to the deferred V2 lane.
 
 ## Reuse (shipped, KEEP)
 - **Asks store lock discipline** (`src/operator-loop/asks/store.ts`) — the `O_CREAT|O_EXCL`
@@ -64,64 +65,25 @@ whole; this spec is the buildable contract.
 - **Reply PDP** — origin-confined disclosure policy decision point, a new separate contract (I-10).
 - **Enriched adapter-observation record** — versioned observation type with account/tenant identity
   and a corrected dedup key (I-06).
-- **`aios inbox` CLI + notify lane** — ranked read-only queue, `--overdue` recovery view, Telegram
-  content-free notification lane (I-04/I-05/I-09), outbox + Gmail send (I-11).
+- **`aios inbox` CLI + operator-loop actions** — ranked local queue, `--overdue` recovery view,
+  outbox, and Gmail send (I-04/I-05/I-09/I-11). The Telegram notification primitive remains
+  available for domain contract coverage, while recovery continues to power the shipped CLI
+  `--overdue` surface; no GUI-driven notify/ack loop ships in V1.
 
-### Current connector reachability
+### V1 surface and V2 deferral
 
-The local GUI refreshes Gmail/Calendar through the reviewed, toolkit-owned GOG observation adapter on
-a bounded, non-overlapping cadence. An installed workspace descriptor is only the explicit opt-in marker:
-its bytes are never loaded or executed. A selected workspace never supplies connector executable code,
-and the child receives a minimal environment allowlist. Scheduled and manual/cron pulls share an atomic
-workspace lock; timeout/shutdown terminate the full connector process group before another pull can run.
-Public freshness comes from the last successful ingestion refresh, never from a source event's occurrence
-time.
+In V1, `aios inbox` reads the durable local asks, observation, activity, and journal state. The GUI
+does not refresh Gmail or Calendar for the inbox, mount inbox-specific localhost routes, render an
+inbox Comms view, start an automatic Telegram notifier, or record GUI acknowledgment evidence.
+Operators use the CLI and existing non-GUI ingestion workflows; connector occurrence time is not a
+substitute for a recorded successful ingestion refresh.
 
-Telegram remains **outbound-only** until a separately gated inbound contract is proven.
-
-The GUI lane activates **only** on the AIOS-scoped credentials `AIOS_TELEGRAM_BOT_TOKEN` +
-`AIOS_TELEGRAM_CHAT_ID`; `AIOS_TELEGRAM_DISABLED=1` is the immediate stop. It deliberately ignores
-the bare `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` fallbacks that `loadTelegramConfig` accepts for
-the CLI: this notifier starts automatically with the GUI, and those generic names routinely belong
-to a different bot in a shared environment (Hermes is the workspace's Telegram gateway), so
-honouring them would push AIOS ask alerts through someone else's bot and chat the first time
-`npm run gui` ran. When only the unscoped pair is present the lane stays `disabled` and says so in
-`notify.lane.last_error`, naming the variables to set — never a credential.
-
-The GUI server owns the production notify loop: on a bounded cadence it projects only open
-`agent-event` asks in `needs-you` (plus protected open asks), folds the durable notification
-journal, and sends one content-free Bot API alert for each ask with no recorded delivery. Telegram
-acceptance is journaled as `delivery-attempted`; a failed request journals no delivery and the
-durable ask remains the source of truth. The loop and the GUI acknowledgment endpoint share an
-operator-local cross-process lock so two GUI servers do not concurrently send or acknowledge the
-same ask.
-
-A `human-ack` means a HUMAN saw the ask — it is what clears that ask from `aios inbox --overdue`,
-the only net that catches a silently-failed alert, so the bar is an act of the operator's rather
-than an act of the app's. The client records one only when **the operator selected that ask**
-(pointer click or keyboard activation of a queue row) *and* its delivered detail was committed to a
-visible, focused document. The queue auto-selects the highest-ranked row on load and whenever a
-selection is dropped; that is the app choosing, and it is explicitly **not** evidence — otherwise a
-GUI merely left open and focused would disarm the recovery net for an ask nobody read. List/detail
-GETs and background polling are likewise never evidence.
-
-Responding in the channel of origin is the other way an ask stops nagging, and it needs no ack: a
-replied or archived ask leaves `open` status, and the recovery view skips every non-open ask.
-
-The server records an ack only when the item is still an open agent ask, at least one delivery is
-journaled, and no effective later ack exists. Unknown, closed, non-agent, never-delivered, and
-already-acked items do not append an ack. The honest delivery guarantee is one recorded successful
-send per ask during normal concurrent operation; Telegram acceptance immediately before a local
-journal failure or process death remains an unavoidable ambiguous duplicate window because the
-provider has no idempotency key.
-
-Outbound notify status is exposed separately from connector freshness:
-`notify.lane.status = disabled | configured | delivery_ok | degraded | failed | unavailable`;
-`degraded` means a bounded tick delivered at least one alert and failed at least one other alert.
-It never contains configuration, token, chat id, ask content, or raw provider errors. Telegram inbound
-freshness continues to report the legacy alerts-only/unavailable state; no `getUpdates` poller,
-webhook ingestion, Telegram conversation projection, or reply affordance ships under this
-outbound contract.
+V2 may add that GUI/API/Telegram lane under a separately reviewed contract. It must preserve the
+existing safety properties: toolkit-owned connector execution with bounded concurrency and a
+minimal environment, AIOS-scoped Telegram credentials with an immediate disable switch,
+content-free alerts, durable delivery evidence, explicit human action before `human-ack`, and no
+Telegram inbound projection or reply affordance until its own policy contract passes. These are V2
+requirements, not claims about the V1 runtime.
 
 ## Contract
 
@@ -283,6 +245,10 @@ Locked here so no gate can move after the fact:
 Every Sol r1+r2 verification item maps to a named test file (naming follows
 `test/operator-loop/asks-store.test.mjs` conventions):
 
+Telegram mentions in this matrix cover the retained notification contract and cases that exercise
+the shipped CLI recovery semantics. They do not imply that the deferred GUI notifier or
+acknowledgment endpoint ships in V1.
+
 | Verification item | Test file |
 |---|---|
 | Journal replay byte-equivalence (incl. post-asks-GC) + truncation at every byte boundary | `test/operator-loop/inbox-journal-replay.test.mjs` |
@@ -299,9 +265,11 @@ Every Sol r1+r2 verification item maps to a named test file (naming follows
 [`prd-unified-agent-inbox.md`](../../prd-unified-agent-inbox.md); the domains README table row; the
 D5 and D6 rulings recorded above; the verification-matrix table reproduced above.
 
-**Deferred:** all implementation (I-02+); any `docs/brain-api.md` change (if a ranking-graph contract
-ever lands, brain-api updates **first** — a G6b concern); adapter-contract publication (stays behind
-its maturity gate).
+**Deferred:** for the V1 release, the Unified Inbox GUI Gmail/Calendar refresher, localhost inbox
+API, React Comms surface, and automatic Telegram notify/ack wiring are deferred together to V2.
+Any `docs/brain-api.md` change also remains deferred (if a ranking-graph contract ever lands,
+brain-api updates **first** — a G6b concern), as does adapter-contract publication behind its
+maturity gate.
 
 ## Tier safety
 The standing posture, enforced two layers deep:
@@ -339,4 +307,6 @@ recovery), I-06 (enriched observations), I-09/I-10/I-11 (Gmail read → reply �
 I-15/I-16 (host + retention/audit-anchor package). Integration points the modules stay consistent
 with: `src/operator-loop/asks/store.ts`, `src/operator-loop/comms/sender.ts`,
 `scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`, and
-`gui/server/runtime-adapters/claude-code.mjs`.
+`gui/server/runtime-adapters/claude-code.mjs`. The Telegram notification primitive remains a
+domain-level building block, while recovery continues to power `aios inbox --overdue`; their former
+GUI/API notify-and-ack wiring is deferred to V2 as stated above.
