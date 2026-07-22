@@ -144,6 +144,37 @@ test("SR17 — a single tripped signal is advisory, not a blocker", () => {
   assert.equal(sr17[0].severity, "minor");
 });
 
+test("SR17 — thorough single-feature spec (code + test + docs + scaffold refs) never blocks", () => {
+  // Regression (2026-07-22): a spec that dutifully names its test file, docs page, and scaffold
+  // mirror is COMPLETE, not mixed-concern — those refs must not count as surfaces and hard-block.
+  const spec = [
+    "# Spec — one feature, thoroughly specified",
+    "## Implementation Tasks",
+    "- edit `scripts/feature.mjs`",
+    "- extract helper in `scripts/feature-lib.mjs`",
+    "- add unit tests in `test/feature.test.mjs`",
+    "- add fixture `test/fixtures/feature/basic.md`",
+    "- document in `docs/feature.md`",
+    "- mirror into `scaffold/.claude/rules/feature.md`",
+    "- wire the command in `scripts/aios.mjs`",
+  ].join("\n");
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.ok(
+    !sr17.some((f) => f.severity === "blocker"),
+    "single code surface + test/docs/scaffold refs must not SR17-block"
+  );
+  assert.deepEqual(assessScopeBound(spec).surfaces, ["scripts"]);
+});
+
+test("SR17 — explicit increment statement downgrades the oversized blocker to advisory", () => {
+  const spec = [read("oversized-multi-surface.md"), "", "One PR; follow-ups deferred to a sibling spec."].join(
+    "\n"
+  );
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.equal(sr17.length, 1);
+  assert.equal(sr17[0].severity, "minor", "author-bounded increment must not hard-block");
+});
+
 test("assessScopeBound — counts tasks, distinct surfaces, and increment statement", () => {
   const spec = [
     "# Spec",
