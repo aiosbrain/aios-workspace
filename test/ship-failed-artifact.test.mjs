@@ -57,7 +57,10 @@ function makeDeps(repo, auditFiles, over = {}) {
     callDeepSeekDirect: async () => "looks good\nPLAN_READY",
     waitForBots: () => 0,
     gitExec: (argv) => (argv[0] === "rev-parse" ? "fakehead\n" : ""),
-    ghExec: () => ({ code: 0, stdout: greenChecks, stderr: "" }),
+    ghExec: (argv) =>
+      argv.join(" ").includes("headRefOid")
+        ? { code: 0, stdout: "fakehead\n", stderr: "" }
+        : { code: 0, stdout: greenChecks, stderr: "" },
     gitLsFiles: () => new Set(["scripts/aios.mjs"]),
     statFile: () => ({ size: 100 }),
     readFile: () => "file contents",

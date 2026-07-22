@@ -114,6 +114,7 @@ function makeDeps(over = {}) {
     ghExec: (argv) => {
       ghCalls.push(argv.join(" "));
       const a = argv.join(" ");
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
       if (a.includes("pr view") && a.includes("--json labels")) {
         return { code: 0, stdout: "ready-for-review\n", stderr: "" };
@@ -866,6 +867,46 @@ console.log("simplify push failure → cleanup dropped, ship proceeds from the r
   check(
     "stranded local cleanup reset to the reviewed head",
     gitCalls.some((c) => c.startsWith("reset --hard fakehead"))
+  );
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("remote PR head drift after review → MERGE_BLOCKED (merge never issued)");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("headRefOid")) {
+      deps.ghCalls.push(a);
+      // Someone pushed to the PR branch on GitHub after the local review.
+      return { code: 0, stdout: "remotedrifthead\n", stderr: "" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("remote head drift blocks the merge", code === SHIP_EXIT.MERGE_BLOCKED);
+  check("merge never issued on remote drift", !deps.ghCalls.some((c) => c.includes("pr merge")));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
+console.log("unreadable remote PR head → MERGE_BLOCKED (fail closed)");
+{
+  const deps = makeDeps();
+  const baseGh = deps.ghExec;
+  deps.ghExec = (argv) => {
+    const a = argv.join(" ");
+    if (a.includes("headRefOid")) {
+      deps.ghCalls.push(a);
+      return { code: 1, stdout: "", stderr: "api unavailable" };
+    }
+    return baseGh(argv);
+  };
+  const { code } = await runShip({ repo: deps.repo, issue: "AIO-163", opts: optsFor(), deps });
+  check("unverifiable remote head blocks the merge", code === SHIP_EXIT.MERGE_BLOCKED);
+  check(
+    "merge never issued when the remote head cannot be read",
+    !deps.ghCalls.some((c) => c.includes("pr merge"))
   );
   rmSync(deps.repo, { recursive: true, force: true });
 }

@@ -144,6 +144,7 @@ function makeDeps(over = {}) {
     ghExec: (argv) => {
       const a = argv.join(" ");
       ghCalls.push(a);
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
       if (a.includes("pr view") && a.includes("--json labels")) {
         return { code: 0, stdout: "ready-for-review\n", stderr: "" };

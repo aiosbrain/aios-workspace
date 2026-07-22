@@ -216,7 +216,10 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 
     proc.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0 || (code === null && (text || finalResult))) {
+      // A null exit code means the process was killed by a signal (OOM killer, external
+      // kill) — partial streamed text is NOT proof of completion. Only a terminal result
+      // event demonstrates the agent finished its turn before the process died.
+      if (code === 0 || (code === null && finalResult)) {
         if (opts.resultEventBundle) {
           // Cursor's result event can contain the accumulated assistant narration on
           // long agent runs. Expose both event shapes so strict callers can accept an

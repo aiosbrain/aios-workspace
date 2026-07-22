@@ -86,6 +86,7 @@ function makeDeps(over = {}) {
     },
     ghExec: (argv) => {
       const a = argv.join(" ");
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks"))
         return {
           code: 0,

@@ -1604,10 +1604,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { ok: false };
     }
 
+    // An ok result MUST carry evidence markdown — an empty artifact is not exact-head
+    // evidence, so fail closed rather than checkpoint a blank file.
+    const evidenceMarkdown = (review.output ?? "").trim();
+    if (!evidenceMarkdown) {
+      record(stage, { blocked: true, emptyEvidence: true });
+      console.error(c.red("local Bugbot returned no evidence markdown — blocking (fail closed)."));
+      return { ok: false };
+    }
     const safeHead = snapshot.head.replace(/[^a-f0-9]/gi, "").slice(0, 40) || "unknown-head";
     const artifactName = `local-bugbot-${safeHead}.md`;
     const artifactPath = path.join(auditDir, artifactName);
-    writeAudit(issueId, artifactName, review.output ?? "(empty)");
+    writeAudit(issueId, artifactName, evidenceMarkdown);
     saveState({
       prePrReviewDone: true,
       localBugbotReviewPath: artifactPath,
@@ -2109,6 +2117,38 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       console.error(
         c.red(
           "merge gate: reviewed head/base evidence is stale — resume to run a fresh review round."
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+
+    // `gh pr merge` merges GITHUB's head, not the local ref. A commit pushed to the PR
+    // branch by anyone else after the review would otherwise slip into the merge without
+    // review evidence — require the remote head to equal the reviewed head, fail closed
+    // when it cannot be read.
+    let remoteHead = null;
+    try {
+      const headRes = ghExec([
+        "pr",
+        "view",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--json",
+        "headRefOid",
+        "--jq",
+        ".headRefOid",
+      ]);
+      if (headRes?.code === 0) remoteHead = (headRes.stdout ?? "").trim() || null;
+    } catch {
+      remoteHead = null;
+    }
+    if (!remoteHead || remoteHead !== state.reviewHead) {
+      record("merge-gate", { remoteHeadMismatch: true, remoteHead });
+      console.error(
+        c.red(
+          remoteHead
+            ? "merge gate: the PR head on GitHub does not match the reviewed head — fetch the branch, re-review, and resume."
+            : "merge gate: could not verify the PR head on GitHub — blocking (fail closed)."
         )
       );
       return { code: SHIP_EXIT.MERGE_BLOCKED, records };

@@ -33,11 +33,19 @@ writeFileSync(
     "  console.log(JSON.stringify({ type: 'text', text: 'BUGBOT_CLEAR' }));",
     "  process.exit(0);",
     "}",
+    "if (process.argv.join(' ').includes('crash-mid-stream')) {",
+    "  console.log(JSON.stringify({ type: 'text', text: 'partial progress before the crash' }));",
+    "  // Simulate an external kill (OOM/SIGKILL): close event fires with code === null.",
+    "  setTimeout(() => process.kill(process.pid, 'SIGKILL'), 50);",
+    "  setTimeout(() => {}, 5000); // keep the loop alive until the signal lands",
+    "  process.stdout.write('');",
+    "} else {",
     "const key = process.env.ANTHROPIC_API_KEY ?? '<unset>';",
     "const text = 'ANTHROPIC_API_KEY=' + key;",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));",
     "console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'TERMINAL_RESULT' }] } }));",
     "console.log(JSON.stringify({ type: 'result', result: text + '\\nTERMINAL_RESULT' }));",
+    "}",
   ].join("\n")
 );
 chmodSync(fakeBin, 0o755);
@@ -108,6 +116,17 @@ console.log("callCursorAgent falls back to an exact transcript for text-only pro
     "text-only exact token becomes the terminal candidate",
     out.transcript === "BUGBOT_CLEAR" && out.result === "BUGBOT_CLEAR" && out.eventResult === null
   );
+}
+
+console.log("an externally killed agent with only partial text rejects (no false success)");
+{
+  let rejected = false;
+  try {
+    await callCursorAgent("crash-mid-stream", 30000, { extraArgs: [], resultEventBundle: true });
+  } catch (e) {
+    rejected = /exited null/.test(e.message);
+  }
+  check("partial streamed text without a result event is not success", rejected);
 }
 
 rmSync(dir, { recursive: true, force: true });

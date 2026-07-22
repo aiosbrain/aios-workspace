@@ -38,14 +38,15 @@ function makeGh({ ready }) {
   const bin = path.join(dir, "gh");
   const body =
     "CodeRabbit reviewed the exact current head and found the implementation consistent. " +
-    "It checked the changed control flow, failure handling, and the relevant regression tests.";
+    "It checked the changed control flow, failure handling, and the relevant regression tests. " +
+    "<!-- commit: abc123def4567890abc123def4567890abc123de -->";
   writeFileSync(
     bin,
     [
       "#!/usr/bin/env node",
       "const a = process.argv.slice(2).join(' ');",
       "if (a.includes('/pulls/1/commits')) {",
-      "  process.stdout.write('2026-07-01T00:00:00Z');",
+      "  process.stdout.write(JSON.stringify({ sha: 'abc123def4567890abc123def4567890abc123de', committedAt: '2026-07-01T00:00:00Z' }));",
       "} else if (a.includes('/issues/1/comments')) {",
       ready
         ? `  process.stdout.write(${JSON.stringify(JSON.stringify([{ user: "coderabbitai[bot]", body, created_at: "2026-07-01T00:00:01Z" }]))});`

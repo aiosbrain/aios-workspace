@@ -115,23 +115,6 @@ function detectRepo() {
   }
 }
 
-export function getLatestPushTime(repo, pr) {
-  // The latest commit's committer timestamp is the freshness boundary for bot evidence.
-  try {
-    const raw = gh([
-      "api",
-      `repos/${repo}/pulls/${pr}/commits`,
-      "--jq",
-      ".[-1].commit.committer.date",
-    ]);
-    if (!raw) return null;
-    const committedAt = new Date(raw);
-    return Number.isFinite(committedAt.getTime()) ? committedAt : null;
-  } catch {
-    return null;
-  }
-}
-
 export function getLatestPush(repo, pr) {
   try {
     const raw = gh([
@@ -344,10 +327,12 @@ async function main() {
   console.log(`Bot: ${botUsers.join(", ")}`);
   console.log(`Timeout: ${timeoutMin} min | Poll: ${POLL_INTERVAL_MS / 1000}s\n`);
 
-  const latestPush = getLatestPush(repo, prNumber) ?? getLatestPushTime(repo, prNumber);
+  // No timestamp-only fallback: without the head SHA the gate cannot bind evidence to the
+  // exact revision, so it fails closed rather than silently degrading to timestamps.
+  const latestPush = getLatestPush(repo, prNumber);
   if (latestPush) {
     console.log(
-      `Latest push: ${(latestPush.committedAt ?? latestPush).toISOString()} (filtering stale pre-push comments)\n`
+      `Latest push: ${latestPush.committedAt.toISOString()} @ ${latestPush.sha.slice(0, 12)} (filtering stale evidence)\n`
     );
   } else {
     console.error(

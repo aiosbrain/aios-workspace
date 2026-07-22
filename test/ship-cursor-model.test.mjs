@@ -84,6 +84,7 @@ function makeDeps({ repo, cursorCalls, deepseekCalls }) {
     gitExec: (argv) => (argv[0] === "rev-parse" ? "fakehead\n" : ""),
     ghExec: (argv) => {
       const a = argv.join(" ");
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks")) return { code: 0, stdout: greenChecks, stderr: "" };
       if (a.includes("--name-only")) return { code: 0, stdout: "scripts/aios.mjs", stderr: "" };
       if (a.includes("pr diff")) return { code: 0, stdout: "diff --git a b", stderr: "" };
