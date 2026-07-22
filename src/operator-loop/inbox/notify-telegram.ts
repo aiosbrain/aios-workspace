@@ -167,19 +167,29 @@ export function loadTelegramConfig(env: NodeJS.ProcessEnv = process.env): Telegr
   return { enabled: !disabled && Boolean(token) && Boolean(chatId), token, chatId };
 }
 
+/** Hard ceiling on one Bot API call. Callers hold a cross-process lock across the send (the GUI
+ *  notifier serializes send vs. ack on it), so an un-timeouted socket would not merely delay this
+ *  alert — it would block acknowledgment and shutdown for as long as the peer holds the connection
+ *  open. A stall is reported as a normal failure: the ask stays queued and recovery still lists it. */
+export const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+
 /**
  * The production transport — the real HTTP boundary. Builds the Bot API URL from the token (never
- * logged), POSTs the content-free text, and normalizes the envelope. A network error is reported as
- * `{ ok: false }` (the ask stays queued; the recovery view is the safety net) — it never throws the
- * token into a stack. Injected so tests never touch the network.
+ * logged), POSTs the content-free text, and normalizes the envelope. A network error or timeout is
+ * reported as `{ ok: false }` (the ask stays queued; the recovery view is the safety net) — it never
+ * throws the token into a stack. Injected so tests never touch the network.
  */
-export function fetchTelegramTransport(token: string): TelegramTransport {
+export function fetchTelegramTransport(
+  token: string,
+  timeoutMs: number = TELEGRAM_REQUEST_TIMEOUT_MS
+): TelegramTransport {
   return async (req) => {
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: AbortSignal.timeout(timeoutMs),
         // The deep link rides IN the text: `aios://` is a custom scheme, and the Bot API rejects
         // non-HTTP(S)/tg:// inline-keyboard button URLs with 400 BUTTON_URL_INVALID. No reply_markup.
         body: JSON.stringify({
@@ -302,12 +312,19 @@ export function recordHumanAck(
  * composition (loop index.ts) injects this into `sendNotification` / `recordHumanAck`; the `inbox`
  * domain never value-imports the journal from another domain — this stays same-domain (journal.js).
  */
-export function createDurableNotifyJournal(root: string): NotifyDeps["appendEvent"] {
+export function createDurableNotifyJournal(
+  root: string,
+  opts: { lockRetries?: number } = {}
+): NotifyDeps["appendEvent"] {
   return (input) =>
-    appendInboxEvent(root, {
-      kind: input.kind,
-      correlation_id: input.correlation_id,
-      ts: input.ts,
-      payload: input.payload,
-    });
+    appendInboxEvent(
+      root,
+      {
+        kind: input.kind,
+        correlation_id: input.correlation_id,
+        ts: input.ts,
+        payload: input.payload,
+      },
+      opts.lockRetries === undefined ? {} : { lockRetries: opts.lockRetries }
+    );
 }

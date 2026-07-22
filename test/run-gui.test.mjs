@@ -152,3 +152,39 @@ test("an ambient-key-only workspace keeps its own dotenv key but drops foreign o
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// The GUI Telegram lane (AIO-386) starts automatically and addresses ONE chat. Launching
+// `npm run gui -- --repo <other-workspace>` from a shell/direnv still exporting a previous
+// workspace's credentials would otherwise send THIS workspace's ask ids, count and repo label to
+// the PREVIOUS workspace's chat, because dotenvx lets existing process.env values win.
+test("ambient Telegram credentials never cross the selected-workspace boundary", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "run-gui-telegram-"));
+  try {
+    writeFileSync(path.join(repo, ".env"), "AIOS_MEMBER=target-member\n");
+    const env = scrubGuiWorkspaceEnv({
+      ambient: {
+        AIOS_TELEGRAM_BOT_TOKEN: "other-workspace-bot",
+        AIOS_TELEGRAM_CHAT_ID: "other-workspace-chat",
+        AIOS_TELEGRAM_DISABLED: "1",
+        TELEGRAM_BOT_TOKEN: "unscoped-bot",
+        TELEGRAM_CHAT_ID: "unscoped-chat",
+        AIOS_GUI_TOKEN: "preserved",
+      },
+      root: path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."),
+      repo,
+    });
+    for (const name of [
+      "AIOS_TELEGRAM_BOT_TOKEN",
+      "AIOS_TELEGRAM_CHAT_ID",
+      "AIOS_TELEGRAM_DISABLED",
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_CHAT_ID",
+    ]) {
+      assert.equal(env[name], undefined, `${name} leaked across the workspace boundary`);
+    }
+    // GUI control variables still survive the boundary.
+    assert.equal(env.AIOS_GUI_TOKEN, "preserved");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

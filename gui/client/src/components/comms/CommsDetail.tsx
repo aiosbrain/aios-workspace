@@ -35,7 +35,9 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
     );
   }
   const item = detail.item;
-  const Glyph = item.origin === "agent-event" ? Bot : Mail;
+  const isTelegram = item.observation?.object_kind === "telegram-chat";
+  const Glyph = item.origin === "agent-event" ? Bot : isTelegram ? Send : Mail;
+  const overdue = detail.notify?.overdue[item.id];
   const subject =
     item.origin === "agent-event"
       ? detail.agentContext?.subject || itemLabel(item)
@@ -90,6 +92,14 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
             </p>
             <p className="mt-3 text-[11px] text-muted-foreground">Why now: {item.why}</p>
           </section>
+        )}
+
+        {overdue && (
+          <p className="max-w-3xl text-[12px] text-[var(--aios-amber)]" role="status">
+            {overdue.delivery_attempts === 0
+              ? "Never delivered to your phone — surfaced by the recovery window."
+              : `Phone alert sent ${overdue.last_delivery_at ? ageLabel(overdue.last_delivery_at) : "earlier"} — not acknowledged.`}
+          </p>
         )}
 
         {item.origin === "agent-event" && item.ask?.status === "open" && (
@@ -190,16 +200,18 @@ export function CommsDetail({ detail, onScopedConfirm, onReply, onArchive }: Com
         )}
 
         {/* Reply composition is deferred: the operator continues the thread in Gmail (content-free link). */}
-        {item.origin === "thread-state" && (
-          <a
-            className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            href="https://mail.google.com/"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <ExternalLink size={13} /> Reply in Gmail
-          </a>
-        )}
+        {item.origin === "thread-state" &&
+          (item.observation?.object_kind === "email" ||
+            item.observation?.object_kind === "calendar-event") && (
+            <a
+              className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border-visible bg-secondary px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              href="https://mail.google.com/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={13} /> Reply in Gmail
+            </a>
+          )}
       </div>
     </div>
   );

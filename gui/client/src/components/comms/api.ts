@@ -5,7 +5,7 @@
  * acceptance criterion is a unit test over this function).
  */
 
-import type { Api } from "../../lib/api";
+import { ApiError, type Api } from "../../lib/api";
 import type { InboxView, InboxDetail } from "./types";
 
 export function fetchInbox(api: Api, opts: { raw?: boolean } = {}): Promise<InboxView> {
@@ -58,4 +58,55 @@ export function postAskReply(api: Api, id: string, message: string): Promise<Ask
 
 export function postAskArchive(api: Api, id: string): Promise<AskActionResult> {
   return api.post<AskActionResult>(`/api/inbox/${encodeURIComponent(id)}/archive`, {});
+}
+
+export type AskAckReason =
+  | "never-delivered"
+  | "already-acked"
+  | "not-acknowledgeable"
+  | "notify-busy"
+  | "notify-unavailable";
+
+export interface AskAckResult {
+  ok: boolean;
+  recorded: boolean;
+  reason?: AskAckReason;
+}
+
+const ACK_REASONS: readonly AskAckReason[] = [
+  "never-delivered",
+  "already-acked",
+  "not-acknowledgeable",
+  "notify-busy",
+  "notify-unavailable",
+];
+
+/**
+ * Outcomes that can never change for this ask, so a caller may stop retrying.
+ *
+ * Everything NOT listed here is transient and must stay retryable: `notify-busy` (the notifier holds
+ * the coordination lock this tick), `notify-unavailable` (the compiled loop is not loaded yet) and
+ * `never-delivered` (the lane may still deliver) all resolve on their own.
+ */
+export function isTerminalAckReason(reason?: AskAckReason): boolean {
+  return reason === "already-acked" || reason === "not-acknowledgeable";
+}
+
+/**
+ * No ask content or client timestamp is sent; the server folds the durable delivery journal.
+ *
+ * `not-acknowledgeable` (404), `notify-busy` (503) and `notify-unavailable` (503) are MODELLED
+ * outcomes the server states in the response body — but `Api.post` throws on any non-2xx, so
+ * without this translation they could never be observed and all three collapsed into one silent
+ * `catch` at the call site. Only a genuine transport/unknown failure still throws.
+ */
+export async function postAskAck(api: Api, id: string): Promise<AskAckResult> {
+  try {
+    return await api.post<AskAckResult>(`/api/inbox/${encodeURIComponent(id)}/ack`);
+  } catch (e) {
+    const body = e instanceof ApiError ? (e.body as { reason?: unknown } | null) : null;
+    const reason = ACK_REASONS.find((r) => r === body?.reason);
+    if (reason) return { ok: false, recorded: false, reason };
+    throw e;
+  }
 }

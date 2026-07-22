@@ -28,7 +28,13 @@ import {
 import { readHostHealth, unhealthyInboxItems } from "./inbox/host-health.js";
 // Composition-point wiring for the capability seam → durable I-02 journal (AIO-427). Local bindings
 // (a `export … from` re-export does NOT bring a symbol into local scope) for `createDurableCapabilityJournal`.
-import { appendInboxEvent, readJournalSegments, INBOX_DIR_REL } from "./inbox/journal.js";
+import {
+  appendInboxEvent,
+  readJournalSegments,
+  inboxJournalLockHeld,
+  INBOX_DIR_REL,
+  type InboxEvent,
+} from "./inbox/journal.js";
 import type { AppendCapabilityEvent } from "./inbox/capability.js";
 // Composition-point wiring for the ranker seam → I-04 deterministic ranker (AIO-429).
 import { loadRegistry } from "./inbox/ranker.js";
@@ -406,6 +412,7 @@ export {
   validateEventInput,
   parseEventLine,
   readJournalSegments,
+  inboxJournalLockHeld,
   listSegments,
   rewriteSegments,
   readSnapshot as readInboxSnapshot,
@@ -770,10 +777,13 @@ export function buildOverdue(
     now?: Date;
     escalationWindowMs?: number;
     asksOverride?: readonly Ask[];
+    /** Journal events already read by the caller — lets a caller that folded the journal for its
+     *  own projection avoid a second full read + fold of the same file. */
+    eventsOverride?: readonly InboxEvent[];
   } = {}
 ): OverdueView {
   const asks = opts.asksOverride ?? readAsks(root).asks;
-  const { events } = readJournalSegments(root);
+  const events = opts.eventsOverride ?? readJournalSegments(root).events;
   return buildOverdueView({
     asks,
     events,

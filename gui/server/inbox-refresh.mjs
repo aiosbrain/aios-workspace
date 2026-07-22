@@ -264,9 +264,13 @@ export function createInboxRefresher({
   return { refresh, snapshot, start, stop };
 }
 
-/** Install once: stop the connector child before the localhost server accepts process shutdown. */
+/**
+ * Install once: stop background components before the localhost server accepts process shutdown.
+ * `stoppables` is the single, authoritative list — one component named in one place, so a caller
+ * cannot half-update the set and leave a background loop running past shutdown.
+ */
 export function installInboxRefreshShutdown({
-  refresher,
+  stoppables = [],
   server,
   webSocketServer,
   processRef = process,
@@ -276,7 +280,17 @@ export function installInboxRefreshShutdown({
     if (stopping) return;
     stopping = true;
     try {
-      await refresher.stop();
+      // Each component is isolated: one that throws or hangs must not strand the rest, nor keep the
+      // server accepting connections after a shutdown signal.
+      for (const component of stoppables) {
+        try {
+          await component?.stop?.();
+        } catch (error) {
+          // A failed stop must not block the remaining shutdown sequence — but swallowing it
+          // silently hides a component that may have left a timer or child process running.
+          console.error(`[shutdown] component stop failed: ${error?.message ?? error}`);
+        }
+      }
     } finally {
       for (const client of webSocketServer?.clients ?? []) client.terminate?.();
       webSocketServer?.close?.();

@@ -52,6 +52,36 @@ export interface InboxItem {
   observation?: ProjectedItem;
 }
 
+export type ConnectorSourceStatus =
+  "unknown" | "ready" | "degraded" | "failed" | "unavailable" | "outbound_only";
+
+export interface TelegramNotifyLane {
+  status: "disabled" | "configured" | "delivery_ok" | "degraded" | "failed" | "unavailable";
+  last_attempt_at: string | null;
+  last_delivery_at: string | null;
+  last_error: string | null;
+}
+
+export interface AskNotifyState {
+  delivery_attempts: number;
+  last_delivery_at: string | null;
+  acked: boolean;
+  last_ack_at: string | null;
+}
+
+export interface AskOverdueState {
+  overdue_by_ms: number;
+  delivery_attempts: number;
+  last_delivery_at: string | null;
+}
+
+export interface InboxNotifyView {
+  escalation_window_ms: number;
+  states: Record<string, AskNotifyState>;
+  overdue: Record<string, AskOverdueState>;
+  lane: TelegramNotifyLane;
+}
+
 export interface InboxView {
   items: InboxItem[];
   ranker_version: string;
@@ -62,11 +92,12 @@ export interface InboxView {
     last_success_at: string | null;
     error: string | null;
     sources: {
-      gmail: string;
-      calendar: string;
-      telegram: "outbound_only";
+      gmail: ConnectorSourceStatus;
+      calendar: ConnectorSourceStatus;
+      telegram: ConnectorSourceStatus;
     };
   } | null;
+  notify?: InboxNotifyView | null;
 }
 
 /** I-03 safe-to-render display projection (no request payload — only the digest the human binds to). */
@@ -89,6 +120,7 @@ export interface InboxDetail {
   pendingApprovals: DisplayProjection[];
   generated_at: string;
   freshness: InboxView["freshness"];
+  notify?: InboxNotifyView | null;
 }
 
 // ── ask-card display state vocabulary (I-13 Q3) ─────────────────────────────────────────────────────

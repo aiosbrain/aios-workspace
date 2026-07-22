@@ -194,7 +194,7 @@ test("stop aborts and awaits the active pull; shutdown closes the server afterwa
   };
   const pull = refresher.refresh();
   await new Promise((resolve) => setImmediate(resolve));
-  installInboxRefreshShutdown({ refresher, server, webSocketServer, processRef });
+  installInboxRefreshShutdown({ stoppables: [refresher], server, webSocketServer, processRef });
   processRef.emit("SIGTERM");
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(child.signals, ["SIGTERM"]);

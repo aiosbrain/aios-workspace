@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  ackInboxAsk,
   getInboxView,
   getInboxDetail,
   decideInbox,
@@ -31,7 +32,12 @@ import {
   capabilityTargets,
   loadRecord,
 } from "../../gui/server/runtime-adapters/capability-store.mjs";
-import { buildObservation, appendObservations } from "../../dist/operator-loop/index.js";
+import {
+  appendObservations,
+  buildObservation,
+  createDurableNotifyJournal,
+  readJournalSegments,
+} from "../../dist/operator-loop/index.js";
 
 // Issue a capability handle exactly as the WS gateway does (index.mjs) — with explicit `targetResources`,
 // so the persisted record's request digest is self-consistent (the runtime's own integrity gate). `extra`
@@ -169,6 +175,215 @@ test("GET /api/inbox/:id threads ingestion freshness exactly like the list endpo
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("notify journal projects as a sibling without changing queue parity", async () => {
+  const dir = ws();
+  try {
+    const id = addAsk(dir, "idle", "blocker", "notify sibling");
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const cliView = JSON.parse(cli(dir, "inbox", ["--json"]));
+    const lane = {
+      status: "delivery_ok",
+      last_attempt_at: "2026-07-21T01:00:00.000Z",
+      last_delivery_at: "2026-07-21T01:00:00.000Z",
+      last_error: null,
+    };
+    const view = await getInboxView(dir, { notifyLane: lane });
+    assert.deepEqual(queueProjection(view), queueProjection(cliView));
+    assert.deepEqual(view.notify.lane, lane);
+    assert.equal(view.notify.states[id].delivery_attempts, 1);
+    assert.equal(view.notify.states[id].acked, false);
+
+    const detail = await getInboxDetail(dir, id, { notifyLane: lane });
+    assert.deepEqual(detail.notify.lane, lane);
+    assert.deepEqual(Object.keys(detail.notify.states), [id]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ack is honest, idempotent, and never records before a delivery", async () => {
+  const dir = ws();
+  try {
+    const id = addAsk(dir, "idle", "blocker", "ack me");
+    const never = await ackInboxAsk(dir, id);
+    assert.deepEqual(never, {
+      ok: true,
+      status: 200,
+      recorded: false,
+      reason: "never-delivered",
+    });
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      0
+    );
+
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const recorded = await ackInboxAsk(dir, id, {
+      now: () => new Date("2026-07-21T01:01:00.000Z"),
+    });
+    assert.equal(recorded.recorded, true);
+    const again = await ackInboxAsk(dir, id);
+    assert.equal(again.recorded, false);
+    assert.equal(again.reason, "already-acked");
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      1
+    );
+    const view = await getInboxView(dir);
+    assert.equal(view.notify.states[id].acked, true);
+    assert.equal(view.notify.overdue[id], undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("unknown and concurrent acknowledgments fail closed without duplicate events", async () => {
+  const dir = ws();
+  try {
+    const unknown = await ackInboxAsk(dir, "missing");
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.reason, "not-acknowledgeable");
+
+    const id = addAsk(dir, "idle", "blocker", "race ack");
+    createDurableNotifyJournal(dir)({
+      kind: "delivery-attempted",
+      correlation_id: id,
+      ts: "2026-07-21T01:00:00.000Z",
+      payload: {
+        lane: "telegram",
+        count: 1,
+        repo_label: "fixture",
+        deep_link: "aios://inbox/ask/" + id,
+        at: "2026-07-21T01:00:00.000Z",
+      },
+    });
+    const results = await Promise.all([ackInboxAsk(dir, id), ackInboxAsk(dir, id)]);
+    assert.equal(
+      results.some((result) => result.recorded),
+      true
+    );
+    assert.equal(
+      readJournalSegments(dir).events.filter((event) => event.kind === "human-ack").length,
+      1
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The ack append is serialized by the async notify coordinator ALONE. It must never also take the
+// asks-store `withLock`: that lock backs off with `sleepSync` (Atomics.wait), which on this
+// single-threaded server would stall all HTTP and WebSocket agent streaming for up to a second
+// whenever an ack raced a reply. The race it would close is benign — `overdueView` skips every
+// non-open ask, so an ack landing on a just-resolved ask changes nothing the operator sees.
+test("human acknowledgment is serialized by the notify coordinator, never the blocking ask lock", async () => {
+  let underNotifyCoordinator = false;
+  let askLockTaken = false;
+  let recorded = 0;
+  const id = "ask-lock-proof";
+  const loop = {
+    buildInbox: () => ({
+      items: [
+        {
+          id,
+          origin: "agent-event",
+          bucket: "needs-you",
+          attention_state: "surfaced",
+          ask: { id, status: "open" },
+        },
+      ],
+    }),
+    readJournalSegments: () => ({ events: [] }),
+    foldNotificationState: () =>
+      new Map([
+        [
+          id,
+          {
+            delivery_attempts: 1,
+            last_delivery_at: "2026-07-21T01:00:00.000Z",
+            acked: false,
+          },
+        ],
+      ]),
+    createDurableNotifyJournal: () => () => {},
+    recordHumanAck: () => {
+      assert.equal(
+        underNotifyCoordinator,
+        true,
+        "ack appended outside the notify critical section"
+      );
+      recorded++;
+    },
+    withLock: (_repo, operation) => {
+      askLockTaken = true;
+      return operation();
+    },
+  };
+  const notifyCoordinator = {
+    async runExclusive(operation) {
+      underNotifyCoordinator = true;
+      try {
+        return { acquired: true, value: await operation() };
+      } finally {
+        underNotifyCoordinator = false;
+      }
+    },
+  };
+
+  const result = await ackInboxAsk("/tmp/fixture", id, {
+    loadLoopFn: async () => loop,
+    notifyCoordinator,
+  });
+  assert.equal(result.recorded, true);
+  assert.equal(recorded, 1);
+  assert.equal(askLockTaken, false, "the sleepSync asks-store lock must not be on the ack path");
+});
+
+// A lane that reports "busy" is contended, not broken: the notifier holds the coordinator for this
+// tick. The route must say so distinctly (503 + notify-busy) so the client can retry rather than
+// silently swallow it as a transport failure.
+test("ack under coordinator contention reports notify-busy, not a failure", async () => {
+  const result = await ackInboxAsk("/tmp/fixture", "ask-busy", {
+    loadLoopFn: async () => {
+      throw new Error("loop must not be loaded when the lock is unavailable");
+    },
+    notifyCoordinator: {
+      async runExclusive() {
+        return { acquired: false };
+      },
+    },
+  });
+  assert.deepEqual(result, {
+    ok: false,
+    status: 503,
+    recorded: false,
+    reason: "notify-busy",
+    retryAfter: 1,
+  });
 });
 
 test("reconcile throttle — at most once per 30s, and an ask decision bypasses the wait", () => {
@@ -424,4 +639,56 @@ test("ADVERSARIAL — a rotated (superseded) epoch is rejected; the current epoc
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The journal lock is shared with the CLI, connectors and compaction, and its default backoff is
+// `sleepSync` (Atomics.wait, up to 40 x 25ms). On the single-threaded GUI server that would freeze
+// every other HTTP request and WebSocket agent stream. An ack is never urgent, so a contended
+// journal must report busy immediately instead of parking the thread.
+test("ack never blocks on the journal lock — it reports notify-busy instead", async () => {
+  const id = "ask-journal-busy";
+  let requestedRetries;
+  const busy = Object.assign(new Error("journal busy"), { code: "INBOX_JOURNAL_LOCK_BUSY" });
+  const loop = {
+    buildInbox: () => ({
+      items: [
+        {
+          id,
+          origin: "agent-event",
+          bucket: "needs-you",
+          attention_state: "surfaced",
+          ask: { id, status: "open" },
+        },
+      ],
+    }),
+    readJournalSegments: () => ({ events: [] }),
+    foldNotificationState: () =>
+      new Map([
+        [id, { delivery_attempts: 1, last_delivery_at: "2026-07-21T01:00:00.000Z", acked: false }],
+      ]),
+    createDurableNotifyJournal: (_repo, opts) => {
+      requestedRetries = opts?.lockRetries;
+      return () => {
+        throw busy;
+      };
+    },
+    recordHumanAck: (askId, deps) => deps.appendEvent({ kind: "human-ack" }),
+  };
+
+  const result = await ackInboxAsk("/tmp/fixture", id, {
+    loadLoopFn: async () => loop,
+    notifyCoordinator: {
+      async runExclusive(operation) {
+        return { acquired: true, value: await operation() };
+      },
+    },
+  });
+  assert.equal(requestedRetries, 0, "the ack append must be non-blocking");
+  assert.deepEqual(result, {
+    ok: false,
+    status: 503,
+    recorded: false,
+    reason: "notify-busy",
+    retryAfter: 1,
+  });
 });

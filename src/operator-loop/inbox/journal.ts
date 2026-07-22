@@ -75,6 +75,10 @@ const KIND_SET: ReadonlySet<string> = new Set(INBOX_EVENT_KINDS);
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRIES = 40;
 const LOCK_DELAY_MS = 25;
+// A stale-lock reclaim retries the open immediately without spending the contention-retry budget;
+// this bounds consecutive reclaims so a stale lock that cannot be removed (e.g. a permission error)
+// can never spin forever.
+const MAX_STALE_RECLAIMS = 8;
 const TAIL_READ_BYTES = 64 * 1024; // enough to always contain the last (small) event line
 
 // ── types ────────────────────────────────────────────────────────────────────────────────────────
@@ -107,8 +111,15 @@ export interface AppendResult {
   path: string;
 }
 
+/** Thrown as `error.code` when the journal lock could not be taken within the allowed retries. */
+export const JOURNAL_LOCK_BUSY = "INBOX_JOURNAL_LOCK_BUSY";
+
 export interface AppendOptions {
   segmentMaxBytes?: number;
+  /** Lock acquisition retries. `0` makes the append non-blocking: it throws `JOURNAL_LOCK_BUSY`
+   *  immediately rather than parking the thread on `Atomics.wait`. Required for any caller running
+   *  on a server event loop, where a synchronous retry stalls every other request. */
+  lockRetries?: number;
 }
 
 export interface JournalWarning {
@@ -176,18 +187,40 @@ function sleepSync(ms: number): void {
 }
 
 /**
+ * True iff a live (non-stale) writer currently holds the journal lock.
+ *
+ * Advisory only — a caller must still handle `JOURNAL_LOCK_BUSY`, because the lock can be taken
+ * between this probe and the append. Its purpose is to let an ASYNC caller yield to its event loop
+ * and re-check, instead of taking the synchronous `sleepSync` backoff that would park the thread.
+ */
+export function inboxJournalLockHeld(root: string): boolean {
+  try {
+    return Date.now() - statSync(lockPathOf(root)).mtimeMs <= LOCK_STALE_MS;
+  } catch {
+    return false; // no lockfile (or unreadable) — nothing is holding it
+  }
+}
+
+/**
  * Run `fn` while holding an exclusive lockfile in the inbox dir. Bounded retries; a stale lock
  * (mtime older than LOCK_STALE_MS) is reclaimed. `fn` receives `ownsLock()` — true iff the lockfile
  * still carries this holder's fresh token. Any rewrite (compaction) must re-verify ownership before
  * its rename and abort if reclaimed, so a reclaimer's appends are never overwritten. The lock is
  * always released while the token still matches (never delete a reclaimer's lock).
  */
-export function withInboxLock<T>(root: string, fn: (ownsLock: () => boolean) => T): T {
+export function withInboxLock<T>(
+  root: string,
+  fn: (ownsLock: () => boolean) => T,
+  opts: { retries?: number } = {}
+): T {
   const lockPath = lockPathOf(root);
   mkdirSync(path.dirname(lockPath), { recursive: true });
   const token = randomUUID();
+  const maxRetries = Math.max(0, opts.retries ?? LOCK_RETRIES);
   let fd: number | null = null;
-  for (let attempt = 0; attempt <= LOCK_RETRIES && fd === null; attempt++) {
+  let backoffs = 0;
+  let reclaims = 0;
+  while (fd === null) {
     try {
       fd = openSync(lockPath, "wx");
     } catch (e) {
@@ -199,17 +232,29 @@ export function withInboxLock<T>(root: string, fn: (ownsLock: () => boolean) => 
         stale = false;
       }
       if (stale) {
+        // Reclaiming a stale lock is NOT contention: retry the open immediately without spending the
+        // contention-retry budget, so a non-blocking caller (retries: 0) still acquires a lock it
+        // just freed instead of failing with JOURNAL_LOCK_BUSY. Bounded by MAX_STALE_RECLAIMS.
+        if (reclaims++ >= MAX_STALE_RECLAIMS) break;
         try {
           unlinkSync(lockPath);
         } catch {
-          /* lost the reclaim race — retry */
+          /* lost the reclaim race — re-attempt the open */
         }
         continue;
       }
-      if (attempt < LOCK_RETRIES) sleepSync(LOCK_DELAY_MS);
+      // A live holder is genuine contention. `sleepSync` is `Atomics.wait` — it parks the whole
+      // thread — so a caller on a server event loop passes retries: 0 and handles JOURNAL_LOCK_BUSY
+      // rather than stall every other request.
+      if (backoffs++ >= maxRetries) break;
+      sleepSync(LOCK_DELAY_MS);
     }
   }
-  if (fd === null) throw new Error(`inbox: could not acquire journal lock (${lockPath})`);
+  if (fd === null) {
+    throw Object.assign(new Error(`inbox: could not acquire journal lock (${lockPath})`), {
+      code: JOURNAL_LOCK_BUSY,
+    });
+  }
   const ownsLock = (): boolean => {
     try {
       if (!readFileSync(lockPath, "utf8").includes(token)) return false;
@@ -443,38 +488,43 @@ export function appendInboxEvent(
   const body = validateEventInput(input);
   const segMax = opts.segmentMaxBytes ?? SEGMENT_MAX_BYTES;
   mkdirSync(inboxDir(root), { recursive: true });
-  return withInboxLock(root, () => {
-    const seq = nextSeq(root);
-    const event: InboxEvent = {
-      schema_version: INBOX_SCHEMA_VERSION,
-      id: input.id ?? randomUUID(),
-      seq,
-      ts: input.ts ?? new Date().toISOString(),
-      kind: body.kind,
-      correlation_id: body.correlation_id,
-      causation_id: body.causation_id,
-      payload: body.payload,
-    };
-    const line = serializeEvent(event) + "\n";
-    const lineBytes = Buffer.byteLength(line, "utf8");
+  const lockOpts = opts.lockRetries === undefined ? {} : { retries: opts.lockRetries };
+  return withInboxLock(
+    root,
+    () => {
+      const seq = nextSeq(root);
+      const event: InboxEvent = {
+        schema_version: INBOX_SCHEMA_VERSION,
+        id: input.id ?? randomUUID(),
+        seq,
+        ts: input.ts ?? new Date().toISOString(),
+        kind: body.kind,
+        correlation_id: body.correlation_id,
+        causation_id: body.causation_id,
+        payload: body.payload,
+      };
+      const line = serializeEvent(event) + "\n";
+      const lineBytes = Buffer.byteLength(line, "utf8");
 
-    const segs = listSegments(root);
-    let index = segs.length ? (segs[segs.length - 1] as { index: number }).index : 1;
-    if (segs.length) {
-      const active = segs[segs.length - 1] as { index: number; path: string };
-      let activeSize = 0;
-      try {
-        activeSize = statSync(active.path).size;
-      } catch {
-        activeSize = 0;
+      const segs = listSegments(root);
+      let index = segs.length ? (segs[segs.length - 1] as { index: number }).index : 1;
+      if (segs.length) {
+        const active = segs[segs.length - 1] as { index: number; path: string };
+        let activeSize = 0;
+        try {
+          activeSize = statSync(active.path).size;
+        } catch {
+          activeSize = 0;
+        }
+        // Rotate only when the active segment is non-empty (never leave an empty segment behind).
+        if (activeSize > 0 && activeSize + lineBytes > segMax) index = active.index + 1;
       }
-      // Rotate only when the active segment is non-empty (never leave an empty segment behind).
-      if (activeSize > 0 && activeSize + lineBytes > segMax) index = active.index + 1;
-    }
-    const target = segmentPath(root, index);
-    appendFileSync(target, line);
-    return { id: event.id, seq, segment: index, path: target };
-  });
+      const target = segmentPath(root, index);
+      appendFileSync(target, line);
+      return { id: event.id, seq, segment: index, path: target };
+    },
+    lockOpts
+  );
 }
 
 // ── rewrite (compaction primitive) ─────────────────────────────────────────────────────────────────

@@ -1,18 +1,49 @@
 /** Quiet, scan-first queue. Ranking and protection still determine order; they are not UI chrome. */
 
-import { Bot, CalendarDays, Mail, Terminal } from "lucide-react";
+import { Bot, CalendarDays, Mail, Send, Terminal } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { deriveAskState, type InboxItem, type InboxView } from "./types";
+import { deriveAskState, type AskOverdueState, type InboxItem, type InboxView } from "./types";
 import { itemLabel, itemSnippet, ageLabel } from "./presenters";
 
-function sourceFor(item: InboxItem) {
+export function sourceFor(item: InboxItem) {
   if (item.origin === "agent-event") {
     return { label: item.source || "Agent", Glyph: Terminal };
   }
   if (item.observation?.object_kind === "calendar-event" || item.source === "calendar") {
     return { label: "Calendar", Glyph: CalendarDays };
   }
+  if (item.observation?.object_kind === "telegram-chat" || item.source === "telegram-chat") {
+    return { label: "Telegram", Glyph: Send };
+  }
   return { label: "Gmail", Glyph: Mail };
+}
+
+function overdueTitle(overdue: AskOverdueState) {
+  const minutes = Math.max(1, Math.floor(overdue.overdue_by_ms / 60_000));
+  if (overdue.delivery_attempts === 0) return `overdue ${minutes}m · never delivered`;
+  const noun = overdue.delivery_attempts === 1 ? "delivery attempt" : "delivery attempts";
+  return `overdue ${minutes}m · ${overdue.delivery_attempts} ${noun}`;
+}
+
+export function telegramLaneLabel(view: InboxView) {
+  const status = view.notify?.lane.status;
+  if (status === "disabled") return "Telegram alerts off";
+  if (status === "configured") return "Telegram alerts armed";
+  if (status === "delivery_ok") return "Telegram alert delivered";
+  if (status === "degraded") return "Some Telegram alerts failed";
+  if (status === "failed") return "Telegram alerts failed";
+  if (status === "unavailable") return "Telegram alerts unavailable";
+  return "Telegram sends alerts only";
+}
+
+export function telegramInboundLabel(view: InboxView) {
+  const status = view.freshness?.sources.telegram;
+  if (!status || status === "outbound_only") return null;
+  if (status === "ready") return "Telegram inbox connected";
+  if (status === "degraded") return "Telegram inbox partly connected";
+  if (status === "failed") return "Telegram inbox refresh failed";
+  if (status === "unavailable") return "Telegram inbox not connected";
+  return "Telegram inbox checking";
 }
 
 function stateLabel(item: InboxItem) {
@@ -39,10 +70,12 @@ function QueueRow({
   item,
   selected,
   onSelect,
+  overdue,
 }: {
   item: InboxItem;
   selected: boolean;
   onSelect: (id: string) => void;
+  overdue?: AskOverdueState;
 }) {
   const { label: source, Glyph } = sourceFor(item);
   const summary = itemSnippet(item);
@@ -82,6 +115,14 @@ function QueueRow({
         <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className="shrink-0">{source}</span>
           {item.account && <span className="truncate">· {item.account}</span>}
+          {overdue && (
+            <span
+              className="shrink-0 rounded-full bg-[color-mix(in_srgb,var(--aios-amber)_16%,transparent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--aios-amber)]"
+              title={overdueTitle(overdue)}
+            >
+              Unacked
+            </span>
+          )}
           <span className="ml-auto flex shrink-0 items-center gap-1.5 text-foreground/75">
             <span
               className={cn(
@@ -112,6 +153,7 @@ export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProp
   const protectedItems = view.items.filter((item) => item.protected);
   const rest = view.items.filter((item) => !item.protected);
   const freshness = refreshLabel(view);
+  const inboundTelegram = telegramInboundLabel(view);
 
   return (
     <section className="flex h-full min-h-0 w-[348px] shrink-0 flex-col border-r border-border-visible bg-card max-lg:w-[316px]">
@@ -152,6 +194,7 @@ export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProp
                 item={item}
                 selected={item.id === selectedId}
                 onSelect={onSelect}
+                overdue={view.notify?.overdue[item.id]}
               />
             ))}
             {protectedItems.length > 0 && rest.length > 0 && (
@@ -163,14 +206,22 @@ export function CommsQueue({ view, selectedId, onSelect, error }: CommsQueueProp
                 item={item}
                 selected={item.id === selectedId}
                 onSelect={onSelect}
+                overdue={view.notify?.overdue[item.id]}
               />
             ))}
           </>
         )}
       </div>
 
-      <footer className="flex items-center gap-1.5 border-t border-border-visible px-3 py-2 text-[11px] text-muted-foreground">
-        <Bot size={12} /> Telegram sends alerts only
+      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border-visible px-3 py-2 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <Bot size={12} /> {telegramLaneLabel(view)}
+        </span>
+        {inboundTelegram && (
+          <span className="inline-flex items-center gap-1.5">
+            <Send size={12} /> {inboundTelegram}
+          </span>
+        )}
       </footer>
     </section>
   );
