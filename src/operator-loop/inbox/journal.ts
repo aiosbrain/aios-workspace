@@ -75,6 +75,10 @@ const KIND_SET: ReadonlySet<string> = new Set(INBOX_EVENT_KINDS);
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRIES = 40;
 const LOCK_DELAY_MS = 25;
+// A stale-lock reclaim retries the open immediately without spending the contention-retry budget;
+// this bounds consecutive reclaims so a stale lock that cannot be removed (e.g. a permission error)
+// can never spin forever.
+const MAX_STALE_RECLAIMS = 8;
 const TAIL_READ_BYTES = 64 * 1024; // enough to always contain the last (small) event line
 
 // ── types ────────────────────────────────────────────────────────────────────────────────────────
@@ -214,7 +218,9 @@ export function withInboxLock<T>(
   const token = randomUUID();
   const maxRetries = Math.max(0, opts.retries ?? LOCK_RETRIES);
   let fd: number | null = null;
-  for (let attempt = 0; attempt <= maxRetries && fd === null; attempt++) {
+  let backoffs = 0;
+  let reclaims = 0;
+  while (fd === null) {
     try {
       fd = openSync(lockPath, "wx");
     } catch (e) {
@@ -226,16 +232,22 @@ export function withInboxLock<T>(
         stale = false;
       }
       if (stale) {
+        // Reclaiming a stale lock is NOT contention: retry the open immediately without spending the
+        // contention-retry budget, so a non-blocking caller (retries: 0) still acquires a lock it
+        // just freed instead of failing with JOURNAL_LOCK_BUSY. Bounded by MAX_STALE_RECLAIMS.
+        if (reclaims++ >= MAX_STALE_RECLAIMS) break;
         try {
           unlinkSync(lockPath);
         } catch {
-          /* lost the reclaim race — retry */
+          /* lost the reclaim race — re-attempt the open */
         }
         continue;
       }
-      // `sleepSync` is `Atomics.wait` — it parks the whole thread. A caller on a server event loop
-      // must pass `retries: 0` and handle JOURNAL_LOCK_BUSY rather than stall every other request.
-      if (attempt < maxRetries) sleepSync(LOCK_DELAY_MS);
+      // A live holder is genuine contention. `sleepSync` is `Atomics.wait` — it parks the whole
+      // thread — so a caller on a server event loop passes retries: 0 and handles JOURNAL_LOCK_BUSY
+      // rather than stall every other request.
+      if (backoffs++ >= maxRetries) break;
+      sleepSync(LOCK_DELAY_MS);
     }
   }
   if (fd === null) {
