@@ -51,6 +51,7 @@ describe("Sidebar information architecture", () => {
 
   test("does not render the removed Comms/Inbox navigation (unified inbox GUI is v2)", () => {
     const html = renderToStaticMarkup(<Sidebar />);
+    // Ordering checks alone would let the inbox nav creep back unnoticed — assert it stays absent.
     expect(html).not.toContain("Comms");
     expect(html).not.toContain("Inbox");
   });
