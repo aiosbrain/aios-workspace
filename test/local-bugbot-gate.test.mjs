@@ -1186,11 +1186,11 @@ test("check-secrets: anchored Basic Auth pattern ignores URLs but catches real c
     assert.equal(run(), 0, "an ordinary URL beside CSS colons/at-rules is not a basic-auth secret");
 
     // A genuine embedded credential — including an `s`-initial username, which a `\s`-in-bracket
-    // pattern would silently miss — must be caught.
-    writeFileSync(
-      path.join(dir, "leak.txt"),
-      "HOOK=https://svc:s3cr3tpass@internal.example.com/x\n"
-    );
+    // pattern would silently miss — must be caught. Assembled at runtime by joining on the `:` so
+    // this committed test file never contains a literal `://user:pass@` that check-secrets would
+    // (correctly) flag against itself in CI.
+    const credentialUrl = ["https://svc", "s3cr3tpass@internal.example.com/x"].join(":");
+    writeFileSync(path.join(dir, "leak.txt"), `HOOK=${credentialUrl}\n`);
     assert.equal(run(), 1, "a real basic-auth credential must still be flagged");
   } finally {
     rmSync(dir, { recursive: true, force: true });
