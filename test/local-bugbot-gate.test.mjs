@@ -33,6 +33,7 @@ import {
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
   retryReviewTimeoutOnce,
+  retryReviewOnRetriable,
   runLocalSecretsPreflight,
   runLocalPrePrReview,
   runLocalBugbotReview,
@@ -135,6 +136,58 @@ test("review timeouts retry once with a doubled per-call budget", async () => {
     }, 400_000),
     /exited 1/
   );
+});
+
+test("transient rate-limit exhaustion retries with bounded backoff; other errors rethrow at once", async () => {
+  // A resource_exhausted / RetriableError is the provider refusing service, not a review verdict —
+  // it must be retried, then succeed, rather than hard-blocking the merge on a transient blip.
+  let calls = 0;
+  const delays = [];
+  const result = await retryReviewOnRetriable(
+    async () => {
+      calls++;
+      if (calls === 1) {
+        throw new Error(
+          "pre-PR code review agent exited 1: RetriableError: [resource_exhausted] Error"
+        );
+      }
+      return BUGBOT_CLEAR_TOKEN;
+    },
+    { attempts: 2, baseDelayMs: 1 },
+    (_attempt, delayMs) => delays.push(delayMs)
+  );
+  assert.equal(result, BUGBOT_CLEAR_TOKEN);
+  assert.equal(calls, 2, "retried once after the transient exhaustion");
+  assert.deepEqual(delays, [1], "backed off before the retry");
+
+  // A NON-transient error is a real failure and must not be retried — it surfaces immediately so a
+  // genuine problem is never masked by retry.
+  let hardCalls = 0;
+  await assert.rejects(
+    retryReviewOnRetriable(
+      async () => {
+        hardCalls++;
+        throw new Error("cursor agent exited 1: bad config");
+      },
+      { attempts: 3, baseDelayMs: 1 }
+    ),
+    /bad config/
+  );
+  assert.equal(hardCalls, 1, "a non-transient error rethrows on the first attempt");
+
+  // Exhausting the attempt budget on a persistent rate limit rethrows the last error (fail-closed).
+  let stuck = 0;
+  await assert.rejects(
+    retryReviewOnRetriable(
+      async () => {
+        stuck++;
+        throw new Error("RetriableError: [resource_exhausted]");
+      },
+      { attempts: 2, baseDelayMs: 1 }
+    ),
+    /resource_exhausted/
+  );
+  assert.equal(stuck, 2, "tried exactly the bounded number of attempts, then gave up");
 });
 
 test("pre-PR review shares the Medium+ full-worktree policy", async () => {

@@ -399,6 +399,42 @@ export async function retryReviewTimeoutOnce(call, timeoutMs, onRetry = () => {}
   }
 }
 
+/** A transient provider exhaustion the reviewer should retry, NOT a review verdict. Matches the
+ *  cursor CLI's `RetriableError: [resource_exhausted]` surface plus generic rate-limit shapes. */
+export const RETRIABLE_REVIEW_RE = /resource_exhausted|RetriableError|\b429\b|rate.?limit/i;
+
+/**
+ * Retry `call` on a TRANSIENT exhaustion only (rate limit / resource_exhausted), with bounded
+ * exponential backoff. Distinct from `retryReviewTimeoutOnce` (which retries a timeout by doubling
+ * the per-call budget) — here the failure is the provider refusing service, so the fix is to wait
+ * and re-issue the same call.
+ *
+ * Kept deliberately small: the parent gate SIGKILLs the child at roughly
+ * REVIEW_ATTEMPT_BUDGET_MULTIPLIER × REVIEW_CHILD_TIMEOUT_SECONDS, and the code and security passes
+ * back off concurrently under `Promise.all`, so a large attempt count or delay would blow that
+ * budget before the retries could land. Anything that is NOT a transient exhaustion (a real error,
+ * a timeout, a protocol error) rethrows immediately and is handled by its own path.
+ */
+export async function retryReviewOnRetriable(
+  call,
+  { attempts = 2, baseDelayMs = 2_000 } = {},
+  onRetry = () => {}
+) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || !RETRIABLE_REVIEW_RE.test(error?.message ?? "")) throw error;
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      onRetry(attempt, delayMs, error);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 function captureUntracked(worktree) {
   const listed = gitRaw(["ls-files", "--others", "--exclude-standard", "-z"], worktree);
   const files = listed.split("\0").filter(Boolean).sort();
@@ -504,13 +540,26 @@ async function runReviewPrompt({
             ...(ref.modelId ? ["--model", ref.modelId] : []),
           ],
         });
-      return await retryReviewTimeoutOnce(invoke, timeoutMs, (retryTimeoutMs) => {
-        console.warn(
-          c.yellow(
-            `[cursor] ${label} timed out after ${timeoutMs / 1000}s; retrying once with ${retryTimeoutMs / 1000}s`
-          )
-        );
-      });
+      // Transient exhaustion (rate limit) backs off on the OUTSIDE; a timeout doubles the budget on
+      // the INSIDE. A single call can therefore ride out a rate-limit blip and a slow response.
+      return await retryReviewOnRetriable(
+        () =>
+          retryReviewTimeoutOnce(invoke, timeoutMs, (retryTimeoutMs) => {
+            console.warn(
+              c.yellow(
+                `[cursor] ${label} timed out after ${timeoutMs / 1000}s; retrying once with ${retryTimeoutMs / 1000}s`
+              )
+            );
+          }),
+        {},
+        (attempt, delayMs) => {
+          console.warn(
+            c.yellow(
+              `[cursor] ${label} rate-limited (attempt ${attempt}); retrying in ${delayMs / 1000}s`
+            )
+          );
+        }
+      );
     }
     console.log(c.dim(`[${ref.provider}] ${label} (${model})...`));
     return await callPromptModel({ model, prompt, timeoutMs, opts: { cwd: reviewCwd } });
