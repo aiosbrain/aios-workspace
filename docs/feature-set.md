@@ -161,10 +161,14 @@ Every workspace generates two catalogs (`scripts/gen-catalog.mjs`, `npm run gen:
 - **Skills catalog** (`.claude/skills/INDEX.md`) — every installed skill, what it does,
   and when it runs, parsed from each `SKILL.md`. Surfaced in `CLAUDE.md` and the GUI.
 - **Integrations catalog** (`.claude/INTEGRATIONS.md` from `.claude/integrations.json`)
-  — connectable tools (Slack, Jira, Confluence, Linear, Notion, GitHub, Gmail/gog-cli,
-  Granola, Mattermost, Toggl) with status + how-to-connect. A live `.mcp.json` stub and
-  `.mcp.example.json` starter servers ship in the scaffold; `docs/integrations.md` has
-  per-tool setup. *Wiring a starter set live is the remaining fast-follow.*
+  — connectable tools (Slack, Linear, Notion, GitHub, Gmail/gog-cli, Granola, Mattermost,
+  Toggl) with status + how-to-connect. Jira/Confluence ship **example-only** (manual
+  setup): the `atlassian` server relies on the unofficial, single-maintainer
+  `mcp-atlassian` package, so it was demoted out of the auto-connectable set in V1.0
+  hardening and lives pinned + provenance-warned in `.mcp.example.json`. A live
+  `.mcp.json` stub and `.mcp.example.json` starter servers ship in the scaffold;
+  `docs/integrations.md` has per-tool setup. *Wiring a starter set live is the remaining
+  fast-follow.*
 
 ## 9. Skill + artifact share/pull
 

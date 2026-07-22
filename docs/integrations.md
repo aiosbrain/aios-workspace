@@ -68,10 +68,17 @@ Create a Slack app, add bot scopes (`channels:history`, `channels:read`,
 `chat:write`), install to your workspace, and copy the bot token into
 `SLACK_BOT_TOKEN`; set `SLACK_TEAM_ID` to your workspace id.
 
-### Jira + Confluence (MCP — one server)
-The `atlassian` server covers both. Create an API token at
-id.atlassian.com → Security → API tokens. Set `ATLASSIAN_URL`
-(e.g. `https://your-org.atlassian.net`), `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`.
+### Jira + Confluence (example-only MCP — manual setup)
+**Not an auto-wired connector.** Jira was removed from the `aios connect` set in the
+V1.0 supply-chain hardening: the `atlassian` server it relied on runs the **unofficial,
+single-maintainer** `mcp-atlassian` npm package, and `npx -y` would re-pull latest on
+every start. It now ships **example-only** in `.mcp.example.json`, with the version
+**pinned** (`mcp-atlassian@2.1.0`) and a provenance warning. Review the package before
+using it. The maintained alternative is `sooperset/mcp-atlassian` via `uvx` (different
+transport — swap deliberately). To wire it manually, copy the `atlassian` block from
+`.mcp.example.json` into `.mcp.json`. Create an API token at id.atlassian.com → Security
+→ API tokens. Set `ATLASSIAN_URL` (e.g. `https://your-org.atlassian.net`),
+`ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`. One server covers both Jira and Confluence.
 
 ### Linear (direct API skill + Team Brain PM sync)
 The shipped workspace connector uses a personal Linear API key (`LINEAR_API_KEY`)

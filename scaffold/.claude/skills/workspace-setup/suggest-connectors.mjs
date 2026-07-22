@@ -42,7 +42,11 @@ export function normalize(s) {
 // Aliases map a normalized scraped token to a connector's normalized id.
 // Keep small and deliberate: brand/umbrella names that don't equal the descriptor id.
 const ALIASES = {
-  atlassian: "jira",        // Atlassian umbrella → Jira (the mcp-atlassian descriptor)
+  atlassian: "jira",        // Atlassian umbrella → Jira. Jira was demoted to example-only
+                            // (V1.0 supply-chain hardening: no jira descriptor, no
+                            // integrations.json entry), so this alias now resolves to
+                            // nothing and degrades gracefully — a mentioned "Jira"/
+                            // "Atlassian" is never surfaced as a connectable CTA.
   gsuite: "gmail",          // recognized-only; resolves into integrations.json (id "google")
   googleworkspace: "gmail",
 };
