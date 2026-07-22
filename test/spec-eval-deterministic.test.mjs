@@ -13,6 +13,7 @@ import {
   findReferencedPaths,
   touchesSyncSurface,
   classifyPathContext,
+  assessScopeBound,
 } from "../scripts/spec-eval.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -111,4 +112,54 @@ test("classifyPathContext — existing vs new vs ambiguous", () => {
     "new"
   );
   assert.equal(classifyPathContext({ section: "Notes", lineText: "see `x.ts`" }), "ambiguous");
+});
+
+test("SR17 — oversized multi-surface spec is a blocker (many tasks AND many surfaces)", () => {
+  const b = blockerIds(runDeterministicChecks(read("oversized-multi-surface.md"), { repo: REPO }));
+  assert.ok(b.has("SR17"), "SR17 blocks the mixed-concern, many-task spec");
+});
+
+test("SR17 — strong (bounded, single-purpose) spec is not a blocker", () => {
+  const findings = runDeterministicChecks(read("strong-spec.md"), { repo: REPO }).filter(
+    (f) => f.ruleId === "SR17"
+  );
+  assert.ok(
+    !findings.some((f) => f.severity === "blocker"),
+    "a bounded 2-surface spec never SR17-blocks"
+  );
+});
+
+test("SR17 — a single tripped signal is advisory, not a blocker", () => {
+  // 4 surfaces but only 3 tasks → surface signal trips alone → minor, never blocker.
+  const spec = [
+    "# Spec",
+    "## Tasks",
+    "- edit `scripts/a.mjs`",
+    "- edit `gui/client/src/b.tsx`",
+    "- edit `hooks/c.mjs`",
+    "- also touch `validation/d.sh`",
+  ].join("\n");
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.equal(sr17.length, 1);
+  assert.equal(sr17[0].severity, "minor");
+});
+
+test("assessScopeBound — counts tasks, distinct surfaces, and increment statement", () => {
+  const spec = [
+    "# Spec",
+    "One PR; follow-ups deferred to a sibling spec.",
+    "## Implementation",
+    "- edit `scripts/a.mjs`",
+    "- edit `scripts/b.mjs`",
+    "- edit `gui/server/c.mjs`",
+  ].join("\n");
+  const s = assessScopeBound(spec);
+  assert.equal(s.taskCount, 3);
+  assert.deepEqual(s.surfaces, ["gui/server", "scripts"]);
+  assert.equal(s.incrementStated, true);
+
+  const bare = assessScopeBound("# Spec\nno tasks, no paths, no increment note");
+  assert.equal(bare.taskCount, 0);
+  assert.deepEqual(bare.surfaces, []);
+  assert.equal(bare.incrementStated, false);
 });

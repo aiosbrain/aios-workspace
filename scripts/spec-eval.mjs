@@ -44,6 +44,7 @@ export const DETERMINISTIC_CHECK_IDS = new Set([
   "SR7",
   "SR10",
   "SR16",
+  "SR17",
 ]);
 
 // Spec-gate ENFORCEMENT policies (orthogonal to eval_tier, which selects layers):
@@ -263,6 +264,70 @@ function findArchitectureClaims(specText) {
   return claims;
 }
 
+// ── SR17: increment-bound (scope-size) assessment ─────────────────────────────────────────────
+// A spec that enumerates many tasks AND spans many unrelated top-level surfaces deterministically
+// becomes a large, multi-fix PR (the observed batch-size → fix-round curve). SR17 flags that shape
+// structurally, before any code is written, and is model-agnostic (a Codex- or Claude-authored spec
+// is held to the same bar).
+
+export const SR17_TASK_LIMIT = 6; // enumerated tasks in the implementation/tasks section
+export const SR17_SURFACE_LIMIT = 3; // distinct top-level code surfaces the spec touches
+
+// A heading that introduces an enumerated build breakdown (tasks / steps / implementation / plan).
+const SR17_TASK_HEADING_RE =
+  /\b(tasks?|implementation|steps?|plan|deliverables?|work\s*items?|to-?dos?|milestones?)\b/i;
+
+// Top-level surfaces of this toolkit. Mixing >SR17_SURFACE_LIMIT of these in one spec is the
+// mixed-concern signal (e.g. PR #365: gui + inbox + scripts in one change). `.claude/`, config, and
+// bare filenames are intentionally NOT surfaces — they are cross-cutting and would over-trip.
+const SR17_SURFACES = [
+  ["gui/client", /^gui\/client\b/],
+  ["gui/server", /^gui\/server\b/],
+  ["scripts", /^scripts\b/],
+  ["src/operator-loop", /^src\/operator-loop\b/],
+  ["src", /^src\b(?!\/operator-loop)/],
+  ["hooks", /^hooks\b/],
+  ["validation", /^validation\b/],
+  ["scaffold", /^scaffold\b/],
+  ["docs", /^docs\b/],
+  ["test", /^test\b/],
+];
+
+// An explicit statement that the author has bounded the increment to one PR.
+const SR17_INCREMENT_RE =
+  /\b(one\s+pr|single\s+pr|this\s+pr\b|one\s+increment|line\s+budget|~?\d{2,4}\s*(loc|lines)\b|follow-?ups?\s+(are\s+)?deferred|sibling\s+spec|split\s+into\s+\w+\s+spec|first\s+slice|slice\s+\d|one\s+surface)\b/i;
+
+/**
+ * Structurally assess whether a spec is bounded to one reviewable PR. Pure + deterministic so it can
+ * be unit-tested directly. Returns { taskCount, surfaces, incrementStated }.
+ *   - taskCount: bullets under the largest task/implementation/steps section (0 if none).
+ *   - surfaces: sorted distinct top-level code surfaces named by the spec's file references.
+ *   - incrementStated: whether the spec explicitly declares a one-PR / deferred-follow-ups boundary.
+ */
+export function assessScopeBound(specText) {
+  const sections = extractSections(specText);
+  let taskCount = 0;
+  for (const s of sections) {
+    if (SR17_TASK_HEADING_RE.test(s.heading)) {
+      taskCount = Math.max(taskCount, extractBullets(s.body).length);
+    }
+  }
+  const surfaces = new Set();
+  for (const ref of findReferencedPaths(specText)) {
+    for (const [name, re] of SR17_SURFACES) {
+      if (re.test(ref.path)) {
+        surfaces.add(name);
+        break;
+      }
+    }
+  }
+  return {
+    taskCount,
+    surfaces: [...surfaces].sort(),
+    incrementStated: SR17_INCREMENT_RE.test(specText),
+  };
+}
+
 // ── deterministic layer ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -368,6 +433,42 @@ export function runDeterministicChecks(specText, { repo } = {}) {
     /\b(out of scope|deferred|non-?goals?|in scope)\b/i.test(specText);
   if (!scopePresent) {
     add("SR5", "blocker", "scope/deferred not stated — declare what is in and what is cut");
+  }
+
+  // SR17 — increment-bounded: the spec is one reviewable PR. Blocks only when BOTH structural
+  // heuristics trip (unambiguously oversized — the mixed-concern, many-task shape); a single trip is
+  // advisory, and a bounded spec that simply omits an explicit increment statement is a gentle nudge.
+  {
+    const scope = assessScopeBound(specText);
+    const tooManyTasks = scope.taskCount > SR17_TASK_LIMIT;
+    const tooManySurfaces = scope.surfaces.length > SR17_SURFACE_LIMIT;
+    if (tooManyTasks && tooManySurfaces) {
+      add(
+        "SR17",
+        "blocker",
+        `scope too broad for one reviewable PR: ${scope.taskCount} enumerated tasks across ${scope.surfaces.length} surfaces (${scope.surfaces.join(", ")}) — split into sequential one-PR specs, each landing on its own`
+      );
+    } else if (tooManyTasks) {
+      add(
+        "SR17",
+        "minor",
+        `${scope.taskCount} enumerated tasks (> ${SR17_TASK_LIMIT}) — consider splitting into sequential specs so each lands as one small PR`
+      );
+    } else if (tooManySurfaces) {
+      add(
+        "SR17",
+        "minor",
+        `spec spans ${scope.surfaces.length} top-level surfaces (${scope.surfaces.join(", ")}) — mixed-concern specs become large PRs; consider one surface per spec`
+      );
+    } else if (!scope.incrementStated && (scope.taskCount >= 4 || scope.surfaces.length >= 3)) {
+      // Only nudge for a missing increment statement once the spec is moderately sized — a small,
+      // single-surface spec is self-evidently one PR and does not need the ceremony.
+      add(
+        "SR17",
+        "minor",
+        'no explicit increment statement — add a line budget or "one PR; follow-ups deferred to a sibling spec" so scope stays bounded'
+      );
+    }
   }
 
   // SR6 — build-with tier present
