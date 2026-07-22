@@ -132,12 +132,23 @@ export function getLatestPushTime(repo, pr) {
   }
 }
 
+export function getLatestPush(repo, pr) {
+  try {
+    const raw = gh(["api", `repos/${repo}/pulls/${pr}/commits`, "--jq", ".[-1] | {sha: .sha, committedAt: .commit.committer.date}"]);
+    const value = JSON.parse(raw);
+    const committedAt = new Date(value.committedAt);
+    return value.sha && Number.isFinite(committedAt.getTime()) ? { sha: value.sha, committedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
 function fetchIssueComments(repo, pr) {
   const raw = gh([
     "api",
     `repos/${repo}/issues/${pr}/comments`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, created_at: .created_at}]",
+    "[.[] | {user: .user.login, body: .body, created_at: .created_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
 }
@@ -158,7 +169,7 @@ function fetchPullReviews(repo, pr) {
     "api",
     `repos/${repo}/pulls/${pr}/reviews`,
     "--jq",
-    "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at}]",
+    "[.[] | {user: .user.login, body: .body, state: .state, submitted_at: .submitted_at, commit_id: .commit_id}]",
   ]);
   return JSON.parse(raw);
 }
@@ -170,7 +181,8 @@ function isStub(body, stubPatterns) {
 export function isSubstantive(body) {
   // A substantive review has more than just HTML comments and stub messages
   const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
-  return stripped.length > 100;
+  if (stripped.length <= 100) return false;
+  return /review|walkthrough|summary|finding|issue|bug|recommend|potential|security|severity|regression|no issues|no bugs|approved/i.test(stripped) || /(?:^|\n)\s*(?:#{1,6}|[-*] |\d+[.)] |\|)/.test(stripped);
 }
 
 export function hasVisibleReviewText(body) {
@@ -178,7 +190,8 @@ export function hasVisibleReviewText(body) {
   // often intentionally terse. Require visible human-readable text, but do not apply
   // the long-form summary threshold used for top-level comments and review bodies.
   const stripped = (body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
-  return /[\p{L}\p{N}]/u.test(stripped);
+  if (stripped.length < 8 || !/[\p{L}]/u.test(stripped)) return false;
+  return /issue|bug|error|unsafe|risk|fix|change|rename|potential|consider|should|must|regression|finding|nit|why|incorrect|security|handle|null/i.test(stripped);
 }
 
 /**
@@ -187,11 +200,13 @@ export function hasVisibleReviewText(body) {
  * are intentionally not evidence: they can complete successfully without review findings.
  */
 export function checkBotReady(botUser, config, issueComments, pullComments, reviews, latestPush) {
+  const boundary = latestPush instanceof Date ? latestPush : latestPush?.committedAt;
   const after = (dateStr) => {
-    if (!latestPush || !dateStr) return false;
+    if (!boundary || !dateStr) return false;
     const at = new Date(dateStr);
-    return Number.isFinite(at.getTime()) && at >= latestPush;
+    return Number.isFinite(at.getTime()) && at >= boundary;
   };
+  const currentSha = (record) => !latestPush?.sha || record.commit_id === latestPush.sha;
 
   // CodeRabbit issue comments (for example, the walkthrough summary)
   for (const c of issueComments) {
@@ -205,6 +220,7 @@ export function checkBotReady(botUser, config, issueComments, pullComments, revi
   for (const c of pullComments) {
     if (c.user !== botUser) continue;
     if (!after(c.created_at)) continue;
+    if (!currentSha(c)) continue;
     if (isStub(c.body, config.stubPatterns)) continue;
     if (hasVisibleReviewText(c.body)) {
       return { ready: true, signal: "inline-comment", preview: c.body };
@@ -215,6 +231,7 @@ export function checkBotReady(botUser, config, issueComments, pullComments, revi
   for (const r of reviews) {
     if (r.user !== botUser) continue;
     if (!after(r.submitted_at)) continue;
+    if (!currentSha(r)) continue;
     if (isStub(r.body, config.stubPatterns)) continue;
     if (isSubstantive(r.body)) return { ready: true, signal: "review", preview: r.body };
   }
@@ -303,9 +320,9 @@ async function main() {
   console.log(`Bot: ${botUsers.join(", ")}`);
   console.log(`Timeout: ${timeoutMin} min | Poll: ${POLL_INTERVAL_MS / 1000}s\n`);
 
-  const latestPush = getLatestPushTime(repo, prNumber);
+  const latestPush = getLatestPush(repo, prNumber) ?? getLatestPushTime(repo, prNumber);
   if (latestPush) {
-    console.log(`Latest push: ${latestPush.toISOString()} (filtering stale pre-push comments)\n`);
+    console.log(`Latest push: ${(latestPush.committedAt ?? latestPush).toISOString()} (filtering stale pre-push comments)\n`);
   } else {
     console.error(
       "error: latest PR commit timestamp is unavailable — cannot verify current-head CodeRabbit evidence"

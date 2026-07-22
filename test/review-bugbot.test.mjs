@@ -62,6 +62,25 @@ console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
     "negated mitigation does not hide a concrete bypass",
     hasUnstructuredSeverityClaim("High auth bypass is not mitigated", "medium")
   );
+  check(
+    "high-level security narration is ignored",
+    !hasUnstructuredSeverityClaim("High-level review of the security surface: no concerns.", "medium")
+  );
+  check(
+    "medium confidence narration is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence the auth changes are correct.", "medium")
+  );
+  check(
+    "high-level summary narration is ignored",
+    !hasUnstructuredSeverityClaim("High-level summary: the error handling looks fine.", "medium")
+  );
+  check(
+    "medium-level accepted risk narration is ignored",
+    !hasUnstructuredSeverityClaim(
+      "Medium-level risk in the retry path is acceptable and well covered.",
+      "medium"
+    )
+  );
 }
 
 console.log("detectBugbotClear");
