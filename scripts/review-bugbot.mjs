@@ -364,23 +364,31 @@ export function hasCriticalOrHighFindings(text) {
 }
 
 /**
- * True only when the review response is the exact machine clear token.
+ * True only when the review response is the machine clear token and nothing else —
+ * every non-empty line consists solely of one-or-more CLEAR tokens (whitespace-separated).
  *
- * DELIBERATELY strict — a bare token and nothing else. Prose accompanying a clear verdict
- * is refused (see the `None.\nBUGBOT_CLEAR` and `No Critical issues found.\n\nBUGBOT_CLEAR`
- * cases in test/review-bugbot.test.mjs + test/fix-ladder.test.mjs), because a model that
- * narrates alongside the token may be hedging — describing a real problem informally, in a
- * shape `hasFindingsAtOrAbove` cannot parse, while still signing off. Relaxing this to
- * "the last line is the token" would let exactly that through.
+ * DELIBERATELY strict — no prose alongside the token. A model that narrates alongside a
+ * clear verdict may be hedging (describing a real problem informally, in a shape
+ * `hasFindingsAtOrAbove` cannot parse) while still signing off, so `None.\nBUGBOT_CLEAR`,
+ * `No Critical issues found.\n\nBUGBOT_CLEAR`, and `BUGBOT_CLEAR is not appropriate here`
+ * are all refused (see test/review-bugbot.test.mjs + test/fix-ladder.test.mjs). Do NOT
+ * relax this to "the last line is the token" — that would let exactly that hedging through.
  *
- * The flake this strictness caused (AIO-468: the reviewer nondeterministically prefaces
- * the token with "Reviewing the diff for bugs.", producing a protocol error that blocks a
- * merge) is fixed WITHOUT weakening the verdict: `runPass` re-asks once on a protocol
- * error, and both prompts now demand the token as a bare final line. Do not trade this
- * predicate's strictness for convergence — fix the caller instead.
+ * The single tolerance added (AIO-472) is a streaming artifact, not prose: composer-2.5's
+ * two review passes' output can concatenate as `BUGBOT_CLEARBUGBOT_CLEAR` or arrive as
+ * repeated bare-token lines, a genuinely clean review that the old exact-`.trim()`-equality
+ * check misreported as a protocol `error`. Accepting only lines that are *pure* repeated
+ * tokens admits that artifact while keeping every prose case rejected.
  */
 export function detectBugbotClear(text) {
-  return String(text ?? "").trim() === BUGBOT_CLEAR_TOKEN;
+  const lines = String(text ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return false;
+  const token = BUGBOT_CLEAR_TOKEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const clearOnly = new RegExp(`^(?:${token}[ \\t]*)+$`);
+  return lines.every((l) => clearOnly.test(l));
 }
 
 /** True only when the verdict response is the exact machine blocked token. */
@@ -397,6 +405,41 @@ export async function retryReviewTimeoutOnce(call, timeoutMs, onRetry = () => {}
     onRetry(retryTimeoutMs, error);
     return call(retryTimeoutMs);
   }
+}
+
+// Transient exhaustion the reviewer can recover from on a retry (rate-limit contention when
+// several agents run the gate at once). NOT the same as a timeout (handled above): these fail
+// fast, so a bounded backoff is cheap against the child-timeout budget.
+const RETRIABLE_REVIEW_RE = /resource_exhausted|RetriableError|\b429\b|rate.?limit/i;
+
+/**
+ * Retry `call` with bounded exponential backoff, but ONLY on a retriable-exhaustion error —
+ * any other failure (including a timeout, which `retryReviewTimeoutOnce` owns) rethrows
+ * immediately. Compose this AROUND the timeout retry, not inside it.
+ *
+ * Budget caveat: the gate SIGKILLs the child at ~REVIEW_ATTEMPT_BUDGET_MULTIPLIER ×
+ * REVIEW_CHILD_TIMEOUT_SECONDS ≈ 1200s (hooks/local-bugbot-gate.mjs), and both review passes
+ * retry concurrently under Promise.all. Keep `attempts` at 2–3 and `baseDelayMs` small, or the
+ * parent kills the child before the backoff completes.
+ */
+export async function retryReviewOnRetriable(
+  call,
+  { attempts = 2, baseDelayMs = 2_000 } = {},
+  onRetry = () => {}
+) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || !RETRIABLE_REVIEW_RE.test(error?.message ?? "")) throw error;
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      onRetry(attempt, delayMs, error);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
 }
 
 function captureUntracked(worktree) {
@@ -504,13 +547,24 @@ async function runReviewPrompt({
             ...(ref.modelId ? ["--model", ref.modelId] : []),
           ],
         });
-      return await retryReviewTimeoutOnce(invoke, timeoutMs, (retryTimeoutMs) => {
-        console.warn(
-          c.yellow(
-            `[cursor] ${label} timed out after ${timeoutMs / 1000}s; retrying once with ${retryTimeoutMs / 1000}s`
-          )
-        );
-      });
+      return await retryReviewOnRetriable(
+        () =>
+          retryReviewTimeoutOnce(invoke, timeoutMs, (retryTimeoutMs) => {
+            console.warn(
+              c.yellow(
+                `[cursor] ${label} timed out after ${timeoutMs / 1000}s; retrying once with ${retryTimeoutMs / 1000}s`
+              )
+            );
+          }),
+        { attempts: 2, baseDelayMs: 2_000 },
+        (attempt, delayMs) => {
+          console.warn(
+            c.yellow(
+              `[cursor] ${label} hit transient exhaustion (attempt ${attempt}); backing off ${delayMs / 1000}s before retry`
+            )
+          );
+        }
+      );
     }
     console.log(c.dim(`[${ref.provider}] ${label} (${model})...`));
     return await callPromptModel({ model, prompt, timeoutMs, opts: { cwd: reviewCwd } });

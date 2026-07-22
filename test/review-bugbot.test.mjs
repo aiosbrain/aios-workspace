@@ -5,6 +5,7 @@ import {
   hasCriticalOrHighFindings,
   SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
+  retryReviewOnRetriable,
 } from "../scripts/review-bugbot.mjs";
 
 let failed = 0;
@@ -29,6 +30,102 @@ console.log("detectBugbotClear");
     "contradictory finding plus token blocks",
     !detectBugbotClear(`High: bug\n${BUGBOT_CLEAR_TOKEN}`)
   );
+  // AIO-472 — tolerate the composer-2.5 streaming artifact (pure repeated tokens) while still
+  // rejecting any prose alongside the token.
+  check("doubled/concatenated token passes", detectBugbotClear("BUGBOT_CLEARBUGBOT_CLEAR"));
+  check(
+    "repeated token on separate lines passes",
+    detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}\n${BUGBOT_CLEAR_TOKEN}`)
+  );
+  check(
+    'token followed by prose ("not appropriate here") blocks',
+    !detectBugbotClear(`${BUGBOT_CLEAR_TOKEN} is not appropriate here`)
+  );
+  check(
+    "token glued to a trailing word blocks",
+    !detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}Reviewing the diff`)
+  );
+  check("empty response blocks", !detectBugbotClear(""));
+}
+
+console.log("retryReviewOnRetriable (AIO-472)");
+{
+  const run = async (label, fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      return { threw: e };
+    } finally {
+      void label;
+    }
+  };
+
+  // retries a transient resource_exhausted, then succeeds
+  {
+    let calls = 0;
+    const result = await run("retriable-then-ok", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          if (calls === 1) throw new Error("RetriableError: [resource_exhausted] slow down");
+          return "OK";
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check("retriable error retried then succeeds", result === "OK" && calls === 2);
+  }
+
+  // a non-retriable error rethrows immediately without retrying
+  {
+    let calls = 0;
+    const result = await run("non-retriable", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("bad prompt — hard failure");
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check(
+      "non-retriable error rethrows without retry",
+      result?.threw?.message?.includes("hard failure") && calls === 1
+    );
+  }
+
+  // a timeout is NOT retriable here — that path is owned by retryReviewTimeoutOnce
+  {
+    let calls = 0;
+    const result = await run("timeout-not-retried", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("cursor timed out after 400s");
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check("timeout error is not retried by retriable-retry", result?.threw && calls === 1);
+  }
+
+  // exhausts all attempts on a persistent retriable error, throwing the last one
+  {
+    let calls = 0;
+    const result = await run("exhausted", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("429 rate limit");
+        },
+        { attempts: 2, baseDelayMs: 1 }
+      )
+    );
+    check(
+      "persistent retriable error throws after attempts exhausted",
+      result?.threw?.message?.includes("429") && calls === 2
+    );
+  }
 }
 
 console.log("buildBugbotPrompt");
