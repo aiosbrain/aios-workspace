@@ -167,9 +167,11 @@ test("SR17 — thorough single-feature spec (code + test + docs + scaffold refs)
 });
 
 test("SR17 — explicit increment statement downgrades the oversized blocker to advisory", () => {
-  const spec = [read("oversized-multi-surface.md"), "", "One PR; follow-ups deferred to a sibling spec."].join(
-    "\n"
-  );
+  const spec = [
+    read("oversized-multi-surface.md"),
+    "",
+    "One PR; follow-ups deferred to a sibling spec.",
+  ].join("\n");
   const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
   assert.equal(sr17.length, 1);
   assert.equal(sr17[0].severity, "minor", "author-bounded increment must not hard-block");
