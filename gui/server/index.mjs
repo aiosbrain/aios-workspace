@@ -23,10 +23,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { createAdapter, readAgentConfig } from "./runtime-adapters/index.mjs";
-import {
-  getSessionInfo as sdkGetSessionInfo,
-  query as sdkQuery,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import { MEMORY_FILES, MEMORY_ABSENT } from "./memory-files.mjs";
 import {
   reviewTurn,
@@ -92,18 +89,6 @@ import {
   TaskEditError,
 } from "./tasks.mjs";
 import { searchSessions } from "./sessions-search.mjs";
-// Unified Inbox comms section (I-14 / AIO-395): the local read-model queue + the scoped-confirm broker.
-import {
-  ackInboxAsk,
-  archiveInboxAsk,
-  decideInbox,
-  getInboxDetail,
-  getInboxView,
-  replyInboxAsk,
-} from "./inbox-api.mjs";
-import { createInboxRefresher, installInboxRefreshShutdown } from "./inbox-refresh.mjs";
-import { createTelegramNotifier } from "./inbox-notify.mjs";
-import { createTelegramNotifyCoordinator } from "./inbox-notify-lock.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
@@ -192,15 +177,6 @@ if (
 // The desktop shell (Tauri) can pre-set the session token so it doesn't have to
 // parse it back out of stdout; otherwise we mint a random one (the dev/CLI path).
 const TOKEN = process.env.AIOS_GUI_TOKEN || randomBytes(16).toString("hex");
-
-// The consuming session's capability audience/epoch for scoped-confirm decisions (I-14). SERVER-supplied
-// (never from the client body), so I-03's audience/session binding + key/session rotation are enforced at
-// consume time. Unset by default → a null-audience/null-epoch handle (today's issuance) consumes normally,
-// while an audience/epoch-bound handle requires the coordinator to present the matching value.
-const CAP_SESSION = {
-  audience: (process.env.AIOS_GUI_CAP_AUDIENCE || "").trim() || undefined,
-  epoch: (process.env.AIOS_GUI_CAP_EPOCH || "").trim() || undefined,
-};
 
 // Chat transcripts + index live INSIDE the workspace (.aios/ is gitignored by the
 // scaffold), so they're inherently scoped to this repo and never leak across
@@ -606,127 +582,6 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(405);
     return res.end("method not allowed");
-  }
-  // ── unified inbox comms section (token-gated) — I-14 / AIO-395 ──
-  // GET /api/inbox → the I-09 ranked queue plus honest GUI ingestion freshness. Occurrence-based
-  // read-model staleness is intentionally not published as ingestion freshness. `?raw=1` keeps raw order.
-  // Admin-tier local state — nothing here syncs to the Team Brain.
-  if (url.pathname === "/api/inbox" && req.method === "GET") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401);
-      return res.end("unauthorized");
-    }
-    const raw = /^(1|true|raw)$/i.test(url.searchParams.get("raw") || "");
-    getInboxView(repo, {
-      raw,
-      refresh: inboxRefresher.snapshot(),
-      notifyLane: telegramNotifier.snapshot(),
-    })
-      .then((view) => {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(view));
-      })
-      .catch((e) => {
-        res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      });
-    return;
-  }
-  // POST /api/inbox/:id/decision → the ONLY mutating call: scoped-confirmation over an I-03 capability
-  // handle. Body carries ONLY { handle, digest, decision }; the owning runtime validates + consumes.
-  // Matched BEFORE the generic detail route ([^/]+ can't span the trailing "/decision").
-  const inboxDecision = url.pathname.match(/^\/api\/inbox\/([^/]+)\/decision$/);
-  if (inboxDecision && req.method === "POST") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401);
-      return res.end("unauthorized");
-    }
-    let body = "";
-    req.on("data", (c) => {
-      body += c;
-      if (body.length > 1e6) req.destroy();
-    });
-    req.on("end", () => {
-      let payload = {};
-      try {
-        payload = JSON.parse(body || "{}");
-      } catch {
-        /* bad body → decideInbox returns a 400 */
-      }
-      decideInbox(repo, decodeURIComponent(inboxDecision[1]), payload, CAP_SESSION)
-        .then(({ status, ...rest }) => {
-          res.writeHead(status || 200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(rest));
-        })
-        .catch((e) => {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: e.message }));
-        });
-    });
-    return;
-  }
-  const inboxAskAction = url.pathname.match(/^\/api\/inbox\/([^/]+)\/(reply|archive|ack)$/);
-  if (inboxAskAction && req.method === "POST") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401);
-      return res.end("unauthorized");
-    }
-    let body = "";
-    req.on("data", (c) => {
-      body += c;
-      if (body.length > 20_000) req.destroy();
-    });
-    req.on("end", () => {
-      let payload = {};
-      try {
-        payload = JSON.parse(body || "{}");
-      } catch {
-        /* action returns its own 400 */
-      }
-      const [, encodedId, action] = inboxAskAction;
-      const id = decodeURIComponent(encodedId);
-      const operation =
-        action === "reply"
-          ? replyInboxAsk(repo, id, payload, {
-              query: sdkQuery,
-              getSessionInfo: sdkGetSessionInfo,
-            })
-          : action === "archive"
-            ? archiveInboxAsk(repo, id)
-            : ackInboxAsk(repo, id, { notifyCoordinator });
-      operation
-        .then(({ status, retryAfter, ...result }) => {
-          if (retryAfter) res.setHeader("Retry-After", String(retryAfter));
-          res.writeHead(status || 200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        })
-        .catch((e) => {
-          res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: e.message, code: e.errorCode }));
-        });
-    });
-    return;
-  }
-  // GET /api/inbox/:id → one item's detail + any pending capability approvals to scoped-confirm from it.
-  const inboxDetail = url.pathname.match(/^\/api\/inbox\/([^/]+)$/);
-  if (inboxDetail && req.method === "GET") {
-    if (url.searchParams.get("token") !== TOKEN) {
-      res.writeHead(401);
-      return res.end("unauthorized");
-    }
-    getInboxDetail(repo, decodeURIComponent(inboxDetail[1]), {
-      refresh: inboxRefresher.snapshot(),
-      notifyLane: telegramNotifier.snapshot(),
-    })
-      .then((detail) => {
-        res.writeHead(detail.item ? 200 : 404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(detail));
-      })
-      .catch((e) => {
-        res.writeHead(e.statusCode || 500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      });
-    return;
   }
   // ── operator loop panel (token-gated) — AIO-318 ──
   // Thin wiring only; cadence/window validation, the lenient subprocess wrapper, the exit-code
@@ -1634,18 +1489,22 @@ wss.on("connection", (ws, req) => {
   });
 });
 
-const inboxRefresher = createInboxRefresher({ repo });
-const notifyCoordinator = createTelegramNotifyCoordinator({ repo });
-const telegramNotifier = createTelegramNotifier({ repo, notifyCoordinator });
-installInboxRefreshShutdown({
-  stoppables: [telegramNotifier, inboxRefresher],
-  server,
-  webSocketServer: wss,
-});
+// Graceful shutdown on a signal: terminate websocket clients and close the server so a
+// SIGTERM/SIGINT doesn't strand open connections. (Previously provided by the unified-inbox
+// refresher's shutdown installer, removed with the inbox GUI.)
+let shuttingDown = false;
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  for (const client of wss?.clients ?? []) client.terminate?.();
+  wss?.close?.();
+  server.close();
+  server.closeAllConnections?.();
+};
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
 
 server.listen(port, "127.0.0.1", () => {
-  inboxRefresher.start();
-  telegramNotifier.start();
   console.log("");
   console.log("  aios-workspace GUI");
   console.log(`  repo:  ${repo}`);

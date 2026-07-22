@@ -36,18 +36,14 @@ beforeEach(() => {
 });
 
 describe("Sidebar information architecture", () => {
-  test("keeps Comms and Build navigation ahead of contextual chat actions", () => {
+  test("keeps Build navigation ahead of contextual chat actions", () => {
     const html = renderToStaticMarkup(<Sidebar />);
 
-    const comms = html.indexOf("Comms");
-    const inbox = html.indexOf("Inbox");
     const build = html.indexOf("Build");
     const chat = html.indexOf("Chat");
     const newChat = html.indexOf("New chat");
 
-    expect(comms).toBeGreaterThan(-1);
-    expect(comms).toBeLessThan(inbox);
-    expect(inbox).toBeLessThan(build);
+    expect(build).toBeGreaterThan(-1);
     expect(build).toBeLessThan(chat);
     expect(chat).toBeLessThan(newChat);
     expect(html).toContain('aria-label="Workspace"');
