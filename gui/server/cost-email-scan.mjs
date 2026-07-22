@@ -101,9 +101,13 @@ function searchQuery(provider, period) {
 }
 
 function senderDomain(from) {
-  const match = String(from ?? "")
-    .toLowerCase()
-    .match(/@([a-z0-9.-]+)(?:>|\s|$)/);
+  const value = String(from ?? "").toLowerCase();
+  // RFC 5322 display names may contain an @. Prefer the address in the final
+  // angle-bracket group; only an address-only header may use the whole value.
+  const address =
+    value.match(/<\s*[^<>@\s]+@([a-z0-9.-]+)\s*>\s*$/)?.[1] ??
+    value.trim().match(/^[^<>@\s]+@([a-z0-9.-]+)$/)?.[1];
+  const match = address ? [null, address] : null;
   return match?.[1] ?? "";
 }
 

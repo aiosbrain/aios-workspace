@@ -295,5 +295,6 @@ export function buildCostsPayload(
     },
     cursor_error: costs.cursor_error ?? null,
     anthropic_error: costs.anthropic_error ?? null,
+    warnings: Array.isArray(providerActuals?._warnings) ? providerActuals._warnings : [],
   };
 }

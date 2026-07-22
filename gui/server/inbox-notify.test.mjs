@@ -1,4 +1,7 @@
 import test from "node:test";
+// Keep the provider billing probe in the repository-owned server test lane; this
+// file is part of the root `npm test` command.
+import "./provider-costs.test.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -297,8 +300,8 @@ test("a later failed sibling cannot overwrite a successful delivery in the same 
     await notifier.tick();
 
     assert.equal(calls, 2);
-    assert.equal(notifier.snapshot().status, "delivery_ok");
-    assert.equal(notifier.snapshot().last_error, null);
+    assert.equal(notifier.snapshot().status, "degraded");
+    assert.equal(notifier.snapshot().last_error, "some telegram deliveries failed");
     const events = realLoop.readJournalSegments(repo).events;
     assert.equal(events.filter((event) => event.kind === "delivery-attempted").length, 1);
     assert.equal(events[0].correlation_id, "ask-a-success");

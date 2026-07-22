@@ -21,21 +21,23 @@ test("OpenRouter returns only the current key's provider-reported monthly actual
   assert.equal(request.url, "https://openrouter.ai/api/v1/key");
   assert.equal(request.options.headers.Authorization, "Bearer fixture-key");
   assert.deepEqual(actual, {
-    monthly_usd: 8.40879405,
-    period: "2026-07",
-    scope: "current_api_key",
+    actual: { monthly_usd: 8.40879405, period: "2026-07", scope: "current_api_key" },
+    error: null,
   });
   assert.doesNotMatch(JSON.stringify(actual), /fixture-key|secret_metadata/);
 });
 
 test("missing credentials and provider failures degrade to no actual", async () => {
-  assert.equal(await fetchOpenRouterMonthlyActual({ apiKey: "" }), null);
-  assert.equal(
+  assert.deepEqual(await fetchOpenRouterMonthlyActual({ apiKey: "" }), {
+    actual: null,
+    error: null,
+  });
+  assert.deepEqual(
     await fetchOpenRouterMonthlyActual({
       apiKey: "fixture-key",
       fetchImpl: async () => ({ ok: false }),
     }),
-    null
+    { actual: null, error: "OpenRouter billing returned HTTP unknown" }
   );
   assert.deepEqual(
     await collectProviderActuals({
@@ -46,6 +48,6 @@ test("missing credentials and provider failures degrade to no actual", async () 
         },
       },
     }),
-    {}
+    { _warnings: ["OpenRouter billing request failed"] }
   );
 });

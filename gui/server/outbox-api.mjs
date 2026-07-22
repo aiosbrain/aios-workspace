@@ -21,7 +21,7 @@ export function loadOutboxLoop() {
 
 function exactFields(payload, expected) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  const keys = Object.keys(payload).sort();
+  const keys = Object.keys(payload).sort((a, b) => a.localeCompare(b));
   return keys.length === expected.length && expected.every((key, index) => keys[index] === key);
 }
 

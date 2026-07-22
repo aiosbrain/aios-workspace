@@ -2,8 +2,9 @@
  * Small, fail-closed provider billing probes for the Cost panel.
  *
  * Only numeric provider-reported actuals cross this boundary. Tokens, response bodies, key metadata,
- * and provider errors never reach the browser. Missing or insufficient credentials resolve to an
- * empty result so the ledger can remain honestly unknown instead of breaking the whole Cost view.
+ * and provider errors never reach the browser. Missing credentials resolve to an empty result;
+ * configured-but-broken probes carry a bounded diagnostic so the UI can distinguish unknown spend
+ * from a failed billing source.
  */
 
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key";
@@ -20,7 +21,7 @@ export async function fetchOpenRouterMonthlyActual({
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   const key = String(apiKey || "").trim();
-  if (!key) return null;
+  if (!key) return { actual: null, error: null };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -30,17 +31,21 @@ export async function fetchOpenRouterMonthlyActual({
       headers: { Authorization: `Bearer ${key}` },
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok)
+      return {
+        actual: null,
+        error: `OpenRouter billing returned HTTP ${response.status ?? "unknown"}`,
+      };
     const body = await response.json().catch(() => null);
     const amount = Number(body?.data?.usage_monthly);
-    if (!Number.isFinite(amount) || amount < 0) return null;
+    if (!Number.isFinite(amount) || amount < 0)
+      return { actual: null, error: "OpenRouter billing response missing usage_monthly" };
     return {
-      monthly_usd: amount,
-      period: currentPeriod(now),
-      scope: "current_api_key",
+      actual: { monthly_usd: amount, period: currentPeriod(now), scope: "current_api_key" },
+      error: null,
     };
   } catch {
-    return null;
+    return { actual: null, error: "OpenRouter billing request failed" };
   } finally {
     clearTimeout(timeout);
   }
@@ -48,5 +53,9 @@ export async function fetchOpenRouterMonthlyActual({
 
 export async function collectProviderActuals(options = {}) {
   const openrouter = await fetchOpenRouterMonthlyActual(options.openrouter);
-  return openrouter ? { openrouter } : {};
+  return openrouter.actual
+    ? { openrouter: openrouter.actual }
+    : openrouter.error
+      ? { _warnings: [openrouter.error] }
+      : {};
 }

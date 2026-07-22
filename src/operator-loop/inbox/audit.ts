@@ -172,7 +172,7 @@ function canonicalize(v: unknown): string {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
   if (Array.isArray(v)) return `[${v.map(canonicalize).join(",")}]`;
   const rec = v as Record<string, unknown>;
-  const keys = Object.keys(rec).sort();
+  const keys = Object.keys(rec).sort((a, b) => a.localeCompare(b));
   return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalize(rec[k])}`).join(",")}}`;
 }
 
