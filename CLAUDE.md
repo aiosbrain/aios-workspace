@@ -96,6 +96,9 @@ they don't recognize.
   and security review before completion or merge; Medium-or-higher findings block. Never disable
   or bypass the hook when it reports a finding or infrastructure failure. OpenCode's upstream
   lifecycle API is post-idle only, so `aios build`/`aios ship` remains its hard pre-merge gate.
+- **CodeRabbit is current-head and label-gated.** Standard PRs use it only when selected; safety
+  PRs require it and the `ready-for-review` label. After any fix push, request a fresh review with
+  `@coderabbitai review`. A successful check run without substantive review text is not evidence.
 - **Harnesses must stay trustworthy.** Skills under `scaffold/.claude/skills/` are dynamic multi-agent
   workflows with **adversarial verification + rubric-gated self-correction** (`scaffold/.claude/rubrics/`).
   When you change a harness, keep its rubric honest — the rubric is what makes the output trustworthy.

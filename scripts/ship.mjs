@@ -23,6 +23,7 @@ import {
   appendFileSync,
   statSync,
   unlinkSync,
+  existsSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -111,11 +112,11 @@ export const SAFETY_PATHS = [
 ];
 
 const DEFAULT_REVIEWERS = ["gpt-5.5"];
-// The gating reviewers ship actually knows how to run. "bugbot" → wait on the cursor[bot]
-// check via wait-for-bots (opt-in via --reviewers bugbot); "gpt-5.5" → adversarial PR review
-// (routes to models.code_review — default deepseek-v4-pro, not Cursor GPT). Unknown names are a
-// usage error rather than a silently-ignored flag.
-const KNOWN_REVIEWERS = new Set(["bugbot", "gpt-5.5"]);
+// Local Bugbot is mandatory and outside reviewer selection. `bugbot` remains accepted only as
+// a deprecated no-op alias so existing commands keep working while `coderabbit` and `gpt-5.5`
+// select the optional remote/model reviewers.
+const KNOWN_REVIEWERS = new Set(["bugbot", "coderabbit", "gpt-5.5"]);
+export const CODERABBIT_READY_LABEL = "ready-for-review";
 const DEFAULT_MAX_FIX_ROUNDS = 3;
 const ISSUE_RE = /^AIO-\d+$/;
 
@@ -254,6 +255,7 @@ export function parseShipArgs(args) {
     auto: hasFlag("--auto"),
     autoMerge: hasFlag("--auto-merge"),
     reviewers,
+    deprecatedBugbotReviewer: reviewers.includes("bugbot"),
     maxFixRounds,
     planRunner,
     loop,
@@ -293,7 +295,7 @@ export function validateShipArgs(opts) {
   if (opts.loop === "light" && gateIsOff)
     return "the spec gate cannot be turned off under --loop light — it is the light loop's entry contract. Use --spec-gate advisory to run-and-warn without blocking.";
   // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
-  // silently disable BOTH gating reviewers and wave the PR through — reject it. (A bare
+  // silently disable every optional reviewer — reject it. Local Bugbot still remains mandatory. (A bare
   // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
   // where a non-empty raw value normalizes to zero names.)
   if (!opts.reviewers.length)
@@ -336,6 +338,20 @@ export function detectSafetyToken(text) {
 export function touchesSafetySurface(paths, safetyPaths = SAFETY_PATHS) {
   const list = paths ?? [];
   return list.some((p) => safetyPaths.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s)));
+}
+
+export function localBugbotEvidenceMatches(
+  state,
+  { head, baseSha, artifactExists = existsSync } = {}
+) {
+  return Boolean(
+    head &&
+    baseSha &&
+    state?.localBugbotHead === head &&
+    state?.localBugbotBaseSha === baseSha &&
+    state?.localBugbotReviewPath &&
+    artifactExists(state.localBugbotReviewPath)
+  );
 }
 
 // Parse the plan's `## Deferred (out of scope)` section into a list of normalized titles.
@@ -449,7 +465,7 @@ export function buildShipDryRunReport({
           "  2. plan          derive build contract from Interfaces / Implementation / Acceptance",
           "  3. build         runBuild on an isolated worktree",
           "  4. PR            cmdPr push + open PR",
-          "  5. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+          "  5. review        mandatory Local Bugbot + optional CodeRabbit + GPT + consolidate",
           "  6. fix loop      re-build until CLEAR or --max-fix-rounds",
           "  6b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
           "  7. merge gate    CI + consolidator + safety review only when `safety: true`",
@@ -462,7 +478,7 @@ export function buildShipDryRunReport({
           "  4. follow-up     file `## Deferred` items as Linear children",
           "  5. build         runBuild on an isolated worktree",
           "  6. PR            cmdPr push + open PR",
-          "  7. review        wait-for-bots (Bugbot) + GPT review + consolidate",
+          "  7. review        mandatory Local Bugbot + optional CodeRabbit + GPT + consolidate",
           "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
           "  8b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
           "  9. merge gate    CI + consolidator + path-gated safety review + operator",
@@ -483,7 +499,7 @@ export function buildShipDryRunReport({
     "",
     `Loop:         ${loop}`,
     `Plan runner:  ${planRunner}`,
-    `Reviewers:    ${(reviewers ?? []).join(", ")} (CodeRabbit swept, never gated on)`,
+    `Reviewers:    ${(reviewers ?? []).join(", ")} (Local Bugbot is always mandatory)`,
     `Max fix rounds: ${maxFixRounds}`,
     `Gates:        plan=${isLightLoop ? "skipped (spec-derived)" : gates.plan}  merge=${gates.merge}`,
     "",
@@ -1507,6 +1523,109 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     state.worktreePath ?? path.resolve(repo, "..", `${path.basename(repo)}-${slugify(branch)}`);
   const auditDir = path.join(repo, ".aios", "loop", issueId);
   const buildLog = path.join(auditDir, "build.md");
+  const artifactExists = deps.artifactExists ?? existsSync;
+  // The mandatory local gate remains pinned; reviewer selection and loop config cannot override it.
+  const reviewModel = REQUIRED_BUGBOT_MODEL;
+  const resolveReviewSnapshot = () => {
+    const head = (gitExec(["rev-parse", branch], repo) ?? "").trim();
+    if (!head) throw new Error("could not resolve the branch head for local review");
+    const verifiedBase = (deps.resolveBugbotBase ?? resolveRequiredBugbotBase)(worktreePath);
+    if (!verifiedBase.ok) throw new Error(verifiedBase.reason);
+    if (!verifiedBase.baseSha) throw new Error("verified Bugbot base SHA is missing");
+    return { head, baseSha: verifiedBase.baseSha };
+  };
+  const invalidateReviewEvidence = (extra = {}, { preserveLocalBugbot = false } = {}) => {
+    saveState({
+      ...(preserveLocalBugbot
+        ? {}
+        : {
+            prePrReviewDone: false,
+            localBugbotReviewPath: null,
+            localBugbotHead: null,
+            localBugbotBaseSha: null,
+          }),
+      reviewClear: false,
+      reviewHead: null,
+      reviewBaseSha: null,
+      codeRabbitHead: null,
+      ...extra,
+    });
+  };
+  const ensureLocalBugbotEvidence = async ({
+    stage = "local-bugbot",
+    roundTag = "pre-pr",
+  } = {}) => {
+    let snapshot;
+    try {
+      snapshot = resolveReviewSnapshot();
+    } catch (e) {
+      record(stage, { error: e.message });
+      writeAudit(issueId, `local-bugbot-${roundTag}-FAILED.md`, failedArtifact("Local Bugbot", e));
+      console.error(c.red(`local Bugbot: ${e.message} — blocking (fail closed).`));
+      return { ok: false };
+    }
+    if (
+      localBugbotEvidenceMatches(state, {
+        ...snapshot,
+        artifactExists,
+      })
+    ) {
+      record(stage, { reused: true, head: snapshot.head, baseSha: snapshot.baseSha });
+      progress(`local Bugbot: reusing exact-head evidence (${snapshot.head.slice(0, 12)})`);
+      return { ok: true, ...snapshot, path: state.localBugbotReviewPath, reused: true };
+    }
+
+    progress(`local Bugbot: code + security review (${roundTag})`);
+    let review;
+    try {
+      review = await (deps.runLocalPrePrReview ?? runLocalPrePrReview)({
+        worktree: worktreePath,
+        baseSha: snapshot.baseSha,
+        branch,
+        timeoutMs: models.code_review.timeoutMs ?? 300 * 1000,
+        model: reviewModel,
+      });
+    } catch (e) {
+      record(stage, { error: e.message });
+      writeAudit(issueId, `local-bugbot-${roundTag}-FAILED.md`, failedArtifact("Local Bugbot", e));
+      console.error(c.red(`local Bugbot: ${e.message} — blocking (fail closed).`));
+      return { ok: false };
+    }
+    if (!review?.ok || review.skipped) {
+      record(stage, { blocked: true, skipped: !!review?.skipped, pass: review?.pass });
+      console.error(
+        c.red(
+          review?.error || review?.skipped
+            ? "local Bugbot could not complete — blocking."
+            : `local Bugbot found Medium+ issues in ${review?.pass ?? "review"} — blocking.`
+        )
+      );
+      console.error(review?.output || "(Local Bugbot produced no evidence)");
+      return { ok: false };
+    }
+
+    // An ok result MUST carry evidence markdown — an empty artifact is not exact-head
+    // evidence, so fail closed rather than checkpoint a blank file.
+    const evidenceMarkdown = (review.output ?? "").trim();
+    if (!evidenceMarkdown) {
+      record(stage, { blocked: true, emptyEvidence: true });
+      console.error(c.red("local Bugbot returned no evidence markdown — blocking (fail closed)."));
+      return { ok: false };
+    }
+    const safeHead = snapshot.head.replace(/[^a-f0-9]/gi, "").slice(0, 40) || "unknown-head";
+    const artifactName = `local-bugbot-${safeHead}.md`;
+    const artifactPath = path.join(auditDir, artifactName);
+    writeAudit(issueId, artifactName, evidenceMarkdown);
+    saveState({
+      prePrReviewDone: true,
+      localBugbotReviewPath: artifactPath,
+      localBugbotHead: snapshot.head,
+      localBugbotBaseSha: snapshot.baseSha,
+    });
+    record(stage, { ok: true, head: snapshot.head, baseSha: snapshot.baseSha, artifactPath });
+    progress(`local Bugbot: clear (${snapshot.head.slice(0, 12)})`);
+    return { ok: true, ...snapshot, path: artifactPath, reused: false };
+  };
   if (state.buildDone) {
     record("build", { resumed: true, branch });
     progress(`build: resumed from checkpoint (branch ${branch})`);
@@ -1543,58 +1662,31 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 4b. PRE-PR LOCAL REVIEW ───────────────────────────────────────────────────
-  // Code + security pass on the worktree diff before opening a PR. This hard boundary
-  // uses the same pinned reviewer as build and the lifecycle gate.
-  if (!state.prePrReviewDone) {
-    progress("pre-pr-review: local code + security pass");
-    const reviewModel = REQUIRED_BUGBOT_MODEL;
-    const reviewTimeout = models.code_review.timeoutMs ?? 300 * 1000;
-    let prePr;
-    try {
-      const verifiedBase = (deps.resolveBugbotBase ?? resolveRequiredBugbotBase)(worktreePath);
-      if (!verifiedBase.ok) throw new Error(verifiedBase.reason);
-      prePr = await (deps.runLocalPrePrReview ?? runLocalPrePrReview)({
-        worktree: worktreePath,
-        baseSha: verifiedBase.baseSha,
-        branch,
-        timeoutMs: reviewTimeout,
-        model: reviewModel,
-      });
-    } catch (e) {
-      record("pre-pr-review", { error: e.message });
-      writeAudit(issueId, "pre-pr-review-FAILED.md", failedArtifact("pre-pr-review", e));
-      console.error(c.red(`pre-pr-review: ${e.message} — blocking PR (fail closed).`));
-      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-    }
-    writeAudit(issueId, "pre-pr-review.md", prePr.output ?? "(empty)");
-    if (!prePr.ok && !prePr.skipped) {
-      record("pre-pr-review", { blocked: true, pass: prePr.pass });
-      console.error(
-        c.red(
-          prePr.error
-            ? "pre-pr-review: local Bugbot could not complete — PR blocked."
-            : `pre-pr-review: Medium+ findings in ${prePr.pass ?? "review"} pass — PR blocked.`
-        )
-      );
-      console.error(prePr.output || "(local Bugbot produced no evidence)");
-      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
-    }
-    record("pre-pr-review", { ok: true, skipped: !!prePr.skipped });
-    saveState({ prePrReviewDone: true });
-    progress("pre-pr-review: clear");
+  // Code + security review is mandatory and canonical. A checkpoint is reusable only when the
+  // artifact, branch head, and verified base SHA all still match.
+  if (!state.merged) {
+    const prePrEvidence = await ensureLocalBugbotEvidence({
+      stage: "pre-pr-review",
+      roundTag: "pre-pr",
+    });
+    if (!prePrEvidence.ok) return { code: SHIP_EXIT.MERGE_BLOCKED, records };
   }
 
   // ── 5. PR ────────────────────────────────────────────────────────────────────
   let prNumber;
+  let reusedPr = false;
   if (state.prNumber) {
     prNumber = state.prNumber;
     record("pr", { resumed: true, pr: prNumber });
     progress(`pr: resumed from checkpoint (#${prNumber})`);
   } else {
     try {
-      prNumber = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
+      const prResult = await cmdPrDep(repo, ["--branch", branch, "--issue", issue.identifier], {
         throwOnError: true,
+        returnMetadata: true,
       });
+      prNumber = typeof prResult === "object" && prResult !== null ? prResult.number : prResult;
+      reusedPr = typeof prResult === "object" && prResult !== null && prResult.reused === true;
     } catch (e) {
       record("pr", { error: e.message });
       writeAudit(issueId, "pr-FAILED.md", failedArtifact("pr", e));
@@ -1606,68 +1698,195 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { code: SHIP_EXIT.PR_FAILED, records };
     }
     record("pr", { pr: prNumber });
-    saveState({ prNumber });
+    // `cmdPr` always pushes. Reusing an already-labelled PR therefore advances its head
+    // without an automatic incremental review; require an explicit current-head refresh.
+    saveState({ prNumber, codeRabbitRefreshRequired: reusedPr });
     progress(`pr: opened #${prNumber}`);
   }
 
   // ── 6 + 7. REVIEW + FIX LOOP ──────────────────────────────────────────────────
-  // --reviewers selects which gating reviewers actually run (validated against KNOWN_REVIEWERS).
-  const wantBugbot = opts.reviewers.includes("bugbot");
+  // Local Bugbot always runs. --reviewers selects CodeRabbit and/or the GPT review; the legacy
+  // `bugbot` name is a deprecated no-op alias.
+  const wantCodeRabbit = opts.reviewers.includes("coderabbit");
   const wantGpt = opts.reviewers.includes("gpt-5.5");
+  const effectiveReviewers = opts.reviewers.filter((reviewer) => reviewer !== "bugbot").sort();
   let round = state.reviewRound ?? 1;
-  // A resumed CLEAR is honored only if the branch head hasn't moved since the review round that
-  // cleared it — new commits after the checkpoint must re-run the reviewers (review r1, Medium).
-  if (state.reviewClear) {
-    let headNow = null;
+  // A resumed CLEAR is honored only when the exact head/base Local Bugbot artifact and every
+  // required current-head reviewer still match the checkpoint.
+  if (state.reviewClear && !state.merged) {
+    let snapshot = null;
     try {
-      headNow = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
+      snapshot = resolveReviewSnapshot();
     } catch {
-      headNow = null;
+      snapshot = null;
     }
-    if (!headNow || headNow !== state.reviewHead) {
-      progress("review: checkpointed CLEAR is stale (branch moved) — re-running the review round");
-      saveState({ reviewClear: false, reviewHead: null });
+    const stale =
+      !snapshot ||
+      snapshot.head !== state.reviewHead ||
+      snapshot.baseSha !== state.reviewBaseSha ||
+      !localBugbotEvidenceMatches(state, { ...snapshot, artifactExists }) ||
+      (state.reviewCodeRabbitRequired && state.codeRabbitHead !== snapshot.head) ||
+      (wantCodeRabbit && !state.reviewCodeRabbitRequired) ||
+      JSON.stringify(state.reviewers ?? []) !== JSON.stringify(effectiveReviewers);
+    if (stale) {
+      progress("review: checkpointed CLEAR is stale — re-running the exact-head review round");
+      // The pre-PR step immediately above has already refreshed Local Bugbot for this exact
+      // head/base. Only the stale consolidation/remote-review checkpoint needs invalidation.
+      invalidateReviewEvidence(
+        {
+          codeRabbitRefreshRequired:
+            (wantCodeRabbit && !state.reviewCodeRabbitRequired) ||
+            (!!state.reviewCodeRabbitRequired && state.codeRabbitHead !== snapshot?.head),
+        },
+        { preserveLocalBugbot: true }
+      );
       state.reviewClear = false;
     }
   }
-  if (state.reviewClear) {
+  if (state.reviewClear || state.merged) {
     record("review", { resumed: true, clear: true });
-    progress("review: resumed from checkpoint (already CLEAR)");
+    progress(
+      state.merged
+        ? "review: skipped (merge already checkpointed)"
+        : "review: resumed from checkpoint (already CLEAR)"
+    );
   } else
     for (;;) {
       saveState({ reviewRound: round });
       progress(`review: round ${round} started`);
-      // (a) Bugbot gate. Skipped ONLY if the operator explicitly dropped "bugbot" from --reviewers.
-      // Pass the resolved GitHub slug so wait-for-bots targets the right repo even under `ship
-      // --repo <path>` (its own git-remote detection runs in the primary checkout, not the slug).
-      // Exit codes (wait-for-bots.mjs): 0 = Bugbot posted; 2 = timeout; anything else = the gate
-      // could not run. A requested reviewer whose evidence is NOT present must fail closed — a
-      // timeout means the consolidator would otherwise CLEAR without Bugbot's findings and merge
-      // before a late Critical/High appears. So ANY non-zero (timeout INCLUDED) blocks merge.
-      if (wantBugbot) {
+      const localEvidence = await ensureLocalBugbotEvidence({
+        stage: "review-local-bugbot",
+        roundTag: `r${round}`,
+      });
+      if (!localEvidence.ok) return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+
+      // Classify the current PR diff every round. Missing changed-path metadata cannot rule out
+      // the safety surface, so it fails closed.
+      let reviewPolicy;
+      try {
+        const changed = ghExec([
+          "pr",
+          "diff",
+          String(prNumber),
+          ...(slug ? ["--repo", slug] : []),
+          "--name-only",
+        ]);
+        if (changed?.code !== 0 || !(changed?.stdout ?? "").trim()) {
+          throw new Error("changed-path metadata unavailable");
+        }
+        const changedPaths = changed.stdout
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const safetyRequired =
+          (isLightLoop && specSafetyFlag(specText)) || touchesSafetySurface(changedPaths);
+        reviewPolicy = {
+          changedPaths,
+          safetyRequired,
+          codeRabbitRequired: safetyRequired || wantCodeRabbit,
+        };
+      } catch (e) {
+        record("review", { round, changedPathsUnavailable: true, error: e.message });
+        console.error(c.red(`review: ${e.message} — blocking (fail closed).`));
+        return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+      }
+
+      if (reviewPolicy.safetyRequired && opts.autoMerge) {
+        record("review", { round, safetyAutoMergeRejected: true });
+        console.error(
+          c.red(
+            "review: --auto-merge is forbidden for safety-sensitive changes; use the interactive " +
+              "operator gate or resume deliberately with --approve-merge."
+          )
+        );
+        return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+      }
+
+      // CodeRabbit is opt-in for Standard PRs and mandatory for Safety PRs. The configured
+      // positive label both proves operator intent and triggers the initial review. Reused PRs
+      // and later fix pushes explicitly request a new review because incremental review is off.
+      if (reviewPolicy.codeRabbitRequired) {
+        let labels;
+        try {
+          const labelRes = ghExec([
+            "pr",
+            "view",
+            String(prNumber),
+            ...(slug ? ["--repo", slug] : []),
+            "--json",
+            "labels",
+            "--jq",
+            ".labels[].name",
+          ]);
+          if (labelRes?.code !== 0) throw new Error(labelRes?.stderr || "label query failed");
+          labels = (labelRes?.stdout ?? "")
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean);
+        } catch (e) {
+          record("review", { round, labelsUnavailable: true, error: e.message });
+          console.error(c.red(`review: could not read PR labels (${e.message}) — blocking.`));
+          return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+        }
+        if (!labels.includes(CODERABBIT_READY_LABEL)) {
+          record("review", { round, codeRabbitLabelMissing: true });
+          console.error(
+            c.red(
+              `review: CodeRabbit is required but PR #${prNumber} lacks the ` +
+                `\`${CODERABBIT_READY_LABEL}\` label. Add it, then resume ship.`
+            )
+          );
+          return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+        }
+
+        if (state.codeRabbitRefreshRequired) {
+          const request = ghExec([
+            "pr",
+            "comment",
+            String(prNumber),
+            ...(slug ? ["--repo", slug] : []),
+            "--body",
+            "@coderabbitai review",
+          ]);
+          if (request?.code !== 0) {
+            record("review", { round, codeRabbitRequestFailed: true, code: request?.code });
+            console.error(
+              c.red(
+                `review: could not request a fresh CodeRabbit review (${request?.stderr || "unknown error"}) — blocking.`
+              )
+            );
+            return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+          }
+        }
+
         const wfbCode = waitForBots([
           "--pr",
           String(prNumber),
           ...(slug ? ["--repo", slug] : []),
           "--bots",
-          "cursor[bot]",
+          "coderabbitai[bot]",
           "--timeout",
           "10",
         ]);
         if (wfbCode !== 0) {
-          record("review", { round, bugbotUnavailable: wfbCode });
+          record("review", { round, codeRabbitUnavailable: wfbCode });
           const why = wfbCode === 2 ? "timed out" : `exited ${wfbCode} (gate could not run)`;
           console.error(
             c.red(
-              `review: Bugbot review unavailable — wait-for-bots ${why}; blocking merge ` +
-                `(drop it via --reviewers to skip it intentionally).`
+              `review: current-head CodeRabbit review unavailable — wait-for-bots ${why}; blocking.`
             )
           );
           return { code: SHIP_EXIT.MERGE_BLOCKED, records };
         }
+        // Keep a pending refresh durable across timeouts. Only substantive current-head
+        // evidence can clear the request flag; a command acknowledgment is not evidence.
+        saveState({ codeRabbitRefreshRequired: false, codeRabbitHead: localEvidence.head });
+      } else if (state.codeRabbitRefreshRequired) {
+        saveState({ codeRabbitRefreshRequired: false, codeRabbitHead: null });
       }
 
-      // (b) GPT-5.5 PR review via Cursor. Skipped ONLY if the operator dropped "gpt-5.5". A
+      // GPT-5.5 PR review via the configured model. Skipped only when the operator drops
+      // "gpt-5.5". A
       // requested GPT review that fails (or has no diff to review) is missing reviewer evidence —
       // fail closed rather than consolidate without it.
       let gptReviewFile = null;
@@ -1721,6 +1940,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         issue.identifier,
         "--round",
         String(round),
+        "--local-bugbot-review",
+        localEvidence.path,
       ];
       if (isLightLoop) consolidateArgs.push("--loop-profile", "light");
       if (gptReviewFile) consolidateArgs.push("--gpt-review", gptReviewFile);
@@ -1729,13 +1950,14 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       record("review", { round, verdictCode });
 
       if (verdictCode === 0) {
-        let reviewHead = null;
-        try {
-          reviewHead = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
-        } catch {
-          reviewHead = null; // unknown head → a resume will conservatively re-review
-        }
-        saveState({ reviewClear: true, reviewHead });
+        saveState({
+          reviewClear: true,
+          reviewHead: localEvidence.head,
+          reviewBaseSha: localEvidence.baseSha,
+          reviewSafetyRequired: reviewPolicy.safetyRequired,
+          reviewCodeRabbitRequired: reviewPolicy.codeRabbitRequired,
+          reviewers: effectiveReviewers,
+        });
         progress(`review: round ${round} CLEAR`);
         break; // CLEAR → merge gate
       }
@@ -1790,15 +2012,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         writeAudit(issueId, `fix-push-r${round}-FAILED.md`, failedArtifact("fix push", e));
         return { code: SHIP_EXIT.PR_FAILED, records };
       }
+      invalidateReviewEvidence({
+        codeRabbitRefreshRequired: reviewPolicy.codeRabbitRequired,
+        reviewRound: round + 1,
+      });
       round++;
     }
 
   // ── 7b. SIMPLIFY — post-review, pre-merge cleanup pass (advisory) ───────────────
   // One cheap-model, behavior-preserving pass over the branch diff after the review
   // loop clears (runSimplify reverts itself on any failure, so this stage can slow a
-  // ship but never block one). On a kept cleanup we UPDATE reviewHead instead of
-  // re-reviewing: the pass is verify-gated and diff-scoped, and a re-review would
-  // double the token cost of a stage designed to be cheap.
+  // ship but never block one). A kept cleanup is a new changeset: invalidate every review
+  // checkpoint and require a resumed exact-head review instead of relabeling stale evidence.
   if (!opts.noSimplify && !state.simplifyDone && !state.merged) {
     const simplifyDep = deps.runSimplify ?? runSimplify;
     const sCfg = models.simplify;
@@ -1835,24 +2060,18 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         }
       }
       if (pushed) {
-        let newHead = null;
-        try {
-          newHead = (gitExec(["rev-parse", branch], repo) ?? "").trim() || null;
-        } catch {
-          newHead = null; // unknown head → a resume will conservatively re-review
-        }
-        saveState({ simplifyDone: true, reviewHead: newHead });
-        progress("simplify: cleanup commit pushed — waiting for CI");
-        // The fresh push resets checks to pending and the merge gate fails closed on
-        // pending, so give CI a bounded window to settle before falling through (a
-        // timeout just means MERGE_BLOCKED — resumable, not fatal).
-        const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-        const deadline = Date.now() + (deps.simplifyCiTimeoutMs ?? 10 * 60 * 1000);
-        for (;;) {
-          const checks = readChecks(prNumber, { ghExec, slug });
-          if (checks.ok || checks.red || Date.now() >= deadline) break;
-          await sleep(30 * 1000);
-        }
+        invalidateReviewEvidence({
+          simplifyDone: true,
+          codeRabbitRefreshRequired: !!state.reviewCodeRabbitRequired,
+          reviewRound: round + 1,
+        });
+        progress("simplify: cleanup commit pushed — exact-head reviews invalidated");
+        console.error(
+          c.yellow(
+            `simplify: resume with aios ship ${issueId} --resume to review the cleanup commit.`
+          )
+        );
+        return { code: SHIP_EXIT.MERGE_BLOCKED, records };
       } else {
         saveState({ simplifyDone: true });
       }
@@ -1872,6 +2091,69 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     record("merge", { resumed: true, pr: prNumber });
     progress(`merge: resumed from checkpoint (PR #${prNumber} already merged)`);
   } else {
+    // Re-check the canonical local artifact immediately before merge. A branch or verified-base
+    // movement after consolidation invalidates the whole CLEAR checkpoint.
+    let mergeSnapshot = null;
+    try {
+      mergeSnapshot = resolveReviewSnapshot();
+    } catch {
+      mergeSnapshot = null;
+    }
+    const mergeEvidenceStale =
+      !mergeSnapshot ||
+      mergeSnapshot.head !== state.reviewHead ||
+      mergeSnapshot.baseSha !== state.reviewBaseSha ||
+      !localBugbotEvidenceMatches(state, {
+        ...(mergeSnapshot ?? {}),
+        artifactExists,
+      }) ||
+      (state.reviewCodeRabbitRequired && state.codeRabbitHead !== mergeSnapshot?.head);
+    if (mergeEvidenceStale) {
+      const headMoved = !!mergeSnapshot && mergeSnapshot.head !== state.reviewHead;
+      invalidateReviewEvidence({
+        codeRabbitRefreshRequired: headMoved && !!state.reviewCodeRabbitRequired,
+      });
+      record("merge-gate", { staleReviewEvidence: true });
+      console.error(
+        c.red(
+          "merge gate: reviewed head/base evidence is stale — resume to run a fresh review round."
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+
+    // `gh pr merge` merges GITHUB's head, not the local ref. A commit pushed to the PR
+    // branch by anyone else after the review would otherwise slip into the merge without
+    // review evidence — require the remote head to equal the reviewed head, fail closed
+    // when it cannot be read.
+    let remoteHead = null;
+    try {
+      const headRes = ghExec([
+        "pr",
+        "view",
+        String(prNumber),
+        ...(slug ? ["--repo", slug] : []),
+        "--json",
+        "headRefOid",
+        "--jq",
+        ".headRefOid",
+      ]);
+      if (headRes?.code === 0) remoteHead = (headRes.stdout ?? "").trim() || null;
+    } catch {
+      remoteHead = null;
+    }
+    if (!remoteHead || remoteHead !== state.reviewHead) {
+      record("merge-gate", { remoteHeadMismatch: true, remoteHead });
+      console.error(
+        c.red(
+          remoteHead
+            ? "merge gate: the PR head on GitHub does not match the reviewed head — fetch the branch, re-review, and resume."
+            : "merge gate: could not verify the PR head on GitHub — blocking (fail closed)."
+        )
+      );
+      return { code: SHIP_EXIT.MERGE_BLOCKED, records };
+    }
+
     // CI green.
     const checks = readChecks(prNumber, { ghExec, slug });
     if (!checks.ok) {
@@ -1923,6 +2205,32 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     const safetyRequired = isLightLoop
       ? specSafetyFlag(specText) || touchesSafetySurface(changedPaths)
       : touchesSafetySurface(changedPaths);
+    if (
+      safetyRequired &&
+      (!state.reviewSafetyRequired ||
+        !state.reviewCodeRabbitRequired ||
+        state.codeRabbitHead !== state.reviewHead)
+    ) {
+      // Defense in depth against path-classification drift or eventual-consistency races between
+      // the review round and merge gate. Safety can never proceed without current-head CodeRabbit.
+      invalidateReviewEvidence({ codeRabbitRefreshRequired: true }, { preserveLocalBugbot: true });
+      record("merge-gate", { safetyReviewPolicyStale: true });
+      console.error(
+        c.red(
+          "merge gate: safety-sensitive diff lacks current-head CodeRabbit evidence — resume for a fresh review round."
+        )
+      );
+      return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+    }
+    if (safetyRequired && gates.merge === "skip") {
+      record("merge-gate", { safetyAutoMergeRejected: true });
+      console.error(
+        c.red(
+          "merge gate: --auto-merge cannot bypass operator approval for safety-sensitive changes."
+        )
+      );
+      return { code: SHIP_EXIT.SAFETY_BLOCKED, records };
+    }
     if (safetyRequired) {
       try {
         const diffRes = ghExec(["pr", "diff", String(prNumber), ...(slug ? ["--repo", slug] : [])]);
@@ -2067,8 +2375,9 @@ function usage() {
       "",
       "options:",
       "  --auto                 skip the plan gate (plan proceeds without operator OK)",
-      "  --auto-merge           skip the merge gate (merge proceeds without operator OK)",
-      "  --reviewers <list>     gating reviewers (default: gpt-5.5; add bugbot to wait on Cursor Bot)",
+      "  --auto-merge           skip the merge gate for Standard PRs (rejected for Safety PRs)",
+      "  --reviewers <list>     optional reviewers: gpt-5.5 (default), coderabbit; local Bugbot always runs",
+      "                         (`bugbot` is accepted temporarily as a deprecated no-op alias)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
       "  --no-simplify          skip the post-review simplify pass (stage 8b — cheap-model",
       "                         cleanup on the reviewed diff; verify-gated, advisory)",
@@ -2104,6 +2413,14 @@ export async function cmdShip(repo, args, deps = {}) {
   if (err) {
     console.error(c.red(`error: ${err}`));
     return SHIP_EXIT.USAGE;
+  }
+  if (opts.deprecatedBugbotReviewer) {
+    console.warn(
+      c.yellow(
+        "warning: `bugbot` in --reviewers is deprecated and ignored; Local Bugbot is mandatory " +
+          "for every ship run. Use `coderabbit` and/or `gpt-5.5` to select optional reviewers."
+      )
+    );
   }
 
   let models;

@@ -516,7 +516,7 @@ flowchart LR
     task["Task / spec / AIO-issue"] --> relay["aios relay<br/>Opus plan ↔ Cursor review<br/>until PLAN_READY"]
     relay --> build["aios build<br/>Opus implements on a worktree<br/>Cursor reviews → MERGE_READY"]
     build --> pr["aios pr / --pr<br/>push + open PR (AIO-key in title)"]
-    pr --> bots["wait-for-bots → GPT review"]
+    pr --> bots["Local Bugbot → optional/required CodeRabbit → GPT review"]
     bots --> cons["aios consolidate-findings<br/>one severity-ranked list (fail-closed)"]
     cons --> fix["aios build --findings<br/>fix the must-fix subset"]
     fix --> merge["merge + cleanup"]
@@ -528,7 +528,7 @@ flowchart LR
 | `aios build <plan-file\|task> [branch]` | Implement a plan with Opus, reviewed by Cursor, until `MERGE_READY`; `--merge` / `--pr` / `--bugbot` |
 | `aios ship AIO-<n>` | The whole gated loop for one issue: recon → plan → build → PR → review → fix → merge → cleanup, behind plan + merge gates (both default ON) |
 | `aios pr [--branch b] [--issue AIO-n]` | Push the branch + open a PR idempotently (prints `PR_NUMBER`; carries the `AIO-<n>` key so board automations fire) |
-| `aios consolidate-findings --pr <n> --issue AIO-<n>` | Merge CI + Bugbot + CodeRabbit + GPT reviews + the PR diff into one severity-ranked, fail-closed finding list |
+| `aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>` | Merge CI + exact-head Local Bugbot + current-head CodeRabbit + GPT reviews + the PR diff into one severity-ranked, fail-closed finding list |
 | `aios review-bugbot [branch]` | Local Cursor Bugbot on a build worktree's diff (offline) |
 | `aios roadmap-run (--label\|--epic\|--project)` | Unattended serial walker: ship one unblocked issue at a time; deterministic digest each run |
 

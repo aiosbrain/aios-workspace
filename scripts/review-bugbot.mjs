@@ -342,6 +342,10 @@ export function hasFindingsAtOrAbove(text, failOn = "high") {
   const threshold = SEVERITY_RANK[canonical];
   const severity = "(Critical|High|Medium|Low)";
   const patterns = [
+    new RegExp(
+      `^\\s*(?:(?:[-*]|\\d+[.)]|#{1,6})\\s+)?${MD}\`?${severity}\\s+Severity\`?${MD}\\s*(?::|—|-\\s+|$)`,
+      "i"
+    ),
     new RegExp(`^\\s*(?:[-*]|\\d+[.)])\\s*${MD}\`?${severity}\`?${MD}\\s*(?::|—|-\\s+)`, "i"),
     new RegExp(`^\\s*(?:[-*]|\\d+[.)])\\s*${MD}\\[${severity}\\]${MD}`, "i"),
     new RegExp(`^\\s*\\|\\s*${MD}\`?${severity}\`?${MD}\\s*\\|`, "i"),
@@ -358,6 +362,68 @@ export function hasFindingsAtOrAbove(text, failOn = "high") {
         if (listed && SEVERITY_RANK[listed] >= threshold) return true;
       }
       return false;
+    });
+}
+
+/**
+ * Catch assertive severity prose that violates the structured finding dialect.
+ * Progress/negative statements remain non-findings; this deliberately requires both
+ * a gating severity and concrete risk language to avoid matching generic status text.
+ */
+export function hasUnstructuredSeverityClaim(text, failOn = "high") {
+  const canonical = canonicalSeverity(failOn);
+  if (!canonical) throw new Error(`invalid Bugbot severity: ${failOn}`);
+  const threshold = SEVERITY_RANK[canonical];
+  const names = Object.entries(SEVERITY_RANK)
+    .filter(([, rank]) => rank >= threshold)
+    .map(([name]) => name)
+    .join("|");
+  const severity = `(?:${names})`;
+  // Require punctuation/whitespace after the severity.  A word boundary would
+  // also match narration such as "High-level" and "Medium-level".
+  const startsWithSeverity = new RegExp(
+    `^\\s*(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?(?=\\s|:|—)`,
+    "i"
+  );
+  const assertiveSeverity = new RegExp(
+    `\\b(?:found|identified|confirmed|detected|observed|reports?|there\\s+(?:is|are))\\s+(?:an?\\s+)?(?:possible\\s+)?(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?\\b`,
+    "i"
+  );
+  const concreteRisk =
+    /\b(?:finding|issue|bug|bypass|vulnerab\w*|regress\w*|risk|leak|inject\w*|unsafe|incorrect|failure|error|race|auth\w*|security|correctness|data[ -]loss)\b/i;
+  const resolvedEvidence =
+    /\b(?:fixed|resolved|mitigated|prevented|guarded)\b|\bcovered\s+by\s+(?:tests?|coverage|validators?)\b/i;
+  const riskClassification = new RegExp(
+    `^\\s*(?:\\*\\*|__|\\*|_)?\\[?${severity}\\]?\\s+risk\\s+(?:change|level|profile|classification)\\b`,
+    "i"
+  );
+  const concreteIssueBeyondRisk =
+    /\b(?:finding|issue|bug|bypass|vulnerab\w*|regress\w*|leak|inject\w*|unsafe|incorrect|failure|error|race|auth\w*|security|correctness|data[ -]loss)\b/i;
+
+  return String(text ?? "")
+    .split("\n")
+    .some((line) => {
+      if (!concreteRisk.test(line)) return false;
+      if (/^\s*(?:high|medium|critical)(?:-level)?\s+(?:confidence|summary)\b/i.test(line))
+        return false;
+      if (
+        startsWithSeverity.test(line) &&
+        /\b(?:acceptable|no concerns?|looks? (?:fine|good|correct)|well covered)\b/i.test(line)
+      )
+        return false;
+      const resolution = resolvedEvidence.exec(line);
+      if (resolution) {
+        const prefix = line.slice(0, resolution.index);
+        const resolutionNegated =
+          /\b(?:not|never)\b(?:\s+\w+){0,3}\s*$|\bwithout\b(?:\s+\w+){0,2}\s*$/i.test(prefix);
+        if (!resolutionNegated) return false;
+      }
+      if (riskClassification.test(line) && !concreteIssueBeyondRisk.test(line)) return false;
+      if (startsWithSeverity.test(line)) return true;
+      const match = assertiveSeverity.exec(line);
+      if (!match) return false;
+      const prefix = line.slice(0, match.index);
+      return !/\b(?:no|not|none|without)\s*$/i.test(prefix);
     });
 }
 
@@ -550,7 +616,10 @@ async function runReviewPrompt({
           cwd: reviewCwd,
           bin: TRUSTED_CURSOR_BIN,
           env: trustedReviewerEnv(),
-          preferLastAssistant: true,
+          // Cursor may stream progress narration before its terminal result event. Keep
+          // both: the transcript is scanned for findings and the terminal payload must
+          // independently satisfy the exact machine-verdict protocol.
+          resultEventBundle: true,
           extraArgs: [
             ...CURSOR_REVIEW_FLAGS,
             ...(readOnly ? ["--mode", "ask"] : []),
@@ -677,15 +746,36 @@ export async function runLocalPrePrReview({
   }
 
   const runPass = async (label, makePrompt) => {
-    const classify = (output) => {
-      // Findings FIRST: a response listing a fail-on-or-above finding is blocked even if
-      // it also ends with the clear token. Order is load-bearing — never invert it.
-      const finding = detectBugbotBlocked(output) || hasFindingsAtOrAbove(output, failOn);
-      const error = !finding && !detectBugbotClear(output);
-      return { finding, error };
+    const classify = (response) => {
+      const bundled =
+        response && typeof response === "object" && !Array.isArray(response)
+          ? {
+              transcript: String(response.transcript ?? ""),
+              terminals: [response.result, response.eventResult]
+                .filter((value) => value != null)
+                .map(String),
+            }
+          : { transcript: String(response ?? ""), terminals: [String(response ?? "")] };
+      const evidence = [bundled.transcript, ...bundled.terminals]
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join("\n\n--- terminal result ---\n\n");
+      // Findings FIRST: streamed or terminal Medium+ evidence blocks even if another terminal
+      // shape says clear. Only the exact terminal protocol can clear an otherwise clean pass.
+      const finding =
+        detectBugbotBlocked(bundled.transcript) ||
+        bundled.terminals.some(detectBugbotBlocked) ||
+        hasFindingsAtOrAbove(evidence, failOn) ||
+        hasUnstructuredSeverityClaim(evidence, failOn);
+      const error = !finding && !bundled.terminals.some(detectBugbotClear);
+      return {
+        finding,
+        error,
+        output: finding || error ? evidence : BUGBOT_CLEAR_TOKEN,
+      };
     };
     const once = async () => {
-      const output = await reviewPrompt({
+      const response = await reviewPrompt({
         label,
         prompt: makePrompt(reviewDiff),
         worktree,
@@ -693,7 +783,7 @@ export async function runLocalPrePrReview({
         model,
         readOnly,
       });
-      return { output, ...classify(output) };
+      return classify(response);
     };
 
     let pass = await once();
@@ -716,7 +806,7 @@ export async function runLocalPrePrReview({
       finding: pass.finding,
       error: pass.error,
       output: pass.error
-        ? `${pass.output}\n\n(review protocol error in the ${label} pass: expected ${BUGBOT_CLEAR_TOKEN} or ${BUGBOT_BLOCKED_TOKEN} as the final line, or a structured finding)`
+        ? `${pass.output}\n\n(review protocol error in the ${label} pass: expected terminal result to be exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
         : pass.output,
     };
   };

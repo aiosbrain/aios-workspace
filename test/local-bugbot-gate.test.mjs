@@ -88,6 +88,7 @@ test("Medium+ matcher is strict while Low remains advisory", async () => {
   assert.equal(hasFindingsAtOrAbove("Medium — stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("Medium - stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("**[Medium]** scripts/x.mjs:1 — stale", "medium"), true);
+  assert.equal(hasFindingsAtOrAbove("**High Severity**\n\nUnsafe retry loop.", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("| High | x | unsafe |", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("- Low: wording", "medium"), false);
   assert.equal(hasFindingsAtOrAbove("No Critical, High, or Medium findings.", "medium"), false);
@@ -248,6 +249,103 @@ test("noncompliant reviewer prose fails closed without a verdict model", async (
     assert.equal(blocked.finding, false);
     assert.equal(blocked.error, true);
     assert.equal(blocked.pass, "code");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("terminal clear ignores progress prose but cannot override a streamed finding", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    const baseSha = git(repo, "rev-parse", "main");
+    const progressOnly = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(progressOnly.ok, true);
+
+    const resultOnlyClear = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: "Still checking validators.",
+        eventResult: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(resultOnlyClear.ok, true);
+
+    const contradictory = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "- Medium: streamed correctness regression",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(contradictory.ok, false);
+    assert.equal(contradictory.finding, true);
+    assert.match(contradictory.output, /streamed correctness regression/);
+
+    const legacyContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript:
+                "**High Severity**\n\nThis retry loop has no upper bound and can hang the process.",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(legacyContradiction.ok, false);
+    assert.equal(legacyContradiction.finding, true);
+    assert.match(legacyContradiction.output, /High Severity/);
+
+    const streamedBlockedToken = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "BUGBOT_BLOCKED",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(streamedBlockedToken.ok, false);
+    assert.equal(streamedBlockedToken.finding, true);
+    assert.match(streamedBlockedToken.output, /BUGBOT_BLOCKED/);
+
+    const unstructuredContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "Critical auth bypass in the callback route",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(unstructuredContradiction.ok, false);
+    assert.equal(unstructuredContradiction.finding, true);
+    assert.match(unstructuredContradiction.output, /Critical auth bypass/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

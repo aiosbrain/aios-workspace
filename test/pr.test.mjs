@@ -189,6 +189,28 @@ console.log("idempotency: existing PR is reused — still PUSHES, but skips crea
     calls.includes("git push -u origin feat/AIO-42-x")
   );
   check("did NOT create a PR", !calls.includes("pr create"));
+
+  const { rv: metadata } = await capture(() =>
+    cmdPr(".", ["--branch", "feat/AIO-42-x", "--repo", "acme/repo", "--issue", "AIO-42"], {
+      returnMetadata: true,
+    })
+  );
+  check(
+    "metadata distinguishes a reused PR whose head was pushed",
+    metadata?.number === 55 && metadata?.reused === true
+  );
+}
+
+console.log("create metadata distinguishes a newly opened PR");
+{
+  resetRecord();
+  process.env.FAKE_PR_LIST = "";
+  const { rv } = await capture(() =>
+    cmdPr(".", ["--branch", "feat/AIO-42-x", "--repo", "acme/repo", "--issue", "AIO-42"], {
+      returnMetadata: true,
+    })
+  );
+  check("new PR metadata is explicit", rv?.number === 77 && rv?.reused === false);
 }
 
 console.log("custom --title without the issue key gets it prefixed (H2)");

@@ -1,4 +1,4 @@
-version: "2"
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
 
 reviews:
@@ -9,8 +9,11 @@ reviews:
   review_status: true
   collapse_walkthrough: false
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
+    labels:
+      - ready-for-review
+    auto_incremental_review: false
     base_branches:
       - main
 
@@ -25,7 +28,7 @@ reviews:
   path_instructions:
     - path: "scripts/aios.mjs"
       instructions: |
-        This is the sync CLI. Changes must not break the brain-api.md v1.2 contract
+        This is the sync CLI. Changes must not break the brain-api.md v1.11 contract
         (docs/brain-api.md). Push must only transmit team/external tier content —
         admin/private content must never leave. Default-deny on missing access: frontmatter.
     - path: "validation/**"

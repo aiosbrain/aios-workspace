@@ -1,19 +1,13 @@
 #!/usr/bin/env node
-// test/wait-for-bots-bots.test.mjs — the additive --bots selector.
-// selectBots validates against BOT_CONFIG (unknown → usage error) and filters to the requested
-// bots. A fast spawn with a fake gh where ONLY Bugbot is ready + --bots cursor[bot] exits 0.
-// A Bugbot check-run with a `skipped` conclusion counts as satisfied. Zero-dep, no live gh.
-// Run: node test/wait-for-bots-bots.test.mjs
+// CodeRabbit-only selector and evidence contract. No live gh/network.
 
-import { selectBots } from "../scripts/wait-for-bots.mjs";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const DIR = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(DIR, "..", "scripts", "wait-for-bots.mjs");
+import {
+  BOT_CONFIG,
+  checkBotReady,
+  hasVisibleReviewText,
+  isSubstantive,
+  selectBots,
+} from "../scripts/wait-for-bots.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -27,93 +21,229 @@ function check(label, cond) {
   }
 }
 
-const CONFIG = { "cursor[bot]": {}, "coderabbitai[bot]": {} };
+const BOT = "coderabbitai[bot]";
+const config = BOT_CONFIG[BOT];
+const headTime = new Date("2026-07-01T00:00:00Z");
+const substantive =
+  "CodeRabbit reviewed the current head and found a correctness risk in the retry path. " +
+  "The loop needs an explicit terminal condition and a regression test for the exhausted case.";
 
-console.log("selectBots");
+console.log("selectBots — CodeRabbit only");
 {
   check(
-    "no arg → all bots",
-    JSON.stringify(selectBots(CONFIG, null)) === JSON.stringify(Object.keys(CONFIG))
-  );
-  check("empty string → all bots", selectBots(CONFIG, "").length === 2);
-  check(
-    "single bot → just it",
-    JSON.stringify(selectBots(CONFIG, "cursor[bot]")) === JSON.stringify(["cursor[bot]"])
+    "default selects CodeRabbit",
+    JSON.stringify(selectBots(BOT_CONFIG)) === JSON.stringify([BOT])
   );
   check(
-    "comma list → both, in config order",
-    JSON.stringify(selectBots(CONFIG, "coderabbitai[bot],cursor[bot]")) ===
-      JSON.stringify(["cursor[bot]", "coderabbitai[bot]"])
-  );
-  check(
-    "repeated flag (array) → filtered",
-    JSON.stringify(selectBots(CONFIG, ["cursor[bot]"])) === JSON.stringify(["cursor[bot]"])
+    "explicit CodeRabbit is accepted",
+    JSON.stringify(selectBots(BOT_CONFIG, BOT)) === JSON.stringify([BOT])
   );
   let threw = false;
   try {
-    selectBots(CONFIG, "nonsense[bot]");
-  } catch (e) {
-    threw = /unknown bot/.test(e.message);
+    selectBots(BOT_CONFIG, "cursor[bot]");
+  } catch (error) {
+    threw = /unknown bot/.test(error.message);
   }
-  check("unknown bot → usage error", threw);
+  check("Cursor bot is no longer selectable", threw);
 }
 
-// Fake gh: only Bugbot (cursor[bot]) is ready — as a `skipped` check run. CodeRabbit absent.
-function makeGh(conclusion) {
-  const dir = mkdtempSync(path.join(tmpdir(), "wfb-bots-gh-"));
-  const bin = path.join(dir, "gh");
-  writeFileSync(
-    bin,
-    [
-      "#!/usr/bin/env node",
-      "const a = process.argv.slice(2).join(' ');",
-      "if (a.includes('check-runs')) {",
-      `  process.stdout.write(JSON.stringify([{name:'Bugbot',status:'completed',conclusion:'${conclusion}',completed_at:'2020-01-01T00:00:00Z'}]));`,
-      "} else if (a.includes('/commits')) {",
-      "  process.stdout.write('');",
-      "} else if (a.startsWith('pr view') || a.includes('headRefOid')) {",
-      "  process.stdout.write('deadbeef');",
-      "} else {",
-      "  process.stdout.write('[]');",
-      "}",
-    ].join("\n")
-  );
-  chmodSync(bin, 0o755);
-  return dir;
-}
-
-function run(ghDir, extraArgs) {
-  try {
-    execFileSync(process.execPath, [SCRIPT, "--pr", "1", "--repo", "acme/repo", ...extraArgs], {
-      env: { ...process.env, PATH: [ghDir, process.env.PATH].join(path.delimiter) },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30000,
-    });
-    return 0;
-  } catch (e) {
-    return e.status ?? -1;
-  }
-}
-
-console.log("spawn: --bots cursor[bot] gates on Bugbot alone");
+console.log("substantive current-head evidence");
 {
-  const gh = makeGh("skipped");
+  check("long review text is substantive", isSubstantive(substantive));
+  check("HTML-only text is not substantive", !isSubstantive("<!-- internal status only -->"));
+  check("short inline finding has visible review text", hasVisibleReviewText("Handle null here."));
   check(
-    "--bots cursor[bot] with skipped Bugbot → exit 0",
-    run(gh, ["--bots", "cursor[bot]"]) === 0
+    "HTML-only inline text has no visible review text",
+    !hasVisibleReviewText("<!-- internal status only -->")
   );
-  // Without narrowing, CodeRabbit is still required → the 10-min timeout would apply; instead
-  // assert an unknown --bots value fails fast with exit 1 (usage), quickly.
-  check("unknown --bots → exit 1", run(gh, ["--bots", "nope[bot]", "--timeout", "1"]) === 1);
-  rmSync(gh, { recursive: true, force: true });
+
+  const fresh = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: substantive, created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    [],
+    headTime
+  );
+  check("fresh issue comment satisfies the gate", fresh.ready && fresh.signal === "issue-comment");
+
+  const stale = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: substantive, created_at: "2026-06-30T23:59:59Z" }],
+    [],
+    [],
+    headTime
+  );
+  check("stale pre-push evidence is rejected", stale.ready === false);
+
+  const stub = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: `Review limit reached. ${substantive}`,
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    headTime
+  );
+  check("rate-limit/review-limit stubs are rejected", stub.ready === false);
+
+  const commandAcknowledgment = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: [
+          "<details>",
+          "<summary>Action performed</summary>",
+          "Review triggered.",
+          "> Note: CodeRabbit is an incremental review system and will review the latest changes.",
+          "</details>",
+        ].join("\n"),
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    headTime
+  );
+  check("review-command acknowledgments are rejected", commandAcknowledgment.ready === false);
+
+  const review = checkBotReady(
+    BOT,
+    config,
+    [],
+    [],
+    [{ user: BOT, body: substantive, submitted_at: "2026-07-01T00:00:01Z" }],
+    headTime
+  );
+  check("fresh submitted review satisfies the gate", review.ready && review.signal === "review");
+
+  const shortInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [{ user: BOT, body: "Handle null here.", created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    headTime
+  );
+  check(
+    "fresh short inline finding satisfies the gate",
+    shortInline.ready && shortInline.signal === "inline-comment"
+  );
+
+  const shortIssue = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: "Review started.", created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    [],
+    headTime
+  );
+  check("short top-level status text does not satisfy the gate", shortIssue.ready === false);
+
+  const noText = checkBotReady(BOT, config, [], [], [], headTime);
+  check("a successful check run alone cannot satisfy the gate", noText.ready === false);
 }
 
-console.log("Bugbot check-run conclusion 'skipped' is satisfied");
+console.log("SHA-bound evidence (latestPush carries the head sha)");
 {
-  const gh = makeGh("skipped");
-  check("skipped conclusion → ready → exit 0", run(gh, ["--bots", "cursor[bot]"]) === 0);
-  rmSync(gh, { recursive: true, force: true });
+  const headSha = "69c6be75a9dac3da6815e66167e796c8996bcea1";
+  const shaPush = { sha: headSha, committedAt: headTime };
+
+  const unboundWalkthrough = checkBotReady(
+    BOT,
+    config,
+    [{ user: BOT, body: substantive, created_at: "2026-07-01T00:00:01Z" }],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "walkthrough without a head-sha reference is rejected in SHA mode",
+    unboundWalkthrough.ready === false
+  );
+
+  const boundWalkthrough = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: `${substantive}\n<!-- commit: ${headSha} -->`,
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "walkthrough referencing the head sha satisfies the gate",
+    boundWalkthrough.ready && boundWalkthrough.signal === "issue-comment"
+  );
+
+  const abbreviated = checkBotReady(
+    BOT,
+    config,
+    [
+      {
+        user: BOT,
+        body: `${substantive}\nReviewed commits up to ${headSha.slice(0, 12)}.`,
+        created_at: "2026-07-01T00:00:01Z",
+      },
+    ],
+    [],
+    [],
+    shaPush
+  );
+  check(
+    "a 12-char head-sha prefix in the walkthrough is accepted",
+    abbreviated.ready && abbreviated.signal === "issue-comment"
+  );
+
+  const staleInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [
+      {
+        user: BOT,
+        body: "Handle null here.",
+        created_at: "2026-07-01T00:00:01Z",
+        commit_id: "0000000000000000000000000000000000000000",
+      },
+    ],
+    [],
+    shaPush
+  );
+  check("inline comment bound to a different sha is rejected", staleInline.ready === false);
+
+  const currentInline = checkBotReady(
+    BOT,
+    config,
+    [],
+    [
+      {
+        user: BOT,
+        body: "Handle null here.",
+        created_at: "2026-07-01T00:00:01Z",
+        commit_id: headSha,
+      },
+    ],
+    [],
+    shaPush
+  );
+  check(
+    "inline comment bound to the head sha satisfies the gate",
+    currentInline.ready && currentInline.signal === "inline-comment"
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
