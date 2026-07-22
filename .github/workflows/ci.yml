@@ -134,6 +134,16 @@ jobs:
       - name: Onboard non-TTY smoke (prints guidance, exits 0)
         run: node scripts/aios.mjs onboard --repo /tmp/ci-sample-team-ops < /dev/null
 
+      - name: Onboarding eval lab smoke (mock driver + mock judge)
+        # Proves the vendored lab's own wiring (setup -> install -> grade -> judge ->
+        # aggregate) still runs end to end — catches a scaffold/CLI change breaking a
+        # scenario's fixture, or a future sync-eval-lab.sh --apply pulling a core
+        # incompatible with this repo's adapters, before either merges green.
+        run: |
+          bash evals/run.sh --runtime mock --scenario all --runs 1 --judge mock \
+            --results-dir /tmp/ci-eval-lab-smoke
+          jq -e '.total > 0 and .by_status.pass == .total' /tmp/ci-eval-lab-smoke/summary.json
+
   lint:
     name: lint + format
     runs-on: ubuntu-latest
