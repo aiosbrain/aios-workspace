@@ -49,6 +49,12 @@ describe("Sidebar information architecture", () => {
     expect(html).toContain('aria-label="Workspace"');
   });
 
+  test("does not render the removed Comms/Inbox navigation (unified inbox GUI is v2)", () => {
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).not.toContain("Comms");
+    expect(html).not.toContain("Inbox");
+  });
+
   test("exposes an explicit Chat destination under Build", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain("Build");
