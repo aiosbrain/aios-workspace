@@ -61,6 +61,7 @@ function hardenedChildEnv(source) {
   for (const key of [
     "AIOS_BUGBOT_MODEL",
     "AIOS_BUGBOT_HOOK_NONCE",
+    "AIOS_BUGBOT_DISABLE",
     "NODE_OPTIONS",
     "NODE_PATH",
     "NODE_EXTRA_CA_CERTS",
@@ -308,6 +309,19 @@ export function evaluateLocalBugbotGate({
   resolveBase = resolveRequiredBugbotBase,
   probeOnly = false,
 } = {}) {
+  // Explicit operator opt-out, for teams that have adopted the paid cloud Cursor Bugbot as the
+  // enforcing gate instead. Strict on the literal "1" so a stray truthy value can't silently
+  // disable a security gate, and always announced on stderr so a skipped review is never silent.
+  // `skipped` is non-blocking (formatHookResult maps it to a pass) — a distinct status would block.
+  if (String(env.AIOS_BUGBOT_DISABLE ?? "").trim() === "1" && !probeOnly) {
+    process.stderr.write(
+      "[local-bugbot] disabled via AIOS_BUGBOT_DISABLE=1 — relying on cloud Bugbot for this change\n"
+    );
+    return {
+      status: "skipped",
+      reason: "local Bugbot disabled via AIOS_BUGBOT_DISABLE=1",
+    };
+  }
   const root = git(["rev-parse", "--show-toplevel"], repo ?? process.cwd());
   const cli = path.join(root, "scripts", "aios.mjs");
   if (!existsSync(cli)) {

@@ -42,7 +42,12 @@ PATTERNS=(
   "GitHub Token|gh[ps]_[A-Za-z0-9_]{36,}"
   "Slack Token|xox[bporas]-[A-Za-z0-9-]+"
   "Toggl API Token|[0-9a-f]{32}"
-  "Basic Auth URL|https?://[^:]+:[^@]+@"
+  # Userinfo tokens are anchored: `user`/`pass` contain no `/`, `@`, whitespace, or quote, so the
+  # pattern cannot bridge an ordinary `scheme://host/…:…@…` span (e.g. minified CSS, where an earlier
+  # `prop:val` colon and a later `@rule` used to be stitched into a false match). POSIX `[:space:]`
+  # is used, NOT `\s` — inside a grep bracket expression `\s` is a literal `s`, which would silently
+  # drop any credential whose username contains an `s`.
+  "Basic Auth URL|https?://[^:/@[:space:]\"']+:[^/@[:space:]\"']+@"
   "Password Assignment|password\s*[:=]\s*['\"][^'\"]{8,}['\"]"
   "Bearer Token|Bearer\s+[A-Za-z0-9_\-\.]{20,}"
 )

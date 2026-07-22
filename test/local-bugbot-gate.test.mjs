@@ -1118,3 +1118,81 @@ test("AIO-468: both prompts demand the verdict as a bare final line", () => {
     assert.match(prompt, /no preamble or narration/i, `${name} prompt forbids preamble`);
   }
 });
+
+test("AIOS_BUGBOT_DISABLE=1 skips the local gate without running any review", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    let calls = 0;
+    const review = () => {
+      calls++;
+      return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+    };
+    const gated = evaluateLocalBugbotGate({
+      repo,
+      env: { AIOS_BUGBOT_BASE: "HEAD", AIOS_BUGBOT_DISABLE: "1" },
+      runReview: review,
+    });
+    // `skipped` is non-blocking (formatHookResult maps it to a pass); the review never runs.
+    assert.equal(gated.status, "skipped");
+    assert.match(gated.reason, /AIOS_BUGBOT_DISABLE/);
+    assert.equal(calls, 0, "no external review may be dispatched while disabled");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("only the literal 1 disables the gate — a stray truthy value still reviews", () => {
+  for (const value of ["true", "0", "yes", " ", ""]) {
+    const repo = fixture();
+    try {
+      appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+      let calls = 0;
+      const review = () => {
+        calls++;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      };
+      const gated = evaluateLocalBugbotGate({
+        repo,
+        env: { AIOS_BUGBOT_BASE: "HEAD", AIOS_BUGBOT_DISABLE: value },
+        runReview: review,
+      });
+      assert.notEqual(gated.status, "skipped", `value ${JSON.stringify(value)} must not disable`);
+      assert.equal(calls, 1, `value ${JSON.stringify(value)} must still run the review`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test("check-secrets: anchored Basic Auth pattern ignores URLs but catches real credentials", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  const run = () => {
+    try {
+      execFileSync("bash", [script, dir], { encoding: "utf8", stdio: "pipe" });
+      return 0;
+    } catch (e) {
+      return e.status ?? 1;
+    }
+  };
+  try {
+    // Minified-CSS shape: an at-rule `@` and a `prop:val` colon that the un-anchored pattern used to
+    // stitch into a false "user:pass@host" match. Must NOT trip.
+    writeFileSync(
+      path.join(dir, "app.css"),
+      ".a{color:red}@layer p{background:url(https://cdn.tailwindcss.com/x.png)}@media(min-width:1px){b:c}\n"
+    );
+    assert.equal(run(), 0, "an ordinary URL beside CSS colons/at-rules is not a basic-auth secret");
+
+    // A genuine embedded credential — including an `s`-initial username, which a `\s`-in-bracket
+    // pattern would silently miss — must be caught.
+    writeFileSync(
+      path.join(dir, "leak.txt"),
+      "HOOK=https://svc:s3cr3tpass@internal.example.com/x\n"
+    );
+    assert.equal(run(), 1, "a real basic-auth credential must still be flagged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
