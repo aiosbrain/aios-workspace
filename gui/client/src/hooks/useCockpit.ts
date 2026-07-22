@@ -58,11 +58,12 @@ export function useCockpit() {
   const [model, setModel] = useState(DEFAULT_CAPS.models[0]?.id ?? "");
   const [approvalMode, setApprovalMode] = useState("default"); // session-scoped; default = ask
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [sessionUsage, setSessionUsage] = useState<Usage | null>(null);
   const [chats, setChats] = useState<SessionListResponse["sessions"]>([]);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const usageRef = useRef<Usage | null>(null); // latest usage for the result line (state is async)
+  const resultUsageRef = useRef<Usage | null>(null); // pending usage for the result line
   const prevCostRef = useRef(0); // session cost so far, for a per-turn delta
   const connectSeqRef = useRef(0); // ignore callbacks from superseded sockets
   const capsRef = useRef<Capabilities>(DEFAULT_CAPS); // fresh caps inside the ws handler
@@ -210,8 +211,13 @@ export function useCockpit() {
             ]);
             break;
           case "usage":
-            usageRef.current = msg.usage;
-            setUsage(msg.usage);
+            if (msg.scope === "session") setSessionUsage(msg.usage);
+            else {
+              // Unscoped events are legacy current-context events. Only current usage belongs
+              // on the "turn done" line; a cumulative session total would mislabel the turn.
+              resultUsageRef.current = msg.usage;
+              setUsage(msg.usage);
+            }
             break;
           case "model": // server confirms an in-session switch — keep the picker in sync
             if (capsRef.current.models.some((m) => m.id === msg.model)) setModel(msg.model);
@@ -229,8 +235,9 @@ export function useCockpit() {
             // Keep the end-of-turn cost summary inline (it's the turn record, not clutter).
             append({
               kind: "meta",
-              text: formatResultMeta(usageRef.current, msg.cost_usd, prevCostRef.current),
+              text: formatResultMeta(resultUsageRef.current, msg.cost_usd, prevCostRef.current),
             });
+            resultUsageRef.current = null;
             if (typeof msg.cost_usd === "number") prevCostRef.current = msg.cost_usd;
             loadChats(); // first turn just set this chat's title
             break;
@@ -309,8 +316,9 @@ export function useCockpit() {
   const resetChatState = useCallback(() => {
     setBusy(false);
     setPermissions([]);
-    usageRef.current = null;
+    resultUsageRef.current = null;
     setUsage(null);
+    setSessionUsage(null);
     prevCostRef.current = 0;
   }, []);
 
@@ -347,14 +355,26 @@ export function useCockpit() {
         const events = d.events || [];
         setMessages(buildMessagesFromEvents(events));
         let lastCost = 0;
-        let lastUsage: Usage | null = null;
+        let contextUsage: Usage | null = null;
+        let aggregateUsage: Usage | null = null;
+        let pendingResultUsage: Usage | null = null;
         for (const ev of events) {
-          if (ev.type === "usage") lastUsage = ev.usage;
-          if (ev.type === "result" && typeof ev.cost_usd === "number") lastCost = ev.cost_usd;
+          if (ev.type === "usage") {
+            if (ev.scope === "session") aggregateUsage = ev.usage;
+            else {
+              pendingResultUsage = ev.usage;
+              contextUsage = ev.usage;
+            }
+          }
+          if (ev.type === "result") {
+            pendingResultUsage = null;
+            if (typeof ev.cost_usd === "number") lastCost = ev.cost_usd;
+          }
         }
         prevCostRef.current = lastCost;
-        usageRef.current = lastUsage;
-        setUsage(lastUsage);
+        resultUsageRef.current = pendingResultUsage;
+        setUsage(contextUsage);
+        setSessionUsage(aggregateUsage);
       } catch {
         setMessages([]);
       }
@@ -508,6 +528,7 @@ export function useCockpit() {
     approvalMode,
     setApprovalMode,
     usage,
+    sessionUsage,
     chats,
     currentSession,
     // actions

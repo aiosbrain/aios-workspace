@@ -12,7 +12,12 @@ import {
   parseUsd,
   type CostSettingsFormValues,
 } from "./CostSettingsForm";
-import type { CostConfigResponse, CostProviderActual } from "../../types/protocol";
+import { buildInvoiceImportPatch, rowsFromScan } from "./cost-email-import";
+import type {
+  CostConfigResponse,
+  CostEmailCandidate,
+  CostProviderActual,
+} from "../../types/protocol";
 
 const row = (
   provider: string,
@@ -79,7 +84,16 @@ describe("CostBarChart", () => {
 
 // ── Settings form: a failed config GET must never turn into a config wipe ──────────────────────────
 
-const BLANK_FORM: CostSettingsFormValues = { claude: "", cursor: "", codex: "", anthropic: "" };
+const BLANK_FORM: CostSettingsFormValues = {
+  claude: "",
+  cursor: "",
+  codex: "",
+  opencode: "",
+  zai: "",
+  anthropic: "",
+  openai: "",
+  openrouter: "",
+};
 
 function renderForm(props: Partial<Parameters<typeof CostSettingsForm>[0]> = {}) {
   return renderToStaticMarkup(
@@ -105,7 +119,7 @@ describe("CostSettingsForm", () => {
     const html = renderForm({ loaded: false, loadError: "http 500" });
     const saveBtn = html.slice(html.lastIndexOf("<button"));
     expect(saveBtn).toContain('disabled=""'); // the attribute, not the Tailwind variant
-    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(4);
+    expect((html.match(/<input[^>]*\sdisabled=""/g) ?? []).length).toBe(8);
     expect(html).toContain("editing is disabled so a save can’t wipe your existing entries");
     expect(html).toContain("Retry");
   });
@@ -113,7 +127,16 @@ describe("CostSettingsForm", () => {
   test("hydrated form is fully editable", () => {
     const html = renderForm({
       loaded: true,
-      form: { claude: "200", cursor: "20", codex: "", anthropic: "42.13" },
+      form: {
+        claude: "200",
+        cursor: "20",
+        codex: "",
+        opencode: "15",
+        zai: "10",
+        anthropic: "42.13",
+        openai: "10",
+        openrouter: "8.5",
+      },
     });
     const saveBtn = html.slice(html.lastIndexOf("<button"));
     expect(saveBtn).not.toContain('disabled=""');
@@ -125,8 +148,16 @@ describe("CostSettingsForm", () => {
 describe("config patch round-trip", () => {
   const CFG: CostConfigResponse = {
     ok: true,
-    subscriptions: { claude: 200, cursor: null, codex: 0 },
-    metered: { anthropic: { "2026-07": 42.13 }, cursor: {}, codex: {}, opencode: {} },
+    subscriptions: { claude: 200, cursor: null, codex: 0, opencode: 15, zai: 10 },
+    metered: {
+      anthropic: { "2026-07": 42.13 },
+      cursor: {},
+      codex: {},
+      openai: { "2026-07": 10 },
+      opencode: {},
+      openrouter: { "2026-07": 8.5 },
+      zai: {},
+    },
   };
 
   test("formFromConfig displays exactly what the server resolved", () => {
@@ -134,7 +165,11 @@ describe("config patch round-trip", () => {
       claude: "200",
       cursor: "",
       codex: "0",
+      opencode: "15",
+      zai: "10",
       anthropic: "42.13",
+      openai: "10",
+      openrouter: "8.5",
     });
   });
 
@@ -142,8 +177,12 @@ describe("config patch round-trip", () => {
     const built = buildConfigPatch(formFromConfig(CFG, "2026-07"), "2026-07");
     expect(built).toEqual({
       patch: {
-        subscriptions: { claude: 200, cursor: null, codex: 0 },
-        metered: { anthropic: { "2026-07": 42.13 } },
+        subscriptions: { claude: 200, cursor: null, codex: 0, opencode: 15, zai: 10 },
+        metered: {
+          anthropic: { "2026-07": 42.13 },
+          openai: { "2026-07": 10 },
+          openrouter: { "2026-07": 8.5 },
+        },
       },
     });
   });
@@ -154,5 +193,67 @@ describe("config patch round-trip", () => {
     expect(parseUsd("$20")).toBe(20);
     expect(parseUsd("  ")).toBeNull();
     expect(Number.isNaN(parseUsd("-5") as number)).toBe(true);
+  });
+});
+
+describe("invoice import patch", () => {
+  const candidate = (
+    id: string,
+    provider: string,
+    label: string,
+    kind: CostEmailCandidate["kind"],
+    amount_usd: number | null
+  ): CostEmailCandidate => ({
+    id,
+    message_id: id,
+    account: "owner@example.com",
+    provider,
+    label,
+    kind,
+    amount_usd,
+    date: "2026-07-03",
+    subject: `${label} receipt`,
+    confidence: amount_usd == null ? "medium" : "high",
+    reason: "verified provider sender",
+  });
+
+  test("scan rows are never selected automatically", () => {
+    const rows = rowsFromScan([candidate("one", "cursor", "Cursor", "subscription", 20)]);
+    expect(rows[0].selected).toBe(false);
+    expect(rows[0].amount).toBe("20");
+    expect(buildInvoiceImportPatch(rows, "2026-07")).toEqual({
+      error: "Select at least one invoice",
+    });
+  });
+
+  test("selected subscriptions stay singular and metered invoices are summed", () => {
+    const rows = rowsFromScan([
+      candidate("sub", "cursor", "Cursor", "subscription", 20),
+      candidate("api-1", "openai", "OpenAI API", "metered", 10),
+      candidate("api-2", "openai", "OpenAI API", "metered", 15),
+    ]).map((row) => ({ ...row, selected: true }));
+    expect(buildInvoiceImportPatch(rows, "2026-07")).toEqual({
+      patch: {
+        subscriptions: { cursor: 20 },
+        metered: { openai: { "2026-07": 25 } },
+      },
+    });
+  });
+
+  test("ambiguous missing amounts and duplicate subscription receipts require owner correction", () => {
+    const missing = rowsFromScan([candidate("one", "zai", "Z.ai", "subscription", null)]).map(
+      (row) => ({ ...row, selected: true })
+    );
+    expect(buildInvoiceImportPatch(missing, "2026-07")).toEqual({
+      error: "Enter a valid USD amount for Z.ai",
+    });
+
+    const duplicate = rowsFromScan([
+      candidate("one", "cursor", "Cursor", "subscription", 20),
+      candidate("two", "cursor", "Cursor", "subscription", 20),
+    ]).map((row) => ({ ...row, selected: true }));
+    expect(buildInvoiceImportPatch(duplicate, "2026-07")).toEqual({
+      error: "Select only one Cursor subscription charge for 2026-07",
+    });
   });
 });

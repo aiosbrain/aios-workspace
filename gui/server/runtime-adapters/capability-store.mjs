@@ -75,7 +75,7 @@ const LOCK_DELAY_MS = 25;
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
-    const keys = Object.keys(value).sort();
+    const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
     return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(",")}}`;
   }
   return JSON.stringify(value ?? null);

@@ -41,7 +41,9 @@ export function buildMessagesFromEvents(events: TranscriptEvent[]): UiMessage[] 
         break;
       }
       case "usage":
-        lastUsage = ev.usage;
+        // Session aggregates belong in usage details, not on a per-turn result line.
+        // Legacy unscoped events retain their original current-turn behavior.
+        if (ev.scope !== "session") lastUsage = ev.usage;
         break;
       case "warning":
         msgs.push({ kind: "meta", text: `⚠ ${ev.message}` });
