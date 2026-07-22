@@ -62,3 +62,29 @@ export function parseDecisionRows(body) {
     }))
     .filter((r) => r.row_key);
 }
+
+/**
+ * Remove admin/private-audience decision rows from BOTH the parsed rows and the raw markdown
+ * body before a team-tier decision-log is pushed (H3). File-level tier gating in buildPlan only
+ * decides whether the FILE syncs; a `team` decision-log still carried individual rows marked
+ * `Audience: private` in its raw body + parsed payload, so their text/rationale/decided-by left
+ * the machine — contradicting `decision-log.md`'s "admin rows are your machine only". This strips
+ * them so only team/external rows leave. Returns { body, rows, redacted } (redacted = count removed).
+ */
+export function redactAdminDecisionRows(body, rows) {
+  const adminKeys = new Set(
+    (rows || []).filter((r) => normalizeTier(r.audience) === "admin").map((r) => String(r.row_key))
+  );
+  if (!adminKeys.size) return { body, rows: rows || [], redacted: 0 };
+  const keptRows = (rows || []).filter((r) => !adminKeys.has(String(r.row_key)));
+  const keptBody = body
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      if (!t.startsWith("|")) return true; // non-table line — keep
+      const first = t.split("|").slice(1, -1)[0]?.trim();
+      return !(first !== undefined && adminKeys.has(first)); // drop admin data rows only
+    })
+    .join("\n");
+  return { body: keptBody, rows: keptRows, redacted: adminKeys.size };
+}

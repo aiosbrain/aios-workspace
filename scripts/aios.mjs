@@ -44,6 +44,7 @@ import {
   normalizeTier,
   classifyKind,
   parseDecisionRows,
+  redactAdminDecisionRows,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
@@ -367,18 +368,14 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
       continue;
     }
     let rows;
+    let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") rows = parseDecisionRows(body);
-    plan.push.push({
-      rel,
-      kind,
-      hash,
-      tier,
-      frontmatter,
-      body,
-      rows,
-      isNew: !prev,
-    });
+    if (kind === "decision") {
+      // H3: strip admin/private-audience rows from BOTH the pushed body and rows even when the
+      // file is team-tier. `hash` stays the local-file hash so any local edit still re-syncs.
+      ({ body: pushBody, rows } = redactAdminDecisionRows(body, parseDecisionRows(body)));
+    }
+    plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
   }
   return { plan, state };
 }
@@ -959,9 +956,10 @@ async function cmdPull(repo, cfg, args = []) {
     if (cursor) qs.set("cursor", cursor);
     const res = await api(cfg, "GET", `/items?${qs}`);
     for (const item of res.items || []) {
-      // Append-only: never overwrite working files; flatten path under from-brain/
-      const flat = `${item.project}__${item.path.replace(/\//g, "__")}`;
-      const dest = path.join(destRoot, flat);
+      // Append-only under from-brain/. Flatten BOTH project and path (a MITM/compromised brain
+      // can put `..` in either) and route through safeJoin so no name escapes the sandbox (H1).
+      const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
+      const dest = safeJoin(destRoot, flat);
       if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;
       const fm = [
         "---",

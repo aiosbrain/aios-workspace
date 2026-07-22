@@ -59,7 +59,13 @@ PATTERNS=(
 # gitignored agentic UX-testing harness OUTPUT (test/ux/evidence/ — screenshots
 # and transcripts from throwaway cockpit fixtures). Committed harness code and
 # fixtures ARE scanned: they use clearly-non-secret dummy values.)
-SCAN_FILES=$(find "$REPO" \
+# NUL-delimited file list. A newline-joined list piped through `xargs` word-splits on
+# spaces, so any file with a space in its name (transcripts, "meeting notes.md", Granola
+# pulls) was silently skipped — the files most likely to hold pasted credentials. -print0 +
+# xargs -0 makes the scan whitespace-safe (H2).
+SCAN_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-scan.XXXXXX")
+trap 'rm -f "$SCAN_LIST"' EXIT
+find "$REPO" \
   -not -path "*/.git/*" \
   -not -path "*/node_modules/*" \
   -not -path "*/skill-library/*" \
@@ -76,7 +82,7 @@ SCAN_FILES=$(find "$REPO" \
   -not -name "*.docx" \
   -not -name "check-secrets.sh" \
   -not -name "secret-patterns.txt" \
-  -type f 2>/dev/null || true)
+  -type f -print0 2>/dev/null > "$SCAN_LIST" || true
 
 # Merge in shared patterns (validation/secret-patterns.txt) — the single
 # source also consumed by hooks/team-ops-guard.sh and scripts/aios.mjs.
@@ -95,10 +101,14 @@ for entry in "${PATTERNS[@]}"; do
 
   # Special case: Toggl tokens are 32-char hex but appear in many contexts
   # Only flag if near "toggl" or "api" keywords
-  if [ "$label" = "Toggl API Token" ]; then
-    matches=$(echo "$SCAN_FILES" | xargs grep -lniE "(toggl|api).{0,20}$pattern" 2>/dev/null || true)
+  # Guard the empty-list case: with no input, both BSD and GNU xargs would run grep once
+  # with no file args, making it read stdin and hang. Only scan when the list is non-empty.
+  if [ ! -s "$SCAN_LIST" ]; then
+    matches=""
+  elif [ "$label" = "Toggl API Token" ]; then
+    matches=$(xargs -0 grep -lniE "(toggl|api).{0,20}$pattern" < "$SCAN_LIST" 2>/dev/null || true)
   else
-    matches=$(echo "$SCAN_FILES" | xargs grep -lniE "$pattern" 2>/dev/null || true)
+    matches=$(xargs -0 grep -lniE "$pattern" < "$SCAN_LIST" 2>/dev/null || true)
   fi
 
   if [ -n "$matches" ]; then

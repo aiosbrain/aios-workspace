@@ -43,8 +43,10 @@ case "$FILE_PATH" in
     ;;
 esac
 
-# Get the content being written
-CONTENT=$(echo "$TOOL_INPUT" | jq -r '.content // .new_string // empty' 2>/dev/null || true)
+# Get the content being written. Covers Write (.content), Edit (.new_string), AND MultiEdit
+# (.edits[].new_string) — the last was previously missed, so a MultiEdit could write a secret
+# or admin-tier content straight past this gate (M1). Aggregate every new_string in the batch.
+CONTENT=$(echo "$TOOL_INPUT" | jq -r '.content // .new_string // ([.edits[]?.new_string] | join("\n")) // empty' 2>/dev/null || true)
 if [ -z "$CONTENT" ]; then
   exit 0  # No content to check — allow (might be a read or other op)
 fi

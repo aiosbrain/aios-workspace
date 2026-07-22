@@ -1127,6 +1127,11 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   );
 
   const specText = buildSpecTextFromIssue(issue);
+  // Read the `safety: true` flag from the RAW issue body, not specText: buildSpecTextFromIssue
+  // prepends a `# <id>: <title>` heading, which pushed the frontmatter off the start of the
+  // string so specSafetyFlag(specText) was ALWAYS false — a fail-open of the safety review +
+  // mandatory CodeRabbit gate for light-loop specs whose diff misses SAFETY_PATHS (H5).
+  const specSafetyDeclared = specSafetyFlag(issue.description);
 
   let recon = "";
   if (isLightLoop) {
@@ -1779,7 +1784,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           .map((value) => value.trim())
           .filter(Boolean);
         const safetyRequired =
-          (isLightLoop && specSafetyFlag(specText)) || touchesSafetySurface(changedPaths);
+          (isLightLoop && specSafetyDeclared) || touchesSafetySurface(changedPaths);
         reviewPolicy = {
           changedPaths,
           safetyRequired,
@@ -2203,7 +2208,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       .map((s) => s.trim())
       .filter(Boolean);
     const safetyRequired = isLightLoop
-      ? specSafetyFlag(specText) || touchesSafetySurface(changedPaths)
+      ? specSafetyDeclared || touchesSafetySurface(changedPaths)
       : touchesSafetySurface(changedPaths);
     if (
       safetyRequired &&
