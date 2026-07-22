@@ -1,5 +1,11 @@
 # Unified Inbox — start here
 
+> **V1.0 scope (2026-07-22):** the Unified Inbox **GUI is cut from V1.0** (PR #377). V1.0 ships the
+> inbox **CLI only** (`aios inbox` + the `src/operator-loop/inbox/` engine + coordinator). The GUI
+> API, the `comms/` cockpit view, and the channel-ingestion / GUI-send extensions return in **v2**
+> (canceled + labeled `v2` in Linear). This doc describes the full feature; read GUI/ingestion
+> sections as v2. See [`../../release-status-v1.md`](../../release-status-v1.md).
+
 The Unified Inbox is one of the largest single features in the operator loop: roughly 8,800 lines
 across 21 TypeScript modules under `src/operator-loop/inbox/`, plus a CLI, a GUI API, a coordinator
 daemon, and a governance package. Each artifact is documented in detail, but that detail is spread

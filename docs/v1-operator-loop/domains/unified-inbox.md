@@ -1,5 +1,9 @@
 # Domain spec — Unified Inbox (`aios inbox`)
 
+> **V1.0 scope (2026-07-22):** the inbox **CLI + engine described here ship in V1.0**; the **GUI
+> layer is cut** (PR #377) and returns in **v2**. Treat any GUI-API / cockpit-view / GUI-send
+> requirement below as v2. See [`../../release-status-v1.md`](../../release-status-v1.md).
+
 Governed by [`ENGINEERING-CONSTITUTION.md`](../../ENGINEERING-CONSTITUTION.md). Part of the
 **Unified Human+Agent Inbox** epic (AIO-381), issue **AIO-382 / I-01** — the Track 0 contract
 that every downstream issue (I-02…I-16, except the I-12/I-13 design work) is `blocked-by` in
