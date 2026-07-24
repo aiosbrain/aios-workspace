@@ -45,6 +45,7 @@ import {
   classifyKind,
   parseDecisionRows,
   redactAdminDecisionRows,
+  DECISION_REDACTION_VERSION,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
@@ -327,10 +328,22 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
-// Bumped when the pushed shape of a decision-log must overwrite what the brain already stored (H3
-// row redaction). A decision-log whose state entry predates this is re-pushed once even at an
-// unchanged SHA — else a workspace that pushed private rows before the redactor keeps them upstream.
-const DECISION_REDACTION_VERSION = 1;
+// content_sha256 for a decision push MUST describe the REDACTED body actually sent, not the raw file
+// hash — else brain-api dedupe (identical sha → "unchanged", body NOT overwritten) leaves leaked
+// rows upstream while the client marks the resync done. Version-tagged; local change-detection keeps
+// the raw item.hash separately.
+function contentShaForDecisionPush(item) {
+  if (item.kind !== "decision") return item.hash;
+  return sha256(
+    JSON.stringify({
+      decision_redaction_version: DECISION_REDACTION_VERSION,
+      access: item.tier,
+      frontmatter: item.frontmatter || {},
+      body: item.body,
+      rows: item.rows || [],
+    })
+  );
+}
 
 function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
@@ -380,7 +393,7 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     if (kind === "task") rows = parseTaskRows(body);
     if (kind === "decision") {
       // H3: redact non-team/external rows from body+rows even in a team file (hash stays local).
-      ({ body: pushBody, rows } = redactAdminDecisionRows(body, parseDecisionRows(body)));
+      ({ body: pushBody, rows } = redactAdminDecisionRows(body));
     }
     plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
   }
@@ -911,7 +924,9 @@ async function cmdPush(repo, cfg, patterns, args) {
       project: cfg.project,
       path: item.rel,
       kind: item.kind,
-      content_sha256: item.hash,
+      // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
+      // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
+      content_sha256: contentShaForDecisionPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},

@@ -46,58 +46,147 @@ export function classifyKind(rel, frontmatter) {
   return "artifact";
 }
 
-export function parseDecisionRows(body) {
-  // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("decision")) return [];
-  const idx = (name) => header.findIndex((h) => h.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) => ({
-      row_key: cells[idx("#")] ?? cells[0] ?? "",
-      decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
-      title: cells[idx("decision")] || "",
-      rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-      decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-      impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-      tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
-      audience: idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
-    }))
-    .filter((r) => r.row_key);
+// Bumped when the pushed shape of a decision-log must overwrite what the brain already stored (H3
+// row redaction). A decision-log whose state entry predates this is re-pushed once even at an
+// unchanged file SHA — else a workspace that pushed private rows before the redactor keeps them
+// upstream. See `contentShaForDecisionPush` (aios.mjs), which hashes the REDACTED body so the
+// brain's content_sha256 dedupe actually replaces the previously-leaked copy.
+export const DECISION_REDACTION_VERSION = 1;
+
+// A decision row is publishable ONLY when its audience explicitly resolves to team/external.
+// Everything else — private/admin, unknown labels, and (crucially) a blank audience cell — is
+// withheld (fail closed). Blank → admin is the deliberate V1 policy: an un-tagged row does NOT sync.
+const SYNCABLE_DECISION_AUDIENCES = new Set(["team", "external"]);
+function isSyncableDecisionAudience(audience) {
+  return SYNCABLE_DECISION_AUDIENCES.has(normalizeTier(audience));
+}
+
+// A markdown separator row: every cell is dashes with optional leading/trailing colons.
+function isTableSeparatorLine(line) {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed.startsWith("|")) return false;
+  const cells = trimmed
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((c) => c.trim());
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
+// Classify a table's header row. A decision table is one that names a Decision or Audience column.
+// `valid` requires exactly one Decision column and at most one Audience column — an ambiguous shape
+// fails closed (its data rows are dropped rather than parsed against the wrong column).
+function decisionTableSchema(cells) {
+  const header = cells.map((c) => c.trim().toLowerCase());
+  const cols = (name) => header.reduce((f, c, i) => (c === name ? [...f, i] : f), []);
+  const decisionCols = cols("decision");
+  const audienceCols = cols("audience");
+  return {
+    isDecision: decisionCols.length > 0 || audienceCols.length > 0,
+    valid: decisionCols.length === 1 && audienceCols.length <= 1,
+    columnCount: cells.length,
+    header,
+    decisionIdx: decisionCols[0] ?? -1,
+    audienceIdx: audienceCols[0] ?? -1,
+  };
+}
+
+// Parse one decision data row against its table's schema. A cell count that doesn't match the header
+// (e.g. from a stray unescaped pipe) → null (dropped). A present-but-blank audience cell → "admin".
+function parseDecisionRow(cells, schema) {
+  if (!schema.valid || cells.length !== schema.columnCount) return null;
+  const idx = (name) => schema.header.findIndex((c) => c.startsWith(name));
+  const audienceCell = schema.audienceIdx >= 0 ? cells[schema.audienceIdx]?.trim() : null;
+  const row = {
+    row_key: cells[idx("#")] ?? cells[0] ?? "",
+    decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
+    title: cells[schema.decisionIdx] || "",
+    rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
+    decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
+    impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
+    tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
+    audience: schema.audienceIdx < 0 ? null : audienceCell ? normalizeTier(audienceCell) : "admin",
+  };
+  return row.row_key ? row : null;
 }
 
 /**
- * Redact non-publishable decision rows from BOTH the parsed rows and the raw markdown body before a
- * team-tier decision-log is pushed (H3). File-level tier gating in buildPlan only decides whether
- * the FILE syncs; a `team` decision-log still carried individual rows marked `Audience: private` in
- * its raw body + parsed payload, so their text/rationale/decided-by left the machine — contradicting
- * `decision-log.md`'s "admin rows are your machine only".
+ * Scan a workspace body line-by-line, tracking decision-table structure, and return
+ * { body, rows, keptRows, removedRows }:
+ *   - body      the input with every NON-syncable decision data row removed (header + separator kept)
+ *   - rows      every parsed decision row (both kept and removed) — what parseDecisionRows returns
+ *   - keptRows  only the syncable (team/external) rows
+ *   - removedRows count dropped
  *
- * FAIL CLOSED: keep a row ONLY when its audience explicitly normalizes to `team` or `external`.
- * Anything else — `admin`/`private`, an unknown label, or a garbage value produced when an earlier
- * escaped `\|` cell throws the column count off — is dropped rather than published. Returns
- * { body, rows, redacted } (redacted = count removed).
+ * Table-scoped so an adjacent table butted against the decision table (detected via separator
+ * lookahead / a fresh decision header) starts a new schema instead of being parsed against the stale
+ * audience column, and so unrelated tables/prose are never touched. Redaction works on the raw line —
+ * NOT a pre-parsed key set — so a blank or escaped-pipe row_key can't slip a sensitive line through.
  */
-export function redactAdminDecisionRows(body, rows) {
-  const publishable = (r) => {
-    const t = normalizeTier(r.audience);
-    return t === "team" || t === "external";
-  };
-  const dropKeys = new Set(
-    (rows || []).filter((r) => !publishable(r)).map((r) => String(r.row_key))
-  );
-  if (!dropKeys.size) return { body, rows: rows || [], redacted: 0 };
-  const keptRows = (rows || []).filter(publishable);
+function scanDecisionTables(body) {
+  const rows = [];
+  const keptRows = [];
+  let table = null;
+  let removedRows = 0;
   const keptBody = body
     .split("\n")
-    .filter((line) => {
-      const t = line.trim();
-      if (!t.startsWith("|")) return true; // non-table line — keep
-      const first = t.split("|").slice(1, -1)[0]?.trim();
-      return !(first !== undefined && dropKeys.has(first)); // drop non-publishable data rows only
+    .filter((line, index, lines) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("|")) {
+        table = null; // left the table
+        return true;
+      }
+      if (isTableSeparatorLine(line)) return true; // keep separators
+
+      const cells = parseTableRows(line)[0] || [];
+      const candidate = decisionTableSchema(cells);
+      const followedBySeparator = isTableSeparatorLine(lines[index + 1]);
+      // A header row (followed by a separator) opens a new table.
+      if (!table?.isDecision && followedBySeparator) {
+        table = candidate;
+        return true;
+      }
+      if (!table) return true; // not in any recognized table
+      if (!table.isDecision) {
+        if (candidate.isDecision) {
+          table = candidate;
+          removedRows++;
+          return false;
+        }
+        return true;
+      }
+      // Inside a decision table: a fresh decision header ends this one.
+      if (candidate.isDecision) {
+        table = candidate;
+        removedRows++;
+        return false;
+      }
+      const row = parseDecisionRow(cells, table);
+      if (row) rows.push(row);
+      if (row && isSyncableDecisionAudience(row.audience)) {
+        keptRows.push(row);
+        return true;
+      }
+      removedRows++; // non-syncable, malformed, or blank-key → drop the line
+      return false;
     })
     .join("\n");
-  return { body: keptBody, rows: keptRows, redacted: dropKeys.size };
+  return { body: keptBody, rows, keptRows, removedRows };
+}
+
+export function parseDecisionRows(body) {
+  // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
+  return scanDecisionTables(body).rows;
+}
+
+/**
+ * Redact non-publishable decision rows from BOTH the pushed body and the parsed rows before a
+ * team-tier decision-log syncs (H3). File-level tier gating only decides whether the FILE syncs; a
+ * `team` decision-log still carried individual rows marked `Audience: private`, leaking their
+ * text/rationale/decided-by — contradicting `decision-log.md`'s "admin rows are your machine only".
+ * Re-parses `body` internally (no pre-parsed key set) so a blank/malformed/escaped-pipe row_key can't
+ * retain a sensitive body line. Returns { body, rows, redacted }.
+ */
+export function redactAdminDecisionRows(body) {
+  const scanned = scanDecisionTables(body);
+  return { body: scanned.body, rows: scanned.keptRows, redacted: scanned.removedRows };
 }

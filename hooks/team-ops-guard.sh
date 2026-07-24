@@ -88,7 +88,7 @@ else
 fi
 
 for pattern in "${SECRETS_PATTERNS[@]}"; do
-  if echo "$CONTENT" | grep -qE "$pattern" 2>/dev/null; then
+  if echo "$CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then
     echo "BLOCKED by team-ops-guard: Potential secret detected in $FILE_PATH" >&2
     echo "Pattern matched: $pattern" >&2
     echo "Remove the secret before writing this file." >&2

@@ -1,83 +1,119 @@
-// test/decision-row-redaction.test.mjs — H3: admin/private-audience decision rows must never
-// leave the machine on push, even when the decision-log file is team-tier. Covers both the
-// parsed-rows payload and the raw markdown body that aios push sends to the brain.
+// test/decision-row-redaction.test.mjs — H3: non-syncable decision rows must never leave the
+// machine on push, even when the decision-log file is team-tier. Covers the parsed-rows payload,
+// the raw markdown body that aios push sends, and the fail-closed edges the release review found
+// (blank/escaped row_key, blank audience → admin, adjacent-table boundary, separator rows).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseDecisionRows, redactAdminDecisionRows } from "../scripts/workspace-parse.mjs";
 
-const BODY = `## Decisions
+const HEADER = `| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |`;
+const SEP = `|---|------|----------|-----------|------------|--------|------|----------|`;
+const table = (...dataLines) => ["## Decisions", "", HEADER, SEP, ...dataLines, ""].join("\n");
 
-| # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
-|---|------|----------|-----------|------------|--------|------|----------|
-| 1 | 2026-07-01 | Adopt X | public rationale | alex | high | 2 | team |
-| 2 | 2026-07-02 | Severance terms for B | eyes-only rationale | john | high | 3 | private |
-| 3 | 2026-07-03 | Ship V1 | go | sam | high | 2 | external |
-| 4 | 2026-07-04 | Personnel note | admin-only detail | john | low | 3 | admin |
-`;
-
-test("redactAdminDecisionRows strips private+admin rows from rows and body", () => {
-  const rows = parseDecisionRows(BODY);
-  const out = redactAdminDecisionRows(BODY, rows);
-
-  assert.equal(out.redacted, 2, "both private and admin rows counted");
-  assert.deepEqual(
-    out.rows.map((r) => r.row_key),
-    ["1", "3"],
-    "only team + external rows survive"
+test("strips private+admin rows from rows and body; keeps team+external", () => {
+  const body = table(
+    `| 1 | 2026-07-01 | Adopt X | public | alex | high | 2 | team |`,
+    `| 2 | 2026-07-02 | Severance terms | eyes-only | john | high | 3 | private |`,
+    `| 3 | 2026-07-03 | Ship V1 | go | sam | high | 2 | external |`,
+    `| 4 | 2026-07-04 | Personnel note | admin detail | john | low | 3 | admin |`
   );
-
-  // The sensitive text is gone from the body that would be pushed.
-  assert.ok(!/Severance terms/.test(out.body), "private decision title removed from body");
-  assert.ok(!/eyes-only rationale/.test(out.body), "private rationale removed from body");
-  assert.ok(!/admin-only detail/.test(out.body), "admin rationale removed from body");
-
-  // Team + external content is preserved intact.
-  assert.ok(/Adopt X/.test(out.body) && /public rationale/.test(out.body));
-  assert.ok(/Ship V1/.test(out.body));
-  // Header + separator (non-data lines) are untouched.
-  assert.ok(/\| # \| Date \| Decision \|/.test(out.body));
-});
-
-test("redactAdminDecisionRows is a no-op when no admin/private rows exist", () => {
-  const body = `| # | Decision | Audience |\n|---|---|---|\n| 1 | Public thing | team |\n`;
-  const rows = parseDecisionRows(body);
-  const out = redactAdminDecisionRows(body, rows);
-  assert.equal(out.redacted, 0);
-  assert.equal(out.body, body);
-  assert.equal(out.rows.length, rows.length);
-});
-
-test("fail closed: capitalized `Private` and unknown audiences are dropped, not published", () => {
-  const body =
-    `| # | Decision | Rationale | Audience |\n|---|---|---|---|\n` +
-    `| 1 | Public | ok | team |\n` +
-    `| 2 | Capitalized-private secret | hush | Private |\n` +
-    `| 3 | Unknown-audience secret | hush | wat |\n` +
-    `| 4 | Empty-audience default | ok |  |\n`;
-  const out = redactAdminDecisionRows(body, parseDecisionRows(body));
-  assert.deepEqual(
-    out.rows.map((r) => r.row_key),
-    ["1", "4"],
-    "only explicit team + empty(→team default) survive; Private + unknown dropped"
-  );
-  assert.ok(!/Capitalized-private secret/.test(out.body));
-  assert.ok(!/Unknown-audience secret/.test(out.body));
+  const out = redactAdminDecisionRows(body);
   assert.equal(out.redacted, 2);
+  assert.deepEqual(
+    out.rows.map((r) => r.row_key),
+    ["1", "3"]
+  );
+  assert.ok(!/Severance terms/.test(out.body) && !/eyes-only/.test(out.body));
+  assert.ok(!/admin detail/.test(out.body));
+  assert.ok(/Adopt X/.test(out.body) && /Ship V1/.test(out.body));
+  assert.ok(out.body.includes(HEADER) && out.body.includes(SEP), "header + separator kept");
 });
 
-test("escaped pipe in an earlier cell does not misparse the Audience column", () => {
-  // A team row whose rationale contains an escaped `\\|` must still parse as `team` and survive —
-  // otherwise fail-closed redaction would wrongly drop a legitimate published decision.
-  const body =
-    `| # | Decision | Rationale | Audience |\n|---|---|---|---|\n` +
-    `| 1 | Ship it | costs \\| benefits weighed | team |\n`;
-  const rows = parseDecisionRows(body);
-  assert.equal(rows[0].audience, "team", "audience read correctly despite the escaped pipe");
-  const out = redactAdminDecisionRows(body, rows);
-  assert.equal(out.redacted, 0, "legit team row not dropped");
+test("fail closed: capitalized `Private`, unknown, and BLANK audience are all dropped", () => {
+  const body = table(
+    `| 1 | d | Public | ok | a | h | 2 | team |`,
+    `| 2 | d | Capitalized secret | hush | j | h | 3 | Private |`,
+    `| 3 | d | Unknown-audience secret | hush | j | h | 3 | wat |`,
+    `| 4 | d | Blank-audience secret | hush | j | h | 3 |  |`
+  );
+  const out = redactAdminDecisionRows(body);
+  assert.deepEqual(
+    out.rows.map((r) => r.row_key),
+    ["1"],
+    "blank audience → admin (V1 policy): only explicit team survives"
+  );
+  for (const s of ["Capitalized secret", "Unknown-audience secret", "Blank-audience secret"]) {
+    assert.ok(!out.body.includes(s), `${s} removed from body`);
+  }
+  assert.equal(out.redacted, 3);
+});
+
+test("blank/malformed row_key private row cannot leak in the body (Fable #2)", () => {
+  const body = table(
+    `| 1 | d | Public | ok | a | h | 2 | team |`,
+    `|  | d | SECRET-blank-key | hush | j | h | 3 | private |`
+  );
+  const out = redactAdminDecisionRows(body);
+  assert.ok(!out.body.includes("SECRET-blank-key"), "blank-# private line removed from body");
   assert.deepEqual(
     out.rows.map((r) => r.row_key),
     ["1"]
   );
+});
+
+test("escaped pipe in a cell does not misparse Audience, and a private escaped-key row cannot leak", () => {
+  // A team row whose rationale contains an escaped \\| must survive.
+  const okBody = table(`| 1 | d | Ship it | costs \\| benefits | a | h | 2 | team |`);
+  const ok = redactAdminDecisionRows(okBody);
+  assert.equal(ok.redacted, 0);
+  assert.deepEqual(
+    ok.rows.map((r) => r.row_key),
+    ["1"]
+  );
+  // A private row whose # cell contains an escaped pipe must NOT leave its line in the body.
+  const leakBody = table(`| a\\|b | d | SECRET-escaped-key | hush | j | h | 3 | private |`);
+  const leak = redactAdminDecisionRows(leakBody);
+  assert.ok(!leak.body.includes("SECRET-escaped-key"), "escaped-key private line removed");
+  assert.equal(leak.rows.length, 0);
+});
+
+test("adjacent non-decision table is NOT over-redacted", () => {
+  const body = [
+    HEADER,
+    SEP,
+    `| 1 | d | Adopt X | ok | a | h | 2 | team |`,
+    `| 2 | d | Secret | hush | j | h | 3 | private |`,
+    "",
+    "| Name | Role |",
+    "|------|------|",
+    "| Alex | Eng |",
+    "| 2 | Ops |",
+  ].join("\n");
+  const out = redactAdminDecisionRows(body);
+  assert.ok(!out.body.includes("Secret"), "private decision row dropped");
+  assert.ok(/\| Alex \| Eng \|/.test(out.body), "unrelated table row kept");
+  assert.ok(
+    /\| 2 \| Ops \|/.test(out.body),
+    "unrelated row whose # collides with a dropped key kept"
+  );
+});
+
+test("no-op body + rows when every row is syncable", () => {
+  const body = table(`| 1 | d | Public | ok | a | h | 2 | team |`);
+  const out = redactAdminDecisionRows(body);
+  assert.equal(out.redacted, 0);
+  assert.equal(out.rows.length, 1);
+});
+
+test("parseDecisionRows returns all rows (kept and dropped) with the expected shape", () => {
+  const body = table(
+    `| 1 | 2026-07-01 | Adopt X | why | alex | high | 2 | team |`,
+    `| 2 | 2026-07-02 | Secret | hush | john | high | 3 | private |`
+  );
+  const rows = parseDecisionRows(body);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].audience, "team");
+  assert.equal(rows[1].audience, "admin"); // normalizeTier(private) → admin
+  assert.equal(rows[0].title, "Adopt X");
 });

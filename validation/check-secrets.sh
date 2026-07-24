@@ -99,6 +99,19 @@ for entry in "${PATTERNS[@]}"; do
   label="${entry%%|*}"
   pattern="${entry#*|}"
 
+  # Fail closed on an invalid pattern. `xargs grep … || true` can't distinguish grep's "no match"
+  # (exit 1) from "error" (exit 2) — xargs collapses both to 123 — so a malformed ERE ever landing
+  # in secret-patterns.txt would otherwise silently disable that pattern forever. Validate the regex
+  # against empty input first (valid → exit 1, invalid → exit 2) and hard-fail the scan if it's bad.
+  # `|| validity=$?` keeps this off `set -e` (grep exits 1 on the normal no-match). valid → 1, invalid → 2.
+  validity=0
+  printf '' | grep -qE -e "$pattern" 2>/dev/null || validity=$?
+  if [ "$validity" -eq 2 ]; then
+    echo -e "  ${RED}✗ invalid secret pattern (regex) — scan cannot be trusted: ${label}${NC}" >&2
+    ERRORS=$((ERRORS + 1))
+    continue
+  fi
+
   # Special case: Toggl tokens are 32-char hex but appear in many contexts
   # Only flag if near "toggl" or "api" keywords
   # Guard the empty-list case: with no input, both BSD and GNU xargs would run grep once
@@ -106,9 +119,9 @@ for entry in "${PATTERNS[@]}"; do
   if [ ! -s "$SCAN_LIST" ]; then
     matches=""
   elif [ "$label" = "Toggl API Token" ]; then
-    matches=$(xargs -0 grep -lniE "(toggl|api).{0,20}$pattern" < "$SCAN_LIST" 2>/dev/null || true)
+    matches=$(xargs -0 grep -lniE -e "(toggl|api).{0,20}$pattern" < "$SCAN_LIST" 2>/dev/null || true)
   else
-    matches=$(xargs -0 grep -lniE "$pattern" < "$SCAN_LIST" 2>/dev/null || true)
+    matches=$(xargs -0 grep -lniE -e "$pattern" < "$SCAN_LIST" 2>/dev/null || true)
   fi
 
   if [ -n "$matches" ]; then
@@ -116,7 +129,7 @@ for entry in "${PATTERNS[@]}"; do
     while IFS= read -r match_file; do
       rel_path="${match_file#$REPO/}"
       # Show the matching line (truncated) but redact the actual secret
-      line=$(grep -niE "$pattern" "$match_file" 2>/dev/null | head -3 | sed 's/\(.\{80\}\).*/\1.../')
+      line=$(grep -niE -e "$pattern" "$match_file" 2>/dev/null | head -3 | sed 's/\(.\{80\}\).*/\1.../')
       echo "    $rel_path:"
       echo "$line" | while IFS= read -r l; do
         echo "      $l"
