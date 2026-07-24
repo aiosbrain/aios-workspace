@@ -639,7 +639,7 @@ function srcTouchedInRange(dir, oldSha, newSha) {
  * Mirrors the read-only-vs-apply split: report whether a rebuild is needed, never perform one.
  */
 function readOnlyRebuildNeeded(dir, remoteState) {
-  if (!remoteState || remoteState.state !== "behind") return false;
+  if (remoteState?.state !== "behind") return false;
   if (!remoteState.remoteSha) return null;
   return srcTouchedInRange(dir, "HEAD", remoteState.remoteSha);
 }
@@ -696,11 +696,18 @@ function rebuildDist(dir, { log, warn }) {
     return false;
   }
   log(c.dim("  src/ changed — rebuilding dist/ (npm run build:loop) …"));
-  // shell:true on Windows (npm is npm.cmd — execFileSync("npm") throws ENOENT there); the args
-  // are fixed strings, so shell interpolation is safe. Mirrors reconcileDeps' npm invocation.
+  // Resolve npm beside the Node executable already running this trusted toolkit code instead
+  // of searching the caller's PATH. Besides avoiding an unrelated/writable PATH entry hijacking
+  // the post-pull build, this follows the npm installation paired with the active Node runtime.
+  // On Windows npm is npm.cmd, so shell:true is still required; the executable path and args are
+  // fully constructed here rather than sourced from user input.
+  const npmBin = path.join(
+    path.dirname(process.execPath),
+    process.platform === "win32" ? "npm.cmd" : "npm"
+  );
   const npmOpts = { cwd: dir, stdio: "inherit", shell: process.platform === "win32" };
   try {
-    execFileSync("npm", ["run", "build:loop"], npmOpts);
+    execFileSync(npmBin, ["run", "build:loop"], npmOpts);
     return true;
   } catch (e) {
     warn(
