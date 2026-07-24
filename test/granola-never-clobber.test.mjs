@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   existingTranscriptsById,
   frontmatterValue,
+  isRedacted,
   planTranscriptWrite,
   renderTranscript,
 } from "../scaffold/.claude/descriptors/skills/granola-direct/granola-pull.mjs";
@@ -58,12 +59,18 @@ test("a grown transcript updates the body but preserves the local access tier", 
 // AIO-503: a hand-redacted transcript (shorter by construction) carries
 // `redacted: true` and must survive a re-pull that would otherwise "grow" it back
 // to the full, unredacted content — byte-identical, tier untouched.
-function redact(markdown) {
-  return markdown.replace(/^access: (.*)$/m, "access: $1\nredacted: true");
+function redact(markdown, marker = "redacted: true") {
+  return markdown.replace(/^access: (.*)$/m, `access: $1\n${marker}`);
 }
 
 test("a redacted transcript is never clobbered even when the incoming body is longer", () => {
-  const existing = { file: "/tmp/existing.md", markdown: redact(renderTranscript(note("redacted"), "team")) };
+  const existing = {
+    file: "/tmp/existing.md",
+    markdown: redact(
+      renderTranscript(note("redacted"), "team"),
+      "redacted: true      # ← connector will never overwrite this file (skip-redacted)"
+    ),
+  };
   const plan = planTranscriptWrite({
     note: note("full unredacted transcript with the sensitive detail restored"),
     destination: "/tmp/new.md",
@@ -76,8 +83,23 @@ test("a redacted transcript is never clobbered even when the incoming body is lo
   assert.doesNotMatch(plan.markdown, /sensitive detail restored/);
 });
 
+test("redaction marker parsing accepts comments and quotes but denies unknown values", () => {
+  const marked = (value) =>
+    redact(renderTranscript(note("redacted"), "team"), `redacted: ${value}`);
+  for (const value of ["true # protected", "YES", '"true"', "'yes' # protected"]) {
+    assert.equal(isRedacted(marked(value)), true, value);
+  }
+  for (const value of ["false", "enabled", "true#not-a-comment", '"true # protected"']) {
+    assert.equal(isRedacted(marked(value)), false, value);
+  }
+  assert.equal(isRedacted(renderTranscript(note("redacted"), "team")), false, "missing marker");
+});
+
 test("--force still overrides the redaction marker (explicit escape hatch)", () => {
-  const existing = { file: "/tmp/existing.md", markdown: redact(renderTranscript(note("redacted"), "private")) };
+  const existing = {
+    file: "/tmp/existing.md",
+    markdown: redact(renderTranscript(note("redacted"), "private")),
+  };
   const plan = planTranscriptWrite({
     note: note("full unredacted"),
     destination: "/tmp/new.md",

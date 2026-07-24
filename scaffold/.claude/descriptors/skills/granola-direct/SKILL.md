@@ -77,7 +77,8 @@ redacted: true      # ← connector will never overwrite this file (skip-redacte
 With `redacted: true` set, the connector always **skips** the file (reported distinctly as
 `redaction-protected` in the run summary, `skip-redacted` internally), regardless of how much
 the upstream transcript has grown. Only `--force` overrides the marker — use it deliberately
-when you actually want the original content back.
+when you actually want the original content back. If the meeting later grows, recover it with
+`--force`, redact the restored transcript again, and re-add `redacted: true` before it syncs.
 
 ## After pulling
 

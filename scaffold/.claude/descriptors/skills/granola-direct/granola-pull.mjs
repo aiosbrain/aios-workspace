@@ -273,7 +273,8 @@ export function existingTranscriptsById(destDir) {
 // it as "less complete" and clobber it back to the full transcript (AIO-503). Only
 // an explicit --force is allowed to override this marker.
 export function isRedacted(markdown) {
-  return /^(true|yes)$/i.test((frontmatterValue(markdown, "redacted") || "").trim());
+  const value = (frontmatterValue(markdown, "redacted") || "").trim();
+  return /^(?:(['"])(?:true|yes)\1|(?:true|yes))(?:\s+#.*)?$/i.test(value);
 }
 
 export function planTranscriptWrite({ note, destination, existing, accessTier, force = false }) {
