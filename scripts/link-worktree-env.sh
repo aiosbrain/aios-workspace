@@ -93,9 +93,21 @@ fi
 
 # .opencode/ — agents and plugins. The product Bugbot adapter is tracked, so the
 # directory can already exist in a fresh worktree; fill only missing hydrated files.
+# NB: `cp -Rn` is NOT safe here under `set -e`. BSD/macOS `cp -n` exits non-zero
+# when it *declines* to overwrite an existing file (GNU `cp -n` exits 0), so on a
+# fresh worktree — where .opencode/opencode.json + plugins/aios-bugbot.mjs are
+# already checked out — it would abort the whole hydration mid-run. Copy each
+# missing file individually instead: portable, preserves the fill-only-missing
+# intent, and still lets a genuine copy failure (permissions, disk) surface
+# rather than being swallowed by a blanket `|| true`.
 if [[ -d "$scaffold/.opencode" ]]; then
   mkdir -p "$here/.opencode"
-  cp -Rn "$scaffold/.opencode/." "$here/.opencode/"
+  while IFS= read -r -d '' src; do
+    dest="$here/.opencode/${src#"$scaffold/.opencode/"}"
+    [[ -e "$dest" ]] && continue
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+  done < <(find "$scaffold/.opencode" -type f -print0)
   echo "hydrated .opencode/"
 fi
 
@@ -107,6 +119,16 @@ fi
 # ── aios asks hooks ─────────────────────────────────────────────────────────
 if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/aios.mjs" ]]; then
   node "$main_worktree/scripts/aios.mjs" asks wire --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
+fi
+
+# ── native-module ABI guard ─────────────────────────────────────────────────
+# node_modules is symlinked from the primary above, so this worktree runs the
+# primary's compiled better_sqlite3.node. If the active Node's ABI differs from
+# what that addon was built for (the classic ABI 127-vs-147 crash), the
+# operator-loop DB tests fail for an environment-only reason. Probe it now and
+# auto-rebuild or point at the pinned Node (.nvmrc) — best-effort, never aborts.
+if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-native-abi.mjs" ]]; then
+  (cd "$here" && node scripts/ensure-native-abi.mjs) || echo "native-abi: better-sqlite3 needs attention (see message above)"
 fi
 
 # ── operator-loop build ─────────────────────────────────────────────────────
