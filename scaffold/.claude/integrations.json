@@ -13,16 +13,6 @@
       "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
     },
     {
-      "id": "jira",
-      "name": "Jira",
-      "category": "issue-tracking",
-      "transport": "mcp",
-      "status": "available",
-      "summary": "Search issues, read/comment/transition tickets, manage sprints and worklogs.",
-      "connect": "Add the mcp-atlassian server to .mcp.json with your site URL and an API token. Covers Jira + Confluence.",
-      "env": ["ATLASSIAN_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN"]
-    },
-    {
       "id": "confluence",
       "name": "Confluence",
       "category": "knowledge-base",

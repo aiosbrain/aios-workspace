@@ -12,8 +12,9 @@
       }
     },
     "atlassian": {
+      "_note": "Example only — NOT an auto-wired connector (removed from `aios connect` in V1.0 hardening). `mcp-atlassian` is an UNOFFICIAL, single-maintainer npm package; review its source before use and pin the version (below) so `npx -y` doesn't silently re-pull latest. The maintained alternative is sooperset/mcp-atlassian via `uvx` (different transport — swap deliberately, not in place).",
       "command": "npx",
-      "args": ["-y", "mcp-atlassian"],
+      "args": ["-y", "mcp-atlassian@2.1.0"],
       "env": {
         "ATLASSIAN_URL": "${ATLASSIAN_URL}",
         "ATLASSIAN_EMAIL": "${ATLASSIAN_EMAIL}",

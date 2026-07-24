@@ -46,18 +46,18 @@ function catalogWithStatus(id, status) {
     connectableIndex.set(normalize(d.id), d);
     connectableIndex.set(normalize(d.name), d);
   }
-  const jira = descriptors.find((d) => d.id === "jira");
-  if (jira) connectableIndex.set(normalize("atlassian"), jira);
   return { descriptors, connectableIndex, recognizedIndex: baseCatalog.recognizedIndex };
 }
 
 console.log("suggest-connectors: catalog loads the expected descriptors");
 {
   check(
-    "descriptors include slack/jira/notion/linear/granola/firecrawl (Plane retired)",
-    ["slack", "jira", "notion", "linear", "granola", "firecrawl"].every((id) =>
+    "descriptors include slack/notion/linear/granola/firecrawl (Plane retired; Jira demoted to example-only)",
+    ["slack", "notion", "linear", "granola", "firecrawl"].every((id) =>
       baseCatalog.descriptors.some((d) => d.id === id)
-    ) && !baseCatalog.descriptors.some((d) => d.id === "plane")
+    ) &&
+      !baseCatalog.descriptors.some((d) => d.id === "plane") &&
+      !baseCatalog.descriptors.some((d) => d.id === "jira")
   );
 }
 
@@ -68,17 +68,22 @@ console.log("suggest-connectors: raw strings match by name");
   check("nothing in recognized_not_connectable", r.recognized_not_connectable.length === 0);
 }
 
-console.log("suggest-connectors: alias atlassian -> jira");
+console.log("suggest-connectors: atlassian no longer resolves to a connectable (Jira demoted)");
 {
-  const r = suggest(baseCatalog, ["Atlassian"]);
-  check("atlassian resolves to jira", ids(r).includes("jira"));
+  // Jira was demoted to example-only (V1.0 supply-chain hardening): its descriptor was
+  // deleted and its integrations.json entry removed, so the atlassian alias resolves to
+  // NOTHING — neither connectable nor recognized. It must never surface as a CTA again.
+  const r = suggest(baseCatalog, ["Atlassian", "Jira"]);
+  check("jira not connectable", !ids(r).includes("jira"));
+  check("atlassian not connectable", ids(r).length === 0);
+  check("jira not surfaced as recognized-only either", r.recognized_not_connectable.length === 0);
 }
 
 console.log("suggest-connectors: dedupe by id");
 {
-  // multiple distinct strings that all map to jira → one entry
-  const r = suggest(baseCatalog, ["Jira", "jira", "Atlassian", "JIRA"]);
-  check("jira appears exactly once", ids(r).filter((x) => x === "jira").length === 1);
+  // multiple distinct strings that all normalize to slack → one entry
+  const r = suggest(baseCatalog, ["Slack", "slack", "SLACK", "Sl-ack"]);
+  check("slack appears exactly once", ids(r).filter((x) => x === "slack").length === 1);
 }
 
 console.log("suggest-connectors: case + punctuation normalization");
@@ -91,9 +96,9 @@ console.log("suggest-connectors: case + punctuation normalization");
 console.log("suggest-connectors: wired connectors are filtered out");
 {
   const cat = catalogWithStatus("slack", "wired");
-  const r = suggest(cat, ["Slack", "Jira"]);
+  const r = suggest(cat, ["Slack", "Notion"]);
   check("wired slack excluded", !ids(r).includes("slack"));
-  check("available jira still included", ids(r).includes("jira"));
+  check("available notion still included", ids(r).includes("notion"));
 }
 
 console.log("suggest-connectors: descriptor-less tools -> recognized_not_connectable only");
@@ -112,7 +117,7 @@ console.log("suggest-connectors: descriptor-less tools -> recognized_not_connect
 console.log("suggest-connectors: stable catalog order (not tools order)");
 {
   // tools_mentioned in reverse-alpha; output must follow descriptor (catalog) order
-  const r = suggest(baseCatalog, ["Slack", "Notion", "Linear", "Jira", "Granola", "Firecrawl"]);
+  const r = suggest(baseCatalog, ["Slack", "Notion", "Linear", "Granola", "Firecrawl"]);
   const sorted = [...ids(r)].sort();
   check(
     "connectable ids are in stable (sorted catalog) order",
@@ -144,10 +149,10 @@ console.log("suggest-connectors: end-to-end via extract shape");
   const r = suggest(baseCatalog, toolsFromExtract(extract(["We use Slack, Jira and GitHub"])));
   // single comma string is one token → matches nothing; ensures we don't tokenize sentences
   check("a sentence is not split into matches", ids(r).length === 0 && recNames(r).length === 0);
-  const r2 = suggest(baseCatalog, toolsFromExtract(extract(["Slack", "Jira", "GitHub"])));
+  const r2 = suggest(baseCatalog, toolsFromExtract(extract(["Slack", "Notion", "GitHub"])));
   check(
     "discrete tokens match",
-    ids(r2).includes("slack") && ids(r2).includes("jira") && recNames(r2).includes("GitHub")
+    ids(r2).includes("slack") && ids(r2).includes("notion") && recNames(r2).includes("GitHub")
   );
 }
 
