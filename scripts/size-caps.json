@@ -1,6 +1,6 @@
 {
-  "_comment": "Line caps (wc -l semantics) enforced by scripts/check-file-size.mjs. AIO-320 holds the line on scripts/aios.mjs growth; AIO-315 ratchets this down per extraction PR.",
+  "_comment": "Line caps (wc -l semantics) enforced by scripts/check-file-size.mjs. AIO-320 holds the line on scripts/aios.mjs growth; AIO-315 ratchets this down per extraction PR. 2026-07-24: +5 (2802→2807) for the H3 decision-row redaction resync gate (DECISION_REDACTION_VERSION + clean-check + push stamp) — irreducible security logic; ratchet back on the next extraction.",
   "caps": {
-    "scripts/aios.mjs": 2802
+    "scripts/aios.mjs": 2807
   }
 }

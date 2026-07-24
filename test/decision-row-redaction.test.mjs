@@ -47,3 +47,37 @@ test("redactAdminDecisionRows is a no-op when no admin/private rows exist", () =
   assert.equal(out.body, body);
   assert.equal(out.rows.length, rows.length);
 });
+
+test("fail closed: capitalized `Private` and unknown audiences are dropped, not published", () => {
+  const body =
+    `| # | Decision | Rationale | Audience |\n|---|---|---|---|\n` +
+    `| 1 | Public | ok | team |\n` +
+    `| 2 | Capitalized-private secret | hush | Private |\n` +
+    `| 3 | Unknown-audience secret | hush | wat |\n` +
+    `| 4 | Empty-audience default | ok |  |\n`;
+  const out = redactAdminDecisionRows(body, parseDecisionRows(body));
+  assert.deepEqual(
+    out.rows.map((r) => r.row_key),
+    ["1", "4"],
+    "only explicit team + empty(→team default) survive; Private + unknown dropped"
+  );
+  assert.ok(!/Capitalized-private secret/.test(out.body));
+  assert.ok(!/Unknown-audience secret/.test(out.body));
+  assert.equal(out.redacted, 2);
+});
+
+test("escaped pipe in an earlier cell does not misparse the Audience column", () => {
+  // A team row whose rationale contains an escaped `\\|` must still parse as `team` and survive —
+  // otherwise fail-closed redaction would wrongly drop a legitimate published decision.
+  const body =
+    `| # | Decision | Rationale | Audience |\n|---|---|---|---|\n` +
+    `| 1 | Ship it | costs \\| benefits weighed | team |\n`;
+  const rows = parseDecisionRows(body);
+  assert.equal(rows[0].audience, "team", "audience read correctly despite the escaped pipe");
+  const out = redactAdminDecisionRows(body, rows);
+  assert.equal(out.redacted, 0, "legit team row not dropped");
+  assert.deepEqual(
+    out.rows.map((r) => r.row_key),
+    ["1"]
+  );
+});

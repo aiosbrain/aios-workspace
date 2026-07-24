@@ -7,10 +7,13 @@ export function parseTableRows(body) {
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("|")) continue;
+    // Split on UNescaped pipes only: a `\|` inside a cell (valid GFM escaping, e.g. in a
+    // rationale) must not shift the column count — otherwise a later column like Audience is
+    // misread, which for the decision-row redactor would silently drop or leak the wrong row.
     const cells = t
-      .split("|")
+      .split(/(?<!\\)\|/)
       .slice(1, -1)
-      .map((x) => x.trim());
+      .map((x) => x.replace(/\\\|/g, "|").trim());
     if (!cells.length) continue;
     if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
     rows.push(cells);

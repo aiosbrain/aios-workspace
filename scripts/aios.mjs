@@ -327,6 +327,11 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
+// Bumped when the pushed shape of a decision-log must overwrite what the brain already stored (H3
+// row redaction). A decision-log whose state entry predates this is re-pushed once even at an
+// unchanged SHA — else a workspace that pushed private rows before the redactor keeps them upstream.
+const DECISION_REDACTION_VERSION = 1;
+
 function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
   const plan = { push: [], blocked: [], clean: [] };
@@ -363,7 +368,10 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     }
 
     const prev = state.items[rel];
-    if (prev && prev.sha === hash) {
+    // A decision-log needs re-push if its redaction is stale, even when the SHA is unchanged.
+    const redactionStale =
+      kind === "decision" && (prev?.redaction_version || 0) < DECISION_REDACTION_VERSION;
+    if (prev && prev.sha === hash && !redactionStale) {
       plan.clean.push({ rel });
       continue;
     }
@@ -371,8 +379,7 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
     if (kind === "decision") {
-      // H3: strip admin/private-audience rows from BOTH the pushed body and rows even when the
-      // file is team-tier. `hash` stays the local-file hash so any local edit still re-syncs.
+      // H3: redact non-team/external rows from body+rows even in a team file (hash stays local).
       ({ body: pushBody, rows } = redactAdminDecisionRows(body, parseDecisionRows(body)));
     }
     plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
@@ -917,6 +924,8 @@ async function cmdPush(repo, cfg, patterns, args) {
         sha: item.hash,
         remote_id: res.id || null,
         pushed_at: new Date().toISOString(),
+        // Record which redaction the pushed copy reflects so a later version bump forces a resync.
+        ...(item.kind === "decision" ? { redaction_version: DECISION_REDACTION_VERSION } : {}),
       };
       pushed++;
       result.pushed.add(item.rel);
@@ -956,8 +965,7 @@ async function cmdPull(repo, cfg, args = []) {
     if (cursor) qs.set("cursor", cursor);
     const res = await api(cfg, "GET", `/items?${qs}`);
     for (const item of res.items || []) {
-      // Append-only under from-brain/. Flatten BOTH project and path (a MITM/compromised brain
-      // can put `..` in either) and route through safeJoin so no name escapes the sandbox (H1).
+      // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
       const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
       const dest = safeJoin(destRoot, flat);
       if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;

@@ -22,9 +22,14 @@ export function parseFrontmatter(content) {
 export function normalizeTier(tier) {
   // Friendly labels → canonical engine values. `private` never syncs (= admin);
   // outward tiers `client` (consultant) and `company` (employee) → external.
-  if (tier === "private") return "admin";
-  if (tier === "client" || tier === "company") return "external";
-  return tier;
+  // Lowercase + trim first so `Private`/`ADMIN`/` team ` can't slip past the admin
+  // block or the decision-row redactor as an "unknown" (publishable) tier.
+  const t = String(tier ?? "")
+    .trim()
+    .toLowerCase();
+  if (t === "private") return "admin";
+  if (t === "client" || t === "company") return "external";
+  return t;
 }
 
 export function classifyKind(rel, frontmatter) {
@@ -64,27 +69,35 @@ export function parseDecisionRows(body) {
 }
 
 /**
- * Remove admin/private-audience decision rows from BOTH the parsed rows and the raw markdown
- * body before a team-tier decision-log is pushed (H3). File-level tier gating in buildPlan only
- * decides whether the FILE syncs; a `team` decision-log still carried individual rows marked
- * `Audience: private` in its raw body + parsed payload, so their text/rationale/decided-by left
- * the machine — contradicting `decision-log.md`'s "admin rows are your machine only". This strips
- * them so only team/external rows leave. Returns { body, rows, redacted } (redacted = count removed).
+ * Redact non-publishable decision rows from BOTH the parsed rows and the raw markdown body before a
+ * team-tier decision-log is pushed (H3). File-level tier gating in buildPlan only decides whether
+ * the FILE syncs; a `team` decision-log still carried individual rows marked `Audience: private` in
+ * its raw body + parsed payload, so their text/rationale/decided-by left the machine — contradicting
+ * `decision-log.md`'s "admin rows are your machine only".
+ *
+ * FAIL CLOSED: keep a row ONLY when its audience explicitly normalizes to `team` or `external`.
+ * Anything else — `admin`/`private`, an unknown label, or a garbage value produced when an earlier
+ * escaped `\|` cell throws the column count off — is dropped rather than published. Returns
+ * { body, rows, redacted } (redacted = count removed).
  */
 export function redactAdminDecisionRows(body, rows) {
-  const adminKeys = new Set(
-    (rows || []).filter((r) => normalizeTier(r.audience) === "admin").map((r) => String(r.row_key))
+  const publishable = (r) => {
+    const t = normalizeTier(r.audience);
+    return t === "team" || t === "external";
+  };
+  const dropKeys = new Set(
+    (rows || []).filter((r) => !publishable(r)).map((r) => String(r.row_key))
   );
-  if (!adminKeys.size) return { body, rows: rows || [], redacted: 0 };
-  const keptRows = (rows || []).filter((r) => !adminKeys.has(String(r.row_key)));
+  if (!dropKeys.size) return { body, rows: rows || [], redacted: 0 };
+  const keptRows = (rows || []).filter(publishable);
   const keptBody = body
     .split("\n")
     .filter((line) => {
       const t = line.trim();
       if (!t.startsWith("|")) return true; // non-table line — keep
       const first = t.split("|").slice(1, -1)[0]?.trim();
-      return !(first !== undefined && adminKeys.has(first)); // drop admin data rows only
+      return !(first !== undefined && dropKeys.has(first)); // drop non-publishable data rows only
     })
     .join("\n");
-  return { body: keptBody, rows: keptRows, redacted: adminKeys.size };
+  return { body: keptBody, rows: keptRows, redacted: dropKeys.size };
 }
