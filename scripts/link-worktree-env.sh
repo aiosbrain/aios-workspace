@@ -93,9 +93,21 @@ fi
 
 # .opencode/ — agents and plugins. The product Bugbot adapter is tracked, so the
 # directory can already exist in a fresh worktree; fill only missing hydrated files.
+# NB: `cp -Rn` is NOT safe here under `set -e`. BSD/macOS `cp -n` exits non-zero
+# when it *declines* to overwrite an existing file (GNU `cp -n` exits 0), so on a
+# fresh worktree — where .opencode/opencode.json + plugins/aios-bugbot.mjs are
+# already checked out — it would abort the whole hydration mid-run. Copy each
+# missing file individually instead: portable, preserves the fill-only-missing
+# intent, and still lets a genuine copy failure (permissions, disk) surface
+# rather than being swallowed by a blanket `|| true`.
 if [[ -d "$scaffold/.opencode" ]]; then
   mkdir -p "$here/.opencode"
-  cp -Rn "$scaffold/.opencode/." "$here/.opencode/"
+  while IFS= read -r -d '' src; do
+    dest="$here/.opencode/${src#"$scaffold/.opencode/"}"
+    [[ -e "$dest" ]] && continue
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+  done < <(find "$scaffold/.opencode" -type f -print0)
   echo "hydrated .opencode/"
 fi
 
