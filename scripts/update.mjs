@@ -850,14 +850,20 @@ function assessReadOnlySource(srcDir, { pullOpts, io, skipRemote = false, repo =
   const vs = vendorSafety(srcDir);
   const sourceClean = pullInfo?.sourceClean ?? sourceCleanliness(srcDir);
   const remoteState = pullInfo?.remoteState ?? null;
+  // Read-only counterpart of apply's dist/ rebuild (AIO-504): report — never perform — whether
+  // pulling would restale the compiled dist/. `true` only when the incoming range provably
+  // touches src/; a `null` (can't tell without fetching) stays silent rather than crying wolf.
+  const rebuildNeeded = pullInfo?.rebuildNeeded ?? false;
   const reasons = [];
   if (remoteState && !["current", "no-upstream"].includes(remoteState.state))
     reasons.push(remoteMessage(remoteState).text);
   if (sourceClean === "dirty") reasons.push("the toolkit checkout has uncommitted changes");
   if (sourceClean === "inspection-error")
     reasons.push("couldn't determine whether the toolkit checkout is clean");
+  if (rebuildNeeded === true)
+    reasons.push("pulling would rebuild dist/ (src/ changed upstream) — `aios update` handles it");
   if (!vs.safe) reasons.push(vendorSafetyReason(vs));
-  return { remoteState, sourceClean, vs, reasons };
+  return { remoteState, sourceClean, vs, rebuildNeeded, reasons };
 }
 
 /**

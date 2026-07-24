@@ -72,6 +72,27 @@ exit 0
   return { ranFile, binPath: `${bin}${path.delimiter}${process.env.PATH}` };
 }
 
+/** Toolkit fixture whose real build:loop script records that npm ran it. The production rebuild
+ *  deliberately resolves npm beside process.execPath instead of trusting PATH, so these tests
+ *  exercise the real command boundary and observe the package script rather than shadowing npm. */
+function rebuildToolkitClone(root) {
+  const ranFile = path.join(root, "build-loop-ran.log");
+  const { origin, clone } = originAndToolkitClone(root, {
+    extraOriginFiles: {
+      "package.json":
+        JSON.stringify({
+          name: "aios-rebuild-fixture",
+          private: true,
+          scripts: { "build:loop": "node scripts/test-build-loop.mjs" },
+        }) + "\n",
+      "scripts/test-build-loop.mjs":
+        `import { writeFileSync } from "node:fs";\n` +
+        `writeFileSync(${JSON.stringify(ranFile)}, "run build:loop\\n");\n`,
+    },
+  });
+  return { origin, clone, ranFile };
+}
+
 /** Put a fake `npm` first on PATH that ALWAYS fails (both `ci` and its `install` fallback). */
 function failingNpm(root) {
   const bin = path.join(root, "fakebin-fail");
@@ -2114,6 +2135,156 @@ test("AIO-466: a failing git op inside --contribute surfaces as a structured Upd
     assert.equal(result.exitStatus, 1);
     assert.equal(result.applyAllowed, false);
     assert.match(result.reasons.join("\n"), /git fetch failed while contributing/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- AIO-504: aios update must rebuild dist/ when a fast-forward touched src/ ----
+// A fast-forward of an existing checkout never fires post-checkout, so nothing else rebuilds
+// the gitignored dist/ the CLI actually runs. These assert the pull half now closes that gap.
+
+test("AIO-504: a fast-forward whose range touches src/ rebuilds dist/ (npm run build:loop), even under --no-install", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-src-"));
+  let result;
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    // Origin advances with a change under src/ — the tsc rootDir. The clone tracks origin, so
+    // pullToolkitCheckout fast-forwards to it.
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(
+      origin,
+      "export const summarizeTranscriptReview = () => {};\n",
+      "src/operator-loop/listing.ts"
+    );
+    // A real (non-symlinked) node_modules to build against — gitignored by the fixture, so the
+    // source-cleanliness gate stays green.
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+
+    // noInstall isolates the assertion to the rebuild AND proves it's independent of that flag.
+    result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
+
+    assert.equal(result.rebuilt, true, "rebuilt is reported true");
+    assert.ok(existsSync(ranFile), "npm was invoked");
+    assert.match(readFileSync(ranFile, "utf8"), /run build:loop/, "npm run build:loop ran");
+  } finally {
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: a fast-forward that touches only non-src/ paths does NOT rebuild dist/", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-nonsrc-"));
+  let result;
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    mkdirSync(path.join(origin, "docs"), { recursive: true });
+    advance(origin, "# docs only\n", "docs/whatever.md");
+    mkdirSync(path.join(clone, "node_modules"), { recursive: true });
+
+    result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
+
+    assert.equal(result.rebuilt, false, "no rebuild for a doc-only pull");
+    assert.ok(!existsSync(ranFile), "npm run build:loop must NOT run on a non-src/ pull");
+  } finally {
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: a src/ change IS built THROUGH a resolvable symlinked node_modules (worktree layout — dist/ is worktree-local)", () => {
+  // Unlike `npm ci` (destructive → must skip a symlink), `npm run build:loop` only reads deps
+  // and writes to the worktree-local dist/, so a linked worktree must still rebuild after a FF.
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-symlink-"));
+  let result;
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const x = 1;\n", "src/operator-loop/listing.ts");
+    const shared = path.join(root, "shared-node-modules");
+    mkdirSync(shared, { recursive: true }); // a real (resolvable) shared install target
+    symlinkSync(shared, path.join(clone, "node_modules"));
+
+    result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
+
+    assert.equal(
+      result.rebuilt,
+      true,
+      "a linked worktree rebuilds its own dist/ through the symlink"
+    );
+    assert.ok(existsSync(ranFile), "npm was invoked");
+    assert.match(readFileSync(ranFile, "utf8"), /run build:loop/, "npm run build:loop ran");
+  } finally {
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: a src/ change is NOT built through a DANGLING node_modules symlink (no install to compile against)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-dangling-"));
+  let result;
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const x = 1;\n", "src/operator-loop/listing.ts");
+    // Point at a target that does not exist — a dangling symlink has no deps to read.
+    symlinkSync(path.join(root, "no-such-node-modules"), path.join(clone, "node_modules"));
+
+    result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
+
+    assert.equal(result.rebuilt, false, "no rebuild against a dangling symlink");
+    assert.ok(!existsSync(ranFile), "npm must NOT be invoked with no resolvable install");
+  } finally {
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: --check reports rebuildNeeded=true when the fetched-but-unmerged range touches src/ (never performs it)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-check-"));
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const y = 2;\n", "src/operator-loop/listing.ts");
+    // Update the clone's remote-tracking ref WITHOUT moving HEAD, so it is genuinely "behind"
+    // with the incoming range locally inspectable (readOnlyRebuildNeeded diffs HEAD..@{u}).
+    git(clone, "fetch", "origin");
+
+    const result = pullToolkitCheckout(
+      clone,
+      { check: true, dryRun: true, noInstall: true },
+      NOOP_IO
+    );
+
+    assert.equal(result.rebuildNeeded, true, "check predicts a rebuild is needed");
+    assert.equal(result.rebuilt, false, "read-only never performs the rebuild");
+    assert.ok(!existsSync(ranFile), "read-only never invokes npm");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: --check reports rebuildNeeded=null when ls-remote sees an unfetched src/ tip (never false from stale @{u})", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-check-unfetched-"));
+  try {
+    const { origin, clone, ranFile } = rebuildToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const unfetched = true;\n", "src/operator-loop/listing.ts");
+    // Deliberately do NOT fetch: @{u} still equals HEAD, while read-only classification sees
+    // the newer tip through ls-remote. The remote object is unavailable locally, so the honest
+    // rebuild prediction is unknown (null), not the old false result from diffing stale @{u}.
+    assert.equal(git(clone, "rev-parse", "HEAD"), git(clone, "rev-parse", "@{u}"));
+
+    const result = pullToolkitCheckout(
+      clone,
+      { check: true, dryRun: true, noInstall: true },
+      NOOP_IO
+    );
+
+    assert.equal(result.remoteState.state, "behind", "ls-remote sees the newer upstream tip");
+    assert.equal(result.rebuildNeeded, null, "unfetched incoming range stays honestly unknown");
+    assert.equal(result.rebuilt, false, "read-only never performs the rebuild");
+    assert.ok(!existsSync(ranFile), "read-only never invokes npm");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
