@@ -2175,7 +2175,9 @@ test("AIO-504: a fast-forward that touches only non-src/ paths does NOT rebuild 
   }
 });
 
-test("AIO-504: a src/ change is NOT built through a SYMLINKED node_modules (worktree layout)", () => {
+test("AIO-504: a src/ change IS built THROUGH a resolvable symlinked node_modules (worktree layout — dist/ is worktree-local)", () => {
+  // Unlike `npm ci` (destructive → must skip a symlink), `npm run build:loop` only reads deps
+  // and writes to the worktree-local dist/, so a linked worktree must still rebuild after a FF.
   const root = mkdtempSync(path.join(tmpdir(), "aios-504-symlink-"));
   const prevPath = process.env.PATH;
   let result;
@@ -2184,15 +2186,40 @@ test("AIO-504: a src/ change is NOT built through a SYMLINKED node_modules (work
     mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
     advance(origin, "export const x = 1;\n", "src/operator-loop/listing.ts");
     const shared = path.join(root, "shared-node-modules");
-    mkdirSync(shared, { recursive: true });
+    mkdirSync(shared, { recursive: true }); // a real (resolvable) shared install target
     symlinkSync(shared, path.join(clone, "node_modules"));
 
     const { ranFile, binPath } = fakeNpm(root);
     process.env.PATH = binPath;
     result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
 
-    assert.equal(result.rebuilt, false, "rebuild skipped through a symlinked node_modules");
-    assert.ok(!existsSync(ranFile), "npm must NOT be invoked through the symlink");
+    assert.equal(result.rebuilt, true, "a linked worktree rebuilds its own dist/ through the symlink");
+    assert.ok(existsSync(ranFile), "npm was invoked");
+    assert.match(readFileSync(ranFile, "utf8"), /run build:loop/, "npm run build:loop ran");
+  } finally {
+    process.env.PATH = prevPath;
+    cleanupPullResult(path.join(root, "toolkit"), result);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("AIO-504: a src/ change is NOT built through a DANGLING node_modules symlink (no install to compile against)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-dangling-"));
+  const prevPath = process.env.PATH;
+  let result;
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const x = 1;\n", "src/operator-loop/listing.ts");
+    // Point at a target that does not exist — a dangling symlink has no deps to read.
+    symlinkSync(path.join(root, "no-such-node-modules"), path.join(clone, "node_modules"));
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
+
+    assert.equal(result.rebuilt, false, "no rebuild against a dangling symlink");
+    assert.ok(!existsSync(ranFile), "npm must NOT be invoked with no resolvable install");
   } finally {
     process.env.PATH = prevPath;
     cleanupPullResult(path.join(root, "toolkit"), result);

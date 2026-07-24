@@ -628,11 +628,15 @@ function readOnlyRebuildNeeded(dir, remoteState) {
  * else happened to rebuild it (AIO-504's live failure: `loop.summarizeTranscriptReview is not
  * a function`, from a dist/ a full source generation behind on an otherwise clean `main`).
  *
- * Gated with the SAME node_modules posture reconcileDeps uses for `npm ci`: tsc needs a real
- * toolkit install to compile against, so skip cleanly when there is no node_modules, and skip a
- * SYMLINKED node_modules (worktree layout) — that worktree's dist/ is the canonical checkout's
- * concern, and the worktree's own creation already ran the post-checkout build. Independent of
- * `--no-install`: a stale dist/ is a correctness bug even when deps didn't change.
+ * Needs a resolvable toolkit install to compile against, so skip cleanly when node_modules is
+ * absent (a sync-only user) or a DANGLING symlink (target gone). But — unlike reconcileDeps'
+ * `npm ci`, which DELETES node_modules and so must never follow a worktree symlink into the
+ * shared install — `npm run build:loop` only READS deps and writes to the worktree-LOCAL,
+ * gitignored dist/. That is non-destructive through a symlink and is exactly what
+ * link-worktree-env.sh already runs at worktree creation, so we DO build through a symlinked
+ * (worktree-layout) node_modules: a linked worktree's dist/ is its own and would otherwise stay
+ * stale after a fast-forward — and linked worktrees are the required dev workflow. Independent
+ * of `--no-install`: a stale dist/ is a correctness bug even when deps didn't change.
  *
  * NON-FATAL on build failure (unlike reconcileDeps' hard throw on a failed `npm ci`): the pull
  * has already landed and cannot be un-advanced, and this rebuild is pull-TRIGGERED (not
@@ -654,11 +658,13 @@ function rebuildDist(dir, { log, warn }) {
     );
     return false;
   }
-  if (st.isSymbolicLink()) {
+  // A symlink is fine to build THROUGH (tsc only reads deps); a DANGLING one has no install to
+  // read (existsSync follows the link), so there is nothing to compile against — skip.
+  if (st.isSymbolicLink() && !existsSync(nm)) {
     warn(
       c.yellow(
-        "  toolkit node_modules is a symlink (worktree layout) — skipping the dist/ rebuild.\n" +
-          "  A worktree's own creation runs `npm run build:loop`; rebuild in the canonical checkout if needed."
+        "  toolkit node_modules is a dangling symlink — can't rebuild dist/; skipping.\n" +
+          "  Restore the worktree's node_modules link (aios worktree install-hook / link-worktree-env.sh)."
       )
     );
     return false;
