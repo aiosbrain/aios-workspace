@@ -39,12 +39,7 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
-import {
-  parseFrontmatter,
-  normalizeTier,
-  classifyKind,
-  parseDecisionRows,
-} from "./workspace-parse.mjs";
+import { parseFrontmatter, normalizeTier, classifyKind, parseDecisionRows, parseEvidenceRows, validateItemPayload, evidencePayloadContent, validEvidenceDeclaration } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -341,6 +336,9 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     const { frontmatter, body } = parseFrontmatter(raw);
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
+    if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {
+      plan.blocked.push({ rel, reason: "evidence files require their explicit kind at a canonical approved path" }); continue;
+    }
 
     const tier = normalizeTier(frontmatter?.access || "");
     if (!frontmatter || !frontmatter.access) {
@@ -366,16 +364,14 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
       plan.clean.push({ rel });
       continue;
     }
-    let rows;
-    if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") rows = parseDecisionRows(body);
+    const rows = kind === "task" ? parseTaskRows(body) : parseEvidenceRows(kind, body);
+    const syncContent = evidencePayloadContent(kind, frontmatter, body);
     plan.push.push({
       rel,
       kind,
       hash,
       tier,
-      frontmatter,
-      body,
+      ...syncContent,
       rows,
       isNew: !prev,
     });
@@ -915,6 +911,8 @@ async function cmdPush(repo, cfg, patterns, args) {
     };
     if (item.rows) payload.rows = item.rows;
     try {
+      if (!validateItemPayload(payload).success)
+        throw new Error("local Brain API 1.12 payload validation failed");
       const res = await api(cfg, "POST", "/items", payload);
       state.items[item.rel] = {
         sha: item.hash,
@@ -925,8 +923,11 @@ async function cmdPush(repo, cfg, patterns, args) {
       result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
-      result.failed.set(item.rel, e.message);
-      console.log(`  ${c.red("✗")} ${item.rel} — ${e.message}`);
+      const needs112 = (item.kind === "fact" || item.kind === "stakeholder_mention") &&
+        /unknown (?:item )?kind|invalid (?:item_)?kind|item_kind.*(?:invalid|unknown)|kind.*(?:unsupported|not supported)/i.test(e.message);
+      const message = needs112 ? `Brain API 1.12 required: ${e.message}` : e.message;
+      result.failed.set(item.rel, message);
+      console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
     }
   }
   saveState(repo, state);

@@ -40,7 +40,10 @@ function sha256(s) {
 
 // Minimal brain-api v1.5 stub. `prepulled` seeds the item store so a pull has content
 // to fetch; pushes append to it too, so pushedItems + the store both reflect reality.
-function startStubBrain(prepulled = [], { rejectPushes = false } = {}) {
+function startStubBrain(
+  prepulled = [],
+  { rejectPushes = false, rejectNewKinds = false, rejectEvidenceRows = false } = {}
+) {
   const pushedItems = [];
   const requestsLog = [];
   const itemStore = [...prepulled];
@@ -71,6 +74,32 @@ function startStubBrain(prepulled = [], { rejectPushes = false } = {}) {
         if (rejectPushes) {
           send(503, {
             error: { code: "unavailable", message: "fixture rejection", request_id: "r-503" },
+          });
+          return;
+        }
+        if (
+          rejectEvidenceRows &&
+          (item.kind === "fact" || item.kind === "stakeholder_mention")
+        ) {
+          send(422, {
+            error: {
+              code: "invalid_payload",
+              message: "malformed evidence rows",
+              request_id: "r-bad-rows",
+            },
+          });
+          return;
+        }
+        if (
+          rejectNewKinds &&
+          (item.kind === "fact" || item.kind === "stakeholder_mention")
+        ) {
+          send(422, {
+            error: {
+              code: "invalid_payload",
+              message: "unknown item kind",
+              request_id: "r-old-brain",
+            },
           });
           return;
         }
@@ -155,6 +184,57 @@ function makeWorkspace(brainUrl) {
   writeFileSync(
     path.join(dir, "2-work", "admin-secret.md"),
     fm({ status: "draft", owner: "alex", access: "private" }, "admin secret")
+  );
+  return dir;
+}
+
+function makeEvidenceWorkspace(brainUrl) {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-evidence-sync-"));
+  mkdirSync(path.join(dir, "3-log"), { recursive: true });
+  mkdirSync(path.join(dir, "4-shared"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "aios.yaml"),
+    [
+      "version: 1",
+      `brain_url: "${brainUrl}"`,
+      `team_id: "${TEST_TEAM}"`,
+      "member: smoke-bot",
+      "sync_tiers:",
+      "  - team",
+      "  - external",
+      "sync_include:",
+      "  - 3-log",
+      "  - 4-shared",
+    ].join("\n") + "\n"
+  );
+  writeFileSync(
+    path.join(dir, "3-log", "facts-team.md"),
+    "---\nkind: fact\naccess: team\ntranscript_note: FULL TRANSCRIPT MUST NOT LEAVE\n---\n\n" +
+      "FULL TRANSCRIPT MUST NOT LEAVE\n\n" +
+      "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
+      "|---|---|---|---|---|---|\n" +
+      "| fact-abcd1234abcd1234 | Launch approved | 2026-07-24 | event | 1-inbox/transcripts/launch.md | Launch is approved. |\n"
+  );
+  writeFileSync(
+    path.join(dir, "3-log", "facts-private.md"),
+    "---\nkind: fact\naccess: admin\n---\n\n" +
+      "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
+      "|---|---|---|---|---|---|\n" +
+      "| fact-private00000001 | Secret | — | fact | 1-inbox/transcripts/private.md | Never upload this. |\n"
+  );
+  writeFileSync(
+    path.join(dir, "4-shared", "stakeholder-mentions.md"),
+    "---\nkind: stakeholder_mention\naccess: external\n---\n\n" +
+      "| Row Key | Name | Role | Context | Source Path | Source Quote |\n" +
+      "|---|---|---|---|---|---|\n" +
+      "| stakeholder-abcd1234abcd1234 | Sam Rivera | Buyer | — | 1-inbox/transcripts/discovery.md | Sam Rivera is the buyer. |\n"
+  );
+  writeFileSync(
+    path.join(dir, "4-shared", "arbitrary.md"),
+    "---\nkind: fact\naccess: external\n---\n\n" +
+      "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
+      "|---|---|---|---|---|---|\n" +
+      "| fact-routing00000001 | ROUTING BYPASS MUST NOT LEAVE | — | fact | 1-inbox/transcripts/a.md | ROUTING BYPASS MUST NOT LEAVE |\n"
   );
   return dir;
 }
@@ -266,6 +346,191 @@ test("aios push: a Brain item rejection exits nonzero so GUI callers cannot repo
     assert.match(r.stdout, /fixture rejection/);
     assert.match(r.stdout, /pushed 0\/1/);
     assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("aios push sends only approved syncable evidence rows with exact 1.12 wire kinds", async () => {
+  const stub = await startStubBrain();
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    const result = await runAios(["push", "--repo", dir], REPO);
+    assert.equal(result.code, 0, `push failed: ${result.stderr}\n${result.stdout}`);
+    assert.equal(stub.pushedItems.length, 2);
+    const fact = stub.pushedItems.find((item) => item.kind === "fact");
+    const stakeholder = stub.pushedItems.find(
+      (item) => item.kind === "stakeholder_mention"
+    );
+    assert.deepEqual(fact.rows, [
+      {
+        row_key: "fact-abcd1234abcd1234",
+        title: "Launch approved",
+        occurred_at: "2026-07-24",
+        fact_type: "event",
+        source_path: "1-inbox/transcripts/launch.md",
+        source_quote: "Launch is approved.",
+      },
+    ]);
+    assert.equal(fact.access, "team");
+    assert.equal(fact.body, "# Approved facts");
+    assert.deepEqual(fact.frontmatter, { kind: "fact", access: "team" });
+    assert.deepEqual(stakeholder.rows, [
+      {
+        row_key: "stakeholder-abcd1234abcd1234",
+        name: "Sam Rivera",
+        role: "Buyer",
+        source_path: "1-inbox/transcripts/discovery.md",
+        source_quote: "Sam Rivera is the buyer.",
+      },
+    ]);
+    assert.equal(stakeholder.access, "external");
+    assert.equal(stakeholder.body, "# Approved stakeholder mentions");
+    assert.equal(
+      stub.pushedItems.some((item) => item.path.endsWith("facts-private.md")),
+      false
+    );
+    assert.equal(
+      JSON.stringify(stub.pushedItems).includes("Never upload this."),
+      false
+    );
+    assert.equal(
+      JSON.stringify(stub.pushedItems).includes("FULL TRANSCRIPT MUST NOT LEAVE"),
+      false
+    );
+    assert.equal(
+      JSON.stringify(stub.pushedItems).includes("ROUTING BYPASS MUST NOT LEAVE"),
+      false
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("empty evidence files fail local validation and never reach Brain", async () => {
+  const stub = await startStubBrain();
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    writeFileSync(
+      path.join(dir, "3-log", "facts-team.md"),
+      "---\nkind: fact\naccess: team\n---\n\n" +
+        "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
+        "|---|---|---|---|---|---|\n"
+    );
+    const result = await runAios(
+      ["push", "--repo", dir, "3-log/facts-team.md"],
+      REPO
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /local Brain API 1\.12 payload validation failed/);
+    assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("mixed valid and malformed evidence rows fail atomically before network", async () => {
+  const stub = await startStubBrain();
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    writeFileSync(
+      path.join(dir, "3-log", "facts-team.md"),
+      "---\nkind: fact\naccess: team\n---\n\n" +
+        "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
+        "|---|---|---|---|---|---|\n" +
+        "| fact-abcd1234abcd1234 | Launch approved | 2026-07-24 | event | 1-inbox/transcripts/launch.md | Launch is approved. |\n" +
+        "| | Missing key | — | fact | 1-inbox/transcripts/launch.md | Missing key. |\n"
+    );
+    const result = await runAios(
+      ["push", "--repo", dir, "3-log/facts-team.md"],
+      REPO
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /local Brain API 1\.12 payload validation failed/);
+    assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("canonical evidence paths without an explicit kind are blocked before network", async () => {
+  const stub = await startStubBrain();
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    writeFileSync(
+      path.join(dir, "3-log", "facts-team.md"),
+      "---\naccess: team\n---\n\nFULL TRANSCRIPT MUST NOT LEAVE\n"
+    );
+    const result = await runAios(
+      ["push", "--repo", dir, "3-log/facts-team.md"],
+      REPO
+    );
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /1 blocked/);
+    assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("private evidence paths cannot be relabeled as syncable tiers", async () => {
+  const stub = await startStubBrain();
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    const privatePath = path.join(dir, "3-log", "facts-private.md");
+    const relabeled = readFileSync(privatePath, "utf8").replace(
+      "access: admin",
+      "access: team"
+    );
+    writeFileSync(privatePath, relabeled);
+    const result = await runAios(
+      ["push", "--repo", dir, "3-log/facts-private.md"],
+      REPO
+    );
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /1 blocked/);
+    assert.equal(stub.pushedItems.length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("an older Brain rejection keeps evidence dirty and reports the 1.12 requirement", async () => {
+  const stub = await startStubBrain([], { rejectNewKinds: true });
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    const result = await runAios(["push", "--repo", dir], REPO);
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /Brain API 1\.12 required/);
+    const stateFile = path.join(dir, ".aios", "state.json");
+    const state = existsSync(stateFile)
+      ? JSON.parse(readFileSync(stateFile, "utf8"))
+      : { items: {} };
+    assert.equal(state.items["3-log/facts-team.md"], undefined);
+    assert.equal(state.items["4-shared/stakeholder-mentions.md"], undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await stub.close();
+  }
+});
+
+test("a current Brain malformed-row 422 is not mislabeled as a version mismatch", async () => {
+  const stub = await startStubBrain([], { rejectEvidenceRows: true });
+  const dir = makeEvidenceWorkspace(stub.url);
+  try {
+    const result = await runAios(
+      ["push", "--repo", dir, "3-log/facts-team.md"],
+      REPO
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /malformed evidence rows/);
+    assert.doesNotMatch(result.stdout, /Brain API 1\.12 required/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     await stub.close();

@@ -1,0 +1,141 @@
+{
+  "corpusVersion": "1.0.0",
+  "transcripts": {
+    "1-inbox/transcripts/planning.md": "Alex: We approved the August 4 launch. Priya: I will publish the rollout checklist by Friday. Alex: Jordan Lee owns customer communications.",
+    "1-inbox/transcripts/operations.md": "Morgan: The warehouse is in Jakarta. Morgan: The migration completed on 2026-07-20. Morgan: Sam Rivera is responsible for coordinating vendor access. Sam Rivera: I will coordinate vendor access. Sam Rivers: Maybe I could observe a future test, but nothing has been assigned.",
+    "1-inbox/transcripts/ambiguous.md": "Taylor: We could move the date, but no decision has been made. Casey: Someone should probably write a brief."
+  },
+  "gold": {
+    "decisions": [
+      {
+        "decision": "Launch on August 4",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "We approved the August 4 launch."
+      }
+    ],
+    "tasks": [
+      {
+        "task": "Publish the rollout checklist by Friday",
+        "assignee": "Priya",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "I will publish the rollout checklist by Friday."
+      },
+      {
+        "task": "Coordinate vendor access",
+        "assignee": "Sam Rivera",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "I will coordinate vendor access."
+      }
+    ],
+    "facts": [
+      {
+        "title": "The warehouse is in Jakarta",
+        "factType": "fact",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "The warehouse is in Jakarta."
+      },
+      {
+        "title": "The migration completed on 2026-07-20",
+        "occurredAt": "2026-07-20",
+        "factType": "event",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "The migration completed on 2026-07-20."
+      }
+    ],
+    "stakeholders": [
+      {
+        "name": "Jordan Lee",
+        "role": "Customer communications owner",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "Jordan Lee owns customer communications."
+      },
+      {
+        "name": "Sam Rivera",
+        "context": "Responsible for coordinating vendor access",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "Sam Rivera is responsible for coordinating vendor access."
+      }
+    ]
+  },
+  "fixedModelOutput": {
+    "decisions": [
+      {
+        "decision": "Launch on August 4",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "We approved the August 4 launch."
+      },
+      {
+        "decision": "Move the date",
+        "transcript": "1-inbox/transcripts/ambiguous.md",
+        "sourceQuote": "No one approved moving the date."
+      }
+    ],
+    "tasks": [
+      {
+        "task": "Publish rollout checklist by Friday",
+        "assignee": "Priya",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "I will publish the rollout checklist by Friday."
+      },
+      {
+        "task": "Coordinate vendor access",
+        "assignee": "Sam Rivera",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "I will coordinate vendor access."
+      },
+      {
+        "task": "Someone writes a brief",
+        "transcript": "1-inbox/transcripts/ambiguous.md",
+        "sourceQuote": ""
+      }
+    ],
+    "facts": [
+      {
+        "title": "Warehouse located in Jakarta",
+        "factType": "fact",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "The warehouse is in Jakarta."
+      },
+      {
+        "title": "Migration completed 2026-07-20",
+        "occurredAt": "2026-07-20",
+        "factType": "event",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "The migration completed on 2026-07-20."
+      },
+      {
+        "title": "  migration   completed 2026-07-20 ",
+        "occurredAt": "2026-07-20",
+        "factType": "event",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "The migration completed on 2026-07-20."
+      }
+    ],
+    "stakeholders": [
+      {
+        "name": "Jordan Lee",
+        "role": "Customer communications owner",
+        "transcript": "1-inbox/transcripts/planning.md",
+        "sourceQuote": "Jordan Lee owns customer communications."
+      },
+      {
+        "name": "Sam Rivera",
+        "context": "Responsible for coordinating vendor access",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "Sam Rivera is responsible for coordinating vendor access."
+      },
+      {
+        "name": "Sam Rivers",
+        "context": "Responsible for coordinating vendor access",
+        "transcript": "1-inbox/transcripts/operations.md",
+        "sourceQuote": "Sam Rivera is responsible for coordinating vendor access."
+      }
+    ]
+  },
+  "expectedRejectedReasons": [
+    "source_quote_not_found",
+    "source_quote_empty",
+    "duplicate_in_stage",
+    "source_quote_mismatch"
+  ]
+}

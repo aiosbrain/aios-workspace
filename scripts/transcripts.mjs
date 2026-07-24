@@ -3,9 +3,18 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callPromptModel } from "./model-call.mjs";
+import {
+  extractionPrompt as extractionContractPrompt,
+  parseModelJson,
+  prepareExtractionStage,
+} from "./transcript-extraction.mjs";
+import {
+  approveTranscriptStageFile,
+  TRANSCRIPT_STAGING_REL,
+} from "./transcript-approval.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const STAGING_REL = ".aios/staging/transcript-decisions";
+const STAGING_REL = TRANSCRIPT_STAGING_REL;
 
 function argValue(args, name) {
   const i = args.indexOf(name);
@@ -25,28 +34,6 @@ function normalize(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-}
-
-function escapeCell(value) {
-  return String(value ?? "—")
-    .replaceAll("|", "\\|")
-    .replaceAll("\n", " ")
-    .trim();
-}
-
-function parseModelJson(raw) {
-  const text = String(raw)
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  try {
-    return JSON.parse(text);
-  } catch {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("extractor returned no JSON object");
-    return JSON.parse(text.slice(start, end + 1));
-  }
 }
 
 function existingDecisionTexts(markdown) {
@@ -69,11 +56,16 @@ function existingTaskTexts(markdown) {
   );
 }
 
-function grounded(item, transcripts) {
-  const quote = String(item.sourceQuote ?? "").trim();
-  const source = String(item.transcript ?? "").trim();
-  if (!quote || !source || !transcripts.has(source)) return false;
-  return transcripts.get(source).includes(quote);
+function existingEvidenceRowKeys(markdowns) {
+  const keys = new Set();
+  for (const markdown of markdowns) {
+    for (const match of markdown.matchAll(
+      /^\|\s*((?:fact|stakeholder)-[a-f0-9]{16})\s*\|/gim
+    )) {
+      keys.add(match[1]);
+    }
+  }
+  return keys;
 }
 
 export function prepareStage({
@@ -81,65 +73,25 @@ export function prepareStage({
   transcriptTexts,
   decisionLog = "",
   tasksLog = "",
+  evidenceLogs = [],
   now,
 }) {
-  const transcripts = new Map(Object.entries(transcriptTexts));
   const knownDecisions = existingDecisionTexts(decisionLog);
   const knownTasks = existingTaskTexts(tasksLog);
-  const decisions = [];
-  const tasks = [];
-
-  for (const item of Array.isArray(extraction.decisions) ? extraction.decisions : []) {
-    const key = normalize(item.decision);
-    if (!key || knownDecisions.has(key) || !grounded(item, transcripts)) continue;
-    knownDecisions.add(key);
-    decisions.push({
-      date: item.date || now.slice(0, 10),
-      decision: item.decision,
-      rationale: item.rationale || "—",
-      decidedBy: item.decidedBy || "—",
-      impact: item.impact || "—",
-      type: [1, 2, 3].includes(Number(item.type)) ? Number(item.type) : 3,
-      audience: ["admin", "team", "external"].includes(item.audience) ? item.audience : "team",
-      transcript: item.transcript,
-      sourceQuote: item.sourceQuote,
-    });
-  }
-
-  for (const item of Array.isArray(extraction.tasks) ? extraction.tasks : []) {
-    const key = normalize(item.task);
-    if (!key || knownTasks.has(key) || !grounded(item, transcripts)) continue;
-    knownTasks.add(key);
-    tasks.push({
-      task: item.task,
-      assignee: item.assignee || "Unassigned",
-      status: item.status || "Todo",
-      sprint: item.sprint || "—",
-      due: item.due || "—",
-      linear: "—",
-      transcript: item.transcript,
-      sourceQuote: item.sourceQuote,
-    });
-  }
-
-  return {
-    version: 1,
-    access: "admin",
-    status: "pending_review",
-    createdAt: now,
-    transcripts: [...transcripts.keys()],
-    decisions,
-    tasks,
-  };
+  const stage = prepareExtractionStage({
+    extraction,
+    transcriptTexts,
+    existingDecisionTexts: knownDecisions,
+    existingTaskTexts: knownTasks,
+    existingRowKeys: existingEvidenceRowKeys(evidenceLogs),
+    now,
+  });
+  return { ...stage, transcripts: Object.keys(transcriptTexts) };
 }
 
 function extractionPrompt(transcriptTexts, decisionLog, tasksLog) {
-  return `Extract genuine decisions and explicit task commitments from these meeting transcripts.
-Return ONLY JSON with {"decisions":[],"tasks":[]}.
-Every item MUST contain an exact sourceQuote and transcript path. Do not emit discussion, ideas,
-or inferred work. Decisions fields: date, decision, rationale, decidedBy, impact, type (1|2|3),
-audience (admin|team|external), transcript, sourceQuote. Tasks fields: task, assignee, status,
-sprint, due, transcript, sourceQuote. Exclude anything already present in the logs.
+  return `${extractionContractPrompt(Object.keys(transcriptTexts))}
+Exclude decisions and tasks already present in the logs.
 
 EXISTING DECISION LOG:
 ${decisionLog}
@@ -172,6 +124,17 @@ export async function draftTranscriptReview({
   const tasksPath = path.join(repo, "3-log", "tasks-team.md");
   const decisionLog = existsSync(decisionPath) ? readFileSync(decisionPath, "utf8") : "";
   const tasksLog = existsSync(tasksPath) ? readFileSync(tasksPath, "utf8") : "";
+  const evidenceLogs = [
+    "3-log/facts-private.md",
+    "3-log/facts-team.md",
+    "4-shared/facts.md",
+    "3-log/stakeholder-mentions-private.md",
+    "3-log/stakeholder-mentions-team.md",
+    "4-shared/stakeholder-mentions.md",
+  ]
+    .map((relativePath) => path.join(repo, relativePath))
+    .filter(existsSync)
+    .map((file) => readFileSync(file, "utf8"));
   const raw =
     extraction ??
     parseModelJson(
@@ -182,7 +145,14 @@ export async function draftTranscriptReview({
         opts: { maxTokens: 8000 },
       })
     );
-  const stage = prepareStage({ extraction: raw, transcriptTexts, decisionLog, tasksLog, now });
+  const stage = prepareStage({
+    extraction: raw,
+    transcriptTexts,
+    decisionLog,
+    tasksLog,
+    evidenceLogs,
+    now,
+  });
   const dir = path.join(repo, STAGING_REL);
   mkdirSync(dir, { recursive: true });
   const stamp = now.replace(/[:.]/g, "-");
@@ -191,59 +161,8 @@ export async function draftTranscriptReview({
   return { file, stage };
 }
 
-function nextDecisionNumber(markdown) {
-  return Math.max(0, ...[...markdown.matchAll(/^\|\s*(\d+)\s*\|/gm)].map((m) => Number(m[1]))) + 1;
-}
-
-function nextTaskNumber(markdown) {
-  return (
-    Math.max(0, ...[...markdown.matchAll(/^\|\s*TT(\d+)\s*\|/gim)].map((m) => Number(m[1]))) + 1
-  );
-}
-
 export function approveTranscriptStage({ repo, stageFile }) {
-  const stagingRoot = path.join(repo, STAGING_REL);
-  const file = safeWorkspacePath(repo, stageFile);
-  if (file !== stagingRoot && !file.startsWith(stagingRoot + path.sep)) {
-    throw new Error(`stage file must be inside ${STAGING_REL}`);
-  }
-  const stage = JSON.parse(readFileSync(file, "utf8"));
-  if (stage.status === "approved") return { decisions: 0, tasks: 0, alreadyApproved: true };
-  if (stage.status !== "pending_review")
-    throw new Error(`stage is not pending_review: ${stage.status}`);
-
-  const decisionPath = path.join(repo, "3-log", "decision-log.md");
-  const tasksPath = path.join(repo, "3-log", "tasks-team.md");
-  let decisionLog = readFileSync(decisionPath, "utf8");
-  let tasksLog = readFileSync(tasksPath, "utf8");
-  const knownDecisions = existingDecisionTexts(decisionLog);
-  const knownTasks = existingTaskTexts(tasksLog);
-  let decisionNo = nextDecisionNumber(decisionLog);
-  let taskNo = nextTaskNumber(tasksLog);
-  let decisions = 0;
-  let tasks = 0;
-
-  for (const item of stage.decisions ?? []) {
-    const key = normalize(item.decision);
-    if (!key || knownDecisions.has(key)) continue;
-    decisionLog += `| ${decisionNo++} | ${escapeCell(item.date)} | ${escapeCell(item.decision)} | ${escapeCell(item.rationale)} | ${escapeCell(item.decidedBy)} | ${escapeCell(item.impact)} | ${escapeCell(item.type)} | ${escapeCell(item.audience)} |\n`;
-    knownDecisions.add(key);
-    decisions++;
-  }
-  for (const item of stage.tasks ?? []) {
-    const key = normalize(item.task);
-    if (!key || knownTasks.has(key)) continue;
-    tasksLog += `| TT${taskNo++} | ${escapeCell(item.task)} | ${escapeCell(item.assignee)} | ${escapeCell(item.status)} | ${escapeCell(item.sprint)} | ${escapeCell(item.due)} | — |\n`;
-    knownTasks.add(key);
-    tasks++;
-  }
-  if (decisions) writeFileSync(decisionPath, decisionLog);
-  if (tasks) writeFileSync(tasksPath, tasksLog);
-  stage.status = "approved";
-  stage.approvedAt = new Date().toISOString();
-  stage.applied = { decisions, tasks };
-  writeFileSync(file, JSON.stringify(stage, null, 2) + "\n", { mode: 0o600 });
-  return { decisions, tasks, alreadyApproved: false };
+  return approveTranscriptStageFile({ repo, stageFile });
 }
 
 export function enableTranscriptSync(repo) {
@@ -290,12 +209,15 @@ export async function cmdTranscripts(repo, _cfg, args) {
       stage: path.relative(repo, result.file),
       decisions: result.stage.decisions.length,
       tasks: result.stage.tasks.length,
+      facts: result.stage.facts.length,
+      stakeholders: result.stage.stakeholders.length,
+      rejected: result.stage.rejected.length,
       status: result.stage.status,
     };
     console.log(
       json
         ? JSON.stringify(out)
-        : `${out.decisions} decisions + ${out.tasks} tasks pending review — ${out.stage}`
+        : `${out.decisions} decisions + ${out.tasks} tasks + ${out.facts} facts + ${out.stakeholders} stakeholders pending review (${out.rejected} rejected) — ${out.stage}`
     );
     return;
   }
@@ -313,13 +235,15 @@ export async function cmdTranscripts(repo, _cfg, args) {
         status: stage.status,
         decisions: stage.decisions?.length ?? 0,
         tasks: stage.tasks?.length ?? 0,
+        facts: stage.facts?.length ?? 0,
+        stakeholders: stage.stakeholders?.length ?? 0,
       };
     });
     console.log(
       json
         ? JSON.stringify({ stages })
         : stages
-            .map((s) => `${s.status}  ${s.decisions} decisions + ${s.tasks} tasks  ${s.file}`)
+            .map((s) => `${s.status}  ${s.decisions} decisions + ${s.tasks} tasks + ${s.facts} facts + ${s.stakeholders} stakeholders  ${s.file}`)
             .join("\n")
     );
     return;
@@ -328,7 +252,10 @@ export async function cmdTranscripts(repo, _cfg, args) {
     if (!args[1] || args[1].startsWith("--"))
       throw new Error("usage: aios transcripts approve <stage-file> [--no-push]");
     const result = approveTranscriptStage({ repo, stageFile: args[1] });
-    if (!args.includes("--no-push") && (result.decisions || result.tasks)) {
+    if (
+      !args.includes("--no-push") &&
+      (result.decisions || result.tasks || result.facts || result.stakeholders)
+    ) {
       execFileSync(process.execPath, [path.join(SCRIPT_DIR, "aios.mjs"), "push", "--repo", repo], {
         stdio: "inherit",
       });
@@ -336,7 +263,7 @@ export async function cmdTranscripts(repo, _cfg, args) {
     console.log(
       json
         ? JSON.stringify(result)
-        : `approved ${result.decisions} decisions + ${result.tasks} tasks${args.includes("--no-push") ? " (push skipped)" : ""}`
+        : `approved ${result.decisions} decisions + ${result.tasks} tasks + ${result.facts ?? 0} facts + ${result.stakeholders ?? 0} stakeholders${args.includes("--no-push") ? " (push skipped)" : ""}`
     );
     return;
   }
