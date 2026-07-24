@@ -55,6 +55,40 @@ test("a grown transcript updates the body but preserves the local access tier", 
   assert.match(plan.markdown, /genuinely longer continuation/);
 });
 
+// AIO-503: a hand-redacted transcript (shorter by construction) carries
+// `redacted: true` and must survive a re-pull that would otherwise "grow" it back
+// to the full, unredacted content — byte-identical, tier untouched.
+function redact(markdown) {
+  return markdown.replace(/^access: (.*)$/m, "access: $1\nredacted: true");
+}
+
+test("a redacted transcript is never clobbered even when the incoming body is longer", () => {
+  const existing = { file: "/tmp/existing.md", markdown: redact(renderTranscript(note("redacted"), "team")) };
+  const plan = planTranscriptWrite({
+    note: note("full unredacted transcript with the sensitive detail restored"),
+    destination: "/tmp/new.md",
+    existing,
+    accessTier: "team",
+  });
+  assert.equal(plan.action, "skip-redacted");
+  assert.equal(plan.file, existing.file);
+  assert.equal(plan.markdown, existing.markdown); // byte-identical — untouched
+  assert.doesNotMatch(plan.markdown, /sensitive detail restored/);
+});
+
+test("--force still overrides the redaction marker (explicit escape hatch)", () => {
+  const existing = { file: "/tmp/existing.md", markdown: redact(renderTranscript(note("redacted"), "private")) };
+  const plan = planTranscriptWrite({
+    note: note("full unredacted"),
+    destination: "/tmp/new.md",
+    existing,
+    accessTier: "team",
+    force: true,
+  });
+  assert.equal(plan.action, "overwrite");
+  assert.match(plan.markdown, /full unredacted/);
+});
+
 test("--force intentionally overwrites the tier and connector content", () => {
   const existing = {
     file: "/tmp/existing.md",

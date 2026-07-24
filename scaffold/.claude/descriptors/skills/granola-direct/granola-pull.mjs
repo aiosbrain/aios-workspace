@@ -28,6 +28,10 @@
  *   --local   force the local-app-token path (skip the public API)
  *   --force   explicitly replace an existing transcript with the connector copy
  *   --dry-run list what would be written without touching the filesystem
+ *
+ * Protecting a manual redaction: add `redacted: true` to a transcript's frontmatter
+ * and this connector will always SKIP it (action "skip-redacted"), never overwriting
+ * a deliberately-shortened note back to the full content — unless --force is passed.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
@@ -262,10 +266,26 @@ export function existingTranscriptsById(destDir) {
   return found;
 }
 
+// A transcript is deliberately protected from connector overwrite by adding
+// `redacted: true` to its frontmatter — the one opt-in marker a human sets after
+// manually shortening a note to strip sensitive content before it syncs outward.
+// A redaction is shorter by construction, so the length heuristic below would read
+// it as "less complete" and clobber it back to the full transcript (AIO-503). Only
+// an explicit --force is allowed to override this marker.
+export function isRedacted(markdown) {
+  return /^(true|yes)$/i.test((frontmatterValue(markdown, "redacted") || "").trim());
+}
+
 export function planTranscriptWrite({ note, destination, existing, accessTier, force = false }) {
   const requested = renderTranscript(note, accessTier);
   if (!existing) return { action: "write", file: destination, markdown: requested };
   if (force) return { action: "overwrite", file: existing.file, markdown: requested };
+
+  // Opt-in redaction guard: never overwrite a hand-redacted transcript, regardless
+  // of body length. Distinct action so the daily loop's log names the reason.
+  if (isRedacted(existing.markdown)) {
+    return { action: "skip-redacted", file: existing.file, markdown: existing.markdown };
+  }
 
   const incomingBody = transcriptBody(requested);
   const currentBody = transcriptBody(existing.markdown);
@@ -358,7 +378,7 @@ async function main() {
   if (!dryRun) mkdirSync(destDir, { recursive: true });
   const existing = existingTranscriptsById(destDir);
 
-  const counts = { write: 0, update: 0, overwrite: 0, skip: 0 };
+  const counts = { write: 0, update: 0, overwrite: 0, skip: 0, "skip-redacted": 0 };
   for (const note of notes) {
     const date = (note.created || "").slice(0, 10) || "undated";
     const destination = path.join(destDir, `${date}-${slug(note.title)}.md`);
@@ -372,6 +392,8 @@ async function main() {
     counts[plan.action]++;
     const rel = path.relative(repo, plan.file);
     if (dryRun) console.log(`  would ${plan.action} ${rel}`);
+    else if (plan.action === "skip-redacted")
+      console.log(`  🛡 preserved (redacted: true — kept, pass --force to override) ${rel}`);
     else if (plan.action === "skip") console.log(`  = preserved ${rel}`);
     else {
       writeFileSync(plan.file, plan.markdown);
@@ -380,7 +402,8 @@ async function main() {
   }
   console.log(
     `\ngranola-pull: ${dryRun ? "planned" : "finished"} ${notes.length} transcript(s) ` +
-      `(new ${counts.write}, updated ${counts.update}, overwritten ${counts.overwrite}, preserved ${counts.skip}) ` +
+      `(new ${counts.write}, updated ${counts.update}, overwritten ${counts.overwrite}, ` +
+      `preserved ${counts.skip}, redaction-protected ${counts["skip-redacted"]}) ` +
       `→ ${path.relative(repo, destDir)}/  [path: ${pathUsed}, access: ${accessTier}]`
   );
 }
