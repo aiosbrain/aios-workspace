@@ -28,7 +28,8 @@ function workspace() {
   );
   writeFileSync(
     path.join(repo, "1-inbox", "transcripts", "meeting.md"),
-    "John: We decided to ship on Friday. Chetan: I will prepare the release notes."
+    "John: We decided to ship on Friday. Chetan: I will prepare the release notes. " +
+      "Launch is August 4. Sam Rivera owns the rollout. This note must stay private."
   );
   return repo;
 }
@@ -183,6 +184,143 @@ test("approve appends both logs once and is idempotent", async () => {
         tasks: readFileSync(path.join(repo, "3-log", "tasks-team.md"), "utf8"),
       },
       logsAfterFirstApproval
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── 1.12 evidence kinds (facts + stakeholder mentions) through the unified engine ──
+
+const evidenceExtraction = {
+  facts: [
+    {
+      title: "Launch is August 4",
+      factType: "event",
+      transcript: TRANSCRIPT,
+      sourceQuote: "Launch is August 4.",
+    },
+    {
+      title: "Ungrounded fact",
+      factType: "fact",
+      transcript: TRANSCRIPT,
+      sourceQuote: "this quote does not appear anywhere",
+    },
+  ],
+  stakeholders: [
+    {
+      name: "Sam Rivera",
+      role: "Rollout owner",
+      transcript: TRANSCRIPT,
+      sourceQuote: "Sam Rivera owns the rollout.",
+    },
+  ],
+};
+
+async function draftWithEvidence(repo) {
+  const out = [];
+  const code = await cmdTranscripts(repo, {}, ["draft", "--transcripts", TRANSCRIPT, "--json"], {
+    runPhase: phaseRunner(),
+    evidenceExtraction,
+    now: () => NOW,
+    stdout: (value) => out.push(String(value)),
+    stderr: () => {},
+  });
+  assert.equal(code, 0);
+  const payload = JSON.parse(out.join("\n"));
+  return { payload, stagePath: path.join(repo, payload.stage) };
+}
+
+test("draft grounds facts and stakeholder mentions into the same stage (ungrounded dropped)", async () => {
+  const repo = workspace();
+  try {
+    const { payload, stagePath } = await draftWithEvidence(repo);
+    assert.equal(payload.decisions, 1);
+    assert.equal(payload.tasks, 1);
+    assert.equal(payload.facts, 1); // only the grounded "Launch is August 4" survives
+    assert.equal(payload.stakeholders, 1);
+    const stage = JSON.parse(readFileSync(stagePath, "utf8"));
+    assert.equal(stage.facts.length, 1);
+    assert.equal(stage.facts[0].title, "Launch is August 4");
+    assert.equal(stage.facts[0].access, "admin"); // facts default to admin; reviewer promotes
+    assert.match(stage.facts[0].rowKey, /^fact-[a-f0-9]{16}$/);
+    assert.equal(stage.stakeholderMentions.length, 1);
+    assert.equal(stage.stakeholderMentions[0].name, "Sam Rivera");
+    assert.equal(stage.stakeholderMentions[0].access, "admin");
+    // Evidence is excluded from the reviewDigest, which stays pinned to the decision/task payload.
+    assert.match(stage.reviewDigest, /^[a-f\d]{64}$/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("no_changes surfaces grounded evidence that was dropped instead of silently discarding it", async () => {
+  const repo = workspace();
+  try {
+    const out = [];
+    const code = await cmdTranscripts(repo, {}, ["draft", "--transcripts", TRANSCRIPT, "--json"], {
+      runPhase: async ({ phase }) => {
+        if (phase === "extract" || phase === "deduplicate") return { decisions: [], tasks: [] };
+        if (phase === "verify") {
+          return { verdict: "pass", criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion) };
+        }
+        return {
+          verdict: "pass",
+          certifiedNoChanges: true,
+          criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
+        };
+      },
+      evidenceExtraction,
+      now: () => NOW,
+      stdout: (value) => out.push(String(value)),
+      stderr: () => {},
+    });
+    assert.equal(code, 0);
+    const payload = JSON.parse(out.join("\n"));
+    assert.equal(payload.outcome, "no_changes");
+    // Same grounding rules as the staged path: only the grounded fact + stakeholder survive
+    // ("Ungrounded fact" has no matching quote in the transcript and is dropped by grounding,
+    // not counted here).
+    assert.equal(payload.droppedFacts, 1);
+    assert.equal(payload.droppedStakeholders, 1);
+    assert.doesNotMatch(JSON.stringify(payload), /"stage"/); // no stage was written or forced
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("approve routes evidence to tier files, records counts, and is idempotent for v2", async () => {
+  const repo = workspace();
+  try {
+    const { stagePath } = await draftWithEvidence(repo);
+    assert.equal(await approveWithoutPush(repo, stagePath), 0);
+    const approved = JSON.parse(readFileSync(stagePath, "utf8"));
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.apply.factsAdded, 1);
+    assert.equal(approved.apply.stakeholdersAdded, 1);
+    // Admin-default evidence lands in the private files (never synced by push).
+    const facts = readFileSync(path.join(repo, "3-log", "facts-private.md"), "utf8");
+    assert.match(facts, /kind: fact/);
+    assert.match(facts, /access: admin/);
+    assert.match(facts, /Launch is August 4/);
+    const mentions = readFileSync(
+      path.join(repo, "3-log", "stakeholder-mentions-private.md"),
+      "utf8"
+    );
+    assert.match(mentions, /kind: stakeholder_mention/);
+    assert.match(mentions, /Sam Rivera/);
+    const after = {
+      facts,
+      mentions,
+    };
+    // Idempotent re-approval: no duplicate evidence rows.
+    assert.equal(await approveWithoutPush(repo, stagePath), 0);
+    assert.deepEqual(
+      {
+        facts: readFileSync(path.join(repo, "3-log", "facts-private.md"), "utf8"),
+        mentions: readFileSync(path.join(repo, "3-log", "stakeholder-mentions-private.md"), "utf8"),
+      },
+      after
     );
   } finally {
     rmSync(repo, { recursive: true, force: true });

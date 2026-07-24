@@ -55,6 +55,8 @@ function reviewPayload(root, stagePath, stage, source = null) {
           state: "approved",
           decisionsAdded: stage.apply.decisionsAdded,
           tasksAdded: stage.apply.tasksAdded,
+          factsAdded: stage.apply.factsAdded ?? 0,
+          stakeholdersAdded: stage.apply.stakeholdersAdded ?? 0,
           decisionLogChanged: stage.apply.decisionLogChanged,
           taskLogChanged: stage.apply.taskLogChanged,
         }
@@ -68,6 +70,8 @@ function reviewPayload(root, stagePath, stage, source = null) {
       status: stage.status,
       decisions: stage.decisions.length,
       tasks: stage.tasks.length,
+      facts: stage.facts?.length ?? 0,
+      stakeholders: stage.stakeholderMentions?.length ?? 0,
     },
     local,
     push: { state: stage.push?.state ?? "not_requested" },
@@ -121,7 +125,9 @@ async function handlePush({ root, stagePath, stage, engine, deps, noPush, source
   if (
     stage.push.state === "not_requested" &&
     !stage.apply.decisionLogChanged &&
-    !stage.apply.taskLogChanged
+    !stage.apply.taskLogChanged &&
+    !stage.apply.factsAdded &&
+    !stage.apply.stakeholdersAdded
   ) {
     const payload = reviewPayload(root, stagePath, stage, source);
     return { code: 0, payload, text: reviewText(payload) };

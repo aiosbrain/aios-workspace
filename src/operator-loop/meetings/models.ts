@@ -39,6 +39,36 @@ export type CandidateBatch = {
   readonly tasks: readonly TaskCandidate[];
 };
 
+// 1.12 evidence kinds. Grounded (deterministic verbatim source-quote verification), NOT rubric-graded:
+// they ride alongside decisions/tasks in the same stage and are applied under the same apply/push
+// lock, but they never enter the TD1–TD6 rubric loop and are excluded from the reviewDigest.
+export type EvidenceAccess = "admin" | "team" | "external";
+
+export type FactCandidate = {
+  readonly rowKey: string;
+  readonly title: string;
+  readonly occurredAt?: string;
+  readonly factType: "fact" | "event";
+  readonly access: EvidenceAccess;
+  readonly transcript: string;
+  readonly sourceQuote: string;
+};
+
+export type StakeholderMentionCandidate = {
+  readonly rowKey: string;
+  readonly name: string;
+  readonly role?: string;
+  readonly context?: string;
+  readonly access: EvidenceAccess;
+  readonly transcript: string;
+  readonly sourceQuote: string;
+};
+
+export type EvidenceBatch = {
+  readonly facts: readonly FactCandidate[];
+  readonly stakeholderMentions: readonly StakeholderMentionCandidate[];
+};
+
 export const CRITERION_IDS = ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"] as const;
 export type CriterionId = (typeof CRITERION_IDS)[number];
 export type CriterionOutcome = "pass" | "fail" | "error";
@@ -103,23 +133,26 @@ export type ApplyRecord = {
   readonly tasksAdded: number;
   readonly decisionLogChanged: boolean;
   readonly taskLogChanged: boolean;
+  readonly factsAdded: number;
+  readonly stakeholdersAdded: number;
 };
 
-type TranscriptReviewCommon = CandidateBatch & {
-  readonly version: 2;
-  readonly id: string;
-  readonly createdAt: string;
-  readonly access: "admin";
-  readonly transcripts: readonly TranscriptMetadata[];
-  readonly rubricBudget: number;
-  readonly loopsUsed: number;
-  readonly loops: readonly ReviewLoop[];
-  readonly gradeReport: GradeReport;
-  readonly diagnostics: readonly ReviewDiagnostic[];
-  readonly push: PushRecord;
-  readonly reviewDigest: string;
-  readonly migration?: MigrationProvenance;
-};
+type TranscriptReviewCommon = CandidateBatch &
+  EvidenceBatch & {
+    readonly version: 2;
+    readonly id: string;
+    readonly createdAt: string;
+    readonly access: "admin";
+    readonly transcripts: readonly TranscriptMetadata[];
+    readonly rubricBudget: number;
+    readonly loopsUsed: number;
+    readonly loops: readonly ReviewLoop[];
+    readonly gradeReport: GradeReport;
+    readonly diagnostics: readonly ReviewDiagnostic[];
+    readonly push: PushRecord;
+    readonly reviewDigest: string;
+    readonly migration?: MigrationProvenance;
+  };
 
 export type TranscriptReviewStageV2 =
   | (TranscriptReviewCommon & { readonly status: "pending_review" })

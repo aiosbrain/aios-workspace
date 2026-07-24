@@ -39,6 +39,7 @@ export const CATEGORIES = {
       "check:domains",
       "check:size",
       "check:inbox-audit",
+      "eval:transcripts",
       "pr:backlog",
       "test:gateway-contracts", // focused gateway contract conformance suite
       "test:gateway-approval-contracts", // AIO-407 durable approval/admin extension

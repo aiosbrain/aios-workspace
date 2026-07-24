@@ -75,6 +75,16 @@ export type ApplyResult = {
   readonly stage: Extract<TranscriptReviewStageV2, { readonly status: "approved" }>;
   readonly decisionsAdded: number;
   readonly tasksAdded: number;
+  readonly factsAdded: number;
+  readonly stakeholdersAdded: number;
+};
+
+export type AttachTranscriptEvidenceOptions = {
+  readonly root: string;
+  readonly stagePath: string;
+  readonly facts?: readonly unknown[];
+  readonly stakeholderMentions?: readonly unknown[];
+  readonly now?: TimeSource;
 };
 
 export type RecordTranscriptPushAttemptOptions = {

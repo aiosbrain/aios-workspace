@@ -46,6 +46,10 @@ import {
   parseDecisionRows,
   redactAdminDecisionRows,
   DECISION_REDACTION_VERSION,
+  parseEvidenceRows,
+  validateItemPayload,
+  evidencePayloadContent,
+  validEvidenceDeclaration,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
@@ -328,12 +332,19 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
-// content_sha256 for a decision push MUST describe the REDACTED body actually sent, not the raw file
-// hash — else brain-api dedupe (identical sha → "unchanged", body NOT overwritten) leaves leaked
-// rows upstream while the client marks the resync done. Version-tagged; local change-detection keeps
-// the raw item.hash separately.
-function contentShaForDecisionPush(item) {
-  if (item.kind !== "decision") return item.hash;
+// content_sha256 MUST describe the payload actually sent on the wire, not the raw file hash — else
+// brain-api dedupe (identical sha → "unchanged", body NOT overwritten) can leave stale/leaked content
+// upstream while the client marks the resync done. This matters for:
+//   - decision: body+rows are redacted (H3 #380) before send — hash the REDACTED body.
+//   - fact / stakeholder_mention: evidencePayloadContent() strips the raw body/source-quotes and
+//     replaces them with a placeholder; the actual synced content is `rows` — hash the pushed
+//     frontmatter+body+rows so the fingerprint matches the transmitted payload, not the raw file
+//     (which may still contain the admin-tier transcript body/quotes that never leave the machine).
+// Local change-detection (re-push decisioning) keeps the raw item.hash separately.
+function contentShaForPush(item) {
+  if (item.kind !== "decision" && item.kind !== "fact" && item.kind !== "stakeholder_mention") {
+    return item.hash;
+  }
   return sha256(
     JSON.stringify({
       decision_redaction_version: DECISION_REDACTION_VERSION,
@@ -360,6 +371,13 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     const { frontmatter, body } = parseFrontmatter(raw);
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
+    if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {
+      plan.blocked.push({
+        rel,
+        reason: "evidence files require their explicit kind at a canonical approved path",
+      });
+      continue;
+    }
 
     const tier = normalizeTier(frontmatter?.access || "");
     if (!frontmatter || !frontmatter.access) {
@@ -388,14 +406,32 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
       plan.clean.push({ rel });
       continue;
     }
+    // decision → H3 (#380) redaction of BOTH body + rows (contentShaForPush hashes the
+    // redacted body); fact/stakeholder_mention → strip raw body/source-quotes, push only parsed rows
+    // (admin/private evidence is already blocked above by the file-tier gate + validEvidenceDeclaration).
     let rows;
+    let pushFrontmatter = frontmatter;
     let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") {
-      // H3: redact rows; legacy tables without Audience inherit the file tier like operator-loop.
-      ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    else if (kind === "decision") ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    else if (kind === "fact" || kind === "stakeholder_mention") {
+      rows = parseEvidenceRows(kind, body);
+      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(
+        kind,
+        frontmatter,
+        body
+      ));
     }
-    plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
+    plan.push.push({
+      rel,
+      kind,
+      hash,
+      tier,
+      frontmatter: pushFrontmatter,
+      body: pushBody,
+      rows,
+      isNew: !prev,
+    });
   }
   return { plan, state };
 }
@@ -926,7 +962,7 @@ async function cmdPush(repo, cfg, patterns, args) {
       kind: item.kind,
       // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
       // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
-      content_sha256: contentShaForDecisionPush(item),
+      content_sha256: contentShaForPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},
@@ -934,6 +970,8 @@ async function cmdPush(repo, cfg, patterns, args) {
     };
     if (item.rows) payload.rows = item.rows;
     try {
+      if (!validateItemPayload(payload).success)
+        throw new Error("local Brain API 1.12 payload validation failed");
       const res = await api(cfg, "POST", "/items", payload);
       state.items[item.rel] = {
         sha: item.hash,
@@ -946,8 +984,14 @@ async function cmdPush(repo, cfg, patterns, args) {
       result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
-      result.failed.set(item.rel, e.message);
-      console.log(`  ${c.red("✗")} ${item.rel} — ${e.message}`);
+      const needs112 =
+        (item.kind === "fact" || item.kind === "stakeholder_mention") &&
+        /unknown (?:item )?kind|invalid (?:item_)?kind|item_kind.*(?:invalid|unknown)|kind.*(?:unsupported|not supported)/i.test(
+          e.message
+        );
+      const message = needs112 ? `Brain API 1.12 required: ${e.message}` : e.message;
+      result.failed.set(item.rel, message);
+      console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
     }
   }
   saveState(repo, state);

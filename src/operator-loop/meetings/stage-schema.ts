@@ -9,6 +9,7 @@ import type {
   TranscriptReviewStageV2,
 } from "./models.js";
 import { parseCandidateBatch } from "./candidate-schema.js";
+import { parseEvidenceBatch } from "./evidence.js";
 import { assertNever, TranscriptReviewError } from "./errors.js";
 import { parseGradeReport } from "./report-schema.js";
 import {
@@ -117,6 +118,13 @@ function applyRecord(value: unknown): ApplyRecord {
     tasksAdded: integer(item["tasksAdded"], "apply.tasksAdded"),
     decisionLogChanged: booleanValue(item["decisionLogChanged"], "apply.decisionLogChanged"),
     taskLogChanged: booleanValue(item["taskLogChanged"], "apply.taskLogChanged"),
+    // Missing on stages approved before 1.12 evidence — default to zero for backward compatibility.
+    factsAdded:
+      item["factsAdded"] === undefined ? 0 : integer(item["factsAdded"], "apply.factsAdded"),
+    stakeholdersAdded:
+      item["stakeholdersAdded"] === undefined
+        ? 0
+        : integer(item["stakeholdersAdded"], "apply.stakeholdersAdded"),
   };
 }
 
@@ -168,6 +176,7 @@ export function parseTranscriptReviewStage(input: string | unknown): TranscriptR
     createdAt: stringValue(item["createdAt"], "createdAt"),
     access: literal(item["access"], ["admin"] as const, "access"),
     ...candidates,
+    ...parseEvidenceBatch(item),
     transcripts,
     rubricBudget,
     loopsUsed,

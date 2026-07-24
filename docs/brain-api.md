@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.11** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.11**
+**Version: 1.12** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.12**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -145,6 +145,16 @@ writeback/registration pulls), so a newer client still works against an older br
   returns `already_claimed`. Credential identity is still revalidated at claim time and recorded
   on the audit row — it is just never part of the idempotency fingerprint. The extension fixture
   bytes were amended in place; the pinned SHA-256 above is the amended value.*
+- *2026-07-24 — **v1.12**: added strict item kinds `fact` and `stakeholder_mention` for
+  human-approved local transcript extraction. Each row carries a deterministic `row_key`, its
+  approved source path, and an exact approved source quote. The complete payload and row contract
+  is machine-readable in
+  [`contract/item-payload-1.12.schema.json`](./contract/item-payload-1.12.schema.json), with
+  canonical parity fixtures in
+  [`contract/item-payload-1.12-fixtures.json`](./contract/item-payload-1.12-fixtures.json).
+  Unknown payload/row keys and malformed rows fail the whole request with 422 before item writes.
+  Raw transcripts remain local; stakeholder mentions are evidence records and never mutate members
+  or the canonical company graph. Existing item kinds and clients remain compatible.*
 
 ---
 
@@ -166,16 +176,19 @@ Canonical values: **`admin` | `team` | `external`**.
 
 ### Item kinds
 
-`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint`
+`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint` |
+`fact` | `stakeholder_mention`
 
-`decision` and `task` items are markdown files containing the canonical status tables
+`decision`, `task`, `fact`, and `stakeholder_mention` items are markdown files containing canonical
+tables. Decision and task items use the existing status tables
 (`3-log/decision-log.md`; tasks live in one of `3-log/tasks-team.md`,
 `3-log/tasks-private.md`, `5-personal/tasks.md`, or the legacy `3-log/tasks.md` — the
 client classifies any `tasks*.md` basename as kind `task`). For these, the client also
 parses table rows into `rows[]` so the brain can materialize structured entities. Only
 `tasks-team.md` (or an equivalent `team`/`external`-tier file) is ever eligible to push —
 `tasks-private.md` and `5-personal/tasks.md` are tier-blocked/outside `sync_include` by
-design (AIO-364).
+design (AIO-364). Facts and stakeholder mentions are emitted only from approved, tier-specific
+files; their raw source transcripts remain admin-only and are never item bodies.
 
 **Forward-compat:** clients MUST ignore item kinds they don't recognize (a v1 client
 that predates `skill` simply skips those items on pull). New kinds are additive.
@@ -327,8 +340,7 @@ One item per request. Idempotent.
   "actor": "alex",
   "access": "team",
   "frontmatter": { "status": "review", "owner": "alex", "sprint": "sprint-1" },
-  "body": "full markdown body (frontmatter stripped)",
-  "rows": []
+  "body": "full markdown body (frontmatter stripped)"
 }
 ```
 
@@ -336,7 +348,8 @@ One item per request. Idempotent.
   legacy: `project.yaml` / `engagement.yaml` — slugified).
 - `actor`: the resolved member identity (must match a member `actor_handle` on the
   brain side; unknown actors are accepted but flagged in the dashboard provenance).
-- `rows`: present **only** for `kind: decision|task`. Shapes below.
+- `rows`: optional for `decision|task`, required for `fact|stakeholder_mention`, and absent for
+  every other kind. The request is strict: unknown root or row keys return 422. Shapes below.
 
 **Task rows** (parsed from a `tasks*.md` file's `| ID | Task | Assignee | Status | Sprint | Due |`;
 newer CLIs also accept optional `PM`, `PM URL`, and the v1.2 `Parent`, `Labels`, `Priority` columns):
@@ -372,15 +385,42 @@ The six-column table remains valid and is the default scaffold; the optional col
   "decided_by": "Priya Sharma", "impact": "...", "tier": 2, "audience": "team" }
 ```
 
+**Fact rows** (parsed only from an approved facts file):
+
+```json
+{ "row_key": "fact-4f11", "title": "The beta has 24 participants",
+  "occurred_at": "2026-07-24", "fact_type": "fact",
+  "source_path": "1-inbox/transcripts/beta.md",
+  "source_quote": "The beta has 24 participants." }
+```
+
+`occurred_at` is optional. `fact_type` is exactly `fact|event`. Required strings are non-empty and
+bounded; the exact limits are normative in the versioned JSON Schema.
+
+**Stakeholder-mention rows** (parsed only from an approved stakeholder-mentions file):
+
+```json
+{ "row_key": "stakeholder-91a2", "name": "Morgan Lee",
+  "role": "Launch reviewer", "context": "Requested the accessibility checklist.",
+  "source_path": "1-inbox/transcripts/launch.md",
+  "source_quote": "Morgan Lee requested the accessibility checklist." }
+```
+
+`role` and `context` are optional. These are unverified evidence records, never canonical member or
+company-graph mutations. Source quotes leave the workstation only after approval and only in a
+team/external-tier item.
+
 **Server semantics (normative):**
 
 1. Upsert project on `(team_id, project)`.
 2. If an item exists at `(team_id, project, path)` with identical `content_sha256` →
    `200 {"status":"unchanged"}`; only `synced_at` is bumped.
 3. Otherwise upsert the item; if the body changed, append an immutable version record.
-4. If `rows[]` present: **diff-sync by `row_key`** — upsert all incoming rows; rows
-   absent from the payload are deleted **only if** they originated from sync
-   (UI-created rows are never deleted by a push).
+4. If `rows[]` is present, rows upsert by their project-scoped `row_key`. Task rows retain the
+   existing origin-aware project diff (UI rows survive), and decision rows retain their existing
+   upsert behavior. Fact and stakeholder rows diff-delete only rows whose `source_item_id` is the
+   same item currently syncing. They inherit the containing item's normalized access as audience;
+   the wire cannot override it.
 5. `access: client`/`company` → stored as `external`. `access: admin`/`private` →
    `422 forbidden_tier`.
 6. Every accepted push is audit-logged with key id, member, and item path.
