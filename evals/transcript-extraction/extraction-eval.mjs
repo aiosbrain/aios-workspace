@@ -1,26 +1,20 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { callPromptModel } from "./model-call.mjs";
+import { callPromptModel } from "../../scripts/model-call.mjs";
 import {
   extractionPrompt,
   parseModelJson,
   prepareExtractionStage,
-} from "./transcript-extraction.mjs";
+} from "../../scripts/transcript-extraction.mjs";
 import {
   factCandidateToMarkdownRow,
   stakeholderCandidateToMarkdownRow,
-} from "./transcript-adapters.mjs";
-import { validateItemPayload } from "./workspace-parse.mjs";
+} from "../../scripts/transcript-adapters.mjs";
+import { validateItemPayload } from "../../scripts/workspace-parse.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CORPUS = path.join(
-  SCRIPT_DIR,
-  "..",
-  "test",
-  "fixtures",
-  "transcript-extraction-gold-v1.json"
-);
+const DEFAULT_CORPUS = path.join(SCRIPT_DIR, "gold-v1.json");
 const PLURALS = ["decisions", "tasks", "facts", "stakeholders"];
 
 function normalized(value) {

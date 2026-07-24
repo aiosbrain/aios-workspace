@@ -14,7 +14,7 @@ Recorded: 2026-07-24
 
 ## Extraction evaluation
 
-- Corpus: `test/fixtures/transcript-extraction-gold-v1.json`
+- Corpus: `evals/transcript-extraction/gold-v1.json`
 - Corpus version: `1.0.0`
 - Deterministic result: PASS
 - Grounded accepted candidates: 100%

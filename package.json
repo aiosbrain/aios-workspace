@@ -27,7 +27,7 @@
     "check:size": "node scripts/check-file-size.mjs",
     "check:v1-linear": "node scripts/check-v1-linear-drift.mjs",
     "check:inbox-audit": "node scripts/inbox-redaction-lint.mjs",
-    "eval:transcripts": "node scripts/extraction-eval.mjs",
+    "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",
     "pr:backlog": "node scripts/pr-backlog-report.mjs",
     "lint": "eslint scripts validation gui/server gui/client/src test",
     "lint:fix": "eslint scripts validation gui/server gui/client/src test --fix",

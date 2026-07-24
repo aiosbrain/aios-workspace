@@ -4,7 +4,7 @@ import {
   loadCorpus,
   runDeterministicEval,
   runLiveEval,
-} from "../scripts/extraction-eval.mjs";
+} from "../evals/transcript-extraction/extraction-eval.mjs";
 
 test("deterministic extraction evaluation verifies rejection, dedup, adapters, and scoring", () => {
   const result = runDeterministicEval(loadCorpus());
