@@ -128,11 +128,92 @@ test("buildInstallPlan: three jobs (daily/weekly/analyze), scheduler follows pla
     assert.match(weekly.commandLine, /maturity-week/);
     const analyze = plan.jobs.find((j) => j.key === "analyze");
     assert.match(analyze.commandLine, /analyze/);
-    assert.equal(analyze.startInterval, 3600);
+    // analyze now uses StartCalendarInterval (Minute: 0 = fires once per hour, at :00) instead of
+    // plain StartInterval, so it gets the same launchd catch-up-on-wake behavior as daily/weekly
+    // (StartInterval's elapsed-time timer can silently stop advancing across sleep/DarkWake).
+    assert.equal(analyze.startInterval, null);
+    assert.ok(analyze.calendar && typeof analyze.calendar.Minute === "number");
+    assert.equal(analyze.calendar.Minute, 0);
     assert.ok(daily.calendar && typeof daily.calendar.Hour === "number");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("buildInstallPlan: threads an injected envPath through to the plan (bug 1 — missing PATH)", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "linux",
+      envPath: "/opt/homebrew/bin:/Users/demo/.local/bin:/usr/bin:/bin",
+    });
+    assert.equal(plan.envPath, "/opt/homebrew/bin:/Users/demo/.local/bin:/usr/bin:/bin");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildInstallPlan: defaults envPath from process.env.PATH when not injected", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux" });
+    assert.equal(plan.envPath, process.env.PATH || "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("renderLaunchdPlan: threads plan.envPath into every rendered plist's PATH", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "darwin",
+      home,
+      envPath: "/opt/homebrew/bin:/usr/bin:/bin",
+    });
+    const rendered = renderLaunchdPlan(plan);
+    assert.equal(rendered.length, 3);
+    for (const r of rendered) {
+      assert.match(r.content, /<key>EnvironmentVariables<\/key>/);
+      assert.match(r.content, /<key>PATH<\/key>\s*<string>\/opt\/homebrew\/bin:\/usr\/bin:\/bin<\/string>/);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("buildCronBlock: prefixes each job's subshell with `export PATH=...;` scoped to that job only", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({
+      repo: dir,
+      platform: "linux",
+      envPath: "/opt/homebrew/bin:/usr/bin:/bin",
+    });
+    const block = buildCronBlock(plan);
+    const lines = block.split("\n").filter((l) => !l.startsWith("#"));
+    assert.equal(lines.length, 3);
+    for (const line of lines) {
+      assert.match(line, /&& \{ export PATH='\/opt\/homebrew\/bin:\/usr\/bin:\/bin'; /);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildCronBlock: omits the PATH prefix entirely when plan.envPath is empty", () => {
+  const dir = tmpWorkspace();
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "linux", envPath: "" });
+    const block = buildCronBlock(plan);
+    assert.doesNotMatch(block, /export PATH=/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -167,7 +248,53 @@ test("buildLaunchdPlist: contains Label, ProgramArguments, WorkingDirectory, and
   assert.match(xml, /<key>Hour<\/key>\s*<integer>8<\/integer>/);
 });
 
-test("buildLaunchdPlist: hourly job uses StartInterval (seconds), not StartCalendarInterval", () => {
+// launchd's default env for a LaunchAgent (no EnvironmentVariables key) is just
+// /usr/bin:/bin:/usr/sbin:/sbin, so connector child processes spawned by bare name (gog, slack,
+// granola, ...) can't find user-installed CLIs. buildLaunchdPlist must emit an explicit
+// EnvironmentVariables/PATH block when an envPath is supplied.
+test("buildLaunchdPlist: emits EnvironmentVariables/PATH when envPath is supplied", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.loop-daily",
+    programArguments: ["/bin/sh", "-c", "/usr/bin/node /repo/scripts/aios.mjs loop daily"],
+    workingDirectory: "/repo",
+    startCalendarInterval: { Hour: 8, Minute: 0 },
+    stdoutPath: "/repo/.aios/loop/logs/daily.log",
+    stderrPath: "/repo/.aios/loop/logs/daily.log",
+    envPath: "/opt/homebrew/bin:/Users/demo/.local/bin:/usr/bin:/bin",
+  });
+  assert.match(xml, /<key>EnvironmentVariables<\/key>/);
+  assert.match(xml, /<key>PATH<\/key>\s*<string>\/opt\/homebrew\/bin:.*<\/string>/);
+});
+
+test("buildLaunchdPlist: omits EnvironmentVariables entirely when no envPath is supplied", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.loop-daily",
+    programArguments: ["/bin/sh", "-c", "/usr/bin/node /repo/scripts/aios.mjs loop daily"],
+    workingDirectory: "/repo",
+    startCalendarInterval: { Hour: 8, Minute: 0 },
+    stdoutPath: "/repo/.aios/loop/logs/daily.log",
+    stderrPath: "/repo/.aios/loop/logs/daily.log",
+  });
+  assert.doesNotMatch(xml, /<key>EnvironmentVariables<\/key>/);
+});
+
+test("buildLaunchdPlist: xml-escapes an envPath containing special characters", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.loop-daily",
+    programArguments: ["/bin/sh", "-c", "cmd"],
+    workingDirectory: "/repo",
+    startCalendarInterval: { Hour: 8, Minute: 0 },
+    stdoutPath: "/repo/log",
+    stderrPath: "/repo/log",
+    envPath: "/a&b/bin:/c<d>/bin",
+  });
+  assert.match(xml, /<string>\/a&amp;b\/bin:\/c&lt;d&gt;\/bin<\/string>/);
+});
+
+// StartInterval is kept as a still-valid lower-level rendering primitive in buildLaunchdPlist
+// (some caller could conceivably want a pure elapsed-time timer), but no JOB_DEFS entry uses it
+// any more — see the "analyze job now uses StartCalendarInterval" test below for why.
+test("buildLaunchdPlist: startInterval option still renders plain StartInterval (seconds), not StartCalendarInterval", () => {
   const xml = buildLaunchdPlist({
     label: "com.aios.demo.analyze",
     programArguments: ["/bin/sh", "-c", "aios analyze"],
@@ -178,6 +305,43 @@ test("buildLaunchdPlist: hourly job uses StartInterval (seconds), not StartCalen
   });
   assert.match(xml, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
   assert.doesNotMatch(xml, /StartCalendarInterval/);
+});
+
+// StartInterval's elapsed-time timer has been observed (in production) to silently stop
+// advancing across repeated sleep/DarkWake cycles on macOS — the analyze job went stale for
+// ~63 hours this way, while the StartCalendarInterval-based daily/weekly jobs kept firing
+// normally in the same window. Moving analyze to StartCalendarInterval (fire every hour, at :00)
+// gets it the same wake-catch-up guarantee daily/weekly already have.
+test("buildLaunchdPlist: hourly job (Minute: 0) renders StartCalendarInterval, not StartInterval", () => {
+  const xml = buildLaunchdPlist({
+    label: "com.aios.demo.analyze",
+    programArguments: ["/bin/sh", "-c", "aios analyze"],
+    workingDirectory: "/repo",
+    startCalendarInterval: { Minute: 0 },
+    stdoutPath: "/repo/.aios/loop/logs/analyze.log",
+    stderrPath: "/repo/.aios/loop/logs/analyze.log",
+  });
+  assert.match(xml, /<key>StartCalendarInterval<\/key>/);
+  assert.match(xml, /<key>Minute<\/key>\s*<integer>0<\/integer>/);
+  assert.doesNotMatch(xml, /<key>StartInterval<\/key>/);
+});
+
+test("buildInstallPlan + renderLaunchdPlan: the analyze job renders StartCalendarInterval (Minute: 0)", () => {
+  const dir = tmpWorkspace();
+  const home = mkdtempSync(path.join(tmpdir(), "loop-install-home-"));
+  try {
+    const plan = buildInstallPlan({ repo: dir, platform: "darwin", home });
+    const analyzeJob = plan.jobs.find((j) => j.key === "analyze");
+    assert.equal(analyzeJob.startInterval, null);
+    assert.deepEqual(analyzeJob.calendar, { Minute: 0 });
+    const rendered = renderLaunchdPlan(plan).find((r) => r.label === analyzeJob.label);
+    assert.match(rendered.content, /<key>StartCalendarInterval<\/key>/);
+    assert.match(rendered.content, /<key>Minute<\/key>\s*<integer>0<\/integer>/);
+    assert.doesNotMatch(rendered.content, /<key>StartInterval<\/key>/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("renderLaunchdPlan: one rendered plist per job, all wrapped in valid-looking plist XML", () => {
