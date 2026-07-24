@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "minimum": {
+    "lines": 51.5,
+    "statements": 51.4,
+    "functions": 65.8,
+    "branches": 67.9
+  },
+  "changedLines": 80
+}

@@ -40,5 +40,12 @@ export default defineConfig({
     // so it must be transformed by Vite rather than externalized — otherwise Node can't resolve them in
     // the component tests (I-14 comms.test.tsx renders TerminalFrame-based cards).
     server: { deps: { inline: [/@aios-alpha\/ui/] } },
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.d.ts"],
+      reporter: ["lcov", "json-summary"],
+      reportsDirectory: "coverage",
+    },
   },
 });
