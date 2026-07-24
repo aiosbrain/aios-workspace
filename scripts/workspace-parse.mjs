@@ -1,11 +1,24 @@
 // Shared, dependency-light parsers for AIOS workspace content. Extracted verbatim from
 // scripts/aios.mjs so both the CLI sync client AND the operator-loop collector
 // (src/operator-loop) read frontmatter, tiers, kinds, and decision rows the same way —
-// keeping tier normalization single-sourced (the architecture invariant). Behavior is
-// unchanged; aios.mjs re-imports these. Guarded by test/sync-plan.test.mjs.
+// keeping tier normalization single-sourced (the architecture invariant). aios.mjs
+// re-imports these shared implementations. Guarded by test/sync-plan.test.mjs.
 
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { parseTableRows } from "./tasks-table.mjs";
+
+export const DECISION_SYNC_VERSION = 1;
+const SYNCABLE_DECISION_AUDIENCES = new Set(["team", "external"]);
+const DECISION_HEADER_CELLS = new Set([
+  "#",
+  "date",
+  "decision",
+  "rationale",
+  "decided by",
+  "impact",
+  "type",
+  "audience",
+]);
 
 export function parseFrontmatter(content) {
   if (!content.startsWith("---")) return { frontmatter: null, body: content };
@@ -41,24 +54,120 @@ export function classifyKind(rel, frontmatter) {
   return "artifact";
 }
 
+function isSyncableDecisionAudience(audience) {
+  const normalized = normalizeTier(
+    String(audience ?? "")
+      .trim()
+      .toLowerCase()
+  );
+  return SYNCABLE_DECISION_AUDIENCES.has(normalized);
+}
+
+function isTableSeparatorLine(line) {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed.startsWith("|")) return false;
+  const cells = trimmed
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+function decisionTableSchema(cells) {
+  const header = cells.map((cell) => cell.trim().toLowerCase());
+  const indexes = (name) =>
+    header.reduce((found, cell, index) => (cell === name ? [...found, index] : found), []);
+  const decisionIndexes = indexes("decision");
+  const audienceIndexes = indexes("audience");
+  const isDecision = decisionIndexes.length > 0 || audienceIndexes.length > 0;
+  return {
+    isDecision,
+    valid: decisionIndexes.length === 1 && audienceIndexes.length <= 1,
+    columnCount: cells.length,
+    header,
+    decisionIdx: decisionIndexes[0] ?? -1,
+    audienceIdx: audienceIndexes[0] ?? -1,
+  };
+}
+
+function parseDecisionRow(cells, schema) {
+  if (!schema.valid || cells.length !== schema.columnCount) return null;
+  const idx = (name) => schema.header.findIndex((cell) => cell.startsWith(name));
+  const audienceCell = schema.audienceIdx >= 0 ? cells[schema.audienceIdx]?.trim() : null;
+  const row = {
+    row_key: cells[idx("#")] ?? cells[0] ?? "",
+    decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
+    title: cells[schema.decisionIdx] || "",
+    rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
+    decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
+    impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
+    tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
+    audience:
+      schema.audienceIdx < 0
+        ? null
+        : audienceCell
+          ? normalizeTier(audienceCell.toLowerCase())
+          : "admin",
+  };
+  return row.row_key ? row : null;
+}
+
+function scanDecisionTables(body) {
+  const rows = [];
+  const keptRows = [];
+  let table = null;
+  let removedRows = 0;
+  const keptBody = body
+    .split("\n")
+    .filter((line, index, lines) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("|")) {
+        table = null;
+        return true;
+      }
+      if (isTableSeparatorLine(line)) return true;
+
+      const cells = parseTableRows(line)[0] || [];
+      const candidateTable = decisionTableSchema(cells);
+      const isLegacyDecisionHeader =
+        candidateTable.isDecision &&
+        candidateTable.header.every((cell) => DECISION_HEADER_CELLS.has(cell)) &&
+        (candidateTable.header.includes("#") ||
+          (candidateTable.decisionIdx >= 0 && candidateTable.audienceIdx >= 0));
+      if (isTableSeparatorLine(lines[index + 1]) || isLegacyDecisionHeader) {
+        table = candidateTable;
+        return true;
+      }
+      if (!table?.isDecision) return true;
+
+      const row = parseDecisionRow(cells, table);
+      if (row) rows.push(row);
+      if (row && isSyncableDecisionAudience(row.audience)) {
+        keptRows.push(row);
+        return true;
+      }
+      removedRows++;
+      return false;
+    })
+    .join("\n");
+  return { body: keptBody, rows, keptRows, removedRows };
+}
+
 export function parseDecisionRows(body) {
-  // | # | Date | Decision | Rationale | Decided By | Impact | Type | Audience |
-  const rows = parseTableRows(body);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.toLowerCase());
-  if (!header.includes("decision")) return [];
-  const idx = (name) => header.findIndex((h) => h.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) => ({
-      row_key: cells[idx("#")] ?? cells[0] ?? "",
-      decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
-      title: cells[idx("decision")] || "",
-      rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
-      decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
-      impact: idx("impact") >= 0 ? cells[idx("impact")] || "" : "",
-      tier: idx("type") >= 0 ? parseInt(cells[idx("type")], 10) || null : null,
-      audience: idx("audience") >= 0 ? normalizeTier(cells[idx("audience")] || "team") : "team",
-    }))
-    .filter((r) => r.row_key);
+  return scanDecisionTables(body).rows;
+}
+
+/**
+ * Keep only explicitly team/external decision rows in both outbound payload forms. Unknown,
+ * missing, private, and admin audiences are default-denied. Markdown rows are parsed directly
+ * as well as filtering the structured rows so malformed or duplicate row keys cannot retain a
+ * sensitive body line.
+ */
+export function redactAdminDecisionRows(body) {
+  const scanned = scanDecisionTables(body);
+  return {
+    body: scanned.body,
+    rows: scanned.keptRows,
+    redacted: scanned.removedRows,
+  };
 }

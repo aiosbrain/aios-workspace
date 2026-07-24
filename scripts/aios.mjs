@@ -44,7 +44,9 @@ import {
   normalizeTier,
   classifyKind,
   parseDecisionRows,
+  redactAdminDecisionRows,
 } from "./workspace-parse.mjs";
+import { contentShaForPush, createSyncedItemState, isSyncStateCurrent } from "./sync-state.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -338,7 +340,7 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
 
   for (const rel of files) {
     const raw = readFileSync(path.join(repo, rel), "utf8");
-    const { frontmatter, body } = parseFrontmatter(raw);
+    let { frontmatter, body } = parseFrontmatter(raw);
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
 
@@ -362,13 +364,13 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     }
 
     const prev = state.items[rel];
-    if (prev && prev.sha === hash) {
+    if (prev && isSyncStateCurrent(prev, kind, hash)) {
       plan.clean.push({ rel });
       continue;
     }
     let rows;
     if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") rows = parseDecisionRows(body);
+    if (kind === "decision") ({ body, rows } = redactAdminDecisionRows(body));
     plan.push.push({
       rel,
       kind,
@@ -907,7 +909,7 @@ async function cmdPush(repo, cfg, patterns, args) {
       project: cfg.project,
       path: item.rel,
       kind: item.kind,
-      content_sha256: item.hash,
+      content_sha256: contentShaForPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},
@@ -916,11 +918,7 @@ async function cmdPush(repo, cfg, patterns, args) {
     if (item.rows) payload.rows = item.rows;
     try {
       const res = await api(cfg, "POST", "/items", payload);
-      state.items[item.rel] = {
-        sha: item.hash,
-        remote_id: res.id || null,
-        pushed_at: new Date().toISOString(),
-      };
+      state.items[item.rel] = createSyncedItemState(item, res);
       pushed++;
       result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);

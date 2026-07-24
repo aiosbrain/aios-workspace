@@ -23,7 +23,7 @@ export const decisionsSource: Source = (ctx): SourceResult => {
   for (const row of parseDecisionRows(body)) {
     const ref = `${rel}#${row.row_key}`;
     // The row audience is authoritative for a decision's tier (parseDecisionRows normalizes a
-    // blank audience to "team"). A PRESENT-but-unrecognized audience is unresolvable → exclude
+    // present-but-blank audience to admin). A PRESENT-but-unrecognized audience is unresolvable → exclude
     // (default-deny) rather than silently inheriting the file's access tier and up-scoping the
     // row. fileTier is only consulted when the table itself has no audience column at all.
     const hasAudienceColumn = row.audience != null && row.audience !== "";
