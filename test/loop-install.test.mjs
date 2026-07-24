@@ -179,7 +179,10 @@ test("renderLaunchdPlan: threads plan.envPath into every rendered plist's PATH",
     assert.equal(rendered.length, 3);
     for (const r of rendered) {
       assert.match(r.content, /<key>EnvironmentVariables<\/key>/);
-      assert.match(r.content, /<key>PATH<\/key>\s*<string>\/opt\/homebrew\/bin:\/usr\/bin:\/bin<\/string>/);
+      assert.match(
+        r.content,
+        /<key>PATH<\/key>\s*<string>\/opt\/homebrew\/bin:\/usr\/bin:\/bin<\/string>/
+      );
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
