@@ -140,12 +140,23 @@ function scanDecisionTables(body) {
       const cells = parseTableRows(line)[0] || [];
       const candidate = decisionTableSchema(cells);
       const followedBySeparator = isTableSeparatorLine(lines[index + 1]);
-      // A header row (followed by a separator) opens a new table.
-      if (!table?.isDecision && followedBySeparator) {
+      // Any header row (followed by its separator) opens a fresh table — including one butted
+      // directly against a decision table with no blank line between them, so that adjacent table
+      // is parsed against ITS own schema instead of the stale decision schema (which dropped its
+      // rows). The header line itself is kept.
+      if (followedBySeparator) {
         table = candidate;
         return true;
       }
-      if (!table) return true; // not in any recognized table
+      if (!table) {
+        // A decision header with NO separator row (hand-edited / malformed) still opens a decision
+        // table so its data rows are redacted — fail closed rather than leaking every line through.
+        if (candidate.isDecision) {
+          table = candidate;
+          return true;
+        }
+        return true; // not in any recognized table
+      }
       if (!table.isDecision) {
         if (candidate.isDecision) {
           table = candidate;

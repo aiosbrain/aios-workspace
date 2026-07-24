@@ -99,6 +99,43 @@ test("adjacent non-decision table is NOT over-redacted", () => {
   );
 });
 
+test("separator-less decision table still fails closed (no leak)", () => {
+  // A decision table whose separator row was hand-deleted must NOT pass private lines through.
+  const body = [
+    "## Decisions",
+    "",
+    HEADER,
+    `| 1 | d | Public | ok | a | h | 2 | team |`,
+    `| 2 | d | SECRET-nosep | hush | j | h | 3 | private |`,
+    "",
+  ].join("\n");
+  const out = redactAdminDecisionRows(body);
+  assert.ok(
+    !out.body.includes("SECRET-nosep"),
+    "private line dropped even without a separator row"
+  );
+  assert.deepEqual(
+    out.rows.map((r) => r.row_key),
+    ["1"]
+  );
+});
+
+test("table butted directly after the decision table (no blank line) is NOT over-redacted", () => {
+  const body = [
+    HEADER,
+    SEP,
+    `| 1 | d | Adopt X | ok | a | h | 2 | team |`,
+    `| 2 | d | Secret | hush | j | h | 3 | private |`,
+    "| Name | Role |", // no blank line before this second table
+    "|------|------|",
+    "| Alex | Eng |",
+  ].join("\n");
+  const out = redactAdminDecisionRows(body);
+  assert.ok(!out.body.includes("Secret"), "private decision row still dropped");
+  assert.ok(/\| Name \| Role \|/.test(out.body), "butted table header kept");
+  assert.ok(/\| Alex \| Eng \|/.test(out.body), "butted table data row kept");
+});
+
 test("no-op body + rows when every row is syncable", () => {
   const body = table(`| 1 | d | Public | ok | a | h | 2 | team |`);
   const out = redactAdminDecisionRows(body);
