@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
       - run: npm run check:docs
 
   context-health:
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
       - run: npm run check:context
 
   constitution:
@@ -38,16 +38,22 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
       # §4 domains-are-siblings (no cross-domain value imports) + the aios.mjs size gate (AIO-320).
       - run: npm run check:domains
       - run: npm run check:size
+      - run: npm run check:inbox-audit
 
   guard:
     name: leak-gate + secrets + harness checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
 
       - name: Confidentiality leak gate
         # Terms come from the AIOS_LEAK_TERMS_B64 secret (the public repo never stores them).
@@ -62,40 +68,21 @@ jobs:
       - name: Harness syntax check
         run: |
           for f in scaffold/.claude/skills/*/*.workflow.js; do
-            node -e "const s=require('fs').readFileSync('$f','utf8'); new Function('agent','parallel','pipeline','phase','log','args','budget','workflow','return (async()=>{'+s.replace(/export const meta/,'const meta')+'})')" \
-              && echo "ok: $f" || { echo "FAIL: $f"; exit 1; }
+            if node -e "const s=require('fs').readFileSync('$f','utf8'); new Function('agent','parallel','pipeline','phase','log','args','budget','workflow','return (async()=>{'+s.replace(/export const meta/,'const meta')+'})')"; then
+              echo "ok: $f"
+            else
+              echo "FAIL: $f"
+              exit 1
+            fi
           done
 
       - name: Sync CLI syntax check
         run: node --check scripts/aios.mjs
 
-      - name: Skill-scan + install-gate tests
-        run: |
-          node test/agent-readiness-glob.test.mjs
-          node test/skill-scan.test.mjs
-          node test/skill-install.test.mjs
-          node test/suggest-connectors.test.mjs
-          node test/skill-install-marketplace.test.mjs
-          node test/slack-cli-sync.test.mjs
-          node test/ux/judge.test.mjs
-          node test/ux/driver.test.mjs
-          node test/ux/tool-policy.test.mjs
-          node test/ux/proc.test.mjs
-          node test/ux/json-extract.test.mjs
-          node test/ux/run-ux-skip.test.mjs
-          node test/analyze.test.mjs
-          node test/analyze-multitool.test.mjs
-          node test/tasks-table.test.mjs
-          node --test gui/server/session-index.test.mjs
-          node scripts/lock-marketplace.mjs --check
-
-      - name: Runtime-adapter contract tests (BYOA Phase 3)
-        run: |
-          # the ACP adapter imports @agentclientprotocol/sdk (peer: zod); the rest
-          # of the mappers need no deps. Install just these, then run every adapter
-          # test incl. the recorded-transcript fixtures.
-          npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
-          node --test gui/server/runtime-adapters/*.test.mjs
+      # All test files, including skill/runtime contracts, run exactly once in
+      # the sharded Node suite. Keep only unique static/security checks here.
+      - name: Marketplace lock check
+        run: node scripts/lock-marketplace.mjs --check
 
       - name: Scaffold smoke test + validate (project profile)
         run: |
@@ -151,39 +138,149 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
       - run: npm ci
       - name: ESLint
         run: npm run lint
       - name: Prettier (format check)
         run: npm run format:check
 
-  tests:
-    name: unit tests (npm test)
+  node-tests:
+    name: Node tests (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run shard
+        run: npm run test:node -- --shard=${{ matrix.shard }}/3 --concurrency=2
+
+  client-tests:
+    name: GUI client tests + build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
       - run: npm ci
-      - name: Gateway approval contract
-        run: npm run test:gateway-approval-contracts
-      - name: Install optional ACP peer (server boot in the GUI search test)
-        # The cockpit search route test (gui/server/sessions-search.test.mjs) boots the
-        # real GUI server, which statically loads every runtime adapter — incl. the ACP
-        # adapter (peer: zod). npm ci doesn't carry these (kept --no-save like the guard
-        # job), so install them here. claude-agent-sdk arrives via npm ci (devDependency).
-        run: npm install --no-save @agentclientprotocol/sdk@^0.25.1 zod@^4.4.3
-      - name: npm test
-        run: npm test
-      - name: Coverage report (non-blocking)
-        continue-on-error: true
+      - run: npm run test:client
+      - run: npm run gui:build
+
+  coverage:
+    name: Corrected coverage ratchet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Production-only coverage
         run: npm run test:coverage
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
-          path: coverage/
+          path: |
+            coverage/coverage-summary.json
+            coverage/lcov.info
           if-no-files-found: ignore
+          retention-days: 7
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - run: npm ci
+      - run: npm run test:rust
+
+  install-smoke:
+    name: Clean production install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:install-smoke
+
+  mutation:
+    name: Changed-code mutation (calibration)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:mutation
+
+  test-gate:
+    name: Required test gate
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - docs-drift
+      - context-health
+      - constitution
+      - guard
+      - lint
+      - node-tests
+      - client-tests
+      - coverage
+      - rust-tests
+      - install-smoke
+    steps:
+      - name: Require every mandatory lane
+        env:
+          DOCS: ${{ needs.docs-drift.result }}
+          CONTEXT: ${{ needs.context-health.result }}
+          CONSTITUTION: ${{ needs.constitution.result }}
+          GUARD: ${{ needs.guard.result }}
+          LINT: ${{ needs.lint.result }}
+          NODE: ${{ needs.node-tests.result }}
+          CLIENT: ${{ needs.client-tests.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          RUST: ${{ needs.rust-tests.result }}
+          INSTALL: ${{ needs.install-smoke.result }}
+        run: |
+          for result in "$DOCS" "$CONTEXT" "$CONSTITUTION" "$GUARD" "$LINT" \
+            "$NODE" "$CLIENT" "$COVERAGE" "$RUST" "$INSTALL"; do
+            test "$result" = success || {
+              echo "mandatory CI result(s): docs=$DOCS context=$CONTEXT constitution=$CONSTITUTION guard=$GUARD lint=$LINT node=$NODE client=$CLIENT coverage=$COVERAGE rust=$RUST install=$INSTALL"
+              exit 1
+            }
+          done

@@ -1,0 +1,27 @@
+{
+  "all": true,
+  "include": [
+    "scripts/**/*.mjs",
+    "hooks/**/*.mjs",
+    "validation/**/*.mjs",
+    "gui/server/**/*.mjs",
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.*",
+    "test/**",
+    "gui/server/skill-library/**",
+    "gui/client/**",
+    "coverage/**",
+    "dist/**",
+    "scripts/test-suite.mjs",
+    "scripts/run-coverage.mjs",
+    "scripts/merge-coverage.mjs",
+    "scripts/check-coverage.mjs",
+    "scripts/run-mutation.mjs"
+  ],
+  "extension": [".js", ".mjs", ".ts"],
+  "reporter": ["lcov", "json-summary"],
+  "reports-dir": "coverage/root",
+  "clean": true
+}
