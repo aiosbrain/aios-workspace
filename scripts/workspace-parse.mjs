@@ -283,21 +283,17 @@ export function parseFactRows(body) {
   const header = rows[0].map((value) => value.toLowerCase());
   if (!header.includes("fact") || !header.includes("source quote")) return [];
   const idx = (name) => header.findIndex((value) => value.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) =>
-      parsedFactMarkdownToWire({
-        rowKey: cells[idx("row key")] ?? cells[0] ?? "",
-        title: cells[idx("fact")] ?? "",
-        occurredAt:
-          idx("occurred") >= 0 && cells[idx("occurred")] !== "—"
-            ? cells[idx("occurred")]
-            : undefined,
-        factType: cells[idx("type")] === "event" ? "event" : "fact",
-        sourcePath: cells[idx("source path")] ?? "",
-        sourceQuote: cells[idx("source quote")] ?? "",
-      })
-    );
+  return rows.slice(1).map((cells) =>
+    parsedFactMarkdownToWire({
+      rowKey: cells[idx("row key")] ?? cells[0] ?? "",
+      title: cells[idx("fact")] ?? "",
+      occurredAt:
+        idx("occurred") >= 0 && cells[idx("occurred")] !== "—" ? cells[idx("occurred")] : undefined,
+      factType: cells[idx("type")] === "event" ? "event" : "fact",
+      sourcePath: cells[idx("source path")] ?? "",
+      sourceQuote: cells[idx("source quote")] ?? "",
+    })
+  );
 }
 
 export function parseStakeholderMentionRows(body) {
@@ -306,21 +302,17 @@ export function parseStakeholderMentionRows(body) {
   const header = rows[0].map((value) => value.toLowerCase());
   if (!header.includes("name") || !header.includes("source quote")) return [];
   const idx = (name) => header.findIndex((value) => value.startsWith(name));
-  return rows
-    .slice(1)
-    .map((cells) =>
-      parsedStakeholderMarkdownToWire({
-        rowKey: cells[idx("row key")] ?? cells[0] ?? "",
-        name: cells[idx("name")] ?? "",
-        role: idx("role") >= 0 && cells[idx("role")] !== "—" ? cells[idx("role")] : undefined,
-        context:
-          idx("context") >= 0 && cells[idx("context")] !== "—"
-            ? cells[idx("context")]
-            : undefined,
-        sourcePath: cells[idx("source path")] ?? "",
-        sourceQuote: cells[idx("source quote")] ?? "",
-      })
-    );
+  return rows.slice(1).map((cells) =>
+    parsedStakeholderMarkdownToWire({
+      rowKey: cells[idx("row key")] ?? cells[0] ?? "",
+      name: cells[idx("name")] ?? "",
+      role: idx("role") >= 0 && cells[idx("role")] !== "—" ? cells[idx("role")] : undefined,
+      context:
+        idx("context") >= 0 && cells[idx("context")] !== "—" ? cells[idx("context")] : undefined,
+      sourcePath: cells[idx("source path")] ?? "",
+      sourceQuote: cells[idx("source quote")] ?? "",
+    })
+  );
 }
 
 export function parseEvidenceRows(kind, body) {

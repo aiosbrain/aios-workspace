@@ -11,15 +11,12 @@ test("deterministic extraction evaluation verifies rejection, dedup, adapters, a
   assert.equal(result.pass, true);
   assert.equal(result.adaptersConform, true);
   assert.equal(result.thresholdsMet, true);
-  assert.deepEqual(
-    result.rejected.map((item) => item.reason).sort(),
-    [
-      "duplicate_in_stage",
-      "source_quote_empty",
-      "source_quote_mismatch",
-      "source_quote_not_found",
-    ]
-  );
+  assert.deepEqual(result.rejected.map((item) => item.reason).sort(), [
+    "duplicate_in_stage",
+    "source_quote_empty",
+    "source_quote_mismatch",
+    "source_quote_not_found",
+  ]);
   for (const score of Object.values(result.scores)) {
     assert.equal(score.precision, 1);
     assert.equal(score.recall, 1);

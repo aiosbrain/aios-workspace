@@ -219,18 +219,13 @@ const evidenceExtraction = {
 
 async function draftWithEvidence(repo) {
   const out = [];
-  const code = await cmdTranscripts(
-    repo,
-    {},
-    ["draft", "--transcripts", TRANSCRIPT, "--json"],
-    {
-      runPhase: phaseRunner(),
-      evidenceExtraction,
-      now: () => NOW,
-      stdout: (value) => out.push(String(value)),
-      stderr: () => {},
-    }
-  );
+  const code = await cmdTranscripts(repo, {}, ["draft", "--transcripts", TRANSCRIPT, "--json"], {
+    runPhase: phaseRunner(),
+    evidenceExtraction,
+    now: () => NOW,
+    stdout: (value) => out.push(String(value)),
+    stderr: () => {},
+  });
   assert.equal(code, 0);
   const payload = JSON.parse(out.join("\n"));
   return { payload, stagePath: path.join(repo, payload.stage) };
@@ -263,28 +258,23 @@ test("no_changes surfaces grounded evidence that was dropped instead of silently
   const repo = workspace();
   try {
     const out = [];
-    const code = await cmdTranscripts(
-      repo,
-      {},
-      ["draft", "--transcripts", TRANSCRIPT, "--json"],
-      {
-        runPhase: async ({ phase }) => {
-          if (phase === "extract" || phase === "deduplicate") return { decisions: [], tasks: [] };
-          if (phase === "verify") {
-            return { verdict: "pass", criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion) };
-          }
-          return {
-            verdict: "pass",
-            certifiedNoChanges: true,
-            criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
-          };
-        },
-        evidenceExtraction,
-        now: () => NOW,
-        stdout: (value) => out.push(String(value)),
-        stderr: () => {},
-      }
-    );
+    const code = await cmdTranscripts(repo, {}, ["draft", "--transcripts", TRANSCRIPT, "--json"], {
+      runPhase: async ({ phase }) => {
+        if (phase === "extract" || phase === "deduplicate") return { decisions: [], tasks: [] };
+        if (phase === "verify") {
+          return { verdict: "pass", criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion) };
+        }
+        return {
+          verdict: "pass",
+          certifiedNoChanges: true,
+          criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
+        };
+      },
+      evidenceExtraction,
+      now: () => NOW,
+      stdout: (value) => out.push(String(value)),
+      stderr: () => {},
+    });
     assert.equal(code, 0);
     const payload = JSON.parse(out.join("\n"));
     assert.equal(payload.outcome, "no_changes");
@@ -328,10 +318,7 @@ test("approve routes evidence to tier files, records counts, and is idempotent f
     assert.deepEqual(
       {
         facts: readFileSync(path.join(repo, "3-log", "facts-private.md"), "utf8"),
-        mentions: readFileSync(
-          path.join(repo, "3-log", "stakeholder-mentions-private.md"),
-          "utf8"
-        ),
+        mentions: readFileSync(path.join(repo, "3-log", "stakeholder-mentions-private.md"), "utf8"),
       },
       after
     );

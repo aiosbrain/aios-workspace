@@ -20,10 +20,7 @@ test("model parsing requires an object and normalizes all four arrays", () => {
     stakeholders: [],
   });
   assert.throws(() => parseModelJson("[]"), /JSON object/);
-  assert.throws(
-    () => parseModelJson('{"decisions":"not-an-array"}'),
-    /decisions must be an array/
-  );
+  assert.throws(() => parseModelJson('{"decisions":"not-an-array"}'), /decisions must be an array/);
 });
 
 test("prompt demands grounded, storage-neutral output for every candidate kind", () => {
@@ -71,10 +68,10 @@ test("stage excludes ungrounded candidates and reports why", () => {
   assert.equal(stage.facts.length, 1);
   assert.equal(stage.stakeholders.length, 0);
   assert.equal(stage.rejected.length, 2);
-  assert.deepEqual(
-    stage.rejected.map((item) => item.reason).sort(),
-    ["source_quote_not_found", "transcript_not_loaded"]
-  );
+  assert.deepEqual(stage.rejected.map((item) => item.reason).sort(), [
+    "source_quote_not_found",
+    "transcript_not_loaded",
+  ]);
 });
 
 test("new evidence defaults admin, uses stable keys, and deduplicates", () => {
@@ -154,26 +151,30 @@ test("decision and task dedupe ignores punctuation like the filesystem logs", ()
 
   assert.equal(stage.decisions.length, 1);
   assert.equal(stage.tasks.length, 0);
-  assert.deepEqual(
-    stage.rejected.map((item) => item.reason).sort(),
-    ["already_approved", "duplicate_in_stage"]
-  );
+  assert.deepEqual(stage.rejected.map((item) => item.reason).sort(), [
+    "already_approved",
+    "duplicate_in_stage",
+  ]);
 });
 
 test("decision and task normalization preserves an explicit admin audience", () => {
   const extraction = {
-    decisions: [{
-      decision: "Keep launch notes private",
-      audience: "admin",
-      transcript: "1-inbox/transcripts/meeting.md",
-      sourceQuote: "We approved launch on August 4.",
-    }],
-    tasks: [{
-      task: "Privately prepare the rollout",
-      audience: "admin",
-      transcript: "1-inbox/transcripts/meeting.md",
-      sourceQuote: "Sam Rivera owns the rollout.",
-    }],
+    decisions: [
+      {
+        decision: "Keep launch notes private",
+        audience: "admin",
+        transcript: "1-inbox/transcripts/meeting.md",
+        sourceQuote: "We approved launch on August 4.",
+      },
+    ],
+    tasks: [
+      {
+        task: "Privately prepare the rollout",
+        audience: "admin",
+        transcript: "1-inbox/transcripts/meeting.md",
+        sourceQuote: "Sam Rivera owns the rollout.",
+      },
+    ],
     facts: [],
     stakeholders: [],
   };

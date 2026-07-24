@@ -38,10 +38,7 @@ test("parseFactRows returns wire-shaped rows from a canonical fact table", () =>
 });
 
 test("parseFactRows returns no rows when the table header doesn't match", () => {
-  assert.deepEqual(
-    parseFactRows("| Name | Role |\n|---|---|\n| Sam | Lead |\n"),
-    []
-  );
+  assert.deepEqual(parseFactRows("| Name | Role |\n|---|---|\n| Sam | Lead |\n"), []);
   assert.deepEqual(parseFactRows(""), []);
 });
 
@@ -137,11 +134,7 @@ const BASE_PAYLOAD = {
 test("validateItemPayload accepts a minimal valid payload for every item kind", () => {
   const rowless = ["deliverable", "transcript", "artifact", "skill", "blueprint"];
   for (const kind of rowless) {
-    assert.equal(
-      validateItemPayload({ ...BASE_PAYLOAD, kind }).success,
-      true,
-      kind
-    );
+    assert.equal(validateItemPayload({ ...BASE_PAYLOAD, kind }).success, true, kind);
   }
   assert.equal(
     validateItemPayload({
@@ -248,10 +241,7 @@ test("validEvidenceDeclaration allows a non-evidence path declaring a non-eviden
 
 test("validEvidenceDeclaration rejects a non-evidence path declaring an evidence kind", () => {
   assert.equal(validEvidenceDeclaration("2-work/report.md", "fact", "team"), false);
-  assert.equal(
-    validEvidenceDeclaration("2-work/report.md", "stakeholder_mention", "team"),
-    false
-  );
+  assert.equal(validEvidenceDeclaration("2-work/report.md", "stakeholder_mention", "team"), false);
 });
 
 test("normalizeTier fails closed: blank, 'Private', and 'ADMIN' never resolve to a syncable tier", () => {
@@ -261,7 +251,11 @@ test("normalizeTier fails closed: blank, 'Private', and 'ADMIN' never resolve to
   assert.equal(normalizeTier(""), "");
   assert.equal(normalizeTier(undefined), "");
   assert.equal(normalizeTier("   "), "");
-  assert.equal(validateItemPayload({ ...BASE_PAYLOAD, kind: "deliverable", access: normalizeTier("") }).success, false);
+  assert.equal(
+    validateItemPayload({ ...BASE_PAYLOAD, kind: "deliverable", access: normalizeTier("") })
+      .success,
+    false
+  );
 
   // Case/whitespace variants of "private" and "admin" collapse to the single canonical
   // "admin" tier — never treated as an unrecognized (and therefore possibly-syncable) label.

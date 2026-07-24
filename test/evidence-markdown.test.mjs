@@ -63,28 +63,17 @@ test("stakeholder markdown omits empty optional wire fields", () => {
 
 test("evidence frontmatter is honored only at canonical approval paths", () => {
   assert.equal(classifyKind("2-work/arbitrary.md", { kind: "fact" }), "deliverable");
-  assert.equal(
-    classifyKind("4-shared/arbitrary.md", { kind: "stakeholder_mention" }),
-    "artifact"
-  );
+  assert.equal(classifyKind("4-shared/arbitrary.md", { kind: "stakeholder_mention" }), "artifact");
   assert.equal(validEvidenceDeclaration("3-log/facts-team.md", undefined, "team"), false);
   assert.equal(validEvidenceDeclaration("3-log/facts-team.md", "fact", "team"), true);
   assert.equal(validEvidenceDeclaration("3-log/facts-private.md", "fact", "private"), true);
   assert.equal(validEvidenceDeclaration("3-log/facts-private.md", "fact", "team"), false);
   assert.equal(
-    validEvidenceDeclaration(
-      "4-shared/stakeholder-mentions.md",
-      "stakeholder_mention",
-      "external"
-    ),
+    validEvidenceDeclaration("4-shared/stakeholder-mentions.md", "stakeholder_mention", "external"),
     true
   );
   assert.equal(
-    validEvidenceDeclaration(
-      "4-shared/stakeholder-mentions.md",
-      "stakeholder_mention",
-      "admin"
-    ),
+    validEvidenceDeclaration("4-shared/stakeholder-mentions.md", "stakeholder_mention", "admin"),
     false
   );
   assert.equal(validEvidenceDeclaration("2-work/arbitrary.md", "fact", "team"), false);

@@ -119,7 +119,8 @@ function applyRecord(value: unknown): ApplyRecord {
     decisionLogChanged: booleanValue(item["decisionLogChanged"], "apply.decisionLogChanged"),
     taskLogChanged: booleanValue(item["taskLogChanged"], "apply.taskLogChanged"),
     // Missing on stages approved before 1.12 evidence — default to zero for backward compatibility.
-    factsAdded: item["factsAdded"] === undefined ? 0 : integer(item["factsAdded"], "apply.factsAdded"),
+    factsAdded:
+      item["factsAdded"] === undefined ? 0 : integer(item["factsAdded"], "apply.factsAdded"),
     stakeholdersAdded:
       item["stakeholdersAdded"] === undefined
         ? 0

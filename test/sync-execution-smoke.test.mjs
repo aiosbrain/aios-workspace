@@ -77,10 +77,7 @@ function startStubBrain(
           });
           return;
         }
-        if (
-          rejectEvidenceRows &&
-          (item.kind === "fact" || item.kind === "stakeholder_mention")
-        ) {
+        if (rejectEvidenceRows && (item.kind === "fact" || item.kind === "stakeholder_mention")) {
           send(422, {
             error: {
               code: "invalid_payload",
@@ -90,10 +87,7 @@ function startStubBrain(
           });
           return;
         }
-        if (
-          rejectNewKinds &&
-          (item.kind === "fact" || item.kind === "stakeholder_mention")
-        ) {
+        if (rejectNewKinds && (item.kind === "fact" || item.kind === "stakeholder_mention")) {
           send(422, {
             error: {
               code: "invalid_payload",
@@ -360,9 +354,7 @@ test("aios push sends only approved syncable evidence rows with exact 1.12 wire 
     assert.equal(result.code, 0, `push failed: ${result.stderr}\n${result.stdout}`);
     assert.equal(stub.pushedItems.length, 2);
     const fact = stub.pushedItems.find((item) => item.kind === "fact");
-    const stakeholder = stub.pushedItems.find(
-      (item) => item.kind === "stakeholder_mention"
-    );
+    const stakeholder = stub.pushedItems.find((item) => item.kind === "stakeholder_mention");
     assert.deepEqual(fact.rows, [
       {
         row_key: "fact-abcd1234abcd1234",
@@ -391,18 +383,12 @@ test("aios push sends only approved syncable evidence rows with exact 1.12 wire 
       stub.pushedItems.some((item) => item.path.endsWith("facts-private.md")),
       false
     );
-    assert.equal(
-      JSON.stringify(stub.pushedItems).includes("Never upload this."),
-      false
-    );
+    assert.equal(JSON.stringify(stub.pushedItems).includes("Never upload this."), false);
     assert.equal(
       JSON.stringify(stub.pushedItems).includes("FULL TRANSCRIPT MUST NOT LEAVE"),
       false
     );
-    assert.equal(
-      JSON.stringify(stub.pushedItems).includes("ROUTING BYPASS MUST NOT LEAVE"),
-      false
-    );
+    assert.equal(JSON.stringify(stub.pushedItems).includes("ROUTING BYPASS MUST NOT LEAVE"), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     await stub.close();
@@ -419,10 +405,7 @@ test("empty evidence files fail local validation and never reach Brain", async (
         "| Row Key | Fact | Occurred At | Type | Source Path | Source Quote |\n" +
         "|---|---|---|---|---|---|\n"
     );
-    const result = await runAios(
-      ["push", "--repo", dir, "3-log/facts-team.md"],
-      REPO
-    );
+    const result = await runAios(["push", "--repo", dir, "3-log/facts-team.md"], REPO);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /local Brain API 1\.12 payload validation failed/);
     assert.equal(stub.pushedItems.length, 0);
@@ -444,10 +427,7 @@ test("mixed valid and malformed evidence rows fail atomically before network", a
         "| fact-abcd1234abcd1234 | Launch approved | 2026-07-24 | event | 1-inbox/transcripts/launch.md | Launch is approved. |\n" +
         "| | Missing key | — | fact | 1-inbox/transcripts/launch.md | Missing key. |\n"
     );
-    const result = await runAios(
-      ["push", "--repo", dir, "3-log/facts-team.md"],
-      REPO
-    );
+    const result = await runAios(["push", "--repo", dir, "3-log/facts-team.md"], REPO);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /local Brain API 1\.12 payload validation failed/);
     assert.equal(stub.pushedItems.length, 0);
@@ -465,10 +445,7 @@ test("canonical evidence paths without an explicit kind are blocked before netwo
       path.join(dir, "3-log", "facts-team.md"),
       "---\naccess: team\n---\n\nFULL TRANSCRIPT MUST NOT LEAVE\n"
     );
-    const result = await runAios(
-      ["push", "--repo", dir, "3-log/facts-team.md"],
-      REPO
-    );
+    const result = await runAios(["push", "--repo", dir, "3-log/facts-team.md"], REPO);
     assert.equal(result.code, 0);
     assert.match(result.stdout, /1 blocked/);
     assert.equal(stub.pushedItems.length, 0);
@@ -483,15 +460,9 @@ test("private evidence paths cannot be relabeled as syncable tiers", async () =>
   const dir = makeEvidenceWorkspace(stub.url);
   try {
     const privatePath = path.join(dir, "3-log", "facts-private.md");
-    const relabeled = readFileSync(privatePath, "utf8").replace(
-      "access: admin",
-      "access: team"
-    );
+    const relabeled = readFileSync(privatePath, "utf8").replace("access: admin", "access: team");
     writeFileSync(privatePath, relabeled);
-    const result = await runAios(
-      ["push", "--repo", dir, "3-log/facts-private.md"],
-      REPO
-    );
+    const result = await runAios(["push", "--repo", dir, "3-log/facts-private.md"], REPO);
     assert.equal(result.code, 0);
     assert.match(result.stdout, /1 blocked/);
     assert.equal(stub.pushedItems.length, 0);
@@ -524,10 +495,7 @@ test("a current Brain malformed-row 422 is not mislabeled as a version mismatch"
   const stub = await startStubBrain([], { rejectEvidenceRows: true });
   const dir = makeEvidenceWorkspace(stub.url);
   try {
-    const result = await runAios(
-      ["push", "--repo", dir, "3-log/facts-team.md"],
-      REPO
-    );
+    const result = await runAios(["push", "--repo", dir, "3-log/facts-team.md"], REPO);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /malformed evidence rows/);
     assert.doesNotMatch(result.stdout, /Brain API 1\.12 required/);

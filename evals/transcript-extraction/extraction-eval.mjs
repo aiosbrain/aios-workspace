@@ -18,7 +18,10 @@ const DEFAULT_CORPUS = path.join(SCRIPT_DIR, "gold-v1.json");
 const PLURALS = ["decisions", "tasks", "facts", "stakeholders"];
 
 function normalized(value) {
-  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function tokens(value) {
@@ -75,14 +78,8 @@ function grounding(extraction, transcripts) {
     const quote = String(candidate.sourceQuote ?? "").trim();
     const source = transcripts[candidate.transcript];
     const stakeholderMatches =
-      kind !== "stakeholders" ||
-      normalized(quote).includes(normalized(candidate.name));
-    return (
-      quote &&
-      typeof source === "string" &&
-      source.includes(quote) &&
-      stakeholderMatches
-    );
+      kind !== "stakeholders" || normalized(quote).includes(normalized(candidate.name));
+    return quote && typeof source === "string" && source.includes(quote) && stakeholderMatches;
   }).length;
   return {
     grounded,
@@ -219,7 +216,10 @@ async function main() {
   const live = args.includes("--live");
   const result = live
     ? await runLiveEval(corpus, {
-        model: argValue(args, "--model") ?? process.env.AIOS_TRANSCRIPT_MODEL ?? "deepseek:deepseek-chat",
+        model:
+          argValue(args, "--model") ??
+          process.env.AIOS_TRANSCRIPT_MODEL ??
+          "deepseek:deepseek-chat",
       })
     : runDeterministicEval(corpus);
   console.log(JSON.stringify(result, null, 2));

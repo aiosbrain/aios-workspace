@@ -170,7 +170,10 @@ export async function runDraftCommand(root, args, deps) {
     // still have been extractable from these transcripts — surface that instead of silently
     // discarding it (V1 behavior stands: no stage is forced, nothing is persisted here).
     const dropped = await gatherGroundedEvidence({ root, paths, fixture, args, deps, now });
-    const droppedEvidence = { facts: dropped.facts.length, stakeholders: dropped.stakeholders.length };
+    const droppedEvidence = {
+      facts: dropped.facts.length,
+      stakeholders: dropped.stakeholders.length,
+    };
     const payload = noChangesPayload(result, droppedEvidence);
     const droppedNote =
       droppedEvidence.facts || droppedEvidence.stakeholders

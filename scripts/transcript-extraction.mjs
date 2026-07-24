@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 const KINDS = ["decisions", "tasks", "facts", "stakeholders"];
 
 function normalized(value) {
-  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function candidateContent(kind, candidate) {
@@ -42,7 +45,10 @@ function normalizeExtraction(value) {
 }
 
 export function parseModelJson(raw) {
-  const text = String(raw ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const text = String(raw ?? "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
   try {
     return normalizeExtraction(JSON.parse(text));
   } catch (error) {
@@ -111,10 +117,7 @@ function groundedCandidate(kind, index, candidate, transcriptTexts) {
   if (!transcriptTexts[transcript].includes(sourceQuote)) {
     return { rejected: rejection(kind, index, candidate, "source_quote_not_found") };
   }
-  if (
-    kind === "stakeholder" &&
-    !normalized(sourceQuote).includes(normalized(candidate.name))
-  ) {
+  if (kind === "stakeholder" && !normalized(sourceQuote).includes(normalized(candidate.name))) {
     return { rejected: rejection(kind, index, candidate, "source_quote_mismatch") };
   }
   return { candidate: { ...candidate, transcript, sourceQuote } };
@@ -212,9 +215,10 @@ export function prepareExtractionStage({
         return;
       }
       const candidate = normalizeCandidate(kind, grounded.candidate, now);
-      const key = kind === "decision" || kind === "task"
-        ? normalized(requiredContent(kind, candidate))
-        : candidate.rowKey;
+      const key =
+        kind === "decision" || kind === "task"
+          ? normalized(requiredContent(kind, candidate))
+          : candidate.rowKey;
       if (!key) {
         stage.rejected.push(rejection(kind, index, candidate, "content_empty"));
       } else if (seen.has(`${kind}:${key}`)) {

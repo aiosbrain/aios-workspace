@@ -88,10 +88,7 @@ function stakeholderCandidate(value: unknown, index: number): StakeholderMention
     context: optionalString(item["context"], `stakeholderMentions[${index}].context`),
     access: literal(item["access"], EVIDENCE_ACCESS, `stakeholderMentions[${index}].access`),
     transcript: stringValue(item["transcript"], `stakeholderMentions[${index}].transcript`),
-    sourceQuote: stringValue(
-      item["sourceQuote"],
-      `stakeholderMentions[${index}].sourceQuote`
-    ),
+    sourceQuote: stringValue(item["sourceQuote"], `stakeholderMentions[${index}].sourceQuote`),
   };
 }
 
@@ -143,7 +140,10 @@ export function groundEvidenceBatch(root: string, batch: EvidenceBatch): Evidenc
 }
 
 function escapeCell(value: string): string {
-  const trimmed = String(value ?? "").replaceAll("|", "\\|").replace(/\s+/g, " ").trim();
+  const trimmed = String(value ?? "")
+    .replaceAll("|", "\\|")
+    .replace(/\s+/g, " ")
+    .trim();
   return trimmed.length > 0 ? trimmed : "—";
 }
 
@@ -186,7 +186,13 @@ function existingRowKeys(root: string): Set<string> {
   return keys;
 }
 
-function appendRows(root: string, relative: string, kind: keyof typeof HEADERS, access: EvidenceAccess, rows: string): void {
+function appendRows(
+  root: string,
+  relative: string,
+  kind: keyof typeof HEADERS,
+  access: EvidenceAccess,
+  rows: string
+): void {
   const file = path.join(canonicalRoot(root), relative);
   mkdirSync(path.dirname(file), { recursive: true });
   const declaredKind = kind === "stakeholder_mention" ? "stakeholder_mention" : "fact";

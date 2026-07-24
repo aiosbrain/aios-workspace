@@ -39,7 +39,18 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
-import { parseFrontmatter, normalizeTier, classifyKind, parseDecisionRows, redactAdminDecisionRows, DECISION_REDACTION_VERSION, parseEvidenceRows, validateItemPayload, evidencePayloadContent, validEvidenceDeclaration } from "./workspace-parse.mjs";
+import {
+  parseFrontmatter,
+  normalizeTier,
+  classifyKind,
+  parseDecisionRows,
+  redactAdminDecisionRows,
+  DECISION_REDACTION_VERSION,
+  parseEvidenceRows,
+  validateItemPayload,
+  evidencePayloadContent,
+  validEvidenceDeclaration,
+} from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -361,7 +372,11 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
     if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {
-      plan.blocked.push({ rel, reason: "evidence files require their explicit kind at a canonical approved path" }); continue;
+      plan.blocked.push({
+        rel,
+        reason: "evidence files require their explicit kind at a canonical approved path",
+      });
+      continue;
     }
 
     const tier = normalizeTier(frontmatter?.access || "");
@@ -401,9 +416,22 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     else if (kind === "decision") ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
     else if (kind === "fact" || kind === "stakeholder_mention") {
       rows = parseEvidenceRows(kind, body);
-      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(kind, frontmatter, body));
+      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(
+        kind,
+        frontmatter,
+        body
+      ));
     }
-    plan.push.push({ rel, kind, hash, tier, frontmatter: pushFrontmatter, body: pushBody, rows, isNew: !prev });
+    plan.push.push({
+      rel,
+      kind,
+      hash,
+      tier,
+      frontmatter: pushFrontmatter,
+      body: pushBody,
+      rows,
+      isNew: !prev,
+    });
   }
   return { plan, state };
 }
@@ -956,8 +984,11 @@ async function cmdPush(repo, cfg, patterns, args) {
       result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
-      const needs112 = (item.kind === "fact" || item.kind === "stakeholder_mention") &&
-        /unknown (?:item )?kind|invalid (?:item_)?kind|item_kind.*(?:invalid|unknown)|kind.*(?:unsupported|not supported)/i.test(e.message);
+      const needs112 =
+        (item.kind === "fact" || item.kind === "stakeholder_mention") &&
+        /unknown (?:item )?kind|invalid (?:item_)?kind|item_kind.*(?:invalid|unknown)|kind.*(?:unsupported|not supported)/i.test(
+          e.message
+        );
       const message = needs112 ? `Brain API 1.12 required: ${e.message}` : e.message;
       result.failed.set(item.rel, message);
       console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
