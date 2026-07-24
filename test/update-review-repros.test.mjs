@@ -2262,3 +2262,33 @@ test("AIO-504: --check reports rebuildNeeded=true when the fetched-but-unmerged 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("AIO-504: --check reports rebuildNeeded=null when ls-remote sees an unfetched src/ tip (never false from stale @{u})", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-504-check-unfetched-"));
+  const prevPath = process.env.PATH;
+  try {
+    const { origin, clone } = originAndToolkitClone(root);
+    mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
+    advance(origin, "export const unfetched = true;\n", "src/operator-loop/listing.ts");
+    // Deliberately do NOT fetch: @{u} still equals HEAD, while read-only classification sees
+    // the newer tip through ls-remote. The remote object is unavailable locally, so the honest
+    // rebuild prediction is unknown (null), not the old false result from diffing stale @{u}.
+    assert.equal(git(clone, "rev-parse", "HEAD"), git(clone, "rev-parse", "@{u}"));
+
+    const { ranFile, binPath } = fakeNpm(root);
+    process.env.PATH = binPath;
+    const result = pullToolkitCheckout(
+      clone,
+      { check: true, dryRun: true, noInstall: true },
+      NOOP_IO
+    );
+
+    assert.equal(result.remoteState.state, "behind", "ls-remote sees the newer upstream tip");
+    assert.equal(result.rebuildNeeded, null, "unfetched incoming range stays honestly unknown");
+    assert.equal(result.rebuilt, false, "read-only never performs the rebuild");
+    assert.ok(!existsSync(ranFile), "read-only never invokes npm");
+  } finally {
+    process.env.PATH = prevPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});

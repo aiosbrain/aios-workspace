@@ -291,10 +291,17 @@ function classifyAgainst(
   try {
     localHead = git(dir, ["rev-parse", "HEAD"]);
   } catch {
-    return { state: "local-status-error", branch, upstream: upstreamName, behind: null, ahead: 0 };
+    return {
+      state: "local-status-error",
+      branch,
+      upstream: upstreamName,
+      behind: null,
+      ahead: 0,
+      remoteSha,
+    };
   }
   if (remoteSha === localHead) {
-    return { state: "current", branch, upstream: upstreamName, behind: 0, ahead: 0 };
+    return { state: "current", branch, upstream: upstreamName, behind: 0, ahead: 0, remoteSha };
   }
   let counts;
   try {
@@ -317,7 +324,14 @@ function classifyAgainst(
       });
       if (verdict) return verdict;
     }
-    return { state: onCountFailure, branch, upstream: upstreamName, behind: null, ahead: 0 };
+    return {
+      state: onCountFailure,
+      branch,
+      upstream: upstreamName,
+      behind: null,
+      ahead: 0,
+      remoteSha,
+    };
   }
   const [behind = "0", ahead = "0"] = counts.split(/\s+/);
   const aheadN = Number(ahead) || 0;
@@ -328,9 +342,17 @@ function classifyAgainst(
       upstream: upstreamName,
       behind: Number(behind) || 0,
       ahead: aheadN,
+      remoteSha,
     };
   }
-  return { state: "behind", branch, upstream: upstreamName, behind: Number(behind) || 0, ahead: 0 };
+  return {
+    state: "behind",
+    branch,
+    upstream: upstreamName,
+    behind: Number(behind) || 0,
+    ahead: 0,
+    remoteSha,
+  };
 }
 
 /**
@@ -611,13 +633,15 @@ function srcTouchedInRange(dir, oldSha, newSha) {
 /**
  * Best-effort "would a pull rebuild dist/?" for the read-only modes (--check/--preview), which
  * never fetch. `false` when there is nothing pending; the src-touch verdict when the incoming
- * range is locally inspectable; `null` when it isn't (the remote object isn't fetched yet, so
- * the honest answer is "can't tell without pulling" — @{u} may be stale in read-only mode).
+ * range is locally inspectable; `null` when it isn't (the ls-remote tip object isn't fetched
+ * yet, so the honest answer is "can't tell without pulling"). Never compare against @{u}: the
+ * local tracking ref may lag the remote tip indefinitely in these deliberately no-fetch modes.
  * Mirrors the read-only-vs-apply split: report whether a rebuild is needed, never perform one.
  */
 function readOnlyRebuildNeeded(dir, remoteState) {
   if (!remoteState || remoteState.state !== "behind") return false;
-  return srcTouchedInRange(dir, "HEAD", "@{u}");
+  if (!remoteState.remoteSha) return null;
+  return srcTouchedInRange(dir, "HEAD", remoteState.remoteSha);
 }
 
 /**
