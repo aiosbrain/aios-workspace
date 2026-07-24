@@ -185,6 +185,7 @@ export {
   type BuildDailyOptions,
   type RunDailyOptions,
 } from "./daily.js";
+export * from "./meetings/index.js";
 
 // Recording-daily connector preamble (AIO-366) — loop-core composition, independently bounded and
 // fail-open. Connector adapters remain manually invokable; this only automates the owner cadence.

@@ -14,6 +14,7 @@ import { parseFrontmatter } from "./workspace-parse.mjs";
 import { resolveLoopIdentity } from "./loop-config.mjs";
 import { mergeTaskWriteback } from "./tasks-table.mjs";
 import { cmdLoopInstall } from "./loop-install.mjs";
+import { renderDaily } from "./daily-render.mjs";
 
 const LOOP_TIERS = ["admin", "team", "external"];
 
@@ -137,119 +138,6 @@ export function resolveLoopTasksPath(repo, logDir) {
     path.join(repo, "03-status", "tasks.md"),
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-// Human render of a C4 DailyOrientation — actions first, one screen, seconds to read. The
-// machine surface is `--json` (the full orientation); this is the terse owner-local view.
-function renderDaily(o) {
-  const today = o.generatedAt.slice(0, 10);
-  const marker = o.audience === "owner" ? "owner-private · local only" : `view: ${o.audience}`;
-  const auditCommand =
-    o.audience === "owner"
-      ? "aios loop manifest --explain --daily"
-      : `aios loop manifest --explain --daily --as ${o.audience}`;
-  const printExcludedHint = () => {
-    if (!o.counts.excluded) return;
-    console.log("");
-    console.log(
-      c.dim(`  ${o.counts.excluded} excluded (default-deny) — run \`${auditCommand}\` to inspect`)
-    );
-  };
-  // "Ran (agent runtime)" — aggregate { tag, durationMin } only; safe at any audience (AIO-139).
-  const renderRan = () => {
-    if (!o.ranByTag?.length) return;
-    const h = (m) => `${(m / 60).toFixed(1)}h`;
-    const total = o.ranByTag.reduce((a, t) => a + t.durationMin, 0);
-    console.log("");
-    console.log(c.bold(`Ran (agent runtime · ${h(total)})`));
-    for (const t of o.ranByTag)
-      console.log(`  • ${c.dim(String(t.tag).padEnd(14))} ${h(t.durationMin)}`);
-  };
-
-  console.log(
-    c.blue("aios loop daily") +
-      c.dim(`  window ${o.window.from.slice(0, 10)} → ${o.window.to.slice(0, 10)}`) +
-      c.dim(`     ${marker}`)
-  );
-
-  const asksTotal = (o.counts.attention ?? 0) + (o.counts.queuedAsks ?? 0);
-  if (
-    o.counts.changed === 0 &&
-    o.counts.blocked === 0 &&
-    o.counts.owedToday === 0 &&
-    (o.counts.calendar ?? 0) === 0 &&
-    (o.counts.commsNeedingReply ?? 0) === 0 &&
-    asksTotal === 0
-  ) {
-    console.log("");
-    if (o.audience !== "owner") {
-      const hidden = [];
-      if (o.counts.withheld) hidden.push(`${o.counts.withheld} withheld`);
-      if (o.counts.excluded) hidden.push(`${o.counts.excluded} excluded (default-deny)`);
-      if (hidden.length) {
-        console.log(
-          c.dim(
-            `0 ${o.audience}-visible items (${hidden.join("; ")}) — run \`${auditCommand}\` to audit`
-          )
-        );
-      } else {
-        console.log(c.green(`0 ${o.audience}-visible items. Nothing happened in this view. ✓`));
-      }
-    } else {
-      console.log(
-        `${c.bold("Changed (0)")}   ${c.bold("Blocked (0)")}   ${c.bold("Owed today (0)")}`
-      );
-      console.log(
-        c.green(
-          o.counts.excluded
-            ? "No classifiable daily items. ✓"
-            : "Nothing carried over. You're clear. ✓"
-        )
-      );
-    }
-    renderRan();
-    if (o.audience === "owner") printExcludedHint();
-    return;
-  }
-
-  const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
-  const refLabel = (it) => (it.ref.row ? `${it.ref.path}#${it.ref.row}` : it.ref.path);
-  const annot = (it) => {
-    if (it.stale != null) return c.dim(`  (stale ${it.stale}d)`);
-    if (it.due) {
-      const dd = String(it.due).slice(0, 10);
-      return c.dim(`  (due ${dd === today ? "today" : it.due})`);
-    }
-    return "";
-  };
-  const section = (title, items, total, { expand = false } = {}) => {
-    console.log("");
-    console.log(c.bold(`${title} (${total})`));
-    for (const it of items) {
-      console.log(
-        `  • ${c.dim(String(it.kind).padEnd(11))} ${truncate(it.summary, 60)}${annot(it)}   ${c.dim(
-          refLabel(it)
-        )}`
-      );
-    }
-    if (total > items.length) {
-      const hint = expand ? ` — run \`${auditCommand}\` to inspect` : "";
-      console.log(c.dim(`  +${total - items.length} more${hint}`));
-    }
-  };
-
-  // Asks (owner-only, admin-tier) surface at the TOP — the operator's queue comes before the
-  // workspace roll-up. Empty for any --as view (buildDailyOrientation gates them out).
-  if (o.counts.attention) section("Attention", o.attention ?? [], o.counts.attention);
-  if (o.counts.queuedAsks) section("Queued asks", o.queuedAsks ?? [], o.counts.queuedAsks);
-  if (asksTotal) console.log(c.dim("  Resolve: `aios asks resolve <id>` · list: `aios asks`"));
-  section("Blocked", o.blocked, o.counts.blocked);
-  section("Owed today", o.owedToday, o.counts.owedToday);
-  section("Today's calendar", o.calendar ?? [], o.counts.calendar ?? 0);
-  section("Comms needing reply", o.commsNeedingReply ?? [], o.counts.commsNeedingReply ?? 0);
-  section("Changed", o.changed, o.counts.changed, { expand: true });
-  renderRan();
-  printExcludedHint();
 }
 
 // C8 — the local dogfood dashboard. Owner-only (admin-tier operational data). Tier-leak first
@@ -1067,11 +955,14 @@ export async function cmdLoop(repo, cfg, args) {
         }
       }
       const dStart = Date.now();
+      const transcriptReview =
+        audience === "owner" ? loop.summarizeTranscriptReview(repo) : undefined;
       orientation = loop.runDaily({
         root: repo,
         member,
         audience,
         record,
+        transcriptReview,
       });
       // C8 telemetry: the daily-run habit signal. Only a real recording OWNER run counts — an `--as`
       // projection or a non-recording run is side-effect-free by C4's contract, so it records nothing
