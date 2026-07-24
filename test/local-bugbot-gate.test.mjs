@@ -1321,6 +1321,21 @@ test("check-secrets: anchored Basic Auth pattern ignores URLs but catches real c
   }
 });
 
+test("check-secrets treats leading-hyphen private-key patterns as patterns", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-private-key-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  try {
+    const privateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    writeFileSync(path.join(dir, "leak.txt"), `${privateKeyHeader}\n`);
+
+    const result = spawnSync("bash", [script, dir], { encoding: "utf8" });
+    assert.equal(result.status, 1, "a private-key header must remain a hard failure");
+    assert.match(result.stdout, /Private Key Header/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("check-secrets ignores a gitignored .env but blocks the same file when tracked", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-env-"));
   const script = path.join(REPO, "validation", "check-secrets.sh");

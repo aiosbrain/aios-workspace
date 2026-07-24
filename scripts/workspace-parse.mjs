@@ -57,6 +57,17 @@ export const DECISION_REDACTION_VERSION = 1;
 // Everything else — private/admin, unknown labels, and (crucially) a blank audience cell — is
 // withheld (fail closed). Blank → admin is the deliberate V1 policy: an un-tagged row does NOT sync.
 const SYNCABLE_DECISION_AUDIENCES = new Set(["team", "external"]);
+const DECISION_HEADER_CELLS = new Set([
+  "#",
+  "date",
+  "decision",
+  "rationale",
+  "decided by",
+  "impact",
+  "type",
+  "audience",
+]);
+
 function isSyncableDecisionAudience(audience) {
   return SYNCABLE_DECISION_AUDIENCES.has(normalizeTier(audience));
 }
@@ -64,12 +75,22 @@ function isSyncableDecisionAudience(audience) {
 // A markdown separator row: every cell is dashes with optional leading/trailing colons.
 function isTableSeparatorLine(line) {
   const trimmed = String(line ?? "").trim();
-  if (!trimmed.startsWith("|")) return false;
+  if (!trimmed.includes("|")) return false;
   const cells = trimmed
     .replace(/^\||\|$/g, "")
     .split("|")
     .map((c) => c.trim());
   return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
+function hasUnescapedTablePipe(line) {
+  for (let index = 0; index < line.length; index++) {
+    if (line[index] !== "|") continue;
+    let slashCount = 0;
+    for (let cursor = index - 1; cursor >= 0 && line[cursor] === "\\"; cursor--) slashCount++;
+    if (slashCount % 2 === 0) return true;
+  }
+  return false;
 }
 
 // Classify a table's header row. A decision table is one that names a Decision or Audience column.
@@ -131,47 +152,40 @@ function scanDecisionTables(body) {
     .split("\n")
     .filter((line, index, lines) => {
       const trimmed = line.trim();
-      if (!trimmed.startsWith("|")) {
-        table = null; // left the table
+      if (!hasUnescapedTablePipe(trimmed)) {
+        // Blank lines do not terminate a table: hand-edited decision logs often space rows apart,
+        // and resetting here lets a later private/admin continuation bypass body redaction.
+        if (trimmed) table = null;
         return true;
       }
       if (isTableSeparatorLine(line)) return true; // keep separators
 
-      const cells = parseTableRows(line)[0] || [];
+      const cells = parseTableRows(trimmed.startsWith("|") ? line : `|${line}`)[0] || [];
       const candidate = decisionTableSchema(cells);
-      const followedBySeparator = isTableSeparatorLine(lines[index + 1]);
-      // Any header row (followed by its separator) opens a fresh table — including one butted
-      // directly against a decision table with no blank line between them, so that adjacent table
-      // is parsed against ITS own schema instead of the stale decision schema (which dropped its
-      // rows). The header line itself is kept.
-      if (followedBySeparator) {
-        table = candidate;
-        return true;
-      }
-      if (!table) {
-        // A decision header with NO separator row (hand-edited / malformed) still opens a decision
-        // table so its data rows are redacted — fail closed rather than leaking every line through.
-        if (candidate.isDecision) {
-          table = candidate;
-          return true;
-        }
-        return true; // not in any recognized table
-      }
-      if (!table.isDecision) {
-        if (candidate.isDecision) {
-          table = candidate;
-          removedRows++;
-          return false;
-        }
-        return true;
-      }
-      // Inside a decision table: a fresh decision header ends this one.
-      if (candidate.isDecision) {
-        table = candidate;
+      const isLegacyDecisionHeader =
+        candidate.isDecision &&
+        candidate.header.every((cell) => DECISION_HEADER_CELLS.has(cell)) &&
+        (candidate.header.includes("#") ||
+          (candidate.decisionIdx >= 0 && candidate.audienceIdx >= 0));
+      const startsNewTable = isTableSeparatorLine(lines[index + 1]);
+      const currentRow =
+        table?.isDecision && !isLegacyDecisionHeader ? parseDecisionRow(cells, table) : null;
+      const looksLikeHeader = DECISION_HEADER_CELLS.has(candidate.header[0]);
+
+      // A separator-backed line that looks like a header must never be accepted under stale column
+      // indexes. Switch to its decision schema, or to an invalid deny-only schema when ambiguous.
+      if (startsNewTable && currentRow && looksLikeHeader && !isLegacyDecisionHeader) {
+        table = candidate.isDecision ? candidate : { ...candidate, isDecision: true, valid: false };
         removedRows++;
         return false;
       }
-      const row = parseDecisionRow(cells, table);
+      if ((startsNewTable && !currentRow) || isLegacyDecisionHeader) {
+        table = candidate;
+        return true;
+      }
+      if (!table?.isDecision) return true;
+
+      const row = currentRow ?? parseDecisionRow(cells, table);
       if (row) rows.push(row);
       if (row && isSyncableDecisionAudience(row.audience)) {
         keptRows.push(row);

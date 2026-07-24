@@ -129,7 +129,7 @@ for entry in "${PATTERNS[@]}"; do
     while IFS= read -r match_file; do
       rel_path="${match_file#$REPO/}"
       # Show the matching line (truncated) but redact the actual secret
-      line=$(grep -niE -e "$pattern" "$match_file" 2>/dev/null | head -3 | sed 's/\(.\{80\}\).*/\1.../')
+      line=$(grep -niE -e "$pattern" -- "$match_file" 2>/dev/null | head -3 | sed 's/\(.\{80\}\).*/\1.../')
       echo "    $rel_path:"
       echo "$line" | while IFS= read -r l; do
         echo "      $l"

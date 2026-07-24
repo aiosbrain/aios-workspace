@@ -136,6 +136,113 @@ test("table butted directly after the decision table (no blank line) is NOT over
   assert.ok(/\| Alex \| Eng \|/.test(out.body), "butted table data row kept");
 });
 
+test("blank lines cannot let later private decision rows escape body redaction", () => {
+  const body = `| # | Decision | Audience |
+|---|---|---|
+| 1 | Team row | team |
+
+| 2 | Payroll detail | private |
+
+| Metric | Value |
+|---|---|
+| latency | fast |
+`;
+  const out = redactAdminDecisionRows(body);
+
+  assert.equal(out.redacted, 1);
+  assert.deepEqual(
+    out.rows.map((row) => row.row_key),
+    ["1"]
+  );
+  assert.doesNotMatch(out.body, /Payroll detail/);
+  assert.match(out.body, /\| latency \| fast \|/);
+});
+
+test("a private continuation row cannot masquerade as a header before a separator", () => {
+  const body = `| # | Decision | Audience |
+|---|---|---|
+| 1 | Team row | team |
+| 2 | Payroll detail | private |
+|---|---|---|
+| 3 | Personnel detail | admin |
+`;
+  const out = redactAdminDecisionRows(body);
+
+  assert.equal(out.redacted, 2);
+  assert.deepEqual(
+    out.rows.map((row) => row.row_key),
+    ["1"]
+  );
+  assert.doesNotMatch(out.body, /Payroll detail|Personnel detail/);
+});
+
+test("separator-backed headers cannot leave stale audience indexes active", () => {
+  const reordered = `| # | Decision | Rationale | Audience |
+|---|---|---|---|
+| 1 | Team row | ok | team |
+| # | Audience | Decision | Owner |
+|---|---|---|---|
+| 2 | private | Confidential row | team |
+`;
+  const ambiguous = `| # | Decision | Rationale | Audience |
+|---|---|---|---|
+| 1 | Team row | ok | team |
+| # | Visibility | Subject | Owner |
+|---|---|---|---|
+| 2 | private | Confidential row | team |
+`;
+
+  for (const body of [reordered, ambiguous]) {
+    const out = redactAdminDecisionRows(body);
+    assert.deepEqual(
+      out.rows.map((row) => row.row_key),
+      ["1"]
+    );
+    assert.doesNotMatch(out.body, /Confidential row/);
+  }
+});
+
+test("syncable data rows survive stray separators, including header-named titles", () => {
+  for (const title of ["Team row", "Decision", "Audience"]) {
+    const body = `| # | Decision | Audience |
+|---|---|---|
+| 1 | ${title} | team |
+|---|---|---|
+| 2 | Private row | private |
+`;
+    const out = redactAdminDecisionRows(body);
+
+    assert.deepEqual(
+      out.rows.map((row) => row.row_key),
+      ["1"]
+    );
+    assert.match(out.body, new RegExp(`\\| 1 \\| ${title} \\| team \\|`));
+    assert.doesNotMatch(out.body, /Private row/);
+  }
+});
+
+test("optional leading pipes are recognized and even slash parity cannot hide a delimiter", () => {
+  const noLeadingPipes = `# | Decision | Audience
+---|---|---
+1 | Team row | team
+2 | Confidential row | private
+`;
+  const evenSlashRun = String.raw`| # | Decision | Audience |
+|---|---|---|
+| 1 | Team row | team |
+| 2 | Restricted detail \\| private | team |
+`;
+
+  for (const body of [noLeadingPipes, evenSlashRun]) {
+    const out = redactAdminDecisionRows(body);
+    assert.deepEqual(
+      out.rows.map((row) => row.row_key),
+      ["1"]
+    );
+    assert.doesNotMatch(out.body, /Confidential row|Restricted detail/);
+  }
+});
+
 test("no-op body + rows when every row is syncable", () => {
   const body = table(`| 1 | d | Public | ok | a | h | 2 | team |`);
   const out = redactAdminDecisionRows(body);

@@ -3,7 +3,7 @@
 // including the v1.2 optional Parent | Labels | Priority columns. Zero network, zero deps.
 // Run: node test/tasks-table.test.mjs
 
-import { parseTaskRows, mergeTaskWriteback } from "../scripts/tasks-table.mjs";
+import { parseTableRows, parseTaskRows, mergeTaskWriteback } from "../scripts/tasks-table.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -49,6 +49,17 @@ check(
 );
 check("hierarchy parses priority", hierRows[0].priority === "high");
 check("empty parent cell → null", hierRows[0].parent === null);
+
+const escapedPipeRows = parseTableRows(String.raw`| k | odd \| pipe | team |
+| k | even \\| private | team`);
+check(
+  "odd backslash escapes a pipe while even backslashes leave a delimiter",
+  escapedPipeRows[0][1] === "odd | pipe" &&
+    escapedPipeRows[0][2] === "team" &&
+    escapedPipeRows[1][1] === "even \\" &&
+    escapedPipeRows[1][2] === "private" &&
+    escapedPipeRows[1][3] === "team"
+);
 
 // ── mergeTaskWriteback: six-column, no hierarchy edits ────────────────────────
 const baseTable = `# Tasks
