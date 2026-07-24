@@ -143,7 +143,7 @@ function parseDecisionRow(cells, schema) {
  * audience column, and so unrelated tables/prose are never touched. Redaction works on the raw line —
  * NOT a pre-parsed key set — so a blank or escaped-pipe row_key can't slip a sensitive line through.
  */
-function scanDecisionTables(body) {
+function scanDecisionTables(body, fallbackAudience = null) {
   const rows = [];
   const keptRows = [];
   let table = null;
@@ -187,7 +187,7 @@ function scanDecisionTables(body) {
 
       const row = currentRow ?? parseDecisionRow(cells, table);
       if (row) rows.push(row);
-      if (row && isSyncableDecisionAudience(row.audience)) {
+      if (row && isSyncableDecisionAudience(row.audience ?? fallbackAudience)) {
         keptRows.push(row);
         return true;
       }
@@ -211,7 +211,7 @@ export function parseDecisionRows(body) {
  * Re-parses `body` internally (no pre-parsed key set) so a blank/malformed/escaped-pipe row_key can't
  * retain a sensitive body line. Returns { body, rows, redacted }.
  */
-export function redactAdminDecisionRows(body) {
-  const scanned = scanDecisionTables(body);
+export function redactAdminDecisionRows(body, fallbackAudience = null) {
+  const scanned = scanDecisionTables(body, fallbackAudience);
   return { body: scanned.body, rows: scanned.keptRows, redacted: scanned.removedRows };
 }

@@ -392,8 +392,8 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
     if (kind === "decision") {
-      // H3: redact non-team/external rows from body+rows even in a team file (hash stays local).
-      ({ body: pushBody, rows } = redactAdminDecisionRows(body));
+      // H3: redact rows; legacy tables without Audience inherit the file tier like operator-loop.
+      ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
     }
     plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
   }

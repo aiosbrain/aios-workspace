@@ -243,6 +243,24 @@ test("optional leading pipes are recognized and even slash parity cannot hide a 
   }
 });
 
+test("legacy tables without Audience inherit an explicit file tier only", () => {
+  const body = `| # | Decision |
+|---|---|
+| 1 | Legacy row |
+`;
+
+  assert.deepEqual(redactAdminDecisionRows(body).rows, [], "no fallback remains default-deny");
+  for (const tier of ["team", "external"]) {
+    const out = redactAdminDecisionRows(body, tier);
+    assert.deepEqual(
+      out.rows.map((row) => row.row_key),
+      ["1"]
+    );
+    assert.match(out.body, /Legacy row/);
+  }
+  assert.deepEqual(redactAdminDecisionRows(body, "admin").rows, []);
+});
+
 test("no-op body + rows when every row is syncable", () => {
   const body = table(`| 1 | d | Public | ok | a | h | 2 | team |`);
   const out = redactAdminDecisionRows(body);
