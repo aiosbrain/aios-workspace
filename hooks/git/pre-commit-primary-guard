@@ -1,23 +1,30 @@
 #!/usr/bin/env bash
 #
-# pre-commit-primary-guard — block feature commits in the PRIMARY checkout.
+# pre-commit-primary-guard — block ALL authored commits in the PRIMARY checkout.
 #
 # AIOS requires every agent to do its work in a dedicated `git worktree`
-# (`aios worktree add <feat/branch>`), NEVER as a branch committed in the
-# primary checkout. Automated harnesses (e.g. oh-my-opencode / Codex) have
-# been observed doing `git checkout -b <feature>` in the primary checkout and
-# committing there — stranding the primary on a feature branch and producing
-# duplicate PRs.
+# (`aios worktree add <feat/branch>`), NEVER as a commit made in the primary
+# checkout. Automated harnesses (e.g. oh-my-opencode / Codex, and a Linear agent
+# observed writing code on `main`) have been seen committing directly in the
+# primary checkout — stranding it on a feature branch, landing feature work
+# straight on `main`, and producing duplicate PRs.
 #
-# This hook makes that structurally loud: a commit is BLOCKED when
-#   (a) the working copy is the PRIMARY checkout (not a linked worktree), AND
-#   (b) the current branch is NOT the default branch (`main`).
+# This hook makes that structurally loud: a commit is BLOCKED whenever the
+# working copy is the PRIMARY checkout (not a linked worktree) — on EVERY
+# branch, including `main`. The primary should only ever advance via
+# `git merge --ff-only` from origin, which moves the ref WITHOUT creating a
+# commit and so never invokes this hook. Any authored commit here is the
+# anti-pattern we're closing.
 #
-# It is a NO-OP inside a legitimate linked worktree (where feature work belongs)
-# and on `main` in the primary (for the rare intentional hotfix — though even
-# that is gated below on an explicit override for non-main branches only).
+# Merge commits: a `git merge` that is NOT a fast-forward DOES invoke pre-commit
+# and is therefore blocked too. That is intentional — the primary is meant to be
+# ff-only, so a non-ff merge in the primary is itself the anti-pattern. Use the
+# override below if you genuinely must create one.
 #
-# Override for a genuinely intentional primary-checkout feature commit:
+# It is a NO-OP inside a legitimate linked worktree (where all real work belongs).
+#
+# Override for a genuinely intentional primary-checkout commit (rare hotfix or a
+# deliberate non-ff merge on `main`):
 #   AIOS_ALLOW_PRIMARY_COMMIT=1 git commit ...
 #
 # Installed to `.git/hooks/pre-commit` by `scripts/install-primary-commit-guard.sh`.
@@ -48,11 +55,14 @@ fi
 
 if [[ "$is_primary" == "1" ]]; then
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
-  if [[ "$branch" != "$DEFAULT_BRANCH" ]]; then
-    if [[ "${AIOS_ALLOW_PRIMARY_COMMIT:-}" == "1" ]]; then
-      echo "[aios] AIOS_ALLOW_PRIMARY_COMMIT=1 set — allowing commit on '$branch' in the primary checkout." >&2
-    else
-      cat >&2 <<EOF
+  if [[ "${AIOS_ALLOW_PRIMARY_COMMIT:-}" == "1" ]]; then
+    echo "[aios] AIOS_ALLOW_PRIMARY_COMMIT=1 set — allowing commit on '$branch' in the primary checkout." >&2
+  else
+    suggest_branch="$branch"
+    if [[ "$suggest_branch" == "$DEFAULT_BRANCH" || "$suggest_branch" == "HEAD" ]]; then
+      suggest_branch="feat/<short-task-name>"
+    fi
+    cat >&2 <<EOF
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  AIOS worktree guard: commit BLOCKED in the PRIMARY checkout                 │
@@ -61,21 +71,22 @@ if [[ "$is_primary" == "1" ]]; then
 You are committing to branch '$branch' inside the PRIMARY checkout:
   $(git rev-parse --show-toplevel 2>/dev/null)
 
-AIOS requires feature work to live in a dedicated git worktree, never on a
-branch committed in the primary checkout (it collides with concurrent work and
-produces duplicate PRs). Do this instead:
+AIOS requires ALL work to live in a dedicated git worktree — the primary
+checkout must never carry an authored commit on ANY branch, including '$DEFAULT_BRANCH'.
+It should only ever advance via 'git merge --ff-only' from origin (which moves
+the ref without a commit and never triggers this hook). Do this instead:
 
-  aios worktree add $branch
-  cd ../$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")-worktrees/${branch//\//-}
+  aios worktree add $suggest_branch
+  cd ../$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")-worktrees/${suggest_branch//\//-}
   # then commit there
 
-If this really is an intentional primary-checkout commit (rare hotfix), re-run:
+If this really is an intentional primary-checkout commit (a rare hotfix, or a
+deliberate non-ff merge on '$DEFAULT_BRANCH'), re-run:
 
   AIOS_ALLOW_PRIMARY_COMMIT=1 git commit ...
 
 EOF
-      exit 1
-    fi
+    exit 1
   fi
 fi
 
