@@ -108,7 +108,11 @@ function groundedCandidate(kind, index, candidate, transcriptTexts) {
   }
   const transcript = String(candidate.transcript ?? "").trim();
   const sourceQuote = String(candidate.sourceQuote ?? "").trim();
-  if (!transcript || !(transcript in transcriptTexts)) {
+  if (
+    !transcript ||
+    !Object.hasOwn(transcriptTexts, transcript) ||
+    typeof transcriptTexts[transcript] !== "string"
+  ) {
     return { rejected: rejection(kind, index, candidate, "transcript_not_loaded") };
   }
   if (!sourceQuote) {

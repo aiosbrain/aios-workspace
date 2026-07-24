@@ -111,9 +111,10 @@ export function parseEvidenceBatch(item: Readonly<Record<string, unknown>>): Evi
 // Fail-closed grounding: the sourceQuote must appear verbatim in the named transcript, and a
 // stakeholder's name must appear inside its own quote. Ungrounded candidates are dropped.
 export function groundEvidenceBatch(root: string, batch: EvidenceBatch): EvidenceBatch {
-  const contentCache = new Map<string, string>();
+  const contentCache = new Map<string, string | null>();
   const readTranscript = (rel: string): string | null => {
-    if (contentCache.has(rel)) return contentCache.get(rel) ?? null;
+    const cached = contentCache.get(rel);
+    if (cached !== undefined) return cached;
     let content: string | null = null;
     try {
       const file = resolveExistingWorkspaceFile({ root, requested: rel, label: "transcript" });
@@ -121,17 +122,18 @@ export function groundEvidenceBatch(root: string, batch: EvidenceBatch): Evidenc
     } catch {
       content = null;
     }
-    contentCache.set(rel, content ?? "");
+    contentCache.set(rel, content);
     return content;
   };
   const facts = batch.facts.filter((fact) => {
     const content = readTranscript(fact.transcript);
-    return content !== null && content.includes(fact.sourceQuote);
+    return content !== null && fact.sourceQuote.length > 0 && content.includes(fact.sourceQuote);
   });
   const stakeholderMentions = batch.stakeholderMentions.filter((mention) => {
     const content = readTranscript(mention.transcript);
     return (
       content !== null &&
+      mention.sourceQuote.length > 0 &&
       content.includes(mention.sourceQuote) &&
       normalizeForMatch(mention.sourceQuote).includes(normalizeForMatch(mention.name))
     );

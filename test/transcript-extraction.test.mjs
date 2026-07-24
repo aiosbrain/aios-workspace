@@ -74,6 +74,31 @@ test("stage excludes ungrounded candidates and reports why", () => {
   ]);
 });
 
+test("prototype-key transcript names reject as not loaded instead of crashing", () => {
+  const stage = prepareExtractionStage({
+    extraction: {
+      decisions: [],
+      tasks: [],
+      facts: [
+        {
+          content: "Injected fact",
+          transcript: "constructor",
+          sourceQuote: "anything",
+        },
+      ],
+      stakeholders: [],
+    },
+    transcriptTexts: {},
+    now: "2026-07-24T00:00:00.000Z",
+  });
+
+  assert.equal(stage.facts.length, 0);
+  assert.deepEqual(
+    stage.rejected.map((item) => item.reason),
+    ["transcript_not_loaded"]
+  );
+});
+
 test("new evidence defaults admin, uses stable keys, and deduplicates", () => {
   const candidate = {
     name: "Sam Rivera",
