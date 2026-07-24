@@ -19,22 +19,22 @@
 // Exit codes: 0 = addon loads (healed or already fine); 1 = unresolved mismatch
 // (caller decides whether that's fatal — hydration treats it as a warning).
 
-import { createRequire } from 'node:module';
-import { readFileSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { createRequire } from "node:module";
+import { readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const activeAbi = process.versions.modules; // e.g. "127" (Node 22), "147" (Node 26)
-const activeMajor = process.versions.node.split('.')[0];
+const activeMajor = process.versions.node.split(".")[0];
 
 function readPinnedMajor() {
-  for (const f of ['.nvmrc', '.node-version']) {
+  for (const f of [".nvmrc", ".node-version"]) {
     const p = join(repoRoot, f);
     if (existsSync(p)) {
-      const v = readFileSync(p, 'utf8').trim().replace(/^v/, '').split('.')[0];
+      const v = readFileSync(p, "utf8").trim().replace(/^v/, "").split(".")[0];
       if (v) return v;
     }
   }
@@ -43,7 +43,7 @@ function readPinnedMajor() {
 
 function betterSqlite3EnginesRange() {
   try {
-    const pkg = require('better-sqlite3/package.json');
+    const pkg = require("better-sqlite3/package.json");
     return pkg.engines?.node ?? null;
   } catch {
     return null;
@@ -56,7 +56,7 @@ function betterSqlite3EnginesRange() {
 // that would only fail at compile time.
 function supportsActiveMajor(range) {
   if (!range) return false;
-  return new RegExp(`(^|\\|)\\s*${activeMajor}(\\.|\\s|$|x)`).test(range);
+  return new RegExp(String.raw`(^|\|)\s*${activeMajor}(\.|\s|$|x)`).test(range);
 }
 
 function tryLoad() {
@@ -64,8 +64,8 @@ function tryLoad() {
     // `require()` alone lazy-loads the JS wrapper and does NOT bind the native
     // addon — the ABI mismatch only surfaces when the addon is actually used.
     // Opening an in-memory DB forces the bind, so this is what actually probes.
-    const Database = require('better-sqlite3');
-    new Database(':memory:').close();
+    const Database = require("better-sqlite3");
+    new Database(":memory:").close();
     return { ok: true };
   } catch (err) {
     return { ok: false, err };
@@ -82,10 +82,10 @@ if (res.ok) {
 // Only self-heal / advise for the ABI-mismatch class; re-throw anything else
 // (a genuinely broken install, missing dep) so it isn't masked.
 const isAbiMismatch = /NODE_MODULE_VERSION|different Node\.js version|was compiled against/i.test(
-  String(res.err?.message ?? res.err),
+  String(res.err?.message ?? res.err)
 );
 if (!isAbiMismatch) {
-  console.error('[native-abi] better-sqlite3 failed to load for a non-ABI reason:');
+  console.error("[native-abi] better-sqlite3 failed to load for a non-ABI reason:");
   console.error(String(res.err?.message ?? res.err));
   process.exit(1);
 }
@@ -93,7 +93,7 @@ if (!isAbiMismatch) {
 const range = betterSqlite3EnginesRange();
 console.error(
   `[native-abi] better-sqlite3 was built for a different Node ABI than the active runtime ` +
-    `(active: Node ${activeMajor} / ABI ${activeAbi}).`,
+    `(active: Node ${activeMajor} / ABI ${activeAbi}).`
 );
 
 if (pinnedMajor && activeMajor !== pinnedMajor) {
@@ -103,7 +103,7 @@ if (pinnedMajor && activeMajor !== pinnedMajor) {
     `[native-abi] This repo is pinned to Node ${pinnedMajor} (.nvmrc). You are on Node ${activeMajor}.` +
       (range && !supportsActiveMajor(range)
         ? ` better-sqlite3 (engines: ${range}) has no prebuild for Node ${activeMajor}.`
-        : ''),
+        : "")
   );
   console.error(`[native-abi] Fix: switch to the pinned Node, then reinstall/rebuild:`);
   console.error(`    nvm use            # or: fnm use / mise use  (reads .nvmrc)`);
@@ -116,17 +116,19 @@ if (pinnedMajor && activeMajor !== pinnedMajor) {
 // the primary, so this rebuilds the shared copy and fixes every worktree.
 console.error(`[native-abi] Rebuilding better-sqlite3 for Node ${activeMajor}…`);
 try {
-  execSync('npm rebuild better-sqlite3', { cwd: repoRoot, stdio: 'inherit' });
+  // NOSONAR javascript:S4036 — resolving `npm` via the developer's PATH is
+  // inherent to rebuilding a native addon; there is no fixed path to harden to.
+  execSync("npm rebuild better-sqlite3", { cwd: repoRoot, stdio: "inherit" }); // NOSONAR
 } catch {
-  console.error('[native-abi] npm rebuild failed — run it manually in the primary checkout.');
+  console.error("[native-abi] npm rebuild failed — run it manually in the primary checkout.");
   process.exit(1);
 }
 
 res = tryLoad();
 if (res.ok) {
-  console.error('[native-abi] Rebuild succeeded — better-sqlite3 now loads.');
+  console.error("[native-abi] Rebuild succeeded — better-sqlite3 now loads.");
   process.exit(0);
 }
-console.error('[native-abi] Still failing after rebuild:');
+console.error("[native-abi] Still failing after rebuild:");
 console.error(String(res.err?.message ?? res.err));
 process.exit(1);
