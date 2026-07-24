@@ -103,6 +103,35 @@ function resolveModel(model) {
 }
 
 /**
+ * Translate one SDK "assistant" message into WS-shaped events. Pure and testable
+ * independent of the live `query()` stream.
+ *
+ * `SDKAssistantMessage.error` (sdk.d.ts) is the SDK's own documented field for this —
+ * an enum (`billing_error`, `rate_limit`, `overloaded`, ...) set directly on the
+ * message when the turn failed at the API level. A message carrying it never streams
+ * through stream_event/content_block_delta, so its `text` content block is the ONLY
+ * place the human-readable failure reason (e.g. "Credit balance is too low") lives —
+ * it's surfaced as a typed `error` event, falling back to the enum value itself if no
+ * text is present. A normal turn's text always arrives via delta first — forwarding it
+ * again here would render it twice — so every other assistant message keeps relying on
+ * the streamed deltas and this branch only ever emits `tool_use`.
+ */
+export function mapAssistantMessage(message) {
+  const content = message.message?.content || [];
+  if (message.error) {
+    const text = content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+    return [{ type: "error", message: text || `Runtime error: ${message.error}` }];
+  }
+  return content
+    .filter((block) => block.type === "tool_use")
+    .map((block) => ({ type: "tool_use", name: block.name, input: block.input, id: block.id }));
+}
+
+/**
  * @param {object} host
  * @param {string} host.repo                       workspace cwd
  * @param {string} [host.model]                    configured agent_model (resolved to a default)
@@ -239,11 +268,10 @@ export async function run({
         emit({ type: "delta", text: ev.delta.text });
       }
     } else if (message.type === "assistant") {
-      for (const block of message.message?.content || []) {
-        if (block.type === "tool_use") {
-          emit({ type: "tool_use", name: block.name, input: block.input, id: block.id });
-        }
-      }
+      // mapAssistantMessage surfaces synthetic/API-error messages (billing, etc.) as an `error`
+      // event and otherwise yields the tool_use events; keep main's "context"-scoped usage label
+      // so a per-prompt usage never masquerades as session-cumulative.
+      for (const ev of mapAssistantMessage(message)) emit(ev);
       emitUsage(message.message?.usage, "context");
       emit({ type: "assistant_done" });
     } else if (message.type === "user") {
