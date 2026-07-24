@@ -1,4 +1,5 @@
 export { applyPendingTranscriptStage } from "./apply.js";
+export { attachTranscriptEvidence } from "./attach-evidence.js";
 export { draftTranscriptReview } from "./engine.js";
 export { TranscriptReviewError } from "./errors.js";
 export { listTranscriptReviewStages, summarizeTranscriptReview } from "./listing.js";

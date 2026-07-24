@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import type { ApplyPendingTranscriptStageOptions, ApplyResult, LiveLogs } from "./contracts.js";
 import { TranscriptReviewError } from "./errors.js";
+import { applyEvidenceBatch } from "./evidence.js";
 import { withTranscriptApplyLock } from "./lock.js";
 import { decisionKey, insertRows, renderDecisionRow, renderTaskRow, taskKey } from "./markdown.js";
 import type { TranscriptReviewStageV2 } from "./models.js";
@@ -98,6 +99,13 @@ export function applyPendingTranscriptStage(
       options.beforeLogReplace?.("tasks");
       replaceLog(logs.tasks.path, plan.taskContent);
     }
+    // 1.12 evidence: append grounded facts/stakeholder mentions to their tier-routed evidence files
+    // (idempotent by rowKey) inside the same apply lock. Admin/private evidence lands in *-private.md,
+    // which the push side never syncs; only team/external files leave the machine.
+    const evidence = applyEvidenceBatch(options.root, {
+      facts: stage.facts,
+      stakeholderMentions: stage.stakeholderMentions,
+    });
     const approved = {
       ...stage,
       status: "approved" as const,
@@ -107,6 +115,8 @@ export function applyPendingTranscriptStage(
         tasksAdded: plan.tasksAdded,
         decisionLogChanged: plan.decisionChanged,
         taskLogChanged: plan.taskChanged,
+        factsAdded: evidence.factsAdded,
+        stakeholdersAdded: evidence.stakeholdersAdded,
       },
     };
     replaceStage(stagePath, approved);
@@ -115,6 +125,8 @@ export function applyPendingTranscriptStage(
       stage: approved,
       decisionsAdded: plan.decisionsAdded,
       tasksAdded: plan.tasksAdded,
+      factsAdded: evidence.factsAdded,
+      stakeholdersAdded: evidence.stakeholdersAdded,
     };
   });
 }

@@ -43,6 +43,10 @@ export function finalizeReview(options: FinalizeReviewOptions): DraftTranscriptR
   };
   const stage: ReviewableStage = {
     ...payload,
+    // Evidence (facts/stakeholder mentions) is attached after finalize via attachTranscriptEvidence
+    // and is excluded from the reviewDigest, so the digest stays pinned to the decision/task payload.
+    facts: [],
+    stakeholderMentions: [],
     status: options.evaluation.status,
     push: { state: "not_requested", attempts: [] },
     reviewDigest: computeReviewDigest(payload),
