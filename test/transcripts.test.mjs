@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  approveTranscriptStage,
-  draftTranscriptReview,
-  enableTranscriptSync,
-} from "../scripts/transcripts.mjs";
+import { draftTranscriptReview } from "../dist/operator-loop/meetings/index.js";
+import { enableTranscriptSync } from "../scripts/transcripts-config.mjs";
+import { cmdTranscripts } from "../scripts/transcripts.mjs";
+
+const TRANSCRIPT = "1-inbox/transcripts/meeting.md";
+const NOW = "2026-07-13T12:00:00.000Z";
 
 function workspace() {
   const repo = mkdtempSync(path.join(tmpdir(), "transcript-pipeline-"));
@@ -35,6 +36,7 @@ function workspace() {
 const extraction = {
   decisions: [
     {
+      id: "decision-ship-friday",
       date: "2026-07-13",
       decision: "Ship on Friday",
       rationale: "Ready",
@@ -42,39 +44,112 @@ const extraction = {
       impact: "Release",
       type: 2,
       audience: "team",
-      transcript: "1-inbox/transcripts/meeting.md",
+      transcript: TRANSCRIPT,
       sourceQuote: "We decided to ship on Friday.",
     },
     {
+      id: "decision-invented",
+      date: "2026-07-13",
       decision: "Invented decision",
-      transcript: "1-inbox/transcripts/meeting.md",
+      rationale: "Invented rationale",
+      decidedBy: "Nobody",
+      impact: "None",
+      type: 2,
+      audience: "team",
+      transcript: TRANSCRIPT,
       sourceQuote: "This quote is absent",
     },
   ],
   tasks: [
     {
+      id: "task-release-notes",
       task: "Prepare the release notes",
       assignee: "Chetan",
-      transcript: "1-inbox/transcripts/meeting.md",
+      status: "Todo",
+      sprint: "Release",
+      due: "2026-07-17",
+      linear: "—",
+      transcript: TRANSCRIPT,
       sourceQuote: "I will prepare the release notes.",
     },
   ],
 };
 
+function criterion(id) {
+  return {
+    id,
+    classification: id === "TD5" ? "advisory" : "must",
+    outcome: "pass",
+    findings: [],
+    candidateIds: [],
+    transcriptPaths: [TRANSCRIPT],
+    evidence: ["deterministic test evidence"],
+  };
+}
+
+function phaseRunner() {
+  return async ({ phase, input }) => {
+    if (phase === "extract") return extraction;
+    if (phase === "deduplicate") {
+      return { decisions: input.decisions, tasks: input.tasks };
+    }
+    if (phase === "verify") {
+      return {
+        verdict: "pass",
+        criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion),
+      };
+    }
+    if (phase === "grade") {
+      return {
+        verdict: "pass",
+        certifiedNoChanges: false,
+        criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
+      };
+    }
+    const rejected = new Set(
+      input.report.criteria
+        .filter(({ outcome }) => outcome === "fail")
+        .flatMap(({ candidateIds }) => candidateIds)
+    );
+    return {
+      decisions: input.decisions.filter(({ id }) => !rejected.has(id)),
+      tasks: input.tasks.filter(({ id }) => !rejected.has(id)),
+    };
+  };
+}
+
+async function draft(repo) {
+  const result = await draftTranscriptReview({
+    root: repo,
+    transcriptPaths: [TRANSCRIPT],
+    rubricBudget: 1,
+    runPhase: phaseRunner(),
+    now: NOW,
+  });
+  assert.equal(result.outcome, "staged");
+  return result;
+}
+
+async function approveWithoutPush(repo, stagePath) {
+  return cmdTranscripts(
+    repo,
+    {},
+    ["approve", path.relative(repo, stagePath), "--no-push", "--json"],
+    { stdout: () => {}, stderr: () => {}, now: () => NOW }
+  );
+}
+
 test("draft persists only grounded decisions and tasks for one durable review", async () => {
   const repo = workspace();
   try {
-    const { file, stage } = await draftTranscriptReview({
-      repo,
-      transcriptPaths: ["1-inbox/transcripts/meeting.md"],
-      extraction,
-      now: "2026-07-13T12:00:00.000Z",
-    });
+    const { stagePath, stage } = await draft(repo);
     assert.equal(stage.status, "pending_review");
     assert.equal(stage.decisions.length, 1);
     assert.equal(stage.tasks.length, 1);
-    assert.ok(file.startsWith(path.join(repo, ".aios", "staging")));
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).access, "admin");
+    assert.ok(
+      realpathSync(stagePath).startsWith(path.join(realpathSync(repo), ".aios", "staging"))
+    );
+    assert.equal(JSON.parse(readFileSync(stagePath, "utf8")).access, "admin");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -83,17 +158,12 @@ test("draft persists only grounded decisions and tasks for one durable review", 
 test("approve appends both logs once and is idempotent", async () => {
   const repo = workspace();
   try {
-    const { file } = await draftTranscriptReview({
-      repo,
-      transcriptPaths: ["1-inbox/transcripts/meeting.md"],
-      extraction,
-      now: "2026-07-13T12:00:00.000Z",
-    });
-    assert.deepEqual(approveTranscriptStage({ repo, stageFile: file }), {
-      decisions: 1,
-      tasks: 1,
-      alreadyApproved: false,
-    });
+    const { stagePath } = await draft(repo);
+    assert.equal(await approveWithoutPush(repo, stagePath), 0);
+    const approved = JSON.parse(readFileSync(stagePath, "utf8"));
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.apply.decisionsAdded, 1);
+    assert.equal(approved.apply.tasksAdded, 1);
     assert.match(
       readFileSync(path.join(repo, "3-log", "decision-log.md"), "utf8"),
       /Ship on Friday/
@@ -102,7 +172,18 @@ test("approve appends both logs once and is idempotent", async () => {
       readFileSync(path.join(repo, "3-log", "tasks-team.md"), "utf8"),
       /TT1.*Prepare the release notes/
     );
-    assert.equal(approveTranscriptStage({ repo, stageFile: file }).alreadyApproved, true);
+    const logsAfterFirstApproval = {
+      decisions: readFileSync(path.join(repo, "3-log", "decision-log.md"), "utf8"),
+      tasks: readFileSync(path.join(repo, "3-log", "tasks-team.md"), "utf8"),
+    };
+    assert.equal(await approveWithoutPush(repo, stagePath), 0);
+    assert.deepEqual(
+      {
+        decisions: readFileSync(path.join(repo, "3-log", "decision-log.md"), "utf8"),
+        tasks: readFileSync(path.join(repo, "3-log", "tasks-team.md"), "utf8"),
+      },
+      logsAfterFirstApproval
+    );
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

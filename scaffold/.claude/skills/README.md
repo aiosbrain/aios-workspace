@@ -10,7 +10,7 @@ engagement-specific arrives through the workflow's `args`.
 |-------|------|-------|
 | `decision-audit/` | workflow-harness | Per-rule fan-out + adversarial verify over the decision log |
 | `scope-creep/` | workflow-harness | Per-deliverable classify + **severity-downgrade** refuter |
-| `transcript-decisions/` | workflow-harness | Per-transcript extract → dedup → adversarial grounding (rubric-gated) |
+| `transcript-decisions/` | skill | Canonical `aios transcripts` CLI + typed V2 review engine; legacy Workflow template retired |
 | `weekly-synthesis/` | workflow-harness | Weekly digest with a **rubric-gated self-correction loop** |
 | `aios-sync/` | skill | Team Brain sync: status → review blocked → dry-run → push → pull |
 

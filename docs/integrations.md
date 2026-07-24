@@ -107,9 +107,28 @@ Install `gog-cli`, run `gog auth login` once for OAuth. The agent reads/sends ma
 calendar, and drive by shelling out to `gog`. No MCP server.
 
 ### Granola (CLI / export)
-Export meeting notes/transcripts into `1-inbox/transcripts/`, then run the
-`transcript-decisions` harness to turn them into decision-log rows. If you have the
-Granola API, set `GRANOLA_API_KEY` and script the export.
+
+Export meeting notes/transcripts into `1-inbox/transcripts/`. New workspaces include
+that path in the team sync configuration; for an existing workspace, enable it once:
+
+```bash
+aios transcripts enable-sync
+```
+
+Transcript processing is an explicit, portable CLI flow—not a Workflow template:
+
+```bash
+aios transcripts draft --transcripts 1-inbox/transcripts/meeting.md
+aios transcripts list
+aios transcripts approve .aios/staging/transcript-decisions/<stage>.json
+```
+
+The typed engine extracts decisions and explicit task commitments, grades the full batch,
+and keeps the V2 stage owner-private until one human approval applies both local logs.
+Approval attempts the existing `aios push` path after local apply; use `--no-push` for an
+explicit skip, or rerun `approve` to retry a failed push without reapplying. Scheduled,
+connector-triggered, and daily-triggered drafting is deferred. If you have the Granola
+API, set `GRANOLA_API_KEY` and script only the export.
 
 ### Mattermost (MCP)
 Self-hosted Slack alternative. Set `MATTERMOST_URL` and a personal access token
