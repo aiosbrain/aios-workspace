@@ -7,7 +7,10 @@ Meetings are where decisions get made and where "who owns what" lives. The weekl
 
 ## Reuse (shipped, KEEP)
 - Granola source connector (sibling **aios-team-brain** repo: ingestion/aios_ingest/sources/granola.py, 319 LOC) — OAuth, auto transcript pull, webhook/scheduler triggers (brain PR #34).
-- `transcript-decisions` harness — multi-agent extraction → decision-log rows with rubric-gated grounding.
+- `aios transcripts` CLI backed by the typed meetings engine — portable, rubric-gated
+  extraction of decisions and explicit task commitments into an owner-local V2 review
+  stage. The former Workflow harness is retired; `transcript-decisions` remains the
+  skill/trigger name for this CLI path.
 - `granola-digest` skill (per-meeting + daily digest).
 - Stakeholder map CLI + MCP surface (AIO-141). Its shipped contract remains below as historical
   domain documentation; it is not part of the active AIO-370 increment.
@@ -32,8 +35,8 @@ subsequent `aios push` are distinct outcomes so a network failure cannot make a 
 write look unapplied or cause it to be applied twice.
 
 This increment replaces the implementation behind the existing `aios transcripts` surface. The
-current `scripts/transcripts.mjs` is an untyped proof of concept and becomes a thin CLI adapter; it
-is not a workflow-layer implementation to port verbatim. The existing
+current `scripts/transcripts.mjs` is the thin CLI adapter to the typed meetings engine; it is not a
+workflow-layer implementation to port verbatim. The existing
 `scaffold/.claude/rubrics/transcript-decisions.md` supplies the TD1–TD5 policy baseline. The builder
 generalizes that policy to decisions **and** tasks and adds TD6 as described below.
 

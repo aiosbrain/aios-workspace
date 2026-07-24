@@ -54,7 +54,9 @@ The template (`scaffold/.claude/`) ships:
 - **Conventions** (`rules/`): decision-log format + type/audience taxonomy, frontmatter
   schema by directory, the promotion/publishing flow, hours logging, and **design-system**
   rules (when you add UI — pin `@aios-alpha/design` + `@aios-alpha/ui`; see `docs/design-system.md`).
-- **Harnesses** (`skills/`): the dynamic-workflow skills below.
+- **Workflow harnesses** (`skills/`): the dynamic-workflow skills below. The
+  `transcript-decisions` skill is a portable CLI adapter to the typed meetings engine,
+  not a Workflow harness.
 
 ---
 
@@ -87,13 +89,13 @@ control.
 
 The heart of the system. Instead of asking one agent to do a whole task in one
 context, a harness spawns focused sub-agents and adds **adversarial verification** so
-its output is trustworthy. Three ship today; more are on the roadmap.
+its output is trustworthy. The workflow harnesses below are distinct from the typed
+transcript review CLI; more harnesses are on the roadmap.
 
 | Harness | What it does | Pattern |
 |---------|--------------|---------|
 | **decision-audit** | Lints the decision log against governance rules; returns only verified findings | one-verifier-per-rule + adversarial verify |
 | **scope-creep** | Flags deliverables that drift from the scope baseline/ledger | per-deliverable classify + severity-downgrade refuter |
-| **transcript-decisions** | Turns meeting transcripts into novel, grounded decision rows | fan-out extract + dedup + adversarial grounding |
 
 These came out of a controlled A/B study (single-pass vs harness on identical inputs).
 The headline finding: **adversarial verification — not parallelism — is what makes a
@@ -103,6 +105,30 @@ conventions distilled from that study (`workflows.md`, `scaffold/.claude/skills/
 
 Every harness is a **template**, tuned per workspace via `args`, read-only (it returns
 data; the caller writes), and demonstrated against the synthetic `examples/sample-engagement/`.
+
+### Transcript review pipeline (typed CLI)
+
+Transcript review is intentionally separate from the dynamic-workflow harnesses. The
+`transcript-decisions` skill uses the same portable, typed engine across supported
+runtimes; its sole canonical execution path is the `aios transcripts` CLI:
+
+```bash
+aios transcripts draft --transcripts 1-inbox/transcripts/meeting.md
+aios transcripts list
+aios transcripts approve .aios/staging/transcript-decisions/<stage>.json
+```
+
+`draft` extracts both grounded decisions and explicit task commitments, grades the full
+transcript batch with TD1–TD6, and writes a private `0600` V2 review stage only when
+there is a review record to preserve. The owner inspects the stage and `approve` is the
+single local write gate for both `3-log/decision-log.md` and `3-log/tasks-team.md`.
+Approval attempts the existing `aios push` path only after local apply is durable;
+`--no-push` records an explicit skip and a failed push can be retried without reapplying.
+`aios loop daily` may show the owner-local pending/failed/unreadable aggregate, while
+team and external views omit transcript review. Drafting remains explicit: scheduled,
+connector-triggered, and daily-triggered drafting, plus stakeholder enrichment, are
+deferred. The retired Workflow file is a non-executable notice only and is never
+invoked, adapted, or exported as transcript execution behavior.
 
 ### The agentic build pipeline (`aios ship` / `aios roadmap-run`)
 

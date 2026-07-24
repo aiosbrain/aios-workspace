@@ -10,13 +10,21 @@ parent: docs/specs/opencode-native/epic.md
 
 # Spec — ON6: Skill Export Verification
 
+> **Historical status — transcript-decisions classification superseded by AIO-370.**
+> This export design predates the typed transcript review engine. Its former
+> Workflow/fan-out and degraded-single-agent classification for `transcript-decisions`
+> is retained only as history; current transcript execution is the portable
+> `aios transcripts draft|list|approve` CLI with private V2 owner review and approval.
+> The retired Workflow file is non-executable and is not invoked, adapted, or exported.
+
 ## Why
 
-AIOS ships 7 multi-agent harnesses in `.claude/skills/`. These are designed for Claude
-Code's subagent orchestration and hooks. When exported for OpenCode's native agent loop
-(via `aios skills export --runtime opencode`), the BYOA export pipeline applies honest
-degradation: multi-agent harnesses degrade to single-agent instruction files, hooks become
-manual steps.
+This historical ON6 spec describes the export of the multi-agent harnesses that were
+designed for Claude Code's subagent orchestration and hooks. When exported for OpenCode's
+native agent loop (via `aios skills export --runtime opencode`), the BYOA export pipeline
+applies honest degradation: those harnesses degrade to single-agent instruction files,
+and hooks become manual steps. `transcript-decisions` is no longer one of those
+harnesses; AIO-370 moved it to the portable typed CLI path described above.
 
 This spec verifies the export works cleanly and documents what degrades, so anyone
 running OpenCode knows exactly what they're getting.
@@ -43,7 +51,7 @@ Two deliverables:
 | agentic-maturity | Multi-agent harness | degraded |
 | decision-audit | Multi-agent harness with adversarial verification | degraded |
 | scope-creep | Multi-agent harness with adversarial verification | degraded |
-| transcript-decisions | Multi-agent harness with fan-out | degraded |
+| transcript-decisions | **Superseded:** portable CLI-backed typed review engine (not a multi-agent harness) | native (AIO-370) |
 | weekly-synthesis | Multi-agent harness with rubric-gated self-correction | degraded |
 
 ## Acceptance criteria

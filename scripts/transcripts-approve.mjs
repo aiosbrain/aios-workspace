@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { loadTranscriptEngine, parseV2Stage, statusExit } from "./transcripts-engine.mjs";
 import { createTranscriptPhaseRunner } from "./transcripts-phases.mjs";
+import { withTranscriptPushLock } from "./transcripts-push-lock.mjs";
 import {
   TranscriptCliError,
   argValue,
@@ -84,10 +85,6 @@ function rereadV2(root, stagePath, engine) {
   return parseV2Stage(engine, stored.source);
 }
 
-async function recordPush(engine, options) {
-  return await engine.recordTranscriptPushAttempt(options);
-}
-
 function bookkeepingFailure(root, stagePath, stage, engine, source) {
   try {
     stage = rereadV2(root, stagePath, engine);
@@ -103,7 +100,7 @@ async function handlePush({ root, stagePath, stage, engine, deps, noPush, source
   if (noPush) {
     if (!new Set(["skipped", "succeeded"]).has(stage.push.state)) {
       try {
-        await recordPush(engine, {
+        await engine.recordTranscriptPushAttempt({
           root,
           stagePath,
           state: "skipped",
@@ -131,7 +128,7 @@ async function handlePush({ root, stagePath, stage, engine, deps, noPush, source
   }
   let started;
   try {
-    started = await recordPush(engine, {
+    started = await engine.recordTranscriptPushAttempt({
       root,
       stagePath,
       state: "pending",
@@ -148,7 +145,7 @@ async function handlePush({ root, stagePath, stage, engine, deps, noPush, source
     pushError = error;
   }
   try {
-    await recordPush(engine, {
+    await engine.recordTranscriptPushAttempt({
       root,
       stagePath,
       state: pushError ? "failed" : "succeeded",
@@ -245,13 +242,19 @@ export async function runApproveCommand(root, args, deps) {
     const payload = reviewPayload(root, stagePath, stage, source);
     return { code: 2, payload, text: reviewText(payload) };
   }
-  return handlePush({
-    root,
-    stagePath,
-    stage,
-    engine,
-    deps,
-    noPush: args.includes("--no-push"),
-    source,
+  return withTranscriptPushLock(root, stagePath, async () => {
+    stage = rereadV2(root, stagePath, engine);
+    if (stage.push.state === "pending") {
+      throw new TranscriptCliError("push attempt is pending; refusing duplicate push", 1);
+    }
+    return handlePush({
+      root,
+      stagePath,
+      stage,
+      engine,
+      deps,
+      noPush: args.includes("--no-push"),
+      source,
+    });
   });
 }
