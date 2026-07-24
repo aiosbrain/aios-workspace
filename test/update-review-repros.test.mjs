@@ -2132,7 +2132,11 @@ test("AIO-504: a fast-forward whose range touches src/ rebuilds dist/ (npm run b
     // Origin advances with a change under src/ — the tsc rootDir. The clone tracks origin, so
     // pullToolkitCheckout fast-forwards to it.
     mkdirSync(path.join(origin, "src", "operator-loop"), { recursive: true });
-    advance(origin, "export const summarizeTranscriptReview = () => {};\n", "src/operator-loop/listing.ts");
+    advance(
+      origin,
+      "export const summarizeTranscriptReview = () => {};\n",
+      "src/operator-loop/listing.ts"
+    );
     // A real (non-symlinked) node_modules to build against — gitignored by the fixture, so the
     // source-cleanliness gate stays green.
     mkdirSync(path.join(clone, "node_modules"), { recursive: true });
@@ -2193,7 +2197,11 @@ test("AIO-504: a src/ change IS built THROUGH a resolvable symlinked node_module
     process.env.PATH = binPath;
     result = pullToolkitCheckout(clone, { noInstall: true }, NOOP_IO);
 
-    assert.equal(result.rebuilt, true, "a linked worktree rebuilds its own dist/ through the symlink");
+    assert.equal(
+      result.rebuilt,
+      true,
+      "a linked worktree rebuilds its own dist/ through the symlink"
+    );
     assert.ok(existsSync(ranFile), "npm was invoked");
     assert.match(readFileSync(ranFile, "utf8"), /run build:loop/, "npm run build:loop ran");
   } finally {
@@ -2240,7 +2248,11 @@ test("AIO-504: --check reports rebuildNeeded=true when the fetched-but-unmerged 
 
     const { ranFile, binPath } = fakeNpm(root);
     process.env.PATH = binPath;
-    const result = pullToolkitCheckout(clone, { check: true, dryRun: true, noInstall: true }, NOOP_IO);
+    const result = pullToolkitCheckout(
+      clone,
+      { check: true, dryRun: true, noInstall: true },
+      NOOP_IO
+    );
 
     assert.equal(result.rebuildNeeded, true, "check predicts a rebuild is needed");
     assert.equal(result.rebuilt, false, "read-only never performs the rebuild");

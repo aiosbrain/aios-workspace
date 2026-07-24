@@ -654,7 +654,9 @@ function rebuildDist(dir, { log, warn }) {
   }
   if (!st) {
     log(
-      c.dim("  no toolkit node_modules — can't rebuild dist/; skipping (deps needed for the loop runtime).")
+      c.dim(
+        "  no toolkit node_modules — can't rebuild dist/; skipping (deps needed for the loop runtime)."
+      )
     );
     return false;
   }
