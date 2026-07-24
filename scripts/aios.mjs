@@ -2631,6 +2631,7 @@ usage:
   aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,
     [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')
   aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md
+  aios spec init <path> [--title "..."]     write aios-issue-template scaffold
     [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
   aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
     [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
