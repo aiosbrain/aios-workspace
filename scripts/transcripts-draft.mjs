@@ -45,7 +45,7 @@ function stagedPayload(root, result, stage, evidence) {
   };
 }
 
-function noChangesPayload(result) {
+function noChangesPayload(result, droppedEvidence) {
   return {
     command: "draft",
     outcome: "no_changes",
@@ -55,6 +55,8 @@ function noChangesPayload(result) {
     facts: 0,
     stakeholders: 0,
     loops: result.loops?.length ?? 0,
+    droppedFacts: droppedEvidence.facts,
+    droppedStakeholders: droppedEvidence.stakeholders,
   };
 }
 
@@ -104,12 +106,16 @@ async function gatherRawEvidence({ paths, fixture, args, deps, transcriptTexts }
   return { facts: raw.facts ?? [], stakeholders: raw.stakeholders ?? [] };
 }
 
-async function attachEvidence({ root, engine, stagePath, paths, fixture, args, deps, now }) {
-  const empty = { factsAttached: 0, stakeholdersAttached: 0 };
+// Shared by the staged path (attachEvidence, below) and the no_changes diagnostic
+// (runDraftCommand): extracts + grounds facts/stakeholder mentions from the same
+// transcript bodies without writing anything. Returns empty arrays when there's
+// nothing to extract from (fixture/injected-runPhase tests with no evidence).
+async function gatherGroundedEvidence({ root, paths, fixture, args, deps, now }) {
+  const empty = { facts: [], stakeholders: [] };
   const transcriptTexts = readTranscriptTexts(root, paths);
   const rawEvidence = await gatherRawEvidence({ paths, fixture, args, deps, transcriptTexts });
   if (!rawEvidence) return empty;
-  const grounded = prepareExtractionStage({
+  return prepareExtractionStage({
     extraction: {
       decisions: [],
       tasks: [],
@@ -120,6 +126,11 @@ async function attachEvidence({ root, engine, stagePath, paths, fixture, args, d
     existingRowKeys: existingEvidenceRowKeys(root),
     now: now(),
   });
+}
+
+async function attachEvidence({ root, engine, stagePath, paths, fixture, args, deps, now }) {
+  const empty = { factsAttached: 0, stakeholdersAttached: 0 };
+  const grounded = await gatherGroundedEvidence({ root, paths, fixture, args, deps, now });
   if (grounded.facts.length === 0 && grounded.stakeholders.length === 0) return empty;
   const result = engine.attachTranscriptEvidence({
     root,
@@ -155,8 +166,21 @@ export async function runDraftCommand(root, args, deps) {
     now,
   });
   if (result.outcome === "no_changes") {
-    const payload = noChangesPayload(result);
-    return { code: 0, payload, text: "draft no_changes: 0 decisions + 0 tasks + 0 facts + 0 stakeholders" };
+    // No stage exists to attach evidence to, but grounded facts/stakeholder mentions may
+    // still have been extractable from these transcripts — surface that instead of silently
+    // discarding it (V1 behavior stands: no stage is forced, nothing is persisted here).
+    const dropped = await gatherGroundedEvidence({ root, paths, fixture, args, deps, now });
+    const droppedEvidence = { facts: dropped.facts.length, stakeholders: dropped.stakeholders.length };
+    const payload = noChangesPayload(result, droppedEvidence);
+    const droppedNote =
+      droppedEvidence.facts || droppedEvidence.stakeholders
+        ? ` (grounded evidence discarded: ${droppedEvidence.facts} facts + ${droppedEvidence.stakeholders} stakeholder mentions — no stage to attach to)`
+        : "";
+    return {
+      code: 0,
+      payload,
+      text: `draft no_changes: 0 decisions + 0 tasks + 0 facts + 0 stakeholders${droppedNote}`,
+    };
   }
   const evidence = await attachEvidence({
     root,

@@ -259,6 +259,46 @@ test("draft grounds facts and stakeholder mentions into the same stage (unground
   }
 });
 
+test("no_changes surfaces grounded evidence that was dropped instead of silently discarding it", async () => {
+  const repo = workspace();
+  try {
+    const out = [];
+    const code = await cmdTranscripts(
+      repo,
+      {},
+      ["draft", "--transcripts", TRANSCRIPT, "--json"],
+      {
+        runPhase: async ({ phase }) => {
+          if (phase === "extract" || phase === "deduplicate") return { decisions: [], tasks: [] };
+          if (phase === "verify") {
+            return { verdict: "pass", criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion) };
+          }
+          return {
+            verdict: "pass",
+            certifiedNoChanges: true,
+            criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
+          };
+        },
+        evidenceExtraction,
+        now: () => NOW,
+        stdout: (value) => out.push(String(value)),
+        stderr: () => {},
+      }
+    );
+    assert.equal(code, 0);
+    const payload = JSON.parse(out.join("\n"));
+    assert.equal(payload.outcome, "no_changes");
+    // Same grounding rules as the staged path: only the grounded fact + stakeholder survive
+    // ("Ungrounded fact" has no matching quote in the transcript and is dropped by grounding,
+    // not counted here).
+    assert.equal(payload.droppedFacts, 1);
+    assert.equal(payload.droppedStakeholders, 1);
+    assert.doesNotMatch(JSON.stringify(payload), /"stage"/); // no stage was written or forced
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("approve routes evidence to tier files, records counts, and is idempotent for v2", async () => {
   const repo = workspace();
   try {
