@@ -1,6 +1,6 @@
 {
-  "_comment": "Line caps (wc -l semantics) enforced by scripts/check-file-size.mjs. AIO-320 holds the line on scripts/aios.mjs growth; AIO-315 ratchets this down per extraction PR. 2026-07-24: +20 (2802→2822) for the H3 decision-log privacy fix — resync gate (clean-check + push stamp) and contentShaForDecisionPush (hashes the redacted body so brain dedupe overwrites leaked rows). Irreducible security logic kept in aios.mjs to avoid pulling node:crypto into the operator-loop bundle; FOLLOW-UP: extract the decision sync-state helpers to a dedicated module and ratchet this back.",
+  "_comment": "Line caps (wc -l semantics) enforced by scripts/check-file-size.mjs. AIO-320 holds the line on scripts/aios.mjs growth; AIO-315 ratchets this down per extraction PR. 2026-07-24: +20 (2802→2822) for the H3 decision-log privacy fix — resync gate (clean-check + push stamp) and contentShaForDecisionPush (hashes the redacted body so brain dedupe overwrites leaked rows). 2026-07-24: +8 (2822→2830, AIO-494) for the 1.12 evidence-kind push path — parseEvidenceRows/evidencePayloadContent/validateItemPayload thread fact + stakeholder_mention through buildPlan/cmdPush with the same admin tier-block as decisions. Irreducible security logic kept in aios.mjs to avoid pulling node:crypto into the operator-loop bundle; FOLLOW-UP: extract the decision sync-state + evidence-payload helpers to a dedicated module and ratchet this back.",
   "caps": {
-    "scripts/aios.mjs": 2822
+    "scripts/aios.mjs": 2830
   }
 }

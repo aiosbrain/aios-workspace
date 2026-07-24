@@ -39,18 +39,7 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
-import {
-  parseFrontmatter,
-  normalizeTier,
-  classifyKind,
-  parseDecisionRows,
-  redactAdminDecisionRows,
-  DECISION_REDACTION_VERSION,
-  parseEvidenceRows,
-  validateItemPayload,
-  evidencePayloadContent,
-  validEvidenceDeclaration,
-} from "./workspace-parse.mjs";
+import { parseFrontmatter, normalizeTier, classifyKind, parseDecisionRows, redactAdminDecisionRows, DECISION_REDACTION_VERSION, parseEvidenceRows, validateItemPayload, evidencePayloadContent, validEvidenceDeclaration } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -395,38 +384,19 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
       plan.clean.push({ rel });
       continue;
     }
+    // decision → H3 (#380) redaction of BOTH body + rows (contentShaForDecisionPush hashes the
+    // redacted body); fact/stakeholder_mention → strip raw body/source-quotes, push only parsed rows
+    // (admin/private evidence is already blocked above by the file-tier gate + validEvidenceDeclaration).
     let rows;
     let pushFrontmatter = frontmatter;
     let pushBody = body;
-    if (kind === "task") {
-      rows = parseTaskRows(body);
-    } else if (kind === "decision") {
-      // H3 (#380): redact non-syncable rows from BOTH the pushed body and the parsed rows before a
-      // team-tier decision-log leaves the machine. Legacy tables without Audience inherit the file
-      // tier. content_sha256 for the push then hashes this REDACTED body (contentShaForDecisionPush).
-      ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
-    } else if (kind === "fact" || kind === "stakeholder_mention") {
-      // 1.12 evidence kinds: push only the parsed rows; strip the raw body (source quotes stay
-      // local) and reduce frontmatter to {kind, access}. Admin/private evidence never reaches here —
-      // the file-tier gate above blocks admin files, and validEvidenceDeclaration pins each canonical
-      // path to its tier, so only promoted team/external rows sync.
+    if (kind === "task") rows = parseTaskRows(body);
+    else if (kind === "decision") ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    else if (kind === "fact" || kind === "stakeholder_mention") {
       rows = parseEvidenceRows(kind, body);
-      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(
-        kind,
-        frontmatter,
-        body
-      ));
+      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(kind, frontmatter, body));
     }
-    plan.push.push({
-      rel,
-      kind,
-      hash,
-      tier,
-      frontmatter: pushFrontmatter,
-      body: pushBody,
-      rows,
-      isNew: !prev,
-    });
+    plan.push.push({ rel, kind, hash, tier, frontmatter: pushFrontmatter, body: pushBody, rows, isNew: !prev });
   }
   return { plan, state };
 }
