@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -317,6 +317,60 @@ test("SIGKILL mid-push leaves a reclaimable lock and the retry refuses a duplica
     assert.deepEqual(pushLocks(root), []);
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function deadPid() {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  const pid = child.pid;
+  await once(child, "exit");
+  return pid; // reaped — process.kill(pid, 0) now yields ESRCH
+}
+
+test("concurrent approvals reclaim a dead-owner lock but only one pushes", async () => {
+  const root = workspace();
+  try {
+    const stagePath = await approvedFailedStage(root);
+    const failedAttemptId = readStage(stagePath).push.attempts[0].id;
+    const beforeLogs = workspaceLogs(root);
+    const beforeHashes = {
+      decisions: sha256(beforeLogs.decisions),
+      tasks: sha256(beforeLogs.tasks),
+    };
+
+    // Seed an abandoned lock owned by a process that has already exited, so both
+    // concurrent approvals must go through the stale-reclaim path at once — the
+    // durably-failed-retry contention that must never duplicate the external push.
+    const lockPath = stageLockPath(root, stagePath);
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, `${await deadPid()}\n`, { mode: 0o600 });
+
+    const readyPath = path.join(root, "push-ready.log");
+    const pushLogPath = path.join(root, "external-push.log");
+    const results = await Promise.all([
+      childApproval(root, stagePath, readyPath, pushLogPath),
+      childApproval(root, stagePath, readyPath, pushLogPath),
+    ]);
+
+    assert.equal(pushLogLines(pushLogPath).length, 1);
+    assert.deepEqual(results.map(({ code }) => code).sort(), [0, 1]);
+    assert.match(results.find(({ code }) => code === 1)?.stdout ?? "", /busy|in.?flight/i);
+    const stage = readStage(stagePath);
+    assert.equal(stage.push.state, "succeeded");
+    assert.equal(stage.push.attempts.length, 2);
+    assert.equal(stage.push.attempts[0].id, failedAttemptId);
+    assert.equal(stage.push.attempts[1].state, "succeeded");
+    assert.deepEqual(
+      {
+        decisions: sha256(workspaceLogs(root).decisions),
+        tasks: sha256(workspaceLogs(root).tasks),
+      },
+      beforeHashes
+    );
+    // No lock, reclaim guard, or scratch/dead capture artifacts remain.
+    assert.deepEqual(pushLocks(root), []);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
