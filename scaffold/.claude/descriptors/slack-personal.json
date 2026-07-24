@@ -13,17 +13,17 @@
   "scopes": [
     "chat:write",
     "im:write",
+    "im:read",
+    "im:history",
+    "channels:read",
+    "channels:history",
+    "groups:read",
+    "groups:history",
+    "mpim:read",
+    "mpim:history",
     "users:read",
     "users:read.email",
-    "reactions:write",
-    "channels:read",
-    "groups:read",
-    "im:read",
-    "mpim:read",
-    "channels:history",
-    "groups:history",
-    "im:history",
-    "mpim:history"
+    "reactions:write"
   ],
   "scopes_advisory": false,
   "oauth": {
