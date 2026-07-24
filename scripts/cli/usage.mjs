@@ -238,6 +238,7 @@ export const USAGE_LINES = {
   spec: [
     "  aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md",
     "    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)",
+    "  aios spec init <path> [--title \"...\"]     write aios-issue-template scaffold",
     "  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready",
     "    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites",
     "  aios spec author <plan> --slices <dir> fan out one author per Markdown issue slice, then run",
