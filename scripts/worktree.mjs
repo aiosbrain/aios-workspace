@@ -48,6 +48,30 @@ export async function cmdWorktree(repo, cfg, args) {
     "post-checkout"
   );
   const hookDest = path.join(repo, ".git", "hooks", "post-checkout");
+  const guardInstaller = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "install-primary-commit-guard.sh"
+  );
+
+  // Install the primary-checkout commit guard (blocks feature commits landing on
+  // a non-main branch in the primary checkout — forces worktree use). Local-only
+  // .git/hooks file, so re-installed here on every `worktree add`/`install-hook`.
+  function installGuard() {
+    if (!existsSync(guardInstaller)) {
+      console.log(c.dim("  primary-commit-guard installer not found — skipping"));
+      return false;
+    }
+    try {
+      execFileSync("bash", [guardInstaller], { cwd: repo, stdio: "pipe" });
+      console.log(
+        c.dim("  installed primary-commit-guard → blocks feature commits in the primary checkout")
+      );
+      return true;
+    } catch (e) {
+      console.log(c.dim("  primary-commit-guard install failed (non-fatal): ") + (e.message || e));
+      return false;
+    }
+  }
 
   function installHook() {
     if (!existsSync(hookSrc)) {
@@ -77,8 +101,9 @@ export async function cmdWorktree(repo, cfg, args) {
     const wtPath = computeWorktreePath(repo, branch);
     const containerDir = path.dirname(wtPath);
 
-    // 0. Ensure the auto-hydration hook is installed in primary
+    // 0. Ensure the auto-hydration hook + primary-commit guard are installed in primary
     installHook();
+    installGuard();
 
     // 0b. Ensure the container dir exists — `git worktree add` does not
     // reliably mkdir -p intermediate directories on every platform/git
@@ -130,6 +155,7 @@ export async function cmdWorktree(repo, cfg, args) {
 
   if (sub === "install-hook") {
     installHook();
+    installGuard();
     return;
   }
 
