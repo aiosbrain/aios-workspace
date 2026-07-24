@@ -14,9 +14,11 @@
 //   relations <IDENT>         show blocks / blocked-by relationships
 //   blocks <BLOCKER> <BLOCKED>
 //                             mark one issue as blocking another
-//   create "<title>" [--desc <file>] [--label <name>] [--state <name>]
-//                             create issue; prepends deck-origin block when --label chetan-deck
+//   create "<title>" [--desc <file>] [--template aios] [--label <name>] [--state <name>]
+//   template [aios]                  print issue scaffold
+//   patch-desc <IDENT> <patch.md>    SEARCH/REPLACE blocks on description only
 import { readFileSync } from "node:fs";
+import { applyDescriptionPatch, resolveLinearTemplate } from "./linear-template.mjs";
 
 const ORIGIN_BLOCK = "**Origin:** Chetan design deck — https://www.fluora.ai/aios\n\n";
 const AIO_TEAM_ID = "7beef22a-34c2-426a-9b0c-db584870a098";
@@ -70,13 +72,26 @@ function parseCreateArgs(args) {
   let label = null;
   let state = "Backlog";
   let parent = null;
+  let template = null;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === "--desc" && args[i + 1]) { descFile = args[++i]; continue; }
+    if (args[i] === "--template" && args[i + 1]) { template = args[++i]; continue; }
     if (args[i] === "--label" && args[i + 1]) { label = args[++i]; continue; }
     if (args[i] === "--state" && args[i + 1]) { state = args[++i]; continue; }
     if (args[i] === "--parent" && args[i + 1]) { parent = args[++i]; continue; }
   }
   let description = descFile ? readFileSync(descFile, "utf8") : "";
+  if (template) {
+    const body = resolveLinearTemplate(template);
+    if (!body) {
+      console.error(`unknown template "${template}"`);
+      process.exit(1);
+    }
+    description = body.replace(/^# TITLE — outcome-oriented slice name/m, `# ${title}`);
+    if (descFile) {
+      console.error("warning: --desc ignored when --template is set");
+    }
+  }
   if (label === "chetan-deck" && !description.startsWith("**Origin:**")) {
     description = ORIGIN_BLOCK + description;
   }
@@ -158,9 +173,26 @@ if (cmd === "get") {
   const arg = argv[2];
   const n = await findIssue(ident);
   if (arg === "--full") {
-    const d = await gql(`query($id:String!){ issue(id:$id){ identifier title state{ name } url description } }`, { id: n.id });
+    const d = await gql(
+      `query($id:String!){
+        issue(id:$id){
+          identifier title state{ name } url description
+          comments(first:50){ nodes{ body user{ name } } }
+        }
+      }`,
+      { id: n.id }
+    );
     const i = d.issue;
-    console.log(`${i.identifier}  ${i.title}  [${i.state?.name}]\n${i.url}\n\n${i.description || "(no description)"}`);
+    const parts = [`${i.identifier}  ${i.title}  [${i.state?.name}]`, i.url, "", i.description || "(no description)"];
+    const comments = (i.comments?.nodes ?? []).filter((cm) => String(cm.body ?? "").trim());
+    if (comments.length) {
+      parts.push("", "## Issue comments", "");
+      for (const cm of comments) {
+        const who = cm.user?.name ?? "comment";
+        parts.push(`### ${who}`, "", String(cm.body).trim(), "");
+      }
+    }
+    console.log(parts.join("\n"));
   } else {
     console.log(`${n.identifier}  ${n.title}  [${n.state?.name}]  id=${n.id}`);
   }
@@ -282,6 +314,37 @@ if (cmd === "get") {
   }
   await gql(`mutation($id:String!,$a:String!){ issueUpdate(id:$id, input:{ assigneeId:$a }){ success } }`, { id: n.id, a: u.id });
   console.log(`assigned ${n.identifier} → ${u.name}`);
+} else if (cmd === "template") {
+  const name = argv[1] || "aios";
+  const body = resolveLinearTemplate(name);
+  if (!body) {
+    console.error(`template "${name}" not found`);
+    process.exit(1);
+  }
+  process.stdout.write(body);
+} else if (cmd === "patch-desc") {
+  const ident = argv[1];
+  const patchFile = argv[2];
+  if (!ident || !patchFile) {
+    console.error("patch-desc requires <IDENT> <patch.md>");
+    process.exit(1);
+  }
+  const n = await findIssue(ident);
+  const d = await gql(`query($id:String!){ issue(id:$id){ description } }`, { id: n.id });
+  const original = d.issue.description || "";
+  const patchText = readFileSync(patchFile, "utf8");
+  let updated;
+  try {
+    updated = applyDescriptionPatch(original, patchText);
+  } catch (e) {
+    console.error(`patch failed: ${e.message}`);
+    process.exit(1);
+  }
+  await gql(`mutation($id:String!,$d:String!){ issueUpdate(id:$id, input:{ description:$d }){ success } }`, {
+    id: n.id,
+    d: updated,
+  });
+  console.log(`patched ${n.identifier} (${original.length} → ${updated.length} chars)`);
 } else if (cmd === "create") {
   const { title, description, label, state, parent } = parseCreateArgs(argv.slice(1));
   const st = await findTeamState(AIO_TEAM_ID, state);
@@ -307,5 +370,5 @@ if (cmd === "get") {
   const i = d.issueCreate.issue;
   console.log(`created ${i.identifier}  ${i.title}\n${i.url}`);
 } else {
-  console.log("usage: linear.mjs get <IDENT> [--full] | set-desc <IDENT> <file> | set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | create \"<title>\" [--desc <file>] [--label chetan-deck] [--state Backlog] [--parent <IDENT>] | users <TEAMKEY> | assign <IDENT> <name-or-email>");
+  console.log("usage: linear.mjs get <IDENT> [--full] | set-desc <IDENT> <file> | patch-desc <IDENT> <patch.md> | set-state <IDENT> <name> | set-priority <IDENT> <priority> | comment <IDENT> <text> | list <TEAMKEY> | relations <IDENT> | blocks <BLOCKER> <BLOCKED> | template [aios] | create \"<title>\" [--desc <file>] [--template aios] [--label chetan-deck] [--state Backlog] [--parent <IDENT>] | users <TEAMKEY> | assign <IDENT> <name-or-email>");
 }

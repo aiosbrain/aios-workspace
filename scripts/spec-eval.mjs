@@ -17,7 +17,7 @@
  *   AIOS_SPEC_FIX_STUB  — revised-spec text (or a file path to it); bypasses the SDK reviser.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
@@ -28,6 +28,11 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 // The canonical rubric shipped inside this toolkit checkout (…/aios-workspace/.claude/rubrics/…).
 const TOOLKIT_RUBRIC_PATH = path.join(SCRIPT_DIR, "..", DEFAULT_RUBRIC_REL);
+export const AIOS_ISSUE_TEMPLATE_REL = path.join(
+  "docs",
+  "agentic-ergonomics",
+  "aios-issue-template.md"
+);
 const DEFAULT_FIX_BUDGET = 2;
 const SPEC_PROMPT_TIMEOUT_MS = 300_000;
 export const SPEC_BATCH_CONCURRENCY_MAX = 8;
@@ -150,6 +155,22 @@ function extractBullets(body) {
     if (m && m[1].trim()) out.push(m[1].trim());
   }
   return out;
+}
+
+/** Bullets under ## Acceptance criteria plus ### Automated/Manual/Visual child sections. */
+function collectAcceptanceBullets(sections) {
+  const accIdx = sections.findIndex((s) =>
+    /\b(accept|success crit|done when|definition of done|acceptance)\b/i.test(s.heading)
+  );
+  if (accIdx < 0) return [];
+  const accLevel = sections[accIdx].level || 2;
+  const bullets = extractBullets(sections[accIdx].body);
+  for (let i = accIdx + 1; i < sections.length; i++) {
+    const s = sections[i];
+    if (s.level > 0 && s.level <= accLevel) break;
+    if (s.level > accLevel) bullets.push(...extractBullets(s.body));
+  }
+  return bullets;
 }
 
 const VAGUE_RE =
@@ -360,14 +381,15 @@ export function runDeterministicChecks(specText, { repo } = {}) {
   if (!acceptanceSection && !acceptanceInline) {
     add("SR2", "blocker", "no acceptance criteria: nothing a builder can self-verify against");
   } else {
-    const body = acceptanceSection
-      ? acceptanceSection.body
-      : specText.slice(
-          specText.search(
-            /\b(acceptance criteria|success criteria|definition of done|done when)\b/i
+    const bullets = acceptanceSection
+      ? collectAcceptanceBullets(sections)
+      : extractBullets(
+          specText.slice(
+            specText.search(
+              /\b(acceptance criteria|success criteria|definition of done|done when)\b/i
+            )
           )
         );
-    const bullets = extractBullets(body);
     if (bullets.length === 0) {
       add("SR2", "blocker", "acceptance section present but has no itemized criteria");
     } else if (!bullets.some(looksObservable)) {
@@ -427,12 +449,25 @@ export function runDeterministicChecks(specText, { repo } = {}) {
     );
   }
 
-  // SR5 — scope + deferred stated
+  // SR5 — scope + deferred stated (Outcomes section counts as target-state scope)
   const scopePresent =
-    hasHeading(/\b(scope|deferred|out of scope|non-?goals|not doing)\b/i) ||
+    hasHeading(/\b(scope|deferred|out of scope|non-?goals|not doing|outcomes?)\b/i) ||
     /\b(out of scope|deferred|non-?goals?|in scope)\b/i.test(specText);
   if (!scopePresent) {
-    add("SR5", "blocker", "scope/deferred not stated — declare what is in and what is cut");
+    add("SR5", "blocker", "scope/deferred not stated — declare what is in and what is cut (## Scope or ## Outcomes)");
+  }
+
+  // SR2 advisory — Automated subsection should name observable checks when present
+  const automatedSection = sections.find((s) => /^automated$/i.test(s.heading.trim()));
+  if (automatedSection) {
+    const autoBullets = extractBullets(automatedSection.body);
+    if (autoBullets.length > 0 && !autoBullets.some(looksObservable)) {
+      add(
+        "SR2",
+        "minor",
+        "### Automated has bullets but none look observable — prefer exit codes, named tests, or concrete commands"
+      );
+    }
   }
 
   // SR17 — increment-bounded: the spec is one reviewable PR. Blocks only when BOTH structural
@@ -1145,6 +1180,62 @@ export async function loadRecentDecisions(repo, limit = 5) {
   }
 }
 
+// ── aios issue template ─────────────────────────────────────────────────────────────────────
+
+/** Resolve the canonical AIOS issue template for a repo checkout. */
+export function resolveAiosIssueTemplate(repo) {
+  const candidates = [
+    path.join(repo, AIOS_ISSUE_TEMPLATE_REL),
+    path.join(SCRIPT_DIR, "..", AIOS_ISSUE_TEMPLATE_REL),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/** Render the AIOS issue template, optionally substituting the H1 title. */
+export function renderAiosIssueTemplate(repo, { title } = {}) {
+  const templatePath = resolveAiosIssueTemplate(repo);
+  if (!templatePath) {
+    throw new Error(`aios issue template not found (expected ${AIOS_ISSUE_TEMPLATE_REL})`);
+  }
+  let text = readFileSync(templatePath, "utf8");
+  if (title) {
+    text = text.replace(/^# TITLE — outcome-oriented slice name/m, `# ${title}`);
+  }
+  return text;
+}
+
+/** `aios spec init <path> [--title "..."]` — write an AIOS issue scaffold. */
+export async function cmdSpecInit(repo, args) {
+  const rest = args.slice();
+  let title = null;
+  let outPath = null;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--title" && rest[i + 1]) {
+      title = rest[++i];
+      continue;
+    }
+    if (!rest[i].startsWith("--") && !outPath) {
+      outPath = rest[i];
+    }
+  }
+  if (!outPath) {
+    console.error(c.red("error: output path required — aios spec init <path> [--title \"...\"]"));
+    process.exit(4);
+  }
+  const abs = path.isAbsolute(outPath) ? outPath : path.join(repo, outPath);
+  if (existsSync(abs)) {
+    console.error(c.red(`error: ${outPath} already exists`));
+    process.exit(4);
+  }
+  const text = renderAiosIssueTemplate(repo, { title });
+  mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileSync(abs, text, "utf8");
+  console.log(`wrote ${outPath} (${text.length} chars)`);
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────────
 
 const SPEC_VALUE_FLAGS = ["--rubric", "--out", "--budget", "--tier", "--concurrency"];
@@ -1156,6 +1247,7 @@ const HELP = [
   "usage:",
   "  aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--json] [--no-llm] [--rubric <path>]",
   "  aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]",
+  "  aios spec init <path> [--title \"...\"]  write aios-issue-template.md scaffold",
   "  aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]",
   "",
   "eval:  score a spec against the rubric (deterministic + adversarial LLM layers).",
@@ -1186,8 +1278,12 @@ export async function cmdSpec(repo, args) {
   }
   const sub = args[0];
   const rest = args.slice(1);
+  if (sub === "init") {
+    await cmdSpecInit(repo, rest);
+    return;
+  }
   if (sub !== "eval" && sub !== "fix" && sub !== "author") {
-    console.error(c.red(`error: unknown subcommand '${sub}' (expected eval|fix|author)`));
+    console.error(c.red(`error: unknown subcommand '${sub}' (expected eval|fix|init|author)`));
     process.exit(4);
   }
   if (sub === "author") {

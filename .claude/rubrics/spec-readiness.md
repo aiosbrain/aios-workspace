@@ -69,3 +69,23 @@ by the rubric↔code drift test).
 | SR15 | Decidability — every must-path is decidable. Bounded design latitude whose output is human-reviewed before merge is a PASS (a reviewed PR is recoverable); a blocker is only a decision with no downstream catch (unstated perf/SLA target, prerequisite with no "what if missing" branch, ambiguous external contract) | llm-read | yes |
 | SR16 | No ungrounded architecture claims — "reuses X / extends Y / builds on Z" resolves to real files (path resolution deterministic; claim adequacy llm-read) | det+llm | yes |
 | SR17 | Increment-bounded — the spec is one reviewable PR. Blocks when it enumerates many tasks AND spans many unrelated top-level code surfaces (mixed-concern, oversized) with no explicit one-PR increment statement; an explicit increment statement or a single signal is advisory. `test/`, `docs/`, `scaffold/` don't count as surfaces (they measure spec completeness, not mixed concerns) | deterministic | yes |
+
+## Template mapping
+
+Canonical scaffold: `docs/agentic-ergonomics/aios-issue-template.md` (author via
+`aios spec init`). Section → criterion map:
+
+| Template section | SR |
+|------------------|-----|
+| `## What / why` | SR1 |
+| `## Outcomes` | SR5 (target state; pairs with `## Scope`) |
+| `## Interface / integration points` | SR3, SR9 |
+| `## Dependencies` | SR4 |
+| `## Scope` | SR5 |
+| `## Implementation approach` | advisory (builder latitude) |
+| `## Acceptance criteria` | SR2, SR11 |
+| `### Automated` / `### Manual` / `### Visual` | SR2 sub-tiers (Automated observability: advisory nudge) |
+| `## Build-with` | SR6 |
+| `## Tier safety` | SR7 |
+
+When the template, this rubric, or deterministic checks change, update all three in one PR.
