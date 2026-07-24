@@ -7,10 +7,40 @@ export function parseTableRows(body) {
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("|")) continue;
-    const cells = t
-      .split("|")
-      .slice(1, -1)
-      .map((x) => x.trim());
+    const cells = [];
+    let cell = "";
+    let lastTokenWasDelimiter = false;
+    for (let i = 1; i < t.length; i++) {
+      if (t[i] === "\\") {
+        let end = i;
+        while (t[end] === "\\") end++;
+        const slashCount = end - i;
+        if (t[end] === "|") {
+          cell += "\\".repeat(Math.floor(slashCount / 2));
+          if (slashCount % 2 === 1) {
+            cell += "|";
+            lastTokenWasDelimiter = false;
+          } else {
+            cells.push(cell.trim());
+            cell = "";
+            lastTokenWasDelimiter = true;
+          }
+          i = end;
+        } else {
+          cell += "\\".repeat(slashCount);
+          lastTokenWasDelimiter = false;
+          i = end - 1;
+        }
+      } else if (t[i] === "|") {
+        cells.push(cell.trim());
+        cell = "";
+        lastTokenWasDelimiter = true;
+      } else {
+        cell += t[i];
+        lastTokenWasDelimiter = false;
+      }
+    }
+    if (!lastTokenWasDelimiter) cells.push(cell.trim());
     if (!cells.length) continue;
     if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
     rows.push(cells);

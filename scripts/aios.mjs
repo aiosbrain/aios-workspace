@@ -44,6 +44,8 @@ import {
   normalizeTier,
   classifyKind,
   parseDecisionRows,
+  redactAdminDecisionRows,
+  DECISION_REDACTION_VERSION,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
@@ -326,6 +328,23 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
+// content_sha256 for a decision push MUST describe the REDACTED body actually sent, not the raw file
+// hash — else brain-api dedupe (identical sha → "unchanged", body NOT overwritten) leaves leaked
+// rows upstream while the client marks the resync done. Version-tagged; local change-detection keeps
+// the raw item.hash separately.
+function contentShaForDecisionPush(item) {
+  if (item.kind !== "decision") return item.hash;
+  return sha256(
+    JSON.stringify({
+      decision_redaction_version: DECISION_REDACTION_VERSION,
+      access: item.tier,
+      frontmatter: item.frontmatter || {},
+      body: item.body,
+      rows: item.rows || [],
+    })
+  );
+}
+
 function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
   const plan = { push: [], blocked: [], clean: [] };
@@ -362,23 +381,21 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     }
 
     const prev = state.items[rel];
-    if (prev && prev.sha === hash) {
+    // A decision-log needs re-push if its redaction is stale, even when the SHA is unchanged.
+    const redactionStale =
+      kind === "decision" && (prev?.redaction_version || 0) < DECISION_REDACTION_VERSION;
+    if (prev && prev.sha === hash && !redactionStale) {
       plan.clean.push({ rel });
       continue;
     }
     let rows;
+    let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") rows = parseDecisionRows(body);
-    plan.push.push({
-      rel,
-      kind,
-      hash,
-      tier,
-      frontmatter,
-      body,
-      rows,
-      isNew: !prev,
-    });
+    if (kind === "decision") {
+      // H3: redact rows; legacy tables without Audience inherit the file tier like operator-loop.
+      ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    }
+    plan.push.push({ rel, kind, hash, tier, frontmatter, body: pushBody, rows, isNew: !prev });
   }
   return { plan, state };
 }
@@ -907,7 +924,9 @@ async function cmdPush(repo, cfg, patterns, args) {
       project: cfg.project,
       path: item.rel,
       kind: item.kind,
-      content_sha256: item.hash,
+      // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
+      // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
+      content_sha256: contentShaForDecisionPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},
@@ -920,6 +939,8 @@ async function cmdPush(repo, cfg, patterns, args) {
         sha: item.hash,
         remote_id: res.id || null,
         pushed_at: new Date().toISOString(),
+        // Record which redaction the pushed copy reflects so a later version bump forces a resync.
+        ...(item.kind === "decision" ? { redaction_version: DECISION_REDACTION_VERSION } : {}),
       };
       pushed++;
       result.pushed.add(item.rel);
@@ -959,9 +980,9 @@ async function cmdPull(repo, cfg, args = []) {
     if (cursor) qs.set("cursor", cursor);
     const res = await api(cfg, "GET", `/items?${qs}`);
     for (const item of res.items || []) {
-      // Append-only: never overwrite working files; flatten path under from-brain/
-      const flat = `${item.project}__${item.path.replace(/\//g, "__")}`;
-      const dest = path.join(destRoot, flat);
+      // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
+      const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
+      const dest = safeJoin(destRoot, flat);
       if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;
       const fm = [
         "---",
