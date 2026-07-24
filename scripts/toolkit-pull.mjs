@@ -581,6 +581,106 @@ export function fastForward(dir) {
   return gitSafe(dir, ["rev-parse", "HEAD"]) !== before;
 }
 
+// The tsc rootDir (tsconfig.json `rootDir: "src"`): a pulled change under here means the
+// gitignored dist/ build artifact is stale. Kept as a bare prefix so `git diff -- src` matches
+// every file the compile reads, without hard-coding the narrower `include` globs.
+const SRC_PREFIX = "src";
+
+/**
+ * Tri-state: did the commit range oldSha..newSha touch any file under src/? A pulled change to
+ * src/ leaves the gitignored dist/ (the compiled output every `aios <cmd>` runs via
+ * operator-loop-loader.mjs) a source generation behind until rebuilt — AIO-504's silent-stale
+ * failure class.
+ *
+ *   true  — the range provably touched src/.
+ *   false — the range provably did NOT (a doc-only/scaffold-only pull, or nothing to compare).
+ *   null  — the range couldn't be inspected (a git failure, or an unresolvable ref such as a
+ *           stale/never-fetched @{u}). The caller decides: apply rebuilds (a redundant rebuild
+ *           costs seconds; a silently-stale dist/ is the bug this exists to close), read-only
+ *           reports "unknown" honestly rather than a guess.
+ */
+function srcTouchedInRange(dir, oldSha, newSha) {
+  if (!oldSha || !newSha || oldSha === newSha) return false;
+  try {
+    return git(dir, ["diff", "--name-only", `${oldSha}..${newSha}`, "--", SRC_PREFIX]).length > 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort "would a pull rebuild dist/?" for the read-only modes (--check/--preview), which
+ * never fetch. `false` when there is nothing pending; the src-touch verdict when the incoming
+ * range is locally inspectable; `null` when it isn't (the remote object isn't fetched yet, so
+ * the honest answer is "can't tell without pulling" — @{u} may be stale in read-only mode).
+ * Mirrors the read-only-vs-apply split: report whether a rebuild is needed, never perform one.
+ */
+function readOnlyRebuildNeeded(dir, remoteState) {
+  if (!remoteState || remoteState.state !== "behind") return false;
+  return srcTouchedInRange(dir, "HEAD", "@{u}");
+}
+
+/**
+ * Rebuild the toolkit's gitignored dist/ after a pull moved src/. The `post-checkout` git hook
+ * already runs `npm run build:loop` for `git checkout`/`git switch`/`git worktree add`, but a
+ * fast-forward of an EXISTING checkout's current branch never fires `post-checkout` — so a
+ * checkout kept current via `aios update` would otherwise run a stale dist/ until something
+ * else happened to rebuild it (AIO-504's live failure: `loop.summarizeTranscriptReview is not
+ * a function`, from a dist/ a full source generation behind on an otherwise clean `main`).
+ *
+ * Gated with the SAME node_modules posture reconcileDeps uses for `npm ci`: tsc needs a real
+ * toolkit install to compile against, so skip cleanly when there is no node_modules, and skip a
+ * SYMLINKED node_modules (worktree layout) — that worktree's dist/ is the canonical checkout's
+ * concern, and the worktree's own creation already ran the post-checkout build. Independent of
+ * `--no-install`: a stale dist/ is a correctness bug even when deps didn't change.
+ *
+ * NON-FATAL on build failure (unlike reconcileDeps' hard throw on a failed `npm ci`): the pull
+ * has already landed and cannot be un-advanced, and this rebuild is pull-TRIGGERED (not
+ * marker-driven like reconcileDeps' self-healing install), so a throw would both abort the
+ * unrelated governance re-vendor AND never retry on a subsequent nothing-to-pull run. Warn
+ * loudly with the exact fix instead. Returns true only on a SUCCESSFUL rebuild.
+ */
+function rebuildDist(dir, { log, warn }) {
+  const nm = path.join(dir, "node_modules");
+  let st = null;
+  try {
+    st = lstatSync(nm);
+  } catch {
+    st = null;
+  }
+  if (!st) {
+    log(
+      c.dim("  no toolkit node_modules — can't rebuild dist/; skipping (deps needed for the loop runtime).")
+    );
+    return false;
+  }
+  if (st.isSymbolicLink()) {
+    warn(
+      c.yellow(
+        "  toolkit node_modules is a symlink (worktree layout) — skipping the dist/ rebuild.\n" +
+          "  A worktree's own creation runs `npm run build:loop`; rebuild in the canonical checkout if needed."
+      )
+    );
+    return false;
+  }
+  log(c.dim("  src/ changed — rebuilding dist/ (npm run build:loop) …"));
+  // shell:true on Windows (npm is npm.cmd — execFileSync("npm") throws ENOENT there); the args
+  // are fixed strings, so shell interpolation is safe. Mirrors reconcileDeps' npm invocation.
+  const npmOpts = { cwd: dir, stdio: "inherit", shell: process.platform === "win32" };
+  try {
+    execFileSync("npm", ["run", "build:loop"], npmOpts);
+    return true;
+  } catch (e) {
+    warn(
+      c.yellow(
+        `  dist/ rebuild failed (npm run build:loop): ${String(e.message || e).trim()}\n` +
+          `  The pull landed, but the compiled loop code may be stale — run \`npm run build:loop\` in ${dir}.`
+      )
+    );
+    return false;
+  }
+}
+
 /**
  * A real, complete, git-native checkout of `dir` at the exact commit `sha`, in a fresh
  * disposable temp directory — shares the object store (cheap, no data duplication),
@@ -856,6 +956,11 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
     behind: remoteState?.behind ?? null,
     pulled: 0,
     installed: false,
+    rebuilt: false,
+    // rebuildNeeded is the read-only counterpart of `rebuilt`: false = nothing to pull /
+    // no src/ change, true = a pull would restale dist/, null = can't tell without fetching.
+    // Only meaningful in read-only mode (apply performs the rebuild instead of predicting it).
+    rebuildNeeded: false,
     upstream: remoteState?.upstream ?? null,
     remoteState,
     sourceClean: null,
@@ -868,7 +973,11 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
   // `aios update --check` uses this result when it is run inside the toolkit checkout
   // itself; returning null here would make buildResult() treat a dirty or uninspectable
   // checkout as apply-safe even though apply mode would refuse it.
-  if (readOnly) return ret({ sourceClean: sourceCleanliness(dir) });
+  if (readOnly)
+    return ret({
+      sourceClean: sourceCleanliness(dir),
+      rebuildNeeded: readOnlyRebuildNeeded(dir, remoteState),
+    });
 
   // APPLY mode from here on.
   // `selfUpdate` (run inside the toolkit checkout itself): nothing is ever vendored, so
@@ -965,6 +1074,7 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
 
   let pulled = 0;
   let srcHead = null;
+  let headBefore = null;
   let snapshotDir = null;
   let restoreFailed = false;
   let ffError = null;
@@ -973,6 +1083,9 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
     // Measured in the clean window (post-stash, pre-pop) so a stashed-away local lockfile
     // edit can't masquerade as "the pull moved the lockfile".
     const lockBefore = lockfileHash(dir);
+    // The pre-fast-forward HEAD — one half of the range used below to decide whether the pull
+    // touched src/ (and so left dist/ stale). Captured in the same clean window as lockBefore.
+    headBefore = gitSafe(dir, ["rev-parse", "HEAD"]);
     if (remoteState?.state === "behind" && fastForward(dir)) pulled = remoteState.behind ?? 0;
     lockChanged = lockfileHash(dir) !== lockBefore;
     // Clean window: fast-forward (if any) is done, stash (if any) has not been popped yet.
@@ -1040,11 +1153,25 @@ export function pullToolkitCheckout(dir, opts = {}, io = {}) {
       );
     }
   }
+
+  // Rebuild dist/ when the pull touched src/ (fast-forward never fires post-checkout, so
+  // nothing else rebuilds the compiled output this checkout actually runs). Keyed off actual
+  // HEAD movement (headBefore vs srcHead) rather than the reported `pulled` count, so a moved
+  // HEAD with an indeterminate behind-count still rebuilds; srcTouchedInRange returns false
+  // for the no-movement case (equal shas). Runs AFTER reconcileDeps so tsc compiles against a
+  // current install, and INDEPENDENT of --no-install (a stale dist/ is a correctness bug even
+  // when deps didn't move). `!== false` treats an uninspectable range (null) as "rebuild" —
+  // fail-safe toward correctness. rebuildDist is non-throwing (a failed build warns, never
+  // aborts the pull/vendor), so no snapshot leak.
+  let rebuilt = false;
+  if (srcTouchedInRange(dir, headBefore, srcHead) !== false) {
+    rebuilt = rebuildDist(dir, { log, warn });
+  }
   // Report "clean", not the pre-stash `sourceClean` value: by this point a snapshot has
   // been successfully pinned, which by construction only ever happens from a clean tree
   // (dirty-without-stash already threw above; dirty-with-stash was pushed away before
   // pinning). Returning the stale "dirty" value here would make buildResult() block a
   // fully successful apply's own result, even though the vendored content came from a
   // verified-clean, pinned snapshot.
-  return ret({ pulled, installed, sourceClean: "clean", srcHead, snapshotDir });
+  return ret({ pulled, installed, rebuilt, sourceClean: "clean", srcHead, snapshotDir });
 }
