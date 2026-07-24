@@ -3,6 +3,8 @@
 
 export type Frontmatter = Record<string, string | string[]>;
 
+export const DECISION_SYNC_VERSION: number;
+
 export function parseFrontmatter(content: string): {
   frontmatter: Frontmatter | null;
   body: string;
@@ -20,7 +22,13 @@ export interface DecisionRow {
   decided_by: string;
   impact: string;
   tier: number | null;
-  audience: string;
+  audience: string | null;
 }
 
 export function parseDecisionRows(body: string): DecisionRow[];
+
+export function redactAdminDecisionRows(body: string): {
+  body: string;
+  rows: DecisionRow[];
+  redacted: number;
+};

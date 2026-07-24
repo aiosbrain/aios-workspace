@@ -43,8 +43,8 @@ case "$FILE_PATH" in
     ;;
 esac
 
-# Get the content being written
-CONTENT=$(echo "$TOOL_INPUT" | jq -r '.content // .new_string // empty' 2>/dev/null || true)
+# Aggregate Write, Edit, and every MultiEdit replacement so no batch member bypasses the gate.
+CONTENT=$(echo "$TOOL_INPUT" | jq -r '[.content?, .new_string?, (.edits[]?.new_string?)] | map(select(type == "string")) | join("\n")' 2>/dev/null || true)
 if [ -z "$CONTENT" ]; then
   exit 0  # No content to check — allow (might be a read or other op)
 fi
@@ -70,12 +70,21 @@ else
     "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
     "gh[ps]_[A-Za-z0-9_]{36,}"
     "xox[bporas]-[A-Za-z0-9-]+"
-    "sk-[A-Za-z0-9]{40,}"
+    "sk-[A-Za-z0-9_-]{40,}"
+    "sk-ant-[A-Za-z0-9_-]{20,}"
+    "aios_[A-Za-z0-9]+_[A-Za-z0-9]{24,}"
+    "https?://[^/:@ ]+:[^/@ ]+@"
+    "[Bb]earer [A-Za-z0-9_\\-\\.=]{30,}"
+    "github_pat_[A-Za-z0-9_]{22,}"
+    "AIza[0-9A-Za-z_\\-]{35}"
+    "[sr]k_live_[A-Za-z0-9]{20,}"
+    "npm_[A-Za-z0-9]{36}"
+    "eyJ[A-Za-z0-9_\\-]{10,}\\.eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}"
   )
 fi
 
 for pattern in "${SECRETS_PATTERNS[@]}"; do
-  if echo "$CONTENT" | grep -qE "$pattern" 2>/dev/null; then
+  if echo "$CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then
     echo "BLOCKED by team-ops-guard: Potential secret detected in $FILE_PATH" >&2
     echo "Pattern matched: $pattern" >&2
     echo "Remove the secret before writing this file." >&2

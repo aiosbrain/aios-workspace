@@ -187,6 +187,26 @@ test("a decision row with an unrecognized audience is excluded (default-deny), n
   );
 });
 
+test("a decision row with a blank audience stays admin instead of inheriting the file tier", () => {
+  const { dir } = ws("current");
+  write(
+    dir,
+    "3-log/decision-log.md",
+    dlog([
+      "1 | 2026-03-29 | Good | r | alex | i | 1 | team",
+      "2 | 2026-03-29 | Blank audience | sensitive | sam | i | 1 | ",
+    ])
+  );
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.ok(
+    m.signals.some((s) => s.ref.row === "1"),
+    "valid-audience row kept"
+  );
+  const blank = m.signals.find((s) => s.ref.row === "2");
+  assert.equal(blank?.tier, "admin");
+  assert.equal(blank?.ref.tier, "admin");
+});
+
 test("future-dated signals (occurredAt > now) are out of window", () => {
   const { dir } = ws("current");
   write(

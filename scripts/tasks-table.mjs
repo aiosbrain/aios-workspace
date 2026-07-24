@@ -7,10 +7,27 @@ export function parseTableRows(body) {
   for (const line of body.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("|")) continue;
-    const cells = t
-      .split("|")
-      .slice(1, -1)
-      .map((x) => x.trim());
+    const cells = [];
+    let cell = "";
+    let endedWithDelimiter = false;
+    for (let i = 1; i < t.length; i++) {
+      if (t[i] === "|") {
+        let precedingBackslashes = 0;
+        for (let j = i - 1; j >= 1 && t[j] === "\\"; j--) precedingBackslashes++;
+        if (precedingBackslashes % 2 === 1) {
+          cell = `${cell.slice(0, -1)}|`;
+          endedWithDelimiter = false;
+          continue;
+        }
+        cells.push(cell.trim());
+        cell = "";
+        endedWithDelimiter = i === t.length - 1;
+      } else {
+        cell += t[i];
+        endedWithDelimiter = false;
+      }
+    }
+    if (!endedWithDelimiter) cells.push(cell.trim());
     if (!cells.length) continue;
     if (cells.every((x) => /^[-: ]*$/.test(x))) continue; // separator row
     rows.push(cells);
