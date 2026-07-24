@@ -155,7 +155,11 @@ function scanDecisionTables(body, fallbackAudience = null) {
       if (!hasUnescapedTablePipe(trimmed)) {
         // Blank lines do not terminate a table: hand-edited decision logs often space rows apart,
         // and resetting here lets a later private/admin continuation bypass body redaction.
-        if (trimmed) table = null;
+        // Prose after a decision table enters deny-only state until a clear table header appears:
+        // an orphan pipe row after prose is ambiguous and must not survive in the outbound body.
+        if (trimmed) {
+          table = table?.isDecision ? { ...table, valid: false } : null;
+        }
         return true;
       }
       if (isTableSeparatorLine(line)) return true; // keep separators

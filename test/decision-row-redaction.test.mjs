@@ -158,6 +158,29 @@ test("blank lines cannot let later private decision rows escape body redaction",
   assert.match(out.body, /\| latency \| fast \|/);
 });
 
+test("prose after a decision table makes orphan pipe rows deny-only", () => {
+  const body = `| # | Decision | Audience |
+|---|---|---|
+| 1 | Team row | team |
+
+This prose ends the valid table.
+| 2 | Payroll detail | private |
+
+| Metric | Value |
+|---|---|
+| latency | fast |
+`;
+  const out = redactAdminDecisionRows(body);
+
+  assert.deepEqual(
+    out.rows.map((row) => row.row_key),
+    ["1"]
+  );
+  assert.doesNotMatch(out.body, /Payroll detail/);
+  assert.match(out.body, /This prose ends the valid table/);
+  assert.match(out.body, /\| latency \| fast \|/);
+});
+
 test("a private continuation row cannot masquerade as a header before a separator", () => {
   const body = `| # | Decision | Audience |
 |---|---|---|
