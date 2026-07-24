@@ -321,12 +321,19 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
-// content_sha256 for a decision push MUST describe the REDACTED body actually sent, not the raw file
-// hash — else brain-api dedupe (identical sha → "unchanged", body NOT overwritten) leaves leaked
-// rows upstream while the client marks the resync done. Version-tagged; local change-detection keeps
-// the raw item.hash separately.
-function contentShaForDecisionPush(item) {
-  if (item.kind !== "decision") return item.hash;
+// content_sha256 MUST describe the payload actually sent on the wire, not the raw file hash — else
+// brain-api dedupe (identical sha → "unchanged", body NOT overwritten) can leave stale/leaked content
+// upstream while the client marks the resync done. This matters for:
+//   - decision: body+rows are redacted (H3 #380) before send — hash the REDACTED body.
+//   - fact / stakeholder_mention: evidencePayloadContent() strips the raw body/source-quotes and
+//     replaces them with a placeholder; the actual synced content is `rows` — hash the pushed
+//     frontmatter+body+rows so the fingerprint matches the transmitted payload, not the raw file
+//     (which may still contain the admin-tier transcript body/quotes that never leave the machine).
+// Local change-detection (re-push decisioning) keeps the raw item.hash separately.
+function contentShaForPush(item) {
+  if (item.kind !== "decision" && item.kind !== "fact" && item.kind !== "stakeholder_mention") {
+    return item.hash;
+  }
   return sha256(
     JSON.stringify({
       decision_redaction_version: DECISION_REDACTION_VERSION,
@@ -384,7 +391,7 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
       plan.clean.push({ rel });
       continue;
     }
-    // decision → H3 (#380) redaction of BOTH body + rows (contentShaForDecisionPush hashes the
+    // decision → H3 (#380) redaction of BOTH body + rows (contentShaForPush hashes the
     // redacted body); fact/stakeholder_mention → strip raw body/source-quotes, push only parsed rows
     // (admin/private evidence is already blocked above by the file-tier gate + validEvidenceDeclaration).
     let rows;
@@ -927,7 +934,7 @@ async function cmdPush(repo, cfg, patterns, args) {
       kind: item.kind,
       // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
       // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
-      content_sha256: contentShaForDecisionPush(item),
+      content_sha256: contentShaForPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},

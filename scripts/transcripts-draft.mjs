@@ -84,9 +84,10 @@ function existingEvidenceRowKeys(root) {
 // The 1.12 evidence kinds (facts, stakeholder mentions) are grounded deterministically from the same
 // transcripts and attached to the just-drafted stage. Deterministic sources: an injected extraction
 // (deps.evidenceExtraction) or a --from-json fixture carrying facts/stakeholders arrays. Live drafts
-// (no injected runner/fixture) additionally extract evidence from the model. Fixture/runner-driven
-// tests that provide no evidence attach nothing — decision/task drafts stay unchanged.
-async function gatherRawEvidence({ paths, fixture, args, deps }) {
+// (no injected runner/fixture) additionally extract evidence from the model, grounded against the same
+// transcript bodies the decision/task phase runner sees. Fixture/injected-runPhase tests that provide
+// no evidence attach nothing — decision/task drafts stay unchanged (no live model call in tests).
+async function gatherRawEvidence({ paths, fixture, args, deps, transcriptTexts }) {
   if (deps.evidenceExtraction) return deps.evidenceExtraction;
   if (fixture && (Array.isArray(fixture.facts) || Array.isArray(fixture.stakeholders))) {
     return { facts: fixture.facts ?? [], stakeholders: fixture.stakeholders ?? [] };
@@ -95,7 +96,7 @@ async function gatherRawEvidence({ paths, fixture, args, deps }) {
   const raw = parseModelJson(
     await (deps.modelCall ?? callPromptModel)({
       model: argValue(args, "--model") ?? "deepseek:deepseek-chat",
-      prompt: extractionContractPrompt(paths),
+      prompt: extractionContractPrompt(paths, transcriptTexts),
       timeoutMs: 180_000,
       opts: { maxTokens: 8000 },
     })
@@ -105,7 +106,8 @@ async function gatherRawEvidence({ paths, fixture, args, deps }) {
 
 async function attachEvidence({ root, engine, stagePath, paths, fixture, args, deps, now }) {
   const empty = { factsAttached: 0, stakeholdersAttached: 0 };
-  const rawEvidence = await gatherRawEvidence({ paths, fixture, args, deps });
+  const transcriptTexts = readTranscriptTexts(root, paths);
+  const rawEvidence = await gatherRawEvidence({ paths, fixture, args, deps, transcriptTexts });
   if (!rawEvidence) return empty;
   const grounded = prepareExtractionStage({
     extraction: {
@@ -114,7 +116,7 @@ async function attachEvidence({ root, engine, stagePath, paths, fixture, args, d
       facts: rawEvidence.facts ?? [],
       stakeholders: rawEvidence.stakeholders ?? [],
     },
-    transcriptTexts: readTranscriptTexts(root, paths),
+    transcriptTexts,
     existingRowKeys: existingEvidenceRowKeys(root),
     now: now(),
   });
