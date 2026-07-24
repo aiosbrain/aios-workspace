@@ -15,7 +15,7 @@ participants:
 **Leo Martins:** Agreed. To state the same decision another way, the existing-customer cohort is
 the only cohort in the beta.
 
-**Priya Shah:** “We decided to keep the current €49 price through the August launch — no launch-week
+**Priya Shah:** “We decided to keep the current $49 price through the August launch — no launch-week
 discount.”
 
 **Mina Okafor:** On the paused-UI topic, “We decided to pause the animated dashboard

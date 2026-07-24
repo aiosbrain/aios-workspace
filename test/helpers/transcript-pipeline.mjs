@@ -41,7 +41,7 @@ export const decisions = [
   {
     id: "decision-august-price",
     date: "2026-07-21",
-    decision: "Keep the €49 price through the August launch",
+    decision: "Keep the $49 price through the August launch",
     rationale: "No launch-week discount",
     decidedBy: "Priya Shah",
     impact: "Launch pricing",
@@ -49,7 +49,7 @@ export const decisions = [
     audience: "team",
     transcript: TRANSCRIPT_REL,
     sourceQuote:
-      "“We decided to keep the current €49 price through the August launch — no launch-week\ndiscount.”",
+      "“We decided to keep the current $49 price through the August launch — no launch-week\ndiscount.”",
   },
   {
     id: "decision-paused-ui",
