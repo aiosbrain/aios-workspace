@@ -108,10 +108,11 @@ test("--force still overrides the redaction marker (explicit escape hatch)", () 
     force: true,
   });
   assert.equal(plan.action, "overwrite");
+  assert.equal(frontmatterValue(plan.markdown, "access"), "private");
   assert.match(plan.markdown, /full unredacted/);
 });
 
-test("--force intentionally overwrites the tier and connector content", () => {
+test("--force overwrites connector content but preserves the local access tier", () => {
   const existing = {
     file: "/tmp/existing.md",
     markdown: renderTranscript(note("long"), "private"),
@@ -124,5 +125,5 @@ test("--force intentionally overwrites the tier and connector content", () => {
     force: true,
   });
   assert.equal(plan.action, "overwrite");
-  assert.equal(frontmatterValue(plan.markdown, "access"), "team");
+  assert.equal(frontmatterValue(plan.markdown, "access"), "private");
 });

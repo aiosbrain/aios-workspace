@@ -26,7 +26,7 @@
  *   --match   only write meetings whose title or participants contain SUBSTR (case-insensitive)
  *   --access  frontmatter access tier for written files (default: team; use private for sensitive)
  *   --local   force the local-app-token path (skip the public API)
- *   --force   explicitly replace an existing transcript with the connector copy
+ *   --force   replace an existing transcript's content while preserving its access tier
  *   --dry-run list what would be written without touching the filesystem
  *
  * Protecting a manual redaction: add `redacted: true` to a transcript's frontmatter
@@ -280,7 +280,14 @@ export function isRedacted(markdown) {
 export function planTranscriptWrite({ note, destination, existing, accessTier, force = false }) {
   const requested = renderTranscript(note, accessTier);
   if (!existing) return { action: "write", file: destination, markdown: requested };
-  if (force) return { action: "overwrite", file: existing.file, markdown: requested };
+  const preservedTier = frontmatterValue(existing.markdown, "access") || accessTier;
+  if (force) {
+    return {
+      action: "overwrite",
+      file: existing.file,
+      markdown: renderTranscript(note, preservedTier),
+    };
+  }
 
   // Opt-in redaction guard: never overwrite a hand-redacted transcript, regardless
   // of body length. Distinct action so the daily loop's log names the reason.
@@ -294,7 +301,6 @@ export function planTranscriptWrite({ note, destination, existing, accessTier, f
     return { action: "skip", file: existing.file, markdown: existing.markdown };
   }
 
-  const preservedTier = frontmatterValue(existing.markdown, "access") || accessTier;
   return {
     action: "update",
     file: existing.file,
