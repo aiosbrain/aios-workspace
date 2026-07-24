@@ -60,7 +60,7 @@ jobs:
           sparse-checkout: ingestion
           token: ${{ secrets.BRAIN_REPO_TOKEN }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: env.AIOS_API_KEY != ''
         with:
           python-version: "3.12"
