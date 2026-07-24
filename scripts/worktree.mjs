@@ -53,8 +53,8 @@ export async function cmdWorktree(repo, cfg, args) {
     "install-primary-commit-guard.sh"
   );
 
-  // Install the primary-checkout commit guard (blocks feature commits landing on
-  // a non-main branch in the primary checkout — forces worktree use). Local-only
+  // Install the primary-checkout commit guard (blocks ALL authored commits in the
+  // primary checkout, on any branch including main — forces worktree use). Local-only
   // .git/hooks file, so re-installed here on every `worktree add`/`install-hook`.
   function installGuard() {
     if (!existsSync(guardInstaller)) {
@@ -64,7 +64,7 @@ export async function cmdWorktree(repo, cfg, args) {
     try {
       execFileSync("bash", [guardInstaller], { cwd: repo, stdio: "pipe" });
       console.log(
-        c.dim("  installed primary-commit-guard → blocks feature commits in the primary checkout")
+        c.dim("  installed primary-commit-guard → blocks all commits in the primary checkout")
       );
       return true;
     } catch (e) {
