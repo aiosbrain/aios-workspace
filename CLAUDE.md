@@ -165,6 +165,14 @@ they don't recognize.
 ## 6. Stack & key commands
 
 - **Node ESM** tooling (zero-/light-dep CLIs), Bash validators/hooks, a Claude Agent SDK GUI + Tauri shell.
+- **Node is pinned to 22** (`.nvmrc` / `.node-version`). Worktrees symlink `node_modules` from the
+  primary, so they all run the primary's compiled `better-sqlite3` — running tests under a different
+  Node major (e.g. Homebrew's newer Node) triggers a `NODE_MODULE_VERSION` ABI crash in the
+  operator-loop DB tests. Run `nvm use` (or fnm/mise, which read `.nvmrc`) so your shell is on 22.
+  `scripts/ensure-native-abi.mjs` (a `pretest` gate + worktree-hydration step) turns any mismatch into
+  an actionable message instead of a cryptic ABI number, and auto-rebuilds when the active Node is a
+  supported one. Bumping to a newer Node major means bumping `better-sqlite3` too (11.x has no prebuild
+  above Node 22/23; Node 24 needs ≥12.0, Node 26 needs ≥12.10).
 
 ```bash
 # scaffold a throwaway workspace to verify template changes:

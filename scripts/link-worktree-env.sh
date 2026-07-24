@@ -121,6 +121,16 @@ if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/aios.mjs" ]]
   node "$main_worktree/scripts/aios.mjs" asks wire --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
 fi
 
+# ── native-module ABI guard ─────────────────────────────────────────────────
+# node_modules is symlinked from the primary above, so this worktree runs the
+# primary's compiled better_sqlite3.node. If the active Node's ABI differs from
+# what that addon was built for (the classic ABI 127-vs-147 crash), the
+# operator-loop DB tests fail for an environment-only reason. Probe it now and
+# auto-rebuild or point at the pinned Node (.nvmrc) — best-effort, never aborts.
+if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-native-abi.mjs" ]]; then
+  (cd "$here" && node scripts/ensure-native-abi.mjs) || echo "native-abi: better-sqlite3 needs attention (see message above)"
+fi
+
 # ── operator-loop build ─────────────────────────────────────────────────────
 # `aios loop`/asks/decisions/time/timeline/mode/maturity-week all require
 # dist/operator-loop (compiled from src/operator-loop, src/timeline — see
