@@ -1,56 +1,387 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit — aios-workspace
+# ---------------------------------------------------------------------------
+# NOTE: there is no `version:` key. The schema root is additionalProperties:false
+# and `version` is not one of the ten permitted keys — the previous config here
+# carried it and was likely failing validation. Do not reintroduce it.
+#
+# PLAN. This org is on Pro ($30/seat/mo), but every AIOS repo is PUBLIC, and
+# CodeRabbit's plans page states public repos receive Pro+ features free. Its
+# older KB article says OSS gets "Pro-level reviews only". Those two first-party
+# sources conflict and it is unresolved — so this file includes the Pro+-gated
+# blocks, because on plain Pro they are accepted by the schema and simply never
+# run. Zero cost if unavailable, high value if not.
+#
+#   >> Blocks marked "PRO+ ONLY" may be silently inert. Do not treat them as a
+#   >> guarantee. Run `@coderabbitai configuration` on a PR to see the resolved
+#   >> config, and look for the check rows in the walkthrough to confirm.
+#
+# RATE LIMITS. Pro is 5 PR reviews/dev/hour, plus a fair-use throttle keyed to a
+# rolling 7-day count: 60+ reviews in 7 days drops you to 1/hour. This repo runs
+# ~300 PRs/month, so auto-review is ON but filtered hard. The decisive lever is
+# auto_pause_after_reviewed_commits — the per-push incremental drip burns far
+# more quota than PR count does. Check budget with `@coderabbitai rate limit`
+# (that command does not itself consume a review).
+#
+# DIVISION OF LABOUR. This repo already runs local Bugbot, Cursor Bugbot, Claude
+# reviews, and CI (lint, format, secrets, leak-gate, tests, coverage, docs-drift,
+# constitution guards). Those own diff-local correctness and style. CodeRabbit is
+# configured for what they structurally cannot do: cross-PR memory, intent-vs-
+# linked-issue assessment, and the pinned-contract invariants below. Linters
+# duplicated by CI are disabled to avoid a second, redundant voice.
+# ---------------------------------------------------------------------------
+
 language: "en-US"
+tone_instructions: "Be terse. No praise, no restating the diff. Only report what would change the merge decision."
 
 reviews:
   profile: "chill"
+
+  # Warning-only posture. `mode: error` below is cosmetic until this is true.
+  # Flip to true once the false-positive rate has proven acceptable (~2 weeks).
   request_changes_workflow: false
+
+  # --- walkthrough noise: keep the signal, drop the ceremony ---
   high_level_summary: true
   poem: false
-  review_status: true
-  collapse_walkthrough: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  changed_files_summary: false # GitHub already lists changed files
+  suggested_reviewers: false # two-person org
+  suggested_labels: false
+  review_status: false # kills "review skipped because…" chatter
+  estimate_code_review_effort: false
+  collapse_walkthrough: true
+  abort_on_close: true
+
+  # Keeps the "Prompt for AI Agents" block on inline comments so findings paste
+  # straight into a Claude Code session.
+  enable_prompt_for_ai_agents: true
+
+  # Cross-PR context — the main reason CodeRabbit earns a slot beside Bugbot.
+  assess_linked_issues: true
+  related_prs: true
+  related_issues: true
+
   auto_review:
-    enabled: false
+    enabled: true
     drafts: false
-    labels:
-      - ready-for-review
-    auto_incremental_review: false
+    auto_incremental_review: true
+
+    # THE rate-limit lever. Default is 5; at this repo's velocity that drip is
+    # what triggers the 7-day fair-use throttle. 1 = review the opening commit,
+    # then pause until explicitly resumed with `@coderabbitai review`.
+    auto_pause_after_reviewed_commits: 1
+
+    # NOTE: base_branches is REGEX, not glob, and EXTENDS the default branch
+    # rather than replacing it. Anchored to avoid matching e.g. "my-main-x".
     base_branches:
-      - main
+      - "^main$"
+
+    # Case-insensitive substring match on the PR title.
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "[skip review]"
+      - "chore"
+      - "docs:"
+      - "deps"
+      - "release"
+      - "bump"
+
+    # Exact match, case-sensitive, no wildcards. Outranks every other control.
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
 
   path_filters:
     - "!node_modules/**"
     - "!dist/**"
     - "!src-tauri/target/**"
-    - "!examples/**"
+    - "!examples/**" # synthetic sample workspace, reviewed by hand
     - "!test/ux/evidence/**"
-    - "!*.lock"
+    - "!**/*.lock"
+    - "!package-lock.json"
+    - "!code-review-*.md" # local review artifacts
+    - "!.aios/**"
+    - "!gui/client/dist/**"
 
   path_instructions:
     - path: "scripts/aios.mjs"
       instructions: |
-        This is the sync CLI. Changes must not break the brain-api.md v1.11 contract
-        (docs/brain-api.md). Push must only transmit team/external tier content —
-        admin/private content must never leave. Default-deny on missing access: frontmatter.
+        The Team Brain sync CLI. Two hard invariants:
+        1. It builds against the pinned contract in docs/brain-api.md. Any change
+           to request/response shapes, item kinds, or endpoints requires the
+           document revision header in docs/brain-api.md to be bumped in the SAME
+           PR. Flag a protocol change with an unbumped header as a blocking issue.
+        2. Push must transmit ONLY team/external tier content. admin/private must
+           never leave the machine, and content with no resolvable `access:`
+           frontmatter is default-deny (not pushed). Flag anything that widens
+           what is eligible to push.
+        Clients MUST ignore item kinds they do not recognise (forward-compat).
+
     - path: "validation/**"
       instructions: |
-        OGR validators (OGR01–OGR10) are the integrity guarantee. Do not weaken
-        regex patterns or add bypass paths to make a test pass.
+        OGR validators (OGR01–OGR10) are the repo's integrity guarantee. Do not
+        accept weakened regex patterns, added bypass paths, or early returns
+        introduced to make a failing test pass. If a validator becomes more
+        permissive, the PR description must explain why — flag if it does not.
+
     - path: "hooks/**"
       instructions: |
-        Claude Code hooks run on PreToolUse (write/edit). The secrets hook must block
-        on exit code 2. Do not change exit codes or skip patterns without justification.
-    - path: "scaffold/.claude/skills/**"
-      instructions: |
-        Skills are multi-agent harnesses. Each must have a corresponding rubric in
-        scaffold/.claude/rubrics/. If a skill changes, check its rubric is still honest.
+        Claude Code PreToolUse guards. The secrets hook MUST block by exiting 2 —
+        flag any change to exit codes, skip patterns, or early returns that could
+        let a write through. local-bugbot-gate.mjs is a completion gate: it must
+        not be made non-fatal, and Medium-or-higher findings must keep blocking.
+
     - path: "scaffold/**"
       instructions: |
-        This is the product template. Changes here affect every scaffolded workspace.
-        Both --context consultant and --context employee must keep working after any change.
+        This is the PRODUCT TEMPLATE — changes here reach every scaffolded
+        workspace. Verify the change holds for all three contexts: consultant,
+        employee, AND business-owner. Flag any change that assumes one context.
+        Product behaviour belongs here, never in a stamped copy.
+
+    - path: "scaffold/.claude/skills/**"
+      instructions: |
+        Skills are multi-agent harnesses whose trustworthiness comes from
+        adversarial verification plus a rubric in scaffold/.claude/rubrics/.
+        If a skill's behaviour changes, check its rubric is still honest — a
+        rubric that no longer matches the harness is a silent correctness hole.
+
+    - path: "scripts/toolkit-manifest.mjs"
+      instructions: |
+        The four buckets (MANAGED / SEED_IF_ABSENT / PERSONAL / SCAFFOLD_UNMANAGED)
+        are held in lockstep with scaffold-project.sh by a parity test. A file
+        moving buckets changes whether `aios update` may overwrite a user's
+        personal edits — treat any bucket reassignment as high-risk and flag it.
+
+    - path: "docs/brain-api.md"
+      instructions: |
+        The pinned sync contract, shared with aios-team-brain. Confirm the
+        document revision header is incremented and that the matching change is
+        called out for the brain side. Silent drift breaks push/pull for everyone.
+
+    - path: "**/*.{ts,tsx,mjs,js}"
+      instructions: |
+        Do NOT comment on formatting or import order — Prettier and ESLint own
+        those in CI. Focus on: unhandled promise rejections, swallowed errors,
+        `any` escapes, and resource cleanup. Report only what changes the merge
+        decision.
+
+    - path: "**/*.md"
+      instructions: |
+        Do not raise prose, grammar, or style nits. Only flag statements that are
+        factually wrong about the code, reference removed APIs/flags, or document
+        behaviour that is not in the current tagged release.
+
+  pre_merge_checks:
+    override_requested_reviewers_only: false
+
+    title:
+      mode: "warning"
+      requirements: |
+        Conventional Commits: <type>(<scope>): <subject>. Imperative mood, under
+        72 chars. Types: feat, fix, chore, docs, refactor, test, ci, perf.
+        Feature work should carry a Linear ID (AIO-NNN) in the title or body.
+
+    # Off: PRs here are largely agent-generated against a known template, so
+    # description nagging is pure noise. Revisit if PR bodies degrade.
+    description:
+      mode: "off"
+
+    # The highest-value built-in here — flags scope creep against the linked
+    # Linear issue, pairing directly with the spec-before-build gate.
+    issue_assessment:
+      mode: "warning"
+
+    # Off deliberately: an 80% docstring bar on an ESM CLI repo fails constantly.
+    docstrings:
+      mode: "off"
+      threshold: 80
+
+    # ----- PRO+ ONLY — may be silently inert on plain Pro. See header. -----
+    # These encode AIOS invariants no other reviewer in the stack checks. Each
+    # states explicit Pass/Fail criteria; vague checks return Inconclusive. The
+    # sandbox is READ-ONLY: it cannot run tests, build, or see approval state.
+    custom_checks:
+      - name: "brain-api contract version bump"
+        mode: "warning"
+        instructions: |
+          Applies only when the diff touches the sync protocol surface:
+          scripts/aios.mjs push/pull logic, or docs/brain-api.md.
+          Pass: the diff touches no sync-protocol surface, OR the document
+          revision header at the top of docs/brain-api.md is incremented in this
+          same PR.
+          Fail: sync request/response shapes, item kinds, or endpoint paths are
+          changed while the docs/brain-api.md revision header is unchanged.
+
+      - name: "access tier default-deny preserved"
+        mode: "warning"
+        instructions: |
+          The tier model is the safety boundary: admin/private never syncs, and
+          content with no resolvable `access:` frontmatter is NOT pushed.
+          Pass: the diff does not alter tier resolution or push eligibility, OR
+          it alters them while preserving default-deny and adds or keeps a test
+          proving unresolvable frontmatter is excluded.
+          Fail: any hunk makes admin or private tier content syncable, or makes
+          content lacking resolvable `access:` frontmatter eligible for push, or
+          removes a default-deny branch.
+
+      - name: "edit the template, not a stamped copy"
+        mode: "warning"
+        instructions: |
+          Product behaviour lives in scaffold/. Editing a stamped workspace does
+          not change the product.
+          Pass: changes to product behaviour are under scaffold/, scripts/,
+          hooks/, or validation/.
+          Fail: a file is modified that mirrors a scaffold/ template file, in a
+          stamped-workspace location, without the corresponding scaffold/ file
+          also being changed in this PR.
+
+      - name: "three scaffold contexts still hold"
+        mode: "warning"
+        instructions: |
+          Applies only when the diff touches scaffold/ or scripts/scaffold-project.sh.
+          Pass: the change is context-neutral, or it explicitly handles all three
+          of consultant, employee, and business-owner.
+          Fail: the change branches on or hardcodes one context (for example only
+          consultant framing) without handling the other two.
+
+      - name: "guardrails not weakened to pass"
+        mode: "warning"
+        instructions: |
+          Pass: no change to validation/, hooks/, or leak-gate logic, OR the
+          change makes them stricter, OR the PR description explains why a
+          relaxation is correct.
+          Fail: a validator regex is loosened, a hook exit code changes from
+          blocking to non-blocking, a skip or allow pattern is broadened, or a
+          bypass path is added, with no justification in the PR description.
 
   finishing_touches:
+    # Owned by the Claude Code loop, which does it better and costs no quota.
     docstrings:
       enabled: false
+    autofix:
+      enabled: true
+    # PRO+ ONLY — declared explicitly so intent is recorded even if inert.
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+
+  # ----- PRO+ ONLY — may be silently inert on plain Pro. See header. -----
+  # Fires only on merge into the default branch. Note that code simplification
+  # is a finishing_touch, not a post-merge action, and is Pro+ regardless.
+  post_merge_actions:
+    - name: "Flag contract drift after merge"
+      enabled: true
+      prompt: |
+        If this merge changed the sync protocol surface (scripts/aios.mjs
+        push/pull, or docs/brain-api.md), emit a short text report listing
+        exactly what changed and whether aios-team-brain needs a matching
+        change. If nothing in that surface changed, do nothing.
+
+    - name: "Surface unresolved review threads"
+      enabled: true
+      prompt: |
+        If this PR merged with unresolved CodeRabbit review comments that were
+        rated potential issues, list them as a short text report so they can be
+        triaged rather than lost. If there are none, do nothing.
+
+  tools:
+    # --- disabled: CI already owns these; a second voice is pure noise ---
+    eslint:
+      enabled: false # npm run lint
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false # biggest prose-nit generator on a docs-heavy repo
+    # --- enabled: security, supply chain, CI config — which CI does NOT run ---
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    semgrep:
+      enabled: true
+    osvScanner:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true # GitHub Actions security
+    shellcheck:
+      enabled: true # scaffold-project.sh, leak-gate.sh, validators
+    checkmake:
+      enabled: true
+    # Scans SKILL.md manifests and MCP configs for malicious patterns — directly
+    # relevant to scaffold/.claude/skills/ and the shipped .mcp.json.
+    skillspector:
+      enabled: true
+
+  # Public repo + GitHub: flags spam/low-quality drive-by PRs on the OSS project.
+  slop_detection:
+    enabled: true
 
 chat:
+  art: false
   auto_reply: true
+  integrations:
+    # MUST be explicit: "auto" DISABLES the integration on public repos.
+    linear:
+      usage: "enabled"
+
+knowledge_base:
+  opt_out: false # true would DELETE stored learnings, not pause them
+  web_search:
+    enabled: true
+
+  code_guidelines:
+    enabled: true
+    # CLAUDE.md / AGENTS.md are picked up by default; these are the extras.
+    filePatterns:
+      - "RESOLVER.md"
+      - "docs/ENGINEERING-CONSTITUTION.md"
+      - "docs/brain-api.md"
+      - "CONTRIBUTING.md"
+
+  # Explicit rather than "auto" (which resolves to local on public repos anyway).
+  # Correcting CodeRabbit in a PR comment ("don't flag X") stores a Learning —
+  # the highest-leverage noise reducer over the first few weeks.
+  learnings:
+    scope: "local"
+    approval_delay: 0
+  issues:
+    scope: "local"
+  pull_requests:
+    scope: "local"
+
+  linear:
+    usage: "enabled" # "auto" would disable this on a public repo
+    team_keys:
+      - "AIO"
+
+  # Pro allows exactly 1 linked repo. Spent on the brain, the other half of the
+  # pinned brain-api.md contract.
+  linked_repositories:
+    - repository: "aiosbrain/aios-team-brain"
+      instructions: |
+        The Team Brain — the server side of the pinned sync contract in
+        docs/brain-api.md. When reviewing changes to the sync CLI, check whether
+        the brain implements the matching side. The brain rejects admin-tier
+        content at the API boundary with 422; the client must never rely on that
+        as its only defence.
+
+code_generation:
+  docstrings:
+    language: "en-US"
+    path_instructions:
+      - path: "**/*.{ts,tsx}"
+        instructions: "TSDoc with @param/@returns. Document tier/access side effects explicitly."
+      - path: "**/*.mjs"
+        instructions: "JSDoc. Note any filesystem or network side effect in the description."
