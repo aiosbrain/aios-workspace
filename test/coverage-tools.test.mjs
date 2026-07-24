@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { changedLineCoverage, parseChangedLines, parseLcov } from "../scripts/check-coverage.mjs";
+import {
+  buildBaseline,
+  changedLineCoverage,
+  parseArgs,
+  parseChangedLines,
+  parseLcov,
+  resolveBase,
+} from "../scripts/check-coverage.mjs";
 import { mergeTotals, prefixRelativeLcov } from "../scripts/merge-coverage.mjs";
 
 test("coverage merge recomputes percentages from production totals", () => {
@@ -74,4 +81,56 @@ test("client LCOV paths are rooted before reports are merged", () => {
     prefixRelativeLcov("SF:C:\\repo\\src\\lib\\api.ts\n", "gui/client"),
     "SF:C:\\repo\\src\\lib\\api.ts\n"
   );
+});
+
+test("coverage CLI rejects missing values and local baseline overwrite shortcuts", () => {
+  assert.throws(() => parseArgs(["--base"]), /--base requires a value/);
+  assert.throws(() => parseArgs(["--base="]), /--base requires a value/);
+  assert.throws(
+    () => parseArgs(["--write-baseline"]),
+    /requires --output <path>.*CI-generated candidate/
+  );
+  assert.throws(
+    () =>
+      parseArgs(["--write-baseline", "--output=coverage/candidate.json"], {
+        GITHUB_ACTIONS: "false",
+      }),
+    /restricted to GitHub Actions/
+  );
+  assert.deepEqual(
+    parseArgs(["--write-baseline", "--output=coverage/candidate.json", "--base", "upstream/main"], {
+      GITHUB_ACTIONS: "true",
+    }),
+    {
+      writeBaseline: true,
+      output: "coverage/candidate.json",
+      base: "upstream/main",
+    }
+  );
+});
+
+test("coverage diff base fails closed instead of silently narrowing to HEAD^", () => {
+  const missingGit = () => {
+    throw new Error("missing ref");
+  };
+  assert.throws(
+    () => resolveBase(null, missingGit, {}),
+    /cannot resolve coverage diff base.*fetch the base branch/
+  );
+});
+
+test("coverage baseline floors CI metrics to one decimal place", () => {
+  const summary = {
+    total: {
+      lines: { pct: 51.49 },
+      statements: { pct: 51.42 },
+      functions: { pct: 65.81 },
+      branches: { pct: 67.92 },
+    },
+  };
+  assert.deepEqual(buildBaseline(summary), {
+    version: 1,
+    minimum: { lines: 51.4, statements: 51.4, functions: 65.8, branches: 67.9 },
+    changedLines: 80,
+  });
 });

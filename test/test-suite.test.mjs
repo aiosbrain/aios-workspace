@@ -56,6 +56,10 @@ test("shard and concurrency arguments are validated", () => {
   assert.throws(() => parseShard("bad"), /INDEX\/TOTAL/);
   assert.deepEqual(parseArgs(["--shard=1/3", "--concurrency=2"]).shard, "1/3");
   assert.equal(parseArgs(["--shard=1/3", "--concurrency=2"]).concurrency, 2);
+  for (const flag of ["--shard", "--concurrency", "--only"]) {
+    assert.throws(() => parseArgs([flag]), new RegExp(`${flag} requires a value`));
+    assert.throws(() => parseArgs([`${flag}=`]), new RegExp(`${flag} requires a value`));
+  }
 });
 
 test("package scripts use canonical discovery instead of enumerating tests", () => {
@@ -63,4 +67,12 @@ test("package scripts use canonical discovery instead of enumerating tests", () 
   assert.match(manifest.scripts["test:node"], /scripts\/test-suite\.mjs/);
   assert.doesNotMatch(manifest.scripts.test, /\.test\./);
   assert.equal(manifest.scripts.pretest, undefined);
+  assert.match(manifest.scripts["pretest:node"], /ensure-native-abi\.mjs/);
+  assert.match(manifest.scripts["test:rust"], /run-rust-tests\.mjs/);
+});
+
+test("aggregate CI gate preserves the protected branch context", () => {
+  const workflow = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(workflow, /test-gate:\n(?:.|\n)*?name: unit tests \(npm test\)/);
+  assert.match(workflow, /AIOS_REQUIRE_RUST_TESTS: "1"/);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { configFor, MUTATION_GROUPS } from "../scripts/run-mutation.mjs";
+import { changedFiles, configFor, MUTATION_GROUPS, parseArgs } from "../scripts/run-mutation.mjs";
 
 test("every mutation group has a unique name and a nightly scope", () => {
   assert.equal(new Set(MUTATION_GROUPS.map((group) => group.name)).size, MUTATION_GROUPS.length);
@@ -22,4 +22,34 @@ test("GUI mutation uses Vitest per-test coverage", () => {
   assert.equal(config.testRunner, "vitest");
   assert.equal(config.coverageAnalysis, "perTest");
   assert.equal(config.incremental, true);
+});
+
+test("mutation CLI validates value-taking flags", () => {
+  for (const flag of ["--base", "--group", "--mutate"]) {
+    assert.throws(() => parseArgs([flag]), new RegExp(`${flag} requires a value`));
+    assert.throws(() => parseArgs([`${flag}=`]), new RegExp(`${flag} requires a value`));
+  }
+  assert.deepEqual(
+    {
+      ...parseArgs(["--base", "upstream/main", "--group=client-auth-permissions", "--list"]),
+      nightly: false,
+    },
+    {
+      nightly: false,
+      list: true,
+      base: "upstream/main",
+      group: "client-auth-permissions",
+      mutate: null,
+    }
+  );
+});
+
+test("mutation changed-file discovery fails closed when git cannot resolve the base", () => {
+  assert.throws(
+    () =>
+      changedFiles("origin/main", () => {
+        throw new Error("missing ref");
+      }),
+    /cannot resolve mutation diff base.*fetch it/
+  );
 });

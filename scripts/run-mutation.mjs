@@ -93,27 +93,35 @@ function git(args) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
 }
 
-function changedFiles(base) {
+export function changedFiles(base, gitCommand = git) {
+  let diffBase;
   try {
-    let diffBase = base;
-    try {
-      diffBase = git(["merge-base", base, "HEAD"]).trim();
-    } catch {
-      // A shallow/manual checkout may not have the target ref; use the supplied
-      // base and let git report an empty changed set if it is also unavailable.
-    }
-    const changed = git(["diff", "--name-only", "--diff-filter=ACMR", diffBase, "--"])
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const untracked = git(["ls-files", "--others", "--exclude-standard"])
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    return [...new Set([...changed, ...untracked])];
-  } catch {
-    return [];
+    diffBase = gitCommand(["merge-base", base, "HEAD"]).trim();
+  } catch (error) {
+    throw new Error(
+      `cannot resolve mutation diff base ${JSON.stringify(base)}; fetch it or pass --base <ref>`,
+      { cause: error }
+    );
   }
+  if (!diffBase) throw new Error(`git returned an empty merge base for ${JSON.stringify(base)}`);
+
+  let changed;
+  let untracked;
+  try {
+    changed = gitCommand(["diff", "--name-only", "--diff-filter=ACMR", diffBase, "--"])
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    untracked = gitCommand(["ls-files", "--others", "--exclude-standard"])
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+  } catch (error) {
+    throw new Error(`cannot enumerate files for mutation analysis: ${error.message}`, {
+      cause: error,
+    });
+  }
+  return [...new Set([...changed, ...untracked])];
 }
 
 function nodeCommand(group) {
@@ -149,36 +157,60 @@ export function configFor(group, mutate, nightly) {
   };
 }
 
+function requiredValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function inlineValue(arg, flag) {
+  const value = arg.slice(`${flag}=`.length);
+  if (!value) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+export function parseArgs(argv) {
+  const options = {
+    nightly: false,
+    list: process.env.AIOS_MUTATION_DRY_RUN === "1",
+    base: process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "origin/main",
+    group: null,
+    mutate: null,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--nightly") options.nightly = true;
+    else if (arg === "--list") options.list = true;
+    else if (arg === "--base") options.base = requiredValue(argv, i++, "--base");
+    else if (arg.startsWith("--base=")) options.base = inlineValue(arg, "--base");
+    else if (arg === "--group") options.group = requiredValue(argv, i++, "--group");
+    else if (arg.startsWith("--group=")) options.group = inlineValue(arg, "--group");
+    else if (arg === "--mutate") options.mutate = requiredValue(argv, i++, "--mutate");
+    else if (arg.startsWith("--mutate=")) options.mutate = inlineValue(arg, "--mutate");
+    else throw new Error(`unknown mutation option: ${arg}`);
+  }
+  return options;
+}
+
 function main(argv) {
-  const nightly = argv.includes("--nightly");
-  const listOnly = argv.includes("--list") || process.env.AIOS_MUTATION_DRY_RUN === "1";
-  const groupArg = argv.find((arg) => arg.startsWith("--group="))?.slice("--group=".length);
-  const mutateArg = argv.find((arg) => arg.startsWith("--mutate="))?.slice("--mutate=".length);
-  if (mutateArg && !groupArg) {
+  const options = parseArgs(argv);
+  if (options.mutate && !options.group) {
     throw new Error("--mutate requires --group so a file cannot run against unrelated tests");
   }
-  const explicitBaseIndex = argv.indexOf("--base");
-  const base =
-    explicitBaseIndex === -1
-      ? process.env.GITHUB_BASE_REF
-        ? `origin/${process.env.GITHUB_BASE_REF}`
-        : "origin/main"
-      : argv[explicitBaseIndex + 1];
-  const changed = nightly ? [] : changedFiles(base);
-  const selected = MUTATION_GROUPS.filter((group) => !groupArg || group.name === groupArg)
+  if (options.group && !MUTATION_GROUPS.some((group) => group.name === options.group)) {
+    throw new Error(`unknown mutation group: ${options.group}`);
+  }
+  const changed = options.nightly || options.mutate ? [] : changedFiles(options.base);
+  const selected = MUTATION_GROUPS.filter((group) => !options.group || group.name === options.group)
     .map((group) => ({
       group,
-      mutate: mutateArg
-        ? [mutateArg]
-        : nightly
+      mutate: options.mutate
+        ? [options.mutate]
+        : options.nightly
           ? group.nightly
           : changed.filter((file) => group.match.test(file)),
     }))
     .filter(({ mutate }) => mutate.length);
-
-  if (groupArg && !MUTATION_GROUPS.some((group) => group.name === groupArg)) {
-    throw new Error(`unknown mutation group: ${groupArg}`);
-  }
 
   if (!selected.length) {
     console.log("mutation: no changed critical production files");
@@ -188,11 +220,11 @@ function main(argv) {
   mkdirSync(path.join(ROOT, "reports", "mutation"), { recursive: true });
 
   for (const { group, mutate } of selected) {
-    const config = configFor(group, mutate, nightly);
+    const config = configFor(group, mutate, options.nightly);
     const configFile = path.join(ROOT, ".stryker-tmp", `${group.name}.conf.json`);
     writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`);
     console.log(`mutation: ${group.name} (${mutate.join(", ")})`);
-    if (listOnly) continue;
+    if (options.list) continue;
     const result = spawnSync(
       process.execPath,
       [

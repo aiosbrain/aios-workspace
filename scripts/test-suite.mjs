@@ -73,6 +73,20 @@ export function parseShard(raw) {
   return `${index}/${total}`;
 }
 
+function requiredValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function inlineValue(arg, flag) {
+  const value = arg.slice(`${flag}=`.length);
+  if (!value) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
 export function parseArgs(argv) {
   const options = {
     list: false,
@@ -87,13 +101,14 @@ export function parseArgs(argv) {
     if (arg === "--list") options.list = true;
     else if (arg === "--json") options.json = true;
     else if (arg === "--live-install") options.liveInstall = true;
-    else if (arg === "--shard") options.shard = argv[++i];
-    else if (arg.startsWith("--shard=")) options.shard = arg.slice("--shard=".length);
-    else if (arg === "--concurrency") options.concurrency = argv[++i];
-    else if (arg.startsWith("--concurrency=")) {
-      options.concurrency = arg.slice("--concurrency=".length);
-    } else if (arg === "--only") options.only.push(argv[++i]);
-    else if (arg.startsWith("--only=")) options.only.push(arg.slice("--only=".length));
+    else if (arg === "--shard") options.shard = requiredValue(argv, i++, "--shard");
+    else if (arg.startsWith("--shard=")) options.shard = inlineValue(arg, "--shard");
+    else if (arg === "--concurrency") {
+      options.concurrency = requiredValue(argv, i++, "--concurrency");
+    } else if (arg.startsWith("--concurrency=")) {
+      options.concurrency = inlineValue(arg, "--concurrency");
+    } else if (arg === "--only") options.only.push(requiredValue(argv, i++, "--only"));
+    else if (arg.startsWith("--only=")) options.only.push(inlineValue(arg, "--only"));
     else throw new Error(`unknown test-suite option: ${arg}`);
   }
   options.shard = parseShard(options.shard);

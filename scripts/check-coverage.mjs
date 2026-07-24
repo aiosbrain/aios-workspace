@@ -75,25 +75,32 @@ export function changedLineCoverage(changed, coverage) {
   return { total, covered, pct: total ? Number(((covered / total) * 100).toFixed(2)) : 100, files };
 }
 
-function resolveBase(explicit) {
-  if (explicit) return explicit;
-  const candidate = process.env.GITHUB_BASE_REF
-    ? `origin/${process.env.GITHUB_BASE_REF}`
-    : "origin/main";
-  try {
-    git(["rev-parse", "--verify", candidate]);
-    return candidate;
-  } catch {
-    return "HEAD^";
+export function resolveBase(explicit, gitCommand = git, env = process.env) {
+  const candidates = explicit
+    ? [explicit]
+    : [env.GITHUB_BASE_REF ? `origin/${env.GITHUB_BASE_REF}` : null, "origin/main"].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      gitCommand(["rev-parse", "--verify", candidate]);
+      return candidate;
+    } catch {
+      // Try the next authoritative base. Never silently narrow to HEAD^.
+    }
   }
+  throw new Error(
+    `cannot resolve coverage diff base (${candidates.join(", ")}); ` +
+      "fetch the base branch or pass --base <ref>"
+  );
 }
 
-function resolveMergeBase(explicit) {
-  const target = resolveBase(explicit);
+export function resolveMergeBase(explicit, gitCommand = git, env = process.env) {
+  const target = resolveBase(explicit, gitCommand, env);
   try {
-    return git(["merge-base", target, "HEAD"]).trim();
-  } catch {
-    return target;
+    const base = gitCommand(["merge-base", target, "HEAD"]).trim();
+    if (!base) throw new Error("empty merge base");
+    return base;
+  } catch (error) {
+    throw new Error(`cannot compute merge base between ${target} and HEAD`, { cause: error });
   }
 }
 
@@ -101,25 +108,71 @@ function roundedFloor(value) {
   return Math.floor(value * 10) / 10;
 }
 
-function writeBaseline(summary) {
-  const baseline = {
+export function buildBaseline(summary) {
+  return {
     version: 1,
     minimum: Object.fromEntries(
       METRICS.map((metric) => [metric, roundedFloor(summary.total[metric].pct)])
     ),
     changedLines: 80,
   };
-  writeFileSync(BASELINE_FILE, `${JSON.stringify(baseline, null, 2)}\n`);
-  console.log(`coverage: wrote corrected baseline to ${path.relative(ROOT, BASELINE_FILE)}`);
+}
+
+function requiredValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function inlineValue(arg, flag) {
+  const value = arg.slice(`${flag}=`.length);
+  if (!value) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+export function parseArgs(argv, env = process.env) {
+  const options = { writeBaseline: false, base: null, output: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--write-baseline") options.writeBaseline = true;
+    else if (arg === "--base") options.base = requiredValue(argv, i++, "--base");
+    else if (arg.startsWith("--base=")) options.base = inlineValue(arg, "--base");
+    else if (arg === "--output") options.output = requiredValue(argv, i++, "--output");
+    else if (arg.startsWith("--output=")) options.output = inlineValue(arg, "--output");
+    else throw new Error(`unknown coverage option: ${arg}`);
+  }
+  if (options.writeBaseline && !options.output) {
+    throw new Error(
+      "--write-baseline requires --output <path>; use the CI-generated candidate as the tracked baseline"
+    );
+  }
+  if (!options.writeBaseline && options.output) {
+    throw new Error("--output requires --write-baseline");
+  }
+  if (options.writeBaseline && env.GITHUB_ACTIONS !== "true") {
+    throw new Error("--write-baseline is restricted to GitHub Actions");
+  }
+  return options;
+}
+
+function writeBaseline(summary, output) {
+  const outputFile = path.resolve(ROOT, output);
+  const relative = path.relative(ROOT, outputFile);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("--output must stay inside the repository");
+  }
+  writeFileSync(outputFile, `${JSON.stringify(buildBaseline(summary), null, 2)}\n`);
+  console.log(`coverage: wrote CI baseline candidate to ${relative}`);
 }
 
 function main(argv) {
+  const options = parseArgs(argv);
   if (!existsSync(SUMMARY_FILE) || !existsSync(LCOV_FILE)) {
-    throw new Error("coverage reports are missing; run npm run test:coverage first");
+    throw new Error("coverage reports are missing; run npm run test:coverage:report first");
   }
   const summary = JSON.parse(readFileSync(SUMMARY_FILE, "utf8"));
-  if (argv.includes("--write-baseline")) {
-    writeBaseline(summary);
+  if (options.writeBaseline) {
+    writeBaseline(summary, options.output);
     return;
   }
   if (!existsSync(BASELINE_FILE)) {
@@ -133,11 +186,9 @@ function main(argv) {
     if (actual < minimum) failures.push(`${metric}: ${actual}% < ${minimum}% baseline`);
   }
 
-  const baseIndex = argv.indexOf("--base");
-  const explicitBase = baseIndex === -1 ? null : argv[baseIndex + 1];
   // Compare the PR's own changes, not reverse changes from a moving main tip
   // when a long-running worktree temporarily falls behind origin/main.
-  const base = resolveMergeBase(explicitBase);
+  const base = resolveMergeBase(options.base);
   const diff = git([
     "diff",
     "--unified=0",

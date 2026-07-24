@@ -1,9 +1,11 @@
 # Test strategy
 
 `npm test` is the complete local verification entrypoint. It runs static preparation, every
-Node test discovered by `scripts/test-suite.mjs`, the GUI client Vitest suite, and Rust tests.
-The Node runner keeps one child process per file and bounds concurrency; do not restore explicit
-test-file lists to `package.json`.
+Node test discovered by `scripts/test-suite.mjs`, the GUI client Vitest suite, and Rust tests
+when the local Rust/Tauri prerequisites are installed. A missing local Rust toolchain produces
+an explicit skip notice; CI sets `AIOS_REQUIRE_RUST_TESTS=1`, installs the Linux dependencies,
+and never permits that lane to skip. The Node runner keeps one child process per file and bounds
+concurrency; do not restore explicit test-file lists to `package.json`.
 
 ## CI lanes
 
@@ -21,14 +23,16 @@ source as zero coverage. `coverage-baseline.json` is a global non-regression rat
 changed executable lines must remain at least 80% covered. PR artifacts contain only the merged
 JSON summary and LCOV data; raw V8 data and HTML are not uploaded.
 
-When an intentional coverage improvement lands, regenerate the floor from a clean run:
+Coverage floors are generated on the Ubuntu CI runner so platform-specific skips cannot make a
+locally generated floor fail in CI. Every coverage run uploads
+`coverage-baseline-candidate.json`. After an intentional improvement lands:
 
-```bash
-npm run test:coverage
-node scripts/check-coverage.mjs --write-baseline
-```
+1. Download the `coverage` artifact from the successful CI run.
+2. Review its `coverage-baseline-candidate.json`.
+3. Replace `coverage-baseline.json` with that CI-generated candidate in a follow-up PR.
 
-Never lower a baseline merely to make CI pass.
+The writer is restricted to GitHub Actions and requires an explicit output path; do not
+regenerate the tracked baseline from a local run. Never lower a baseline merely to make CI pass.
 
 ## Mutation policy
 

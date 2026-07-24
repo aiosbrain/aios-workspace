@@ -56,8 +56,11 @@ export const CATEGORIES = {
       "test:gateway-contracts", // focused gateway contract conformance suite
       "test:gateway-approval-contracts", // AIO-407 durable approval/admin extension
       "test:prepare",
+      "pretest:node",
       "test:node",
       "test:node:list",
+      "test:coverage:report",
+      "test:mutation:smoke",
       "test:mutation:nightly",
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],
