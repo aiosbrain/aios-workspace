@@ -63,7 +63,9 @@ export async function cmdWorktree(repo, cfg, args) {
     }
     try {
       execFileSync("bash", [guardInstaller], { cwd: repo, stdio: "pipe" });
-      console.log(c.dim("  installed primary-commit-guard → blocks feature commits in the primary checkout"));
+      console.log(
+        c.dim("  installed primary-commit-guard → blocks feature commits in the primary checkout")
+      );
       return true;
     } catch (e) {
       console.log(c.dim("  primary-commit-guard install failed (non-fatal): ") + (e.message || e));
