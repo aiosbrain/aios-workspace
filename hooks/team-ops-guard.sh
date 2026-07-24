@@ -43,8 +43,10 @@ case "$FILE_PATH" in
     ;;
 esac
 
-# Get the content being written
-CONTENT=$(echo "$TOOL_INPUT" | jq -r '.content // .new_string // empty' 2>/dev/null || true)
+# Get the content being written. Covers Write (.content), Edit (.new_string), AND MultiEdit
+# (.edits[].new_string) — the last was previously missed, so a MultiEdit could write a secret
+# or admin-tier content straight past this gate (M1). Aggregate every new_string in the batch.
+CONTENT=$(echo "$TOOL_INPUT" | jq -r '.content // .new_string // ([.edits[]?.new_string] | join("\n")) // empty' 2>/dev/null || true)
 if [ -z "$CONTENT" ]; then
   exit 0  # No content to check — allow (might be a read or other op)
 fi
@@ -64,18 +66,29 @@ if [ -f "$PATTERNS_FILE" ]; then
     SECRETS_PATTERNS+=("$line")
   done < "$PATTERNS_FILE"
 else
-  # Fallback if the shared file is missing (e.g. hook copied standalone)
+  # Fallback if the shared file is missing (e.g. hook copied standalone). MUST mirror the full
+  # set in validation/secret-patterns.txt — a partial list makes standalone mode a strictly
+  # weaker gate (e.g. a github_pat_… token would pass here but be blocked in a normal checkout).
   SECRETS_PATTERNS=(
     "AKIA[0-9A-Z]{16}"
     "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
     "gh[ps]_[A-Za-z0-9_]{36,}"
     "xox[bporas]-[A-Za-z0-9-]+"
-    "sk-[A-Za-z0-9]{40,}"
+    "sk-[A-Za-z0-9_-]{40,}"
+    "sk-ant-[A-Za-z0-9_-]{20,}"
+    "aios_[A-Za-z0-9]+_[A-Za-z0-9]{24,}"
+    "https?://[^/[:space:]:]+:[^@[:space:]]+@"
+    "[Bb]earer [A-Za-z0-9_.=-]{30,}"
+    "github_pat_[A-Za-z0-9_]{22,}"
+    "AIza[0-9A-Za-z_-]{35}"
+    "[sr]k_live_[A-Za-z0-9]{20,}"
+    "npm_[A-Za-z0-9]{36}"
+    "eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
   )
 fi
 
 for pattern in "${SECRETS_PATTERNS[@]}"; do
-  if echo "$CONTENT" | grep -qE "$pattern" 2>/dev/null; then
+  if echo "$CONTENT" | grep -qE -e "$pattern" 2>/dev/null; then
     echo "BLOCKED by team-ops-guard: Potential secret detected in $FILE_PATH" >&2
     echo "Pattern matched: $pattern" >&2
     echo "Remove the secret before writing this file." >&2

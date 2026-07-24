@@ -13,7 +13,6 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 | `decision-audit` | Governance audit of an engagement decision log. | audit the decision log; decision log hygiene; check the decision log |
 | `okf-traverse` | Answer a question by traversing the local OKF bundle — reading index files to orient, fanning out to relevant documents, following cross-links for context, and synthesizing a cited answer. | answer a question about this repo; what does the repo say about; find information about |
 | `scope-creep` | Detect scope creep across an engagement's deliverables. | check for scope creep; scope creep audit; are we in scope |
-| `transcript-decisions` | Extract decisions from meeting transcripts into decision-log rows. | extract decisions from transcripts; process meeting transcripts; decisions from the meeting |
 | `weekly-synthesis` | Produce a weekly team digest (decisions, scope moves, task deltas, risks) with a rubric-gated self-correction loop: an independent verifier grades the draft against .claude/rubrics/weekly-synthesis.md and the harness revises until the rubric passes or its budget is spent. | weekly synthesis; weekly digest; what happened this week |
 
 ## Skills
@@ -30,6 +29,7 @@ Multi-agent harnesses with adversarial verification / rubric-gated self-correcti
 | `framework-currency` | Known framework gotchas and stale patterns. |
 | `maturity-report` | Produce an AI-transformation maturity report + roadmap deliverable from the three AM scopes — the individual (workstation), the codebase(s), and the team. |
 | `review-plan` | Critically review implementation plans and produce a copy-paste feedback prompt for another model, especially Opus, to adapt the plan. |
+| `transcript-decisions` | Review meeting transcripts through the canonical aios transcripts CLI and typed review engine. |
 | `workspace-setup` | Set up, update, or incrementally extend the owner's profile in this workspace: interview the user (or draft from a link), then write it into the workspace memory files (.claude/memory/USER.md + WORKSPACE.md) so the agent has durable context. |
 
 ## Share a skill

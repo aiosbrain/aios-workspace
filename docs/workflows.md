@@ -1,10 +1,20 @@
 # Dynamic-Workflow Harnesses — Design Study
 
-The skills in `scaffold/.claude/skills/` are **dynamic multi-agent workflow
+Several skills in `scaffold/.claude/skills/` are **dynamic multi-agent workflow
 harnesses**: instead of asking one agent to do a whole task in one context, they
 spawn focused sub-agents and add an independent verification stage. This doc records
 what we learned building and A/B-testing them — single-pass skill vs. harness, on
 identical inputs — so contributors know *when* a harness helps and *how* to build one.
+
+> **Superseded — transcript review.** Transcript → decisions is **no longer** one of
+> these harnesses. It was rebuilt as the canonical typed `aios transcripts
+> draft|list|approve` CLI/engine (grounded decisions **and** explicit tasks, a private
+> `0600` V2 owner-review stage, one approval gate before either log changes, default
+> post-approval `aios push` unless `--no-push`). The A/B row below is retained as
+> **historical** design context only — it does not describe the current transcript path,
+> which is not a Workflow or read-only harness and does not use the `args`/read-only
+> conventions in this doc. See
+> [`v1-operator-loop/domains/meetings.md`](v1-operator-loop/domains/meetings.md).
 
 > This doc is the *design study* behind the harnesses and the agent pipeline. For the
 > task-oriented walkthrough of every command — the daily/weekly loop, the asks queue and attention
@@ -34,7 +44,7 @@ scored by an independent judge.
 |----------|---------|--------|
 | Decision-log audit | **Harness wins, decisively** | A single pass emitted many findings, ~80%+ false positives; adversarial verification cut them to a small verified set. One-verifier-per-rule made coverage *structural*, not asserted. |
 | Scope-creep detection | **Harness wins on precision** | A binary keep/drop refuter drove false accusations to zero — but also discarded true positives. Fix: **re-grade severity** (out-of-scope → watch → in-scope) instead of keep/drop. |
-| Transcript → decisions | **Tie on extraction; harness wins on pipeline** | Both extract equally well on a short transcript; the harness's value is automatic **dedup** + per-decision **grounding**, not raw recall. |
+| Transcript → decisions *(historical — superseded; now the typed `aios transcripts` CLI, see note above)* | **Tie on extraction; harness wins on pipeline** | Both extract equally well on a short transcript; the harness's value is automatic **dedup** + per-decision **grounding**, not raw recall. This finding informed the rebuild: transcript review now ships as the typed CLI/engine, not a Workflow harness. |
 | Weekly synthesis | **Single-pass wins** | With no fidelity check, fan-out *amplified* one reader's hallucination into the headline. When sources fit one context, single-pass kept fidelity. (This harness is on the roadmap, to be rebuilt **with** a fidelity verifier.) |
 
 **The deciding variable was always verification, not parallelism.** A fan-out without

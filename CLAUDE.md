@@ -87,6 +87,21 @@ they don't recognize.
 
 ## 5. Conventions (internalize these)
 
+- **No direct commits in the primary checkout, on any branch.** A local `pre-commit` guard
+  (tracked source: `hooks/git/pre-commit-primary-guard`; installed by
+  `scripts/install-primary-commit-guard.sh`, and automatically by `aios worktree add` /
+  `aios worktree install-hook`) BLOCKS **every** authored commit made in the PRIMARY
+  checkout — including on `main` — telling you to `aios worktree add <branch>` instead. The
+  primary should only ever advance via `git merge --ff-only` from origin, which moves the ref
+  without creating a commit and so never triggers the hook; a non-ff merge in the primary IS
+  the anti-pattern and is blocked too (use the override if genuinely intended). It NO-OPs
+  inside linked worktrees (where all real work belongs). This is the structural enforcement of
+  the worktree rule — it exists because automated harnesses (oh-my-opencode / Codex, and a
+  Linear agent seen writing code straight on `main`) were observed committing in the primary,
+  landing feature work on `main`, stranding it on a feature branch, and producing duplicate
+  PRs. Override only for a genuine primary hotfix or a deliberate non-ff merge on `main`:
+  `AIOS_ALLOW_PRIMARY_COMMIT=1 git commit ...`. It chains any pre-existing pre-commit hook
+  (e.g. the NDA leak gate) — never bypass it with `--no-verify`.
 - **Validators + hooks are the contract, not vibes.** Run `validation/validate-all.sh <workspace>`
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never

@@ -39,7 +39,18 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
-import { parseFrontmatter, normalizeTier, classifyKind, parseDecisionRows, parseEvidenceRows, validateItemPayload, evidencePayloadContent, validEvidenceDeclaration } from "./workspace-parse.mjs";
+import {
+  parseFrontmatter,
+  normalizeTier,
+  classifyKind,
+  parseDecisionRows,
+  redactAdminDecisionRows,
+  DECISION_REDACTION_VERSION,
+  parseEvidenceRows,
+  validateItemPayload,
+  evidencePayloadContent,
+  validEvidenceDeclaration,
+} from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -321,6 +332,23 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
+// content_sha256 for a decision push MUST describe the REDACTED body actually sent, not the raw file
+// hash — else brain-api dedupe (identical sha → "unchanged", body NOT overwritten) leaves leaked
+// rows upstream while the client marks the resync done. Version-tagged; local change-detection keeps
+// the raw item.hash separately.
+function contentShaForDecisionPush(item) {
+  if (item.kind !== "decision") return item.hash;
+  return sha256(
+    JSON.stringify({
+      decision_redaction_version: DECISION_REDACTION_VERSION,
+      access: item.tier,
+      frontmatter: item.frontmatter || {},
+      body: item.body,
+      rows: item.rows || [],
+    })
+  );
+}
+
 function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
   const plan = { push: [], blocked: [], clean: [] };
@@ -360,18 +388,42 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     }
 
     const prev = state.items[rel];
-    if (prev && prev.sha === hash) {
+    // A decision-log needs re-push if its redaction is stale, even when the SHA is unchanged.
+    const redactionStale =
+      kind === "decision" && (prev?.redaction_version || 0) < DECISION_REDACTION_VERSION;
+    if (prev && prev.sha === hash && !redactionStale) {
       plan.clean.push({ rel });
       continue;
     }
-    const rows = kind === "task" ? parseTaskRows(body) : parseEvidenceRows(kind, body);
-    const syncContent = evidencePayloadContent(kind, frontmatter, body);
+    let rows;
+    let pushFrontmatter = frontmatter;
+    let pushBody = body;
+    if (kind === "task") {
+      rows = parseTaskRows(body);
+    } else if (kind === "decision") {
+      // H3 (#380): redact non-syncable rows from BOTH the pushed body and the parsed rows before a
+      // team-tier decision-log leaves the machine. Legacy tables without Audience inherit the file
+      // tier. content_sha256 for the push then hashes this REDACTED body (contentShaForDecisionPush).
+      ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    } else if (kind === "fact" || kind === "stakeholder_mention") {
+      // 1.12 evidence kinds: push only the parsed rows; strip the raw body (source quotes stay
+      // local) and reduce frontmatter to {kind, access}. Admin/private evidence never reaches here —
+      // the file-tier gate above blocks admin files, and validEvidenceDeclaration pins each canonical
+      // path to its tier, so only promoted team/external rows sync.
+      rows = parseEvidenceRows(kind, body);
+      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(
+        kind,
+        frontmatter,
+        body
+      ));
+    }
     plan.push.push({
       rel,
       kind,
       hash,
       tier,
-      ...syncContent,
+      frontmatter: pushFrontmatter,
+      body: pushBody,
       rows,
       isNew: !prev,
     });
@@ -903,7 +955,9 @@ async function cmdPush(repo, cfg, patterns, args) {
       project: cfg.project,
       path: item.rel,
       kind: item.kind,
-      content_sha256: item.hash,
+      // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
+      // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
+      content_sha256: contentShaForDecisionPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},
@@ -918,6 +972,8 @@ async function cmdPush(repo, cfg, patterns, args) {
         sha: item.hash,
         remote_id: res.id || null,
         pushed_at: new Date().toISOString(),
+        // Record which redaction the pushed copy reflects so a later version bump forces a resync.
+        ...(item.kind === "decision" ? { redaction_version: DECISION_REDACTION_VERSION } : {}),
       };
       pushed++;
       result.pushed.add(item.rel);
@@ -960,9 +1016,9 @@ async function cmdPull(repo, cfg, args = []) {
     if (cursor) qs.set("cursor", cursor);
     const res = await api(cfg, "GET", `/items?${qs}`);
     for (const item of res.items || []) {
-      // Append-only: never overwrite working files; flatten path under from-brain/
-      const flat = `${item.project}__${item.path.replace(/\//g, "__")}`;
-      const dest = path.join(destRoot, flat);
+      // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
+      const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
+      const dest = safeJoin(destRoot, flat);
       if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;
       const fm = [
         "---",

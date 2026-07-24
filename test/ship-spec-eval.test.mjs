@@ -154,6 +154,20 @@ console.log("light-loop helpers preserve only the approved spec contract");
     "safety flag only reads leading frontmatter",
     specSafetyFlag("# title\n---\nsafety: true\n---") === false
   );
+  // H5 regression: ship must read the flag from the RAW issue body, because
+  // buildSpecTextFromIssue prepends a `# <id>: <title>` heading that would push the
+  // frontmatter off the start of the string (masking safety: true → fail-open).
+  {
+    const safetyIssue = { identifier: "AIO-999", title: "risky", description: spec };
+    check(
+      "buildSpecTextFromIssue masks the leading frontmatter (why the caller must not use it)",
+      specSafetyFlag(buildSpecTextFromIssue(safetyIssue)) === false
+    );
+    check(
+      "reading the flag from issue.description sees safety: true",
+      specSafetyFlag(safetyIssue.description) === true
+    );
+  }
   check("includes interfaces", plan.includes("## Interfaces") && plan.includes("public API"));
   check(
     "includes implementation",

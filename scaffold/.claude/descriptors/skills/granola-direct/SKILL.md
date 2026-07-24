@@ -63,9 +63,12 @@ transcript text is appended. Use `--force` only for an intentional connector ove
 
 ## After pulling
 
-Chain into `transcript-decisions` to turn the new transcripts into decision-log rows,
-or `weekly-synthesis` for a digest. Promotion to the brain stays a deliberate
-`aios push` — pull sensitive calls with `--access private` so they never sync.
+Review the new transcripts with the typed `transcript-decisions` CLI —
+`aios transcripts draft|list|approve` extracts grounded decisions **and** explicit
+tasks into a private V2 owner-review stage and applies both local logs on one
+approval (which then attempts `aios push` unless you pass `--no-push`). Or run
+`weekly-synthesis` for a digest. Pull sensitive calls with `--access private` so they
+never sync.
 
 ## Connect / troubleshoot
 
