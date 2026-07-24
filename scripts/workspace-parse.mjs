@@ -174,7 +174,10 @@ function scanDecisionTables(body, fallbackAudience = null) {
       const startsNewTable = isTableSeparatorLine(lines[index + 1]);
       const currentRow =
         table?.isDecision && !isLegacyDecisionHeader ? parseDecisionRow(cells, table) : null;
-      const looksLikeHeader = DECISION_HEADER_CELLS.has(candidate.header[0]);
+      const looksLikeHeader =
+        candidate.header.includes("#") ||
+        (candidate.decisionIdx >= 0 && candidate.audienceIdx >= 0) ||
+        (currentRow && !isSyncableDecisionAudience(currentRow.audience ?? fallbackAudience));
 
       // A separator-backed line that looks like a header must never be accepted under stale column
       // indexes. Switch to its decision schema, or to an invalid deny-only schema when ambiguous.
@@ -183,7 +186,35 @@ function scanDecisionTables(body, fallbackAudience = null) {
         removedRows++;
         return false;
       }
-      if ((startsNewTable && !currentRow) || isLegacyDecisionHeader) {
+      if (startsNewTable && currentRow) {
+        rows.push(currentRow);
+        keptRows.push(currentRow);
+        table = { ...table, valid: false };
+        return true;
+      }
+      if (isLegacyDecisionHeader) {
+        table = candidate;
+        return true;
+      }
+      const recoverableDenyOnlyRow =
+        table?.isDecision && !table.valid
+          ? parseDecisionRow(cells, { ...table, valid: true })
+          : null;
+      const staleAudienceCell =
+        table?.isDecision && table.audienceIdx >= 0 ? cells[table.audienceIdx] : null;
+      const staleAudienceLooksRestricted =
+        staleAudienceCell != null &&
+        staleAudienceCell !== "" &&
+        !isSyncableDecisionAudience(staleAudienceCell);
+      if (
+        startsNewTable &&
+        !currentRow &&
+        (recoverableDenyOnlyRow || staleAudienceLooksRestricted)
+      ) {
+        removedRows++;
+        return false;
+      }
+      if (startsNewTable && !currentRow) {
         table = candidate;
         return true;
       }

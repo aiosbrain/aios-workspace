@@ -181,6 +181,24 @@ This prose ends the valid table.
   assert.match(out.body, /\| latency \| fast \|/);
 });
 
+test("prose deny-only state cannot be reset by an orphan private row plus separator", () => {
+  const body = `| # | Decision | Audience |
+|---|---|---|
+| 1 | Team row | team |
+This prose ends the valid table.
+| 2 | Payroll detail | private |
+|---|---|---|
+| 3 | Personnel detail | admin |
+`;
+  const out = redactAdminDecisionRows(body);
+
+  assert.deepEqual(
+    out.rows.map((row) => row.row_key),
+    ["1"]
+  );
+  assert.doesNotMatch(out.body, /Payroll detail|Personnel detail/);
+});
+
 test("a private continuation row cannot masquerade as a header before a separator", () => {
   const body = `| # | Decision | Audience |
 |---|---|---|
@@ -214,8 +232,22 @@ test("separator-backed headers cannot leave stale audience indexes active", () =
 |---|---|---|---|
 | 2 | private | Confidential row | team |
 `;
+  const idHeader = `| # | Decision | Rationale | Audience |
+|---|---|---|---|
+| 1 | Team row | ok | team |
+| ID | Audience | Decision | Owner |
+|---|---|---|---|
+| arbitrary-key | private | Confidential row | team |
+`;
+  const ownerHeader = `| # | Decision | Rationale | Audience |
+|---|---|---|---|
+| 1 | Team row | ok | team |
+| Owner | Audience | Decision | # |
+|---|---|---|---|
+| jane | private | Confidential row | team |
+`;
 
-  for (const body of [reordered, ambiguous]) {
+  for (const body of [reordered, ambiguous, idHeader, ownerHeader]) {
     const out = redactAdminDecisionRows(body);
     assert.deepEqual(
       out.rows.map((row) => row.row_key),
