@@ -9,6 +9,7 @@ const SUMMARY_FILE = path.join(ROOT, "coverage", "coverage-summary.json");
 const LCOV_FILE = path.join(ROOT, "coverage", "lcov.info");
 const BASELINE_FILE = path.join(ROOT, "coverage-baseline.json");
 const METRICS = ["lines", "statements", "functions", "branches"];
+const SOURCE_PATHSPECS = [":(glob)**/*.mjs", ":(glob)**/*.js", ":(glob)**/*.ts", ":(glob)**/*.tsx"];
 
 function git(args) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
@@ -104,6 +105,10 @@ export function resolveMergeBase(explicit, gitCommand = git, env = process.env) 
   }
 }
 
+export function coverageDiffArgs(base) {
+  return ["diff", "--unified=0", "--no-color", base, "--", ...SOURCE_PATHSPECS];
+}
+
 function roundedFloor(value) {
   return Math.floor(value * 10) / 10;
 }
@@ -189,17 +194,7 @@ function main(argv) {
   // Compare the PR's own changes, not reverse changes from a moving main tip
   // when a long-running worktree temporarily falls behind origin/main.
   const base = resolveMergeBase(options.base);
-  const diff = git([
-    "diff",
-    "--unified=0",
-    "--no-color",
-    base,
-    "--",
-    "*.mjs",
-    "*.js",
-    "*.ts",
-    "*.tsx",
-  ]);
+  const diff = git(coverageDiffArgs(base));
   const changed = parseChangedLines(diff);
   const lcov = parseLcov(readFileSync(LCOV_FILE, "utf8"));
   const changedResult = changedLineCoverage(changed, lcov);

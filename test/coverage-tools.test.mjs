@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildBaseline,
   changedLineCoverage,
+  coverageDiffArgs,
   parseArgs,
   parseChangedLines,
   parseLcov,
@@ -48,6 +49,20 @@ test("changed-line coverage considers only executable lines", () => {
     pct: 50,
     files: [{ file: "scripts/example.mjs", total: 2, covered: 1 }],
   });
+});
+
+test("coverage diff pathspecs include source files at every directory depth", () => {
+  assert.deepEqual(coverageDiffArgs("merge-base-sha"), [
+    "diff",
+    "--unified=0",
+    "--no-color",
+    "merge-base-sha",
+    "--",
+    ":(glob)**/*.mjs",
+    ":(glob)**/*.js",
+    ":(glob)**/*.ts",
+    ":(glob)**/*.tsx",
+  ]);
 });
 
 test("unimported production files remain zero in merged c8 summaries", () => {
