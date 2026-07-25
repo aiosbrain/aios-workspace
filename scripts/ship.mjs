@@ -1202,6 +1202,17 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       })
     : { source: "none", stage: "builder", bytes: 0, skills: [], prompt: "", audit: [] };
   const builderCheckpoint = builderSkillCheckpoint(builderContext);
+  if (
+    opts.resume &&
+    Object.keys(state).length > 0 &&
+    !Object.hasOwn(state, "builderSkillContext")
+  ) {
+    record("resume", { error: "builder skill checkpoint missing" });
+    console.error(
+      c.red("resume: checkpoint predates builder skill verification; start a fresh ship run.")
+    );
+    return { code: SHIP_EXIT.USAGE, records };
+  }
   if (opts.resume && state.builderSkillContext) {
     if (!builderSkillCheckpointMatches(state.builderSkillContext, builderCheckpoint)) {
       record("resume", { error: "builder skill context changed" });
@@ -1337,6 +1348,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       const decisions = await loadRecentDecisionsDep(repo);
       const res = await evaluateSpecDep({
         specText,
+        skillDeclarationText: issue.description || "",
         repo,
         rubric,
         useLlm: true,

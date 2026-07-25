@@ -52,9 +52,14 @@ const LOCAL_BUGBOT_ARTIFACT = path.join(
   "consolidate",
   "local-bugbot-clear.md"
 );
+const EMPTY_BUILDER_CHECKPOINT = { source: "none", bytes: 0, skills: [] };
+
+function withBuilderCheckpoint(state) {
+  return { builderSkillContext: EMPTY_BUILDER_CHECKPOINT, ...state };
+}
 
 function withExactReviewEvidence(state, { head = "fakehead", baseSha = "test-base" } = {}) {
-  return {
+  return withBuilderCheckpoint({
     ...state,
     reviewClear: true,
     reviewHead: head,
@@ -65,7 +70,7 @@ function withExactReviewEvidence(state, { head = "fakehead", baseSha = "test-bas
     localBugbotReviewPath: LOCAL_BUGBOT_ARTIFACT,
     localBugbotHead: head,
     localBugbotBaseSha: baseSha,
-  };
+  });
 }
 
 function makeIssue() {
@@ -205,6 +210,22 @@ console.log("resolveGates: --approve-* yields 'approved'; --auto still wins");
   check("merge still blocked", g1.merge === "blocked");
   const g2 = resolveGates({ auto: true, approvePlan: true, isTty: false });
   check("--auto wins over --approve-plan (skip)", g2.plan === "skip");
+}
+
+console.log("pre-feature resume checkpoint without builder skill evidence fails closed");
+{
+  const ss = makeStateStore();
+  ss.store.state = { plan: PLAN_TEXT, planReviewed: true, planApproved: true, buildDone: true };
+  const deps = makeDeps({ ...ss });
+  const result = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ resume: true, approvePlan: true }),
+    deps,
+  });
+  check("legacy resume is a usage failure", result.code === SHIP_EXIT.USAGE);
+  check("legacy build is not reused or rerun", deps.counters.build === 0);
+  rmSync(deps.repo, { recursive: true, force: true });
 }
 
 console.log("blocked plan gate → exit 22, state + GATE-plan.pending persisted, work done once");
@@ -361,7 +382,7 @@ console.log("fresh --approve-plan (no pending gate) → treated as pending, neve
 console.log("resume with state.merged → merge NOT re-attempted; cleanup still runs; exits OK");
 {
   const ss = makeStateStore();
-  ss.store.state = {
+  ss.store.state = withBuilderCheckpoint({
     recon: "RECON",
     specReady: true,
     plan: PLAN_TEXT,
@@ -376,7 +397,7 @@ console.log("resume with state.merged → merge NOT re-attempted; cleanup still 
     reviewClear: true,
     reviewHead: "fakehead",
     merged: true,
-  };
+  });
   const deps = makeDeps({ ...ss });
   const r = await runShip({
     repo: deps.repo,
@@ -400,7 +421,7 @@ console.log("resume with state.merged → merge NOT re-attempted; cleanup still 
 console.log("stale reviewClear (branch moved since checkpoint) → review re-runs before merge");
 {
   const ss = makeStateStore();
-  ss.store.state = {
+  ss.store.state = withBuilderCheckpoint({
     recon: "RECON",
     specReady: true,
     plan: PLAN_TEXT,
@@ -414,7 +435,7 @@ console.log("stale reviewClear (branch moved since checkpoint) → review re-run
     reviewRound: 1,
     reviewClear: true,
     reviewHead: "STALE-HEAD", // fake gitExec reports "fakehead" → mismatch
-  };
+  });
   const deps = makeDeps({ ...ss });
   const r = await runShip({
     repo: deps.repo,

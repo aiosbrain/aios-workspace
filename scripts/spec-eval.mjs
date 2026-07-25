@@ -841,6 +841,7 @@ export async function evaluateSpec({
   evalFn,
   decisions = [],
   skillContext = null,
+  skillDeclarationText = null,
   requireCleanRepo = false,
   resolveRepoState,
 }) {
@@ -873,7 +874,7 @@ export async function evaluateSpec({
     const suite = loadSkillSuite({ repo });
     validateSkillSelection({
       suite,
-      ids: parseDeclaredSkills(specText),
+      ids: parseDeclaredSkills(skillDeclarationText ?? specText),
       stage: "builder",
       source: "spec",
     });
@@ -970,7 +971,8 @@ export async function evaluateSpec({
     candidateSha256,
     repoSha,
     repoDirty,
-    publishable: requireCleanRepo && repoDirty === false,
+    publishable:
+      requireCleanRepo && repoDirty === false && verdict === "SPEC_READY" && exitCode === 0,
   };
 }
 
@@ -1208,11 +1210,26 @@ export async function runFixLoop({
   const status =
     result.verdict === "NOT_READY" ? (reviseError ? "error" : "exhausted") : "converged"; // SPEC_READY | NOT_EVALUATED
   const exitCode = result.verdict === "NOT_READY" ? result.exitCode : 0;
-  const resolutionMap = before.findings.map((finding) => ({
-    ruleId: finding.ruleId,
-    severity: finding.severity,
-    status: current === specText ? "unchanged" : "revised",
-  }));
+  const afterFindingKeys = new Set(
+    result.findings.map((finding) =>
+      JSON.stringify([finding.ruleId, finding.severity, finding.detail ?? finding.why ?? ""])
+    )
+  );
+  const resolutionMap = before.findings.map((finding) => {
+    const key = JSON.stringify([
+      finding.ruleId,
+      finding.severity,
+      finding.detail ?? finding.why ?? "",
+    ]);
+    return {
+      ruleId: finding.ruleId,
+      severity: finding.severity,
+      status:
+        current === specText || afterFindingKeys.has(key)
+          ? "unchanged"
+          : "not-reported-after-revision",
+    };
+  });
   return {
     status,
     exitCode,
@@ -1332,6 +1349,7 @@ export async function cmdSpec(repo, args) {
       console.error(c.red(`error: ${error.message}`));
       process.exit(4);
     }
+    return;
   }
   const rest = args.slice(1);
   if (sub !== "eval" && sub !== "fix" && sub !== "author") {

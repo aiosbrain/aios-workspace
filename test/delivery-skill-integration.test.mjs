@@ -135,6 +135,25 @@ test("unknown spec declarations fail before the adversarial model is called", as
   assert.equal(calls, 0);
 });
 
+test("declarations can be validated from raw issue frontmatter when the evaluated spec has a heading", async () => {
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      evaluateSpec({
+        specText: `# AIO-1: title\n\n${STRONG}`,
+        skillDeclarationText: "---\nskills: [not-a-real-skill]\n---\nTask",
+        repo: REPO,
+        rubric: RUBRIC,
+        evalFn: () => {
+          calls++;
+          return JSON.stringify({ verdict: "SPEC_READY", score: 100, findings: [] });
+        },
+      }),
+    /unknown skill/
+  );
+  assert.equal(calls, 0);
+});
+
 test("publishable evaluation refuses SPEC_READY when the evaluated tree is dirty", async () => {
   const result = await evaluateSpec({
     specText: STRONG,
@@ -148,6 +167,24 @@ test("publishable evaluation refuses SPEC_READY when the evaluated tree is dirty
   assert.equal(result.exitCode, 1);
   assert.equal(result.publishable, false);
   assert.ok(result.findings.some((finding) => finding.ruleId === "SR0"));
+});
+
+test("a clean NOT_READY evaluation is never publishable", async () => {
+  const result = await evaluateSpec({
+    specText: STRONG,
+    repo: REPO,
+    rubric: RUBRIC,
+    evalFn: () =>
+      JSON.stringify({
+        verdict: "NOT_READY",
+        score: 40,
+        findings: [{ ruleId: "SR15", severity: "blocker", why: "underspecified" }],
+      }),
+    requireCleanRepo: true,
+    resolveRepoState: () => ({ repoSha: "1".repeat(40), repoDirty: false }),
+  });
+  assert.equal(result.verdict, "NOT_READY");
+  assert.equal(result.publishable, false);
 });
 
 test("legacy no-skill plans preserve the old prompt shape", () => {

@@ -58,10 +58,12 @@ function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-spec-eval-"));
   seedRubric(repo);
   let evalCalls = 0;
+  let evalInput = null;
   const evaluateResult = over.evaluateResult;
   const deps = {
     repo,
     evalCalls: () => evalCalls,
+    evalInput: () => evalInput,
     linear: {
       getIssue: async () => makeIssue(),
       createIssue: async () => ({ identifier: "AIO-9" }),
@@ -104,8 +106,9 @@ function makeDeps(over = {}) {
     confirm: async () => true,
     isTty: true,
     makeAnthropic: async () => ({ fake: true }),
-    evaluateSpec: async () => {
+    evaluateSpec: async (input) => {
       evalCalls++;
+      evalInput = input;
       return (
         evaluateResult ?? {
           verdict: "SPEC_READY",
@@ -287,7 +290,13 @@ console.log("resume with specReady skips evaluateSpec");
     opts: optsFor({ resume: true }),
     deps: {
       ...deps,
-      readState: () => ({ specReady: true, recon: "RECON", plan: PLAN_TEXT, planReviewed: true }),
+      readState: () => ({
+        builderSkillContext: { source: "none", bytes: 0, skills: [] },
+        specReady: true,
+        recon: "RECON",
+        plan: PLAN_TEXT,
+        planReviewed: true,
+      }),
     },
   });
   check("reaches OK", code === SHIP_EXIT.OK);
@@ -306,6 +315,10 @@ console.log("SPEC_READY proceeds to plan/build");
   });
   check("exit OK", code === SHIP_EXIT.OK);
   check("eval ran once", deps.evalCalls() === 1);
+  check(
+    "eval validates declarations from the raw issue frontmatter",
+    deps.evalInput()?.skillDeclarationText === makeIssue().description
+  );
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

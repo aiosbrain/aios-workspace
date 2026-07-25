@@ -93,7 +93,20 @@
             "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
           },
           "explicit_invocation_required": { "type": "boolean" }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "mutability": { "const": "external-write" } },
+              "required": ["mutability"]
+            },
+            "then": {
+              "properties": {
+                "explicit_invocation_required": { "const": true }
+              }
+            }
+          }
+        ]
       }
     }
   }
