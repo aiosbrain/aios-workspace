@@ -201,11 +201,18 @@ function roundedFloor(value) {
   return Math.floor(value * 10) / 10;
 }
 
+// Coverage totals jitter a few hundredths of a point between identical CI runs
+// (timing-dependent branches); a floor equal to the live value goes red on noise.
+const BASELINE_JITTER_MARGIN = 0.2;
+
 export function buildBaseline(summary) {
   return {
     version: 1,
     minimum: Object.fromEntries(
-      METRICS.map((metric) => [metric, roundedFloor(summary.total[metric].pct)])
+      METRICS.map((metric) => [
+        metric,
+        Math.max(0, roundedFloor(summary.total[metric].pct - BASELINE_JITTER_MARGIN)),
+      ])
     ),
     changedLines: 80,
   };

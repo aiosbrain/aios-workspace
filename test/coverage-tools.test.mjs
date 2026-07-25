@@ -306,7 +306,7 @@ test("shard merge collects every shard's raw data and fails closed on a missing 
   }
 });
 
-test("coverage baseline floors CI metrics to one decimal place", () => {
+test("coverage baseline floors CI metrics with jitter headroom", () => {
   const summary = {
     total: {
       lines: { pct: 51.49 },
@@ -317,7 +317,24 @@ test("coverage baseline floors CI metrics to one decimal place", () => {
   };
   assert.deepEqual(buildBaseline(summary), {
     version: 1,
-    minimum: { lines: 51.4, statements: 51.4, functions: 65.8, branches: 67.9 },
+    minimum: { lines: 51.2, statements: 51.2, functions: 65.6, branches: 67.7 },
     changedLines: 80,
+  });
+});
+
+test("coverage baseline floor never goes negative", () => {
+  const summary = {
+    total: {
+      lines: { pct: 0.1 },
+      statements: { pct: 0 },
+      functions: { pct: 0.05 },
+      branches: { pct: 0.35 },
+    },
+  };
+  assert.deepEqual(buildBaseline(summary).minimum, {
+    lines: 0,
+    statements: 0,
+    functions: 0,
+    branches: 0.1,
   });
 });
