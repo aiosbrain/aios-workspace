@@ -2,6 +2,24 @@
 // CLI syncs to the Team Brain. Kept dependency-free and side-effect-free so they can be
 // unit-tested directly (see test/tasks-table.test.mjs) without invoking the CLI.
 
+// AIO-524: `—` (em dash) is the workspace-wide "no value" sentinel used in every scaffolded
+// markdown table (tasks-team.md, tasks-private.md, decision-log.md, scope-ledger.md, etc — see
+// scripts/scaffold-project.sh). parseFactRows/parseStakeholderMentionRows (workspace-parse.mjs)
+// already treat a bare `—` cell as "no value" for their date-ish fields (occurredAt); parseTaskRows
+// didn't, so a fresh scaffold's example task row (`Due` column = `—`) round-tripped the literal
+// em-dash character into `due`, which the Team Brain writes straight into a Postgres `date` column
+// (`due_date date` in postgres/schema.sql) — "invalid input syntax for type date" on the very first
+// `aios push`. Only date-shaped fields need this (assignee/status/sprint are free text on the brain
+// side and tolerate a literal `—`). Exported so workspace-parse.mjs's decision-row parser (which
+// has the same due_date-shaped `decided_at` column on the brain side) reuses this instead of a
+// second, independently-drifting "—"-to-null implementation.
+export function dateCell(cells, idx, name) {
+  const i = idx(name);
+  if (i < 0) return null;
+  const value = cells[i];
+  return value && value !== "—" ? value : null;
+}
+
 export function parseTableRows(body) {
   const rows = [];
   for (const line of body.split("\n")) {
@@ -83,7 +101,7 @@ export function parseTaskRows(body) {
         assignee: idx("assignee") >= 0 ? cells[idx("assignee")] || "" : "",
         status: idx("status") >= 0 ? cells[idx("status")] || "" : "",
         sprint: idx("sprint") >= 0 ? cells[idx("sprint")] || "" : "",
-        due: idx("due") >= 0 ? cells[idx("due")] || null : null,
+        due: dateCell(cells, idx, "due"),
         ...pm,
         pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
       };
