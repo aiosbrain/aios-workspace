@@ -11,7 +11,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
@@ -572,6 +580,14 @@ export async function retryReviewOnRetriable(
   throw lastError;
 }
 
+/**
+ * Above this size an untracked file is fingerprinted by its stat size instead of read and
+ * hashed. A large untracked artifact (e.g. a stray build output or data dump) must not stall
+ * the gate reading and hashing it on every run, but the fingerprint still has to invalidate
+ * when the file changes — a size marker does that cheaply without ever reading the bytes.
+ */
+export const UNTRACKED_HASH_SIZE_CAP = 5 * 1024 * 1024;
+
 function captureUntracked(worktree) {
   const listed = gitRaw(["ls-files", "--others", "--exclude-standard", "-z"], worktree);
   const files = listed.split("\0").filter(Boolean).sort();
@@ -579,8 +595,18 @@ function captureUntracked(worktree) {
   const hashes = [];
   const withheldFiles = [];
   for (const rel of files) {
+    const abs = path.join(worktree, rel);
     try {
-      const body = readFileSync(path.join(worktree, rel));
+      const size = statSync(abs).size;
+      if (size > UNTRACKED_HASH_SIZE_CAP) {
+        hashes.push(`${rel}\0toolarge:${size}`);
+        withheldFiles.push(rel);
+        blocks.push(
+          `### Untracked file: ${rel}\n\n(untracked content withheld locally: ${size} bytes, too large to hash)`
+        );
+        continue;
+      }
+      const body = readFileSync(abs);
       const digest = createHash("sha256").update(body).digest("hex");
       hashes.push(`${rel}\0${digest}`);
       withheldFiles.push(rel);
@@ -862,6 +888,20 @@ function registryHost(resolved) {
 }
 
 /**
+ * A workspace `link` entry's `resolved` is a filesystem path, not a URL — `npm ci`'s own
+ * EUSAGE rejection of an out-of-tree link target is the only thing standing between this
+ * repo and a lockfile entry that symlinks somewhere outside the worktree (e.g. `../../evil`
+ * or an absolute path). That defense lives in npm, not in this inspector, so a reviewer
+ * reading `inspectLockDelta`'s output alone would never know it was relied on. Resolve the
+ * target against the worktree root ourselves and fail closed the same way here.
+ */
+function linkEscapesWorktree(worktree, resolved) {
+  const root = path.resolve(worktree);
+  const target = path.resolve(root, resolved);
+  return target !== root && !target.startsWith(root + path.sep);
+}
+
+/**
  * Inspect the lockfile delta the reviewer no longer sees. `npm ci --dry-run` only proves
  * the lock and the manifest agree — it resolves the tree from the lockfile and never
  * fetches a tarball, so a tampered `integrity` or a `resolved` repointed at an attacker
@@ -903,7 +943,14 @@ export function inspectLockDelta(
         ` [${linked ? `workspace link ${next.resolved ?? ""}`.trim() : (host ?? "no tarball")}]` +
         `${integrityChanged ? " integrity changed" : ""}`
     );
-    if (linked) continue;
+    if (linked) {
+      if (next.resolved && linkEscapesWorktree(worktree, next.resolved)) {
+        failures.push(
+          `${lockPath}: ${name} is a workspace link whose target ${next.resolved} resolves outside the worktree`
+        );
+      }
+      continue;
+    }
 
     if (next.resolved && !host) {
       failures.push(

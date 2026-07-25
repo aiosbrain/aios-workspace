@@ -48,7 +48,7 @@ const ERROR_HANDOFF_TTL_MS = 120_000;
 const LOCK_POLL_MS = 250;
 const LOCK_INITIALIZATION_GRACE_MS = 5_000;
 const OUTPUT_CAP = 9_000;
-const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v22";
+const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v23";
 const VALID_RUNTIMES = new Set(["claude", "codex", "cursor", "opencode"]);
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
   existsSync
