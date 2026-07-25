@@ -199,7 +199,7 @@ function isoDate(now) {
 }
 
 /** Default scan: shared secret patterns (in-process) + the confidentiality leak-gate (shelled out). */
-function defaultScanFile(destAbs) {
+export function defaultScanFile(destAbs) {
   const findings = [];
   const content = readFileSync(destAbs, "utf8");
   const secretHit = findSecret(content, loadSecretPatterns());

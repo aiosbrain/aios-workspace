@@ -1,0 +1,228 @@
+{
+  "$schema": "./skill-suite.schema.json",
+  "version": 1,
+  "limits": {
+    "compact_index_bytes": 1500,
+    "stage_skill_bytes": 6000,
+    "builder_total_bytes": 10000,
+    "builder_skill_count": 2
+  },
+  "skills": [
+    {
+      "id": "author-ready-spec",
+      "path": "author-ready-spec/SKILL.md",
+      "stages": ["spec-author", "interactive", "export"],
+      "routing": {
+        "positive": ["write the spec", "make this issue buildable", "draft acceptance criteria"],
+        "negative": ["evaluate this spec", "repair this spec", "publish this spec"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": ["evaluate-spec-readiness", "repair-spec-safely", "linear-publish-spec"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "evaluate-spec-readiness",
+      "path": "evaluate-spec-readiness/SKILL.md",
+      "stages": ["spec-eval", "interactive", "export"],
+      "routing": {
+        "positive": ["is this spec ready", "run the readiness rubric", "audit this spec"],
+        "negative": ["fix this spec", "publish this spec", "implement this spec"]
+      },
+      "mutability": "read-only",
+      "max_bytes": 6000,
+      "conflicts": ["author-ready-spec", "repair-spec-safely", "linear-publish-spec"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "repair-spec-safely",
+      "path": "repair-spec-safely/SKILL.md",
+      "stages": ["spec-fix", "interactive", "export"],
+      "routing": {
+        "positive": ["repair this spec", "address readiness findings", "revise after spec eval"],
+        "negative": ["evaluate only", "publish this spec", "write a new spec"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": ["author-ready-spec", "evaluate-spec-readiness", "linear-publish-spec"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "linear-publish-spec",
+      "path": "linear-publish-spec/SKILL.md",
+      "stages": ["spec-publish", "interactive", "export"],
+      "routing": {
+        "positive": ["publish this spec to Linear", "replace the AIO issue description"],
+        "negative": ["review this spec", "make this spec ready", "draft an issue"]
+      },
+      "mutability": "external-write",
+      "max_bytes": 6000,
+      "conflicts": ["author-ready-spec", "evaluate-spec-readiness", "repair-spec-safely"],
+      "prerequisites": ["evaluate-spec-readiness"],
+      "explicit_invocation_required": true
+    },
+    {
+      "id": "verify-runtime-capabilities",
+      "path": "verify-runtime-capabilities/SKILL.md",
+      "stages": ["builder", "interactive", "export"],
+      "routing": {
+        "positive": ["runtime preflight", "verify hook capability", "cross-runtime parity"],
+        "negative": ["implement the adapter", "generic code review"]
+      },
+      "mutability": "read-only",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "start-safe-worktree",
+      "path": "start-safe-worktree/SKILL.md",
+      "stages": ["interactive", "export"],
+      "routing": {
+        "positive": [
+          "start a worktree",
+          "begin implementation safely",
+          "create the feature branch"
+        ],
+        "negative": ["clean up the worktree", "implement in this worktree"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": ["close-delivery-safely"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "triage-pr-evidence",
+      "path": "triage-pr-evidence/SKILL.md",
+      "stages": ["review", "interactive", "export"],
+      "routing": {
+        "positive": [
+          "triage review findings",
+          "reconcile Bugbot and CodeRabbit",
+          "consolidate PR evidence"
+        ],
+        "negative": ["review this code", "fix the findings", "merge the PR"]
+      },
+      "mutability": "read-only",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "close-delivery-safely",
+      "path": "close-delivery-safely/SKILL.md",
+      "stages": ["cleanup", "interactive", "export"],
+      "routing": {
+        "positive": ["close this delivery", "clean up after merge", "abandon this worktree safely"],
+        "negative": ["start a worktree", "delete this branch now"]
+      },
+      "mutability": "read-only",
+      "max_bytes": 6000,
+      "conflicts": ["start-safe-worktree"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "evolve-versioned-contract",
+      "path": "evolve-versioned-contract/SKILL.md",
+      "stages": ["builder", "interactive", "export"],
+      "routing": {
+        "positive": [
+          "change the versioned contract",
+          "migrate this wire format",
+          "evolve the persisted schema"
+        ],
+        "negative": ["schema validator parity only", "generic API implementation"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "verify-schema-validator-parity",
+      "path": "verify-schema-validator-parity/SKILL.md",
+      "stages": ["builder", "review", "interactive", "export"],
+      "routing": {
+        "positive": [
+          "verify schema validator parity",
+          "check runtime versus JSON schema",
+          "boundary fixtures"
+        ],
+        "negative": ["decide contract semantics", "generic test review"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "protect-transcript-data",
+      "path": "protect-transcript-data/SKILL.md",
+      "stages": ["builder", "review", "interactive", "export"],
+      "routing": {
+        "positive": [
+          "change transcript ingestion",
+          "redact transcript output",
+          "transcript provenance"
+        ],
+        "negative": ["generic privacy review", "unrelated schema change"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "change-installer-safely",
+      "path": "change-installer-safely/SKILL.md",
+      "stages": ["builder", "review", "interactive", "export"],
+      "routing": {
+        "positive": ["change the installer", "workspace hydration", "config merge behavior"],
+        "negative": ["self-update re-exec", "ordinary dependency update"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": ["change-self-update-safely"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "change-self-update-safely",
+      "path": "change-self-update-safely/SKILL.md",
+      "stages": ["builder", "review", "interactive", "export"],
+      "routing": {
+        "positive": ["change aios update", "toolkit pull and re-exec", "scheduler version handoff"],
+        "negative": ["change the installer", "ordinary dependency update"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": ["change-installer-safely"],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    },
+    {
+      "id": "verify-generated-distribution",
+      "path": "verify-generated-distribution/SKILL.md",
+      "stages": ["builder", "review", "interactive", "export"],
+      "routing": {
+        "positive": ["rebuild dist", "verify generated artifacts", "packaged output freshness"],
+        "negative": ["edit generated files directly", "generic build failure"]
+      },
+      "mutability": "local-write",
+      "max_bytes": 6000,
+      "conflicts": [],
+      "prerequisites": [],
+      "explicit_invocation_required": false
+    }
+  ]
+}

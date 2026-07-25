@@ -65,6 +65,7 @@ import {
 } from "./cli-common.mjs";
 import { dispatch } from "./cli/dispatch.mjs";
 import { createBrainClient } from "./brain-client.mjs";
+import * as skillContext from "./skill-context.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2102,6 +2103,7 @@ function readWorkspaceSkills(repo) {
   const dir = path.join(repo, ".claude", "skills");
   const out = [];
   if (!existsSync(dir)) return out;
+  const suiteById = skillContext.loadSkillSuiteIndex(repo);
   for (const name of readdirSync(dir).sort()) {
     const sub = path.join(dir, name);
     if (!statSync(sub).isDirectory()) continue;
@@ -2121,9 +2123,9 @@ function readWorkspaceSkills(repo) {
       kind: fm.kind || "skill",
       version: fm.version || "1.0.0",
       description,
-      triggers: Array.isArray(fm.triggers) ? fm.triggers : [],
       workflow: fm.workflow || null,
       body: (body || "").trim(),
+      ...skillContext.skillSuiteExportFields(suiteById.get(fm.name), fm.triggers),
     });
   }
   return out;
@@ -2198,18 +2200,15 @@ function cmdSkills(repo, args) {
   const only = flagValue(args, "--skill");
   const outBase = flagValue(args, "--out") || path.join(repo, ".aios", "export", runtime);
   const doInstall = args.includes("--install");
-
-  let skills = readWorkspaceSkills(repo);
-  if (only) skills = skills.filter((s) => s.name === only);
+  const skills = skillContext.selectSkillsForExport(readWorkspaceSkills(repo), only);
   if (!skills.length) {
     die(
       only ? `no skill named '${only}' in .claude/skills/` : "no skills found in .claude/skills/"
     );
   }
-
   mkdirSync(outBase, { recursive: true });
   const degraded = [];
-  const installable = []; // {name, md} for SKILL.md-layout runtimes
+  const installable = [];
   for (const s of skills) {
     const willDegrade = s.kind === "workflow-harness" && !rt.harness;
     if (willDegrade) degraded.push(s.name);
@@ -2226,6 +2225,7 @@ function cmdSkills(repo, args) {
     }
     console.log(`  ${s.name}${willDegrade ? " (harness→single-agent)" : ""}`);
   }
+  skillContext.writeSkillExportRoutings(skills, outBase, rt.layout === "claude");
   console.log(
     `\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`
   );

@@ -185,6 +185,20 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("selected builder skills fail closed when the suite manifest is absent");
+{
+  const deps = makeDeps();
+  const { code } = await runShip({
+    repo: deps.repo,
+    issue: "AIO-163",
+    opts: optsFor({ builderSkills: ["evolve-versioned-contract"] }),
+    deps,
+  });
+  check("missing manifest is a usage failure", code === SHIP_EXIT.USAGE);
+  check("build never ran", !deps.auditFiles.includes("build.md"));
+  rmSync(deps.repo, { recursive: true, force: true });
+}
+
 console.log("local pre-PR Bugbot evidence is visible when it blocks");
 {
   const evidence = "- Medium: operator-visible regression";
