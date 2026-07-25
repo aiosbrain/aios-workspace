@@ -96,8 +96,10 @@ export const USAGE_LINES = {
   ],
   mcp: [
     "  aios mcp                              run the Team Brain MCP server over stdio, for",
-    "                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)",
-    "                                        that can't shell out; env-first, no workspace needed",
+    "                                        GUI-only agents (Claude Desktop/Cowork/claude.ai)",
+    "                                        that can't shell out; env-first, no workspace needed.",
+    "                                        Codex + Conductor DO have a shell — they use this CLI",
+    "                                        directly (see `aios worktree doctor`)",
   ],
   analyze: [
     "  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs",
@@ -188,6 +190,7 @@ export const USAGE_LINES = {
     "                                       copies opencode.json/.claude/settings, wires hooks",
     "  aios worktree init                  hydrate the current worktree dir (idempotent)",
     "  aios worktree list                  list all worktrees for this repo",
+    "  aios worktree doctor                report auto-hydration readiness (Conductor et al)",
   ],
   update: [
     "  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]",

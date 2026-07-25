@@ -56,8 +56,10 @@ usage:
     [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);
     [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json
   aios mcp                              run the Team Brain MCP server over stdio, for
-                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
-                                        that can't shell out; env-first, no workspace needed
+                                        GUI-only agents (Claude Desktop/Cowork/claude.ai)
+                                        that can't shell out; env-first, no workspace needed.
+                                        Codex + Conductor DO have a shell — they use this CLI
+                                        directly (see `aios worktree doctor`)
   aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
     [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
     [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
@@ -116,6 +118,7 @@ usage:
                                        copies opencode.json/.claude/settings, wires hooks
   aios worktree init                  hydrate the current worktree dir (idempotent)
   aios worktree list                  list all worktrees for this repo
+  aios worktree doctor                report auto-hydration readiness (Conductor et al)
   aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]
                                        get latest AIOS: pull the toolkit (git + npm ci) +
                                        3-way-merge governance (personal + uncommitted edits kept);

@@ -89,6 +89,15 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
+  // AIO-482: SessionStart adapter that re-hydrates a worktree created by a tool
+  // that never called `aios worktree add` (Conductor et al). MANAGED so existing
+  // workspaces pick it up on `aios update` and self-heal without re-scaffolding.
+  {
+    dest: "hooks/worktree-self-heal.mjs",
+    src: "hooks/worktree-self-heal.mjs",
+    kind: "file",
+    exec: true,
+  },
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 
@@ -105,6 +114,14 @@ export const SEED_IF_ABSENT = [
   {
     dest: ".aios/comms-config.json",
     src: "scaffold/comms-config.json",
+    kind: "file",
+  },
+  // AIO-482: Conductor's own repo-scoped config. Seed-only — a workspace owner's
+  // `[scripts]`/`[git]` customisations here are theirs, and the two other hydration
+  // layers (post-checkout hook + SessionStart self-heal) cover the file's absence.
+  {
+    dest: ".conductor/settings.toml",
+    src: "scaffold/.conductor/settings.toml",
     kind: "file",
   },
 ];
@@ -134,6 +151,10 @@ export const PERSONAL_PATHS = [
   "AGENTS.md",
   ".git",
   ".aios",
+  // A workspace owner's own Conductor config (run scripts, git prefs, env). Same
+  // shape as `.aios`: PERSONAL as a whole, with one narrow SEED_IF_ABSENT child
+  // (`.conductor/settings.toml`) allowed to fill it in when it's missing entirely.
+  ".conductor",
   "node_modules",
 ];
 

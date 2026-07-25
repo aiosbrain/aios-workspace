@@ -13,6 +13,7 @@ import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { persistBrainOrigin } from "./onboard-config.mjs";
 import { formatInspection, inspectOnboarding } from "./onboard-inspect.mjs";
 import { cmdUpdate } from "./update.mjs";
+import { installPostCheckoutHook } from "./worktree.mjs";
 
 const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
 
@@ -131,6 +132,12 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     );
     return;
   }
+
+  // AIO-482: install the auto-hydration post-checkout hook as a silent side effect of
+  // onboarding. It's per-machine `.git/hooks/` state that a fresh clone can't inherit,
+  // and installing it here means a worktree later created by a tool that never calls
+  // `aios worktree add` (Conductor et al) hydrates at creation time. Idempotent.
+  installPostCheckoutHook(repo, { quiet: true });
 
   const connectors = listConnectors(repo);
   if (!process.stdin.isTTY) {

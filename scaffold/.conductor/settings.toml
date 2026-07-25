@@ -1,0 +1,15 @@
+# Conductor (conductor.build) — AIOS adapter. See docs/integrations.md#conductor.
+#
+# Conductor creates its own git worktree per workspace and runs [scripts].setup
+# from that worktree right after checkout, before the agent's first turn. Pointing
+# it at `aios worktree init` gives a Conductor workspace the same hydration
+# (node_modules symlink, .mcp.json, .claude config, asks hooks) that
+# `aios worktree add` performs — with no setup inside the Conductor UI.
+#
+# This is the EARLIEST of three independent layers; hydration still happens without
+# it, via the .git/hooks/post-checkout hook and the SessionStart self-heal hook.
+# Safe to delete, safe to extend with your own steps.
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "node scripts/aios.mjs worktree init || true"

@@ -144,7 +144,8 @@ export const COMMANDS = [
   {
     name: "mcp",
     // The GUI-surface bridge: a long-lived stdio MCP server for agents that can't shell out
-    // to this CLI (Claude Desktop/Cowork/Codex/Conductor). It must run with NO workspace —
+    // to this CLI (Claude Desktop/Cowork/claude.ai — NOT Codex or Conductor, which run real
+    // shell sessions and call this CLI directly). It must run with NO workspace —
     // config is env-first — so it resolves nothing and owns the process until the client
     // disconnects.
     resolution: "pre-config",
