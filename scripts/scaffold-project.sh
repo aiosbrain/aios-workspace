@@ -347,6 +347,14 @@ type: "Decision Log"
 |---|------|----------|-----------|------------|--------|------|----------|
 EOF
 
+# AIO-524: the example row's \`Due\` cell below is the workspace-wide "no value" sentinel
+# (\`—\`, em dash), same as every other placeholder cell in this file's tables. That's safe ONLY
+# because scripts/tasks-table.mjs's parseTaskRows() (and scripts/workspace-parse.mjs's decision
+# row parser) normalize a bare \`—\` to null for date-shaped fields (\`due\`/\`decided_at\`) — those
+# two fields alone flow into a Postgres \`date\` column on the Team Brain and previously
+# round-tripped the literal em dash straight into a push payload, 500ing on the very first
+# \`aios push\`. If you ever touch that normalization, re-run
+# test/scaffold-push-item-validation.test.mjs against all three contexts first.
 idx "$OUTPUT/$D_LOG/tasks-team.md" << EOF
 ---
 access: team
