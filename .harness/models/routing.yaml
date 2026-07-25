@@ -1,0 +1,74 @@
+# models/routing.yaml — category-based multi-model routing
+#
+# Curated from: oh-my-opencode's category delegation (capability tiers, not model
+# names), Amp's Oracle/Worker split and no-model-picker philosophy, and the
+# Anthropic-compatible-endpoint pattern (GLM/Kimi/DeepSeek as drop-in backends).
+# AM patterns: E1, B6.
+#
+# Principle: agents and skills request a CATEGORY; this table maps category →
+# model + fallback chain. Swapping providers is a config edit, never a prompt
+# rewrite. Humans don't pick models per task; the harness routes.
+#
+# Hard rule (mirrors CONSTITUTION §3 / rubrics/code-review.md MG6): output from
+# the bulk or utility lanes ALWAYS passes a frontier-lane or human review gate
+# before merge. Cheap lanes buy throughput, never trust.
+#
+# This file is a convention, not an engine: adapters consume it —
+#   - Claude Code: set the primary via `model` in settings; wire an alternate
+#     backend by pointing ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN at an
+#     Anthropic-compatible endpoint (see adapters/claude-code/README.md).
+#   - opencode: map categories to `agent.<name>.model` entries (see
+#     adapters/opencode/README.md).
+#   - Custom pipelines: read this file directly.
+
+version: 1
+
+lanes:
+  frontier:        # planning, architecture, review, merge decisions, hard debugging
+    use_for: [plan, review, verify, merge-gate, architecture, hard-debugging]
+    chain:
+      - provider: anthropic
+        model: claude-opus        # pin your current frontier tier
+      - provider: openai
+        model: gpt-5              # cross-lab fallback keeps you unblocked
+    notes: >
+      The Oracle. Use the smartest model with thinking for anything whose
+      mistakes are expensive to catch. E1: it steers less, so it's often
+      cheaper end-to-end than a "cheap" model you babysit.
+
+  bulk:            # high-volume implementation against an approved plan
+    use_for: [implement, refactor-mechanical, test-writing, migration-sweeps]
+    chain:
+      - provider: zhipu           # GLM coding plan — Anthropic-compatible endpoint
+        model: glm-coding         # pin the current GLM coding tier
+        endpoint_env: GLM_BASE_URL
+        key_env: GLM_AUTH_TOKEN
+      - provider: anthropic
+        model: claude-sonnet      # fallback when the bulk lane is down/unavailable
+    notes: >
+      The Worker. Large context, ~5-8x cheaper than frontier. Everything it
+      produces goes through the frontier review gate (MG6) — no exceptions.
+
+  utility:         # cheap, fast, low-stakes turns
+    use_for: [search, summarize-logs, grep-triage, commit-messages, formatting-chores]
+    chain:
+      - provider: moonshot
+        model: kimi-code
+        endpoint_env: KIMI_BASE_URL
+        key_env: KIMI_AUTH_TOKEN
+      - provider: deepseek
+        model: deepseek-coder
+      - provider: zhipu
+        model: glm-coding
+    notes: Mistakes here are cheap and self-evident; optimize for speed and cost.
+
+policies:
+  review_gate:
+    rule: "bulk/utility output merges only after frontier-lane or human review"
+    enforced_by: [rubrics/code-review.md#MG6]
+  fallback:
+    rule: "on provider error/timeout, walk the chain in order; never silently downgrade frontier work to a cheaper lane"
+  concurrency:
+    per_provider_max: 4          # respect provider rate limits when parallelizing
+  provenance:
+    rule: "record which lane produced each change (commit trailer or PR label) so review gates and postmortems can see it"

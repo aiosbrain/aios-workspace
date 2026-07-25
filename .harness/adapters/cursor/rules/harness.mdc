@@ -1,0 +1,21 @@
+---
+description: AIOS engineering harness — engineering contract and available skills
+alwaysApply: true
+---
+
+# Engineering harness (this repo)
+
+This repo vendors the AIOS engineering harness at `.harness/`. Two contracts govern all work:
+
+- **`AGENTS.md`** (repo root) — slow-changing operational facts and the error ledger.
+- **`CONSTITUTION.md`** (repo root) — the pinned engineering principles (spec-before-code,
+  verification-is-the-value, the autonomy ladder, mandatory compounding, the simplification bar).
+
+Read both before non-trivial work. The available skills live in `.harness/skills/*/SKILL.md`
+(plan-first, tdd-fail-first, systematic-debugging, verify-change, code-review, simplify-pass,
+compound-learnings, …) — read the matching `SKILL.md` in full before doing that kind of work.
+
+Enforcement is not advisory: `.cursor/hooks.json` runs the harness guards (secrets, protected
+paths, destructive commands, **worktree discipline**) before edits/commands and the verification
+gate (`.harness/check`) at stop. Do feature work in a dedicated `git worktree`, never on a branch
+committed in the primary checkout.

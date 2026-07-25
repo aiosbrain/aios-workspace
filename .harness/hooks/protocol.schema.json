@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiosbrain.dev/harness/hook-event/1.1/schema.json",
+  "title": "AIOS Harness normalized hook event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "event", "runtime", "cwd"],
+  "properties": {
+    "protocol_version": { "enum": ["1.0", "1.1"] },
+    "event": {
+      "enum": ["pre_edit", "pre_command", "post_edit", "stop", "session_start", "subagent_start", "user_prompt_submit"]
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "enum": ["claude", "codex", "opencode", "cursor", "mock"] },
+        "version": { "type": "string" }
+      }
+    },
+    "cwd": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string" },
+    "tool_name": { "type": "string" },
+    "tool_id": { "type": "string" },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "action"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "action": {
+            "enum": ["add", "update", "delete", "rename", "unknown"]
+          },
+          "from": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "added_content": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "command": { "type": "string", "minLength": 1 },
+    "prompt": { "type": "string" },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verification_loop_active"],
+      "properties": {
+        "verification_loop_active": { "type": "boolean" },
+        "stop_status": { "enum": ["ok", "failed", "aborted", "error"] },
+        "loop_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "session_start": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase"],
+      "properties": {
+        "phase": { "enum": ["startup", "resume", "compact"] }
+      }
+    },
+    "subagent_start": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent_type": { "type": "string" },
+        "agent_id": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "pre_edit" } } },
+      "then": { "required": ["paths", "added_content"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "pre_command" } } },
+      "then": { "required": ["command"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "post_edit" } } },
+      "then": { "required": ["paths"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "stop" } } },
+      "then": { "required": ["stop"] }
+    },
+    {
+      "if": { "properties": { "event": { "const": "session_start" } } },
+      "then": {
+        "required": ["session_start"],
+        "properties": { "protocol_version": { "const": "1.1" } }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "subagent_start" } } },
+      "then": {
+        "required": ["subagent_start"],
+        "properties": { "protocol_version": { "const": "1.1" } }
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "user_prompt_submit" } } },
+      "then": {
+        "required": ["prompt"],
+        "properties": { "protocol_version": { "const": "1.1" } }
+      }
+    }
+  ],
+  "$defs": {
+    "action": {
+      "$comment": "Policy OUTPUT envelope (protocol 1.1): a context/continuation policy prints exactly one of these on stdout; adapters validate it (hooks/validate-action.sh) BEFORE translating to any runtime-native shape. Guard policies print nothing on stdout and keep exit-code semantics.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "action"],
+      "properties": {
+        "protocol": { "const": "1.1" },
+        "action": { "enum": ["context", "continue"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 8000 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "context" } } },
+          "then": { "required": ["text"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "continue" } } },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    }
+  }
+}

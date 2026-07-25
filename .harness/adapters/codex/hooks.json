@@ -1,0 +1,107 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex session_start inject-context.sh",
+            "timeout": 30,
+            "statusMessage": "Injecting harness digest and skill index"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex subagent_start inject-context.sh",
+            "timeout": 30,
+            "statusMessage": "Injecting harness digest and skill index into subagent"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex user_prompt_submit route-skills.sh",
+            "timeout": 15,
+            "statusMessage": "Routing prompt to a matching skill"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex pre_edit guard-secrets.sh",
+            "timeout": 30,
+            "statusMessage": "Scanning edit for secrets"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex pre_edit guard-protected-paths.sh",
+            "timeout": 30,
+            "statusMessage": "Checking protected paths"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex pre_edit guard-worktree.sh",
+            "timeout": 30,
+            "statusMessage": "Enforcing worktree discipline"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex pre_command guard-destructive.sh",
+            "timeout": 30,
+            "statusMessage": "Checking destructive command policy"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex pre_command guard-worktree.sh",
+            "timeout": 30,
+            "statusMessage": "Enforcing worktree discipline"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex post_edit post-edit-format.sh",
+            "timeout": 120,
+            "statusMessage": "Formatting edited files"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" codex stop stop-verify-gate.sh",
+            "timeout": 600,
+            "statusMessage": "Running the repository verification gate"
+          }
+        ]
+      }
+    ]
+  }
+}

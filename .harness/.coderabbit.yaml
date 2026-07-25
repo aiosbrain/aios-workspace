@@ -1,0 +1,222 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+#
+# CodeRabbit — aios-engineering-harness (agents, skills, rubrics, evals)
+# ---------------------------------------------------------------------------
+# NOTE: no `version:` key exists in the schema (root is additionalProperties:false).
+#
+# PLAN. Org is on Pro; this repo is PUBLIC and may receive Pro+ features free
+# (CodeRabbit's plans page and its older KB conflict — unresolved). Pro+-gated
+# blocks are included; on plain Pro they parse and never run.
+#   >> Blocks marked "PRO+ ONLY" may be silently inert.
+#
+# RATE LIMITS. Low PR volume; not a quota concern.
+#
+# FOCUS. This repo is mostly prompts, skills, rubrics, and adapters rather than
+# application code. Ordinary code review has little to say about it. The real
+# risks are: a rubric that no longer matches the harness it grades (which makes
+# every downstream verdict untrustworthy), prompt-injection surface in skills and
+# MCP configs, and adapters that quietly make a completion gate non-blocking.
+# skillspector is the highest-value tool here — it scans SKILL.md manifests and
+# MCP configs for malicious patterns.
+# ---------------------------------------------------------------------------
+
+language: "en-US"
+tone_instructions: "Be terse. No praise, no restating the diff. Only report what would change the merge decision."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  changed_files_summary: false
+  suggested_reviewers: false
+  suggested_labels: false
+  review_status: false
+  estimate_code_review_effort: false
+  collapse_walkthrough: true
+  abort_on_close: true
+  enable_prompt_for_ai_agents: true
+
+  assess_linked_issues: true
+  related_prs: true
+  related_issues: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 3
+    base_branches:
+      - "^main$"
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "[skip review]"
+      - "chore"
+      - "deps"
+      - "bump"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  path_filters:
+    - "!node_modules/**"
+    - "!dist/**"
+    - "!**/*.lock"
+    - "!package-lock.json"
+    - "!code-review-*.md"
+    - "!evals/**/results/**"     # eval output artifacts, not source
+
+  path_instructions:
+    - path: "skills/**"
+      instructions: |
+        Skills are executable instructions for agents, so treat their text as
+        code. Flag: instructions that tell an agent to bypass a review gate,
+        disable a hook, skip validation, or force-push; unbounded shell
+        invocations; and any instruction to read secrets or .env files.
+        Also flag a skill whose described behaviour no longer matches its rubric
+        in rubrics/ — a stale rubric silently invalidates every verdict it gates.
+
+    - path: "rubrics/**"
+      instructions: |
+        Rubrics are what make harness output trustworthy. Flag any change that
+        makes a rubric more permissive (lowered thresholds, removed criteria,
+        softened pass conditions) without a stated reason in the PR description.
+        A rubric that cannot fail is not a rubric.
+
+    - path: "adapters/**"
+      instructions: |
+        Lifecycle adapters for Claude, Codex, Cursor, and OpenCode. The local
+        Bugbot gate must stay blocking: flag any change that converts a failing
+        exit code to a passing one, swallows an error, adds a bypass env var, or
+        makes a gate advisory. OpenCode's lifecycle API is post-idle only, so
+        `aios build`/`aios ship` remains its hard pre-merge gate — flag changes
+        that assume otherwise.
+
+    - path: "agents/**"
+      instructions: |
+        Flag prompts that grant an agent broader tool access than its task needs,
+        and any instruction that would let untrusted input (issue bodies, PR
+        descriptions, fetched web content) be treated as trusted instructions.
+
+    - path: "CONSTITUTION.md"
+      instructions: |
+        The governing document for the workflow layer. Changes here alter the
+        rules every harness is judged against — flag any relaxation of an
+        engineering standard that is not explained in the PR description.
+
+    - path: "**/*.md"
+      instructions: |
+        No prose, grammar, or style nits. This repo is almost entirely Markdown;
+        review it for instruction safety and rubric honesty, not for writing.
+
+  pre_merge_checks:
+    override_requested_reviewers_only: false
+    title:
+      mode: "warning"
+      requirements: |
+        Conventional Commits: <type>(<scope>): <subject>. Imperative mood, under
+        72 chars.
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "warning"
+    docstrings:
+      mode: "off"
+      threshold: 80
+
+    # ----- PRO+ ONLY — may be silently inert on plain Pro. -----
+    custom_checks:
+      - name: "skill change keeps its rubric honest"
+        mode: "warning"
+        instructions: |
+          Pass: the diff changes no skill under skills/, OR every changed skill
+          whose behaviour or output shape changed has a corresponding update to
+          its rubric in rubrics/, OR the PR description states why the existing
+          rubric still applies.
+          Fail: a skill's behaviour, output format, or success criteria change
+          with no rubric update and no explanation.
+
+      - name: "no gate weakened to non-blocking"
+        mode: "warning"
+        instructions: |
+          Pass: no change to adapters/ or hooks/ gate logic, OR the change keeps
+          failures blocking.
+          Fail: an adapter or hook changes a blocking failure into a warning,
+          adds a skip or bypass environment variable, swallows a non-zero exit
+          code, or downgrades the severity threshold at which a finding blocks,
+          without justification in the PR description.
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    autofix:
+      enabled: true
+    unit_tests:
+      enabled: false      # PRO+ ONLY
+    simplify:
+      enabled: false      # PRO+ ONLY
+
+  tools:
+    eslint:
+      enabled: false
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false      # this repo is nearly all prose; would be pure noise
+    # The highest-value tool here: scans SKILL.md manifests and MCP configs for
+    # malicious patterns (prompt injection, exfiltration, unsafe tool grants).
+    skillspector:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    semgrep:
+      enabled: true
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+
+  slop_detection:
+    enabled: true
+
+chat:
+  art: false
+  auto_reply: true
+  integrations:
+    linear:
+      usage: "enabled"
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONSTITUTION.md"
+      - "BOOTSTRAP.md"
+      - "PROVENANCE.md"
+  learnings:
+    scope: "local"
+    approval_delay: 0
+  issues:
+    scope: "local"
+  pull_requests:
+    scope: "local"
+  linear:
+    usage: "enabled"
+    team_keys:
+      - "AIO"

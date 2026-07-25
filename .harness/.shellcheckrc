@@ -1,0 +1,22 @@
+# shellcheck config for CI's lint-shell job (severity=warning).
+#
+# These codes are pre-existing, deliberate patterns used consistently across this
+# repo's shell scripts, not bugs:
+#   SC1007 - `VAR=$(CDPATH= cd -- ... && pwd)` — the space after `CDPATH=` is
+#            intentional (clears CDPATH for the subshell only); not an assignment typo.
+#   SC2164 - bare `cd`/`pushd`/`popd` inside test-harness subshells (evals/*.test.sh)
+#            where the surrounding `set -u` + explicit exit-code assertions already
+#            catch a failed directory change.
+#   SC2046 - unquoted `$(probe ...)` word-splitting in hooks/guard-worktree.sh is
+#            deliberate: probe() prints a fixed two-token "KIND BRANCH" pair to
+#            populate positional params via `set --`.
+#   SC2088 - the `~/` case arm in hooks/guard-worktree.sh is a literal string match
+#            (case pattern), not a tilde expansion the shell is being asked to do.
+#   SC2209 - `MODE=command` in hooks/guard-worktree.sh assigns the literal string
+#            "command", not the builtin.
+#   SC2319 - `$?` immediately after `report "..." $?` in evals/visual-qa.test.sh is
+#            read before any intervening command, so it is not stale.
+#
+# Do not add new codes here to silence a genuinely new warning — fix the script
+# instead. Only pre-existing, reviewed patterns belong on this list.
+disable=SC1007,SC2164,SC2046,SC2088,SC2209,SC2319
