@@ -86,12 +86,19 @@ export function parseArgs(argv) {
   return options;
 }
 
+// Tests shell out to repo-local CLIs (e.g. dotenvx); when this script is run as
+// `node scripts/run-coverage.mjs` (not via `npm run`), node_modules/.bin isn't on
+// PATH, so prepend it the way npm would.
+const LOCAL_BIN_PATH = [path.join(ROOT, "node_modules", ".bin"), process.env.PATH]
+  .filter(Boolean)
+  .join(path.delimiter);
+
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: ROOT,
       stdio: "inherit",
-      env: process.env,
+      env: { ...process.env, PATH: LOCAL_BIN_PATH },
       ...options,
     });
     child.once("error", reject);
