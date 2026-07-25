@@ -114,9 +114,17 @@ function resolveRoot(desc, repoArg, rest, r) {
 
 const hasConfig = (repo) => existsSync(path.join(repo, "aios.yaml"));
 
-/** Normalize the handler's return value into this command's declared exit semantics. */
-function finish(desc, value) {
+/**
+ * Normalize the handler's return value into this command's declared exit semantics.
+ *
+ * `exit-status` assigns ONLY for a truthy status. The old `update` branch was
+ * `if (result.exitStatus) process.exitCode = result.exitStatus` — it never wrote 0 — so a
+ * soft-failure `process.exitCode` set deeper in the command (or in a module it lazily pulled
+ * in) survived. An unconditional `?? 0` would silently overwrite that signal and exit green
+ * on a failure. Exported for the unit test; dispatch is the only production caller.
+ */
+export function finish(desc, value) {
   if (desc.exit === "exit-code") process.exit(value ?? 0);
-  if (desc.exit === "exit-status") process.exitCode = value ?? 0;
+  if (desc.exit === "exit-status" && value) process.exitCode = value;
   return value;
 }

@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { COMMANDS, findCommand, renderUsage } from "../scripts/cli/registry.mjs";
+import { finish } from "../scripts/cli/dispatch.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
@@ -163,44 +164,239 @@ test("registry: every loader resolves to a real module", async () => {
   }
 });
 
-test("registry: every adapt calls into its module (or its injected local handler)", async () => {
-  // Drives each descriptor's adapt with recorders in place of the real module + inline
-  // handlers. This proves no descriptor is wired to a name its module doesn't export, and
-  // that adapt reads its arguments off the ctx rather than closing over anything.
-  const calls = [];
-  const recorder = (owner) =>
-    new Proxy(
+test("registry: every adapt hands its module the EXACT argument signature (table-driven)", async () => {
+  // The parity claim of this PR lives or dies here. Asserting only "something was called"
+  // would let a reorder like cmdPush(repo, cfg, REST, PATTERNS) — argv handed to the secret
+  // scanner on the tier-carrying sync path — pass every other test in this file. So: distinct
+  // sentinels on the ctx, and an exact expected signature for ALL 46 commands.
+  const R = "@repo";
+  const C = "@cfg";
+  const P = "@patterns";
+  const A = "@rest";
+
+  // Every helper/handler the registry may pull off ctx.local, as identity-checkable recorders.
+  const LOCAL_KEYS = [
+    "cmdStatus",
+    "cmdReview",
+    "cmdPush",
+    "cmdWork",
+    "cmdPull",
+    "cmdConnect",
+    "cmdWhoami",
+    "cmdStakeholders",
+    "cmdQuery",
+    "cmdExportOkf",
+    "cmdPullBundle",
+    "cmdGraph",
+    "cmdSkills",
+    "cmdInstallSkill",
+    "cmdAssessCodebase",
+    "cmdLearn",
+    "connectFlow",
+    "nextAction",
+    "api",
+    "resolveMember",
+    "loadDotEnv",
+    "findRepoRootOffline",
+    "die",
+    "c",
+  ];
+
+  function harness() {
+    const calls = [];
+    const local = {};
+    for (const key of LOCAL_KEYS) {
+      const fn = (...args) => {
+        calls.push({ owner: "local", prop: key, args });
+        // Shape that satisfies every consumer: `mcp` reads .missing, `update` .exitStatus.
+        return { missing: [] };
+      };
+      local[key] = fn;
+    }
+    const mod = new Proxy(
       {},
       {
         get:
           (_t, prop) =>
           (...args) => {
-            calls.push({ owner, prop, args });
-            // Shape that satisfies every consumer in the table: `mcp` reads .missing,
-            // `update` reads .exitStatus (undefined => exit 0).
+            calls.push({ owner: "mod", prop, args });
             return { missing: [] };
           },
       }
     );
+    return { ctx: { repo: R, cfg: C, patterns: P, rest: A, local }, local, mod, calls };
+  }
+
+  // A marker for an argument that is a closure built by adapt — identity can't be asserted,
+  // so the closure is invoked and its downstream call is checked instead.
+  const closure = (verify) => Object.assign(() => {}, { __closure: true, verify });
+
+  /** name -> [owner, exported/handler name, ...expected args] */
+  const EXPECTED = (l) => ({
+    // ── inline handlers still living in scripts/aios.mjs ───────────────────────
+    status: ["local", "cmdStatus", R, C, P, A],
+    review: ["local", "cmdReview", R, C, P, A],
+    push: ["local", "cmdPush", R, C, P, A],
+    work: ["local", "cmdWork", R, C, P, A],
+    pull: ["local", "cmdPull", R, C, A],
+    connect: ["local", "cmdConnect", R, A],
+    whoami: ["local", "cmdWhoami", R, C],
+    stakeholders: ["local", "cmdStakeholders", R, C, A],
+    query: ["local", "cmdQuery", R, C, A],
+    "export-okf": ["local", "cmdExportOkf", R, C, A],
+    "pull-bundle": ["local", "cmdPullBundle", R, C, A],
+    graph: ["local", "cmdGraph", R, C, A],
+    skills: ["local", "cmdSkills", R, A],
+    "install-skill": ["local", "cmdInstallSkill", R, A],
+    "assess-codebase": ["local", "cmdAssessCodebase", R, C, P, A],
+    learn: ["local", "cmdLearn", R, C, P, A],
+    // ── lazily loaded command modules ──────────────────────────────────────────
+    onboard: [
+      "mod",
+      "cmdOnboard",
+      R,
+      C,
+      A,
+      { connectFlow: l.connectFlow, nextAction: l.nextAction },
+    ],
+    promote: [
+      "mod",
+      "cmdPromote",
+      R,
+      C,
+      A,
+      closure((bag, calls) => {
+        assert.deepEqual(Object.keys(bag), ["resolveMember"]);
+        bag.resolveMember();
+        const inner = calls.filter((x) => x.prop === "resolveMember" || x.prop === "loadDotEnv");
+        assert.deepEqual(
+          inner.map((x) => x.prop),
+          ["loadDotEnv", "resolveMember"]
+        );
+        assert.deepEqual(inner[0].args, [R]);
+        assert.deepEqual(inner[1].args, [R, C, { missing: [] }]);
+      }),
+    ],
+    member: [
+      "mod",
+      "cmdMember",
+      R,
+      C,
+      A,
+      closure((bag, calls) => {
+        assert.deepEqual(Object.keys(bag), ["api"]);
+        bag.api("GET", "/route", "body");
+        const inner = calls.filter((x) => x.prop === "api");
+        // the cfg must be prepended, and the caller's three args forwarded in order
+        assert.deepEqual(inner.at(-1).args, [C, "GET", "/route", "body"]);
+      }),
+    ],
+    analyze: [
+      "mod",
+      "cmdAnalyze",
+      R,
+      C,
+      A,
+      { api: l.api, resolveMember: l.resolveMember, loadDotEnv: l.loadDotEnv },
+    ],
+    "context-health": ["mod", "runContextHealthCli", R, A, l.c],
+    loop: ["mod", "cmdLoop", R, C, A],
+    timeline: ["mod", "cmdTimeline", R, C, A],
+    "maturity-week": ["mod", "cmdMaturityWeek", R, A],
+    instincts: ["mod", "cmdInstincts", R, A],
+    time: ["mod", "cmdTime", R, C, A],
+    asks: ["mod", "cmdAsks", R, C, A],
+    inbox: ["mod", "cmdInbox", R, C, A],
+    transcripts: ["mod", "cmdTranscripts", R, C, A],
+    pm: ["mod", "cmdPm", C, A],
+    mode: ["mod", "cmdMode", R, C, A],
+    decisions: ["mod", "cmdDecisions", R, C, A],
+    council: ["mod", "runCouncil", R, A],
+    worktree: ["mod", "cmdWorktree", R, C, A],
+    update: ["mod", "cmdUpdate", R, C, A],
+    rails: ["mod", "cmdRails", R, C, A],
+    relay: ["mod", "cmdRelay", R, A],
+    build: ["mod", "cmdBuild", R, A],
+    simplify: ["mod", "cmdSimplify", R, A],
+    spec: ["mod", "cmdSpec", R, A],
+    pr: ["mod", "cmdPr", R, A],
+    "consolidate-findings": ["mod", "cmdConsolidateFindings", R, A],
+    "review-bugbot": ["mod", "cmdReviewBugbot", R, A],
+    ship: ["mod", "cmdShip", R, A],
+    "roadmap-run": ["mod", "cmdRoadmapRun", R, A],
+    // mcp inlines its pre-config block: resolve the env-first config, then own the process.
+    mcp: ["mod", "runStdio", { missing: [] }],
+  });
+
+  // The table must cover the registry exactly — a new command can't slip in unasserted.
+  const table = EXPECTED(harness().local);
+  assert.deepEqual(Object.keys(table).sort(), COMMANDS.map((d) => d.name).sort());
 
   for (const d of COMMANDS) {
-    calls.length = 0;
-    const ctx = {
-      repo: "/tmp/fake-repo",
-      cfg: { project: "fake" },
-      patterns: [],
-      rest: [],
-      local: recorder("local"),
-    };
-    const mod = d.loader ? recorder("mod") : null;
-    await d.adapt(ctx, mod);
-    assert.ok(calls.length > 0, `${d.name}'s adapt invoked nothing`);
-    // A descriptor with a loader must use the module it loaded; one without must use `local`.
-    assert.equal(
-      calls.some((cl) => cl.owner === (d.loader ? "mod" : "local")),
-      true,
-      `${d.name}'s adapt ignored its ${d.loader ? "module" : "local handler"}`
+    const h = harness();
+    const spec = EXPECTED(h.local)[d.name];
+    const [owner, prop, ...expectedArgs] = spec;
+
+    await d.adapt(h.ctx, d.loader ? h.mod : null);
+
+    const call = h.calls.find((x) => x.owner === owner && x.prop === prop);
+    assert.ok(
+      call,
+      `${d.name}: expected adapt to call ${owner}.${prop}, saw ${JSON.stringify(
+        h.calls.map((x) => `${x.owner}.${String(x.prop)}`)
+      )}`
     );
+    assert.equal(
+      call.args.length,
+      expectedArgs.length,
+      `${d.name}: ${prop} arity drifted — got ${call.args.length}, expected ${expectedArgs.length}`
+    );
+    for (const [i, expected] of expectedArgs.entries()) {
+      if (typeof expected === "function" && expected.__closure) {
+        assert.equal(typeof call.args[i], "object", `${d.name}: arg ${i} should be an option bag`);
+        expected.verify(call.args[i], h.calls);
+        continue;
+      }
+      assert.deepEqual(
+        call.args[i],
+        expected,
+        `${d.name}: argument ${i} of ${prop} drifted (this is the tier-safety axis — a swapped ` +
+          `patterns/rest here hands argv to the secret scanner)`
+      );
+    }
+  }
+
+  // mcp additionally reads its env-first config before starting the server.
+  const h = harness();
+  await findCommand("mcp").adapt(h.ctx, h.mod);
+  assert.deepEqual(
+    h.calls.map((x) => String(x.prop)),
+    ["resolveBrainConfig", "runStdio"]
+  );
+  assert.deepEqual(h.calls[0].args, []);
+});
+
+test("dispatch: exit-status only assigns a truthy status (never clobbers with 0)", () => {
+  // The old `update` branch was `if (result.exitStatus) process.exitCode = ...` — it never
+  // wrote 0, so a soft-failure exitCode set deeper in the command survived. An unconditional
+  // `?? 0` would silently turn a failure green.
+  const previous = process.exitCode;
+  try {
+    process.exitCode = 3;
+    finish({ exit: "exit-status" }, 0);
+    assert.equal(process.exitCode, 3, "a 0 status must not overwrite an existing exitCode");
+    finish({ exit: "exit-status" }, undefined);
+    assert.equal(
+      process.exitCode,
+      3,
+      "an undefined status must not overwrite an existing exitCode"
+    );
+    finish({ exit: "none" }, 7);
+    assert.equal(process.exitCode, 3, "an exit-less command must not touch exitCode");
+    finish({ exit: "exit-status" }, 2);
+    assert.equal(process.exitCode, 2, "a truthy status must be assigned");
+  } finally {
+    process.exitCode = previous;
   }
 });
 
