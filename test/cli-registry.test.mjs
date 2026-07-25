@@ -13,14 +13,16 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { COMMANDS, findCommand, renderUsage } from "../scripts/cli/registry.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
-const PROBE = path.join(DIR, "helpers", "import-probe.mjs");
+// NODE_OPTIONS is split on whitespace by Node, so a checkout path containing a space would
+// break every trace below — pass the probe as a file: URL, which percent-encodes them.
+const PROBE = pathToFileURL(path.join(DIR, "helpers", "import-probe.mjs")).href;
 const USAGE_FIXTURE = path.join(DIR, "fixtures", "aios-usage.txt");
 
 // ── the pre-refactor truth, transcribed from the if/else-if chain + OFFLINE_CMDS set + the
@@ -300,6 +302,20 @@ test("cli: `update` keeps its own root resolution and rejects a bare directory",
 test("cli: exit codes are preserved for an exit-code command", () => {
   // `spec` publishes an explicit exit-code contract (0/1/2/3, 4 on IO error).
   assert.equal(run(["spec", "eval", "/nonexistent/spec.md", "--repo", REPO]).code, 4);
+});
+
+test("cli: a valueless trailing `--repo` fails loudly instead of walking up from cwd", () => {
+  const r = run(["push", "--dry-run", "--repo"], { cwd: REPO });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /`aios push --repo` needs a path/);
+});
+
+test("cli: an unhandled throw outside the handler still reports as a CLI error", () => {
+  // Root resolution runs outside dispatch's inner try; without the outer .catch in aios.mjs
+  // this surfaces as a bare unhandled rejection with a stack instead of `error: …`.
+  const r = run(["status", "--repo", "/nonexistent/definitely/not/here"]);
+  assert.notEqual(r.code, 0);
+  assert.doesNotMatch(r.stderr, /UnhandledPromiseRejection|at ModuleJob/);
 });
 
 test("cli: `--repo` is still forwarded, not consumed, for a flag-owning command", () => {

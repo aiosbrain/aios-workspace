@@ -57,6 +57,10 @@ export async function dispatch({ argv, local, resolvers }) {
     const i = rest.indexOf("--repo");
     if (i !== -1) {
       repoArg = rest[i + 1];
+      // A valueless trailing `--repo` used to be dropped silently, so resolution fell back to
+      // the cwd walk-up and the command ran against whatever workspace happened to be above
+      // it. For `push` that means syncing the wrong repo — fail loudly instead.
+      if (repoArg === undefined) die(`\`aios ${cmd} --repo\` needs a path — got no value`);
       rest.splice(i, 2);
     }
   }

@@ -65,7 +65,6 @@ import {
 } from "./cli-common.mjs";
 import { dispatch } from "./cli/dispatch.mjs";
 import { createBrainClient } from "./brain-client.mjs";
-import { printProjectionHealth } from "./pm.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -526,7 +525,9 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
       )
     );
   }
-  await printProjectionHealth(cfg, { optional: true });
+  await import("./pm.mjs").then(({ printProjectionHealth }) =>
+    printProjectionHealth(cfg, { optional: true })
+  );
 }
 
 // Best-effort: open a URL in the user's default browser. Returns false (caller prints the
@@ -975,7 +976,9 @@ async function cmdPush(repo, cfg, patterns, args) {
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
   if (plan.push.some((item) => item.kind === "task" && result.pushed.has(item.rel)))
-    await printProjectionHealth(cfg, { optional: true });
+    await import("./pm.mjs").then(({ printProjectionHealth }) =>
+      printProjectionHealth(cfg, { optional: true })
+    );
   return result;
 }
 
@@ -2470,6 +2473,10 @@ async function cmdWork(repo, cfg, patterns, args) {
 // cmdStakeholders, the connect/OAuth family, the skill/blueprint sync family, export-okf …)
 // are injected as `local` — Phase 2 extracts them into their own modules.
 
+// The trailing .catch is the outer safety net: dispatch's own try/catch only wraps the
+// handler call, so a throw from root resolution, loadSecretPatterns(), or the pre-config
+// (mcp) path would otherwise surface as a bare unhandled rejection instead of the CLI's
+// `error: <message>` + exit 1.
 await dispatch({
   argv: process.argv.slice(2),
   local: {
@@ -2509,4 +2516,4 @@ await dispatch({
     loadSecretPatterns,
     die,
   },
-});
+}).catch((e) => die(e?.message || String(e)));
