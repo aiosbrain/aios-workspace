@@ -73,6 +73,14 @@ CI:
 
 `validate-all.sh` runs all three, with `--critical` and `--quick` modes.
 
+Every validator enumerates its targets **via git** — `git ls-files` (tracked) plus
+`git ls-files -o --exclude-standard` (untracked but not ignored) — never a filesystem
+walk with an exclude list. That union is exactly the content that can reach a commit, and
+it makes gitignored build trees structurally invisible: a 1.6 GB `src-tauri/target` used
+to exhaust the secret scan's window so the gate never finished (AIO-517). A directory
+that is not a git work tree (the throwaway change-set dir `aios build` assembles) falls
+back to a scoped walk.
+
 ---
 
 ## 4. Guard hook

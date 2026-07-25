@@ -33,7 +33,46 @@ fi
 echo "OGR02: Checking frontmatter in $REPO"
 echo "================================================"
 
-# Find all .md files, excluding hidden dirs, node_modules, .git
+# List the .md files to check, excluding hidden dirs, node_modules, .git and the
+# conventional non-frontmatter documents.
+#
+# Enumeration is via GIT, never a filesystem walk (AIO-517): a bare `find` descends into
+# gitignored build trees (`src-tauri/target` is 1.6 GB / 35k files here), which is both
+# slow and wrong — build output is not workspace content and can never carry frontmatter
+# anyone must fix. Tracked + untracked-but-not-ignored is exactly the content set OGR02
+# governs. Non-git targets keep the walk.
+md_candidates() {
+  if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    {
+      git -C "$REPO" ls-files
+      git -C "$REPO" ls-files -o --exclude-standard
+    }
+  else
+    find "$REPO" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f 2>/dev/null |
+      sed "s|^${REPO%/}/||"
+  fi
+}
+
+list_md_files() {
+  local rel abs
+  while IFS= read -r rel; do
+    case "/$rel" in
+      *.md) ;;
+      *) continue ;;
+    esac
+    case "/$rel" in
+      */.git/* | */.planning/* | */node_modules/* | */.claude/* | */.aios/*) continue ;;
+      */CLAUDE.md | */MEMORY.md | */README.md | */decision-log.md) continue ;;
+      */hours-log.md | */hours-log-*.md | */tasks.md | */learnings.md) continue ;;
+      */client-surface-log.md | */index.md) continue ;;
+    esac
+    abs="$REPO/$rel"
+    [ -L "$abs" ] && continue
+    [ -f "$abs" ] || continue
+    printf '%s\n' "$abs"
+  done
+}
+
 while IFS= read -r file; do
   # Skip files that are just .gitkeep or very small
   if [ "$(wc -l < "$file" 2>/dev/null)" -lt 3 ]; then
@@ -99,23 +138,7 @@ while IFS= read -r file; do
     WARNINGS=$((WARNINGS + 1))
   fi
 
-done < <(find "$REPO" -name "*.md" \
-  -not -path "*/.git/*" \
-  -not -path "*/.planning/*" \
-  -not -path "*/node_modules/*" \
-  -not -path "*/.claude/*" \
-  -not -path "*/.aios/*" \
-  -not -name "CLAUDE.md" \
-  -not -name "MEMORY.md" \
-  -not -name "README.md" \
-  -not -name "decision-log.md" \
-  -not -name "hours-log.md" \
-  -not -name "hours-log-*.md" \
-  -not -name "tasks.md" \
-  -not -name "learnings.md" \
-  -not -name "client-surface-log.md" \
-  -not -name "index.md" \
-  | sort)
+done < <(md_candidates | list_md_files | sort)
 
 # Summary
 echo ""
