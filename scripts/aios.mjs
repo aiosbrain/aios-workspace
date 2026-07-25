@@ -63,34 +63,9 @@ import {
   loadSecretPatterns,
   findSecret,
 } from "./cli-common.mjs";
-import { cmdAnalyze } from "./analyze/index.mjs";
-import { cmdBuild } from "./build.mjs";
-import { cmdSimplify } from "./simplify.mjs";
-import { cmdSpec } from "./spec-eval.mjs";
-import { runCouncil } from "./council.mjs";
-import { cmdReviewBugbot } from "./review-bugbot.mjs";
-import { cmdPr } from "./pr.mjs";
-import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
-import { cmdShip } from "./ship.mjs";
-import { cmdRoadmapRun } from "./roadmap-run.mjs";
-import { cmdRails } from "./rails.mjs";
-import { cmdMember } from "./member-cli.mjs";
+import { dispatch } from "./cli/dispatch.mjs";
 import { createBrainClient } from "./brain-client.mjs";
-import { cmdInstincts } from "./instincts.mjs";
-import { cmdMode } from "./mode.mjs";
-import { cmdWorktree } from "./worktree.mjs";
-import { cmdUpdate } from "./update.mjs";
-import { cmdMaturityWeek } from "./maturity-week-cmd.mjs";
-import { cmdTime } from "./time.mjs";
-import { cmdTimeline } from "./timeline.mjs";
-import { cmdAsks } from "./asks.mjs";
-import { cmdInbox } from "./inbox.mjs";
-import { cmdDecisions } from "./decisions.mjs";
-import { cmdLoop } from "./loop.mjs";
-import { cmdPromote } from "./promote.mjs";
-import { cmdTranscripts } from "./transcripts.mjs";
-import { cmdPm, printProjectionHealth } from "./pm.mjs";
-import { runContextHealthCli } from "./context-health.mjs";
+import { printProjectionHealth } from "./pm.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -2480,387 +2455,58 @@ async function cmdWork(repo, cfg, patterns, args) {
   }
   await postWorkEvent(repo, cfg, key, member);
 }
-
-// ── operator loop (C1 collector + manifest, C2 evidence ledger) ──────────────
-// loadOperatorLoop now lives in ./operator-loop-loader.mjs (shared with the extracted
-// mode/loop/asks/decisions/time handler modules). Imported at the top of this file.
-
-// aios loop (V1 Operator Loop CLI): collect / daily / manifest --explain / verify / weekly /
-// writeback / telemetry. Extracted to ./loop.mjs (AIO-315); dispatched below as
-// cmdLoop(repo, cfg, rest).
-
-// aios time (AIO-139): native agent-session runtime capture. Extracted to ./time.mjs
-// (AIO-315); dispatched below as cmdTime(repo, cfg, rest).
-
-// aios asks (AIO-167): non-blocking escalation queue + hook wiring. Extracted to ./asks.mjs
-// (AIO-315); dispatched below as cmdAsks(repo, cfg, rest).
-
-// aios decisions (AIO-170 / EE4): human-in-the-loop decision-capture corpus. Extracted to
-// ./decisions.mjs (AIO-315); dispatched below as cmdDecisions(repo, cfg, rest).
-
-// aios mode (AIO-168): deep-work / orchestration attention toggle. Extracted to
-// ./mode.mjs (AIO-315); dispatched below as cmdMode(repo, cfg, rest).
-
-// aios maturity-week — local weekly AEM report + belts (AM6, AIO-231). Extracted to
-// ./maturity-week-cmd.mjs (AIO-315); dispatched below as cmdMaturityWeek(repo, rest).
-
-// aios timeline (AIO-203): screenshot-rich weekly summaries, team + external.
-// Extracted to ./timeline.mjs (AIO-315); dispatched below as
-// process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0).
-
 // ── main ────────────────────────────────────────────────────────────────────
+//
+// Every subcommand — its root-resolution mode, its lazy module loader, its argument shape,
+// its exit semantics AND its help text — is declared exactly once in scripts/cli/registry.mjs
+// and executed by scripts/cli/dispatch.mjs (AIO-512 Phase 1). There is no if/else-if dispatch
+// chain and no hand-maintained USAGE string in this file any more; `aios help` is rendered
+// from the descriptors, so a command can no longer exist without help text (or vice versa).
+//
+// Command modules are loaded lazily by the descriptors, so `aios status` no longer parses
+// ship.mjs / build.mjs / spec-eval.mjs / roadmap-run.mjs on the way to printing a diff.
+//
+// The handlers still defined above (cmdStatus, cmdPush, cmdPull, cmdQuery, cmdGraph,
+// cmdStakeholders, the connect/OAuth family, the skill/blueprint sync family, export-okf …)
+// are injected as `local` — Phase 2 extracts them into their own modules.
 
-const argv = process.argv.slice(2);
-const cmd = argv[0];
-const rest = argv.slice(1);
-
-// `pr` and `consolidate-findings` own their own `--repo` flag — a GitHub owner/repo slug,
-// NOT the workspace path. `timeline` owns it too — repeatable TARGET repo paths (its
-// workspace root comes from the cwd walk-up or its own `--workspace`). Don't consume it
-// here, or the command never sees the target-repo override.
-const repoFlagIdx =
-  cmd === "pr" || cmd === "consolidate-findings" || cmd === "timeline"
-    ? -1
-    : rest.indexOf("--repo");
-let repoArg = null;
-if (repoFlagIdx !== -1) {
-  repoArg = rest[repoFlagIdx + 1];
-  rest.splice(repoFlagIdx, 2);
-}
-
-// aios worktree — git worktree wrapper with automatic config propagation.
-// Extracted to ./worktree.mjs (AIO-315); dispatched below as cmdWorktree(repo, cfg, rest).
-
-const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
-
-usage:
-  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
-  aios onboard                          guided first-run setup (brain + tools, one multi-select)
-    --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state
-  aios connect [<id>]                   connect an integration (guided + live-validated)
-    [--token <v>] [--set ENV=v]         non-interactive credential input
-  aios review                           interactive: toggle inclusion, then push selected
-  aios push [--dry-run] [paths…]
-  aios work done <key> [--push]         mark a task done; --push notifies Brain/PM sync
-  aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
-  aios push blueprint                   publish the team's tool set (lead/admin only)
-  aios pull blueprint                   fetch the team's tool set → .aios/blueprint.json
-  aios pull                             fetch team updates → 1-inbox/from-brain/
-  aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/
-  aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
-  aios promote <file>                   anonymize-then-promote reusable IP: COPY a private
-    [--to 2-work|4-shared] [--dry-run]  file (5-personal/, or any dir outside sync_include)
-                                         to 2-work/ (team) or 4-shared/ (client|company); scans
-                                         the copy (secrets + leak-gate), sets access frontmatter,
-                                         logs the promotion; omit --to to be prompted
-  aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
-  aios query "question"                 ask the Team Brain
-  aios member invite <email>            create/re-invite a member + cascade tool invites
-    --name <n> --handle <h>              (Linear/Slack/GitHub); admin-key only (brain-api v1.7)
-    [--role member|lead|admin]           role default member; tolerates a pre-v1.7 brain (404)
-    [--tools linear,slack,github|all|none]  tools default "all"
-  aios member list                      team roster (GET /members; team-tier key required)
-  aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)
-    | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from
-    [--json]                            meeting items; external key → 403 forbidden_tier
-  aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
-    [--json]                            (.aios/loop/manifests/; offline, never synced)
-  aios loop manifest --explain          inspect a manifest's evidence + tiers
-    [--as team|external] [--daily]      simulate what a digest audience would see
-  aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →
-    --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed
-    [--smoke]                           --smoke derives a debug ledger from a fresh manifest
-  aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),
-    [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;
-    [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)
-  aios loop daily [--as team|external]  fast daily orientation: changed / blocked / owed today
-    [--no-record] [--json]              (read-only; owner run records a local change-snapshot)
-  aios loop writeback <stamp>           approval-gated promotion of a saved closeout (default: preview)
-    [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
-  aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
-    [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
-  aios loop install [--dry-run]         installs the real scheduler for daily+weekly+analyze
-    [--uninstall] [--status]            (launchd on macOS, cron elsewhere); see docs/loop-install.md
-    [--scheduler launchd|cron]
-  aios timeline [--since <date|Nd>]     cross-repo "what we shipped": merged PRs + commits →
-    --repo <path[=liveUrl]> [...]       screenshot-rich, self-contained HTML per audience
-    [--as team|external|all] [--open]   (.aios/timeline/<stamp>/index-<audience>.html);
-    [--until <date>] [--dry-run]        external render is tier-filtered + leak-gate swept,
-    [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);
-    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json
-  aios mcp                              run the Team Brain MCP server over stdio, for
-                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
-                                        that can't shell out; env-first, no workspace needed
-  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
-    [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
-    [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
-    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
-  aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
-  aios instincts distill [--limit N] [--dry-run] [--json]  batch-distill observations → homunculus instincts
-    [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
-  aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
-    [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
-  aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
-  aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
-    [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
-  aios asks list [--status open|resolved|orphaned|all]  escalation queue (local, admin-tier, never synced)
-    [--json]                            list open (default) / resolved / orphaned / all
-  aios asks add --kind <k>              enqueue an ask (severity: blocker|decision|fyi)
-    --severity <s> --title <t> [--body <b>] [--ref <r>] [--json]
-  aios asks show <id> | resolve <id...> inspect one ask; mark ask(s) resolved (bookkeeping)
-  aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)
-  aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue
-    [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
-  aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into
-    [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
-                                         worktrees whose checked-out branch predates the hooks
-  aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline
-  aios pm status [--json]               projection health + recent-run observability
-  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges
-    [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
-  aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
-    [--since date] [--json]             AskUserQuestion + plan-approval prompts, newest first
-  aios decisions show <id> [--json]     full record: options, choice, notes, outcome
-  aios decisions outcome <id> <text>    annotate a decision's outcome (append; decisions never mutate)
-  aios decisions export [--json]        dump all records as a JSON array (the training-corpus read path)
-  aios decisions backfill [--all]       recover historical decisions from ~/.claude transcripts
-    [--home d] [--since date]           --all ingests allowlisted repos (foreign origin redacted);
-    [--include tag,…] [--dry-run]       client/unknown roots skipped + counted, never ingested
-  aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW
-    [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress
-    [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md
-  aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)
-    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet
-                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)
-  aios export-okf [output-dir]          emit OKF bundle (no brain needed)
-    [--tier external|team]              default: external (includes team + external)
-  aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
-  aios graph [--from <file>]            traverse local OKF link graph (no brain needed)
-    [--depth N] [--format text|json]
-  aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
-    [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
-    [--install]                         for hermes: also run hermes skills install on each
-  aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
-    [--json]                            machine output; the Team Brain scanner records scores
-  aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,
-                                        read-only, 0-4): context files, tiers, catalog, sync
-  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
-    [--base <ref>]                     --base defaults to origin/main; links node_modules,
-                                       copies opencode.json/.claude/settings, wires hooks
-  aios worktree init                  hydrate the current worktree dir (idempotent)
-  aios worktree list                  list all worktrees for this repo
-  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]
-                                       get latest AIOS: pull the toolkit (git + npm ci) +
-                                       3-way-merge governance (personal + uncommitted edits kept);
-                                       --preview/--check never pull; --contribute opens a toolkit PR
-  aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
-    [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
-    [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
-  aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)
-    [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched
-  aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)
-    [--json]                            reuses assess-codebase scoring; each with a how-to pointer
-  aios learn                            prescribe your next AM patterns from MATURITY.md (offline)
-  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
-    [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
-    [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
-    [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
-    [--build] [--build-rounds N]        after approval, hand the plan to the build phase
-  aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)
-    [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
-    [--pr] [--issue AIO-<n>]            --pr pushes + opens a PR on approval (mutually exclusive with --merge)
-    [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
-    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
-    [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
-  aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,
-    [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')
-  aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md
-    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
-  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
-    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
-  aios spec author <plan> --slices <dir> fan out one author per Markdown issue slice, then run
-    [--out <dir>] [--concurrency N]       deterministic cross-spec consistency checks
-    [--model id] [--effort level]          override the configured author for this batch only
-  aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
-    [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
-  aios consolidate-findings --pr <n>    merge CI + exact Local Bugbot + current-head CodeRabbit
-    --issue AIO-<n> --local-bugbot-review <path>  + GPT + PR diff; [--round N] [--repo owner/repo]
-    [--gpt-review p]                    → .aios/loop/<issue>/findings-r<N>.md; feed to aios build
-    [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)
-  aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
-    [--base ref] [--worktree path]      requires an existing build worktree for the branch
-  aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→
-    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup; safety rejects --auto-merge
-    [--reviewers coderabbit,gpt-5.5] [--dry-run]  Local Bugbot mandatory; bugbot alias deprecated
-    [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)
-  aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time
-    --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run
-    [--comment-digest [--digest-target   (requires LINEAR_API_KEY except ship --dry-run)
-    AIO-<n>]] [--dry-run]
-options:
-  --repo <path>               team-ops repo (default: walk up from cwd)`;
-
-if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
-  console.log(USAGE);
-  process.exit(0);
-}
-
-// `mcp` is the GUI-surface bridge: a long-lived stdio MCP server for agents that can't
-// shell out to this CLI (Claude Desktop/Cowork/Codex/Conductor). It must run with NO
-// workspace — config is env-first — so it's handled before any repo resolution, and it
-// owns the process (blocks on stdin) until the client disconnects.
-if (cmd === "mcp") {
-  const { resolveBrainConfig, runStdio } = await import("./brain-mcp.mjs");
-  const mcpCfg = resolveBrainConfig();
-  if (mcpCfg.missing.length) {
-    // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
-    // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
-    // error when called. With neither brain config nor a workspace, there's nothing to do.
-    // Use the offline resolver so project.yaml / engagement.yaml workspaces are recognized too
-    // (matches `aios loop` + the MCP tool's findWorkspaceRoot, not just aios.yaml).
-    const ws = findRepoRootOffline(process.cwd());
-    if (!ws) {
-      die(
-        `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
-          `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
-      );
-    }
-    process.stderr.write(
-      `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
-        `starting in local-only mode — aios_* tools available.\n`
-    );
-  }
-  await runStdio(mcpCfg);
-  process.exit(0);
-}
-
-// export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
-// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs; time reads
-// ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
-const OFFLINE_CMDS = new Set([
-  "export-okf",
-  "graph",
-  "install-skill",
-  "connect",
-  "onboard",
-  "skills",
-  "assess-codebase",
-  "context-health",
-  "learn",
-  "analyze",
-  "relay",
-  "build",
-  "simplify",
-  "spec",
-  "pr",
-  "consolidate-findings",
-  "review-bugbot",
-  // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (the generic walk-up, like
-  // build/relay) — NOT a GitHub slug — so they are NOT in the pr/consolidate --repo opt-out.
-  // Ship derives the GitHub slug internally via detectRepo(repo).
-  "ship",
-  "roadmap-run",
-  "loop",
-  "time",
-  "asks",
-  "inbox",
-  "decisions",
-  "mode",
-  "rails",
-  "council",
-  "maturity-week",
-  "instincts",
-  "worktree",
-
-  // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
-  // (the brain only enriches avatars when configured).
-  "timeline",
-]);
-
-let repo, cfg;
-if (cmd === "update") {
-  // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
-  // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed at
-  // an arbitrary directory to re-vendor governance into. May run inside the toolkit (no
-  // aios.yaml), so config loads offline.
-  repo = repoArg ? path.resolve(repoArg) : findUpdateRoot(process.cwd());
-  if (!repo || !isUpdateRoot(repo))
-    die(
-      "`aios update` must run in a workspace (aios.yaml) or the toolkit checkout — pass --repo <path>"
-    );
-  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
-} else if (OFFLINE_CMDS.has(cmd)) {
-  repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
-  if (!repo && cmd === "onboard" && rest.includes("--inspect")) repo = process.cwd();
-  if (!repo) die("could not locate repo root — pass --repo <path>");
-  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
-} else {
-  repo = repoArg ? path.resolve(repoArg) : findRepoRoot(process.cwd());
-  if (!repo) die("no aios.yaml found walking up from cwd — pass --repo <path>");
-  cfg = loadConfig(repo);
-}
-const patterns = loadSecretPatterns();
-
-try {
-  if (cmd === "status") await cmdStatus(repo, cfg, patterns, rest);
-  else if (cmd === "review") await cmdReview(repo, cfg, patterns, rest);
-  else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
-  else if (cmd === "work") await cmdWork(repo, cfg, patterns, rest);
-  else if (cmd === "pull") await cmdPull(repo, cfg, rest);
-  else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
-  else if (cmd === "connect") await cmdConnect(repo, rest);
-  else if (cmd === "onboard") {
-    const { cmdOnboard } = await import("./onboard-command.mjs");
-    await cmdOnboard(repo, cfg, rest, { connectFlow, nextAction });
-  } else if (cmd === "whoami") await cmdWhoami(repo, cfg);
-  else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
-  else if (cmd === "query") await cmdQuery(repo, cfg, rest);
-  else if (cmd === "member")
-    await cmdMember(repo, cfg, rest, { api: (m, r, b) => api(cfg, m, r, b) });
-  else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
-  else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
-  else if (cmd === "graph") cmdGraph(repo, cfg, rest);
-  else if (cmd === "skills") cmdSkills(repo, rest);
-  else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
-  else if (cmd === "context-health") runContextHealthCli(repo, rest, c);
-  else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
-  else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
-  else if (cmd === "relay")
-    await import("./relay.mjs").then(({ cmdRelay }) => cmdRelay(repo, rest));
-  else if (cmd === "build") await cmdBuild(repo, rest);
-  else if (cmd === "simplify") process.exit(await cmdSimplify(repo, rest));
-  else if (cmd === "spec") await cmdSpec(repo, rest);
-  else if (cmd === "pr") await cmdPr(repo, rest);
-  else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));
-  else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
-  else if (cmd === "ship") process.exit(await cmdShip(repo, rest));
-  else if (cmd === "roadmap-run") process.exit(await cmdRoadmapRun(repo, rest));
-  else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
-  else if (cmd === "time") await cmdTime(repo, cfg, rest);
-  else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
-  else if (cmd === "inbox") await cmdInbox(repo, cfg, rest);
-  else if (cmd === "transcripts") await cmdTranscripts(repo, cfg, rest);
-  else if (cmd === "pm") await cmdPm(cfg, rest);
-  else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
-  else if (cmd === "mode") await cmdMode(repo, cfg, rest);
-  else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);
-  else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
-  else if (cmd === "council") await runCouncil(repo, rest);
-  else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
-  else if (cmd === "instincts") await cmdInstincts(repo, rest);
-  else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
-  else if (cmd === "update") {
-    // cmdUpdate returns a structured result (never exits, so callers can read .applyAllowed).
-    const result = await cmdUpdate(repo, cfg, rest);
-    if (result.exitStatus) process.exitCode = result.exitStatus;
-  } else if (cmd === "promote")
-    await cmdPromote(repo, cfg, rest, {
-      resolveMember: () => resolveMember(repo, cfg, loadDotEnv(repo)),
-    });
-  else {
-    console.log(USAGE);
-    process.exit(1);
-  }
-} catch (e) {
-  die(e.message);
-}
+await dispatch({
+  argv: process.argv.slice(2),
+  local: {
+    cmdStatus,
+    cmdReview,
+    cmdPush,
+    cmdWork,
+    cmdPull,
+    cmdConnect,
+    cmdWhoami,
+    cmdStakeholders,
+    cmdQuery,
+    cmdExportOkf,
+    cmdPullBundle,
+    cmdGraph,
+    cmdSkills,
+    cmdInstallSkill,
+    cmdAssessCodebase,
+    cmdLearn,
+    // helpers the extracted command modules are handed
+    connectFlow,
+    nextAction,
+    api,
+    resolveMember,
+    loadDotEnv,
+    findRepoRootOffline,
+    die,
+    c,
+  },
+  resolvers: {
+    findRepoRoot,
+    findRepoRootOffline,
+    findUpdateRoot,
+    isUpdateRoot,
+    loadConfig,
+    loadOfflineConfig,
+    loadSecretPatterns,
+    die,
+  },
+});
