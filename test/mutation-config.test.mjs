@@ -158,7 +158,14 @@ test("native Node mutation uses narrow command-runner tests", () => {
   assert.equal(config.testRunner, "command");
   assert.match(config.commandRunner.command, /update-safety\.test\.mjs/);
   assert.doesNotMatch(config.commandRunner.command, /npm test(?:\s|$)/);
-  assert.equal(config.thresholds.break, 0, "calibration must remain advisory");
+  assert.equal(config.thresholds.break, 0, "uncalibrated groups remain advisory");
+});
+
+test("the calibrated inbox authorization group enforces its mutation floor", () => {
+  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  const config = configFor(group, ["dist/operator-loop/inbox/capability.js"], true);
+  assert.equal(group.breakThreshold, 90);
+  assert.deepEqual(config.thresholds, { high: 90, low: 80, break: 90 });
 });
 
 test("GUI mutation uses Vitest per-test coverage", () => {

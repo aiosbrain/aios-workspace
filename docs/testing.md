@@ -29,7 +29,9 @@ never refreshes `dist/` and masks itself).
   parallel.
 - The clean-install test is network-dependent and runs only through
   `npm run test:install-smoke`.
-- The required test gate excludes mutation only during its initial calibration period.
+- The required test gate excludes mutation while the nightly campaign is not yet healthy. The
+  2026-07-25 calibration run timed out during `bugbot-security`; make the lane mandatory only
+  after a complete nightly and a green 1–2 week soak.
 
 ## Coverage policy
 
@@ -70,9 +72,11 @@ regenerate the tracked baseline from a local run. Never lower a baseline merely 
 
 `npm run test:mutation` mutates changed files in critical safety groups and pairs native
 `node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` expands
-those groups and reuses incremental results. During the first ten successful runs mutation is
-advisory (`thresholds.break = 0`). After calibration, set the break threshold to 80 and make the
-PR mutation lane mandatory; equivalent mutants require a reviewed justification.
+those groups and reuses incremental results. The calibrated `inbox-authorization` group enforces
+a 90% break threshold, with headroom below its demonstrated 96.43% score; groups still gathering
+per-group calibration data remain advisory at `thresholds.break = 0`. The PR mutation job remains
+non-blocking until the nightly campaign completes within its budget and then soaks green for 1–2
+weeks. Equivalent mutants require a reviewed justification.
 
 TypeScript groups mutate the compiled `dist/` output, not `src/`: Stryker's command runner
 scores purely on exit code, so mutating source TypeScript would let compile-breaking mutants be

@@ -66,6 +66,9 @@ export const MUTATION_GROUPS = [
     match: /^(?:scripts\/inbox\.mjs|src\/operator-loop\/inbox\/.+\.ts)$/,
     nightly: ["scripts/inbox.mjs", "src/operator-loop/inbox/**/*.ts"],
     tests: ["test/operator-loop/*.test.mjs"],
+    // AIO-513 demonstrated 96.43% for the credential boundary. Keep headroom
+    // for equivalent mutants while making a score regression fail this campaign.
+    breakThreshold: 90,
     mutateDist: true,
     // Stryker's sandbox copy drops POSIX execute bits, and the hook tests in
     // this scope assert them (statSync(HOOK).mode & 0o111). Restore the bits
@@ -165,7 +168,10 @@ export function configFor(group, mutate, nightly) {
     timeoutMS: 60_000,
     reporters: ["clear-text", "progress", "json"],
     jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
-    thresholds: { high: 80, low: 60, break: 0 },
+    thresholds:
+      group.breakThreshold == null
+        ? { high: 80, low: 60, break: 0 }
+        : { high: group.breakThreshold, low: 80, break: group.breakThreshold },
     incremental: nightly,
     incrementalFile: `.stryker-tmp/${group.name}.json`,
   };
