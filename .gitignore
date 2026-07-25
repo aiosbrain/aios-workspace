@@ -43,3 +43,8 @@ docs/pre-ship/.spec-fix-log.txt
 # Agent runtime session state (omo run-continuation records) — written into the
 # repo root on every session; machine-local, never source of truth.
 .omo/
+
+# .harness/install.sh conflict markers — written instead of overwriting a locally
+# customized file; resolve by hand (diff against the .harness-incoming sibling),
+# never commit under this suffix.
+*.harness-incoming
