@@ -12,6 +12,8 @@ gui/client/dist/
 dist/
 coverage/
 gui/client/coverage/
+.stryker-tmp/
+reports/mutation/
 test/ux/evidence/
 evals/results/
 evals/scratch/

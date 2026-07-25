@@ -1,0 +1,48 @@
+name: mutation
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  critical-subsystems:
+    name: Critical mutation campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v5
+        with:
+          # Cache ONLY the Stryker incremental state. run-mutation.mjs writes it
+          # to .stryker-tmp/<group>.json (incrementalFile); the generated
+          # .stryker-tmp/<group>.conf.json configs and per-run sandbox trees are
+          # excluded — caching all of .stryker-tmp/ swept whole sandboxes into a
+          # fresh per-sha cache entry every night.
+          # (Key prefix intentionally new so stale full-sandbox entries are
+          # never restored.)
+          path: |
+            .stryker-tmp/*.json
+            !.stryker-tmp/*.conf.json
+          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-
+      - run: npm ci
+      - run: npm run test:mutation:nightly
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: ignore
+          retention-days: 14

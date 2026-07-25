@@ -8,7 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage --coverage.reporter=lcov --coverage.reporter=json-summary --coverage.reportsDirectory=coverage"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@aios-alpha/design": "^0.3.0",
