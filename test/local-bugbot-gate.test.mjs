@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -43,6 +44,7 @@ import {
   runLocalPrePrReview,
   runLocalBugbotReview,
   trustedReviewerEnv,
+  UNTRACKED_HASH_SIZE_CAP,
 } from "../scripts/review-bugbot.mjs";
 import {
   enqueueContinuation,
@@ -466,6 +468,55 @@ test("all untracked content is withheld and blocked before external review", asy
     assert.equal(review.ok, false);
     assert.equal(review.error, true);
     assert.equal(calls, 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- untracked-file size cap: a large untracked artifact must not stall the gate --------
+// statSync happens before readFileSync; above the cap the fingerprint records the apparent
+// size instead of hashed content, so hashing a multi-megabyte stray artifact can't block the
+// gate on every run while still invalidating the fingerprint when the file's size changes.
+
+test("an oversized untracked file is fingerprinted by size, not read", async () => {
+  const repo = fixture();
+  try {
+    const big = path.join(repo, "big-artifact.bin");
+    // Sparse file: truncateSync only sets the apparent length, so this never writes
+    // UNTRACKED_HASH_SIZE_CAP bytes of real data to disk.
+    writeFileSync(big, "");
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 1);
+    const base = git(repo, "rev-parse", "main");
+
+    const captured = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.deepEqual(captured.withheldUntrackedFiles, ["big-artifact.bin"]);
+    assert.match(captured.diff, /too large to hash/);
+    assert.doesNotMatch(captured.diff, /sha256/);
+
+    // Growing the file changes the recorded size, so the fingerprint still invalidates.
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 2);
+    const grown = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.notEqual(grown.fingerprint, captured.fingerprint);
+
+    // Shrinking back to the same size reproduces the same fingerprint — proof the size
+    // marker, not file content, drives it (content was never read either time).
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 1);
+    const back = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.equal(back.fingerprint, captured.fingerprint);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a small untracked file is still content-hashed", async () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "small.txt"), "hello\n");
+    const base = git(repo, "rev-parse", "main");
+    const captured = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.deepEqual(captured.withheldUntrackedFiles, ["small.txt"]);
+    assert.match(captured.diff, /sha256 [a-f0-9]{64}/);
+    assert.doesNotMatch(captured.diff, /too large to hash/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -2000,6 +2051,43 @@ test("a workspace link entry is not judged by the tarball rules", () => {
     })
   );
   assert.match(gitDep.failures.join(" "), /not a registry tarball/);
+});
+
+// ---- L4: a link target must resolve inside the worktree, not just be well-formed --------
+// `npm ci` itself refuses an out-of-tree `link` target with an EUSAGE error, but that
+// defense lives in npm, not in this inspector — a reviewer reading `inspectLockDelta`'s
+// output alone would never see it enforced. The gate must assert containment itself.
+
+test("a relative link target that escapes the worktree blocks", () => {
+  const escaped = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "../../evil", link: true })
+  );
+  assert.equal(escaped.failures.length, 1);
+  assert.match(escaped.failures[0], /resolves outside the worktree/);
+});
+
+test("an absolute out-of-tree link target blocks", () => {
+  const escaped = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "/etc/passwd", link: true })
+  );
+  assert.equal(escaped.failures.length, 1);
+  assert.match(escaped.failures[0], /resolves outside the worktree/);
+});
+
+test("legitimate in-tree workspace links still pass containment", () => {
+  const client = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "gui/client", link: true })
+  );
+  assert.deepEqual(client.failures, []);
+
+  const server = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "gui/server", link: true })
+  );
+  assert.deepEqual(server.failures, []);
 });
 
 test("an oversized per-attempt timeout is clamped, never crash-shaped", async () => {
