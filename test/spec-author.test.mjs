@@ -88,9 +88,7 @@ test("one invalid skill declaration does not discard successful sibling slices",
       rubric: RUBRIC,
       authorCfg: { model: "stub" },
       authorFn: async ({ slice }) =>
-        slice.includes("# bad")
-          ? `---\nskills: [not-a-real-skill]\n---\n${STRONG}`
-          : STRONG,
+        slice.includes("# bad") ? `---\nskills: [not-a-real-skill]\n---\n${STRONG}` : STRONG,
     });
     assert.equal(run.results.length, 2);
     assert.equal(run.results.find((item) => item.file === good).error, undefined);

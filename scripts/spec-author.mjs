@@ -225,8 +225,7 @@ export async function cmdSpecAuthor(repo, args, { models }) {
     }
   }
   const blockers = run.results.filter(
-    (item) =>
-      item.error || item.deterministic.some((finding) => finding.severity === "blocker")
+    (item) => item.error || item.deterministic.some((finding) => finding.severity === "blocker")
   );
   const summary = {
     outputDir,
