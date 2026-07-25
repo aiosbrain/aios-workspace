@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,15 +18,21 @@ const PULL_MODULE = pathToFileURL(
 const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
 
 // One test below clones THIS checkout to get a disposable-but-real toolkit. Under
-// Stryker the tests run from a sandbox copy that is NOT a git repository, so the
+// Stryker the tests run from a sandbox copy that is not a repository root, so the
 // clone fails with "repository does not exist" — a missing precondition, not a
-// defect. Ask git itself rather than probing for `.git` (which is a *file* in a
-// linked worktree, and could be copied in a broken state).
+// defect. Skip there rather than fail the mutation lane's initial test run.
 const TOOLKIT_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const TOOLKIT_IS_GIT_REPO = (() => {
   try {
-    execFileSync("git", ["-C", TOOLKIT_ROOT, "rev-parse", "--git-dir"], { stdio: "ignore" });
-    return true;
+    // `git clone <dir>` needs <dir> to BE a repository root; it does not walk up. A
+    // plain `rev-parse --git-dir` would wrongly pass here, because Stryker's sandbox
+    // lives at <repo>/.stryker-tmp/sandbox-*, i.e. *inside* the real checkout, so git
+    // happily resolves the ENCLOSING repo. Compare top-levels instead.
+    const top = execFileSync("git", ["-C", TOOLKIT_ROOT, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return realpathSync(top) === realpathSync(TOOLKIT_ROOT);
   } catch {
     return false;
   }
