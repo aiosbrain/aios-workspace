@@ -29,6 +29,7 @@ import {
   isContentFile,
   isFrontmatterExempt,
 } from "../hooks/file-governance-guard.mjs";
+import { gitFiles } from "../scripts/git-files.mjs";
 
 const RED = "\x1b[0;31m",
   YELLOW = "\x1b[1;33m",
@@ -112,8 +113,23 @@ function walk(dir, out) {
   }
 }
 
+// Content is enumerated via GIT, never a filesystem walk (AIO-517): a walk readdir's
+// every gitignored build tree (`src-tauri/target` is 1.6 GB / 35k files) just to prove
+// there is no .md inside. Tracked + untracked-but-not-ignored is exactly the content
+// this ratchet governs; ignored trees become structurally invisible instead of relying
+// on SKIP_DIR_NAMES to have remembered them. Non-git targets keep the walk.
 const contentFiles = [];
-walk(repo, contentFiles);
+const listed = gitFiles(repo);
+if (listed) {
+  for (const rel of listed) {
+    const segments = rel.split("/");
+    if (segments.some((s) => SKIP_DIR_NAMES.has(s))) continue;
+    if (!isContentFile(segments[segments.length - 1])) continue;
+    contentFiles.push(path.join(repo, rel));
+  }
+} else {
+  walk(repo, contentFiles);
+}
 contentFiles.sort();
 
 let checked = 0;
