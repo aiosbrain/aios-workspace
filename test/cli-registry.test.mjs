@@ -150,6 +150,58 @@ test("registry: loaders are lazy — no descriptor holds an eagerly-resolved mod
   }
 });
 
+test("registry: every loader resolves to a real module", async () => {
+  // A typo in a loader's specifier is otherwise only discoverable by running that one
+  // command — the old static imports failed at startup, so this restores that guarantee.
+  for (const d of COMMANDS) {
+    if (!d.loader) continue;
+    const mod = await d.loader();
+    assert.equal(typeof mod, "object", `${d.name} loader did not resolve to a module`);
+    assert.ok(Object.keys(mod).length > 0, `${d.name} module exports nothing`);
+  }
+});
+
+test("registry: every adapt calls into its module (or its injected local handler)", async () => {
+  // Drives each descriptor's adapt with recorders in place of the real module + inline
+  // handlers. This proves no descriptor is wired to a name its module doesn't export, and
+  // that adapt reads its arguments off the ctx rather than closing over anything.
+  const calls = [];
+  const recorder = (owner) =>
+    new Proxy(
+      {},
+      {
+        get:
+          (_t, prop) =>
+          (...args) => {
+            calls.push({ owner, prop, args });
+            // Shape that satisfies every consumer in the table: `mcp` reads .missing,
+            // `update` reads .exitStatus (undefined => exit 0).
+            return { missing: [] };
+          },
+      }
+    );
+
+  for (const d of COMMANDS) {
+    calls.length = 0;
+    const ctx = {
+      repo: "/tmp/fake-repo",
+      cfg: { project: "fake" },
+      patterns: [],
+      rest: [],
+      local: recorder("local"),
+    };
+    const mod = d.loader ? recorder("mod") : null;
+    await d.adapt(ctx, mod);
+    assert.ok(calls.length > 0, `${d.name}'s adapt invoked nothing`);
+    // A descriptor with a loader must use the module it loaded; one without must use `local`.
+    assert.equal(
+      calls.some((cl) => cl.owner === (d.loader ? "mod" : "local")),
+      true,
+      `${d.name}'s adapt ignored its ${d.loader ? "module" : "local handler"}`
+    );
+  }
+});
+
 // ── help text ────────────────────────────────────────────────────────────────
 
 test("registry: renderUsage matches the checked-in snapshot", () => {
