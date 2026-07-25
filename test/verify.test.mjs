@@ -9,7 +9,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { rankFindings } from "../scripts/consolidate-findings.mjs";
-import { cmdVerify, mergeLaneResults, parseVerifyArgs, MAX_LANES } from "../scripts/verify.mjs";
+import {
+  cmdVerify,
+  mergeLaneResults,
+  parseVerifyArgs,
+  readCommitDiff,
+  MAX_LANES,
+} from "../scripts/verify.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
@@ -149,6 +155,44 @@ test("invalid or failed lanes fail closed as High findings", () => {
   ]);
   assert.equal(merged.length, 2);
   assert.ok(merged.every((finding) => finding.severity === "High"));
+});
+
+test("root commits use an empty-tree diff", () => {
+  const repo = makeRepo();
+  try {
+    const root = runGit(repo, ["rev-list", "--max-parents=0", "HEAD"]);
+    const diff = readCommitDiff(repo, root);
+    assert.match(diff, /README\.md/);
+    assert.match(diff, /\+one/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("all failed providers still produce a blocking report", async () => {
+  const repo = makeRepo();
+  const chunks = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  try {
+    const code = await cmdVerify(repo, ["HEAD", "--lanes", "2", "--json"], {
+      apiKey: "test-only-key",
+      councilOptions: {
+        callModel: async (model) => ({ model, ok: false, error: "provider unavailable" }),
+      },
+    });
+    assert.equal(code, 1);
+    const report = JSON.parse(chunks.join(""));
+    assert.equal(report.blocking, true);
+    assert.equal(report.findings.length, 2);
+    assert.ok(report.findings.every((finding) => finding.severity === "High"));
+  } finally {
+    process.stdout.write = originalWrite;
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("full JSON CLI run is report-only and preserves repository fingerprint", () => {

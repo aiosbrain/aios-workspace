@@ -123,7 +123,9 @@ export async function runCouncil(repo, rest, options = {}) {
       );
     }
   }
-  if (!succeeded.length) die("all council models failed — nothing to synthesize");
+  if (!succeeded.length && options.requireSuccess !== false) {
+    die("all council models failed — nothing to synthesize");
+  }
 
   let outPath = null;
   if (persist) {

@@ -77,6 +77,16 @@ export function validateCommit(repo, sha) {
   }
 }
 
+export function readCommitDiff(repo, sha) {
+  try {
+    gitRead(repo, ["rev-parse", "--verify", `${sha}^`]);
+    return gitRead(repo, ["diff", `${sha}^..${sha}`]);
+  } catch {
+    const emptyTree = gitRead(repo, ["hash-object", "-t", "tree", "/dev/null"]);
+    return gitRead(repo, ["diff", emptyTree, sha]);
+  }
+}
+
 export function parseLaneFindings(text, lane, model) {
   const raw = String(text ?? "").trim();
   const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -191,13 +201,14 @@ export async function cmdVerify(repo, args, deps = {}) {
     return 2;
   }
 
-  const diff = gitRead(repo, ["diff", `${resolvedSha}^..${resolvedSha}`]);
+  const diff = readCommitDiff(repo, resolvedSha);
   const councilRunner = deps.runCouncil ?? runCouncil;
   const council = await councilRunner(repo, [buildPrompt(resolvedSha, diff)], {
     apiKey,
     lanes: parsed.lanes,
     persist: false,
     print: false,
+    requireSuccess: false,
     ...(deps.councilOptions ?? {}),
   });
   const findings = mergeLaneResults(council.results);
