@@ -11,7 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
@@ -30,9 +30,27 @@ export const CANONICAL_BUGBOT_MAIN_URL = "https://github.com/aiosbrain/aios-work
 const CURSOR_REVIEW_FLAGS = ["--force", "--trust"];
 export const LOCAL_BUGBOT_DIFF_CAP = 500_000;
 const DEFAULT_TIMEOUT = 300;
-const CURSOR_TIMEOUT_RETRY_BUDGET_MULTIPLIER = 3;
 const CURSOR_RETRIABLE_ATTEMPTS = 2;
 const CURSOR_RETRIABLE_BASE_DELAY_MS = 2_000;
+
+/**
+ * The ONE wall-clock budget for a whole local review run (both mandatory passes and
+ * every nested retry inside them). Before this existed the budget was derived by
+ * multiplying the per-attempt timeout by the retry layers, and the AIO-468 protocol
+ * re-ask silently doubled the real worst case — so the parent hook SIGTERMed its own
+ * child mid-review and produced "Bugbot exited without a status". An absolute deadline
+ * cannot be doubled by adding a retry layer: every attempt is clamped against it.
+ */
+export const REVIEW_WALL_CLOCK_BUDGET_MS = 900_000;
+
+/** Floor a not-yet-started pass (or a protocol re-ask) needs to be worth starting. */
+export const MIN_ATTEMPT_MS = 180_000;
+
+/** Real clock + sleeper. Injected in tests so no test ever waits on wall-clock time. */
+const REAL_CLOCK = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 const OPENCODE_PLATFORM_CONSTRAINT =
   "Known constraints: OpenCode currently exposes only a non-blocking idle event, so its adapter uses the acknowledged prompt_async endpoint to re-prompt and aios build/ship provide the documented hard pre-merge boundary. Project-local lifecycle hooks are UX controls and cannot be tamper-proof against an actor with arbitrary worktree write access; external required CI is needed for that stronger boundary. Canonical main must be verified before declaring even a clean worktree unchanged because committed feature-branch changes are not visible in git status and the writable local origin/main ref is not a trusted proof; an offline verification failure is deliberately fail-closed. Do not report these inherent constraints unless this changeset regresses their documented mitigations.";
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
@@ -219,6 +237,26 @@ export function resolveRequiredBugbotBase(repo, { canonicalUrl = CANONICAL_BUGBO
   return { ok: true, baseSha, remoteSha };
 }
 
+/**
+ * Render the paths whose content is deliberately kept out of the prompt payload
+ * (generated lockfile/dist noise). Their bytes still feed the review fingerprint and
+ * fail-closed compensating gates verify them, so this is a disclosure, not a blind spot.
+ */
+function excludedPathsSection(excluded = []) {
+  if (!excluded.length) return [];
+  return [
+    "## Changed, not shown",
+    "",
+    "These generated paths changed in this changeset but their content is excluded from this",
+    "prompt. Their bytes still feed the review fingerprint, and fail-closed compensating gates",
+    "verify them (lockfile↔manifest parity, a clean `npm ci --ignore-scripts` verification, and",
+    "a dist rebuild byte-comparison). Do not report their absence as a finding.",
+    "",
+    ...excluded.map((file) => `- ${file.path} — ${file.bytes} bytes, sha256 ${file.sha256}`),
+    "",
+  ];
+}
+
 export function buildSecurityReviewPrompt({
   branch,
   baseSha,
@@ -227,6 +265,7 @@ export function buildSecurityReviewPrompt({
   logOneline,
   failOn = "high",
   promptOnly = false,
+  excluded = [],
 }) {
   const blocking = blockingSeverityNames(failOn);
   return [
@@ -249,6 +288,7 @@ export function buildSecurityReviewPrompt({
     "",
     diffStat || "(empty)",
     "",
+    ...excludedPathsSection(excluded),
     "## git diff",
     "",
     diff,
@@ -270,6 +310,7 @@ export function buildBugbotPrompt({
   logOneline,
   promptOnly = false,
   failOn = "high",
+  excluded = [],
 }) {
   const blocking = blockingSeverityNames(failOn);
   return [
@@ -290,6 +331,7 @@ export function buildBugbotPrompt({
     "",
     diffStat || "(empty)",
     "",
+    ...excludedPathsSection(excluded),
     "## git diff",
     "",
     diff,
@@ -476,13 +518,6 @@ export async function retryReviewTimeoutOnce(call, timeoutMs, onRetry = () => {}
   }
 }
 
-export function cursorReviewRetryBudgetMs(timeoutMs) {
-  const timeoutCycleMs = CURSOR_TIMEOUT_RETRY_BUDGET_MULTIPLIER * timeoutMs;
-  const exhaustionBackoffMs =
-    CURSOR_RETRIABLE_BASE_DELAY_MS * (2 ** (CURSOR_RETRIABLE_ATTEMPTS - 1) - 1);
-  return CURSOR_RETRIABLE_ATTEMPTS * timeoutCycleMs + exhaustionBackoffMs;
-}
-
 // Transient exhaustion the reviewer can recover from on a retry (rate-limit contention when
 // several agents run the gate at once). NOT the same as a timeout (handled above): these fail
 // fast, so a bounded backoff is cheap against the child-timeout budget.
@@ -493,15 +528,17 @@ const RETRIABLE_REVIEW_RE = /resource_exhausted|RetriableError|\b429\b|rate.?lim
  * any other failure (including a timeout, which `retryReviewTimeoutOnce` owns) rethrows
  * immediately. Compose this AROUND the timeout retry, not inside it.
  *
- * Budget contract: `cursorReviewRetryBudgetMs` describes this outer retry composed with the
- * timeout retry above, and the parent hook imports it when setting the child deadline. Both
- * review passes retry concurrently under Promise.all, so their budgets are not additive.
+ * Budget contract: there is no separately-derived retry budget any more. Every attempt is
+ * clamped against the run's absolute `deadlineAt` (REVIEW_WALL_CLOCK_BUDGET_MS), and the
+ * backoff sleep below is clamped to — and skipped past — the same deadline, so no retry
+ * layer can push the run beyond the deadline the parent hook sized its child kill against.
  */
 export async function retryReviewOnRetriable(
   call,
-  { attempts = 2, baseDelayMs = 2_000 } = {},
+  { attempts = 2, baseDelayMs = 2_000, deadlineAt = Infinity, now = REAL_CLOCK.now, sleep } = {},
   onRetry = () => {}
 ) {
+  const wait = sleep ?? REAL_CLOCK.sleep;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -509,9 +546,11 @@ export async function retryReviewOnRetriable(
     } catch (error) {
       lastError = error;
       if (attempt === attempts || !RETRIABLE_REVIEW_RE.test(error?.message ?? "")) throw error;
-      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      const remainingMs = deadlineAt - now();
+      if (remainingMs <= 0) throw error;
+      const delayMs = Math.min(baseDelayMs * 2 ** (attempt - 1), remainingMs);
       onRetry(attempt, delayMs, error);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await wait(delayMs);
     }
   }
   throw lastError;
@@ -553,11 +592,47 @@ function captureSuppressedTrackedFiles(worktree) {
     .sort();
 }
 
-export function captureBranchDiff(worktree, baseSha, { includeWorktree = false } = {}) {
+/**
+ * Generated paths whose CONTENT is worthless to a reviewer but whose bulk crowds out the
+ * real changeset (a lockfile churn alone can blow the diff cap). Excluded from the PROMPT
+ * only, and only on the lifecycle-hook path — never from the fingerprint, and never for a
+ * standalone `aios review-bugbot` or the `aios build`/`aios ship` pre-merge boundary, which
+ * keep the full atomic diff.
+ */
+export const PROMPT_EXCLUDED_GLOBS = ["package-lock.json", "**/package-lock.json", "dist/**"];
+const includeExcludedSpecs = PROMPT_EXCLUDED_GLOBS.map((glob) => `:(glob)${glob}`);
+const dropExcludedSpecs = PROMPT_EXCLUDED_GLOBS.map((glob) => `:(exclude,glob)${glob}`);
+
+function captureExcludedFromPrompt(worktree, range) {
+  const names = gitQuiet(["diff", "--name-only", range, "--", ...includeExcludedSpecs], worktree)
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+  return names.map((file) => {
+    const fileDiff = gitRaw(["diff", "--binary", range, "--", `:(literal)${file}`], worktree);
+    return {
+      path: file,
+      bytes: Buffer.byteLength(fileDiff),
+      sha256: createHash("sha256").update(fileDiff).digest("hex"),
+    };
+  });
+}
+
+export function captureBranchDiff(
+  worktree,
+  baseSha,
+  { includeWorktree = false, excludeFromPrompt = false } = {}
+) {
   const range = includeWorktree ? baseSha : `${baseSha}..HEAD`;
   let diffStat = gitQuiet(["diff", "--stat", range], worktree);
   const logOneline = gitQuiet(["log", "--oneline", `${baseSha}..HEAD`], worktree);
-  let rawDiff = gitQuiet(["diff", "--binary", range], worktree);
+  const trackedDiff = gitQuiet(["diff", "--binary", range], worktree);
+  const excluded = excludeFromPrompt ? captureExcludedFromPrompt(worktree, range) : [];
+  // The prompt payload may drop generated paths; the fingerprinted payload never does.
+  let promptTrackedDiff = excluded.length
+    ? gitQuiet(["diff", "--binary", range, "--", ".", ...dropExcludedSpecs], worktree)
+    : trackedDiff;
+  let rawDiff = trackedDiff;
   let untrackedMaterial = "";
   let withheldUntrackedFiles = [];
   const suppressedTrackedFiles = includeWorktree ? captureSuppressedTrackedFiles(worktree) : [];
@@ -567,6 +642,7 @@ export function captureBranchDiff(worktree, baseSha, { includeWorktree = false }
       const suffix = `${untracked.files.length} untracked file${untracked.files.length === 1 ? "" : "s"}`;
       diffStat = diffStat ? `${diffStat}\n ${suffix}` : suffix;
       rawDiff = [rawDiff, ...untracked.blocks].filter(Boolean).join("\n\n");
+      promptTrackedDiff = [promptTrackedDiff, ...untracked.blocks].filter(Boolean).join("\n\n");
       untrackedMaterial = untracked.fingerprintMaterial;
       withheldUntrackedFiles = untracked.withheldFiles;
     }
@@ -574,8 +650,8 @@ export function captureBranchDiff(worktree, baseSha, { includeWorktree = false }
   const fingerprint = createHash("sha256")
     .update(`${baseSha}\0${rawDiff}\0${untrackedMaterial}`)
     .digest("hex");
-  const reviewTooLarge = rawDiff.length > LOCAL_BUGBOT_DIFF_CAP;
-  let diff = rawDiff;
+  const reviewTooLarge = promptTrackedDiff.length > LOCAL_BUGBOT_DIFF_CAP;
+  let diff = promptTrackedDiff;
   if (diff.length > LOCAL_BUGBOT_DIFF_CAP) {
     const files = includeWorktree
       ? gitQuiet(["status", "--short"], worktree)
@@ -588,10 +664,12 @@ export function captureBranchDiff(worktree, baseSha, { includeWorktree = false }
     diff,
     fingerprint,
     // A review must see the atomic changeset. Oversized diffs fail closed below.
-    reviewDiff: rawDiff,
+    reviewDiff: promptTrackedDiff,
     reviewTooLarge,
     withheldUntrackedFiles,
     suppressedTrackedFiles,
+    excluded,
+    changedFiles: gitQuiet(["diff", "--name-only", range], worktree).split("\n").filter(Boolean),
   };
 }
 
@@ -602,8 +680,21 @@ async function runReviewPrompt({
   timeoutMs,
   model = "deepseek-v4-pro",
   readOnly = false,
+  deadlineAt = Infinity,
+  now = REAL_CLOCK.now,
+  sleep = REAL_CLOCK.sleep,
 }) {
   const ref = parseModelRef(model);
+  // Every attempt — first try, doubled timeout retry, exhaustion retry — is clamped to
+  // what is left of the absolute deadline. This is what makes the retry layers additive
+  // to a FIXED ceiling instead of multiplicative.
+  const attemptBudgetMs = (requestedMs) => {
+    const budgetMs = Math.min(requestedMs, deadlineAt - now());
+    if (budgetMs <= 0) {
+      throw new Error(`local review wall-clock budget exhausted before the ${label} attempt`);
+    }
+    return budgetMs;
+  };
   // Read-only review needs only the supplied diff. Every provider runs outside the
   // checkout so project config and lifecycle hooks cannot mutate or recurse.
   const reviewCwd = readOnly ? mkdtempSync(path.join(tmpdir(), "aios-bugbot-review-")) : worktree;
@@ -612,7 +703,7 @@ async function runReviewPrompt({
       if (!TRUSTED_CURSOR_BIN) die("trusted Cursor CLI binary not found");
       console.log(c.dim(`[cursor] ${label} (${model})...`));
       const invoke = (attemptTimeoutMs) =>
-        callCursorAgent(prompt, attemptTimeoutMs, {
+        callCursorAgent(prompt, attemptBudgetMs(attemptTimeoutMs), {
           cwd: reviewCwd,
           bin: TRUSTED_CURSOR_BIN,
           env: trustedReviewerEnv(),
@@ -638,6 +729,9 @@ async function runReviewPrompt({
         {
           attempts: CURSOR_RETRIABLE_ATTEMPTS,
           baseDelayMs: CURSOR_RETRIABLE_BASE_DELAY_MS,
+          deadlineAt,
+          now,
+          sleep,
         },
         (attempt, delayMs) => {
           console.warn(
@@ -649,7 +743,12 @@ async function runReviewPrompt({
       );
     }
     console.log(c.dim(`[${ref.provider}] ${label} (${model})...`));
-    return await callPromptModel({ model, prompt, timeoutMs, opts: { cwd: reviewCwd } });
+    return await callPromptModel({
+      model,
+      prompt,
+      timeoutMs: attemptBudgetMs(timeoutMs),
+      opts: { cwd: reviewCwd },
+    });
   } finally {
     if (readOnly) rmSync(reviewCwd, { recursive: true, force: true });
   }
@@ -686,6 +785,139 @@ export function runLocalSecretsPreflight(worktree, sourceEnv = process.env) {
   }
 }
 
+const LOCKFILE_VERIFY_TIMEOUT_MS = 180_000;
+const DIST_VERIFY_TIMEOUT_MS = 180_000;
+const TRUSTED_NPM_BIN = [
+  path.join(path.dirname(process.execPath), "npm"),
+  "/opt/homebrew/bin/npm",
+  "/usr/local/bin/npm",
+  "/usr/bin/npm",
+].find(existsSync);
+
+function pinnedNodeMajor(worktree) {
+  try {
+    return parseInt(
+      readFileSync(path.join(worktree, ".nvmrc"), "utf8").trim().replace(/^v/, ""),
+      10
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify a changed lockfile the reviewer never saw: it must move together with its
+ * manifest, and it must resolve cleanly in a throwaway checkout under the pinned Node,
+ * with lifecycle scripts disabled so verifying an untrusted lockfile cannot execute code.
+ */
+function verifyLockfile(worktree, lockPath) {
+  const dir = path.posix.dirname(lockPath) === "." ? "" : path.posix.dirname(lockPath);
+  const pinned = pinnedNodeMajor(worktree);
+  const running = parseInt(process.versions.node.split(".")[0], 10);
+  if (pinned && pinned !== running) {
+    return `${lockPath} changed but the lockfile verification must run under the pinned Node ${pinned} (running Node ${running})`;
+  }
+  if (!TRUSTED_NPM_BIN)
+    return `${lockPath} changed but no trusted npm binary was found to verify it`;
+  const temp = mkdtempSync(path.join(tmpdir(), "aios-bugbot-lockfile-"));
+  try {
+    // The manifest set is what `npm ci` reads: the lockfile plus every tracked package.json
+    // (workspaces included). Nothing else is copied, so no project code can run.
+    const manifests = gitRaw(
+      ["ls-files", "-z", "--", ":(glob)**/package.json", "package.json"],
+      worktree
+    )
+      .split("\0")
+      .filter(Boolean);
+    for (const rel of [lockPath, ...manifests]) {
+      const source = path.join(worktree, rel);
+      if (!existsSync(source)) continue;
+      mkdirSync(path.join(temp, path.dirname(rel)), { recursive: true });
+      copyFileSync(source, path.join(temp, rel));
+    }
+    execFileSync(
+      TRUSTED_NPM_BIN,
+      ["ci", "--ignore-scripts", "--dry-run", "--no-audit", "--no-fund"],
+      {
+        cwd: path.join(temp, dir),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: LOCKFILE_VERIFY_TIMEOUT_MS,
+        env: trustedScannerEnv({ ...process.env, PATH: process.env.PATH }),
+      }
+    );
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    return `${lockPath} changed but failed clean verification (npm ci --ignore-scripts in a temp checkout): ${detail}`;
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+/** Verify changed dist/ output by rebuilding it from the reviewed source and byte-comparing. */
+function verifyDistOutputs(worktree, distPaths) {
+  const tsc = path.join(worktree, "node_modules", ".bin", "tsc");
+  if (!existsSync(tsc)) {
+    return `dist output changed (${distPaths.join(", ")}) but tsc is not installed, so the rebuild comparison cannot run`;
+  }
+  const temp = mkdtempSync(path.join(tmpdir(), "aios-bugbot-dist-"));
+  try {
+    execFileSync(tsc, ["-p", "tsconfig.json", "--outDir", temp], {
+      cwd: worktree,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: DIST_VERIFY_TIMEOUT_MS,
+      env: trustedScannerEnv(),
+    });
+    for (const rel of distPaths) {
+      const rebuilt = path.join(temp, rel.slice("dist/".length));
+      const committed = path.join(worktree, rel);
+      if (!existsSync(rebuilt) || !existsSync(committed)) {
+        return `${rel} does not exist in a clean rebuild of the reviewed source`;
+      }
+      if (!readFileSync(rebuilt).equals(readFileSync(committed))) {
+        return `${rel} does not byte-match a clean rebuild of the reviewed source`;
+      }
+    }
+    return null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    return `dist output changed but the verification rebuild failed: ${detail}`;
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Fail-closed gates that stand in for reviewer eyes on the paths excluded from the prompt.
+ * ANY failure blocks — an excluded path is only safe because these run.
+ */
+export function runExcludedPathGates(worktree, excluded, changedFiles) {
+  const failures = [];
+  const lockfiles = excluded.filter(
+    (file) => path.posix.basename(file.path) === "package-lock.json"
+  );
+  for (const lock of lockfiles) {
+    const dir = path.posix.dirname(lock.path);
+    const manifest = dir === "." ? "package.json" : `${dir}/package.json`;
+    if (!changedFiles.includes(manifest)) {
+      failures.push(
+        `${lock.path} changed without a matching ${manifest} change; a dependency change must be visible in the reviewed manifest`
+      );
+      continue;
+    }
+    const failure = verifyLockfile(worktree, lock.path);
+    if (failure) failures.push(failure);
+  }
+  const distPaths = excluded.map((file) => file.path).filter((file) => file.startsWith("dist/"));
+  if (distPaths.length) {
+    const failure = verifyDistOutputs(worktree, distPaths);
+    if (failure) failures.push(failure);
+  }
+  return { ok: !failures.length, reason: failures.join("; ") };
+}
+
 /** Pre-PR local pass: code (/review-bugbot persona) + security, via DeepSeek when keyed. */
 export async function runLocalPrePrReview({
   worktree,
@@ -699,11 +931,20 @@ export async function runLocalPrePrReview({
   readOnly = true,
   skill = DEFAULT_BUGBOT_SKILL,
   secretsPreflight = runLocalSecretsPreflight,
+  excludeFromPrompt = false,
+  excludedPathGates = runExcludedPathGates,
+  wallClockBudgetMs = REVIEW_WALL_CLOCK_BUDGET_MS,
+  now = REAL_CLOCK.now,
+  sleep = REAL_CLOCK.sleep,
 }) {
   if (!worktree || !existsSync(worktree)) {
     return { ok: true, skipped: true, output: "(worktree missing — pre-PR review skipped)" };
   }
   if (!baseSha) die("baseSha required for pre-PR review");
+  // ONE absolute deadline for the whole run, computed once. Everything below — each
+  // attempt, each retry, each backoff, the protocol re-ask, and the second pass —
+  // is scheduled against it, so the run cannot outlive the parent hook's child kill.
+  const deadlineAt = now() + wallClockBudgetMs;
 
   const secrets = secretsPreflight(worktree);
   if (!secrets.ok) {
@@ -719,7 +960,9 @@ export async function runLocalPrePrReview({
     withheldUntrackedFiles,
     suppressedTrackedFiles,
     fingerprint,
-  } = captureBranchDiff(worktree, baseSha, { includeWorktree });
+    excluded,
+    changedFiles,
+  } = captureBranchDiff(worktree, baseSha, { includeWorktree, excludeFromPrompt });
   if (suppressedTrackedFiles.length) {
     return {
       ok: false,
@@ -744,8 +987,18 @@ export async function runLocalPrePrReview({
   if (!diffStat && !logOneline) {
     return { ok: true, output: "(no diff to review)" };
   }
+  if (excluded.length) {
+    const gates = excludedPathGates(worktree, excluded, changedFiles);
+    if (!gates.ok) {
+      return {
+        ok: false,
+        error: true,
+        output: `compensating gate failed for a path excluded from the review prompt: ${gates.reason}`,
+      };
+    }
+  }
 
-  const runPass = async (label, makePrompt) => {
+  const runPass = async (label, makePrompt, passDeadlineAt) => {
     const classify = (response) => {
       const bundled =
         response && typeof response === "object" && !Array.isArray(response)
@@ -779,9 +1032,12 @@ export async function runLocalPrePrReview({
         label,
         prompt: makePrompt(reviewDiff),
         worktree,
-        timeoutMs,
+        timeoutMs: Math.min(timeoutMs, Math.max(0, passDeadlineAt - now())),
         model,
         readOnly,
+        deadlineAt: passDeadlineAt,
+        now,
+        sleep,
       });
       return classify(response);
     };
@@ -795,34 +1051,54 @@ export async function runLocalPrePrReview({
     // Same precedent as `retryReviewTimeoutOnce` above. Without this, one malformed
     // response hard-blocks a merge (observed ~3 runs in 6), which pressures operators
     // toward bypassing the one gate that must never be bypassed.
-    if (pass.error) {
+    // …and only when the remaining budget can still fund a real attempt. A re-ask costs a
+    // full attempt; taking one on an empty budget is how the run used to overrun its
+    // deadline and get SIGTERMed with no verdict at all.
+    let budgetNote = "";
+    if (pass.error && passDeadlineAt - now() > MIN_ATTEMPT_MS) {
       process.stderr.write(
         `[local-bugbot] ${label}: unreadable verdict — re-asking once (protocol error, not a finding)\n`
       );
       pass = await once();
+    } else if (pass.error) {
+      budgetNote = "\n\n(insufficient review budget for protocol retry)";
     }
     return {
       ok: !pass.finding && !pass.error,
       finding: pass.finding,
       error: pass.error,
       output: pass.error
-        ? `${pass.output}\n\n(review protocol error in the ${label} pass: expected terminal result to be exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)`
+        ? `${pass.output}\n\n(review protocol error in the ${label} pass: expected terminal result to be exactly ${BUGBOT_CLEAR_TOKEN}, ${BUGBOT_BLOCKED_TOKEN}, or a structured finding)${budgetNote}`
         : pass.output,
     };
   };
 
-  const shared = { branch, baseSha, diffStat, logOneline, failOn };
-  // Both passes are mandatory but independent. Concurrent execution avoids
-  // doubling Stop-hook latency while preserving fail-closed aggregation.
-  const [code, security] = await Promise.all([
-    runPass("pre-PR code review", (diff) =>
-      buildBugbotPrompt({ skill, promptOnly, diff, ...shared })
-    ),
-    runPass("pre-PR security review", (diff) =>
-      buildSecurityReviewPrompt({ diff, promptOnly, ...shared })
-    ),
-  ]);
-  const current = captureBranchDiff(worktree, baseSha, { includeWorktree });
+  const shared = { branch, baseSha, diffStat, logOneline, failOn, excluded };
+  // Both passes are mandatory, and they run SEQUENTIALLY. Running them concurrently on the
+  // same reviewer account manufactured `resource_exhausted` against itself, burning the
+  // retry budget on self-inflicted contention. The first pass may spend at most the budget
+  // minus MIN_ATTEMPT_MS, so the mandatory security pass always gets a real attempt.
+  const code = await runPass(
+    "pre-PR code review",
+    (diff) => buildBugbotPrompt({ skill, promptOnly, diff, ...shared }),
+    deadlineAt - MIN_ATTEMPT_MS
+  );
+  if (deadlineAt - now() <= 0) {
+    return {
+      ok: false,
+      finding: code.finding,
+      error: !code.finding,
+      output: `${code.output}\n\n--- security pass ---\n\n(deadline exhausted before security pass)`,
+      reason: "deadline exhausted before security pass",
+      pass: "security",
+    };
+  }
+  const security = await runPass(
+    "pre-PR security review",
+    (diff) => buildSecurityReviewPrompt({ diff, promptOnly, ...shared }),
+    deadlineAt
+  );
+  const current = captureBranchDiff(worktree, baseSha, { includeWorktree, excludeFromPrompt });
   if (current.suppressedTrackedFiles.length) {
     return {
       ok: false,
@@ -862,6 +1138,7 @@ export async function runLocalBugbotReview({
   includeWorktree = false,
   readOnly = false,
   secretsPreflight = runLocalSecretsPreflight,
+  excludeFromPrompt = false,
 }) {
   if (!worktree || !existsSync(worktree)) die("worktree path missing for Bugbot review");
   if (!baseSha) die("baseSha required for Bugbot review");
@@ -877,6 +1154,7 @@ export async function runLocalBugbotReview({
     readOnly,
     skill,
     secretsPreflight,
+    excludeFromPrompt,
   });
 }
 
@@ -899,6 +1177,8 @@ export async function cmdReviewBugbot(repo, args) {
         `  --fail-on severity      threshold (default: ${REQUIRED_BUGBOT_FAIL_ON})`,
         "  --include-worktree      include staged, unstaged, and untracked changes",
         "  --read-only             review supplied diff without running commands",
+        "  --exclude-generated     lifecycle-hook mode: keep lockfile/dist content out of the",
+        "                          prompt (still fingerprinted + verified by compensating gates)",
         "",
         "Requires a checked-out worktree for the branch. Exits 0 on BUGBOT_CLEAR / no blockers.",
       ].join("\n")
@@ -965,6 +1245,7 @@ export async function cmdReviewBugbot(repo, args) {
     failOn,
     includeWorktree: args.includes("--include-worktree"),
     readOnly: args.includes("--read-only"),
+    excludeFromPrompt: args.includes("--exclude-generated"),
   });
   if (!ok) {
     if (reviewError) {

@@ -7,6 +7,8 @@ import {
   SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
   retryReviewOnRetriable,
+  MIN_ATTEMPT_MS,
+  REVIEW_WALL_CLOCK_BUDGET_MS,
 } from "../scripts/review-bugbot.mjs";
 
 let failed = 0;
@@ -256,6 +258,75 @@ console.log("hasCriticalOrHighFindings: markdown-decorated severities still matc
     !hasCriticalOrHighFindings("There are no Critical or High findings.")
   );
   check("bold Medium does NOT match", !hasCriticalOrHighFindings("**[Medium]** meh"));
+}
+
+console.log("retryReviewOnRetriable — the exhaustion backoff is clamped by the deadline");
+{
+  // The backoff used to sleep a fixed delay with no idea of the run's deadline, so a retry
+  // could sleep straight through the parent hook's child kill. Injected clock — no real waits.
+  let clock = 0;
+  const sleeper = (ms) => {
+    clock += ms;
+    return Promise.resolve();
+  };
+
+  {
+    const slept = [];
+    let calls = 0;
+    await retryReviewOnRetriable(
+      () => {
+        calls++;
+        if (calls === 1) throw new Error("resource_exhausted");
+        return "OK";
+      },
+      {
+        attempts: 2,
+        baseDelayMs: 60_000,
+        deadlineAt: 5_000,
+        now: () => clock,
+        sleep: (ms) => {
+          slept.push(ms);
+          return sleeper(ms);
+        },
+      }
+    );
+    check("backoff is clamped to the remaining budget", slept.length === 1 && slept[0] === 5_000);
+    check("the clamped sleep never passes the deadline", clock === 5_000);
+  }
+
+  {
+    let calls = 0;
+    let threw = null;
+    clock = 10_000;
+    try {
+      await retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("resource_exhausted");
+        },
+        { attempts: 3, baseDelayMs: 1_000, deadlineAt: 5_000, now: () => clock, sleep: sleeper }
+      );
+    } catch (error) {
+      threw = error;
+    }
+    check(
+      "an already-exhausted deadline skips the retry entirely",
+      calls === 1 && /resource_exhausted/.test(threw?.message ?? "")
+    );
+  }
+}
+
+console.log("wall-clock budget constants");
+{
+  check(
+    "the budget is a single absolute value, not derived",
+    REVIEW_WALL_CLOCK_BUDGET_MS === 900_000
+  );
+  check("a reserved attempt is a real attempt", MIN_ATTEMPT_MS === 180_000);
+  check(
+    "the budget funds both mandatory passes with a reservation left",
+    REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS >= MIN_ATTEMPT_MS
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

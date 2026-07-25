@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,20 +27,23 @@ import {
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   captureBranchDiff,
-  cursorReviewRetryBudgetMs,
   LOCAL_BUGBOT_DIFF_CAP,
   REQUIRED_BUGBOT_FAIL_ON,
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
+  REVIEW_WALL_CLOCK_BUDGET_MS,
 } from "../scripts/review-bugbot.mjs";
 
 const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
-const REVIEW_PROCESS_GRACE_MS = 20_000;
+// Grace on top of the child's own absolute wall-clock budget. Raised from 20s: the parent
+// kill must be the LAST resort, well after the child has had time to fail closed itself
+// and write a verdict, otherwise the kill lands mid-review and produces no verdict at all.
+const REVIEW_PROCESS_GRACE_MS = 60_000;
 const NATIVE_HOOK_GRACE_MS = 60_000;
 const LOCK_POLL_MS = 250;
 const LOCK_INITIALIZATION_GRACE_MS = 5_000;
 const OUTPUT_CAP = 9_000;
-const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v20";
+const GATE_POLICY_VERSION = "medium-read-only-code-security-secrets-v21";
 const VALID_RUNTIMES = new Set(["claude", "codex", "cursor", "opencode"]);
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
   existsSync
@@ -203,7 +206,20 @@ function releaseLock(lock) {
   }
 }
 
-function cachedResult(file, fingerprint) {
+/**
+ * Human-readable account of a review whose child process died without a verdict. The
+ * operator needs to distinguish "the reviewer found something" from "we killed it".
+ */
+function errorHandoffReason(handoff) {
+  const seconds = Math.round((handoff.elapsedMs ?? 0) / 1000);
+  const cause = handoff.signal
+    ? `was killed by ${handoff.signal} after ${seconds}s`
+    : `exited ${handoff.exitStatus ?? "without a status"} after ${seconds}s`;
+  const budget = handoff.parentDeadlineFired ? " (wall-clock budget exceeded)" : "";
+  return `Local Bugbot ${cause}${budget}. No verdict was produced, so this is a failed required check, not a clear. Rerun the gate once the cause is addressed.`;
+}
+
+function cachedResult(file, fingerprint, nowMs = Date.now()) {
   const previous = readJson(file);
   if (previous?.fingerprint !== fingerprint) return null;
   if (previous.status === "blocked") {
@@ -213,6 +229,21 @@ function cachedResult(file, fingerprint) {
       fingerprint,
       reason:
         "Bugbot previously found Medium-or-higher findings for this exact changeset; change the diff or run the manual review command to refresh evidence.",
+    };
+  }
+  // A short-lived terminal error handoff: concurrent waiters get the real failure instead
+  // of piling on a duplicate expensive review. Deliberately EXPIRING — unlike a blocked
+  // verdict it is not evidence about the diff, so it must never become a permanent block.
+  if (
+    previous.status === "error" &&
+    Number.isFinite(previous.expiresAt) &&
+    nowMs < previous.expiresAt
+  ) {
+    return {
+      status: "error",
+      cached: true,
+      fingerprint,
+      reason: errorHandoffReason(previous),
     };
   }
   return null;
@@ -250,6 +281,7 @@ function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
   );
   heartbeat.unref();
   const childEnv = { ...hardenedChildEnv(env), NO_COLOR: "1" };
+  const startedAt = Date.now();
   let child;
   try {
     child = spawnSync(
@@ -271,6 +303,7 @@ function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
         String(REVIEW_CHILD_TIMEOUT_SECONDS),
         "--read-only",
         "--hook-protocol",
+        "--exclude-generated",
       ],
       {
         cwd: repo,
@@ -284,7 +317,14 @@ function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
     heartbeat.kill();
   }
   const output = [child.stdout, child.stderr, child.error?.message].filter(Boolean).join("\n");
-  return { ok: child.status === 0, output, status: child.status, signal: child.signal };
+  return {
+    ok: child.status === 0,
+    output,
+    status: child.status,
+    signal: child.signal,
+    elapsedMs: Date.now() - startedAt,
+    parentDeadlineFired: child.error?.code === "ETIMEDOUT",
+  };
 }
 
 function blockedReason(result) {
@@ -342,7 +382,10 @@ export function evaluateLocalBugbotGate({
   const { baseSha } = resolvedBase;
 
   const branch = gitMaybe(["symbolic-ref", "--quiet", "--short", "HEAD"], root) || "HEAD";
-  const snapshot = captureBranchDiff(root, baseSha, { includeWorktree: true });
+  const snapshot = captureBranchDiff(root, baseSha, {
+    includeWorktree: true,
+    excludeFromPrompt: true,
+  });
   if (snapshot.suppressedTrackedFiles.length) {
     return {
       status: "error",
@@ -377,8 +420,9 @@ export function evaluateLocalBugbotGate({
     .update(`${GATE_POLICY_VERSION}\0${REQUIRED_BUGBOT_FAIL_ON}\0${model}\0${snapshot.fingerprint}`)
     .digest("hex");
   if (probeOnly) return { status: "probe", fingerprint };
-  const reviewTimeoutMs =
-    cursorReviewRetryBudgetMs(REVIEW_CHILD_TIMEOUT_SECONDS * 1000) + REVIEW_PROCESS_GRACE_MS;
+  // The child owns an absolute REVIEW_WALL_CLOCK_BUDGET_MS deadline and fails closed on its
+  // own; this kill is only the backstop for a child that stops responding entirely.
+  const reviewTimeoutMs = REVIEW_WALL_CLOCK_BUDGET_MS + REVIEW_PROCESS_GRACE_MS;
 
   const existing = cachedResult(file, fingerprint);
   if (existing) return existing;
@@ -392,6 +436,7 @@ export function evaluateLocalBugbotGate({
     };
   }
   const lock = acquired.lock;
+  const ownerRunId = randomUUID();
   const raced = cachedResult(file, fingerprint);
   if (raced) {
     releaseLock(lock);
@@ -406,7 +451,38 @@ export function evaluateLocalBugbotGate({
       model,
       timeoutMs: reviewTimeoutMs,
     });
-    const currentSnapshot = captureBranchDiff(root, baseSha, { includeWorktree: true });
+    // A killed child produced no verdict at all. Record a SHORT-LIVED error handoff before
+    // the lock is released so every waiter sees the real failure instead of spawning its own
+    // duplicate review — and so it expires, because an infrastructure failure is not evidence
+    // about the diff and must never harden into a permanent block or be mistaken for a clear.
+    if (review.signal || review.parentDeadlineFired) {
+      const handoff = {
+        status: "error",
+        ownerRunId,
+        fingerprint,
+        expiresAt: Date.now() + 2 * REVIEW_WALL_CLOCK_BUDGET_MS,
+        signal: review.signal ?? null,
+        exitStatus: review.status ?? null,
+        elapsedMs: review.elapsedMs ?? 0,
+        parentDeadlineFired: review.parentDeadlineFired === true,
+        baseSha,
+        branch,
+        model,
+        reviewedAt: new Date().toISOString(),
+      };
+      writeJson(file, handoff);
+      return {
+        status: "error",
+        cached: false,
+        fingerprint,
+        reason: errorHandoffReason(handoff),
+        output: capOutput(review.output),
+      };
+    }
+    const currentSnapshot = captureBranchDiff(root, baseSha, {
+      includeWorktree: true,
+      excludeFromPrompt: true,
+    });
     if (currentSnapshot.suppressedTrackedFiles.length) {
       return {
         status: "error",

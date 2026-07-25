@@ -30,9 +30,12 @@ import {
   buildSecurityReviewPrompt,
   captureBranchDiff,
   hasFindingsAtOrAbove,
+  MIN_ATTEMPT_MS,
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
   retryReviewTimeoutOnce,
+  REVIEW_WALL_CLOCK_BUDGET_MS,
+  runExcludedPathGates,
   runLocalSecretsPreflight,
   runLocalPrePrReview,
   runLocalBugbotReview,
@@ -138,7 +141,7 @@ test("review timeouts retry once with a doubled per-call budget", async () => {
   );
 });
 
-test("hook deadline covers both nested review retry layers", () => {
+test("hook child kill is the shared wall-clock budget plus a real grace", () => {
   const repo = fixture();
   try {
     appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
@@ -151,14 +154,10 @@ test("hook deadline covers both nested review retry layers", () => {
       },
     });
     assert.equal(result.status, "clear");
-
-    const cursorTimeoutCycleMs = 400_000 + 800_000;
-    const exhaustionBackoffMs = 2_000;
-    const processGraceMs = 20_000;
-    assert.ok(
-      hookTimeoutMs >= cursorTimeoutCycleMs * 2 + exhaustionBackoffMs + processGraceMs,
-      `hook timeout ${hookTimeoutMs}ms cannot cover the composed retry cycle`
-    );
+    // The child's own absolute deadline is the budget; the parent kill must sit strictly
+    // AFTER it so the child always gets to fail closed with a verdict of its own.
+    assert.equal(hookTimeoutMs, REVIEW_WALL_CLOCK_BUDGET_MS + 60_000);
+    assert.ok(hookTimeoutMs > REVIEW_WALL_CLOCK_BUDGET_MS);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -1354,5 +1353,408 @@ test("check-secrets ignores a gitignored .env but blocks the same file when trac
     assert.match(tracked.stdout, /\.env file committed/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- AIO wall-clock budget: one absolute deadline for the whole review run ---------------
+// Before this, the budget was DERIVED (attempts × 3 × per-call timeout), the AIO-468 protocol
+// re-ask silently doubled the real worst case, and the parent hook SIGTERMed its own child
+// mid-review — producing "Bugbot exited without a status" and no verdict at all. Every test
+// below drives an INJECTED clock; none of them waits on real time.
+
+function fakeClock(startMs = 0) {
+  let current = startMs;
+  return {
+    now: () => current,
+    advance: (ms) => {
+      current += ms;
+    },
+    sleep: async (ms) => {
+      current += ms;
+    },
+  };
+}
+
+function changedRepo() {
+  const repo = fixture();
+  appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+  return repo;
+}
+
+test("the shared deadline reserves the security pass a full MIN_ATTEMPT_MS", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    const calls = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      // Deliberately larger than the whole budget: only the deadline may bound the calls.
+      timeoutMs: 5_000_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ label, timeoutMs, deadlineAt }) => {
+        calls.push({ label, timeoutMs, deadlineAt, startedAt: clock.now() });
+        clock.advance(timeoutMs); // each pass spends everything it is allowed
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(calls.length, 2, "both mandatory passes ran, sequentially");
+    assert.ok(calls[0].label.includes("code review"));
+    assert.ok(calls[1].label.includes("security review"));
+    assert.equal(
+      calls[0].deadlineAt,
+      REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS,
+      "the code pass may not spend the security pass's reservation"
+    );
+    assert.equal(calls[1].deadlineAt, REVIEW_WALL_CLOCK_BUDGET_MS);
+    assert.equal(calls[1].startedAt, REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS);
+    assert.equal(calls[1].timeoutMs, MIN_ATTEMPT_MS, "the security pass still gets a real attempt");
+    assert.ok(
+      clock.now() <= REVIEW_WALL_CLOCK_BUDGET_MS,
+      `total elapsed ${clock.now()}ms exceeded the wall-clock budget`
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("each call's timeout is clamped to the smaller of the per-attempt and remaining budget", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    const timeouts = [];
+    await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        timeouts.push(timeoutMs);
+        clock.advance(timeoutMs);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.deepEqual(timeouts, [400_000, 400_000], "the per-attempt timeout wins while it fits");
+    assert.ok(clock.now() + 0 <= REVIEW_WALL_CLOCK_BUDGET_MS);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a protocol re-ask is taken with budget and skipped without it", async () => {
+  const affordable = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: affordable,
+      baseSha: git(affordable, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async () => {
+        calls++;
+        clock.advance(1_000);
+        // Narration alongside the token is unreadable by design — a protocol error.
+        return calls % 2 === 1 ? `Reviewing the diff.\n${BUGBOT_CLEAR_TOKEN}` : BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(calls, 4, "with budget left, each pass is re-asked exactly once");
+  } finally {
+    rmSync(affordable, { recursive: true, force: true });
+  }
+
+  const broke = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: broke,
+      baseSha: git(broke, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 5_000_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        calls++;
+        clock.advance(timeoutMs); // the first attempt consumes the pass's whole budget
+        return `Reviewing the diff.\n${BUGBOT_CLEAR_TOKEN}`;
+      },
+    });
+    assert.equal(review.ok, false, "an unreadable verdict still fails closed");
+    assert.equal(review.error, true);
+    assert.equal(calls, 2, "no pass may fund a re-ask it cannot pay for");
+    assert.match(review.output, /insufficient review budget for protocol retry/);
+  } finally {
+    rmSync(broke, { recursive: true, force: true });
+  }
+});
+
+test("an exhausted deadline fails closed instead of skipping the security pass", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async () => {
+        calls++;
+        clock.advance(REVIEW_WALL_CLOCK_BUDGET_MS * 2); // the code pass overruns
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(calls, 1, "the security pass must not start past the deadline");
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.equal(review.reason, "deadline exhausted before security pass");
+    assert.equal(review.pass, "security");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a killed review surfaces the signal, elapsed time, and deadline cause", () => {
+  const repo = changedRepo();
+  try {
+    const killed = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => ({
+        ok: false,
+        status: null,
+        signal: "SIGTERM",
+        elapsedMs: 912_000,
+        parentDeadlineFired: true,
+        output: "",
+      }),
+    });
+    assert.equal(killed.status, "error");
+    assert.match(killed.reason, /killed by SIGTERM/);
+    assert.match(killed.reason, /912s/);
+    assert.match(killed.reason, /wall-clock budget exceeded/);
+    assert.match(killed.reason, /not a clear/);
+    // Never a pass for any runtime adapter.
+    assert.equal(formatHookResult("claude", killed).decision, "block");
+    assert.equal(formatHookResult("codex", killed).continue, false);
+
+    // A concurrent waiter reuses the terminal error instead of spawning a duplicate review.
+    const waiter = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => assert.fail("a terminal error handoff must not spawn a duplicate review"),
+    });
+    assert.equal(waiter.status, "error");
+    assert.equal(waiter.cached, true);
+    assert.match(waiter.reason, /killed by SIGTERM/);
+
+    // …and it EXPIRES: an error is not evidence about the diff, so it must never harden
+    // into a permanent block the way an exact-diff `blocked` finding does.
+    const state = path.resolve(
+      repo,
+      git(repo, "rev-parse", "--git-path", "aios/local-bugbot-gate.json")
+    );
+    const handoff = JSON.parse(readFileSync(state, "utf8"));
+    assert.equal(handoff.status, "error");
+    assert.equal(handoff.parentDeadlineFired, true);
+    assert.ok(handoff.ownerRunId);
+    assert.equal(handoff.expiresAt > Date.now(), true);
+    writeFileSync(state, `${JSON.stringify({ ...handoff, expiresAt: Date.now() - 1 })}\n`);
+
+    let retried = 0;
+    const afterExpiry = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => {
+        retried++;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      },
+    });
+    assert.equal(retried, 1, "an expired handoff must let an independent run retry");
+    assert.equal(afterExpiry.status, "clear");
+    assert.equal(existsSync(state), false, "a clear never persists a trusted verdict on disk");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an on-disk error handoff is never laundered into a clear", () => {
+  const repo = changedRepo();
+  try {
+    const state = path.resolve(
+      repo,
+      git(repo, "rev-parse", "--git-path", "aios/local-bugbot-gate.json")
+    );
+    const probe = evaluateLocalBugbotGate({ repo, probeOnly: true });
+    mkdirSync(path.dirname(state), { recursive: true });
+    writeFileSync(
+      state,
+      `${JSON.stringify({
+        status: "error",
+        fingerprint: probe.fingerprint,
+        expiresAt: Date.now() + 60_000,
+        signal: "SIGKILL",
+        elapsedMs: 5_000,
+      })}\n`
+    );
+    const result = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => assert.fail("the live handoff must be returned without a new review"),
+    });
+    assert.equal(result.status, "error");
+    assert.notEqual(result.status, "clear");
+    assert.equal(result.verified, undefined);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- Lockfile/dist exclusion: PROMPT-only, lifecycle-hook-only, gate-compensated ---------
+
+function lockfileRepo() {
+  const repo = fixture();
+  writeFileSync(
+    path.join(repo, "package-lock.json"),
+    `${JSON.stringify({ name: "aios-workspace", lockfileVersion: 3, packages: {} })}\n`
+  );
+  git(repo, "add", "package-lock.json");
+  git(repo, "commit", "-qm", "add lockfile");
+  return repo;
+}
+
+test("an excluded-only edit still changes the fingerprint and stays out of the prompt", () => {
+  const repo = lockfileRepo();
+  try {
+    const base = git(repo, "rev-parse", "main");
+    const lock = path.join(repo, "package-lock.json");
+    const first = captureBranchDiff(repo, base, {
+      includeWorktree: true,
+      excludeFromPrompt: true,
+    });
+    assert.deepEqual(
+      first.excluded.map((file) => file.path),
+      ["package-lock.json"]
+    );
+    assert.match(first.excluded[0].sha256, /^[a-f0-9]{64}$/);
+    assert.ok(first.excluded[0].bytes > 0);
+    assert.doesNotMatch(first.reviewDiff, /lockfileVersion/);
+
+    appendFileSync(lock, "\n");
+    const second = captureBranchDiff(repo, base, {
+      includeWorktree: true,
+      excludeFromPrompt: true,
+    });
+    assert.notEqual(
+      second.fingerprint,
+      first.fingerprint,
+      "excluded bytes must still feed the fingerprint"
+    );
+
+    // Hook-only: standalone review / aios build / aios ship keep the full atomic diff.
+    const unfiltered = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.match(unfiltered.reviewDiff, /lockfileVersion/);
+    assert.deepEqual(unfiltered.excluded, []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("both prompts disclose every excluded path with its byte count and digest", () => {
+  const excluded = [
+    { path: "package-lock.json", bytes: 4242, sha256: "a".repeat(64) },
+    { path: "dist/operator-loop/index.js", bytes: 17, sha256: "b".repeat(64) },
+  ];
+  const shared = {
+    branch: "feat/x",
+    baseSha: "abc123",
+    diffStat: " a | 1 +",
+    diff: "+line",
+    logOneline: "abc feat",
+    excluded,
+  };
+  for (const [name, prompt] of [
+    ["code", buildBugbotPrompt({ skill: "/review-bugbot", ...shared })],
+    ["security", buildSecurityReviewPrompt({ ...shared })],
+  ]) {
+    assert.match(prompt, /Changed, not shown/, `${name} prompt announces the exclusion`);
+    for (const file of excluded) {
+      assert.ok(
+        prompt.includes(`${file.path} — ${file.bytes} bytes, sha256 ${file.sha256}`),
+        `${name} prompt lists ${file.path} with its byte count and digest`
+      );
+    }
+  }
+});
+
+test("a lockfile change without its manifest blocks", async () => {
+  const repo = lockfileRepo();
+  try {
+    const gates = runExcludedPathGates(
+      repo,
+      [{ path: "package-lock.json", bytes: 10, sha256: "c".repeat(64) }],
+      ["package-lock.json", "tracked.txt"]
+    );
+    assert.equal(gates.ok, false);
+    assert.match(gates.reason, /without a matching package\.json change/);
+
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      excludeFromPrompt: true,
+      reviewPrompt: async () => {
+        calls++;
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.equal(calls, 0, "a failed compensating gate blocks before any reviewer runs");
+    assert.match(review.output, /compensating gate failed/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a dist output that does not match a clean rebuild blocks", () => {
+  const repo = fixture();
+  try {
+    const bin = path.join(repo, "node_modules", ".bin");
+    mkdirSync(bin, { recursive: true });
+    // Stand-in compiler: emits the one known-good artifact into the requested --outDir.
+    writeFileSync(
+      path.join(bin, "tsc"),
+      '#!/bin/sh\nmkdir -p "$4/operator-loop"\nprintf \'rebuilt\\n\' > "$4/operator-loop/index.js"\n'
+    );
+    chmodSync(path.join(bin, "tsc"), 0o755);
+    writeFileSync(path.join(repo, "tsconfig.json"), "{}\n");
+    mkdirSync(path.join(repo, "dist", "operator-loop"), { recursive: true });
+
+    const excluded = [{ path: "dist/operator-loop/index.js", bytes: 9, sha256: "d".repeat(64) }];
+    writeFileSync(path.join(repo, "dist", "operator-loop", "index.js"), "tampered\n");
+    const tampered = runExcludedPathGates(repo, excluded, []);
+    assert.equal(tampered.ok, false);
+    assert.match(tampered.reason, /does not byte-match a clean rebuild/);
+
+    writeFileSync(path.join(repo, "dist", "operator-loop", "index.js"), "rebuilt\n");
+    assert.equal(runExcludedPathGates(repo, excluded, []).ok, true);
+
+    // No compiler at all is also fail-closed: an unverifiable artifact is not a clear.
+    rmSync(path.join(bin, "tsc"));
+    const unverifiable = runExcludedPathGates(repo, excluded, []);
+    assert.equal(unverifiable.ok, false);
+    assert.match(unverifiable.reason, /rebuild comparison cannot run/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });

@@ -12,6 +12,7 @@ import {
   computeReviewPayloadChars,
   DIFF_CAP,
 } from "../scripts/build.mjs";
+import * as reviewBugbot from "../scripts/review-bugbot.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -138,6 +139,29 @@ console.log("computeReviewPayloadChars (Major 3) — clamped to DIFF_CAP");
     adaptiveReviewTimeout(computeReviewPayloadChars(big)) * 1000 === 600000
   );
   check("null → 0", computeReviewPayloadChars(null) === 0);
+}
+
+console.log("local Bugbot wall-clock budget replaces the derived retry budget");
+{
+  // The old `cursorReviewRetryBudgetMs(timeout)` = attempts × 3 × timeout + backoff was the
+  // bug: adding the AIO-468 protocol re-ask silently doubled the real worst case (~4,804s)
+  // while the parent hook still sized its child kill from the old number (~2,422s), so the
+  // hook SIGTERMed its own child mid-review. One absolute budget cannot drift that way.
+  check(
+    "the multiplicative retry budget export is gone",
+    reviewBugbot.cursorReviewRetryBudgetMs === undefined
+  );
+  const { REVIEW_WALL_CLOCK_BUDGET_MS, MIN_ATTEMPT_MS } = reviewBugbot;
+  const hookChildTimeoutSeconds = 400; // hooks/local-bugbot-gate.mjs
+  check(
+    "a full first attempt fits inside the code pass's allowance (never truncated)",
+    hookChildTimeoutSeconds * 1000 <= REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS
+  );
+  check(
+    "the worst case is the budget, not attempts × passes × timeout",
+    REVIEW_WALL_CLOCK_BUDGET_MS < 2 * (2 * 3 * hookChildTimeoutSeconds * 1000)
+  );
+  check("both mandatory passes are fundable", REVIEW_WALL_CLOCK_BUDGET_MS >= 2 * MIN_ATTEMPT_MS);
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
