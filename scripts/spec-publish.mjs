@@ -35,6 +35,7 @@ export async function publishSpec({
   candidatePath,
   evalArtifactPath,
   expectedRemoteSha,
+  exclusiveEditConfirmed = false,
   dryRun = false,
   linear,
   auditRoot = path.join(repo, ".aios", "spec-publish"),
@@ -46,6 +47,10 @@ export async function publishSpec({
     throw new SpecPublishError(`invalid issue id '${issueId}' (expected AIO-<n>)`);
   if (!/^[a-f0-9]{64}$/.test(expectedRemoteSha))
     throw new SpecPublishError("--expected-remote-sha must be a lowercase SHA-256");
+  if (!exclusiveEditConfirmed)
+    throw new SpecPublishError(
+      "publishing requires --confirm-exclusive-editor: coordinate a single Linear description editor until byte verification completes"
+    );
   if (!existsSync(candidatePath))
     throw new SpecPublishError(`candidate not found: ${candidatePath}`);
   if (!existsSync(evalArtifactPath))
@@ -73,10 +78,12 @@ export async function publishSpec({
   if (evaluation.repoDirty !== false)
     throw new SpecPublishError("evaluation artifact does not prove a clean repository baseline");
   const scan = scanCandidate(candidatePath);
-  if (!scan.clean)
+  if (!scan.clean) {
+    const findingCount = Array.isArray(scan.findings) ? scan.findings.length : 1;
     throw new SpecPublishError(
-      `candidate failed the pre-egress confidentiality scan: ${scan.findings.join("; ")}`
+      `candidate failed the pre-egress confidentiality scan (${findingCount} finding(s); details withheld)`
     );
+  }
 
   const skillContext = loadSkillContext({
     repo,
@@ -99,6 +106,7 @@ export async function publishSpec({
     candidateSha256,
     repoSha: currentRepoSha,
     remoteBeforeSha256,
+    exclusiveEditConfirmed,
     injectedSkills: skillContext.audit,
     dryRun,
     status: dryRun ? "DRY_RUN" : "PENDING",
@@ -189,9 +197,15 @@ export async function cmdSpecPublish(repo, args, deps = {}) {
     const index = args.indexOf(name);
     return index < 0 ? null : args[index + 1];
   };
-  if (!issueId || !candidate || !flag("--eval-artifact") || !flag("--expected-remote-sha")) {
+  if (
+    !issueId ||
+    !candidate ||
+    !flag("--eval-artifact") ||
+    !flag("--expected-remote-sha") ||
+    !args.includes("--confirm-exclusive-editor")
+  ) {
     throw new SpecPublishError(
-      "usage: aios spec publish AIO-<n> <candidate> --eval-artifact <json> --expected-remote-sha <sha256> [--dry-run] [--json]"
+      "usage: aios spec publish AIO-<n> <candidate> --eval-artifact <json> --expected-remote-sha <sha256> --confirm-exclusive-editor [--dry-run] [--json]"
     );
   }
   const linear =
@@ -205,6 +219,7 @@ export async function cmdSpecPublish(repo, args, deps = {}) {
     candidatePath: path.resolve(candidate),
     evalArtifactPath: path.resolve(flag("--eval-artifact")),
     expectedRemoteSha: flag("--expected-remote-sha"),
+    exclusiveEditConfirmed: true,
     dryRun: args.includes("--dry-run"),
     linear,
     ...(deps.publishOptions ?? {}),

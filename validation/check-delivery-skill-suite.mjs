@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -22,6 +22,10 @@ try {
   const manifestPath = path.join(repo, ".claude", "skill-suite.json");
   const schemaPath = path.join(repo, ".claude", "skill-suite.schema.json");
   const corpusPath = path.join(repo, ".claude", "skill-trigger-corpus.json");
+  if (!existsSync(manifestPath)) {
+    console.log("SKIP delivery skill suite: manifest not installed in this workspace");
+    process.exit(0);
+  }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
   const ajv = new Ajv2020({ allErrors: true, strict: true });

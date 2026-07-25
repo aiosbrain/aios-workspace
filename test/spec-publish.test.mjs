@@ -45,6 +45,7 @@ function fixture({ verdict = "SPEC_READY", candidate = "# Ready\n", remote = "# 
     candidatePath,
     evalArtifactPath,
     expectedRemoteSha: skillSha256(remote),
+    exclusiveEditConfirmed: true,
     linear,
     auditRoot: path.join(root, "audit"),
     now: () => new Date("2026-07-25T00:00:00.000Z"),
@@ -53,6 +54,23 @@ function fixture({ verdict = "SPEC_READY", candidate = "# Ready\n", remote = "# 
   };
   return { root, args, linear, writes: () => writes, setRemote: (value) => (description = value) };
 }
+
+test("publish refuses without explicit single-editor coordination", async () => {
+  const fx = fixture();
+  let reads = 0;
+  fx.args.exclusiveEditConfirmed = false;
+  fx.args.linear.getIssue = async () => {
+    reads++;
+    return { description: "# Old\n" };
+  };
+  try {
+    await assert.rejects(() => publishSpec(fx.args), /confirm-exclusive-editor/);
+    assert.equal(reads, 0);
+    assert.equal(fx.writes(), 0);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
 
 test("successful publish writes once, fetches again, and byte-verifies the remote", async () => {
   const fx = fixture();
@@ -137,13 +155,24 @@ test("a remote edit during audit preparation is rechecked immediately before mut
 test("candidate confidentiality findings refuse before contacting Linear", async () => {
   const fx = fixture();
   let reads = 0;
-  fx.args.scanCandidate = () => ({ clean: false, findings: ["secret pattern matched"] });
+  const withheldPayload = "do-not-echo-this-finding-payload";
+  fx.args.scanCandidate = () => ({
+    clean: false,
+    findings: [`scanner finding payload: ${withheldPayload}`],
+  });
   fx.args.linear.getIssue = async () => {
     reads++;
     return { description: "# Old\n" };
   };
   try {
-    await assert.rejects(() => publishSpec(fx.args), /pre-egress confidentiality scan/);
+    await assert.rejects(
+      () => publishSpec(fx.args),
+      (error) => {
+        assert.match(error.message, /pre-egress confidentiality scan \(1 finding/);
+        assert.doesNotMatch(error.message, new RegExp(withheldPayload));
+        return true;
+      }
+    );
     assert.equal(reads, 0);
     assert.equal(fx.writes(), 0);
   } finally {

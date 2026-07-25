@@ -9,14 +9,16 @@ Treat this as a single external write with optimistic concurrency.
 
 1. Confirm the exact `AIO-<n>` id, candidate path, final `SPEC_READY` artifact, evaluated candidate
    SHA, and evaluated repository SHA.
-2. Export the current remote description immediately before mutation and compute its SHA-256.
-3. Refuse if the remote hash differs from the user-approved `--expected-remote-sha`, or if any
+2. Coordinate one exclusive Linear-description editor through post-write verification and require
+   `--confirm-exclusive-editor`. Linear's update mutation has no compare-and-swap precondition.
+3. Export the current remote description immediately before mutation and compute its SHA-256.
+4. Refuse if the remote hash differs from the user-approved `--expected-remote-sha`, or if any
    candidate/repository/evaluation identity is stale.
-4. Invoke `aios spec publish` rather than composing API or shell writes.
-5. Preserve the remote backup, candidate, request/response metadata, and hashes in the audit bundle.
-6. Replace once, fetch again, and byte-verify the remote description. On mismatch or ambiguous
+5. Invoke `aios spec publish` rather than composing API or shell writes.
+6. Preserve the remote backup, candidate, request/response metadata, and hashes in the audit bundle.
+7. Replace once, fetch again, and byte-verify the remote description. On mismatch or ambiguous
    response, report uncertainty and stop all later writes.
-7. Report whether the write was verified. Never infer success from a transport-only response.
+8. Report whether the write was verified. Never infer success from a transport-only response.
 
 Never change issue state, publish from `NOT_READY` or `NOT_EVALUATED`, overwrite concurrent edits,
 or retry an ambiguous mutation.
