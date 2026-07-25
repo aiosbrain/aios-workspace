@@ -851,9 +851,11 @@ function lockPackages(text, label) {
   );
 }
 
-function resolvedHost(url) {
+/** The registry host of a tarball `resolved`, or null when it is not an http(s) URL. */
+function registryHost(resolved) {
   try {
-    return new URL(url).host;
+    const url = new URL(resolved);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.host : null;
   } catch {
     return null;
   }
@@ -890,16 +892,26 @@ export function inspectLockDelta(
   for (const [name, next] of after) {
     const previous = before.get(name);
     if (previous && JSON.stringify(previous) === JSON.stringify(next)) continue;
-    const host = next.resolved ? resolvedHost(next.resolved) : null;
+    // A workspace link is a symlink into this same repo, not a downloaded artifact: it has
+    // no tarball, no registry and no integrity hash by construction. Its target IS reviewed
+    // (it is a path inside the changeset), so the tarball rules below must not fire on it.
+    const linked = next.link === true;
+    const host = !linked && next.resolved ? registryHost(next.resolved) : null;
     const integrityChanged = (previous?.integrity ?? null) !== (next.integrity ?? null);
     summary.push(
       `${name} ${previous?.version ?? "(added)"} → ${next.version ?? "(none)"}` +
-        ` [${host ?? "no tarball"}]${integrityChanged ? " integrity changed" : ""}`
+        ` [${linked ? `workspace link ${next.resolved ?? ""}`.trim() : (host ?? "no tarball")}]` +
+        `${integrityChanged ? " integrity changed" : ""}`
     );
+    if (linked) continue;
 
-    if (next.resolved && !allowedHosts.includes(host)) {
+    if (next.resolved && !host) {
       failures.push(
-        `${lockPath}: ${name} resolves from ${host ?? next.resolved}, which is not an allowed registry host`
+        `${lockPath}: ${name} resolves from ${next.resolved}, which is not a registry tarball`
+      );
+    } else if (next.resolved && !allowedHosts.includes(host)) {
+      failures.push(
+        `${lockPath}: ${name} resolves from ${host}, which is not an allowed registry host`
       );
     }
     if (previous?.integrity && !next.integrity) {

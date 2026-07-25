@@ -1977,3 +1977,27 @@ test("the compensating gates run before the review clock starts", async () => {
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("a workspace link entry is not judged by the tarball rules", () => {
+  // This repo's own lockfile carries `link: true` workspace entries with a RELATIVE
+  // `resolved` and no `integrity` — by construction, not by tampering. Judging them with
+  // the registry-host and integrity rules would hard-block every real workspace change.
+  const linkEntry = { resolved: "gui/client", link: true };
+  const added = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith(linkEntry)
+  );
+  assert.deepEqual(added.failures, []);
+  assert.match(added.summary.join(" "), /workspace link gui\/client/);
+
+  // A non-registry tarball source is still fail-closed.
+  const gitDep = lockDelta(
+    lockWith(PINNED),
+    lockWith({
+      version: "1.3.0",
+      resolved: "git+ssh://git@github.com/x/y.git#abc",
+      integrity: "sha512-AAA",
+    })
+  );
+  assert.match(gitDep.failures.join(" "), /not a registry tarball/);
+});
