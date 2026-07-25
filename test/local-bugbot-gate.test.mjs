@@ -2001,3 +2001,50 @@ test("a workspace link entry is not judged by the tarball rules", () => {
   );
   assert.match(gitDep.failures.join(" "), /not a registry tarball/);
 });
+
+test("an oversized per-attempt timeout is clamped, never crash-shaped", async () => {
+  const repo = changedRepo();
+  try {
+    // A caller-supplied timeout at or above the whole budget used to leave the code pass a
+    // non-positive allowance, so `attemptBudgetMs` threw out of the run — a crash instead of
+    // a verdict. The reserve is clamped to half the budget, so both passes stay fundable.
+    const clock = fakeClock();
+    const timeouts = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: REVIEW_WALL_CLOCK_BUDGET_MS * 2,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        timeouts.push(timeoutMs);
+        clock.advance(timeoutMs);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.deepEqual(timeouts, [REVIEW_WALL_CLOCK_BUDGET_MS / 2, REVIEW_WALL_CLOCK_BUDGET_MS / 2]);
+    assert.ok(clock.now() <= REVIEW_WALL_CLOCK_BUDGET_MS);
+
+    // A budget that genuinely cannot fund two passes fails closed and SAYS SO.
+    let calls = 0;
+    const starved = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      wallClockBudgetMs: 60_000,
+      now: fakeClock().now,
+      reviewPrompt: async () => {
+        calls++;
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(starved.ok, false);
+    assert.equal(starved.error, true);
+    assert.equal(calls, 0, "no reviewer runs on a budget that cannot fund both passes");
+    assert.match(starved.output, /review budget too small for two passes/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

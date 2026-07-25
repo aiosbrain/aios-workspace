@@ -1111,10 +1111,23 @@ export async function runLocalPrePrReview({
   // attempt, each retry, each backoff, the protocol re-ask, and the second pass —
   // is scheduled against it, so the run cannot outlive the parent hook's child kill.
   const deadlineAt = now() + wallClockBudgetMs;
+  if (wallClockBudgetMs < 2 * MIN_ATTEMPT_MS) {
+    return {
+      ok: false,
+      error: true,
+      output: `review budget too small for two passes: ${wallClockBudgetMs}ms cannot fund the mandatory code and security passes (${2 * MIN_ATTEMPT_MS}ms minimum)`,
+    };
+  }
   // Reserve a FULL attempt (plus margin) for the mandatory security pass. Reserving less
   // than one attempt only guarantees that pass starts, which turns a slow-but-healthy run
-  // into a false block on the security pass specifically.
-  const securityReserveMs = timeoutMs + ATTEMPT_RESERVE_MARGIN_MS;
+  // into a false block on the security pass specifically. Clamped to half the budget: a
+  // caller-supplied timeout at or above the budget would otherwise leave the code pass a
+  // non-positive allowance, and `attemptBudgetMs` would THROW — a crash-shaped block
+  // instead of a legible fail-closed verdict.
+  const securityReserveMs = Math.min(
+    timeoutMs + ATTEMPT_RESERVE_MARGIN_MS,
+    Math.floor(wallClockBudgetMs / 2)
+  );
 
   const runPass = async (label, makePrompt, passDeadlineAt) => {
     const classify = (response) => {
