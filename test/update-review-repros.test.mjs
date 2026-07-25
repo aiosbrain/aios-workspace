@@ -41,6 +41,14 @@ const CLI = fileURLToPath(new URL("../scripts/aios.mjs", import.meta.url));
 const UPDATE_MODULE = fileURLToPath(new URL("../scripts/update.mjs", import.meta.url));
 const NOOP_IO = { log: () => {}, warn: () => {} };
 
+/**
+ * One test below asserts on the LITERAL SOURCE TEXT of update.mjs. When Stryker mutates
+ * that file the sandbox copy is instrumented (every expression wrapped in `stryMutAct_*`),
+ * so the source no longer reads as written — the precondition is gone, not the property.
+ * Skip there rather than fail the mutation lane's initial test run.
+ */
+const UPDATE_SOURCE_IS_INSTRUMENTED = readFileSync(UPDATE_MODULE, "utf8").includes("stryMutAct_");
+
 /** pullToolkitCheckout's apply mode pins a snapshot in the OS tmpdir (not under the caller's
  *  temp root), so any test that calls it directly must clean it up explicitly or it leaks a
  *  git-worktree registration + temp dir across runs. */
@@ -2070,16 +2078,24 @@ test("R8-12: an inherited GIT_DIR can't defeat the envelope probe (git sets it f
   }
 });
 
-test("R8-13: the vendor child is spawned with a scrubbed git env (old snapshots' unsanitized git calls can't inherit GIT_DIR)", () => {
-  // The child runs the SNAPSHOT's own update.mjs, which may predate the git-env
-  // hardening — scrubbing must therefore happen at the spawn boundary, not only at our
-  // own call sites, or the process that actually writes the workspace + version stamp
-  // resolves against the wrong repository.
-  const src = readFileSync(UPDATE_MODULE, "utf8");
-  const spawnCall = src.slice(src.indexOf("spawnSync(process.execPath"));
-  const spawnOpts = spawnCall.slice(0, spawnCall.indexOf("});") + 3);
-  assert.match(spawnOpts, /env:\s*gitEnv\(\)/, "the hand-off spawn passes a scrubbed env");
-});
+test(
+  "R8-13: the vendor child is spawned with a scrubbed git env (old snapshots' unsanitized git calls can't inherit GIT_DIR)",
+  {
+    skip: UPDATE_SOURCE_IS_INSTRUMENTED
+      ? "update.mjs is Stryker-instrumented (source-text assertion N/A)"
+      : false,
+  },
+  () => {
+    // The child runs the SNAPSHOT's own update.mjs, which may predate the git-env
+    // hardening — scrubbing must therefore happen at the spawn boundary, not only at our
+    // own call sites, or the process that actually writes the workspace + version stamp
+    // resolves against the wrong repository.
+    const src = readFileSync(UPDATE_MODULE, "utf8");
+    const spawnCall = src.slice(src.indexOf("spawnSync(process.execPath"));
+    const spawnOpts = spawnCall.slice(0, spawnCall.indexOf("});") + 3);
+    assert.match(spawnOpts, /env:\s*gitEnv\(\)/, "the hand-off spawn passes a scrubbed env");
+  }
+);
 
 test("R8-14: --check/--preview run the SAME containment pre-flight as apply — no offer-then-refuse", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "aios-r8-previewcontain-"));

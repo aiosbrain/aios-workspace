@@ -17,6 +17,21 @@ const PULL_MODULE = pathToFileURL(
 ).href;
 const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
 
+// One test below clones THIS checkout to get a disposable-but-real toolkit. Under
+// Stryker the tests run from a sandbox copy that is NOT a git repository, so the
+// clone fails with "repository does not exist" — a missing precondition, not a
+// defect. Ask git itself rather than probing for `.git` (which is a *file* in a
+// linked worktree, and could be copied in a broken state).
+const TOOLKIT_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+const TOOLKIT_IS_GIT_REPO = (() => {
+  try {
+    execFileSync("git", ["-C", TOOLKIT_ROOT, "rev-parse", "--git-dir"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 function initRepo(dir) {
   git(dir, "init", "-q", "-b", "main");
   git(dir, "config", "user.email", "t@t.t");
@@ -387,82 +402,86 @@ test("interactive CLI still self-updates and propagates the re-exec child's fail
 
 // ---- #9 the unconditional hand-off can't loop (base case: same source, twice in a row) -----
 
-test("update against an already-current same source runs twice in a row without hanging or looping", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "aios-norecurse-"));
-  // A DISPOSABLE local clone of the real toolkit, not the live worktree directly and not a
-  // stub — exercises the actual real code (`--vendor-apply-only` is now structurally
-  // non-recursive, so there is no env-var guard to prove works; this test instead proves
-  // the hand-off completes normally, twice, without hanging) without ever risking a git
-  // fetch/fast-forward against the developer's/CI's actual working checkout, and without
-  // depending on the worktree being clean at test-run time (every other test in this file
-  // already uses a synthetic/disposable fixture — this is the one that didn't, previously).
-  const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
-  const disposableToolkit = path.join(root, "toolkit");
-  try {
-    execFileSync("git", [
-      "clone",
-      "--local",
-      "--no-hardlinks",
-      "-q",
-      toolkitRoot,
-      disposableToolkit,
-    ]);
-    git(disposableToolkit, "config", "user.email", "t@t.t");
-    git(disposableToolkit, "config", "user.name", "t");
-    const headBefore = git(toolkitRoot, "rev-parse", "HEAD");
-
-    const workspace = path.join(root, "workspace");
-    mkdirSync(workspace, { recursive: true });
-    writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
-
-    // First run: nothing synced yet, so this vendors for real. Bounded timeout — a
-    // reintroduced infinite-recursion bug must fail loudly and fast, never hang CI.
-    // --no-pull: the disposable clone is already current with itself; no network needed.
-    const first = spawnSync(
-      process.execPath,
-      [
-        CLI,
-        "update",
-        "--no-pull",
-        "--no-install",
-        "--from",
+test(
+  "update against an already-current same source runs twice in a row without hanging or looping",
+  { skip: TOOLKIT_IS_GIT_REPO ? false : "no .git in this checkout (Stryker sandbox)" },
+  () => {
+    const root = mkdtempSync(path.join(tmpdir(), "aios-norecurse-"));
+    // A DISPOSABLE local clone of the real toolkit, not the live worktree directly and not a
+    // stub — exercises the actual real code (`--vendor-apply-only` is now structurally
+    // non-recursive, so there is no env-var guard to prove works; this test instead proves
+    // the hand-off completes normally, twice, without hanging) without ever risking a git
+    // fetch/fast-forward against the developer's/CI's actual working checkout, and without
+    // depending on the worktree being clean at test-run time (every other test in this file
+    // already uses a synthetic/disposable fixture — this is the one that didn't, previously).
+    const toolkitRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+    const disposableToolkit = path.join(root, "toolkit");
+    try {
+      execFileSync("git", [
+        "clone",
+        "--local",
+        "--no-hardlinks",
+        "-q",
+        toolkitRoot,
         disposableToolkit,
-        "--repo",
-        workspace,
-      ],
-      { encoding: "utf8", timeout: 30_000 }
-    );
-    assert.notEqual(first.signal, "SIGTERM", "first run must not time out (no infinite loop)");
-    assert.equal(first.status, 0, first.stderr);
+      ]);
+      git(disposableToolkit, "config", "user.email", "t@t.t");
+      git(disposableToolkit, "config", "user.name", "t");
+      const headBefore = git(toolkitRoot, "rev-parse", "HEAD");
 
-    // Second run: workspace is now current — the exact "already-current, same source" case.
-    // The hand-off to --vendor-apply-only is unconditional and structurally non-recursive
-    // (no env-var guard to defeat), so this just proves it completes normally twice in a
-    // row rather than hanging or erroring on the second, redundant sync.
-    const second = spawnSync(
-      process.execPath,
-      [
-        CLI,
-        "update",
-        "--no-pull",
-        "--no-install",
-        "--from",
-        disposableToolkit,
-        "--repo",
-        workspace,
-      ],
-      { encoding: "utf8", timeout: 30_000 }
-    );
-    assert.notEqual(second.signal, "SIGTERM", "second run must not time out (no infinite loop)");
-    assert.equal(second.status, 0, second.stderr);
-    assert.match(second.stdout, /already up to date|synced to/, "completed normally, not stuck");
+      const workspace = path.join(root, "workspace");
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(path.join(workspace, "aios.yaml"), "owner: t\n");
 
-    assert.equal(
-      git(toolkitRoot, "rev-parse", "HEAD"),
-      headBefore,
-      "the REAL toolkit checkout this test runs from must be untouched"
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+      // First run: nothing synced yet, so this vendors for real. Bounded timeout — a
+      // reintroduced infinite-recursion bug must fail loudly and fast, never hang CI.
+      // --no-pull: the disposable clone is already current with itself; no network needed.
+      const first = spawnSync(
+        process.execPath,
+        [
+          CLI,
+          "update",
+          "--no-pull",
+          "--no-install",
+          "--from",
+          disposableToolkit,
+          "--repo",
+          workspace,
+        ],
+        { encoding: "utf8", timeout: 30_000 }
+      );
+      assert.notEqual(first.signal, "SIGTERM", "first run must not time out (no infinite loop)");
+      assert.equal(first.status, 0, first.stderr);
+
+      // Second run: workspace is now current — the exact "already-current, same source" case.
+      // The hand-off to --vendor-apply-only is unconditional and structurally non-recursive
+      // (no env-var guard to defeat), so this just proves it completes normally twice in a
+      // row rather than hanging or erroring on the second, redundant sync.
+      const second = spawnSync(
+        process.execPath,
+        [
+          CLI,
+          "update",
+          "--no-pull",
+          "--no-install",
+          "--from",
+          disposableToolkit,
+          "--repo",
+          workspace,
+        ],
+        { encoding: "utf8", timeout: 30_000 }
+      );
+      assert.notEqual(second.signal, "SIGTERM", "second run must not time out (no infinite loop)");
+      assert.equal(second.status, 0, second.stderr);
+      assert.match(second.stdout, /already up to date|synced to/, "completed normally, not stuck");
+
+      assert.equal(
+        git(toolkitRoot, "rev-parse", "HEAD"),
+        headBefore,
+        "the REAL toolkit checkout this test runs from must be untouched"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);

@@ -84,7 +84,10 @@ export function selfHeal(cwd) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (r.status === 0) return { status: "hydrated" };
-  return { status: "failed", reason: (r.stderr || r.error?.message || "").trim().split("\n").pop() };
+  return {
+    status: "failed",
+    reason: (r.stderr || r.error?.message || "").trim().split("\n").pop(),
+  };
 }
 
 // ── entrypoint ──────────────────────────────────────────────────────────────

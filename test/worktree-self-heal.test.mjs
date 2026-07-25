@@ -1,6 +1,7 @@
 /**
  * AIO-482 — worktree auto-hydration for tools that never call `aios worktree add`
- * (Conductor et al). T1–T5 from the spec's automated acceptance section.
+ * (Conductor et al). T1–T6 cover the spec's automated acceptance section end-to-end
+ * (subprocess + real git hooks); T7–T11 pin the same units' return contracts in-process.
  *
  * Every case runs against a REAL temp git repo (no mocks): the whole point is that
  * hydration survives a vanilla `git worktree add` performed by someone else.
@@ -19,11 +20,22 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  realpathSync,
   rmSync,
   readFileSync,
 } from "node:fs";
 
 import { MANAGED_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
+import {
+  cmdWorktree,
+  installPostCheckoutHook,
+  postCheckoutHookPath,
+} from "../scripts/worktree.mjs";
+import {
+  findHydrator,
+  selfHeal,
+  MARKER as SELF_HEAL_MARKER,
+} from "../hooks/worktree-self-heal.mjs";
 
 const TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SELF_HEAL = path.join(TOOLKIT, "hooks", "worktree-self-heal.mjs");
@@ -179,6 +191,174 @@ test("T6: post-checkout hydrates a scaffolded workspace via the sibling toolkit"
   git(ws, "worktree", "add", "-b", "task6", wt, "main");
 
   assert.ok(existsSync(path.join(wt, MARKER)), "hydrated from the sibling toolkit checkout");
+});
+
+// ── T7: installPostCheckoutHook — the three outcomes, in-process ───────────────
+/** Capture console.log for the duration of `fn`. */
+function captureLog(fn) {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    return { result: fn(), out: lines.join("\n") };
+  } finally {
+    console.log = original;
+  }
+}
+
+test("T7: installPostCheckoutHook reports installed → present, and skips with no hooks dir", () => {
+  const { root, repo } = makePrimary();
+
+  const first = captureLog(() => installPostCheckoutHook(repo, { quiet: true }));
+  assert.equal(first.result, "installed");
+  assert.match(first.out, /installed post-checkout hook/, "a new install is announced even quiet");
+  assert.ok(existsSync(postCheckoutHookPath(repo)), "hook landed in the common dir");
+
+  // Second call is byte-identical → idempotent no-op, and silent under `quiet`.
+  const second = captureLog(() => installPostCheckoutHook(repo, { quiet: true }));
+  assert.equal(second.result, "present");
+  assert.equal(second.out, "", "an already-present hook stays silent when quiet");
+
+  // Non-quiet reports the same state on stdout.
+  const loud = captureLog(() => installPostCheckoutHook(repo, {}));
+  assert.equal(loud.result, "present");
+  assert.match(loud.out, /already installed/);
+
+  // A directory with no .git/hooks is a skip, never a throw.
+  const bare = path.join(root, "not-a-repo");
+  mkdirSync(bare, { recursive: true });
+  assert.equal(installPostCheckoutHook(bare, { quiet: true }), "skipped");
+});
+
+// ── T8: postCheckoutHookPath resolves the SHARED common dir from a worktree ────
+test("T8: postCheckoutHookPath resolves hooks from the common dir, not <worktree>/.git", () => {
+  const { root, repo } = makePrimary();
+  const wt = path.join(root, "linked");
+  git(repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-b", "task8", wt, "main");
+
+  // Inside a linked worktree `.git` is a FILE, so a naive join would name a path that
+  // can never exist and silently report "no hook installed" for a repo that has one.
+  // Compare through realpath: on macOS the tmpdir is a /var → /private/var symlink, and
+  // git hands back an already-resolved absolute common dir for a linked worktree.
+  installPostCheckoutHook(repo, { quiet: true });
+  assert.equal(
+    realpathSync(postCheckoutHookPath(wt)),
+    realpathSync(postCheckoutHookPath(repo)),
+    "worktree and primary agree on one shared hook path"
+  );
+  assert.ok(existsSync(postCheckoutHookPath(wt)), "the worktree sees the primary's hook");
+
+  // Not a git repo at all → conventional <dir>/.git/hooks/post-checkout, no throw.
+  const bare = path.join(root, "plain-dir");
+  mkdirSync(bare, { recursive: true });
+  assert.equal(postCheckoutHookPath(bare), path.join(bare, ".git", "hooks", "post-checkout"));
+});
+
+// ── T9: `aios worktree doctor` reports the three layers ───────────────────────
+test("T9: worktree doctor reports 'not wired' then 'ready' as layers land", async () => {
+  const { repo } = makePrimary();
+
+  // Nothing installed: no post-checkout hook, no SessionStart entry, no .conductor.
+  let captured = [];
+  const original = console.log;
+  console.log = (...args) => captured.push(args.join(" "));
+  try {
+    await cmdWorktree(repo, {}, ["doctor"]);
+  } finally {
+    console.log = original;
+  }
+  let out = captured.join("\n");
+  assert.match(out, /Conductor support: not wired/);
+  assert.match(out, /post-checkout hook installed/);
+
+  // Land all three layers, then re-report.
+  installPostCheckoutHook(repo, { quiet: true });
+  writeFileSync(
+    path.join(repo, ".claude", "settings.json"),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              { type: "command", command: "${CLAUDE_PROJECT_DIR}/hooks/worktree-self-heal.mjs" },
+            ],
+          },
+        ],
+      },
+    }) + "\n"
+  );
+  mkdirSync(path.join(repo, ".conductor"), { recursive: true });
+  writeFileSync(path.join(repo, ".conductor", "settings.toml"), '[scripts]\nsetup = "true"\n');
+
+  captured = [];
+  console.log = (...args) => captured.push(args.join(" "));
+  try {
+    await cmdWorktree(repo, {}, ["doctor"]);
+  } finally {
+    console.log = original;
+  }
+  out = captured.join("\n");
+  assert.match(out, /Conductor support: ready/);
+  assert.doesNotMatch(out, /not wired/);
+});
+
+// ── T10: selfHeal's return contract, in-process (each skip reason + failure) ───
+test("T10: selfHeal returns a typed status for every branch, and never throws", () => {
+  const { root, repo } = makePrimary();
+
+  assert.deepEqual(selfHeal(path.join(root, "nowhere-at-all")), {
+    status: "skipped",
+    reason: "not a git repo",
+  });
+  assert.equal(selfHeal(repo).status, "skipped", "the primary checkout is never hydrated");
+  assert.equal(selfHeal(repo).reason, "primary checkout");
+
+  const wt = path.join(root, "wt10");
+  git(repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-b", "task10", wt, "main");
+  assert.equal(selfHeal(wt).status, "hydrated");
+  assert.deepEqual(selfHeal(wt), { status: "skipped", reason: "already hydrated" });
+
+  // A hydrator that exits non-zero is reported as `failed`, never thrown. The worktree
+  // checks out its own copy of scripts/, which findHydrator prefers over the primary's,
+  // so the failing stub has to replace THAT one.
+  rmSync(path.join(wt, SELF_HEAL_MARKER));
+  writeFileSync(
+    path.join(wt, "scripts", "link-worktree-env.sh"),
+    "#!/usr/bin/env bash\necho 'boom' >&2\nexit 3\n"
+  );
+  const failed = selfHeal(wt);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.reason, /boom/);
+});
+
+// ── T11: findHydrator's candidate order ───────────────────────────────────────
+test("T11: findHydrator prefers the worktree, then primary, then AIOS_TOOLKIT_DIR", () => {
+  const { root, repo } = makePrimary();
+  const elsewhere = path.join(root, "toolkit-elsewhere");
+  mkdirSync(path.join(elsewhere, "scripts"), { recursive: true });
+  writeFileSync(path.join(elsewhere, "scripts", "link-worktree-env.sh"), "#!/bin/sh\n");
+
+  // The primary carries a hydrator (makePrimary copies the real one).
+  assert.equal(
+    findHydrator(path.join(root, "no-such-worktree"), repo),
+    path.join(repo, "scripts", "link-worktree-env.sh")
+  );
+
+  // With no local and no primary hydrator, AIOS_TOOLKIT_DIR is the next candidate.
+  const previous = process.env.AIOS_TOOLKIT_DIR;
+  process.env.AIOS_TOOLKIT_DIR = elsewhere;
+  try {
+    rmSync(path.join(repo, "scripts", "link-worktree-env.sh"));
+    assert.equal(
+      findHydrator(path.join(root, "no-such-worktree"), repo),
+      path.join(elsewhere, "scripts", "link-worktree-env.sh")
+    );
+    delete process.env.AIOS_TOOLKIT_DIR;
+    assert.equal(findHydrator(path.join(root, "no-such-worktree"), repo), null, "no candidate");
+  } finally {
+    if (previous === undefined) delete process.env.AIOS_TOOLKIT_DIR;
+    else process.env.AIOS_TOOLKIT_DIR = previous;
+  }
 });
 
 // ── T5: the adapter is actually wired + shipped ────────────────────────────────
