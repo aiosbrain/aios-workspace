@@ -160,6 +160,11 @@ export const USAGE_LINES = {
     "    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet",
     "                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)",
   ],
+  verify: [
+    "  aios verify <sha> [--lanes N]         report-only multi-model review of one commit",
+    "    [--json] [--out <file>]             defaults to 3 lanes; hard cap 8; no repo mutations",
+    "                                         Exit 0 clear · 1 blocking findings · 4 usage error",
+  ],
   "export-okf": [
     "  aios export-okf [output-dir]          emit OKF bundle (no brain needed)",
     "    [--tier external|team]              default: external (includes team + external)",

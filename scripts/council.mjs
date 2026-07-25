@@ -71,62 +71,84 @@ async function askOneModel(model, question, apiKey) {
 
 // `repo` + `rest` let aios.mjs's `cmdCouncil` call this directly (repo-aware, like cmdAsks);
 // direct `node scripts/council.mjs` invocation below passes repo=cwd + the raw argv tail.
-export async function runCouncil(repo, rest) {
+export async function runCouncil(repo, rest, options = {}) {
   const { question, modelsOverride } = parseCouncilArgs(rest);
   if (!question.trim()) die('usage: aios council "<question>" [--models id,id,id]');
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) die("OPENROUTER_API_KEY is not set — council needs it to reach OpenRouter");
 
   const { models: configured } = resolveCouncilConfig(repo, { modelsOverride });
-  const models = assertDiverse(configured);
+  const panel = assertDiverse(configured);
+  const requestedLanes = options.lanes ?? panel.length;
+  if (!Number.isInteger(requestedLanes) || requestedLanes < 1) {
+    die(`council lanes must be a positive integer (got ${requestedLanes})`);
+  }
+  if (requestedLanes > panel.length) {
+    die(
+      `council requested ${requestedLanes} lane(s), but only ${panel.length} model(s) are configured`
+    );
+  }
+  const models = panel.slice(0, requestedLanes);
+  const print = options.print !== false;
+  const persist = options.persist !== false;
+  const callModel = options.callModel ?? askOneModel;
 
-  console.error(
-    c.yellow("⚠ aios council — third-party egress") +
-      c.dim("  your question is sent to OpenRouter and each configured model provider")
-  );
+  if (print) {
+    console.error(
+      c.yellow("⚠ aios council — third-party egress") +
+        c.dim("  your question is sent to OpenRouter and each configured model provider")
+    );
 
-  console.log(c.blue("aios council") + c.dim(`  ${models.length} models · P0 (stage 1 only)`));
-  for (const m of models) console.log(c.dim(`  · ${m}  [${modelFamily(m)}]`));
-  console.log("");
+    console.log(c.blue("aios council") + c.dim(`  ${models.length} models · P0 (stage 1 only)`));
+    for (const m of models) console.log(c.dim(`  · ${m}  [${modelFamily(m)}]`));
+    console.log("");
+  }
 
-  const results = await Promise.all(models.map((m) => askOneModel(m, question, apiKey)));
+  const results = await Promise.all(models.map((m) => callModel(m, question, apiKey)));
 
   const succeeded = results.filter((r) => r.ok);
   const failed = results.filter((r) => !r.ok);
 
-  for (const r of results) {
-    console.log(c.blue(`── ${r.model} `) + c.dim(`(${r.durationMs}ms)`));
-    if (r.ok) console.log(r.text);
-    else console.log(c.dim(`  [failed: ${r.error}]`));
-    console.log("");
-  }
-  if (failed.length) {
-    console.log(
-      c.dim(`  ${failed.length}/${models.length} model(s) failed — proceeding with the rest.`)
-    );
+  if (print) {
+    for (const r of results) {
+      console.log(c.blue(`── ${r.model} `) + c.dim(`(${r.durationMs}ms)`));
+      if (r.ok) console.log(r.text);
+      else console.log(c.dim(`  [failed: ${r.error}]`));
+      console.log("");
+    }
+    if (failed.length) {
+      console.log(
+        c.dim(`  ${failed.length}/${models.length} model(s) failed — proceeding with the rest.`)
+      );
+    }
   }
   if (!succeeded.length) die("all council models failed — nothing to synthesize");
 
-  const dir = path.join(repo, ".aios", "loop", "council");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const outPath = path.join(dir, `${stamp}.json`);
-  writeFileSync(
-    outPath,
-    JSON.stringify(
-      {
-        question,
-        models,
-        stage1: results,
-        createdAt: new Date().toISOString(),
-        phase: "P0 — stage 1 only, no ranking/synthesis yet",
-      },
-      null,
-      2
-    )
-  );
-  console.log(c.dim(`  transcript: ${outPath}`));
+  let outPath = null;
+  if (persist) {
+    const dir = path.join(repo, ".aios", "loop", "council");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    outPath = path.join(dir, `${stamp}.json`);
+    writeFileSync(
+      outPath,
+      JSON.stringify(
+        {
+          question,
+          models,
+          stage1: results,
+          createdAt: new Date().toISOString(),
+          phase: "P0 — stage 1 only, no ranking/synthesis yet",
+        },
+        null,
+        2
+      )
+    );
+    if (print) console.log(c.dim(`  transcript: ${outPath}`));
+  }
+
+  return { question, models, results, outPath };
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

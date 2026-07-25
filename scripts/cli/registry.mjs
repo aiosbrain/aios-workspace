@@ -252,6 +252,14 @@ export const COMMANDS = [
     usage: U.council,
   },
   {
+    name: "verify",
+    resolution: "offline",
+    loader: () => import("../verify.mjs"),
+    adapt: (ctx, mod) => mod.cmdVerify(ctx.repo, ctx.rest),
+    exit: "exit-code",
+    usage: U.verify,
+  },
+  {
     name: "export-okf",
     resolution: "offline",
     adapt: (ctx) => ctx.local.cmdExportOkf(ctx.repo, ctx.cfg, ctx.rest),
