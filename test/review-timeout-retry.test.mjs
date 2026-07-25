@@ -151,17 +151,26 @@ console.log("local Bugbot wall-clock budget replaces the derived retry budget");
     "the multiplicative retry budget export is gone",
     reviewBugbot.cursorReviewRetryBudgetMs === undefined
   );
-  const { REVIEW_WALL_CLOCK_BUDGET_MS, MIN_ATTEMPT_MS } = reviewBugbot;
+  const { REVIEW_WALL_CLOCK_BUDGET_MS, MIN_ATTEMPT_MS, ATTEMPT_RESERVE_MARGIN_MS } = reviewBugbot;
   const hookChildTimeoutSeconds = 400; // hooks/local-bugbot-gate.mjs
+  const reserveMs = hookChildTimeoutSeconds * 1000 + ATTEMPT_RESERVE_MARGIN_MS;
   check(
     "a full first attempt fits inside the code pass's allowance (never truncated)",
-    hookChildTimeoutSeconds * 1000 <= REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS
+    hookChildTimeoutSeconds * 1000 <= REVIEW_WALL_CLOCK_BUDGET_MS - reserveMs
+  );
+  check(
+    "the security reservation covers a FULL attempt, not just a start",
+    reserveMs > hookChildTimeoutSeconds * 1000
   );
   check(
     "the worst case is the budget, not attempts × passes × timeout",
     REVIEW_WALL_CLOCK_BUDGET_MS < 2 * (2 * 3 * hookChildTimeoutSeconds * 1000)
   );
-  check("both mandatory passes are fundable", REVIEW_WALL_CLOCK_BUDGET_MS >= 2 * MIN_ATTEMPT_MS);
+  check(
+    "both mandatory passes can each take a full attempt",
+    REVIEW_WALL_CLOCK_BUDGET_MS >= 2 * hookChildTimeoutSeconds * 1000
+  );
+  check("the protocol re-ask floor is still a meaningful attempt", MIN_ATTEMPT_MS === 180_000);
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

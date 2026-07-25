@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,11 @@ const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
 // and write a verdict, otherwise the kill lands mid-review and produces no verdict at all.
 const REVIEW_PROCESS_GRACE_MS = 60_000;
 const NATIVE_HOOK_GRACE_MS = 60_000;
+// The handoff exists so a run that was queued behind the lock sees the real failure
+// instead of spawning its own duplicate review. That window is seconds; anything later is
+// a legitimate retry of a transient infrastructure failure, so the TTL stays short —
+// a long one would lock the operator who owns the failure out of their own retry.
+const ERROR_HANDOFF_TTL_MS = 120_000;
 const LOCK_POLL_MS = 250;
 const LOCK_INITIALIZATION_GRACE_MS = 5_000;
 const OUTPUT_CAP = 9_000;
@@ -59,7 +64,7 @@ function git(args, cwd) {
   }).trim();
 }
 
-function hardenedChildEnv(source) {
+export function hardenedChildEnv(source) {
   const env = { ...source };
   for (const key of [
     "AIOS_BUGBOT_MODEL",
@@ -267,8 +272,30 @@ function waitForLockOrResult(file, fingerprint, timeoutMs) {
   return { error: "timed out waiting for the concurrent local Bugbot review" };
 }
 
+/** The exact argv the gate hands its child reviewer. Exported so tests assert behavior. */
+export function reviewChildArgs({ repo, baseSha, branch, model }) {
+  return [
+    path.join(repo, "scripts", "aios.mjs"),
+    "review-bugbot",
+    branch,
+    "--base",
+    baseSha,
+    "--worktree",
+    repo,
+    "--include-worktree",
+    "--fail-on",
+    REQUIRED_BUGBOT_FAIL_ON,
+    "--model",
+    model,
+    "--cursor-timeout",
+    String(REVIEW_CHILD_TIMEOUT_SECONDS),
+    "--read-only",
+    "--hook-protocol",
+    "--exclude-generated",
+  ];
+}
+
 function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
-  const cli = path.join(repo, "scripts", "aios.mjs");
   process.stderr.write("[local-bugbot] code + security review started (both required)\n");
   const heartbeat = spawn(
     process.execPath,
@@ -284,35 +311,13 @@ function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
   const startedAt = Date.now();
   let child;
   try {
-    child = spawnSync(
-      process.execPath,
-      [
-        cli,
-        "review-bugbot",
-        branch,
-        "--base",
-        baseSha,
-        "--worktree",
-        repo,
-        "--include-worktree",
-        "--fail-on",
-        REQUIRED_BUGBOT_FAIL_ON,
-        "--model",
-        model,
-        "--cursor-timeout",
-        String(REVIEW_CHILD_TIMEOUT_SECONDS),
-        "--read-only",
-        "--hook-protocol",
-        "--exclude-generated",
-      ],
-      {
-        cwd: repo,
-        encoding: "utf8",
-        timeout: timeoutMs,
-        maxBuffer: 8 * 1024 * 1024,
-        env: childEnv,
-      }
-    );
+    child = spawnSync(process.execPath, reviewChildArgs({ repo, baseSha, branch, model }), {
+      cwd: repo,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      maxBuffer: 8 * 1024 * 1024,
+      env: childEnv,
+    });
   } finally {
     heartbeat.kill();
   }
@@ -436,7 +441,6 @@ export function evaluateLocalBugbotGate({
     };
   }
   const lock = acquired.lock;
-  const ownerRunId = randomUUID();
   const raced = cachedResult(file, fingerprint);
   if (raced) {
     releaseLock(lock);
@@ -458,9 +462,8 @@ export function evaluateLocalBugbotGate({
     if (review.signal || review.parentDeadlineFired) {
       const handoff = {
         status: "error",
-        ownerRunId,
         fingerprint,
-        expiresAt: Date.now() + 2 * REVIEW_WALL_CLOCK_BUDGET_MS,
+        expiresAt: Date.now() + ERROR_HANDOFF_TTL_MS,
         signal: review.signal ?? null,
         exitStatus: review.status ?? null,
         elapsedMs: review.elapsedMs ?? 0,

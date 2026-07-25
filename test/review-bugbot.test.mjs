@@ -322,7 +322,7 @@ console.log("wall-clock budget constants");
     "the budget is a single absolute value, not derived",
     REVIEW_WALL_CLOCK_BUDGET_MS === 900_000
   );
-  check("a reserved attempt is a real attempt", MIN_ATTEMPT_MS === 180_000);
+  check("the protocol re-ask floor is a meaningful attempt", MIN_ATTEMPT_MS === 180_000);
   check(
     "the budget funds both mandatory passes with a reservation left",
     REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS >= MIN_ATTEMPT_MS

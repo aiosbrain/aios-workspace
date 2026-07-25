@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 import {
   evaluateLocalBugbotGate as evaluateProductionGate,
   formatHookResult,
+  hardenedChildEnv,
+  reviewChildArgs,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
   BUGBOT_BLOCKED_MARKER,
@@ -28,9 +30,10 @@ import {
   BUGBOT_CLEAR_TOKEN,
   buildBugbotPrompt,
   buildSecurityReviewPrompt,
+  ATTEMPT_RESERVE_MARGIN_MS,
   captureBranchDiff,
   hasFindingsAtOrAbove,
-  MIN_ATTEMPT_MS,
+  inspectLockDelta,
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
   retryReviewTimeoutOnce,
@@ -1091,15 +1094,42 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   assert.match(openCode, /env:\s*hardenedGateEnv\(\)/);
   assert.match(hydration, /cp -Rn.*scaffold\/\.opencode/s);
 
-  const gate = readFileSync(path.join(REPO, "hooks", "local-bugbot-gate.mjs"), "utf8");
   const build = readFileSync(path.join(REPO, "scripts", "build.mjs"), "utf8");
   const ship = readFileSync(path.join(REPO, "scripts", "ship.mjs"), "utf8");
-  assert.match(gate, /--cursor-timeout/);
-  assert.match(gate, /--read-only/);
-  assert.match(gate, /--hook-protocol/);
-  assert.match(gate, /const model = REQUIRED_BUGBOT_MODEL/);
-  assert.match(gate, /reviewTimeoutMs \+ NATIVE_HOOK_GRACE_MS/);
-  assert.match(gate, /env\.PATH = "\/usr\/bin:\/bin:/);
+  // Assert the gate's BEHAVIOUR, never its source text: source-text matching breaks under
+  // the mutation lane (Stryker rewrites the very literals a regex is looking for) and does
+  // not actually prove the child is invoked correctly.
+  const args = reviewChildArgs({
+    repo: "/repo",
+    baseSha: "abc123",
+    branch: "feat/x",
+    model: REQUIRED_BUGBOT_MODEL,
+  });
+  for (const flag of [
+    "--cursor-timeout",
+    "--read-only",
+    "--hook-protocol",
+    "--exclude-generated",
+    "--include-worktree",
+  ]) {
+    assert.ok(args.includes(flag), `the child reviewer is invoked with ${flag}`);
+  }
+  assert.equal(args[args.indexOf("--model") + 1], REQUIRED_BUGBOT_MODEL);
+  assert.equal(args[0], path.join("/repo", "scripts", "aios.mjs"));
+  const childEnv = hardenedChildEnv({
+    PATH: "/hostile/bin",
+    NODE_OPTIONS: "--require /hostile.js",
+    GIT_DIR: "/hostile/.git",
+    HTTPS_PROXY: "https://attacker.invalid",
+    AIOS_BUGBOT_MODEL: "cursor:forged",
+    KEEP: "yes",
+  });
+  assert.equal(childEnv.PATH, "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin");
+  assert.equal(childEnv.NODE_OPTIONS, undefined);
+  assert.equal(childEnv.GIT_DIR, undefined);
+  assert.equal(childEnv.HTTPS_PROXY, undefined);
+  assert.equal(childEnv.AIOS_BUGBOT_MODEL, undefined);
+  assert.equal(childEnv.KEEP, "yes");
   assert.doesNotMatch(build, /AIOS_BUGBOT_MODEL/);
   assert.match(build, /model:\s*REQUIRED_BUGBOT_MODEL/);
   assert.match(ship, /const reviewModel = REQUIRED_BUGBOT_MODEL/);
@@ -1381,7 +1411,7 @@ function changedRepo() {
   return repo;
 }
 
-test("the shared deadline reserves the security pass a full MIN_ATTEMPT_MS", async () => {
+test("the shared deadline reserves the security pass a full attempt", async () => {
   const repo = changedRepo();
   try {
     const clock = fakeClock();
@@ -1390,13 +1420,13 @@ test("the shared deadline reserves the security pass a full MIN_ATTEMPT_MS", asy
       worktree: repo,
       baseSha: git(repo, "rev-parse", "main"),
       branch: "feat/gate",
-      // Deliberately larger than the whole budget: only the deadline may bound the calls.
-      timeoutMs: 5_000_000,
+      // Larger than the code pass's allowance: only the deadline may bound the calls.
+      timeoutMs: 400_000,
       now: clock.now,
       sleep: clock.sleep,
       reviewPrompt: async ({ label, timeoutMs, deadlineAt }) => {
         calls.push({ label, timeoutMs, deadlineAt, startedAt: clock.now() });
-        clock.advance(timeoutMs); // each pass spends everything it is allowed
+        clock.advance(deadlineAt - clock.now()); // each pass spends everything it is allowed
         return BUGBOT_CLEAR_TOKEN;
       },
     });
@@ -1404,14 +1434,20 @@ test("the shared deadline reserves the security pass a full MIN_ATTEMPT_MS", asy
     assert.equal(calls.length, 2, "both mandatory passes ran, sequentially");
     assert.ok(calls[0].label.includes("code review"));
     assert.ok(calls[1].label.includes("security review"));
+    const reserveMs = 400_000 + ATTEMPT_RESERVE_MARGIN_MS;
     assert.equal(
       calls[0].deadlineAt,
-      REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS,
+      REVIEW_WALL_CLOCK_BUDGET_MS - reserveMs,
       "the code pass may not spend the security pass's reservation"
     );
     assert.equal(calls[1].deadlineAt, REVIEW_WALL_CLOCK_BUDGET_MS);
-    assert.equal(calls[1].startedAt, REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS);
-    assert.equal(calls[1].timeoutMs, MIN_ATTEMPT_MS, "the security pass still gets a real attempt");
+    assert.equal(calls[1].startedAt, REVIEW_WALL_CLOCK_BUDGET_MS - reserveMs);
+    assert.equal(
+      calls[1].timeoutMs,
+      400_000,
+      "the security pass gets a FULL attempt, not just enough to start"
+    );
+    assert.ok(reserveMs > 400_000, "the reservation exceeds one per-attempt timeout");
     assert.ok(
       clock.now() <= REVIEW_WALL_CLOCK_BUDGET_MS,
       `total elapsed ${clock.now()}ms exceeded the wall-clock budget`
@@ -1566,8 +1602,11 @@ test("a killed review surfaces the signal, elapsed time, and deadline cause", ()
     const handoff = JSON.parse(readFileSync(state, "utf8"));
     assert.equal(handoff.status, "error");
     assert.equal(handoff.parentDeadlineFired, true);
-    assert.ok(handoff.ownerRunId);
     assert.equal(handoff.expiresAt > Date.now(), true);
+    assert.ok(
+      handoff.expiresAt - Date.now() <= 120_000,
+      "the handoff must not lock its own owner out of a retry"
+    );
     writeFileSync(state, `${JSON.stringify({ ...handoff, expiresAt: Date.now() - 1 })}\n`);
 
     let retried = 0;
@@ -1726,34 +1765,214 @@ test("a lockfile change without its manifest blocks", async () => {
   }
 });
 
-test("a dist output that does not match a clean rebuild blocks", () => {
+// ---- H3: the lockfile delta is the reviewable form of an excluded lockfile ---------------
+// `npm ci --dry-run` resolves the tree FROM the lockfile and never fetches a tarball, so it
+// proves lock↔manifest agreement and nothing else: a tampered integrity hash and a `resolved`
+// repointed at an attacker mirror both exit 0. These checks are the actual content control.
+
+const NPM_TARBALL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz";
+
+function lockWith(entry) {
+  return {
+    name: "aios-workspace",
+    lockfileVersion: 3,
+    packages: { "": { name: "aios-workspace" }, "node_modules/left-pad": entry },
+  };
+}
+
+function lockDelta(before, after) {
   const repo = fixture();
   try {
-    const bin = path.join(repo, "node_modules", ".bin");
-    mkdirSync(bin, { recursive: true });
-    // Stand-in compiler: emits the one known-good artifact into the requested --outDir.
-    writeFileSync(
-      path.join(bin, "tsc"),
-      '#!/bin/sh\nmkdir -p "$4/operator-loop"\nprintf \'rebuilt\\n\' > "$4/operator-loop/index.js"\n'
+    const lock = path.join(repo, "package-lock.json");
+    writeFileSync(lock, `${typeof before === "string" ? before : JSON.stringify(before)}\n`);
+    git(repo, "add", "package-lock.json");
+    git(repo, "commit", "-qm", "lockfile");
+    const base = git(repo, "rev-parse", "HEAD");
+    writeFileSync(lock, `${typeof after === "string" ? after : JSON.stringify(after)}\n`);
+    return inspectLockDelta(repo, "package-lock.json", base);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+const PINNED = { version: "1.3.0", resolved: NPM_TARBALL, integrity: "sha512-AAA" };
+
+test("a lockfile entry repointed at a foreign registry host blocks", () => {
+  const delta = lockDelta(
+    lockWith(PINNED),
+    lockWith({ ...PINNED, resolved: "https://evil.example.com/left-pad-1.3.0.tgz" })
+  );
+  assert.equal(delta.failures.length, 1);
+  assert.match(delta.failures[0], /evil\.example\.com.*not an allowed registry host/);
+});
+
+test("a tampered integrity hash on an unchanged version blocks", () => {
+  const delta = lockDelta(lockWith(PINNED), lockWith({ ...PINNED, integrity: "sha512-EVIL" }));
+  assert.equal(delta.failures.length, 1);
+  assert.match(delta.failures[0], /without changing version or resolved URL/);
+});
+
+test("an entry that loses or never had an integrity hash blocks", () => {
+  const dropped = lockDelta(
+    lockWith(PINNED),
+    lockWith({ version: PINNED.version, resolved: PINNED.resolved })
+  );
+  assert.match(dropped.failures.join(" "), /lost its integrity hash/);
+
+  const added = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ version: "1.3.0", resolved: NPM_TARBALL })
+  );
+  assert.match(added.failures.join(" "), /added with a tarball but no integrity hash/);
+});
+
+test("an honest version bump passes and is summarized for the reviewer", () => {
+  const delta = lockDelta(
+    lockWith(PINNED),
+    lockWith({
+      version: "1.4.0",
+      resolved: "https://registry.npmjs.org/left-pad/-/left-pad-1.4.0.tgz",
+      integrity: "sha512-BBB",
+    })
+  );
+  assert.deepEqual(delta.failures, []);
+  assert.equal(delta.summary.length, 1);
+  assert.match(delta.summary[0], /node_modules\/left-pad 1\.3\.0 → 1\.4\.0/);
+  assert.match(delta.summary[0], /registry\.npmjs\.org/);
+  assert.match(delta.summary[0], /integrity changed/);
+
+  const removed = lockDelta(lockWith(PINNED), {
+    name: "x",
+    lockfileVersion: 3,
+    packages: { "": { name: "x" } },
+  });
+  assert.deepEqual(removed.failures, []);
+  assert.match(removed.summary.join(" "), /left-pad 1\.3\.0 → \(removed\)/);
+});
+
+test("an unparseable or pre-v2 lockfile fails closed", () => {
+  const broken = lockDelta(lockWith(PINNED), "{ not json");
+  assert.equal(broken.failures.length, 1);
+  assert.match(broken.failures[0], /could not be parsed for review/);
+
+  const legacy = lockDelta(lockWith(PINNED), {
+    name: "x",
+    lockfileVersion: 1,
+    dependencies: { "left-pad": { version: "9.9.9" } },
+  });
+  assert.match(legacy.failures.join(" "), /lockfileVersion 2\+ is required/);
+});
+
+test("the summarized lockfile delta reaches both prompts", async () => {
+  const repo = lockfileRepo();
+  try {
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    appendFileSync(path.join(repo, "package.json"), "\n");
+    const prompts = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      excludeFromPrompt: true,
+      // Stand in for the real gates; their own outputs are covered above and below.
+      excludedPathGates: () => ({
+        ok: true,
+        summaries: {
+          "package-lock.json": ["node_modules/left-pad 1.3.0 → 1.4.0 [registry.npmjs.org]"],
+        },
+      }),
+      reviewPrompt: async ({ prompt }) => {
+        prompts.push(prompt);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(prompts.length, 2);
+    for (const prompt of prompts) {
+      assert.match(prompt, /Changed, not shown in full/);
+      assert.match(prompt, /package-lock\.json — \d+ bytes, sha256 [a-f0-9]{64}/);
+      assert.match(prompt, /node_modules\/left-pad 1\.3\.0 → 1\.4\.0 \[registry\.npmjs\.org\]/);
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- H1/M4: the compensating gate runs REAL npm against this repo's own lockfile ---------
+// It shipped broken (a sanitized PATH stripped `node`, so npm's `#!/usr/bin/env node`
+// shebang died in 34 ms and EVERY lockfile change was hard-blocked) because only stand-ins
+// were ever exercised. This test invokes the real thing.
+
+test("the real compensating gate clears this repo's own real lockfile", () => {
+  // Seeded from THIS repo's actual manifests, so real npm resolves the real 900-package
+  // lock — but in a self-contained fixture, independent of the ambient checkout's git state
+  // (the mutation lane runs these tests from a sandbox copy).
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-bugbot-real-lock-"));
+  try {
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.name", "AIOS Test");
+    git(repo, "config", "user.email", "test@aios.invalid");
+    const seeded = [
+      "package.json",
+      "package-lock.json",
+      ".nvmrc",
+      "gui/client/package.json",
+      "gui/server/package.json",
+    ].filter((rel) => existsSync(path.join(REPO, rel)));
+    for (const rel of seeded) {
+      mkdirSync(path.join(repo, path.dirname(rel)), { recursive: true });
+      writeFileSync(path.join(repo, rel), readFileSync(path.join(REPO, rel)));
+    }
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "seed real manifests");
+
+    const gates = runExcludedPathGates(
+      repo,
+      [{ path: "package-lock.json", bytes: 0, sha256: "e".repeat(64) }],
+      ["package-lock.json", "package.json"],
+      { baseSha: git(repo, "rev-parse", "HEAD") }
     );
-    chmodSync(path.join(bin, "tsc"), 0o755);
-    writeFileSync(path.join(repo, "tsconfig.json"), "{}\n");
-    mkdirSync(path.join(repo, "dist", "operator-loop"), { recursive: true });
+    assert.equal(gates.ok, true, `real npm verification must succeed, got: ${gates.reason}`);
+    assert.deepEqual(gates.summaries["package-lock.json"], []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
-    const excluded = [{ path: "dist/operator-loop/index.js", bytes: 9, sha256: "d".repeat(64) }];
-    writeFileSync(path.join(repo, "dist", "operator-loop", "index.js"), "tampered\n");
-    const tampered = runExcludedPathGates(repo, excluded, []);
-    assert.equal(tampered.ok, false);
-    assert.match(tampered.reason, /does not byte-match a clean rebuild/);
-
-    writeFileSync(path.join(repo, "dist", "operator-loop", "index.js"), "rebuilt\n");
-    assert.equal(runExcludedPathGates(repo, excluded, []).ok, true);
-
-    // No compiler at all is also fail-closed: an unverifiable artifact is not a clear.
-    rmSync(path.join(bin, "tsc"));
-    const unverifiable = runExcludedPathGates(repo, excluded, []);
-    assert.equal(unverifiable.ok, false);
-    assert.match(unverifiable.reason, /rebuild comparison cannot run/);
+test("the compensating gates run before the review clock starts", async () => {
+  const repo = lockfileRepo();
+  try {
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    const clock = fakeClock();
+    const gateCostMs = 300_000;
+    let gateFinishedAt = 0;
+    const calls = [];
+    await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      excludeFromPrompt: true,
+      excludedPathGates: () => {
+        clock.advance(gateCostMs); // an expensive precondition, e.g. a real `npm ci`
+        gateFinishedAt = clock.now();
+        return { ok: true, summaries: {} };
+      },
+      reviewPrompt: async ({ deadlineAt }) => {
+        calls.push({ deadlineAt, startedAt: clock.now() });
+        clock.advance(1_000);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(gateFinishedAt, gateCostMs);
+    assert.equal(
+      calls[1].deadlineAt - gateFinishedAt,
+      REVIEW_WALL_CLOCK_BUDGET_MS,
+      "gate time must not be charged against the reviewer's budget"
+    );
+    assert.equal(calls[0].deadlineAt - gateFinishedAt, REVIEW_WALL_CLOCK_BUDGET_MS - 430_000);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

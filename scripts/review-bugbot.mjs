@@ -29,6 +29,7 @@ export const REQUIRED_BUGBOT_MODEL = "cursor:composer-2.5";
 export const CANONICAL_BUGBOT_MAIN_URL = "https://github.com/aiosbrain/aios-workspace.git";
 const CURSOR_REVIEW_FLAGS = ["--force", "--trust"];
 export const LOCAL_BUGBOT_DIFF_CAP = 500_000;
+const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const DEFAULT_TIMEOUT = 300;
 const CURSOR_RETRIABLE_ATTEMPTS = 2;
 const CURSOR_RETRIABLE_BASE_DELAY_MS = 2_000;
@@ -43,8 +44,11 @@ const CURSOR_RETRIABLE_BASE_DELAY_MS = 2_000;
  */
 export const REVIEW_WALL_CLOCK_BUDGET_MS = 900_000;
 
-/** Floor a not-yet-started pass (or a protocol re-ask) needs to be worth starting. */
+/** Floor a protocol re-ask needs to be worth taking. */
 export const MIN_ATTEMPT_MS = 180_000;
+
+/** Headroom added to the security pass's reserved full attempt. */
+export const ATTEMPT_RESERVE_MARGIN_MS = 30_000;
 
 /** Real clock + sleeper. Injected in tests so no test ever waits on wall-clock time. */
 const REAL_CLOCK = {
@@ -163,6 +167,9 @@ function gitQuiet(args, cwd) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // Without this a diff over Node's 1 MB default silently becomes "" — a fail-OPEN
+      // that would hand the reviewer an empty changeset.
+      maxBuffer: GIT_MAX_BUFFER,
       env: trustedGitEnv(),
     }).trim();
   } catch {
@@ -177,6 +184,9 @@ function gitRaw(args, cwd) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // Without this a diff over Node's 1 MB default silently becomes "" — a fail-OPEN
+      // that would hand the reviewer an empty changeset.
+      maxBuffer: GIT_MAX_BUFFER,
       env: trustedGitEnv(),
     });
   } catch {
@@ -190,6 +200,7 @@ function gitRequired(args, cwd) {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_MAX_BUFFER,
     env: trustedGitEnv(),
   }).trim();
 }
@@ -245,14 +256,19 @@ export function resolveRequiredBugbotBase(repo, { canonicalUrl = CANONICAL_BUGBO
 function excludedPathsSection(excluded = []) {
   if (!excluded.length) return [];
   return [
-    "## Changed, not shown",
+    "## Changed, not shown in full",
     "",
-    "These generated paths changed in this changeset but their content is excluded from this",
-    "prompt. Their bytes still feed the review fingerprint, and fail-closed compensating gates",
-    "verify them (lockfile↔manifest parity, a clean `npm ci --ignore-scripts` verification, and",
-    "a dist rebuild byte-comparison). Do not report their absence as a finding.",
+    "These generated paths changed in this changeset; their raw content is excluded from this",
+    "prompt but their bytes still feed the review fingerprint, and fail-closed compensating",
+    "gates verify them (manifest parity, registry-host and integrity-hash checks on every",
+    "changed lockfile entry, and a clean `npm ci --ignore-scripts` resolution). The summarized",
+    "delta below is the reviewable form — judge it as you would the diff, and do not report",
+    "the absence of the raw content as a finding.",
     "",
-    ...excluded.map((file) => `- ${file.path} — ${file.bytes} bytes, sha256 ${file.sha256}`),
+    ...excluded.flatMap((file) => [
+      `- ${file.path} — ${file.bytes} bytes, sha256 ${file.sha256}`,
+      ...(file.summary ?? []).map((line) => `  - ${line}`),
+    ]),
     "",
   ];
 }
@@ -593,13 +609,17 @@ function captureSuppressedTrackedFiles(worktree) {
 }
 
 /**
- * Generated paths whose CONTENT is worthless to a reviewer but whose bulk crowds out the
+ * Generated paths whose RAW content is worthless to a reviewer but whose bulk crowds out the
  * real changeset (a lockfile churn alone can blow the diff cap). Excluded from the PROMPT
  * only, and only on the lifecycle-hook path — never from the fingerprint, and never for a
  * standalone `aios review-bugbot` or the `aios build`/`aios ship` pre-merge boundary, which
- * keep the full atomic diff.
+ * keep the full atomic diff. What the reviewer gets instead is a SUMMARIZED delta plus
+ * fail-closed compensating gates (see `runExcludedPathGates`).
+ *
+ * `dist/**` is deliberately NOT here: it is gitignored and untracked in this repo, so
+ * excluding it would be dead code carrying a live hard-block risk.
  */
-export const PROMPT_EXCLUDED_GLOBS = ["package-lock.json", "**/package-lock.json", "dist/**"];
+export const PROMPT_EXCLUDED_GLOBS = ["package-lock.json", "**/package-lock.json"];
 const includeExcludedSpecs = PROMPT_EXCLUDED_GLOBS.map((glob) => `:(glob)${glob}`);
 const dropExcludedSpecs = PROMPT_EXCLUDED_GLOBS.map((glob) => `:(exclude,glob)${glob}`);
 
@@ -785,13 +805,26 @@ export function runLocalSecretsPreflight(worktree, sourceEnv = process.env) {
   }
 }
 
-const LOCKFILE_VERIFY_TIMEOUT_MS = 180_000;
-const DIST_VERIFY_TIMEOUT_MS = 180_000;
-const TRUSTED_NPM_BIN = [
-  path.join(path.dirname(process.execPath), "npm"),
-  "/opt/homebrew/bin/npm",
-  "/usr/local/bin/npm",
-  "/usr/bin/npm",
+const LOCKFILE_VERIFY_TIMEOUT_MS = 120_000;
+/** Hosts a changed lockfile entry may resolve from. Anything else fails closed. */
+export const DEFAULT_LOCK_RESOLVED_HOSTS = ["registry.npmjs.org"];
+const LOCK_SUMMARY_CAP = 200;
+// npm ships as a Node script behind an `#!/usr/bin/env node` shebang, so it cannot be
+// spawned under a sanitized PATH. Run its CLI entry point with THIS node binary instead:
+// no PATH lookup, no shebang, and the interpreter is the pinned one by construction.
+const TRUSTED_NPM_CLI_JS = [
+  path.join(
+    path.dirname(process.execPath),
+    "..",
+    "lib",
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js"
+  ),
+  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+  "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+  "/usr/lib/node_modules/npm/bin/npm-cli.js",
 ].find(existsSync);
 
 function pinnedNodeMajor(worktree) {
@@ -805,20 +838,109 @@ function pinnedNodeMajor(worktree) {
   }
 }
 
+function lockPackages(text, label) {
+  if (!String(text).trim()) return new Map();
+  const parsed = JSON.parse(text);
+  if (!parsed.packages) {
+    throw new Error(`${label} has no "packages" map (lockfileVersion 2+ is required)`);
+  }
+  return new Map(
+    Object.entries(parsed.packages)
+      .filter(([key]) => key)
+      .map(([key, entry]) => [key, entry ?? {}])
+  );
+}
+
+function resolvedHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Verify a changed lockfile the reviewer never saw: it must move together with its
- * manifest, and it must resolve cleanly in a throwaway checkout under the pinned Node,
- * with lifecycle scripts disabled so verifying an untrusted lockfile cannot execute code.
+ * Inspect the lockfile delta the reviewer no longer sees. `npm ci --dry-run` only proves
+ * the lock and the manifest agree — it resolves the tree from the lockfile and never
+ * fetches a tarball, so a tampered `integrity` or a `resolved` repointed at an attacker
+ * mirror sails straight through it. These checks are the actual control for that class,
+ * and the summary they return puts the delta back in front of the reviewer.
  */
-function verifyLockfile(worktree, lockPath) {
+export function inspectLockDelta(
+  worktree,
+  lockPath,
+  baseSha,
+  { allowedHosts = DEFAULT_LOCK_RESOLVED_HOSTS } = {}
+) {
+  let before;
+  let after;
+  try {
+    before = lockPackages(
+      gitRaw(["show", `${baseSha}:${lockPath}`], worktree),
+      "the base lockfile"
+    );
+    after = lockPackages(readFileSync(path.join(worktree, lockPath), "utf8"), lockPath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { failures: [`${lockPath} could not be parsed for review: ${detail}`], summary: [] };
+  }
+
+  const failures = [];
+  const summary = [];
+  for (const [name, next] of after) {
+    const previous = before.get(name);
+    if (previous && JSON.stringify(previous) === JSON.stringify(next)) continue;
+    const host = next.resolved ? resolvedHost(next.resolved) : null;
+    const integrityChanged = (previous?.integrity ?? null) !== (next.integrity ?? null);
+    summary.push(
+      `${name} ${previous?.version ?? "(added)"} → ${next.version ?? "(none)"}` +
+        ` [${host ?? "no tarball"}]${integrityChanged ? " integrity changed" : ""}`
+    );
+
+    if (next.resolved && !allowedHosts.includes(host)) {
+      failures.push(
+        `${lockPath}: ${name} resolves from ${host ?? next.resolved}, which is not an allowed registry host`
+      );
+    }
+    if (previous?.integrity && !next.integrity) {
+      failures.push(`${lockPath}: ${name} lost its integrity hash`);
+    }
+    if (!previous && next.resolved && !next.integrity) {
+      failures.push(`${lockPath}: ${name} was added with a tarball but no integrity hash`);
+    }
+    if (
+      previous?.integrity &&
+      next.integrity &&
+      integrityChanged &&
+      previous.version === next.version &&
+      previous.resolved === next.resolved
+    ) {
+      failures.push(
+        `${lockPath}: ${name} changed its integrity hash without changing version or resolved URL`
+      );
+    }
+  }
+  for (const name of before.keys()) {
+    if (!after.has(name)) summary.push(`${name} ${before.get(name).version ?? ""} → (removed)`);
+  }
+  return { failures, summary };
+}
+
+/**
+ * Verify a changed lockfile resolves cleanly in a throwaway checkout under the pinned Node,
+ * with lifecycle scripts disabled so verifying an untrusted lockfile cannot execute code.
+ * This is the lock↔manifest desync check ONLY — content trust comes from `inspectLockDelta`.
+ */
+function verifyLockfileResolves(worktree, lockPath) {
   const dir = path.posix.dirname(lockPath) === "." ? "" : path.posix.dirname(lockPath);
   const pinned = pinnedNodeMajor(worktree);
   const running = parseInt(process.versions.node.split(".")[0], 10);
   if (pinned && pinned !== running) {
     return `${lockPath} changed but the lockfile verification must run under the pinned Node ${pinned} (running Node ${running})`;
   }
-  if (!TRUSTED_NPM_BIN)
-    return `${lockPath} changed but no trusted npm binary was found to verify it`;
+  if (!TRUSTED_NPM_CLI_JS) {
+    return `${lockPath} changed but npm's CLI entry point could not be located to verify it`;
+  }
   const temp = mkdtempSync(path.join(tmpdir(), "aios-bugbot-lockfile-"));
   try {
     // The manifest set is what `npm ci` reads: the lockfile plus every tracked package.json
@@ -835,15 +957,18 @@ function verifyLockfile(worktree, lockPath) {
       mkdirSync(path.join(temp, path.dirname(rel)), { recursive: true });
       copyFileSync(source, path.join(temp, rel));
     }
+    const env = trustedScannerEnv();
+    // npm shells out to git for git-backed dependencies; keep node's own directory first.
+    env.PATH = [path.dirname(process.execPath), env.PATH].join(":");
     execFileSync(
-      TRUSTED_NPM_BIN,
-      ["ci", "--ignore-scripts", "--dry-run", "--no-audit", "--no-fund"],
+      process.execPath,
+      [TRUSTED_NPM_CLI_JS, "ci", "--ignore-scripts", "--dry-run", "--no-audit", "--no-fund"],
       {
         cwd: path.join(temp, dir),
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: LOCKFILE_VERIFY_TIMEOUT_MS,
-        env: trustedScannerEnv({ ...process.env, PATH: process.env.PATH }),
+        env,
       }
     );
     return null;
@@ -855,46 +980,14 @@ function verifyLockfile(worktree, lockPath) {
   }
 }
 
-/** Verify changed dist/ output by rebuilding it from the reviewed source and byte-comparing. */
-function verifyDistOutputs(worktree, distPaths) {
-  const tsc = path.join(worktree, "node_modules", ".bin", "tsc");
-  if (!existsSync(tsc)) {
-    return `dist output changed (${distPaths.join(", ")}) but tsc is not installed, so the rebuild comparison cannot run`;
-  }
-  const temp = mkdtempSync(path.join(tmpdir(), "aios-bugbot-dist-"));
-  try {
-    execFileSync(tsc, ["-p", "tsconfig.json", "--outDir", temp], {
-      cwd: worktree,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: DIST_VERIFY_TIMEOUT_MS,
-      env: trustedScannerEnv(),
-    });
-    for (const rel of distPaths) {
-      const rebuilt = path.join(temp, rel.slice("dist/".length));
-      const committed = path.join(worktree, rel);
-      if (!existsSync(rebuilt) || !existsSync(committed)) {
-        return `${rel} does not exist in a clean rebuild of the reviewed source`;
-      }
-      if (!readFileSync(rebuilt).equals(readFileSync(committed))) {
-        return `${rel} does not byte-match a clean rebuild of the reviewed source`;
-      }
-    }
-    return null;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    return `dist output changed but the verification rebuild failed: ${detail}`;
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
-}
-
 /**
  * Fail-closed gates that stand in for reviewer eyes on the paths excluded from the prompt.
- * ANY failure blocks — an excluded path is only safe because these run.
+ * ANY failure blocks — an excluded path is only safe because these run — and the summaries
+ * they return are fed back into both prompts so the delta is disclosed, not hidden.
  */
-export function runExcludedPathGates(worktree, excluded, changedFiles) {
+export function runExcludedPathGates(worktree, excluded, changedFiles, { baseSha } = {}) {
   const failures = [];
+  const summaries = {};
   const lockfiles = excluded.filter(
     (file) => path.posix.basename(file.path) === "package-lock.json"
   );
@@ -907,15 +1000,19 @@ export function runExcludedPathGates(worktree, excluded, changedFiles) {
       );
       continue;
     }
-    const failure = verifyLockfile(worktree, lock.path);
+    if (baseSha) {
+      const delta = inspectLockDelta(worktree, lock.path, baseSha);
+      failures.push(...delta.failures);
+      const shown = delta.summary.slice(0, LOCK_SUMMARY_CAP);
+      if (delta.summary.length > shown.length) {
+        shown.push(`… and ${delta.summary.length - shown.length} more changed entries`);
+      }
+      summaries[lock.path] = shown;
+    }
+    const failure = verifyLockfileResolves(worktree, lock.path);
     if (failure) failures.push(failure);
   }
-  const distPaths = excluded.map((file) => file.path).filter((file) => file.startsWith("dist/"));
-  if (distPaths.length) {
-    const failure = verifyDistOutputs(worktree, distPaths);
-    if (failure) failures.push(failure);
-  }
-  return { ok: !failures.length, reason: failures.join("; ") };
+  return { ok: !failures.length, reason: failures.join("; "), summaries };
 }
 
 /** Pre-PR local pass: code (/review-bugbot persona) + security, via DeepSeek when keyed. */
@@ -941,10 +1038,6 @@ export async function runLocalPrePrReview({
     return { ok: true, skipped: true, output: "(worktree missing — pre-PR review skipped)" };
   }
   if (!baseSha) die("baseSha required for pre-PR review");
-  // ONE absolute deadline for the whole run, computed once. Everything below — each
-  // attempt, each retry, each backoff, the protocol re-ask, and the second pass —
-  // is scheduled against it, so the run cannot outlive the parent hook's child kill.
-  const deadlineAt = now() + wallClockBudgetMs;
 
   const secrets = secretsPreflight(worktree);
   if (!secrets.ok) {
@@ -987,8 +1080,11 @@ export async function runLocalPrePrReview({
   if (!diffStat && !logOneline) {
     return { ok: true, output: "(no diff to review)" };
   }
+  // Compensating gates are preconditions, not review work: they run BEFORE the clock starts
+  // so their (separately bounded) cost is never charged to the reviewer's budget.
+  let disclosed = excluded;
   if (excluded.length) {
-    const gates = excludedPathGates(worktree, excluded, changedFiles);
+    const gates = excludedPathGates(worktree, excluded, changedFiles, { baseSha });
     if (!gates.ok) {
       return {
         ok: false,
@@ -996,7 +1092,17 @@ export async function runLocalPrePrReview({
         output: `compensating gate failed for a path excluded from the review prompt: ${gates.reason}`,
       };
     }
+    disclosed = excluded.map((file) => ({ ...file, summary: gates.summaries?.[file.path] ?? [] }));
   }
+
+  // ONE absolute deadline for the whole review, computed once. Everything below — each
+  // attempt, each retry, each backoff, the protocol re-ask, and the second pass —
+  // is scheduled against it, so the run cannot outlive the parent hook's child kill.
+  const deadlineAt = now() + wallClockBudgetMs;
+  // Reserve a FULL attempt (plus margin) for the mandatory security pass. Reserving less
+  // than one attempt only guarantees that pass starts, which turns a slow-but-healthy run
+  // into a false block on the security pass specifically.
+  const securityReserveMs = timeoutMs + ATTEMPT_RESERVE_MARGIN_MS;
 
   const runPass = async (label, makePrompt, passDeadlineAt) => {
     const classify = (response) => {
@@ -1073,7 +1179,7 @@ export async function runLocalPrePrReview({
     };
   };
 
-  const shared = { branch, baseSha, diffStat, logOneline, failOn, excluded };
+  const shared = { branch, baseSha, diffStat, logOneline, failOn, excluded: disclosed };
   // Both passes are mandatory, and they run SEQUENTIALLY. Running them concurrently on the
   // same reviewer account manufactured `resource_exhausted` against itself, burning the
   // retry budget on self-inflicted contention. The first pass may spend at most the budget
@@ -1081,7 +1187,7 @@ export async function runLocalPrePrReview({
   const code = await runPass(
     "pre-PR code review",
     (diff) => buildBugbotPrompt({ skill, promptOnly, diff, ...shared }),
-    deadlineAt - MIN_ATTEMPT_MS
+    deadlineAt - securityReserveMs
   );
   if (deadlineAt - now() <= 0) {
     return {
