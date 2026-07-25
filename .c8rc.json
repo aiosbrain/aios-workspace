@@ -10,7 +10,6 @@
   "exclude": [
     "**/*.test.*",
     "test/**",
-    "gui/server/skill-library/**",
     "gui/client/**",
     "coverage/**",
     "dist/**",
@@ -18,8 +17,11 @@
     "scripts/run-coverage.mjs",
     "scripts/merge-coverage.mjs",
     "scripts/check-coverage.mjs",
-    "scripts/run-mutation.mjs"
+    "scripts/run-mutation.mjs",
+    "scripts/run-rust-tests.mjs",
+    "scripts/ensure-loop-built.mjs"
   ],
+  "exclude-after-remap": true,
   "extension": [".js", ".mjs", ".ts"],
   "reporter": ["lcov", "json-summary"],
   "reports-dir": "coverage/root",

@@ -14,10 +14,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const NODE_TEST_ROOTS = ["test", "gui/server", "scripts"];
-const CLIENT_TEST_ROOT = "gui/client/src";
-const TEST_FILE_RE = /\.test\.(?:mjs|js|ts|tsx)$/;
-const NODE_TEST_FILE_RE = /\.test\.(?:mjs|js)$/;
+export const NODE_TEST_ROOTS = ["test", "gui/server", "scripts"];
+export const CLIENT_TEST_ROOT = "gui/client/src";
+// Extension sets are per runner: the Node roots execute .mjs/.js under node:test;
+// the client root is owned by gui/client's Vitest (which also runs .ts/.tsx).
+// test/test-suite.test.mjs imports these so its git-parity oracle can never
+// silently disagree with what each runner actually executes.
+export const CLIENT_TEST_FILE_RE = /\.test\.(?:mjs|js|ts|tsx)$/;
+export const NODE_TEST_FILE_RE = /\.test\.(?:mjs|js)$/;
+// Test-looking sources a Node root can NOT execute — tracked files matching this
+// under a Node root fail discovery loudly instead of being silently unrun.
+const UNRUNNABLE_NODE_TEST_RE = /\.test\.(?:ts|tsx|mts|cts|cjs|jsx)$/;
 const SKIP_DIRS = new Set(["node_modules", "coverage", "dist", "target", ".git"]);
 
 function walk(relativeRoot, matches) {
@@ -39,14 +46,66 @@ function walk(relativeRoot, matches) {
   return found;
 }
 
+// Discovery is tracked-files-only: untracked scratch tests and gitignored
+// artifact dirs never run (and never break the git-parity oracle). Returns null
+// when git is unavailable (e.g. an npm-tarball install), in which case discovery
+// falls back to the pure filesystem walk.
+let trackedSetCache;
+export function trackedFileSet() {
+  if (trackedSetCache !== undefined) return trackedSetCache;
+  const result = spawnSync("git", ["ls-files", "-z", "--cached"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  trackedSetCache =
+    result.error || result.status !== 0 ? null : new Set(result.stdout.split("\0").filter(Boolean));
+  return trackedSetCache;
+}
+
+function inSkippedDir(file) {
+  return file
+    .split("/")
+    .slice(0, -1)
+    .some((segment) => SKIP_DIRS.has(segment));
+}
+
+// Pure so the guard itself is testable: given a tracked-file list, return the
+// tracked Node-root test files whose extension no Node-root runner executes.
+export function findUnrunnableNodeTests(trackedFiles) {
+  return [...trackedFiles]
+    .filter(
+      (file) =>
+        NODE_TEST_ROOTS.some((root) => file.startsWith(`${root}/`)) &&
+        !inSkippedDir(file) &&
+        UNRUNNABLE_NODE_TEST_RE.test(file)
+    )
+    .sort();
+}
+
+function filterTracked(files) {
+  const tracked = trackedFileSet();
+  return tracked ? files.filter((file) => tracked.has(file)) : files;
+}
+
 export function discoverNodeTests() {
-  return NODE_TEST_ROOTS.flatMap((root) =>
-    walk(root, (name) => NODE_TEST_FILE_RE.test(name))
+  const tracked = trackedFileSet();
+  if (tracked) {
+    const unrunnable = findUnrunnableNodeTests(tracked);
+    if (unrunnable.length) {
+      throw new Error(
+        "tracked Node-root test file(s) with an extension the Node runner cannot execute " +
+          `(convert to .mjs/.js or move under ${CLIENT_TEST_ROOT}/): ${unrunnable.join(", ")}`
+      );
+    }
+  }
+  return filterTracked(
+    NODE_TEST_ROOTS.flatMap((root) => walk(root, (name) => NODE_TEST_FILE_RE.test(name)))
   ).sort();
 }
 
 export function discoverClientTests() {
-  return walk(CLIENT_TEST_ROOT, (name) => TEST_FILE_RE.test(name)).sort();
+  return filterTracked(walk(CLIENT_TEST_ROOT, (name) => CLIENT_TEST_FILE_RE.test(name))).sort();
 }
 
 export function discoverTestInventory() {

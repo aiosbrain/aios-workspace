@@ -1,15 +1,26 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   buildBaseline,
   changedLineCoverage,
   coverageDiffArgs,
+  isCoverageSource,
+  missingCoverageFiles,
   parseArgs,
   parseChangedLines,
   parseLcov,
   resolveBase,
+  unquoteGitPath,
 } from "../scripts/check-coverage.mjs";
 import { mergeTotals, prefixRelativeLcov } from "../scripts/merge-coverage.mjs";
+import {
+  collectShardFiles,
+  parseArgs as parseRunCoverageArgs,
+  shardDirectory,
+} from "../scripts/run-coverage.mjs";
 
 test("coverage merge recomputes percentages from production totals", () => {
   const metric = (total, covered) => ({ total, covered, skipped: 0, pct: covered });
@@ -51,6 +62,81 @@ test("changed-line coverage considers only executable lines", () => {
   });
 });
 
+test("an added source line rendered as '+++ b/…' inside a hunk is never a file header", () => {
+  // With --unified=0, adding the literal source line "++ b/evil.mjs" renders as
+  // "+++ b/evil.mjs" inside the hunk body. It must not open a new file: later
+  // hunks still belong to the real file from the diff header block.
+  const changed = parseChangedLines(
+    [
+      "diff --git a/scripts/real.mjs b/scripts/real.mjs",
+      "index 111..222 100644",
+      "--- a/scripts/real.mjs",
+      "+++ b/scripts/real.mjs",
+      "@@ -0,0 +1 @@",
+      "+++ b/evil.mjs",
+      "@@ -4,0 +5,2 @@",
+      "+more",
+      "+more",
+    ].join("\n")
+  );
+  assert.deepEqual([...changed.keys()], ["scripts/real.mjs"]);
+  assert.deepEqual(
+    [...changed.get("scripts/real.mjs")].sort((a, b) => a - b),
+    [1, 5, 6]
+  );
+});
+
+test("git-quoted non-ASCII headers attribute hunks to the decoded path, not the previous file", () => {
+  const changed = parseChangedLines(
+    [
+      "diff --git a/scripts/plain.mjs b/scripts/plain.mjs",
+      "--- a/scripts/plain.mjs",
+      "+++ b/scripts/plain.mjs",
+      "@@ -0,0 +1 @@",
+      "+x",
+      'diff --git "a/scripts/caf\\303\\251.mjs" "b/scripts/caf\\303\\251.mjs"',
+      '--- "a/scripts/caf\\303\\251.mjs"',
+      '+++ "b/scripts/caf\\303\\251.mjs"',
+      "@@ -0,0 +10,2 @@",
+      "+y",
+      "+y",
+    ].join("\n")
+  );
+  assert.deepEqual([...changed.get("scripts/plain.mjs")], [1]);
+  assert.deepEqual(
+    [...changed.get("scripts/café.mjs")].sort((a, b) => a - b),
+    [10, 11]
+  );
+});
+
+test("deleted files ('+++ /dev/null') do not attach hunks to the previous file", () => {
+  const changed = parseChangedLines(
+    [
+      "diff --git a/scripts/kept.mjs b/scripts/kept.mjs",
+      "--- a/scripts/kept.mjs",
+      "+++ b/scripts/kept.mjs",
+      "@@ -0,0 +1 @@",
+      "+x",
+      "diff --git a/scripts/gone.mjs b/scripts/gone.mjs",
+      "deleted file mode 100644",
+      "--- a/scripts/gone.mjs",
+      "+++ /dev/null",
+      "@@ -1,3 +0,0 @@",
+      "-a",
+      "-b",
+      "-c",
+    ].join("\n")
+  );
+  assert.deepEqual([...changed.keys()], ["scripts/kept.mjs"]);
+  assert.deepEqual([...changed.get("scripts/kept.mjs")], [1]);
+});
+
+test("git C-style quoted paths decode octal and simple escapes", () => {
+  assert.equal(unquoteGitPath("b/plain.ts"), "b/plain.ts");
+  assert.equal(unquoteGitPath('"b/caf\\303\\251.ts"'), "b/café.ts");
+  assert.equal(unquoteGitPath('"b/a\\tb\\"c\\\\d.ts"'), 'b/a\tb"c\\d.ts');
+});
+
 test("coverage diff pathspecs include source files at every directory depth", () => {
   assert.deepEqual(coverageDiffArgs("merge-base-sha"), [
     "diff",
@@ -58,11 +144,60 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     "--no-color",
     "merge-base-sha",
     "--",
-    ":(glob)**/*.mjs",
-    ":(glob)**/*.js",
-    ":(glob)**/*.ts",
-    ":(glob)**/*.tsx",
+    ":(glob)scripts/**/*.mjs",
+    ":(glob)hooks/**/*.mjs",
+    ":(glob)validation/**/*.mjs",
+    ":(glob)gui/server/**/*.mjs",
+    ":(glob)src/**/*.ts",
+    ":(glob)gui/client/src/**/*.ts",
+    ":(glob)gui/client/src/**/*.tsx",
   ]);
+});
+
+test("coverage source classification matches the root and client instrumentation scopes", () => {
+  for (const file of [
+    "scripts/nested/example.mjs",
+    "hooks/example.mjs",
+    "validation/example.mjs",
+    "gui/server/nested/example.mjs",
+    "src/nested/example.ts",
+    "gui/client/src/lib/example.ts",
+    "gui/client/src/components/Example.tsx",
+  ]) {
+    assert.equal(isCoverageSource(file), true, file);
+  }
+  for (const file of [
+    "test/example.test.mjs",
+    "gui/server/example.test.mjs",
+    "gui/client/src/lib/example.test.ts",
+    "gui/client/src/lib/example.d.ts",
+    "scripts/check-coverage.mjs",
+    "scripts/run-rust-tests.mjs",
+    "scripts/ensure-loop-built.mjs",
+    "scaffold/example.js",
+  ]) {
+    assert.equal(isCoverageSource(file), false, file);
+  }
+});
+
+test("every .c8rc.json tool-script exclusion is also exempt from the fail-closed LCOV check", () => {
+  const c8rc = JSON.parse(readFileSync(new URL("../.c8rc.json", import.meta.url), "utf8"));
+  const toolScripts = c8rc.exclude.filter((entry) => /^scripts\/[^*]+\.mjs$/.test(entry));
+  assert.ok(toolScripts.length >= 7, "expected the coverage tool-script exclusions");
+  for (const file of toolScripts) {
+    assert.equal(isCoverageSource(file), false, `${file} must not trip the missing-LCOV gate`);
+  }
+});
+
+test("changed production files missing from LCOV fail closed", () => {
+  const changed = new Map([
+    ["gui/server/nested/covered.mjs", new Set([1])],
+    ["gui/server/nested/missing.mjs", new Set([1])],
+    ["gui/server/nested/example.test.mjs", new Set([1])],
+    ["scripts/check-coverage.mjs", new Set([1])],
+  ]);
+  const coverage = new Map([["gui/server/nested/covered.mjs", new Map([[1, 1]])]]);
+  assert.deepEqual(missingCoverageFiles(changed, coverage), ["gui/server/nested/missing.mjs"]);
 });
 
 test("unimported production files remain zero in merged c8 summaries", () => {
@@ -132,6 +267,43 @@ test("coverage diff base fails closed instead of silently narrowing to HEAD^", (
     () => resolveBase(null, missingGit, {}),
     /cannot resolve coverage diff base.*fetch the base branch/
   );
+});
+
+test("run-coverage CLI enforces the shard/merge contract syntax", () => {
+  assert.deepEqual(parseRunCoverageArgs([]), { mode: "full", shard: null, merge: null });
+  assert.deepEqual(parseRunCoverageArgs(["--shard", "2/3"]), {
+    mode: "shard",
+    shard: { index: 2, total: 3, raw: "2/3" },
+    merge: null,
+  });
+  assert.deepEqual(parseRunCoverageArgs(["--merge=3"]), { mode: "merge", shard: null, merge: 3 });
+  assert.throws(() => parseRunCoverageArgs(["--shard=4/3"]), /shard index 4 exceeds total 3/);
+  assert.throws(() => parseRunCoverageArgs(["--shard=abc"]), /INDEX\/TOTAL/);
+  assert.throws(() => parseRunCoverageArgs(["--shard=0/3"]), /positive integer/);
+  assert.throws(() => parseRunCoverageArgs(["--merge=0"]), /positive integer/);
+  assert.throws(() => parseRunCoverageArgs(["--shard=1/2", "--merge=2"]), /mutually exclusive/);
+  assert.throws(() => parseRunCoverageArgs(["--frobnicate"]), /unknown run-coverage option/);
+});
+
+test("shard merge collects every shard's raw data and fails closed on a missing shard", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "aios-shards-"));
+  try {
+    for (const index of [1, 2]) {
+      mkdirSync(shardDirectory(index, root), { recursive: true });
+      writeFileSync(
+        path.join(shardDirectory(index, root), `coverage-${index}00-1-0.json`),
+        JSON.stringify({ result: [] })
+      );
+    }
+    const files = collectShardFiles(2, root);
+    assert.deepEqual(files.map((file) => file.name).sort(), [
+      "coverage-s1-coverage-100-1-0.json",
+      "coverage-s2-coverage-200-1-0.json",
+    ]);
+    assert.throws(() => collectShardFiles(3, root), /missing shard coverage data.*shard-3/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("coverage baseline floors CI metrics to one decimal place", () => {

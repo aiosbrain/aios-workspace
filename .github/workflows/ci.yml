@@ -176,26 +176,97 @@ jobs:
       - run: npm run test:client
       - run: npm run gui:build
 
+  coverage-shard:
+    name: Coverage shard (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run coverage shard (raw c8 data only, no report/check)
+        run: node scripts/run-coverage.mjs --shard ${{ matrix.shard }}/3
+      - name: Upload shard coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 1
+
   coverage:
+    # The gating lane for the ratchet: merges the parallel shards above so the
+    # full ~254-file suite no longer runs unsharded on the PR critical path.
     name: Corrected coverage ratchet
     runs-on: ubuntu-latest
+    needs: coverage-shard
     steps:
       - uses: actions/checkout@v7
         with:
+          # check-coverage.mjs diffs changed lines against the merge base.
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Production-only coverage report
-        run: npm run test:coverage:report
-      - name: Export CI baseline candidate
+      - name: Download shard coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          path: coverage-shards
+      - name: Arrange shard data for merge
         run: |
-          node scripts/check-coverage.mjs --write-baseline \
-            --output coverage/coverage-baseline-candidate.json
+          mkdir -p coverage
+          for dir in coverage-shards/coverage-shard-*; do
+            mv "$dir" "coverage/shard-${dir##*-}"
+          done
+          ls coverage/
+      - name: Merge shards into report + baseline candidate
+        run: node scripts/run-coverage.mjs --merge 3
       - name: Enforce coverage ratchet
         run: node scripts/check-coverage.mjs
+      - name: Raise-the-floor nudge
+        run: |
+          candidate=coverage/coverage-baseline-candidate.json
+          if [ ! -f "$candidate" ]; then
+            echo "no baseline candidate at $candidate; skipping raise-the-floor check"
+            exit 0
+          fi
+          improved=$(jq -r --slurpfile base coverage-baseline.json '
+            (.minimum // {}) | to_entries[]
+            | ($base[0].minimum[.key] // null) as $floor
+            | select($floor != null and .value > $floor)
+            | "\(.key): \($floor)% -> \(.value)%"
+          ' "$candidate")
+          if [ -z "$improved" ]; then
+            echo "baseline candidate does not exceed the tracked floor; nothing to raise"
+            exit 0
+          fi
+          oneline=$(paste -sd ', ' - <<< "$improved")
+          echo "::notice title=Coverage floor can be raised::Baseline candidate beats coverage-baseline.json ($oneline). Copy coverage/coverage-baseline-candidate.json (in the coverage artifact) over coverage-baseline.json to tighten the ratchet."
+          {
+            echo "### Coverage ratchet can be tightened"
+            echo
+            echo "This run's baseline candidate exceeds the tracked \`coverage-baseline.json\` floor:"
+            echo
+            echo "| metric | tracked floor | candidate |"
+            echo "|--------|---------------|-----------|"
+            jq -r --slurpfile base coverage-baseline.json '
+              (.minimum // {}) | to_entries[]
+              | ($base[0].minimum[.key] // null) as $floor
+              | select($floor != null and .value > $floor)
+              | "| \(.key) | \($floor)% | \(.value)% |"
+            ' "$candidate"
+            echo
+            echo "Update \`coverage-baseline.json\` from \`coverage/coverage-baseline-candidate.json\` (in the \`coverage\` artifact) to lock in the gain."
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -275,6 +346,11 @@ jobs:
     name: unit tests (npm test)
     if: always()
     runs-on: ubuntu-latest
+    # The `needs` list below is the SINGLE source of truth for the mandatory
+    # lanes: the step iterates ${{ toJSON(needs) }}, so adding a lane here makes
+    # it blocking automatically — there is no env-var mapping or shell list to
+    # keep in sync (a lane missed there used to be silently non-blocking under
+    # `if: always()`).
     needs:
       - docs-drift
       - context-health
@@ -289,21 +365,13 @@ jobs:
     steps:
       - name: Require every mandatory lane
         env:
-          DOCS: ${{ needs.docs-drift.result }}
-          CONTEXT: ${{ needs.context-health.result }}
-          CONSTITUTION: ${{ needs.constitution.result }}
-          GUARD: ${{ needs.guard.result }}
-          LINT: ${{ needs.lint.result }}
-          NODE: ${{ needs.node-tests.result }}
-          CLIENT: ${{ needs.client-tests.result }}
-          COVERAGE: ${{ needs.coverage.result }}
-          RUST: ${{ needs.rust-tests.result }}
-          INSTALL: ${{ needs.install-smoke.result }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          for result in "$DOCS" "$CONTEXT" "$CONSTITUTION" "$GUARD" "$LINT" \
-            "$NODE" "$CLIENT" "$COVERAGE" "$RUST" "$INSTALL"; do
-            test "$result" = success || {
-              echo "mandatory CI result(s): docs=$DOCS context=$CONTEXT constitution=$CONSTITUTION guard=$GUARD lint=$LINT node=$NODE client=$CLIENT coverage=$COVERAGE rust=$RUST install=$INSTALL"
-              exit 1
-            }
-          done
+          if ! jq -e 'length > 0 and all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null; then
+            echo "one or more mandatory lanes did not succeed:"
+            jq . <<< "$RESULTS"
+            jq -r 'to_entries[] | select(.value.result != "success")
+              | "::error::mandatory lane \(.key) result: \(.value.result)"' <<< "$RESULTS"
+            exit 1
+          fi
+          jq -r 'to_entries[] | "ok: \(.key)"' <<< "$RESULTS"

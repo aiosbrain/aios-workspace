@@ -9,19 +9,92 @@ const SUMMARY_FILE = path.join(ROOT, "coverage", "coverage-summary.json");
 const LCOV_FILE = path.join(ROOT, "coverage", "lcov.info");
 const BASELINE_FILE = path.join(ROOT, "coverage-baseline.json");
 const METRICS = ["lines", "statements", "functions", "branches"];
-const SOURCE_PATHSPECS = [":(glob)**/*.mjs", ":(glob)**/*.js", ":(glob)**/*.ts", ":(glob)**/*.tsx"];
+const SOURCE_PATHSPECS = [
+  ":(glob)scripts/**/*.mjs",
+  ":(glob)hooks/**/*.mjs",
+  ":(glob)validation/**/*.mjs",
+  ":(glob)gui/server/**/*.mjs",
+  ":(glob)src/**/*.ts",
+  ":(glob)gui/client/src/**/*.ts",
+  ":(glob)gui/client/src/**/*.tsx",
+];
+// Test/coverage/build-lane infrastructure: excluded from instrumentation in
+// .c8rc.json and exempt from the missing-LCOV fail-closed check. Keep this
+// list and the .c8rc.json "exclude" tool-script entries in lockstep.
+const COVERAGE_TOOL_FILES = new Set([
+  "scripts/test-suite.mjs",
+  "scripts/run-coverage.mjs",
+  "scripts/merge-coverage.mjs",
+  "scripts/check-coverage.mjs",
+  "scripts/run-mutation.mjs",
+  "scripts/run-rust-tests.mjs",
+  "scripts/ensure-loop-built.mjs",
+]);
+
+// A large PR diff easily exceeds execFileSync's default 1 MiB maxBuffer and
+// would kill the required coverage lane with ENOBUFS.
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 function git(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: GIT_MAX_BUFFER });
+}
+
+// Decode a git C-style quoted path ("b/caf\303\251.ts") to its literal form.
+export function unquoteGitPath(raw) {
+  if (!(raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2)) return raw;
+  const inner = raw.slice(1, -1);
+  const bytes = [];
+  const simpleEscapes = new Map([
+    ["a", 0x07],
+    ["b", 0x08],
+    ["f", 0x0c],
+    ["n", 0x0a],
+    ["r", 0x0d],
+    ["t", 0x09],
+    ["v", 0x0b],
+    ["\\", 0x5c],
+    ['"', 0x22],
+  ]);
+  for (let i = 0; i < inner.length; i += 1) {
+    if (inner[i] !== "\\" || i === inner.length - 1) {
+      bytes.push(...Buffer.from(inner[i], "utf8"));
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(inner.slice(i + 1));
+    if (octal) {
+      bytes.push(Number.parseInt(octal[0], 8));
+      i += octal[0].length;
+    } else {
+      const next = inner[i + 1];
+      const mapped = simpleEscapes.get(next);
+      if (mapped === undefined) bytes.push(...Buffer.from(next, "utf8"));
+      else bytes.push(mapped);
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 export function parseChangedLines(diff) {
   const changed = new Map();
   let file = null;
+  // Only a "+++" line inside a file header block (opened by "diff --git",
+  // before the first hunk) names a file. An *added source line* whose content
+  // starts "++ b/…" also renders as "+++ b/…" but appears inside a hunk, and
+  // must never be taken as a header (it would misattribute later hunks).
+  let inHeader = false;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("+++ b/")) {
-      file = line.slice(6);
-      if (!changed.has(file)) changed.set(file, new Set());
+    if (line.startsWith("diff --git ")) {
+      inHeader = true;
+      file = null;
+      continue;
+    }
+    if (line.startsWith("@@")) inHeader = false;
+    if (inHeader && line.startsWith("+++ ")) {
+      const target = unquoteGitPath(line.slice(4));
+      file = target.startsWith("b/") ? target.slice(2) : null; // "+++ /dev/null" = deletion
+      if (file && !changed.has(file)) changed.set(file, new Set());
+      inHeader = false;
       continue;
     }
     if (!file || !line.startsWith("@@")) continue;
@@ -74,6 +147,21 @@ export function changedLineCoverage(changed, coverage) {
     covered += fileCovered;
   }
   return { total, covered, pct: total ? Number(((covered / total) * 100).toFixed(2)) : 100, files };
+}
+
+export function isCoverageSource(file) {
+  const normalized = file.split(path.sep).join("/");
+  if (COVERAGE_TOOL_FILES.has(normalized) || /\.test\.[^/]+$/.test(normalized)) return false;
+  if (/^gui\/client\/src\/.+\.d\.ts$/.test(normalized)) return false;
+  return (
+    /^(?:scripts|hooks|validation|gui\/server)\/.+\.mjs$/.test(normalized) ||
+    /^src\/.+\.ts$/.test(normalized) ||
+    /^gui\/client\/src\/.+\.tsx?$/.test(normalized)
+  );
+}
+
+export function missingCoverageFiles(changed, coverage) {
+  return [...changed.keys()].filter((file) => isCoverageSource(file) && !coverage.has(file)).sort();
 }
 
 export function resolveBase(explicit, gitCommand = git, env = process.env) {
@@ -197,6 +285,10 @@ function main(argv) {
   const diff = git(coverageDiffArgs(base));
   const changed = parseChangedLines(diff);
   const lcov = parseLcov(readFileSync(LCOV_FILE, "utf8"));
+  const missing = missingCoverageFiles(changed, lcov);
+  if (missing.length) {
+    failures.push(`changed production files missing from LCOV: ${missing.join(", ")}`);
+  }
   const changedResult = changedLineCoverage(changed, lcov);
   if (changedResult.pct < baseline.changedLines) {
     failures.push(

@@ -5,6 +5,14 @@
  * Stryker's command runner cannot map native node:test cases to mutants, so
  * critical production files are paired with narrow, explicit test groups. The
  * GUI client uses Stryker's Vitest runner and per-test coverage analysis.
+ *
+ * TypeScript groups (`mutateDist: true`) are mutated in their compiled `dist/`
+ * output, never in `src/`. The command runner scores purely on exit code, so a
+ * mutant that merely breaks `tsc` would otherwise be recorded as "killed" by
+ * the compiler and structurally inflate the score. dist is built once,
+ * unmutated, before the campaign; the per-mutant kill command runs only tests.
+ * Group `match`/`nightly` stay in tracked source terms (so existence checks in
+ * test/mutation-config.test.mjs work); `toMutateTarget` maps them to dist.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -16,12 +24,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const MUTATION_GROUPS = [
   {
     name: "access-governance",
-    match: /^(hooks\/file-governance-guard|scripts\/sync-plan|scripts\/brain-client)\.mjs$/,
-    nightly: [
-      "hooks/file-governance-guard.mjs",
-      "scripts/sync-plan.mjs",
-      "scripts/brain-client.mjs",
-    ],
+    // The sync-plan safety gate (buildPlan: admin never syncs, default-deny on
+    // missing `access:`) lives in scripts/aios.mjs — there is no sync-plan.mjs.
+    match: /^(hooks\/file-governance-guard|scripts\/aios|scripts\/brain-client)\.mjs$/,
+    nightly: ["hooks/file-governance-guard.mjs", "scripts/aios.mjs", "scripts/brain-client.mjs"],
     tests: [
       "test/file-governance-guard.test.mjs",
       "test/sync-plan.test.mjs",
@@ -60,7 +66,12 @@ export const MUTATION_GROUPS = [
     match: /^(?:scripts\/inbox\.mjs|src\/operator-loop\/inbox\/.+\.ts)$/,
     nightly: ["scripts/inbox.mjs", "src/operator-loop/inbox/**/*.ts"],
     tests: ["test/operator-loop/*.test.mjs"],
-    build: true,
+    mutateDist: true,
+    // Stryker's sandbox copy drops POSIX execute bits, and the hook tests in
+    // this scope assert them (statSync(HOOK).mode & 0o111). Restore the bits
+    // before the tests run; chmod on tracked files always exits 0, so it can
+    // never kill a mutant — scoring stays purely test-driven.
+    executableBits: ["hooks/*.mjs"],
   },
   {
     name: "runtime-capabilities",
@@ -90,7 +101,19 @@ export const MUTATION_GROUPS = [
 ];
 
 function git(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  // 64 MiB: execFileSync's default 1 MiB maxBuffer makes a large diff crash
+  // the changed-code lane with ENOBUFS (same pattern as check-coverage.mjs).
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+}
+
+/**
+ * Map a source path (or glob) to the file Stryker should actually mutate.
+ * For `mutateDist` groups, TypeScript under src/ maps to its compiled dist/
+ * JavaScript so only real test execution — never a tsc failure — kills mutants.
+ */
+export function toMutateTarget(group, file) {
+  if (!group.mutateDist) return file;
+  return file.replace(/^src\//, "dist/").replace(/\.tsx?$/, ".js");
 }
 
 export function changedFiles(base, gitCommand = git) {
@@ -125,8 +148,13 @@ export function changedFiles(base, gitCommand = git) {
 }
 
 function nodeCommand(group) {
-  const prefix = group.build ? "npm run build:loop && " : "";
-  return `${prefix}node --test --test-concurrency=2 ${group.tests.join(" ")}`;
+  // No build step here: compiled-output groups build dist once (unmutated)
+  // before the campaign, so the per-mutant command is pure test execution and
+  // a compile-breaking mutant cannot be scored as "killed" by the compiler.
+  // `chmod +x` only repairs execute bits Stryker's sandbox copy drops; it
+  // always succeeds on tracked files and cannot kill a mutant.
+  const chmod = group.executableBits ? `chmod +x ${group.executableBits.join(" ")} && ` : "";
+  return `${chmod}node --test --test-concurrency=2 ${group.tests.join(" ")}`;
 }
 
 export function configFor(group, mutate, nightly) {
@@ -204,11 +232,12 @@ function main(argv) {
   const selected = MUTATION_GROUPS.filter((group) => !options.group || group.name === options.group)
     .map((group) => ({
       group,
-      mutate: options.mutate
+      mutate: (options.mutate
         ? [options.mutate]
         : options.nightly
           ? group.nightly
-          : changed.filter((file) => group.match.test(file)),
+          : changed.filter((file) => group.match.test(file))
+      ).map((file) => toMutateTarget(group, file)),
     }))
     .filter(({ mutate }) => mutate.length);
 
@@ -218,6 +247,17 @@ function main(argv) {
   }
   mkdirSync(path.join(ROOT, ".stryker-tmp"), { recursive: true });
   mkdirSync(path.join(ROOT, "reports", "mutation"), { recursive: true });
+
+  if (!options.list && selected.some(({ group }) => group.mutateDist)) {
+    console.log("mutation: building unmutated dist once for compiled-output groups");
+    const build = spawnSync("npm", ["run", "build:loop"], {
+      cwd: ROOT,
+      stdio: "inherit",
+      env: process.env,
+    });
+    if (build.error) throw build.error;
+    if (build.status !== 0) throw new Error("build:loop failed before the mutation campaign");
+  }
 
   for (const { group, mutate } of selected) {
     const config = configFor(group, mutate, options.nightly);

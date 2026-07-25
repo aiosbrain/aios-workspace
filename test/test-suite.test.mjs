@@ -5,28 +5,40 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  CLIENT_TEST_FILE_RE,
+  CLIENT_TEST_ROOT,
   discoverClientTests,
   discoverNodeTests,
   discoverTestInventory,
+  findUnrunnableNodeTests,
+  NODE_TEST_FILE_RE,
+  NODE_TEST_ROOTS,
   parseArgs,
   parseShard,
 } from "../scripts/test-suite.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// Git-parity oracle: discovery must equal the *tracked* test files under each
+// runner's root, filtered by that runner's own extension set (Node roots run
+// .mjs/.js via node:test; the client root is Vitest's and also runs .ts/.tsx).
+// Untracked scratch files and gitignored artifacts are deliberately excluded on
+// both sides — tracked-ness is part of discovery itself.
 function trackedTests() {
-  return execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
+  const tracked = execFileSync("git", ["ls-files", "-z", "--cached"], {
     cwd: ROOT,
     encoding: "utf8",
   })
-    .trim()
-    .split("\n")
-    .filter(
-      (file) =>
-        /^(?:test\/|gui\/server\/|gui\/client\/src\/|scripts\/)/.test(file) &&
-        /\.test\.(?:mjs|js|ts|tsx)$/.test(file)
-    )
-    .sort();
+    .split("\0")
+    .filter(Boolean);
+  const node = tracked.filter(
+    (file) =>
+      NODE_TEST_ROOTS.some((root) => file.startsWith(`${root}/`)) && NODE_TEST_FILE_RE.test(file)
+  );
+  const client = tracked.filter(
+    (file) => file.startsWith(`${CLIENT_TEST_ROOT}/`) && CLIENT_TEST_FILE_RE.test(file)
+  );
+  return [...node, ...client].sort();
 }
 
 test("every tracked test is discovered exactly once", () => {
@@ -35,18 +47,42 @@ test("every tracked test is discovered exactly once", () => {
   assert.deepEqual(inventory.all, trackedTests());
 });
 
-test("Node and client ownership are disjoint", () => {
+test("Node and client ownership are disjoint and every root contributes", () => {
   const node = discoverNodeTests();
   const client = discoverClientTests();
-  assert.ok(node.length > 200, "expected the complete Node suite");
-  assert.ok(client.length >= 9, "expected the GUI client suite");
+  for (const root of NODE_TEST_ROOTS) {
+    assert.ok(
+      node.some((file) => file.startsWith(`${root}/`)),
+      `expected Node root ${root}/ to contribute at least one discovered test`
+    );
+  }
+  assert.ok(client.length > 0, "expected the client root to contribute discovered tests");
+  assert.ok(
+    client.every((file) => file.startsWith(`${CLIENT_TEST_ROOT}/`)),
+    "client tests must live under the client root"
+  );
   assert.deepEqual(
     node.filter((file) => client.includes(file)),
     []
   );
-  assert.ok(node.includes("test/model-call-codex.test.mjs"));
-  assert.ok(node.includes("test/transcript-pipeline.test.mjs"));
-  assert.ok(node.includes("scripts/brain-mcp.test.mjs"));
+});
+
+test("a tracked Node-root test with an unrunnable extension fails loudly", () => {
+  // The live tree must be clean of them (discoverNodeTests above would throw)…
+  assert.deepEqual(findUnrunnableNodeTests(trackedTests()), []);
+  // …and the guard itself must flag exactly the silently-unrunnable shapes.
+  assert.deepEqual(
+    findUnrunnableNodeTests([
+      "test/foo.test.ts",
+      "gui/server/bar.test.tsx",
+      "scripts/baz.test.cjs",
+      "test/ok.test.mjs",
+      "gui/client/src/ok.test.ts",
+      "test/node_modules/vendored.test.ts",
+      "evals/outside-roots.test.ts",
+    ]),
+    ["gui/server/bar.test.tsx", "scripts/baz.test.cjs", "test/foo.test.ts"]
+  );
 });
 
 test("shard and concurrency arguments are validated", () => {
@@ -65,6 +101,13 @@ test("shard and concurrency arguments are validated", () => {
 test("package scripts use canonical discovery instead of enumerating tests", () => {
   const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
   assert.match(manifest.scripts["test:node"], /scripts\/test-suite\.mjs/);
+  // Test paths must front the suite with a STRICT loop build: a TS compile
+  // failure has to fail the run, not fall through to stale dist/ (soft mode is
+  // for postinstall only).
+  assert.match(manifest.scripts["test:node"], /ensure-loop-built\.mjs --strict/);
+  // --noEmitOnError keeps the mtime staleness gate sound: a failed compile must
+  // never refresh dist/ and mask itself as "fresh" on the next run.
+  assert.match(manifest.scripts["build:loop"], /--noEmitOnError/);
   assert.doesNotMatch(manifest.scripts.test, /\.test\./);
   assert.equal(manifest.scripts.pretest, undefined);
   assert.match(manifest.scripts["pretest:node"], /ensure-native-abi\.mjs/);
