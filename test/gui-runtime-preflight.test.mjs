@@ -165,7 +165,11 @@ test("runtime SDKs are production dependencies at both workspace boundaries", ()
 });
 
 test("non-relay CLI commands do not eagerly import the relay SDK boundary", () => {
-  const source = readFileSync(path.join(ROOT, "scripts/aios.mjs"), "utf8");
-  assert.doesNotMatch(source, /^import .*cmdRelay.*relay\.mjs/m);
-  assert.match(source, /await import\("\.\/relay\.mjs"\)/);
+  // Since AIO-512 the lazy import lives in the command registry's descriptor loader, not in
+  // an inline `await import()` in aios.mjs. Both files must stay free of a static import.
+  const cli = readFileSync(path.join(ROOT, "scripts/aios.mjs"), "utf8");
+  const registry = readFileSync(path.join(ROOT, "scripts/cli/registry.mjs"), "utf8");
+  assert.doesNotMatch(cli, /^import .*relay\.mjs/m);
+  assert.doesNotMatch(registry, /^import .*relay\.mjs/m);
+  assert.match(registry, /loader: \(\) => import\("\.\.\/relay\.mjs"\)/);
 });
