@@ -420,5 +420,33 @@ export function createLinearClient({
     return { ok: true };
   }
 
-  return { request, getIssue, listIssues, createIssue, addComment };
+  async function updateIssueDescription(identifier, description) {
+    if (typeof description !== "string")
+      throw new LinearError("updateIssueDescription requires a string description.");
+    const meta = await resolveIssueMeta(identifier);
+    const query = `mutation UpdateIssueDescription($id: String!, $input: IssueUpdateInput!) {
+      issueUpdate(id: $id, input: $input) { success issue { identifier } }
+    }`;
+    // Never retry an external mutation. A lost response is ambiguous and must be reconciled by a
+    // fresh read, not by issuing a second write.
+    const data = await request(
+      query,
+      { id: meta.id, input: { description } },
+      { retryable: false }
+    );
+    const result = data?.issueUpdate;
+    if (!result?.success || result?.issue?.identifier !== identifier) {
+      throw new LinearError(`issueUpdate returned an ambiguous result for ${identifier}.`);
+    }
+    return { ok: true, identifier };
+  }
+
+  return {
+    request,
+    getIssue,
+    listIssues,
+    createIssue,
+    addComment,
+    updateIssueDescription,
+  };
 }

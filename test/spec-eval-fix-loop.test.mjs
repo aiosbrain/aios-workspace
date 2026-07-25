@@ -51,6 +51,35 @@ test("converges within budget (fail-then-pass) → exit 0, 1 iteration", async (
   assert.equal(loop.after.verdict, "SPEC_READY");
 });
 
+test("resolution map reports each finding from the post-revision evaluation", async () => {
+  let evalCalls = 0;
+  const findingA = { ruleId: "A", severity: "blocker", why: "first" };
+  const findingB = { ruleId: "B", severity: "blocker", why: "second" };
+  const loop = await runFixLoop({
+    specText: STRONG,
+    repo: REPO,
+    rubric: RUBRIC,
+    budget: 1,
+    useLlm: true,
+    evalFn: () => {
+      evalCalls++;
+      return JSON.stringify({
+        verdict: "NOT_READY",
+        score: 40,
+        findings: evalCalls === 1 ? [findingA, findingB] : [findingB],
+      });
+    },
+    reviseFn: ({ specText }) => `${specText}\n`,
+  });
+  assert.deepEqual(
+    loop.resolutionMap.filter(({ ruleId }) => ruleId === "A" || ruleId === "B"),
+    [
+      { ruleId: "A", severity: "blocker", status: "not-reported-after-revision" },
+      { ruleId: "B", severity: "blocker", status: "unchanged" },
+    ]
+  );
+});
+
 test("exhaustion (always NOT_READY) → status exhausted, exit 2, iterations == budget", async () => {
   let reviseCalls = 0;
   const loop = await runFixLoop({

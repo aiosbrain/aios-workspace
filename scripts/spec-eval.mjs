@@ -18,11 +18,29 @@
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
+import {
+  loadSkillContext,
+  loadSkillSuite,
+  parseDeclaredSkills,
+  skillSha256,
+  validateSkillSelection,
+} from "./skill-context.mjs";
+import { cmdSpecPublish } from "./spec-publish.mjs";
+
+const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
+  existsSync
+);
+
+function trustedGitBin() {
+  if (!TRUSTED_GIT_BIN) throw new Error("git was not found in a trusted system directory");
+  return TRUSTED_GIT_BIN;
+}
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
@@ -561,7 +579,7 @@ const EVAL_SYSTEM = [
   '{"ruleId":"SR8","severity":"blocker"|"major"|"minor","quote":"…","why":"…","suggestion":"…"}]}',
 ].join(" ");
 
-function buildEvalPrompt(specText, rubric, deterministic, decisions) {
+function buildEvalPrompt(specText, rubric, deterministic, decisions, skillContext) {
   const detText = deterministic.length
     ? deterministic.map((f) => `- [${f.ruleId}/${f.severity}] ${f.detail}`).join("\n")
     : "- (none)";
@@ -576,6 +594,10 @@ function buildEvalPrompt(specText, rubric, deterministic, decisions) {
     "",
     "For each SR criterion below, read the spec and return a pass/fail judgment with evidence.",
     "Skip criteria whose trigger does not fire (record trigger:false).",
+    "",
+    "## Stage skill",
+    "",
+    skillContext?.prompt ?? "(none)",
     "",
     "| ID | What to check | Must |",
     "|----|---------------|------|",
@@ -618,7 +640,7 @@ async function defaultEvalFn({ specText, rubric, deterministic, decisions, evalC
   const stub = process.env.AIOS_SPEC_EVAL_STUB;
   if (stub != null) return existsSync(stub) ? readFileSync(stub, "utf8") : stub;
   const model = evalCfg?.model ?? "deepseek-v4-pro";
-  const prompt = `${EVAL_SYSTEM}\n\n${buildEvalPrompt(specText, rubric, deterministic, decisions)}`;
+  const prompt = `${EVAL_SYSTEM}\n\n${buildEvalPrompt(specText, rubric, deterministic, decisions, evalCfg?.skillContext)}`;
   return callPromptModel({
     model,
     prompt,
@@ -818,8 +840,65 @@ export async function evaluateSpec({
   evalCfg = null,
   evalFn,
   decisions = [],
+  skillContext = null,
+  skillDeclarationText = null,
+  requireCleanRepo = false,
+  resolveRepoState,
 }) {
+  const candidateSha256 = skillSha256(specText);
+  let repoSha = null;
+  let repoDirty = null;
+  try {
+    if (resolveRepoState) {
+      ({ repoSha, repoDirty } = resolveRepoState(repo));
+    } else {
+      repoSha = execFileSync(trustedGitBin(), ["rev-parse", "HEAD"], {
+        cwd: repo,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      repoDirty =
+        execFileSync(trustedGitBin(), ["status", "--porcelain"], {
+          cwd: repo,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim().length > 0;
+    }
+  } catch {
+    repoSha = null;
+    repoDirty = null;
+  }
+  let resolvedSkillContext = skillContext;
+  const suitePath = path.join(repo, ".claude", "skill-suite.json");
+  if (existsSync(suitePath)) {
+    const suite = loadSkillSuite({ repo });
+    validateSkillSelection({
+      suite,
+      ids: parseDeclaredSkills(skillDeclarationText ?? specText),
+      stage: "builder",
+      source: "spec",
+    });
+    resolvedSkillContext ??= loadSkillContext({
+      repo,
+      ids: ["evaluate-spec-readiness"],
+      stage: "spec-eval",
+      source: "workflow",
+    });
+  }
+  const resolvedEvalCfg = resolvedSkillContext
+    ? { ...(evalCfg ?? {}), skillContext: resolvedSkillContext }
+    : evalCfg;
   const deterministic = runDeterministicChecks(specText, { repo });
+  if (requireCleanRepo && repoDirty !== false) {
+    deterministic.push({
+      ruleId: "SR0",
+      severity: "blocker",
+      detail:
+        repoDirty === true
+          ? "repository has uncommitted changes; SPEC_READY requires a clean evaluated tree"
+          : "repository cleanliness could not be verified; SPEC_READY requires a clean evaluated tree",
+    });
+  }
   const detBlockers = deterministic.filter((f) => f.severity === "blocker");
   let adversarial = null;
   let verdict;
@@ -827,12 +906,12 @@ export async function evaluateSpec({
   let score = null;
 
   if (useLlm) {
-    const quorum = normalizeQuorum(evalCfg?.quorum ?? DEFAULT_QUORUM);
+    const quorum = normalizeQuorum(resolvedEvalCfg?.quorum ?? DEFAULT_QUORUM);
     adversarial = await runAdversarialQuorum({
       specText,
       rubric,
       deterministic,
-      evalCfg,
+      evalCfg: resolvedEvalCfg,
       decisions,
       evalFn,
       quorum,
@@ -841,13 +920,13 @@ export async function evaluateSpec({
     // with no injected evalFn). Quorum ≥ 3 already tolerates a minority parseError by majority vote,
     // so runAdversarialQuorum clears parseError on the aggregated path and this retry stays dormant.
     if (adversarial.parseError && !evalFn) {
-      const model = evalCfg?.model ?? "deepseek-v4-pro";
+      const model = resolvedEvalCfg?.model ?? "deepseek-v4-pro";
       const retryEvalFn = async (args) => {
-        const prompt = `${EVAL_SYSTEM}\n\nCRITICAL: output ONLY the JSON object. No markdown fences.\n\n${buildEvalPrompt(args.specText, args.rubric, args.deterministic, args.decisions)}`;
+        const prompt = `${EVAL_SYSTEM}\n\nCRITICAL: output ONLY the JSON object. No markdown fences.\n\n${buildEvalPrompt(args.specText, args.rubric, args.deterministic, args.decisions, resolvedSkillContext)}`;
         return callPromptModel({
           model,
           prompt,
-          timeoutMs: evalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
+          timeoutMs: resolvedEvalCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
           opts: { ...EVAL_SAMPLING },
         });
       };
@@ -855,7 +934,7 @@ export async function evaluateSpec({
         specText,
         rubric,
         deterministic,
-        evalCfg,
+        evalCfg: resolvedEvalCfg,
         decisions,
         evalFn: retryEvalFn,
         quorum,
@@ -881,7 +960,20 @@ export async function evaluateSpec({
   }
 
   const findings = [...deterministic, ...(adversarial?.findings ?? [])];
-  return { verdict, exitCode, score, deterministic, adversarial, findings };
+  return {
+    verdict,
+    exitCode,
+    score,
+    deterministic,
+    adversarial,
+    findings,
+    injectedSkills: resolvedSkillContext?.audit ?? [],
+    candidateSha256,
+    repoSha,
+    repoDirty,
+    publishable:
+      requireCleanRepo && repoDirty === false && verdict === "SPEC_READY" && exitCode === 0,
+  };
 }
 
 /** Read the small, flat frontmatter surface used by the evaluator.  This intentionally accepts
@@ -971,7 +1063,7 @@ function collectSpecPaths(input) {
 
 // ── fix loop ────────────────────────────────────────────────────────────────────────────────
 
-function buildFixPrompt(specText, findings, rubric) {
+function buildFixPrompt(specText, findings, rubric, skillContext) {
   const list = findings.length
     ? findings.map((f) => `- [${f.ruleId}/${f.severity}] ${f.detail ?? f.why ?? ""}`).join("\n")
     : "- (none)";
@@ -981,6 +1073,14 @@ function buildFixPrompt(specText, findings, rubric) {
     "it under an explicit 'new file to create' heading; make acceptance criteria observable; add",
     "any missing Deps / Scope / Build-with / tier-safety sections.",
     "Output ONLY the full revised spec markdown — no preamble, no commentary.",
+    "",
+    "## Stage skill",
+    "",
+    skillContext?.prompt ?? "(none)",
+    "",
+    `## Original candidate SHA-256\n\n${skillSha256(specText)}`,
+    "",
+    `## Declared builder skills\n\n${parseDeclaredSkills(specText).join(", ") || "(none)"}`,
     "",
     "## Rubric",
     "",
@@ -1001,13 +1101,23 @@ async function defaultReviseFn({ specText, findings, rubric, fixCfg }) {
   const stub = process.env.AIOS_SPEC_FIX_STUB;
   if (stub != null) return existsSync(stub) ? readFileSync(stub, "utf8") : stub;
   const model = fixCfg?.model ?? "deepseek-v4-pro";
-  const prompt = buildFixPrompt(specText, findings, rubric);
+  const prompt = buildFixPrompt(specText, findings, rubric, fixCfg?.skillContext);
   const text = await callPromptModel({
     model,
     prompt,
     timeoutMs: fixCfg?.timeoutMs ?? SPEC_PROMPT_TIMEOUT_MS,
   });
   return text.trim() || specText;
+}
+
+function renderSpecRevisionDiff(original, revised) {
+  if (original === revised) return "";
+  return [
+    "--- original-spec.md",
+    "+++ revised-spec.md",
+    ...original.split("\n").map((line) => `-${line}`),
+    ...revised.split("\n").map((line) => `+${line}`),
+  ].join("\n");
 }
 
 /**
@@ -1030,6 +1140,25 @@ export async function runFixLoop({
   decisions = [],
   provenanceAware = false,
 }) {
+  const suitePath = path.join(repo, ".claude", "skill-suite.json");
+  const skillContext = existsSync(suitePath)
+    ? loadSkillContext({
+        repo,
+        ids: ["repair-spec-safely"],
+        stage: "spec-fix",
+        source: "workflow",
+      })
+    : null;
+  if (existsSync(suitePath)) {
+    const suite = loadSkillSuite({ repo });
+    validateSkillSelection({
+      suite,
+      ids: parseDeclaredSkills(specText),
+      stage: "builder",
+      source: "spec",
+    });
+  }
+  const resolvedFixCfg = skillContext ? { ...(fixCfg ?? {}), skillContext } : fixCfg;
   const cap =
     Number.isInteger(budget) && budget >= 0
       ? budget
@@ -1062,7 +1191,7 @@ export async function runFixLoop({
         specText: current,
         findings: result.findings,
         rubric,
-        fixCfg,
+        fixCfg: resolvedFixCfg,
       });
     } catch (e) {
       // The reviser failed (e.g. an SDK/billing/network error). Degrade gracefully: keep the last
@@ -1081,6 +1210,26 @@ export async function runFixLoop({
   const status =
     result.verdict === "NOT_READY" ? (reviseError ? "error" : "exhausted") : "converged"; // SPEC_READY | NOT_EVALUATED
   const exitCode = result.verdict === "NOT_READY" ? result.exitCode : 0;
+  const afterFindingKeys = new Set(
+    result.findings.map((finding) =>
+      JSON.stringify([finding.ruleId, finding.severity, finding.detail ?? finding.why ?? ""])
+    )
+  );
+  const resolutionMap = before.findings.map((finding) => {
+    const key = JSON.stringify([
+      finding.ruleId,
+      finding.severity,
+      finding.detail ?? finding.why ?? "",
+    ]);
+    return {
+      ruleId: finding.ruleId,
+      severity: finding.severity,
+      status:
+        current === specText || afterFindingKeys.has(key)
+          ? "unchanged"
+          : "not-reported-after-revision",
+    };
+  });
   return {
     status,
     exitCode,
@@ -1092,6 +1241,11 @@ export async function runFixLoop({
     revisedSpec: current,
     beforeScore: before.score,
     afterScore: result.score,
+    originalSha256: skillSha256(specText),
+    revisedSha256: skillSha256(current),
+    resolutionMap,
+    revisionDiff: renderSpecRevisionDiff(specText, current),
+    injectedSkills: skillContext?.audit ?? [],
   };
 }
 
@@ -1155,11 +1309,13 @@ const HELP = [
   c.blue("aios spec — spec/plan readiness harness (rubric: .claude/rubrics/spec-readiness.md)"),
   "",
   "usage:",
-  "  aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--json] [--no-llm] [--rubric <path>]",
+  "  aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--publishable] [--json] [--no-llm] [--rubric <path>]",
   "  aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]",
   "  aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]",
+  "  aios spec publish AIO-<n> <candidate> --eval-artifact <json> --expected-remote-sha <sha256> [--dry-run]",
   "",
   "eval:  score a spec against the rubric (deterministic + adversarial LLM layers).",
+  "       --publishable also requires a clean repository and emits a publishable artifact.",
   "fix:   iterate the spec through the bounded fix loop until it is ready (budget from rubric).",
   "       default writes <name>.improved.md; --write overwrites in place; --out <path> is explicit.",
   "",
@@ -1186,6 +1342,15 @@ export async function cmdSpec(repo, args) {
     return;
   }
   const sub = args[0];
+  if (sub === "publish") {
+    try {
+      process.exit(await cmdSpecPublish(repo, args));
+    } catch (error) {
+      console.error(c.red(`error: ${error.message}`));
+      process.exit(4);
+    }
+    return;
+  }
   const rest = args.slice(1);
   if (sub !== "eval" && sub !== "fix" && sub !== "author") {
     console.error(c.red(`error: unknown subcommand '${sub}' (expected eval|fix|author)`));
@@ -1291,6 +1456,7 @@ export async function cmdSpec(repo, args) {
         useLlm: !noLlm && tier !== "deterministic",
         evalCfg: models.spec_eval,
         decisions,
+        requireCleanRepo: args.includes("--publishable"),
       });
       // deterministic is a declared tier, not an incomplete evaluation; its clean result passes.
       if (tier === "deterministic" && res.exitCode === 3) {
@@ -1329,16 +1495,37 @@ export async function cmdSpec(repo, args) {
                 score: res.score,
                 findings: res.findings,
                 tier: res.tier,
+                injectedSkills: res.injectedSkills,
+                candidateSha256: res.candidateSha256,
+                repoSha: res.repoSha,
+                repoDirty: res.repoDirty,
+                publishable: res.publishable,
               }
             : {
                 exitCode,
                 results: results.map(
-                  ({ file: itemFile, verdict, exitCode: itemExit, score, tier }) => ({
+                  ({
                     file: itemFile,
                     verdict,
                     exitCode: itemExit,
                     score,
                     tier,
+                    injectedSkills,
+                    candidateSha256,
+                    repoSha,
+                    repoDirty,
+                    publishable,
+                  }) => ({
+                    file: itemFile,
+                    verdict,
+                    exitCode: itemExit,
+                    score,
+                    tier,
+                    injectedSkills,
+                    candidateSha256,
+                    repoSha,
+                    repoDirty,
+                    publishable,
                   })
                 ),
               },
@@ -1386,9 +1573,24 @@ export async function cmdSpec(repo, args) {
   else if (flag("--out")) outPath = path.resolve(flag("--out"));
   else outPath = specPath.replace(/\.md$/i, "") + ".improved.md";
 
+  const resolutionPath = `${outPath}.resolution.json`;
+  const diffPath = `${outPath}.diff`;
   try {
     const { writeFileSync } = await import("node:fs");
     writeFileSync(outPath, loop.revisedSpec);
+    writeFileSync(
+      resolutionPath,
+      `${JSON.stringify(
+        {
+          originalSha256: loop.originalSha256,
+          revisedSha256: loop.revisedSha256,
+          findings: loop.resolutionMap,
+        },
+        null,
+        2
+      )}\n`
+    );
+    writeFileSync(diffPath, `${loop.revisionDiff}\n`);
   } catch (e) {
     console.error(c.red(`error: cannot write ${outPath}: ${e.message}`));
     process.exit(4);
@@ -1407,6 +1609,11 @@ export async function cmdSpec(repo, args) {
           beforeVerdict: loop.before.verdict,
           afterVerdict: loop.after.verdict,
           outputPath: outPath,
+          resolutionPath,
+          diffPath,
+          originalSha256: loop.originalSha256,
+          revisedSha256: loop.revisedSha256,
+          injectedSkills: loop.injectedSkills,
         },
         null,
         2

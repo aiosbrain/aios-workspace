@@ -64,6 +64,7 @@ case "$MODE" in
     run_check "OGR10 — Agent Readiness (advisory)" "$SCRIPT_DIR/check-agent-readiness.mjs"
     run_check "OGR13 — Modularity (advisory)" "$SCRIPT_DIR/check-modularity.mjs"
     run_check "OGR14 — File Governance (anti-sprawl ratchet)" "$SCRIPT_DIR/check-file-governance.mjs"
+    run_check "OGR15 — Focused Delivery Skill Suite" "$SCRIPT_DIR/check-delivery-skill-suite.mjs"
     ;;
 esac
 

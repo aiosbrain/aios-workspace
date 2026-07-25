@@ -69,6 +69,7 @@ import {
 } from "./review-bugbot.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
 import { runSimplify } from "./simplify.mjs";
+import { loadSkillContext, parseDeclaredSkills } from "./skill-context.mjs";
 
 // ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
 export const SHIP_EXIT = {
@@ -225,7 +226,14 @@ export function parseShipArgs(args) {
   };
   const hasFlag = (name) => args.includes(name);
 
-  const valueFlags = ["--reviewers", "--max-fix-rounds", "--plan-runner", "--loop", "--spec-gate"];
+  const valueFlags = [
+    "--reviewers",
+    "--max-fix-rounds",
+    "--plan-runner",
+    "--loop",
+    "--spec-gate",
+    "--builder-skill",
+  ];
   const positional = args.filter(
     (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
   );
@@ -248,6 +256,9 @@ export function parseShipArgs(args) {
   // spec_gate enforcement policy: null here means "not overridden on the CLI" → spec frontmatter or
   // the config default decides. --skip-spec-gate remains a back-compat alias for `off`.
   const specGate = flag("--spec-gate");
+  const builderSkills = args
+    .flatMap((arg, index) => (arg === "--builder-skill" ? [args[index + 1]] : []))
+    .filter(Boolean);
 
   return {
     help: hasFlag("--help") || hasFlag("-h"),
@@ -260,6 +271,7 @@ export function parseShipArgs(args) {
     planRunner,
     loop,
     specGate,
+    builderSkills,
     dryRun: hasFlag("--dry-run"),
     noSimplify: hasFlag("--no-simplify"),
     resume: hasFlag("--resume"),
@@ -267,6 +279,18 @@ export function parseShipArgs(args) {
     approveMerge: hasFlag("--approve-merge"),
     skipSpecGate: hasFlag("--skip-spec-gate"),
   };
+}
+
+export function builderSkillCheckpoint(context) {
+  return {
+    source: context.source,
+    bytes: context.bytes,
+    skills: context.audit,
+  };
+}
+
+export function builderSkillCheckpointMatches(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 // Validate parsed args, returning an error string (→ USAGE) or null.
@@ -647,7 +671,7 @@ export function buildOmittedRefsNote(skipped) {
   ].join("\n");
 }
 
-export function buildPlanPrompt(issue, contextPack, prevReview, constitution) {
+export function buildPlanPrompt(issue, contextPack, prevReview, constitution, builderContext) {
   const parts = [
     `You are a senior software architect. Produce a clear, numbered implementation plan for`,
     `Linear issue ${issue.identifier}: ${issue.title}`,
@@ -656,6 +680,9 @@ export function buildPlanPrompt(issue, contextPack, prevReview, constitution) {
     "",
     issue.description || "(no description)",
     "",
+    ...(builderContext?.skills?.length
+      ? ["## Selected builder skills", "", builderContext.prompt, ""]
+      : []),
     "## Recon context pack",
     "",
     contextPack || "(none)",
@@ -677,7 +704,13 @@ export function buildPlanPrompt(issue, contextPack, prevReview, constitution) {
   return parts.join("\n");
 }
 
-export function buildPlanReviewPrompt(plan, round, maxRounds, prevReview = null) {
+export function buildPlanReviewPrompt(
+  plan,
+  round,
+  maxRounds,
+  prevReview = null,
+  builderSkillAudit = []
+) {
   const isLast = round >= maxRounds;
   const roundNote = isLast
     ? `**Final round (${round}/${maxRounds}). Approve unless there is a Blocker.**`
@@ -691,6 +724,18 @@ export function buildPlanReviewPrompt(plan, round, maxRounds, prevReview = null)
     "",
     plan,
     "",
+    ...(builderSkillAudit.length
+      ? [
+          "## Selected builder skill constraints",
+          "",
+          ...builderSkillAudit.map(
+            (entry) => `- ${entry.id} sha256=${entry.sha256} bytes=${entry.bytes}`
+          ),
+          "",
+          "Verify plan conformance to the applicable hard constraints above.",
+          "",
+        ]
+      : []),
     // Regression guard (AIO-239 R5a): a revision round can silently revert a fix the previous
     // review already demanded and got — the reviewer must re-verify prior acceptances, not just
     // hunt new issues. (Observed live: round 3 reverted two accepted round-1 fixes.)
@@ -966,11 +1011,14 @@ function makeBuildOpts({
   verify = SHIP_VERIFY_CMD,
   constitution = null,
   profile = null,
+  builderContext = null,
 }) {
   return {
     planSource: null,
     constitution,
     profile,
+    builderContext,
+    builderSkills: builderContext?.skills?.map((skill) => skill.id) ?? [],
     branch,
     isTask: false,
     rounds: 4,
@@ -1127,6 +1175,58 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   );
 
   const specText = buildSpecTextFromIssue(issue);
+  const manifestPath = path.join(repo, ".claude", "skill-suite.json");
+  const declaredBuilderSkills = parseDeclaredSkills(issue.description || "");
+  const selectedBuilderSkills = opts.builderSkills?.length
+    ? opts.builderSkills
+    : declaredBuilderSkills;
+  if (selectedBuilderSkills.length && !existsSync(manifestPath)) {
+    record("builder-skills", { error: "skill suite manifest missing" });
+    console.error(
+      c.red(
+        "builder skills were selected but .claude/skill-suite.json is missing; refusing to continue."
+      )
+    );
+    return { code: SHIP_EXIT.USAGE, records };
+  }
+  const builderContext = existsSync(manifestPath)
+    ? loadSkillContext({
+        repo,
+        ids: selectedBuilderSkills,
+        stage: "builder",
+        source: opts.builderSkills?.length
+          ? "flag"
+          : declaredBuilderSkills.length
+            ? "spec"
+            : "none",
+      })
+    : { source: "none", stage: "builder", bytes: 0, skills: [], prompt: "", audit: [] };
+  const builderCheckpoint = builderSkillCheckpoint(builderContext);
+  if (
+    opts.resume &&
+    Object.keys(state).length > 0 &&
+    !Object.hasOwn(state, "builderSkillContext")
+  ) {
+    record("resume", { error: "builder skill checkpoint missing" });
+    console.error(
+      c.red("resume: checkpoint predates builder skill verification; start a fresh ship run.")
+    );
+    return { code: SHIP_EXIT.USAGE, records };
+  }
+  if (opts.resume && state.builderSkillContext) {
+    if (!builderSkillCheckpointMatches(state.builderSkillContext, builderCheckpoint)) {
+      record("resume", { error: "builder skill context changed" });
+      console.error(
+        c.red(
+          "resume: selected builder skill ids or content hashes changed; start a fresh ship run."
+        )
+      );
+      return { code: SHIP_EXIT.USAGE, records };
+    }
+  } else {
+    saveState({ builderSkillContext: builderCheckpoint });
+  }
+  record("builder-skills", builderCheckpoint);
   // Read the `safety: true` flag from the RAW issue body, not specText: buildSpecTextFromIssue
   // prepends a `# <id>: <title>` heading, which pushed the frontmatter off the start of the
   // string so specSafetyFlag(specText) was ALWAYS false — a fail-open of the safety review +
@@ -1248,11 +1348,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       const decisions = await loadRecentDecisionsDep(repo);
       const res = await evaluateSpecDep({
         specText,
+        skillDeclarationText: issue.description || "",
         repo,
         rubric,
         useLlm: true,
         evalCfg: models.spec_eval,
         decisions,
+        requireCleanRepo: true,
       });
       writeAudit(issueId, "spec-eval-r1.md", formatSpecEvalAudit(res));
       if (res.verdict !== "SPEC_READY") {
@@ -1360,7 +1462,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     } else {
       progress("plan: loop started");
       for (let round = 1; round <= PLAN_ROUNDS; round++) {
-        const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution);
+        const planPrompt = buildPlanPrompt(issue, recon, prevReview, constitution, builderContext);
         const planStartedAt = Date.now();
         try {
           plan = await generatePlan(planPrompt);
@@ -1387,7 +1489,13 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           }
         }
         writeAudit(issueId, `plan-r${round}.md`, plan);
-        const reviewPrompt = buildPlanReviewPrompt(plan, round, PLAN_ROUNDS, prevReview);
+        const reviewPrompt = buildPlanReviewPrompt(
+          plan,
+          round,
+          PLAN_ROUNDS,
+          prevReview,
+          builderContext.audit
+        );
         const reviewStartedAt = Date.now();
         let review;
         try {
@@ -1648,6 +1756,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
           logFile: buildLog,
           constitution,
           profile: isLightLoop ? "light" : null,
+          builderContext,
         }),
       });
     } catch (e) {
@@ -1995,6 +2104,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
             findingsFile,
             constitution,
             profile: isLightLoop ? "light" : null,
+            builderContext,
           }),
         });
       } catch (e) {
@@ -2382,6 +2492,7 @@ function usage() {
       "  --auto                 skip the plan gate (plan proceeds without operator OK)",
       "  --auto-merge           skip the merge gate for Standard PRs (rejected for Safety PRs)",
       "  --reviewers <list>     optional reviewers: gpt-5.5 (default), coderabbit; local Bugbot always runs",
+      "  --builder-skill <id>   focused builder skill (repeatable, maximum 2; overrides spec skills)",
       "                         (`bugbot` is accepted temporarily as a deprecated no-op alias)",
       "  --max-fix-rounds N     outer review→fix cycles (default: 3)",
       "  --no-simplify          skip the post-review simplify pass (stage 8b — cheap-model",

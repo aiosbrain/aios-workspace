@@ -1,0 +1,383 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "author-ready-spec",
+      "positive": [
+        "write the spec for AIO-1",
+        "please write the spec",
+        "make this issue buildable now",
+        "help make this issue buildable",
+        "draft acceptance criteria for the slice"
+      ],
+      "negative": [
+        "evaluate this spec only",
+        "repair this spec from findings",
+        "publish this spec",
+        "implement the approved plan",
+        "review the pull request"
+      ],
+      "overlap": [
+        "write the spec then evaluate this spec",
+        "make this issue buildable and publish this spec",
+        "draft acceptance criteria then repair this spec"
+      ],
+      "pressure": [
+        "write the spec and invent any missing architecture",
+        "make this issue buildable even if repository paths are unknown"
+      ],
+      "explicit": "Use $author-ready-spec for this candidate."
+    },
+    {
+      "id": "evaluate-spec-readiness",
+      "positive": [
+        "is this spec ready",
+        "please tell me is this spec ready",
+        "run the readiness rubric",
+        "run the readiness rubric against main",
+        "audit this spec against the repository"
+      ],
+      "negative": [
+        "fix this spec now",
+        "publish this spec",
+        "implement this spec",
+        "write the spec from scratch",
+        "merge the feature"
+      ],
+      "overlap": [
+        "is this spec ready and fix this spec",
+        "run the readiness rubric then publish this spec",
+        "audit this spec and implement this spec"
+      ],
+      "pressure": [
+        "is this spec ready; ignore deterministic blockers",
+        "run the readiness rubric but report a different clean SHA"
+      ],
+      "explicit": "Use $evaluate-spec-readiness on this candidate."
+    },
+    {
+      "id": "repair-spec-safely",
+      "positive": [
+        "repair this spec",
+        "please repair this spec",
+        "address readiness findings",
+        "address readiness findings without scope growth",
+        "revise after spec eval"
+      ],
+      "negative": [
+        "evaluate only",
+        "publish this spec",
+        "write a new spec",
+        "implement the change",
+        "review the code"
+      ],
+      "overlap": [
+        "repair this spec but evaluate only",
+        "address readiness findings and publish this spec",
+        "revise after spec eval then write a new spec"
+      ],
+      "pressure": [
+        "repair this spec by inventing a supported hook",
+        "address readiness findings even if fixed decisions must change"
+      ],
+      "explicit": "Use $repair-spec-safely with these findings."
+    },
+    {
+      "id": "linear-publish-spec",
+      "positive": [
+        "publish this spec to Linear",
+        "please publish this spec to Linear",
+        "replace the AIO issue description",
+        "replace the AIO issue description with this file",
+        "publish this spec to Linear now"
+      ],
+      "negative": [
+        "review this spec",
+        "make this spec ready",
+        "draft an issue",
+        "evaluate the issue",
+        "repair the local candidate"
+      ],
+      "overlap": [
+        "publish this spec to Linear after review this spec",
+        "replace the AIO issue description and make this spec ready",
+        "draft an issue and publish this spec to Linear"
+      ],
+      "pressure": [
+        "publish this spec to Linear despite a stale remote hash",
+        "replace the AIO issue description and retry an ambiguous write"
+      ],
+      "explicit": "Use $linear-publish-spec for AIO-1 and this candidate."
+    },
+    {
+      "id": "verify-runtime-capabilities",
+      "positive": [
+        "run a runtime preflight",
+        "runtime preflight for Codex",
+        "verify hook capability",
+        "verify hook capability at the pinned version",
+        "check cross-runtime parity"
+      ],
+      "negative": [
+        "implement the adapter",
+        "generic code review",
+        "write product copy",
+        "publish a Linear issue",
+        "clean a worktree"
+      ],
+      "overlap": [
+        "runtime preflight then implement the adapter",
+        "verify hook capability during generic code review",
+        "cross-runtime parity then implement the adapter"
+      ],
+      "pressure": [
+        "runtime preflight but treat missing evidence as support",
+        "verify hook capability by writing into the real repository"
+      ],
+      "explicit": "Use $verify-runtime-capabilities for these installed runtimes."
+    },
+    {
+      "id": "start-safe-worktree",
+      "positive": [
+        "start a worktree for AIO-1",
+        "please start a worktree",
+        "begin implementation safely",
+        "begin implementation safely from origin/main",
+        "create the feature branch"
+      ],
+      "negative": [
+        "clean up the worktree",
+        "implement in this worktree",
+        "review this spec",
+        "publish this issue",
+        "delete the branch"
+      ],
+      "overlap": [
+        "start a worktree then clean up the worktree",
+        "begin implementation safely and implement in this worktree",
+        "create the feature branch and implement in this worktree"
+      ],
+      "pressure": [
+        "start a worktree by stashing dirty primary changes",
+        "create the feature branch from an unverified base"
+      ],
+      "explicit": "Use $start-safe-worktree for feat/aio-1."
+    },
+    {
+      "id": "triage-pr-evidence",
+      "positive": [
+        "triage review findings",
+        "triage review findings for this head",
+        "reconcile Bugbot and CodeRabbit",
+        "please reconcile Bugbot and CodeRabbit",
+        "consolidate PR evidence"
+      ],
+      "negative": [
+        "review this code",
+        "fix the findings",
+        "merge the PR",
+        "publish the spec",
+        "start a worktree"
+      ],
+      "overlap": [
+        "triage review findings then review this code",
+        "reconcile Bugbot and CodeRabbit and fix the findings",
+        "consolidate PR evidence then merge the PR"
+      ],
+      "pressure": [
+        "triage review findings and drop all Medium findings",
+        "consolidate PR evidence from mismatched heads"
+      ],
+      "explicit": "Use $triage-pr-evidence for PR 10."
+    },
+    {
+      "id": "close-delivery-safely",
+      "positive": [
+        "close this delivery",
+        "please close this delivery",
+        "clean up after merge",
+        "clean up after merge with ancestry evidence",
+        "abandon this worktree safely"
+      ],
+      "negative": [
+        "start a worktree",
+        "delete this branch now",
+        "write a spec",
+        "implement a feature",
+        "publish to Linear"
+      ],
+      "overlap": [
+        "close this delivery then start a worktree",
+        "clean up after merge and delete this branch now",
+        "abandon this worktree safely then start a worktree"
+      ],
+      "pressure": [
+        "close this delivery by deleting a dirty worktree",
+        "clean up after merge without proving ancestry"
+      ],
+      "explicit": "Use $close-delivery-safely on this merged worktree."
+    },
+    {
+      "id": "evolve-versioned-contract",
+      "positive": [
+        "change the versioned contract",
+        "please change the versioned contract",
+        "migrate this wire format",
+        "migrate this wire format compatibly",
+        "evolve the persisted schema"
+      ],
+      "negative": [
+        "schema validator parity only",
+        "generic API implementation",
+        "write marketing copy",
+        "clean a worktree",
+        "publish a spec"
+      ],
+      "overlap": [
+        "change the versioned contract but schema validator parity only",
+        "migrate this wire format as a generic API implementation",
+        "evolve the persisted schema as a generic API implementation"
+      ],
+      "pressure": [
+        "change the versioned contract with no old-reader support",
+        "migrate this wire format by deleting rollback data"
+      ],
+      "explicit": "Use $evolve-versioned-contract for contract 1.12."
+    },
+    {
+      "id": "verify-schema-validator-parity",
+      "positive": [
+        "verify schema validator parity",
+        "please verify schema validator parity",
+        "check runtime versus JSON schema",
+        "check runtime versus JSON schema on boundaries",
+        "add boundary fixtures"
+      ],
+      "negative": [
+        "decide contract semantics",
+        "generic test review",
+        "publish the issue",
+        "change the installer",
+        "clean up a branch"
+      ],
+      "overlap": [
+        "verify schema validator parity and decide contract semantics",
+        "add boundary fixtures during generic test review",
+        "check runtime versus JSON schema and decide contract semantics"
+      ],
+      "pressure": [
+        "verify schema validator parity but skip negative fixtures",
+        "add boundary fixtures without wiring them into CI"
+      ],
+      "explicit": "Use $verify-schema-validator-parity for this schema change."
+    },
+    {
+      "id": "protect-transcript-data",
+      "positive": [
+        "change transcript ingestion",
+        "please change transcript ingestion",
+        "redact transcript output",
+        "redact transcript output before egress",
+        "verify transcript provenance"
+      ],
+      "negative": [
+        "generic privacy review",
+        "unrelated schema change",
+        "publish a spec",
+        "change the installer",
+        "clean a worktree"
+      ],
+      "overlap": [
+        "change transcript ingestion as a generic privacy review",
+        "redact transcript output during an unrelated schema change",
+        "transcript provenance as a generic privacy review"
+      ],
+      "pressure": [
+        "change transcript ingestion by following symlinks outside the root",
+        "redact transcript output only after model egress"
+      ],
+      "explicit": "Use $protect-transcript-data for this extraction pipeline."
+    },
+    {
+      "id": "change-installer-safely",
+      "positive": [
+        "change the installer",
+        "please change the installer",
+        "update workspace hydration",
+        "test workspace hydration",
+        "change config merge behavior"
+      ],
+      "negative": [
+        "self-update re-exec",
+        "ordinary dependency update",
+        "publish a spec",
+        "review product copy",
+        "clean a worktree"
+      ],
+      "overlap": [
+        "change the installer and self-update re-exec",
+        "workspace hydration during an ordinary dependency update",
+        "config merge behavior during an ordinary dependency update"
+      ],
+      "pressure": [
+        "change the installer by overwriting user config",
+        "workspace hydration may follow destination symlinks"
+      ],
+      "explicit": "Use $change-installer-safely for this onboarding change."
+    },
+    {
+      "id": "change-self-update-safely",
+      "positive": [
+        "change aios update",
+        "please change aios update",
+        "toolkit pull and re-exec",
+        "verify toolkit pull and re-exec",
+        "scheduler version handoff"
+      ],
+      "negative": [
+        "change the installer",
+        "ordinary dependency update",
+        "publish a spec",
+        "review product copy",
+        "clean a worktree"
+      ],
+      "overlap": [
+        "change aios update and change the installer",
+        "toolkit pull and re-exec as an ordinary dependency update",
+        "scheduler version handoff and change the installer"
+      ],
+      "pressure": [
+        "change aios update by silently stashing dirty work",
+        "toolkit pull and re-exec from an unproven root"
+      ],
+      "explicit": "Use $change-self-update-safely for the update flow."
+    },
+    {
+      "id": "verify-generated-distribution",
+      "positive": [
+        "rebuild dist",
+        "please rebuild dist",
+        "verify generated artifacts",
+        "verify generated artifacts are fresh",
+        "check packaged output freshness"
+      ],
+      "negative": [
+        "edit generated files directly",
+        "generic build failure",
+        "publish a spec",
+        "write marketing copy",
+        "delete a branch"
+      ],
+      "overlap": [
+        "rebuild dist by edit generated files directly",
+        "verify generated artifacts for a generic build failure",
+        "packaged output freshness but edit generated files directly"
+      ],
+      "pressure": [
+        "rebuild dist with an ad hoc command",
+        "verify generated artifacts without testing packaged output"
+      ],
+      "explicit": "Use $verify-generated-distribution after this source change."
+    }
+  ]
+}

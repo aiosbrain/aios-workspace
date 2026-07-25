@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aios.dev/schemas/delivery-skill-suite-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "limits", "skills"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compact_index_bytes",
+        "stage_skill_bytes",
+        "builder_total_bytes",
+        "builder_skill_count"
+      ],
+      "properties": {
+        "compact_index_bytes": { "type": "integer", "minimum": 1, "maximum": 1500 },
+        "stage_skill_bytes": { "type": "integer", "minimum": 1, "maximum": 6000 },
+        "builder_total_bytes": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "builder_skill_count": { "type": "integer", "minimum": 1, "maximum": 2 }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "path",
+          "stages",
+          "routing",
+          "mutability",
+          "max_bytes",
+          "conflicts",
+          "prerequisites",
+          "explicit_invocation_required"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "path": { "type": "string", "pattern": "^[a-z0-9-]+/SKILL\\.md$" },
+          "stages": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "spec-author",
+                "spec-eval",
+                "spec-fix",
+                "spec-publish",
+                "builder",
+                "review",
+                "cleanup",
+                "interactive",
+                "export"
+              ]
+            }
+          },
+          "routing": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["positive", "negative"],
+            "properties": {
+              "positive": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 3 }
+              },
+              "negative": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 3 }
+              }
+            }
+          },
+          "mutability": { "enum": ["read-only", "local-write", "external-write"] },
+          "max_bytes": { "type": "integer", "minimum": 1, "maximum": 6000 },
+          "conflicts": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+          },
+          "prerequisites": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+          },
+          "explicit_invocation_required": { "type": "boolean" }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "mutability": { "const": "external-write" } },
+              "required": ["mutability"]
+            },
+            "then": {
+              "properties": {
+                "explicit_invocation_required": { "const": true }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
