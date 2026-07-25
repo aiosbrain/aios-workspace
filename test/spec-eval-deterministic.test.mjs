@@ -60,6 +60,17 @@ test("acceptance-demo-weak → the full deterministic blocker set", () => {
   for (const id of ["SR2", "SR3", "SR4", "SR5", "SR6", "SR7", "SR16"]) assert.ok(b.has(id), id);
 });
 
+test("SR6 accepts every build-with spelling — hyphen, space, joined", () => {
+  for (const heading of ["## Build-with", "## Build with", "## Buildwith"]) {
+    const b = blockerIds(
+      runDeterministicChecks(`# T\n\n${heading}\n\nSonnet 5 / high effort\n`, { repo: REPO })
+    );
+    assert.ok(!b.has("SR6"), `SR6 should pass for heading "${heading}"`);
+  }
+  const b = blockerIds(runDeterministicChecks("# T\n\nno tier here\n", { repo: REPO }));
+  assert.ok(b.has("SR6"), "SR6 should still block when no build-with tier is stated");
+});
+
 test("looksObservable — concrete signals pass, vibes fail", () => {
   assert.ok(looksObservable("`aios spec eval` returns exit code 1"));
   assert.ok(looksObservable("A new test in `foo.test.mjs` asserts the shape"));
