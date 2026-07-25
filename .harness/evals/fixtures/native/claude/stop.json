@@ -1,0 +1,6 @@
+{
+  "session_id": "claude-fixture",
+  "cwd": "__CWD__",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false
+}

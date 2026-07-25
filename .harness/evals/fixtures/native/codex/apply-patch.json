@@ -1,0 +1,9 @@
+{
+  "session_id": "codex-fixture",
+  "turn_id": "turn-1",
+  "cwd": "__CWD__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "apply_patch",
+  "tool_call_id": "call-1",
+  "tool_input": { "command": "__PATCH__" }
+}

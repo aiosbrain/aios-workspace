@@ -1,0 +1,4 @@
+{"type":"tool","sessionID":"opencode-sanitized","part":{"type":"tool","tool":"bash","callID":"opencode-red","state":{"status":"completed","input":{"command":"python3 -m unittest -q"},"metadata":{"exit":5},"output":"ordinary non-magic failure output"}}}
+{"type":"tool","sessionID":"opencode-sanitized","part":{"type":"tool","tool":"bash","callID":"opencode-green","state":{"status":"completed","input":{"command":"python3 check.py"},"metadata":{"exit":0},"output":"test_FAILED_input ... ok; 0 failed"}}}
+{"type":"tool","sessionID":"opencode-sanitized","part":{"type":"tool","tool":"bash","callID":"opencode-native-error","state":{"status":"error","input":{"command":"python check.py"},"error":"ordinary error"}}}
+{"type":"tool","sessionID":"opencode-sanitized","part":{"type":"tool","tool":"bash","callID":"opencode-read","state":{"status":"completed","input":{"command":"cat check.py"},"metadata":{"exit":0},"output":"source only"}}}

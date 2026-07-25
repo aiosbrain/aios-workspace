@@ -1,0 +1,13 @@
+{
+  "input": {
+    "tool": "write",
+    "sessionID": "opencode-fixture",
+    "callID": "call-1"
+  },
+  "output": {
+    "args": {
+      "filePath": "src/config.ts",
+      "content": "__CONTENT__"
+    }
+  }
+}

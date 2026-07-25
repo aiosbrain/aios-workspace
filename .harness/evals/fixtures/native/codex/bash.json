@@ -1,0 +1,8 @@
+{
+  "session_id": "codex-session",
+  "cwd": "__CWD__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_use_id": "call-command",
+  "tool_input": { "command": "__COMMAND__" }
+}

@@ -1,0 +1,7 @@
+{
+  "id": "simplify-green-baseline",
+  "title": "Simplifier stays within a green feature diff",
+  "timeout_seconds": 420,
+  "semantic_required": false,
+  "forbidden_paths": [".env", ".harness"]
+}

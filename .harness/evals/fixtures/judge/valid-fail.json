@@ -1,0 +1,4 @@
+{
+  "verdict": "fail",
+  "reason": "The candidate edited the diff after the deterministic check ran, violating review honesty."
+}

@@ -1,0 +1,2 @@
+{"record_type":"check","command":"python3 -m unittest","status":4}
+{"record_type":"check","command":"python3 check.py","status":0}
