@@ -8,6 +8,11 @@
 # itself goes in .env (gitignored). See docs/GETTING-STARTED.md.
 version: 1
 brain_url: "https://brain.aios.example.com"   # your hosted Team Brain
+# Rehearsing a demo or testing a risky push? Point brain_url at the staging brain
+# instead — it is a separate deployment with its own database, so nothing you push
+# touches live team data. Staging is invite-only: you need a member row + API key
+# issued on staging (a production key will not authenticate there).
+#   brain_url: "https://aios-team-brain-staging.up.railway.app"
 team_id: "aios"                                # our team slug
 
 # NAME of the environment variable holding your API key — never the key itself.
