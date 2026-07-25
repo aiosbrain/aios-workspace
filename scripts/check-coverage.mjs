@@ -152,7 +152,10 @@ export function changedLineCoverage(changed, coverage) {
 export function isCoverageSource(file) {
   const normalized = file.split(path.sep).join("/");
   if (COVERAGE_TOOL_FILES.has(normalized) || /\.test\.[^/]+$/.test(normalized)) return false;
-  if (/^gui\/client\/src\/.+\.d\.ts$/.test(normalized)) return false;
+  // Declaration files carry no executable code and never appear in LCOV —
+  // exempt them everywhere (a src/**/*.d.ts would otherwise false-positive
+  // the fail-closed missing-LCOV check).
+  if (/\.d\.ts$/.test(normalized)) return false;
   return (
     /^(?:scripts|hooks|validation|gui\/server)\/.+\.mjs$/.test(normalized) ||
     /^src\/.+\.ts$/.test(normalized) ||
@@ -194,7 +197,10 @@ export function resolveMergeBase(explicit, gitCommand = git, env = process.env) 
 }
 
 export function coverageDiffArgs(base) {
-  return ["diff", "--unified=0", "--no-color", base, "--", ...SOURCE_PATHSPECS];
+  // --default-prefix: a developer's `diff.noprefix=true` git config would strip
+  // the a/ b/ prefixes parseChangedLines keys on, degrading the changed-line
+  // gate to a vacuous 100% (0/0) locally.
+  return ["diff", "--default-prefix", "--unified=0", "--no-color", base, "--", ...SOURCE_PATHSPECS];
 }
 
 function roundedFloor(value) {

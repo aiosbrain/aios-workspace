@@ -22,7 +22,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/cache@v5
+      # restore/save are split (instead of one actions/cache post step) so the
+      # save runs with `if: always()` — a failed campaign group must not throw
+      # away the incremental JSON of the groups that completed before it.
+      - uses: actions/cache/restore@v5
         with:
           # Cache ONLY the Stryker incremental state. run-mutation.mjs writes it
           # to .stryker-tmp/<group>.json (incrementalFile); the generated
@@ -39,6 +42,13 @@ jobs:
             stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-
       - run: npm ci
       - run: npm run test:mutation:nightly
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: |
+            .stryker-tmp/*.json
+            !.stryker-tmp/*.conf.json
+          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

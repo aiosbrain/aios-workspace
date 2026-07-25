@@ -23,9 +23,49 @@ const GUARD = path.join(ROOT, "hooks", "team-ops-guard.sh");
 
 const FRONTMATTER = "---\nstatus: draft\nowner: test\n---\n";
 
+// Isolation hardening (flake seen once on CI, PR #400 shard 2/3): pin cwd to
+// the repo root and strip ambient variables that could change the guard's
+// behavior or bash/grep semantics — CC_TOOL_NAME/CC_TOOL_INPUT (the guard's
+// env-input fallback), BASH_ENV (arbitrary startup code), GREP_OPTIONS
+// (deprecated grep behavior override), POSIXLY_CORRECT.
+function guardEnv() {
+  const env = { ...process.env };
+  for (const key of [
+    "CC_TOOL_NAME",
+    "CC_TOOL_INPUT",
+    "BASH_ENV",
+    "GREP_OPTIONS",
+    "POSIXLY_CORRECT",
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
 function runGuard(toolInput) {
   const payload = JSON.stringify({ tool_name: "Write", tool_input: toolInput });
-  return spawnSync("bash", [GUARD], { input: payload, encoding: "utf8" });
+  return spawnSync("bash", [GUARD], {
+    input: payload,
+    encoding: "utf8",
+    cwd: ROOT,
+    env: guardEnv(),
+  });
+}
+
+// On a spawn/guard failure, surface everything needed to diagnose a one-off
+// CI flake from the log alone (status, signal, spawn error, both streams).
+function verdict(r) {
+  return JSON.stringify(
+    {
+      status: r.status,
+      signal: r.signal,
+      error: r.error?.message,
+      stderr: r.stderr,
+      stdout: r.stdout,
+    },
+    null,
+    2
+  );
 }
 
 // A fake AWS-style key, built so the literal never appears in source (AKIA + 16 uppercase).
@@ -56,7 +96,7 @@ test("only default + acceptEdits are exposed by default; bypassPermissions is wi
 for (const mode of EXPOSED_MODES) {
   test(`[${mode}] guard BLOCKS a secret-bearing write (exit 2)`, () => {
     const r = runGuard({ file_path: "2-work/notes.md", content: FRONTMATTER + FAKE_SECRET });
-    assert.equal(r.status, 2, `expected block; stderr: ${r.stderr}`);
+    assert.equal(r.status, 2, `expected block; got: ${verdict(r)}`);
     assert.match(r.stderr, /secret/i);
   });
 
@@ -65,14 +105,14 @@ for (const mode of EXPOSED_MODES) {
       file_path: "4-shared/proposal.md",
       content: FRONTMATTER + SENSITIVE_PHRASE,
     });
-    assert.equal(r.status, 2, `expected block; stderr: ${r.stderr}`);
+    assert.equal(r.status, 2, `expected block; got: ${verdict(r)}`);
     assert.match(r.stderr, /Admin-only|admin-tier/i);
   });
 }
 
 test("guard ALLOWS a clean team write (exit 0)", () => {
   const r = runGuard({ file_path: "2-work/notes.md", content: FRONTMATTER + "Plain team notes." });
-  assert.equal(r.status, 0, `expected allow; stderr: ${r.stderr}`);
+  assert.equal(r.status, 0, `expected allow; got: ${verdict(r)}`);
 });
 
 test("Full access becomes advertised only when explicitly enabled (documents the gate)", () => {

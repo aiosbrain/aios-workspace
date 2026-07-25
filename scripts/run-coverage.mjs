@@ -114,6 +114,14 @@ function runClientCoverage() {
   return execute("npm", ["run", "test:coverage", "--workspace", "gui/client"]);
 }
 
+// Modes that execute the Node suite must fail on a TS compile error with one
+// tsc diagnostic instead of dozens of ERR_MODULE_NOT_FOUND failures against a
+// missing/stale dist/ (same guard as `npm run test:node`). Merge mode only
+// reports over already-collected data, so it is exempt.
+function ensureLoopBuiltStrict() {
+  return execute(process.execPath, ["scripts/ensure-loop-built.mjs", "--strict"]);
+}
+
 async function runNodeSuiteUnderC8(tempDirectory, extraSuiteArgs = [], extraC8Args = []) {
   await execute(process.execPath, [
     C8,
@@ -128,6 +136,7 @@ async function runNodeSuiteUnderC8(tempDirectory, extraSuiteArgs = [], extraC8Ar
 }
 
 async function runFull() {
+  await ensureLoopBuiltStrict();
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-"));
   try {
     rmSync(COVERAGE_DIR, { recursive: true, force: true });
@@ -145,6 +154,7 @@ async function runFull() {
 }
 
 async function runShard(shard) {
+  await ensureLoopBuiltStrict();
   const shardDir = shardDirectory(shard.index);
   rmSync(shardDir, { recursive: true, force: true });
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
@@ -158,6 +168,24 @@ async function runShard(shard) {
 }
 
 export function collectShardFiles(total, root = ROOT) {
+  // The shard total is written in three places (ci.yml coverage-shard matrix,
+  // `--shard k/N`, `--merge N`). If they drift, extra shard-<k> data beyond the
+  // merge total would be silently ignored, under-reporting coverage — refuse.
+  const coverageRoot = path.join(root, "coverage");
+  const strays = (existsSync(coverageRoot) ? readdirSync(coverageRoot) : [])
+    .filter((entry) => {
+      const match = /^shard-(\d+)$/.exec(entry);
+      return match !== null && Number.parseInt(match[1], 10) > total;
+    })
+    .sort()
+    .map((entry) => `coverage/${entry}`);
+  if (strays.length) {
+    throw new Error(
+      `run-coverage: shard data beyond --merge ${total} exists: ${strays.join(", ")} — ` +
+        "the shard total drifted (ci.yml coverage-shard matrix, --shard and --merge " +
+        "must agree); merging a subset would under-report coverage"
+    );
+  }
   const missing = [];
   const files = [];
   for (let index = 1; index <= total; index += 1) {

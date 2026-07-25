@@ -182,6 +182,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # SYNC: the coverage shard total "3" appears in three places — this
+        # matrix, `--shard k/3` below, and `--merge 3` in the coverage job.
+        # Change all three together. run-coverage's merge fails loudly when a
+        # coverage/shard-<k> beyond the merge total exists, so drift goes red.
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
@@ -239,17 +243,19 @@ jobs:
             echo "no baseline candidate at $candidate; skipping raise-the-floor check"
             exit 0
           fi
-          improved=$(jq -r --slurpfile base coverage-baseline.json '
-            (.minimum // {}) | to_entries[]
-            | ($base[0].minimum[.key] // null) as $floor
-            | select($floor != null and .value > $floor)
-            | "\(.key): \($floor)% -> \(.value)%"
+          # jq join(", ") — not `paste -sd ', '`, which cycles its delimiter
+          # characters per line instead of joining pairs, garbling 3+ metrics.
+          oneline=$(jq -r --slurpfile base coverage-baseline.json '
+            [ (.minimum // {}) | to_entries[]
+              | ($base[0].minimum[.key] // null) as $floor
+              | select($floor != null and .value > $floor)
+              | "\(.key): \($floor)% -> \(.value)%"
+            ] | join(", ")
           ' "$candidate")
-          if [ -z "$improved" ]; then
+          if [ -z "$oneline" ]; then
             echo "baseline candidate does not exceed the tracked floor; nothing to raise"
             exit 0
           fi
-          oneline=$(paste -sd ', ' - <<< "$improved")
           echo "::notice title=Coverage floor can be raised::Baseline candidate beats coverage-baseline.json ($oneline). Copy coverage/coverage-baseline-candidate.json (in the coverage artifact) over coverage-baseline.json to tighten the ratchet."
           {
             echo "### Coverage ratchet can be tightened"

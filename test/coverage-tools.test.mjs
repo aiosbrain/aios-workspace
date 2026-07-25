@@ -140,6 +140,7 @@ test("git C-style quoted paths decode octal and simple escapes", () => {
 test("coverage diff pathspecs include source files at every directory depth", () => {
   assert.deepEqual(coverageDiffArgs("merge-base-sha"), [
     "diff",
+    "--default-prefix",
     "--unified=0",
     "--no-color",
     "merge-base-sha",
@@ -152,6 +153,23 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     ":(glob)gui/client/src/**/*.ts",
     ":(glob)gui/client/src/**/*.tsx",
   ]);
+});
+
+test("coverage diff args pin the a/ b/ prefixes against a diff.noprefix git config", () => {
+  // parseChangedLines keys on "+++ b/…" headers; a developer's
+  // `diff.noprefix=true` would strip them and degrade the gate to 100% (0/0).
+  assert.ok(coverageDiffArgs("merge-base-sha").includes("--default-prefix"));
+});
+
+test(".d.ts declaration files are never coverage sources, inside or outside gui/client", () => {
+  for (const file of [
+    "src/operator-loop/types.d.ts",
+    "src/global.d.ts",
+    "gui/client/src/lib/example.d.ts",
+    "gui/client/src/vite-env.d.ts",
+  ]) {
+    assert.equal(isCoverageSource(file), false, file);
+  }
 });
 
 test("coverage source classification matches the root and client instrumentation scopes", () => {
@@ -301,6 +319,34 @@ test("shard merge collects every shard's raw data and fails closed on a missing 
       "coverage-s2-coverage-200-1-0.json",
     ]);
     assert.throws(() => collectShardFiles(3, root), /missing shard coverage data.*shard-3/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shard merge fails loudly when shard data beyond the merge total exists", () => {
+  // The shard total lives in three places (ci.yml matrix, --shard, --merge);
+  // if it drifts, a stray coverage/shard-<k> with k > total must not be
+  // silently ignored into an under-reported merge.
+  const root = mkdtempSync(path.join(tmpdir(), "aios-shards-"));
+  try {
+    for (const index of [1, 2, 3]) {
+      mkdirSync(shardDirectory(index, root), { recursive: true });
+      writeFileSync(
+        path.join(shardDirectory(index, root), `coverage-${index}00-1-0.json`),
+        JSON.stringify({ result: [] })
+      );
+    }
+    assert.throws(
+      () => collectShardFiles(2, root),
+      /shard data beyond --merge 2.*coverage\/shard-3/
+    );
+    // An empty stray directory is still drift — the data it should hold is gone.
+    rmSync(path.join(shardDirectory(3, root), "coverage-300-1-0.json"));
+    assert.throws(() => collectShardFiles(2, root), /coverage\/shard-3/);
+    // With the total matching the shards on disk, collection succeeds.
+    rmSync(shardDirectory(3, root), { recursive: true, force: true });
+    assert.equal(collectShardFiles(2, root).length, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
