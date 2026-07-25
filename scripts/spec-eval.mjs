@@ -473,11 +473,12 @@ export function runDeterministicChecks(specText, { repo } = {}) {
     }
   }
 
-  // SR6 — build-with tier present
+  // SR6 — build-with tier present ("build-with", "build with", and "buildwith" all count:
+  // the natural space spelling failing the gate was a pure format gotcha)
   const buildWithPresent =
-    hasHeading(/build-?with/i) ||
-    /\bbuild-?with\b\s*[:—-]/i.test(specText) ||
-    /\b(build-?with|model\/effort|effort tier)\b/i.test(specText) ||
+    hasHeading(/build[-\s]?with/i) ||
+    /\bbuild[-\s]?with\b\s*[:—-]/i.test(specText) ||
+    /\b(build[-\s]?with|model\/effort|effort tier)\b/i.test(specText) ||
     /\b(claude-?opus|claude-?sonnet|claude-?haiku|opus|sonnet|haiku|fable)\b[^.\n]*\b(low|medium|high|xhigh|max)\b/i.test(
       specText
     );
