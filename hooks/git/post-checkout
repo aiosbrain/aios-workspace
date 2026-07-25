@@ -28,12 +28,34 @@ here="$(pwd)"
 # Not a worktree? Skip.
 if [[ "$main_worktree" == "$here" ]]; then exit 0; fi
 
-# Already hydrated? Skip.
-if [[ -f "$here/opencode.json" ]]; then exit 0; fi
+# Already hydrated? Skip. The marker (written last by link-worktree-env.sh) is the
+# authoritative signal. It replaces an earlier `opencode.json`-presence check, which
+# was ambiguous: a repo that *tracks* opencode.json checks it out into every fresh
+# worktree, so that check read "hydrated" for a worktree that had never been touched
+# and silently disabled auto-hydration for exactly the tools this exists for.
+if [[ -f "$here/.aios/.worktree-hydrated" ]]; then exit 0; fi
 
-script="$main_worktree/scripts/link-worktree-env.sh"
-if [[ ! -x "$script" ]]; then
-  echo "[aios] link-worktree-env.sh not found or not executable — skipping auto-hydration"
+# Resolve the checkout that owns the hydrator. A *scaffolded workspace* vendors only
+# the `aios` shim (scripts/aios.mjs), not scripts/link-worktree-env.sh — that lives in
+# the canonical toolkit checkout. Without this fallback the hook is a silent no-op in
+# exactly the repos this feature exists for. Candidate order mirrors
+# hooks/worktree-self-heal.mjs and scaffold/scripts/aios.mjs.
+script=""
+for dir in \
+  "$main_worktree" \
+  "${AIOS_TOOLKIT_DIR:-}" \
+  "$main_worktree/../aios-workspace" \
+  "$main_worktree/../aios/aios-workspace" \
+  "$main_worktree/../../aios-workspace"; do
+  [[ -z "$dir" ]] && continue
+  if [[ -f "$dir/scripts/link-worktree-env.sh" ]]; then
+    script="$dir/scripts/link-worktree-env.sh"
+    break
+  fi
+done
+
+if [[ -z "$script" ]]; then
+  echo "[aios] link-worktree-env.sh not found — skipping auto-hydration"
   exit 0
 fi
 

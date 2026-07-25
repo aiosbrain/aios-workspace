@@ -2,8 +2,8 @@
 /**
  * brain-mcp.mjs — AIOS Team Brain MCP server (stdio transport).
  *
- * Bridges any MCP-capable client (Claude Desktop, Claude Cowork, Codex, Conductor,
- * …) to an AIOS Team Brain over the v1 contract in docs/brain-api.md. This is the
+ * Bridges any MCP-capable client (Claude Desktop, Claude Cowork, claude.ai, …) to an
+ * AIOS Team Brain over the v1 contract in docs/brain-api.md. This is the
  * GUI-surface counterpart to the `aios` CLI: shell-capable agents call `aios` directly
  * (faster, cheaper, no schema overhead); GUI-only agents that cannot spawn a shell
  * reach the brain through this server instead.

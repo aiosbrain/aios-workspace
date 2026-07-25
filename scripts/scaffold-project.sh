@@ -648,7 +648,9 @@ cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patter
 # Operator-loop capture hooks (AIO-167/AIO-170/AIO-293): dependency-free hooks shipped
 # standalone so IC workspaces auto-capture asks + steering decisions without the toolkit.
 # file-governance-guard.mjs (AIO-352) is the anti-sprawl write-time ratchet — layer 1.
-for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs; do
+# worktree-self-heal.mjs (AIO-482) is the SessionStart adapter that re-hydrates a worktree
+# created by a tool that never called `aios worktree add` (Conductor et al).
+for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs; do
   cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
   chmod +x "$OUTPUT/hooks/$hook"
 done
@@ -664,6 +666,13 @@ done
 # never sends) until a real admin fills in real channel names.
 mkdir -p "$OUTPUT/.aios"
 command cp -f "$SCAFFOLD/comms-config.json" "$OUTPUT/.aios/comms-config.json"
+
+# Conductor adapter (AIO-482). Conductor (conductor.build) creates its own git
+# worktree per workspace and runs `[scripts].setup` from it right after checkout —
+# the earliest of the three hydration layers. Committed repo content per Conductor's
+# own docs; seed-only on `aios update` so an owner's edits are never clobbered.
+mkdir -p "$OUTPUT/.conductor"
+cp "$SCAFFOLD/.conductor/settings.toml" "$OUTPUT/.conductor/settings.toml"
 
 # Pin the toolkit version this workspace was stamped from. `aios update` reads this
 # as the sync baseline; without it the first update has no base and can only blind-

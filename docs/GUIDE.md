@@ -610,7 +610,7 @@ speeds up *safe repetition*.
 - `aios skills` — list the workspace's skills.
 
 **Reaching the brain from a shell-less agent — `aios mcp` (built, read-only):** agents that can't
-shell out (Claude Desktop, Cowork, Codex, Conductor) reach the brain through `aios mcp`, a stdio MCP
+shell out (Claude Desktop, Cowork, claude.ai) reach the brain through `aios mcp`, a stdio MCP
 server bridge (`scripts/brain-mcp.mjs`). It's intentionally **thin and read-only** — it wraps the v1
 read endpoints and reuses the brain's server-side tier filtering as its safety boundary, and needs no
 workspace (config is env-first). The tool surface: `brain_status`, `brain_query`,
@@ -620,6 +620,12 @@ the `aios mcp` command; what is still **planned** (in the same PRD) is the one-c
 bundle, an `npx` distribution, and write/push support — so the current bridge validates the protocol
 but does not yet deliver the "no terminal, ≤5 min" desktop experience. Design + phasing:
 [`prd-team-brain-mcp-connector.md`](prd-team-brain-mcp-connector.md).
+
+> **Conductor and Codex are NOT in that list.** Both run a real local agent process with a shell
+> and git, so they use the `aios` CLI directly — same as terminal Claude Code. They get harness
+> parity from the worktree-hydration adapter (`aios worktree doctor` reports it), not from the
+> bridge. See [`integrations.md#conductor`](integrations.md#conductor). The bridge is still
+> available to them as an optional path when no scaffolded workspace is open.
 
 > Don't confuse the **MCP bridge** (which *AI surfaces* can reach the brain) with **BYOA** (which
 > *agent runtimes* can run the local harness — `aios skills export`, the runtime adapters). Different
