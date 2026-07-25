@@ -33,6 +33,15 @@ import {
 } from "./skill-context.mjs";
 import { cmdSpecPublish } from "./spec-publish.mjs";
 
+const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
+  existsSync
+);
+
+function trustedGitBin() {
+  if (!TRUSTED_GIT_BIN) throw new Error("git was not found in a trusted system directory");
+  return TRUSTED_GIT_BIN;
+}
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
 // The canonical rubric shipped inside this toolkit checkout (…/aios-workspace/.claude/rubrics/…).
@@ -842,13 +851,13 @@ export async function evaluateSpec({
     if (resolveRepoState) {
       ({ repoSha, repoDirty } = resolveRepoState(repo));
     } else {
-      repoSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      repoSha = execFileSync(trustedGitBin(), ["rev-parse", "HEAD"], {
         cwd: repo,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
       repoDirty =
-        execFileSync("git", ["status", "--porcelain"], {
+        execFileSync(trustedGitBin(), ["status", "--porcelain"], {
           cwd: repo,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],

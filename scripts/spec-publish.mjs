@@ -5,6 +5,10 @@ import { createLinearClient, resolveLinearApiKey } from "./linear-client.mjs";
 import { defaultScanFile } from "./promote.mjs";
 import { loadSkillContext, skillSha256 } from "./skill-context.mjs";
 
+const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
+  existsSync
+);
+
 export class SpecPublishError extends Error {
   constructor(message, { ambiguous = false } = {}) {
     super(message);
@@ -14,7 +18,9 @@ export class SpecPublishError extends Error {
 }
 
 function repoHead(repo) {
-  return execFileSync("git", ["rev-parse", "HEAD"], {
+  if (!TRUSTED_GIT_BIN)
+    throw new SpecPublishError("git was not found in a trusted system directory");
+  return execFileSync(TRUSTED_GIT_BIN, ["rev-parse", "HEAD"], {
     cwd: repo,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],

@@ -53,7 +53,7 @@ function parseCanonicalFrontmatter(text, id) {
     if (Object.hasOwn(values, field[1])) fail(`${id}: duplicate frontmatter field '${field[1]}'`);
     values[field[1]] = field[2].replace(/^(['"])(.*)\1$/, "$2").trim();
   }
-  const keys = Object.keys(values).sort();
+  const keys = Object.keys(values).sort((left, right) => left.localeCompare(right, "en"));
   if (keys.join(",") !== "description,name")
     fail(`${id}: frontmatter may contain only name and description`);
   if (values.name !== id) fail(`${id}: frontmatter name '${values.name}' does not match id`);
