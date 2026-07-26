@@ -64,6 +64,10 @@ test("argument contract: defaults, cap, and usage errors", () => {
   assert.match(capped.error, /hard cap of 8/);
   assert.equal(parseVerifyArgs([]).exitCode, 4);
   assert.equal(parseVerifyArgs(["HEAD", "--lanes", "many"]).exitCode, 4);
+  assert.equal(parseVerifyArgs(["HEAD", "--lanes"]).exitCode, 4);
+  assert.equal(parseVerifyArgs(["HEAD", "--out"]).exitCode, 4);
+  assert.equal(parseVerifyArgs(["--help"]).help, true);
+  assert.equal(parseVerifyArgs(["HEAD", "--unknown"]).exitCode, 4);
 });
 
 test("unknown sha exits 4 and --lanes 9 names the cap", () => {
@@ -197,9 +201,10 @@ test("lane findings use consolidate-findings' stable severity order", () => {
 test("invalid or failed lanes fail closed as High findings", () => {
   const merged = mergeLaneResults([
     { model: "bad-json", ok: true, text: "not json" },
+    { model: "missing-array", ok: true, text: "{}" },
     { model: "down", ok: false, error: "provider unavailable" },
   ]);
-  assert.equal(merged.length, 2);
+  assert.equal(merged.length, 3);
   assert.ok(merged.every((finding) => finding.severity === "High"));
 });
 
