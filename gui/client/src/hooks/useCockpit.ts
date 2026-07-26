@@ -22,7 +22,15 @@ export type ViewKey = "chat" | "tasks" | "review" | "maturity" | "cost" | "loop"
  * established session dropped and we're backing off; "offline" = retries exhausted
  * (a manual Retry is offered). No infinite silent "Connecting…".
  */
-export type ConnectionStatus = "draft" | "connecting" | "connected" | "reconnecting" | "offline";
+export type ConnectionStatus =
+  | "draft"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  // The session was taken over by a newer connection (another tab). Deliberately NOT
+  // auto-reconnecting — that would steal it straight back. Retry = take it back.
+  | "superseded";
 
 const RECONNECT_MAX_ATTEMPTS = 6;
 const RECONNECT_BASE_MS = 500;
@@ -67,6 +75,9 @@ export function useCockpit() {
   const connectSeqRef = useRef(0); // ignore callbacks from superseded sockets
   const capsRef = useRef<Capabilities>(DEFAULT_CAPS); // fresh caps inside the ws handler
   capsRef.current = capabilities;
+  const modelRef = useRef(model); // current model inside async callbacks (changeModel rollback)
+  modelRef.current = model;
+  const openChatSeqRef = useRef(0); // rapid chat switching: stale replay fetches must not win
 
   // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -154,9 +165,19 @@ export function useCockpit() {
           resolve(ws);
         };
         ws.onerror = () => fail("WebSocket connection failed");
-        ws.onclose = () => {
+        ws.onclose = (ev) => {
           if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
           setConnected(false);
+          // 4001 = the server closed us because this session was opened by a newer
+          // connection (another tab, or a reconnect that superseded us). Reconnecting
+          // would steal the session straight back, so park offline instead — the
+          // user can Retry deliberately to take the session over again.
+          if (ev.code === 4001) {
+            applyConn("superseded");
+            toast.warning("This chat was opened in another tab or window — Retry to take it back.");
+            fail("session superseded by a newer connection");
+            return;
+          }
           // Always settle on a terminal state — never leave a stuck "Connecting…". If there
           // is a session to resume (an established drop, a failed reconnect attempt, OR an
           // initial open failure for an existing chat) back off and retry; otherwise it was
@@ -280,6 +301,20 @@ export function useCockpit() {
     const attempt = reconnectAttemptsRef.current;
     if (attempt >= RECONNECT_MAX_ATTEMPTS) {
       applyConn("offline");
+      // Fail honest: "server down" and "server restarted → this tab's token is stale"
+      // look identical over the WS (both close before open). Probe an authed endpoint
+      // once — a 401/403 means the server is UP and it's the LINK that expired.
+      api
+        .get("/api/me")
+        .then(() => {})
+        .catch((e: unknown) => {
+          const status = (e as { status?: number })?.status;
+          if (status === 401 || status === 403)
+            toast.error(
+              "The server restarted, so this tab's link is stale — open the fresh link printed by `npm run gui` (or the desktop app).",
+              { duration: Infinity } // terminal + actionable: stays until dismissed
+            );
+        });
       return;
     }
     reconnectAttemptsRef.current = attempt + 1;
@@ -346,11 +381,13 @@ export function useCockpit() {
       clearReconnect();
       reconnectAttemptsRef.current = 0;
       currentSessionRef.current = id; // resume target before any close handler can fire
+      const seq = ++openChatSeqRef.current; // rapid switching: only the newest open wins
       setApprovalMode("default"); // approval mode is session-scoped; never inherit it across chats
       resetChatState();
       setView("chat");
       try {
         const d = await api.get<SessionTranscriptResponse>(`/api/sessions/${id}`);
+        if (openChatSeqRef.current !== seq) return; // a newer chat was opened while we fetched
         const events = d.events || [];
         setMessages(buildMessagesFromEvents(events));
         let lastCost = 0;
@@ -375,8 +412,18 @@ export function useCockpit() {
         setUsage(contextUsage);
         setSessionUsage(aggregateUsage);
       } catch {
-        setMessages([]);
+        if (openChatSeqRef.current !== seq) return; // superseded — don't touch the newer chat
+        // A failed replay must not masquerade as an empty chat — say so, and keep the
+        // session resumable (new turns still work; history is just not shown).
+        setMessages([
+          {
+            kind: "meta",
+            text: "Couldn't load this chat's history — new messages will still work. Reopen the chat to retry.",
+          },
+        ]);
+        toast.error("Failed to load chat history.");
       }
+      if (openChatSeqRef.current !== seq) return;
       setCurrentSession(id);
       connect(id).catch((e: Error) => append({ kind: "meta", text: `error: ${e.message}` }));
     },
@@ -384,8 +431,13 @@ export function useCockpit() {
   );
 
   const changeModel = useCallback((m: string) => {
+    const prev = modelRef.current;
     setModel(m); // applies to the NEXT send (sent on each user_message → setModel)
-    api.post("/api/config/model", { model: m }).catch(() => {});
+    api.post("/api/config/model", { model: m }).catch(() => {
+      // The picker must not lie: roll back if the server rejected the change.
+      setModel(prev);
+      toast.error("Couldn't switch model — reverted.");
+    });
   }, []);
 
   const sendMessage = useCallback(

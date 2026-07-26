@@ -42,10 +42,12 @@ export function ChatView() {
   const placeholder =
     !connected && !isDraft
       ? connectionStatus === "offline"
-        ? "offline — retrying… (Retry in the sidebar)"
-        : connectionStatus === "reconnecting"
-          ? "reconnecting…"
-          : "connecting…"
+        ? "offline (Retry in the sidebar)"
+        : connectionStatus === "superseded"
+          ? "this chat is open in another tab (Retry in the sidebar to take it back)"
+          : connectionStatus === "reconnecting"
+            ? "reconnecting…"
+            : "connecting…"
       : isEmpty
         ? "Describe a task — Enter to send, Shift+Enter for a newline"
         : "Message your workspace… (Enter to send, Shift+Enter for newline)";

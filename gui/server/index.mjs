@@ -1080,6 +1080,10 @@ function readCatalog(repoDir) {
 
 // ── websocket: one connection = one SDK session ─────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
+// One live connection per session id (see the latest-wins guard in the connection
+// handler). 4001 is our app-level close code for "superseded by a newer connection".
+const WS_CLOSE_SUPERSEDED = 4001;
+const liveSessionConns = new Map(); // sessionId -> ws
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -1099,6 +1103,19 @@ wss.on("connection", (ws, req) => {
   const resumeId =
     UUID_RE.test(wanted) && existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) ? wanted : null;
   const sessionId = resumeId || randomUUID();
+  // Latest-wins single-writer guard: a session has at most one live connection, so
+  // two adapter runs can never interleave one transcript (a reconnect after sleep
+  // must supersede its half-dead predecessor). Close code 4001 tells the old client
+  // this was a takeover, not a network drop — it must NOT auto-reconnect.
+  const prevWs = liveSessionConns.get(sessionId);
+  if (prevWs && prevWs !== ws) {
+    try {
+      prevWs.close(WS_CLOSE_SUPERSEDED, "session opened by a newer connection");
+    } catch {
+      /* already dying */
+    }
+  }
+  liveSessionConns.set(sessionId, ws);
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
   const existingSession = readSessionIndex(SESSIONS_INDEX).sessions.find((s) => s.id === sessionId);
   let sessionRegistered = !!existingSession;
@@ -1478,6 +1495,7 @@ wss.on("connection", (ws, req) => {
   })();
 
   ws.on("close", () => {
+    if (liveSessionConns.get(sessionId) === ws) liveSessionConns.delete(sessionId);
     ac.abort();
     if (wake) {
       wake();
@@ -1504,6 +1522,15 @@ const shutdown = () => {
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
 
+server.on("error", (err) => {
+  if (err?.code === "EADDRINUSE") {
+    console.error(`error: port ${port} is already in use (another GUI server?).`);
+    console.error(`  pick another port:   npm run gui -- --port ${Number(port) + 1}`);
+    console.error(`  or find the holder:  lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+    process.exit(1);
+  }
+  throw err;
+});
 server.listen(port, "127.0.0.1", () => {
   console.log("");
   console.log("  aios-workspace GUI");

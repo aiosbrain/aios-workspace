@@ -132,6 +132,23 @@ export interface ToolPolicyEvent {
   allowed: boolean;
   reason: string;
 }
+/**
+ * Capability-broker events (I-03, AIO-384). Best-effort/advisory: the client has no
+ * dedicated UI for them yet (they land in transcripts and the asks lane), but they are
+ * part of the wire contract and MUST be representable here — protocol.ts is documented
+ * as byte-compatible with gui/server/index.mjs.
+ */
+export interface NotifyDeeplinkEvent {
+  type: "notify_deeplink";
+  handle: string;
+  deepLink: string;
+  lane?: string;
+}
+export interface CapabilityRejectedEvent {
+  type: "capability_rejected";
+  handle: string;
+  reason: string;
+}
 
 export type ServerEvent =
   | HelloEvent
@@ -150,7 +167,9 @@ export type ServerEvent =
   | ApprovalModeEvent
   | SessionEvent
   | EchoUserEvent
-  | ToolPolicyEvent;
+  | ToolPolicyEvent
+  | NotifyDeeplinkEvent
+  | CapabilityRejectedEvent;
 
 /** Any stored transcript line — same shape as a live ServerEvent. */
 export type TranscriptEvent = ServerEvent;

@@ -49,6 +49,7 @@ export function Sidebar() {
     connected: "Connected",
     reconnecting: "Reconnecting…",
     offline: "Offline",
+    superseded: "Opened in another tab",
   };
 
   const isDraft = currentSession === null;
@@ -65,7 +66,7 @@ export function Sidebar() {
     "ml-auto h-[7px] w-[7px] rounded-full",
     connectionStatus === "reconnecting"
       ? "bg-primary animate-[conn-pulse_1s_ease-in-out_infinite]"
-      : connectionStatus === "offline"
+      : connectionStatus === "offline" || connectionStatus === "superseded"
         ? "bg-destructive"
         : connected
           ? "bg-lime shadow-[0_0_8px_color-mix(in_srgb,var(--aios-accent)_60%,transparent)]"
@@ -103,7 +104,9 @@ export function Sidebar() {
         />
       </div>
 
-      {(connectionStatus === "reconnecting" || connectionStatus === "offline") && (
+      {(connectionStatus === "reconnecting" ||
+        connectionStatus === "offline" ||
+        connectionStatus === "superseded") && (
         <div
           className={cn(
             "mx-3 mb-2 flex items-center gap-2 rounded-md border border-border-visible bg-secondary px-2.5 py-1.5 text-xs text-muted-foreground",
@@ -112,8 +115,14 @@ export function Sidebar() {
           )}
           role="status"
         >
-          <span>{connectionStatus === "offline" ? "Connection lost" : "Reconnecting…"}</span>
-          {connectionStatus === "offline" && (
+          <span>
+            {connectionStatus === "offline"
+              ? "Connection lost"
+              : connectionStatus === "superseded"
+                ? "Opened in another tab"
+                : "Reconnecting…"}
+          </span>
+          {(connectionStatus === "offline" || connectionStatus === "superseded") && (
             <button
               className={cn(
                 "ml-auto cursor-pointer rounded-sm border border-border-visible bg-muted px-2.5 py-0.5 font-mono text-xs text-foreground transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]",

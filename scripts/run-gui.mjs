@@ -175,9 +175,19 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
   });
 }
 
+/** Fail fast (before the client build) when the target repo isn't a workspace. */
+export function assertGuiRepo(repo) {
+  if (existsSync(path.join(repo, "aios.yaml")) || existsSync(path.join(repo, "workspace.yaml")))
+    return;
+  console.error(`error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml)`);
+  console.error("  point the GUI at a workspace:  npm run gui -- --repo <workspace-path>");
+  process.exit(1);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   assertGuiRuntimeReady();
   const launch = normalizeGuiLauncherArgs(process.argv.slice(2));
+  assertGuiRepo(resolveGuiRepo(launch.serverArgs)); // validate BEFORE the (slow) client build
   if (!launch.skipBuild) buildGuiClient();
   const plan = guiLaunchPlan({ args: launch.serverArgs });
   const child = spawn(plan.command, plan.args, { ...plan.options, stdio: "inherit" });
