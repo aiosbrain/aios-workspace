@@ -64,6 +64,9 @@ export interface PermissionRequestEvent {
   tool: string;
   input: unknown;
   options?: PermissionOption[];
+  /** Durable capability handle for this approval (I-03, AIO-384); present when the
+   * owning runtime issued one. Advisory to the client — approvals reply by `id`. */
+  handle?: string;
 }
 export interface UsageEvent {
   type: "usage";

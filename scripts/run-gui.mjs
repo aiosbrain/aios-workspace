@@ -175,11 +175,16 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
   });
 }
 
-/** Fail fast (before the client build) when the target repo isn't a workspace. */
+/**
+ * Fail fast (before the client build) when the target repo isn't a workspace.
+ * Marker list mirrors gui/server/index.mjs's startup check — keep the two in sync.
+ */
+const WORKSPACE_MARKERS = ["aios.yaml", "workspace.yaml", "project.yaml", "engagement.yaml"];
 export function assertGuiRepo(repo) {
-  if (existsSync(path.join(repo, "aios.yaml")) || existsSync(path.join(repo, "workspace.yaml")))
-    return;
-  console.error(`error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml)`);
+  if (WORKSPACE_MARKERS.some((f) => existsSync(path.join(repo, f)))) return;
+  console.error(
+    `error: ${repo} does not look like an AIOS workspace (no ${WORKSPACE_MARKERS.join("/")})`
+  );
   console.error("  point the GUI at a workspace:  npm run gui -- --repo <workspace-path>");
   process.exit(1);
 }

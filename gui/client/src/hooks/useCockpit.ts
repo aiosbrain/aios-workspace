@@ -78,6 +78,7 @@ export function useCockpit() {
   const modelRef = useRef(model); // current model inside async callbacks (changeModel rollback)
   modelRef.current = model;
   const openChatSeqRef = useRef(0); // rapid chat switching: stale replay fetches must not win
+  const changeModelSeqRef = useRef(0); // rapid model switching: stale failure replies must not roll back
 
   // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,7 +175,10 @@ export function useCockpit() {
           // user can Retry deliberately to take the session over again.
           if (ev.code === 4001) {
             applyConn("superseded");
-            toast.warning("This chat was opened in another tab or window — Retry to take it back.");
+            setBusy(false); // a mid-turn takeover must not strand the composer as busy
+            toast.warning("This chat was opened in another tab or window — Retry to take it back.", {
+              id: "session-superseded", // dedupe: repeated takeovers replace, not stack
+            });
             fail("session superseded by a newer connection");
             return;
           }
@@ -312,7 +316,8 @@ export function useCockpit() {
           if (status === 401 || status === 403)
             toast.error(
               "The server restarted, so this tab's link is stale — open the fresh link printed by `npm run gui` (or the desktop app).",
-              { duration: Infinity } // terminal + actionable: stays until dismissed
+              // Terminal + actionable: stays until dismissed; id dedupes across Retry ladders.
+              { duration: Infinity, id: "stale-gui-link" }
             );
         });
       return;
@@ -358,6 +363,8 @@ export function useCockpit() {
 
   const newChat = useCallback(() => {
     connectSeqRef.current++;
+    openChatSeqRef.current++; // a slow in-flight openChat replay must not hijack the fresh draft
+    currentSessionRef.current = null;
     clearReconnect();
     reconnectAttemptsRef.current = 0;
     try {
@@ -432,9 +439,12 @@ export function useCockpit() {
 
   const changeModel = useCallback((m: string) => {
     const prev = modelRef.current;
+    const seq = ++changeModelSeqRef.current;
     setModel(m); // applies to the NEXT send (sent on each user_message → setModel)
     api.post("/api/config/model", { model: m }).catch(() => {
-      // The picker must not lie: roll back if the server rejected the change.
+      // The picker must not lie: roll back if the server rejected the change — but only
+      // if a newer switch hasn't superseded this one (out-of-order failure replies).
+      if (changeModelSeqRef.current !== seq) return;
       setModel(prev);
       toast.error("Couldn't switch model — reverted.");
     });

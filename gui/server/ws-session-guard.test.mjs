@@ -103,6 +103,25 @@ test("distinct sessions do not interfere", async () => {
   b.ws.close();
 });
 
+test("takeover does not wait on the old peer's close handshake (dead-peer window)", async () => {
+  // The motivating scenario: the old connection's peer is unresponsive (laptop asleep).
+  // A graceful close() against it stalls ~30s on ws's closeTimeout — the takeover path
+  // must abort the old run and admit the new connection IMMEDIATELY, not after that.
+  const a = await connect(PORT, token);
+  a.ws._socket.pause(); // wedge A's TCP socket: it can no longer ack a close handshake
+  const t0 = Date.now();
+  const b = await connect(PORT, token, a.sessionId);
+  const elapsed = Date.now() - t0;
+  assert.equal(b.sessionId, a.sessionId, "B resumed A's session");
+  assert.ok(
+    elapsed < 3000,
+    `B's takeover must complete immediately even with a wedged predecessor (took ${elapsed}ms)`
+  );
+  assert.equal(b.ws.readyState, WebSocket.OPEN);
+  a.ws.terminate(); // hard-drop the wedged socket so the test doesn't leak it
+  b.ws.close();
+});
+
 test("EADDRINUSE exits 1 with an actionable message, not a stack trace", async () => {
   const dup = startServer(PORT, repo);
   let err = "";
