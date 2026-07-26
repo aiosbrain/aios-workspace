@@ -126,13 +126,28 @@ export function rankSeverity(sev) {
   return SEVERITY_RANK[sev] ?? 0;
 }
 
-function normSev(s) {
+export function normalizeSeverity(s) {
   const t = String(s ?? "").toLowerCase();
   if (t.startsWith("crit")) return "Critical";
   if (t === "high") return "High";
   if (t === "medium" || t === "med") return "Medium";
   if (t === "low") return "Low";
   return null;
+}
+
+// Stable, deterministic severity order shared by report-only review fan-outs.
+// Equal-severity findings retain their source order.
+export function rankFindings(findings) {
+  return findings
+    .map((finding, sourceIndex) => ({
+      ...finding,
+      severity: normalizeSeverity(finding?.severity) ?? "Low",
+      sourceIndex,
+    }))
+    .sort(
+      (a, b) => rankSeverity(b.severity) - rankSeverity(a.severity) || a.sourceIndex - b.sourceIndex
+    )
+    .map(({ sourceIndex: _sourceIndex, ...finding }) => finding);
 }
 
 function maxSev(a, b) {
@@ -218,7 +233,9 @@ export function extractGptSeverities(gptMarkdown) {
   let max = null;
   const re = /^\s*-\s*`(Critical|High|Medium|Low)`/gim;
   let m;
-  while ((m = re.exec(gptMarkdown ?? "")) !== null) max = maxSev(max, normSev(m[1]));
+  while ((m = re.exec(gptMarkdown ?? "")) !== null) {
+    max = maxSev(max, normalizeSeverity(m[1]));
+  }
   return max;
 }
 

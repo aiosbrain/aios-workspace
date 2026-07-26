@@ -101,6 +101,10 @@ usage:
   aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)
     [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet
                                          (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)
+  aios verify <sha> [--lanes N]         report-only multi-model review of one commit
+    [--json] [--out <file>]             defaults to 3 lanes; hard cap 8; no repo mutations
+                                         sends the commit diff to OpenRouter/model providers
+                                         Exit 0 clear · 1 Medium+ · 2 key missing · 4 usage/output
   aios export-okf [output-dir]          emit OKF bundle (no brain needed)
     [--tier external|team]              default: external (includes team + external)
   aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
