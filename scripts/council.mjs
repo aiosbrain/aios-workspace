@@ -78,7 +78,7 @@ export async function runCouncil(repo, rest, options = {}) {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) die("OPENROUTER_API_KEY is not set — council needs it to reach OpenRouter");
 
-  const { models: configured } = resolveCouncilConfig(repo, { modelsOverride });
+  const configured = options.models ?? resolveCouncilConfig(repo, { modelsOverride }).models;
   const panel = assertDiverse(configured);
   const requestedLanes = options.lanes ?? panel.length;
   if (!Number.isInteger(requestedLanes) || requestedLanes < 1) {

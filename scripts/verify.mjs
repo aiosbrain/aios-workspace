@@ -12,6 +12,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCouncil } from "./council.mjs";
+import { assertDiverse, resolveCouncilConfig } from "./council-models.mjs";
 import { normalizeSeverity, rankFindings, rankSeverity } from "./consolidate-findings.mjs";
 
 export const DEFAULT_LANES = 3;
@@ -25,6 +26,7 @@ export function parseVerifyArgs(args) {
   const rest = [...args];
   const positional = [];
   let lanes = DEFAULT_LANES;
+  let lanesExplicit = false;
   let json = false;
   let out = null;
 
@@ -37,6 +39,7 @@ export function parseVerifyArgs(args) {
       }
       if (!/^\d+$/.test(raw)) return usageError(`--lanes must be an integer (got ${raw})`);
       lanes = Number(raw);
+      lanesExplicit = true;
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--out") {
@@ -45,7 +48,7 @@ export function parseVerifyArgs(args) {
         return usageError("`--out` needs a file path");
       }
     } else if (arg === "--help" || arg === "-h") {
-      return { help: true, lanes, json, out, sha: null };
+      return { help: true, lanes, lanesExplicit, json, out, sha: null };
     } else if (arg.startsWith("-")) {
       return usageError(`unknown option: ${arg}`);
     } else {
@@ -58,7 +61,7 @@ export function parseVerifyArgs(args) {
   if (lanes > MAX_LANES) {
     return usageError(`--lanes ${lanes} exceeds the hard cap of ${MAX_LANES}`);
   }
-  return { sha: positional[0], lanes, json, out, help: false };
+  return { sha: positional[0], lanes, lanesExplicit, json, out, help: false };
 }
 
 function gitRead(repo, args) {
@@ -187,6 +190,9 @@ export async function cmdVerify(repo, args, deps = {}) {
   if (parsed.help) {
     console.log("usage: aios verify <sha> [--lanes N] [--json] [--out <file>]");
     console.log("warning: sends the commit diff to OpenRouter and its configured model providers");
+    console.log(
+      "exit: 0 clear · 1 Medium+ findings · 2 provider key missing · 4 usage/output error"
+    );
     return 0;
   }
 
@@ -205,11 +211,20 @@ export async function cmdVerify(repo, args, deps = {}) {
   console.error(
     "warning: aios verify sends the commit diff to OpenRouter and its configured model providers"
   );
+  const panel = assertDiverse(resolveCouncilConfig(repo).models);
+  if (parsed.lanesExplicit && parsed.lanes > panel.length) {
+    console.error(
+      `error: --lanes ${parsed.lanes} exceeds the configured panel size of ${panel.length}`
+    );
+    return 4;
+  }
+  const lanes = Math.min(parsed.lanes, panel.length);
   const diff = readCommitDiff(repo, resolvedSha);
   const councilRunner = deps.runCouncil ?? runCouncil;
   const council = await councilRunner(repo, [buildPrompt(resolvedSha, diff)], {
     apiKey,
-    lanes: parsed.lanes,
+    lanes,
+    models: panel,
     persist: false,
     print: false,
     requireSuccess: false,
@@ -229,7 +244,14 @@ export async function cmdVerify(repo, args, deps = {}) {
   };
   const output = parsed.json ? `${JSON.stringify(report)}\n` : formatTextReport(report);
 
-  if (parsed.out) writeFileSync(path.resolve(repo, parsed.out), output, "utf8");
+  if (parsed.out) {
+    try {
+      writeFileSync(path.resolve(repo, parsed.out), output, "utf8");
+    } catch (error) {
+      console.error(`error: could not write --out '${parsed.out}': ${error.message}`);
+      return 4;
+    }
+  }
   process.stdout.write(output);
   return blocking ? 1 : 0;
 }

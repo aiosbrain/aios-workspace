@@ -164,7 +164,7 @@ export const USAGE_LINES = {
     "  aios verify <sha> [--lanes N]         report-only multi-model review of one commit",
     "    [--json] [--out <file>]             defaults to 3 lanes; hard cap 8; no repo mutations",
     "                                         sends the commit diff to OpenRouter/model providers",
-    "                                         Exit 0 clear · 1 Medium+ findings · 4 usage error",
+    "                                         Exit 0 clear · 1 Medium+ · 2 key missing · 4 usage/output",
   ],
   "export-okf": [
     "  aios export-okf [output-dir]          emit OKF bundle (no brain needed)",

@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -56,7 +56,9 @@ function runCli(repo, args, env = {}) {
 
 test("argument contract: defaults, cap, and usage errors", () => {
   assert.equal(parseVerifyArgs(["HEAD"]).lanes, 3);
+  assert.equal(parseVerifyArgs(["HEAD"]).lanesExplicit, false);
   assert.equal(parseVerifyArgs(["HEAD", "--lanes", "1"]).lanes, 1);
+  assert.equal(parseVerifyArgs(["HEAD", "--lanes", "1"]).lanesExplicit, true);
   const capped = parseVerifyArgs(["HEAD", "--lanes", String(MAX_LANES + 1)]);
   assert.equal(capped.exitCode, 4);
   assert.match(capped.error, /hard cap of 8/);
@@ -107,6 +109,50 @@ test("missing provider key fails before launching a lane", async () => {
   } finally {
     if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = previous;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("default lanes adapt to a two-model panel; an explicit overflow exits 4", async () => {
+  const repo = makeRepo();
+  mkdirSync(path.join(repo, ".aios"));
+  writeFileSync(
+    path.join(repo, ".aios", "council-models.yaml"),
+    "council_models:\n  - openai/model-a\n  - google/model-b\n"
+  );
+  let calls = 0;
+  const runCouncil = async (_repo, _rest, options) => {
+    calls++;
+    assert.equal(options.lanes, 2);
+    assert.deepEqual(options.models, ["openai/model-a", "google/model-b"]);
+    return {
+      models: options.models,
+      results: options.models.map((model) => ({ model, ok: true, text: "[]" })),
+    };
+  };
+  const chunks = [];
+  const originalWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  try {
+    assert.equal(await cmdVerify(repo, ["HEAD", "--json"], { apiKey: "test", runCouncil }), 0);
+    assert.equal(JSON.parse(chunks.join("")).lanes, 2);
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      assert.equal(
+        await cmdVerify(repo, ["HEAD", "--lanes", "3"], { apiKey: "test", runCouncil }),
+        4
+      );
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(calls, 1);
+  } finally {
+    process.stdout.write = originalWrite;
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -287,6 +333,26 @@ test("--out is the only explicit report file write", async () => {
     });
     assert.equal(code, 0);
     assert.equal(JSON.parse(readFileSync(path.join(repo, "report.json"), "utf8")).lanes, 2);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an unwritable --out path returns a controlled usage/output error", async () => {
+  const repo = makeRepo();
+  try {
+    const code = await cmdVerify(repo, ["HEAD", "--lanes", "2", "--out", "missing/report.txt"], {
+      apiKey: "test-only-key",
+      runCouncil: async () => ({
+        models: ["model-a", "model-b"],
+        results: [
+          { model: "model-a", ok: true, text: "[]" },
+          { model: "model-b", ok: true, text: "[]" },
+        ],
+      }),
+    });
+    assert.equal(code, 4);
+    assert.equal(existsSync(path.join(repo, "missing")), false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
