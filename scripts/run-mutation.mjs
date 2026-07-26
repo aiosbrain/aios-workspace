@@ -66,8 +66,8 @@ export const MUTATION_GROUPS = [
     match: /^(?:scripts\/inbox\.mjs|src\/operator-loop\/inbox\/.+\.ts)$/,
     nightly: ["scripts/inbox.mjs", "src/operator-loop/inbox/**/*.ts"],
     tests: ["test/operator-loop/*.test.mjs"],
-    // AIO-513 demonstrated 96.43% for this exact compiled credential-boundary
-    // target. Do not project that single-file score onto the much larger group.
+    // This floor is calibrated for the exact compiled target only. Do not
+    // project a single-file score onto the much larger mutation group.
     breakThresholdByTarget: { "dist/operator-loop/inbox/capability.js": 90 },
     mutateDist: true,
     // Stryker's sandbox copy drops POSIX execute bits, and the hook tests in

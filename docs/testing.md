@@ -75,7 +75,7 @@ regenerate the tracked baseline from a local run. Never lower a baseline merely 
 `node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` expands
 those groups and reuses incremental results. The exact compiled inbox capability target enforces
 a 90% break threshold when it is the campaign's sole target, with headroom below its demonstrated
-single-file 96.43% score. Mixed-file and whole-group denominators remain advisory at
+single-file 96.43% score from AIO-513. Mixed-file and whole-group denominators remain advisory at
 `thresholds.break = 0` until measured directly. A failed campaign is reported after the remaining
 groups run, so one score regression cannot starve later groups of reports or incremental-cache
 updates. The PR mutation job remains non-blocking until ten consecutive complete nightlies fit the
