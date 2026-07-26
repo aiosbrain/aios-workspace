@@ -66,9 +66,9 @@ export const MUTATION_GROUPS = [
     match: /^(?:scripts\/inbox\.mjs|src\/operator-loop\/inbox\/.+\.ts)$/,
     nightly: ["scripts/inbox.mjs", "src/operator-loop/inbox/**/*.ts"],
     tests: ["test/operator-loop/*.test.mjs"],
-    // AIO-513 demonstrated 96.43% for the credential boundary. Keep headroom
-    // for equivalent mutants while making a score regression fail this campaign.
-    breakThreshold: 90,
+    // AIO-513 demonstrated 96.43% for this exact compiled credential-boundary
+    // target. Do not project that single-file score onto the much larger group.
+    breakThresholdByTarget: { "dist/operator-loop/inbox/capability.js": 90 },
     mutateDist: true,
     // Stryker's sandbox copy drops POSIX execute bits, and the hook tests in
     // this scope assert them (statSync(HOOK).mode & 0o111). Restore the bits
@@ -161,6 +161,10 @@ function nodeCommand(group) {
 }
 
 export function configFor(group, mutate, nightly) {
+  // A threshold calibrated on one file is valid only when that file is the
+  // complete campaign denominator. Mixed and whole-group campaigns remain
+  // advisory until their own scores have been observed.
+  const breakThreshold = mutate.length === 1 ? (group.breakThresholdByTarget?.[mutate[0]] ?? 0) : 0;
   const common = {
     $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
     mutate,
@@ -168,10 +172,7 @@ export function configFor(group, mutate, nightly) {
     timeoutMS: 60_000,
     reporters: ["clear-text", "progress", "json"],
     jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
-    thresholds:
-      group.breakThreshold == null
-        ? { high: 80, low: 60, break: 0 }
-        : { high: group.breakThreshold, low: 80, break: group.breakThreshold },
+    thresholds: { high: 80, low: 60, break: breakThreshold },
     incremental: nightly,
     incrementalFile: `.stryker-tmp/${group.name}.json`,
   };
@@ -189,6 +190,33 @@ export function configFor(group, mutate, nightly) {
     coverageAnalysis: "off",
     commandRunner: { command: nodeCommand(group) },
   };
+}
+
+export function runAllCampaigns(selected, runCampaign) {
+  const failures = [];
+  for (const entry of selected) {
+    try {
+      runCampaign(entry);
+    } catch (error) {
+      failures.push({ group: entry.group.name, error });
+    }
+  }
+  if (failures.length) {
+    const summary = failures
+      .map(
+        ({ group, error }) => `${group} (${error instanceof Error ? error.message : String(error)})`
+      )
+      .join("; ");
+    throw new AggregateError(
+      failures.map(
+        ({ group, error }) =>
+          new Error(`${group}: ${error instanceof Error ? error.message : String(error)}`, {
+            cause: error,
+          })
+      ),
+      `mutation campaigns failed: ${summary}`
+    );
+  }
 }
 
 function requiredValue(argv, index, flag) {
@@ -265,12 +293,12 @@ function main(argv) {
     if (build.status !== 0) throw new Error("build:loop failed before the mutation campaign");
   }
 
-  for (const { group, mutate } of selected) {
+  runAllCampaigns(selected, ({ group, mutate }) => {
     const config = configFor(group, mutate, options.nightly);
     const configFile = path.join(ROOT, ".stryker-tmp", `${group.name}.conf.json`);
     writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`);
     console.log(`mutation: ${group.name} (${mutate.join(", ")})`);
-    if (options.list) continue;
+    if (options.list) return;
     const result = spawnSync(
       process.execPath,
       [
@@ -281,8 +309,10 @@ function main(argv) {
       { cwd: ROOT, stdio: "inherit", env: process.env }
     );
     if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`${group.name} mutation campaign failed`);
-  }
+    if (result.status !== 0) {
+      throw new Error(`Stryker exited ${result.status ?? "without a status"}`);
+    }
+  });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

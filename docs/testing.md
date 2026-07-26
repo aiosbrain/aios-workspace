@@ -31,7 +31,8 @@ never refreshes `dist/` and masks itself).
   `npm run test:install-smoke`.
 - The required test gate excludes mutation while the nightly campaign is not yet healthy. The
   2026-07-25 calibration run timed out during `bugbot-security`; make the lane mandatory only
-  after a complete nightly and a green 1–2 week soak.
+  after ten consecutive complete nightlies within the workflow budget, spanning at least seven
+  days. Reassess or file a follow-up if that evidence is still unavailable after fourteen days.
 
 ## Coverage policy
 
@@ -72,11 +73,13 @@ regenerate the tracked baseline from a local run. Never lower a baseline merely 
 
 `npm run test:mutation` mutates changed files in critical safety groups and pairs native
 `node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` expands
-those groups and reuses incremental results. The calibrated `inbox-authorization` group enforces
-a 90% break threshold, with headroom below its demonstrated 96.43% score; groups still gathering
-per-group calibration data remain advisory at `thresholds.break = 0`. The PR mutation job remains
-non-blocking until the nightly campaign completes within its budget and then soaks green for 1–2
-weeks. Equivalent mutants require a reviewed justification.
+those groups and reuses incremental results. The exact compiled inbox capability target enforces
+a 90% break threshold when it is the campaign's sole target, with headroom below its demonstrated
+single-file 96.43% score. Mixed-file and whole-group denominators remain advisory at
+`thresholds.break = 0` until measured directly. A failed campaign is reported after the remaining
+groups run, so one score regression cannot starve later groups of reports or incremental-cache
+updates. The PR mutation job remains non-blocking until ten consecutive complete nightlies fit the
+workflow budget over at least seven days. Equivalent mutants require a reviewed justification.
 
 TypeScript groups mutate the compiled `dist/` output, not `src/`: Stryker's command runner
 scores purely on exit code, so mutating source TypeScript would let compile-breaking mutants be

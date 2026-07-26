@@ -8,6 +8,7 @@ import {
   configFor,
   MUTATION_GROUPS,
   parseArgs,
+  runAllCampaigns,
   toMutateTarget,
 } from "../scripts/run-mutation.mjs";
 
@@ -161,11 +162,69 @@ test("native Node mutation uses narrow command-runner tests", () => {
   assert.equal(config.thresholds.break, 0, "uncalibrated groups remain advisory");
 });
 
-test("the calibrated inbox authorization group enforces its mutation floor", () => {
+test("the calibrated inbox capability target enforces its mutation floor in either lane", () => {
   const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
-  const config = configFor(group, ["dist/operator-loop/inbox/capability.js"], true);
-  assert.equal(group.breakThreshold, 90);
-  assert.deepEqual(config.thresholds, { high: 90, low: 80, break: 90 });
+  const target = "dist/operator-loop/inbox/capability.js";
+  assert.equal(group.breakThresholdByTarget[target], 90);
+  for (const nightly of [false, true]) {
+    assert.deepEqual(configFor(group, [target], nightly).thresholds, {
+      high: 80,
+      low: 60,
+      break: 90,
+    });
+  }
+});
+
+test("uncalibrated inbox denominators remain advisory with valid reporting bands", () => {
+  const group = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  for (const mutate of [
+    ["dist/operator-loop/inbox/store.js"],
+    ["dist/operator-loop/inbox/capability.js", "dist/operator-loop/inbox/store.js"],
+  ]) {
+    const { thresholds } = configFor(group, mutate, true);
+    assert.deepEqual(thresholds, { high: 80, low: 60, break: 0 });
+    assert.ok(thresholds.high >= thresholds.low);
+  }
+});
+
+test("an explicit zero target threshold stays advisory without invalidating reporting bands", () => {
+  const target = "scripts/example.mjs";
+  const group = { name: "example", tests: [], breakThresholdByTarget: { [target]: 0 } };
+  assert.deepEqual(configFor(group, [target], false).thresholds, {
+    high: 80,
+    low: 60,
+    break: 0,
+  });
+});
+
+test("every whole-group and single-target configuration has valid reporting bands", () => {
+  for (const group of MUTATION_GROUPS) {
+    const targets = group.nightly.map((entry) => toMutateTarget(group, entry));
+    for (const mutate of [targets, ...targets.map((target) => [target])]) {
+      const { thresholds } = configFor(group, mutate, true);
+      assert.ok(
+        thresholds.high >= thresholds.low,
+        `${group.name} has high ${thresholds.high} below low ${thresholds.low}`
+      );
+    }
+  }
+});
+
+test("a failed campaign does not prevent later mutation groups from running", () => {
+  const selected = ["first", "threshold-miss", "last"].map((name) => ({
+    group: { name },
+    mutate: [`${name}.mjs`],
+  }));
+  const visited = [];
+  assert.throws(
+    () =>
+      runAllCampaigns(selected, ({ group }) => {
+        visited.push(group.name);
+        if (group.name === "threshold-miss") throw new Error("Stryker exited 1");
+      }),
+    /mutation campaigns failed: threshold-miss/
+  );
+  assert.deepEqual(visited, ["first", "threshold-miss", "last"]);
 });
 
 test("GUI mutation uses Vitest per-test coverage", () => {

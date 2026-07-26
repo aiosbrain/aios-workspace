@@ -343,8 +343,9 @@ jobs:
       - run: npm ci
       - run: npm run test:mutation
       # Always exercise the Stryker/Vitest integration even when this PR does
-      # not touch a file in a critical changed-code group.
+      # not touch a file in a critical changed-code group or a campaign fails.
       - run: npm run test:mutation:smoke
+        if: always()
 
   test-gate:
     # Preserve the existing protected-branch context while strengthening it:
