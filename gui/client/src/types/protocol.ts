@@ -67,6 +67,8 @@ export interface PermissionRequestEvent {
   /** Durable capability handle for this approval (I-03, AIO-384); present when the
    * owning runtime issued one. Advisory to the client — approvals reply by `id`. */
   handle?: string;
+  /** Server auto-denies this request after this many ms (see PERM_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 export interface UsageEvent {
   type: "usage";

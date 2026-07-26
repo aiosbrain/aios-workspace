@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Plus,
   Search,
@@ -12,9 +12,10 @@ import {
 } from "lucide-react";
 import { useConnection, useSession } from "../../state/cockpit";
 import { groupChatsByRecency } from "../../lib/recency";
+import { fmtAge } from "../../lib/format";
 import { shortcutLabel } from "../../lib/shortcuts";
 import { cn } from "../../lib/cn";
-import type { SessionSummary } from "../../types/protocol";
+import type { SessionSearchResult, SessionSummary } from "../../types/protocol";
 
 const SIDE_KBD =
   "ml-auto font-mono text-[10px] text-muted-foreground bg-muted border border-border-visible rounded-sm px-[5px] py-px";
@@ -26,13 +27,14 @@ export function shouldDisableNewChat(view: string, isEmptyDraft: boolean): boole
 }
 
 export function Sidebar() {
-  const { repo } = useConnection();
+  const { repo, api } = useConnection();
   const {
     view,
     setView,
     connected,
     connectionStatus,
     chats,
+    chatsLoadFailed,
     currentSession,
     openChat,
     newChat,
@@ -42,6 +44,32 @@ export function Sidebar() {
     retryConnection,
   } = useSession();
   const [query, setQuery] = useState("");
+  // Full-content hits from the server (same engine as the command palette — the two
+  // search affordances must not silently differ in power). null = fall back to the
+  // instant client-side title filter (empty query, or the endpoint failed).
+  const [hits, setHits] = useState<SessionSearchResult[] | null>(null);
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setHits(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api
+        .get<{ results: SessionSearchResult[] }>(`/api/sessions/search?q=${encodeURIComponent(q)}`)
+        .then((r) => {
+          if (!cancelled) setHits(r.results || []);
+        })
+        .catch(() => {
+          if (!cancelled) setHits(null); // fall back to the title filter
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [query, api]);
 
   const statusTitle: Record<string, string> = {
     draft: "Draft",
@@ -59,7 +87,13 @@ export function Sidebar() {
   const initial = (repoName?.[0] || "A").toUpperCase();
 
   const q = query.trim().toLowerCase();
-  const filtered = q ? chats.filter((c) => (c.title || "").toLowerCase().includes(q)) : null;
+  const byId = new Map(chats.map((c) => [c.id, c]));
+  // Server full-content hits win (same engine as ⌘K); title filter is the instant/offline fallback.
+  const filtered = !q
+    ? null
+    : hits !== null
+      ? hits.map((h) => ({ ...(byId.get(h.id) ?? { id: h.id, title: h.title, createdAt: "", updatedAt: "" }), snippet: h.snippet }))
+      : chats.filter((c) => (c.title || "").toLowerCase().includes(q));
   const groups = filtered ? null : groupChatsByRecency(chats);
 
   const dotClass = cn(
@@ -74,22 +108,37 @@ export function Sidebar() {
   );
   const connectionLabel = statusTitle[connectionStatus] ?? (isDraft ? "Draft" : "Connecting...");
 
-  const ChatItem = (c: SessionSummary) => (
-    <button
-      key={c.id}
-      className={cn(
-        "block w-full truncate rounded-[8px] border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
-        FOCUS_RING,
-        c.id === currentSession &&
-          view === "chat" &&
-          "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-      )}
-      onClick={() => openChat(c.id)}
-      title={c.title || "(untitled)"}
-    >
-      {c.title || "New chat"}
-    </button>
-  );
+  const ChatItem = (c: SessionSummary & { snippet?: string }) => {
+    const age = c.updatedAt ? Date.now() - Date.parse(c.updatedAt) : NaN;
+    return (
+      <button
+        key={c.id}
+        className={cn(
+          "block w-full rounded-[8px] border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
+          FOCUS_RING,
+          c.id === currentSession &&
+            view === "chat" &&
+            "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
+        )}
+        onClick={() => openChat(c.id)}
+        title={c.title || "(untitled)"}
+      >
+        <span className="flex items-baseline gap-1.5">
+          <span className="min-w-0 flex-1 truncate">{c.title || "New chat"}</span>
+          {Number.isFinite(age) && (
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+              {fmtAge(age)}
+            </span>
+          )}
+        </span>
+        {c.snippet && (
+          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/70">
+            {c.snippet}
+          </span>
+        )}
+      </button>
+    );
+  };
 
   return (
     <aside className="flex w-[232px] shrink-0 flex-col gap-1 border-r border-border-visible bg-card px-3 py-4">
@@ -268,7 +317,9 @@ export function Sidebar() {
           ))
         ) : (
           <div className="px-2.5 py-2 text-xs text-muted-foreground">
-            No chats yet — start one above.
+            {chatsLoadFailed
+              ? "Couldn't load chats — they'll reappear when the connection is back."
+              : "No chats yet — start one above."}
           </div>
         )}
       </div>

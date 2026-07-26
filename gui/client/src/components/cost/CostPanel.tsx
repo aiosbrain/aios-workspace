@@ -108,7 +108,7 @@ export function CostPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [configVersion, setConfigVersion] = useState(0);
+  const [configVersion] = useState(0);
 
   // `force` = the explicit Refresh button → `?force=1` bypasses the server's
   // failure backoff (an automatic poll/retry never does).

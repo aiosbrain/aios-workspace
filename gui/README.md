@@ -19,7 +19,7 @@ login already configured for the SDK).
 - Streaming chat with tool-call cards (collapsible input/result)
 - **Interactive tool approvals** — the SDK's `canUseTool` round-trips to the
   browser; unanswered approvals auto-deny after 5 minutes
-- Session transcripts as JSONL under `gui/.sessions/` (gitignored)
+- Session transcripts as JSONL under the workspace’s `.aios/sessions/` (created lazily on the first user message)
 
 ## Security posture
 

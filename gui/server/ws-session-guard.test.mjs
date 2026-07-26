@@ -4,7 +4,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,8 +78,8 @@ after(() => {
 
 test("second connection on the same session id supersedes the first (close 4001)", async () => {
   const a = await connect(PORT, token);
-  // The session must have a transcript on disk before it is resumable; the hello
-  // append creates it, so B can attach by id immediately.
+  // A has sent no message, so it has no transcript file (lazy creation) — it must
+  // still be resumable by id via the live-connection map, and supersede, not fork.
   const b = await connect(PORT, token, a.sessionId);
   assert.equal(b.sessionId, a.sessionId, "B resumed A's session");
   const aCode = await Promise.race([
@@ -89,6 +89,16 @@ test("second connection on the same session id supersedes the first (close 4001)
   assert.equal(aCode, 4001, "old connection closed with the app-level SUPERSEDED code");
   assert.equal(b.ws.readyState, WebSocket.OPEN, "new connection stays open");
   b.ws.close();
+});
+
+test("a connection that never sends a message leaves no transcript file", async () => {
+  const sessionsDir = path.join(repo, ".aios", "sessions");
+  const before = existsSync(sessionsDir) ? readdirSync(sessionsDir).length : 0;
+  const a = await connect(PORT, token);
+  await new Promise((r) => setTimeout(r, 300)); // give any (wrong) eager write time to land
+  const during = existsSync(sessionsDir) ? readdirSync(sessionsDir).length : 0;
+  assert.equal(during, before, "no orphan transcript minted by a silent page load");
+  a.ws.close();
 });
 
 test("distinct sessions do not interfere", async () => {

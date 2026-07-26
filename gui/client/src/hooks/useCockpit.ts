@@ -68,6 +68,7 @@ export function useCockpit() {
   const [sessionUsage, setSessionUsage] = useState<Usage | null>(null);
   const [chats, setChats] = useState<SessionListResponse["sessions"]>([]);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
+  const [chatsLoadFailed, setChatsLoadFailed] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const resultUsageRef = useRef<Usage | null>(null); // pending usage for the result line
@@ -79,6 +80,9 @@ export function useCockpit() {
   modelRef.current = model;
   const openChatSeqRef = useRef(0); // rapid chat switching: stale replay fetches must not win
   const changeModelSeqRef = useRef(0); // rapid model switching: stale failure replies must not roll back
+  const msgUidRef = useRef(0); // monotonic uid per rendered message (stable React keys)
+  const permissionsRef = useRef<PendingPermission[]>([]); // live view for disconnect cleanup
+  permissionsRef.current = permissions;
 
   // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,7 +107,10 @@ export function useCockpit() {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
 
-  const append = useCallback((m: UiMessage) => setMessages((prev) => [...prev, m]), []);
+  const append = useCallback(
+    (m: UiMessage) => setMessages((prev) => [...prev, { ...m, uid: ++msgUidRef.current }]),
+    []
+  );
 
   const appendDelta = useCallback((text: string) => {
     setMessages((prev) => {
@@ -111,7 +118,7 @@ export function useCockpit() {
       if (last?.kind === "assistant" && last.streaming) {
         return [...prev.slice(0, -1), { ...last, text: last.text + text }];
       }
-      return [...prev, { kind: "assistant", text, streaming: true }];
+      return [...prev, { kind: "assistant", text, streaming: true, uid: ++msgUidRef.current }];
     });
   }, []);
 
@@ -127,8 +134,12 @@ export function useCockpit() {
     try {
       const d = await api.get<SessionListResponse>("/api/sessions");
       setChats(d.sessions || []);
+      setChatsLoadFailed(false);
       return d;
     } catch {
+      // Keep the last-good list; only flag the failure so an EMPTY sidebar can say
+      // "couldn't load" instead of impersonating a workspace with no history.
+      setChatsLoadFailed(true);
       return { sessions: [], lastSelected: null };
     }
   }, []);
@@ -169,6 +180,15 @@ export function useCockpit() {
         ws.onclose = (ev) => {
           if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
           setConnected(false);
+          // The server denies every pending approval when a connection tears down —
+          // leaving the cards up would invite decisions that can no longer apply.
+          if (permissionsRef.current.length) {
+            setPermissions([]);
+            toast.warning(
+              "The pending approval was cancelled — the connection dropped, so the run was denied it.",
+              { id: "perm-cancelled" }
+            );
+          }
           // 4001 = the server closed us because this session was opened by a newer
           // connection (another tab, or a reconnect that superseded us). Reconnecting
           // would steal the session straight back, so park offline instead — the
@@ -231,7 +251,14 @@ export function useCockpit() {
           case "permission_request":
             setPermissions((prev) => [
               ...prev,
-              { id: msg.id, tool: msg.tool, input: msg.input, options: msg.options },
+              {
+                id: msg.id,
+                tool: msg.tool,
+                input: msg.input,
+                options: msg.options,
+                timeoutMs: msg.timeoutMs,
+                receivedAt: Date.now(),
+              },
             ]);
             break;
           case "usage":
@@ -396,7 +423,7 @@ export function useCockpit() {
         const d = await api.get<SessionTranscriptResponse>(`/api/sessions/${id}`);
         if (openChatSeqRef.current !== seq) return; // a newer chat was opened while we fetched
         const events = d.events || [];
-        setMessages(buildMessagesFromEvents(events));
+        setMessages(buildMessagesFromEvents(events).map((m) => ({ ...m, uid: ++msgUidRef.current })));
         let lastCost = 0;
         let contextUsage: Usage | null = null;
         let aggregateUsage: Usage | null = null;
@@ -591,6 +618,7 @@ export function useCockpit() {
     usage,
     sessionUsage,
     chats,
+    chatsLoadFailed,
     currentSession,
     // actions
     changeModel,

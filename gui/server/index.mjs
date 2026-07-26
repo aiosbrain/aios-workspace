@@ -1083,7 +1083,10 @@ const wss = new WebSocketServer({ noServer: true });
 // One live connection per session id (see the latest-wins guard in the connection
 // handler). 4001 is our app-level close code for "superseded by a newer connection".
 const WS_CLOSE_SUPERSEDED = 4001;
-const liveSessionConns = new Map(); // sessionId -> ws
+const liveSessionConns = new Map(); // sessionId -> { ws, supersede }
+// Interactive tool approvals auto-deny after this long so a closed tab can't wedge
+// the run. Advertised to the client in each permission_request (countdown UI).
+const PERM_TIMEOUT_MS = 5 * 60 * 1000;
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -1100,8 +1103,13 @@ wss.on("connection", (ws, req) => {
   // the SDK session id so the transcript file and the resumable session share one id.
   const wsUrl = new URL(req.url, `http://127.0.0.1:${port}`);
   const wanted = wsUrl.searchParams.get("session") || "";
+  // Resumable = has a stored transcript OR is currently live (a draft session that
+  // hasn't earned its file yet — see transcriptLive — must still supersede, not fork).
   const resumeId =
-    UUID_RE.test(wanted) && existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) ? wanted : null;
+    UUID_RE.test(wanted) &&
+    (existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) || liveSessionConns.has(wanted))
+      ? wanted
+      : null;
   const sessionId = resumeId || randomUUID();
   // Latest-wins single-writer guard: a session has at most one live connection, so
   // two adapter runs can never interleave one transcript (a reconnect after sleep
@@ -1147,6 +1155,10 @@ wss.on("connection", (ws, req) => {
     teardown();
   });
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
+  // Lazy transcript: a page load that never sends a message must not leave an orphan
+  // file behind (every open used to mint one). Writes start at the first user turn;
+  // sessions with an existing file (real resumes) keep appending from the hello on.
+  let transcriptLive = existsSync(transcript);
   const existingSession = readSessionIndex(SESSIONS_INDEX).sessions.find((s) => s.id === sessionId);
   let sessionRegistered = !!existingSession;
   let titleSet = !!existingSession?.title;
@@ -1238,6 +1250,7 @@ wss.on("connection", (ws, req) => {
     } catch {
       /* closed */
     }
+    if (!transcriptLive) return; // no file until the first user turn (no orphan transcripts)
     try {
       appendFileSync(transcript, JSON.stringify(obj) + "\n");
     } catch {
@@ -1291,6 +1304,7 @@ wss.on("connection", (ws, req) => {
     if (msg.type === "user_message" && typeof msg.text === "string") {
       const userText = msg.text.trim();
       if (!userText) return;
+      transcriptLive = true; // first real turn — the session now earns its file
       send({ type: "echo_user", text: userText });
       if (!titleSet) {
         upsertSession(SESSIONS_INDEX, sessionId, {
@@ -1411,6 +1425,7 @@ wss.on("connection", (ws, req) => {
       tool: toolName,
       input: toolInput,
       ...(cap ? { handle: cap.handle } : {}),
+      timeoutMs: PERM_TIMEOUT_MS,
     });
     const allow = await new Promise((resolve) => {
       pending.set(id, resolve);
@@ -1422,7 +1437,7 @@ wss.on("connection", (ws, req) => {
             resolve(false);
           }
         },
-        5 * 60 * 1000
+        PERM_TIMEOUT_MS
       ).unref?.();
     });
     // Broker + durable consume. On the happy path this is the audit + one-time tombstone; if the
@@ -1465,7 +1480,14 @@ wss.on("connection", (ws, req) => {
   // it timed out (the adapter maps a non-string to a "cancelled" outcome).
   const requestPermission = async ({ title, content, options }) => {
     const id = nextPermId++;
-    send({ type: "permission_request", id, tool: title, input: content, options });
+    send({
+      type: "permission_request",
+      id,
+      tool: title,
+      input: content,
+      options,
+      timeoutMs: PERM_TIMEOUT_MS,
+    });
     return new Promise((resolve) => {
       pending.set(id, resolve);
       setTimeout(
@@ -1475,7 +1497,7 @@ wss.on("connection", (ws, req) => {
             resolve(null);
           }
         },
-        5 * 60 * 1000
+        PERM_TIMEOUT_MS
       ).unref?.();
     });
   };

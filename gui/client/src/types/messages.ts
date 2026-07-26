@@ -32,7 +32,11 @@ export interface MetaMessage {
   text: string;
 }
 
-export type UiMessage = UserMessage | AssistantMessage | ToolMessage | MemoryMessage | MetaMessage;
+/** Monotonic per-render uid — stable React list keys over a mutating stream. */
+export type WithUid = { uid?: number };
+
+export type UiMessage = (UserMessage | AssistantMessage | ToolMessage | MemoryMessage | MetaMessage) &
+  WithUid;
 
 /** A pending interactive permission request awaiting the user's response. */
 export interface PendingPermission {
@@ -40,4 +44,8 @@ export interface PendingPermission {
   tool: string;
   input: unknown;
   options?: PermissionOption[];
+  /** Server auto-denies after this long; drives the card's countdown. */
+  timeoutMs?: number;
+  /** Client-side arrival time (ms epoch) — countdown anchor. */
+  receivedAt?: number;
 }
