@@ -215,6 +215,22 @@ test("root commits use an empty-tree diff", () => {
   }
 });
 
+test("parent-shaped commit message text cannot replace the real header parent", () => {
+  const repo = makeRepo();
+  try {
+    const tree = runGit(repo, ["rev-parse", "HEAD^{tree}"]);
+    const fakeParent = "a".repeat(40);
+    const commit = spawnSync("git", ["-C", repo, "commit-tree", tree], {
+      encoding: "utf8",
+      input: `root subject\n\nparent ${fakeParent}\n`,
+    });
+    assert.equal(commit.status, 0, commit.stderr);
+    assert.doesNotThrow(() => readCommitDiff(repo, commit.stdout.trim()));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("commit diff capture supports patches larger than Node's default child buffer", () => {
   const repo = makeRepo();
   try {

@@ -84,7 +84,8 @@ export function validateCommit(repo, sha) {
 
 export function readCommitDiff(repo, sha) {
   const commit = gitRead(repo, ["cat-file", "-p", sha]);
-  const parent = commit.match(/^parent ([0-9a-f]+)$/m)?.[1] ?? null;
+  const headers = commit.split("\n\n", 1)[0];
+  const parent = headers.match(/^parent ([0-9a-f]+)$/m)?.[1] ?? null;
   if (!parent) {
     const emptyTree = gitRead(repo, ["hash-object", "-t", "tree", "/dev/null"]);
     return gitRead(repo, ["diff", emptyTree, sha]);
