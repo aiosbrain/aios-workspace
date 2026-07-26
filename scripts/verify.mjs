@@ -17,6 +17,7 @@ import { normalizeSeverity, rankFindings, rankSeverity } from "./consolidate-fin
 
 export const DEFAULT_LANES = 3;
 export const MAX_LANES = 8;
+const GIT_READ_MAX_BUFFER = 64 * 1024 * 1024;
 
 function usageError(message) {
   return { error: message, exitCode: 4 };
@@ -68,6 +69,7 @@ function gitRead(repo, args) {
   return execFileSync("git", ["-C", repo, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_READ_MAX_BUFFER,
   }).trimEnd();
 }
 
@@ -81,13 +83,14 @@ export function validateCommit(repo, sha) {
 }
 
 export function readCommitDiff(repo, sha) {
-  try {
-    gitRead(repo, ["rev-parse", "--verify", `${sha}^`]);
-    return gitRead(repo, ["diff", `${sha}^..${sha}`]);
-  } catch {
+  const commit = gitRead(repo, ["cat-file", "-p", sha]);
+  const parent = commit.match(/^parent ([0-9a-f]+)$/m)?.[1] ?? null;
+  if (!parent) {
     const emptyTree = gitRead(repo, ["hash-object", "-t", "tree", "/dev/null"]);
     return gitRead(repo, ["diff", emptyTree, sha]);
   }
+  gitRead(repo, ["cat-file", "-e", `${parent}^{commit}`]);
+  return gitRead(repo, ["diff", `${parent}..${sha}`]);
 }
 
 export function parseLaneFindings(text, lane, model) {
@@ -208,9 +211,6 @@ export async function cmdVerify(repo, args, deps = {}) {
     return 2;
   }
 
-  console.error(
-    "warning: aios verify sends the commit diff to OpenRouter and its configured model providers"
-  );
   const panel = assertDiverse(resolveCouncilConfig(repo).models);
   if (parsed.lanesExplicit && parsed.lanes > panel.length) {
     console.error(
@@ -219,7 +219,16 @@ export async function cmdVerify(repo, args, deps = {}) {
     return 4;
   }
   const lanes = Math.min(parsed.lanes, panel.length);
-  const diff = readCommitDiff(repo, resolvedSha);
+  let diff;
+  try {
+    diff = (deps.readCommitDiff ?? readCommitDiff)(repo, resolvedSha);
+  } catch (error) {
+    console.error(`error: could not read commit diff: ${error.message}`);
+    return 4;
+  }
+  console.error(
+    "warning: aios verify sends the commit diff to OpenRouter and its configured model providers"
+  );
   const councilRunner = deps.runCouncil ?? runCouncil;
   const council = await councilRunner(repo, [buildPrompt(resolvedSha, diff)], {
     apiKey,

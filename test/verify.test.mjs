@@ -215,6 +215,60 @@ test("root commits use an empty-tree diff", () => {
   }
 });
 
+test("commit diff capture supports patches larger than Node's default child buffer", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(path.join(repo, "large.txt"), `${"x".repeat(1_100_000)}\n`);
+    runGit(repo, ["add", "large.txt"]);
+    runGit(repo, ["commit", "-qm", "large"]);
+    assert.ok(readCommitDiff(repo, "HEAD").length > 1_000_000);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a missing parent object fails closed instead of producing a root diff", () => {
+  const source = makeRepo();
+  const shallow = mkdtempSync(path.join(tmpdir(), "aios-verify-shallow-"));
+  try {
+    const clone = spawnSync("git", ["clone", "-q", "--depth=1", `file://${source}`, shallow], {
+      encoding: "utf8",
+    });
+    assert.equal(clone.status, 0, clone.stderr);
+    assert.throws(() => readCommitDiff(shallow, "HEAD"));
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(shallow, { recursive: true, force: true });
+  }
+});
+
+test("diff acquisition errors return a controlled usage error before egress", async () => {
+  const repo = makeRepo();
+  let councilCalls = 0;
+  const originalError = console.error;
+  const errors = [];
+  console.error = (message) => errors.push(String(message));
+  try {
+    const code = await cmdVerify(repo, ["HEAD"], {
+      apiKey: "test-only-key",
+      readCommitDiff: () => {
+        throw new Error("parent object unavailable");
+      },
+      runCouncil: async () => {
+        councilCalls++;
+        throw new Error("must not run");
+      },
+    });
+    assert.equal(code, 4);
+    assert.equal(councilCalls, 0);
+    assert.match(errors.join("\n"), /could not read commit diff: parent object unavailable/);
+    assert.doesNotMatch(errors.join("\n"), /sends the commit diff to OpenRouter/);
+  } finally {
+    console.error = originalError;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("all failed providers still produce a blocking report", async () => {
   const repo = makeRepo();
   const chunks = [];
