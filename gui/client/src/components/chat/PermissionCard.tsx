@@ -24,10 +24,12 @@ export function PermissionCard({
   permission,
   onRespond,
   onRespondOption,
+  onExpired,
 }: {
   permission: PendingPermission;
   onRespond: (id: number, allow: boolean) => void;
   onRespondOption: (id: number, optionId: string) => void;
+  onExpired?: (id: number) => void;
 }) {
   const { id, tool, input, options } = permission;
   // Tick once a second while a server deadline is running so the user knows this
@@ -39,6 +41,15 @@ export function PermissionCard({
     return () => clearInterval(t);
   }, [permission.timeoutMs, permission.receivedAt]);
   const remaining = autoDenyRemaining(permission, now);
+  // At the server's deadline the request is already denied server-side — remove the
+  // card (via onExpired) so a late Allow can't pretend to work. Unmount stops the tick.
+  const expired =
+    permission.timeoutMs != null &&
+    permission.receivedAt != null &&
+    now >= permission.receivedAt + permission.timeoutMs;
+  useEffect(() => {
+    if (expired) onExpired?.(permission.id);
+  }, [expired, onExpired, permission.id]);
   return (
     <div className="self-stretch rounded-xl border border-primary bg-[var(--accent-soft)] px-3.5 py-3">
       <div className="mb-2 flex items-baseline gap-2">

@@ -16,6 +16,7 @@ interface MessageListProps {
   onUndoMemory: (id: string) => void;
   onRespond: (id: number, allow: boolean) => void;
   onRespondOption: (id: number, optionId: string) => void;
+  onExpirePermission: (id: number) => void;
 }
 
 /**
@@ -29,6 +30,7 @@ export function MessageList({
   onUndoMemory,
   onRespond,
   onRespondOption,
+  onExpirePermission,
 }: MessageListProps) {
   const mainRef = useRef<HTMLElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -82,6 +84,7 @@ export function MessageList({
           permission={p}
           onRespond={onRespond}
           onRespondOption={onRespondOption}
+          onExpired={onExpirePermission}
         />
       ))}
       <div ref={bottomRef} />

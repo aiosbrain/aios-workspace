@@ -21,6 +21,7 @@ export function ChatView() {
     setInput,
     busy,
     permissions,
+    expirePermission,
     currentSession,
     sendMessage,
     respondPermission,
@@ -128,6 +129,7 @@ export function ChatView() {
         onUndoMemory={undoMemory}
         onRespond={respondPermission}
         onRespondOption={respondPermissionOption}
+        onExpirePermission={expirePermission}
       />
       <ContextMeter />
       {composer}

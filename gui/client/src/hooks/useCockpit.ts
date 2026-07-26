@@ -453,6 +453,7 @@ export function useCockpit() {
           {
             kind: "meta",
             text: "Couldn't load this chat's history — new messages will still work. Reopen the chat to retry.",
+            uid: ++msgUidRef.current,
           },
         ]);
         toast.error("Failed to load chat history.");
@@ -522,6 +523,16 @@ export function useCockpit() {
 
   const respondPermissionOption = useCallback((id: number, optionId: string) => {
     wsRef.current?.send(JSON.stringify({ type: "permission_response", id, optionId }));
+    setPermissions((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  // The server auto-denied this approval at its deadline — remove the dead card and
+  // say what happened, so a late Allow can't look like it worked (it would be a no-op).
+  const expirePermission = useCallback((id: number) => {
+    if (!permissionsRef.current.some((p) => p.id === id)) return;
+    toast.warning("The approval request timed out and was denied automatically.", {
+      id: `perm-expired-${id}`,
+    });
     setPermissions((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
@@ -627,6 +638,7 @@ export function useCockpit() {
     sendMessage,
     respondPermission,
     respondPermissionOption,
+    expirePermission,
     undoMemory,
     loadChats,
     retryConnection,

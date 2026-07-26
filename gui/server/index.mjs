@@ -1593,6 +1593,7 @@ process.once("SIGINT", shutdown);
 // .aios/sessions unprotected. Warn loudly; don't hard-fail (CLI + desktop shell may
 // deliberately coexist during development).
 const GUI_LOCK = path.join(repo, ".aios", "gui-server.lock");
+let foreignLockAlive = false; // a live sibling server holds the lock — never clobber it
 try {
   const prev = JSON.parse(readFileSync(GUI_LOCK, "utf8"));
   let prevAlive = false;
@@ -1603,6 +1604,7 @@ try {
     /* stale lock */
   }
   if (prevAlive && prev.pid !== process.pid) {
+    foreignLockAlive = true;
     console.error(
       `warning: another GUI server for this workspace appears to be running (pid ${prev.pid}, port ${prev.port}).`
     );
@@ -1626,10 +1628,14 @@ server.on("error", (err) => {
   throw err;
 });
 server.listen(port, "127.0.0.1", () => {
-  try {
-    fsWriteFileSync(GUI_LOCK, JSON.stringify({ pid: process.pid, port }));
-  } catch {
-    /* advisory only */
+  // First-claim semantics: never clobber a LIVE sibling's lock — otherwise our own
+  // clean exit would delete it and silently disarm the warning for the next server.
+  if (!foreignLockAlive) {
+    try {
+      fsWriteFileSync(GUI_LOCK, JSON.stringify({ pid: process.pid, port }));
+    } catch {
+      /* advisory only */
+    }
   }
   console.log("");
   console.log("  aios-workspace GUI");
