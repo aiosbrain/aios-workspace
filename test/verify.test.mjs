@@ -195,6 +195,36 @@ test("all failed providers still produce a blocking report", async () => {
   }
 });
 
+test("Medium findings are blocking and egress is disclosed on stderr", () => {
+  const repo = makeRepo();
+  const preload = path.join(repo, "mock-fetch.mjs");
+  writeFileSync(
+    preload,
+    [
+      "globalThis.fetch = async () => ({",
+      "  ok: true,",
+      "  json: async () => ({ choices: [{ message: { content: JSON.stringify([",
+      "    { severity: 'Medium', title: 'review me', detail: 'medium risk' },",
+      "  ]) } }] }),",
+      "  text: async () => '',",
+      "});",
+      "",
+    ].join("\n")
+  );
+
+  try {
+    const result = runCli(repo, ["verify", "HEAD", "--lanes", "1", "--json"], {
+      OPENROUTER_API_KEY: "test-only-key",
+      NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+    });
+    assert.equal(result.code, 1);
+    assert.equal(JSON.parse(result.stdout).blocking, true);
+    assert.match(result.stderr, /sends the commit diff to OpenRouter/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("full JSON CLI run is report-only and preserves repository fingerprint", () => {
   const repo = makeRepo();
   const preload = path.join(repo, "mock-fetch.mjs");

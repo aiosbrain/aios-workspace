@@ -186,6 +186,7 @@ export async function cmdVerify(repo, args, deps = {}) {
   }
   if (parsed.help) {
     console.log("usage: aios verify <sha> [--lanes N] [--json] [--out <file>]");
+    console.log("warning: sends the commit diff to OpenRouter and its configured model providers");
     return 0;
   }
 
@@ -201,6 +202,9 @@ export async function cmdVerify(repo, args, deps = {}) {
     return 2;
   }
 
+  console.error(
+    "warning: aios verify sends the commit diff to OpenRouter and its configured model providers"
+  );
   const diff = readCommitDiff(repo, resolvedSha);
   const councilRunner = deps.runCouncil ?? runCouncil;
   const council = await councilRunner(repo, [buildPrompt(resolvedSha, diff)], {
@@ -213,7 +217,7 @@ export async function cmdVerify(repo, args, deps = {}) {
   });
   const findings = mergeLaneResults(council.results);
   const blocking = findings.some(
-    (finding) => rankSeverity(finding.severity) >= rankSeverity("High")
+    (finding) => rankSeverity(finding.severity) >= rankSeverity("Medium")
   );
   const report = {
     schemaVersion: 1,
