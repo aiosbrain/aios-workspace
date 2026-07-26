@@ -29,7 +29,10 @@ never refreshes `dist/` and masks itself).
   parallel.
 - The clean-install test is network-dependent and runs only through
   `npm run test:install-smoke`.
-- The required test gate excludes mutation only during its initial calibration period.
+- The required test gate excludes mutation while the nightly campaign is not yet healthy. The
+  2026-07-25 calibration run timed out during `bugbot-security`; make the lane mandatory only
+  after ten consecutive complete nightlies within the workflow budget, spanning at least seven
+  days. Reassess or file a follow-up if that evidence is still unavailable after fourteen days.
 
 ## Coverage policy
 
@@ -70,9 +73,13 @@ regenerate the tracked baseline from a local run. Never lower a baseline merely 
 
 `npm run test:mutation` mutates changed files in critical safety groups and pairs native
 `node:test` modules with narrow impacted test commands. `npm run test:mutation:nightly` expands
-those groups and reuses incremental results. During the first ten successful runs mutation is
-advisory (`thresholds.break = 0`). After calibration, set the break threshold to 80 and make the
-PR mutation lane mandatory; equivalent mutants require a reviewed justification.
+those groups and reuses incremental results. The exact compiled inbox capability target enforces
+a 90% break threshold when it is the campaign's sole target, with headroom below its demonstrated
+single-file 96.43% score from AIO-513. Mixed-file and whole-group denominators remain advisory at
+`thresholds.break = 0` until measured directly. A failed campaign is reported after the remaining
+groups run, so one score regression cannot starve later groups of reports or incremental-cache
+updates. The PR mutation job remains non-blocking until ten consecutive complete nightlies fit the
+workflow budget over at least seven days. Equivalent mutants require a reviewed justification.
 
 TypeScript groups mutate the compiled `dist/` output, not `src/`: Stryker's command runner
 scores purely on exit code, so mutating source TypeScript would let compile-breaking mutants be
