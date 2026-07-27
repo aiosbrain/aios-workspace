@@ -83,6 +83,25 @@ export function useCockpit() {
   const msgUidRef = useRef(0); // monotonic uid per rendered message (stable React keys)
   const permissionsRef = useRef<PendingPermission[]>([]); // live view for disconnect cleanup
   permissionsRef.current = permissions;
+  // Stall watchdog: a turn that produces NO events (adapter hung — bad key, dead runtime)
+  // must not look like silent progress. Armed on send, cleared by any server event.
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearStall = useCallback(() => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+  const armStall = useCallback(() => {
+    clearStall();
+    stallTimerRef.current = setTimeout(() => {
+      stallTimerRef.current = null;
+      append({
+        kind: "meta",
+        text: "still waiting — the agent runtime has produced no output for 30s. It may have failed to start (check the key/runtime or the server log at <workspace>/.aios/gui-server.log).",
+      });
+    }, 30_000);
+  }, [clearStall]);
 
   // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -218,6 +237,7 @@ export function useCockpit() {
         } catch {
           return;
         }
+        if (msg.type !== "hello" && msg.type !== "echo_user") clearStall(); // the run is alive
         switch (msg.type) {
           case "hello":
             setRepo(msg.repo);
@@ -294,7 +314,9 @@ export function useCockpit() {
             break;
           case "error":
             setBusy(false);
-            // Live → a longer-lived error toast so it isn't missed; replay keeps it inline.
+            // Inline FIRST (same shape replay reconstructs — lib/transcript.ts), so a run
+            // failure is durable in the transcript view, not only a missable toast.
+            append({ kind: "meta", text: `error: ${msg.message}` });
             toast.error(msg.message, { duration: 10_000 });
             break;
           case "memory_updated": {
@@ -499,6 +521,7 @@ export function useCockpit() {
           payload.approvalMode = approvalMode;
         }
         ws.send(JSON.stringify(payload));
+        armStall();
       } catch (e) {
         setBusy(false);
         // The message never left the client. Roll back the optimistic user bubble
