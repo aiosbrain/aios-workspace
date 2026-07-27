@@ -17,7 +17,14 @@
 
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync } from "node:fs";
+import {
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  appendFileSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -169,7 +176,7 @@ if (
   !existsSync(path.join(repo, "engagement.yaml"))
 ) {
   console.error(
-    `error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml)`
+    `error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml/project.yaml/engagement.yaml)`
   );
   process.exit(1);
 }
@@ -1080,6 +1087,13 @@ function readCatalog(repoDir) {
 
 // ── websocket: one connection = one SDK session ─────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
+// One live connection per session id (see the latest-wins guard in the connection
+// handler). 4001 is our app-level close code for "superseded by a newer connection".
+const WS_CLOSE_SUPERSEDED = 4001;
+const liveSessionConns = new Map(); // sessionId -> { ws, supersede }
+// Interactive tool approvals auto-deny after this long so a closed tab can't wedge
+// the run. Advertised to the client in each permission_request (countdown UI).
+const PERM_TIMEOUT_MS = 5 * 60 * 1000;
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -1096,10 +1110,62 @@ wss.on("connection", (ws, req) => {
   // the SDK session id so the transcript file and the resumable session share one id.
   const wsUrl = new URL(req.url, `http://127.0.0.1:${port}`);
   const wanted = wsUrl.searchParams.get("session") || "";
+  // Resumable = has a stored transcript OR is currently live (a draft session that
+  // hasn't earned its file yet — see transcriptLive — must still supersede, not fork).
   const resumeId =
-    UUID_RE.test(wanted) && existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) ? wanted : null;
+    UUID_RE.test(wanted) &&
+    (existsSync(path.join(SESSIONS_DIR, `${wanted}.jsonl`)) || liveSessionConns.has(wanted))
+      ? wanted
+      : null;
   const sessionId = resumeId || randomUUID();
+  // Latest-wins single-writer guard: a session has at most one live connection, so
+  // two adapter runs can never interleave one transcript (a reconnect after sleep
+  // must supersede its half-dead predecessor). Close code 4001 tells the old client
+  // this was a takeover, not a network drop — it must NOT auto-reconnect.
+  //
+  // supersede() must NOT depend on the 'close' event: a graceful close() against a
+  // dead peer stalls on ws's ~30s close handshake timeout, which would leave the old
+  // adapter run writing the shared transcript the whole time. So takeover (a) flags
+  // the old connection to stop writing immediately, (b) aborts its run directly, and
+  // only then (c) starts the close handshake for whoever is still listening.
+  let superseded = false; // once set, this connection may not write transcript or socket
+  const teardownTasks = []; // registered below once ac/pending exist; runs at most once
+  let tornDown = false;
+  const teardown = () => {
+    if (tornDown) return;
+    tornDown = true;
+    for (const t of teardownTasks) {
+      try {
+        t();
+      } catch {
+        /* teardown is best-effort */
+      }
+    }
+  };
+  const conn = {
+    ws,
+    supersede: () => {
+      superseded = true;
+      teardown();
+      try {
+        ws.close(WS_CLOSE_SUPERSEDED, "session opened by a newer connection");
+      } catch {
+        /* already dying */
+      }
+    },
+  };
+  liveSessionConns.get(sessionId)?.supersede();
+  liveSessionConns.set(sessionId, conn);
+  // Registered first so the map entry can't be orphaned by a later setup failure.
+  ws.on("close", () => {
+    if (liveSessionConns.get(sessionId) === conn) liveSessionConns.delete(sessionId);
+    teardown();
+  });
   const transcript = path.join(SESSIONS_DIR, `${sessionId}.jsonl`); // append; resume continues the same file
+  // Lazy transcript: a page load that never sends a message must not leave an orphan
+  // file behind (every open used to mint one). Writes start at the first user turn;
+  // sessions with an existing file (real resumes) keep appending from the hello on.
+  let transcriptLive = existsSync(transcript);
   const existingSession = readSessionIndex(SESSIONS_INDEX).sessions.find((s) => s.id === sessionId);
   let sessionRegistered = !!existingSession;
   let titleSet = !!existingSession?.title;
@@ -1185,11 +1251,13 @@ wss.on("connection", (ws, req) => {
   }
 
   const send = (obj) => {
+    if (superseded) return; // a superseded run may not write the transcript (single-writer)
     try {
       ws.send(JSON.stringify(obj));
     } catch {
       /* closed */
     }
+    if (!transcriptLive) return; // no file until the first user turn (no orphan transcripts)
     try {
       appendFileSync(transcript, JSON.stringify(obj) + "\n");
     } catch {
@@ -1243,6 +1311,7 @@ wss.on("connection", (ws, req) => {
     if (msg.type === "user_message" && typeof msg.text === "string") {
       const userText = msg.text.trim();
       if (!userText) return;
+      transcriptLive = true; // first real turn — the session now earns its file
       send({ type: "echo_user", text: userText });
       if (!titleSet) {
         upsertSession(SESSIONS_INDEX, sessionId, {
@@ -1363,19 +1432,17 @@ wss.on("connection", (ws, req) => {
       tool: toolName,
       input: toolInput,
       ...(cap ? { handle: cap.handle } : {}),
+      timeoutMs: PERM_TIMEOUT_MS,
     });
     const allow = await new Promise((resolve) => {
       pending.set(id, resolve);
       // auto-deny after 5 minutes so a closed tab can't wedge the run
-      setTimeout(
-        () => {
-          if (pending.has(id)) {
-            pending.delete(id);
-            resolve(false);
-          }
-        },
-        5 * 60 * 1000
-      ).unref?.();
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          resolve(false);
+        }
+      }, PERM_TIMEOUT_MS).unref?.();
     });
     // Broker + durable consume. On the happy path this is the audit + one-time tombstone; if the
     // runtime rejects (a replayed/tampered handle), deny for safety. Guarded so a store/broker
@@ -1417,18 +1484,22 @@ wss.on("connection", (ws, req) => {
   // it timed out (the adapter maps a non-string to a "cancelled" outcome).
   const requestPermission = async ({ title, content, options }) => {
     const id = nextPermId++;
-    send({ type: "permission_request", id, tool: title, input: content, options });
+    send({
+      type: "permission_request",
+      id,
+      tool: title,
+      input: content,
+      options,
+      timeoutMs: PERM_TIMEOUT_MS,
+    });
     return new Promise((resolve) => {
       pending.set(id, resolve);
-      setTimeout(
-        () => {
-          if (pending.has(id)) {
-            pending.delete(id);
-            resolve(null);
-          }
-        },
-        5 * 60 * 1000
-      ).unref?.();
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          resolve(null);
+        }
+      }, PERM_TIMEOUT_MS).unref?.();
     });
   };
 
@@ -1477,16 +1548,23 @@ wss.on("connection", (ws, req) => {
     }
   })();
 
-  ws.on("close", () => {
-    ac.abort();
-    if (wake) {
-      wake();
-      wake = null;
-    } // unpark the input iterator so it returns
-    // resolve any pending approvals as denied so the adapter loop can finish
-    for (const resolve of pending.values()) resolve(false);
-    pending.clear();
-  });
+  // Teardown (runs once, from supersede() OR the 'close' listener registered at the
+  // top of this handler — whichever fires first): stop the adapter run and unwedge
+  // everything waiting on this connection.
+  teardownTasks.push(
+    () => ac.abort(),
+    () => {
+      if (wake) {
+        wake();
+        wake = null;
+      } // unpark the input iterator so it returns
+    },
+    () => {
+      // resolve any pending approvals as denied so the adapter loop can finish
+      for (const resolve of pending.values()) resolve(false);
+      pending.clear();
+    }
+  );
 });
 
 // Graceful shutdown on a signal: terminate websocket clients and close the server so a
@@ -1496,6 +1574,13 @@ let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  try {
+    // release the advisory workspace lock only if it's ours
+    const cur = JSON.parse(readFileSync(GUI_LOCK, "utf8"));
+    if (cur?.pid === process.pid) unlinkSync(GUI_LOCK);
+  } catch {
+    /* advisory only */
+  }
   for (const client of wss?.clients ?? []) client.terminate?.();
   wss?.close?.();
   server.close();
@@ -1504,7 +1589,55 @@ const shutdown = () => {
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
 
+// Advisory per-workspace lock: the single-writer session guard is per-process, so a
+// second server on the SAME workspace (different port) would manage the same
+// .aios/sessions unprotected. Warn loudly; don't hard-fail (CLI + desktop shell may
+// deliberately coexist during development).
+const GUI_LOCK = path.join(repo, ".aios", "gui-server.lock");
+let foreignLockAlive = false; // a live sibling server holds the lock — never clobber it
+try {
+  const prev = JSON.parse(readFileSync(GUI_LOCK, "utf8"));
+  let prevAlive = false;
+  try {
+    process.kill(prev.pid, 0);
+    prevAlive = true;
+  } catch {
+    /* stale lock */
+  }
+  if (prevAlive && prev.pid !== process.pid) {
+    foreignLockAlive = true;
+    console.error(
+      `warning: another GUI server for this workspace appears to be running (pid ${prev.pid}, port ${prev.port}).`
+    );
+    console.error(
+      `  Two servers share the same .aios/sessions — prefer reusing the existing one at 127.0.0.1:${prev.port}.`
+    );
+  }
+} catch {
+  /* no lock */
+}
+server.on("error", (err) => {
+  if (err?.code === "EADDRINUSE") {
+    console.error(`error: port ${port} is already in use (another GUI server?).`);
+    console.error(
+      `  if it's a GUI for this same workspace, reuse its link instead of starting a second server;`
+    );
+    console.error(`  otherwise pick another port:  npm run gui -- --port ${Number(port) + 1}`);
+    console.error(`  find the holder:              lsof -nP -iTCP:${port} -sTCP:LISTEN`);
+    process.exit(1);
+  }
+  throw err;
+});
 server.listen(port, "127.0.0.1", () => {
+  // First-claim semantics: never clobber a LIVE sibling's lock — otherwise our own
+  // clean exit would delete it and silently disarm the warning for the next server.
+  if (!foreignLockAlive) {
+    try {
+      fsWriteFileSync(GUI_LOCK, JSON.stringify({ pid: process.pid, port }));
+    } catch {
+      /* advisory only */
+    }
+  }
   console.log("");
   console.log("  aios-workspace GUI");
   console.log(`  repo:  ${repo}`);

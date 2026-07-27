@@ -16,6 +16,7 @@ interface MessageListProps {
   onUndoMemory: (id: string) => void;
   onRespond: (id: number, allow: boolean) => void;
   onRespondOption: (id: number, optionId: string) => void;
+  onExpirePermission: (id: number) => void;
 }
 
 /**
@@ -29,6 +30,7 @@ export function MessageList({
   onUndoMemory,
   onRespond,
   onRespondOption,
+  onExpirePermission,
 }: MessageListProps) {
   const mainRef = useRef<HTMLElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -62,17 +64,18 @@ export function MessageList({
     >
       {header}
       {messages.map((m, i) => {
+        const key = m.uid ?? `i${i}`; // uid is stable across stream mutations; index is the legacy fallback
         switch (m.kind) {
           case "user":
-            return <UserMessage key={i} message={m} />;
+            return <UserMessage key={key} message={m} />;
           case "assistant":
-            return <AssistantMessage key={i} message={m} />;
+            return <AssistantMessage key={key} message={m} />;
           case "tool":
-            return <ToolCard key={i} tool={m} />;
+            return <ToolCard key={key} tool={m} />;
           case "memory":
-            return <MemoryCard key={i} message={m} onUndo={onUndoMemory} />;
+            return <MemoryCard key={key} message={m} onUndo={onUndoMemory} />;
           case "meta":
-            return <MetaMessage key={i} message={m} />;
+            return <MetaMessage key={key} message={m} />;
         }
       })}
       {permissions.map((p) => (
@@ -81,6 +84,7 @@ export function MessageList({
           permission={p}
           onRespond={onRespond}
           onRespondOption={onRespondOption}
+          onExpired={onExpirePermission}
         />
       ))}
       <div ref={bottomRef} />

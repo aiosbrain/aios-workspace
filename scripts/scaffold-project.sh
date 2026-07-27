@@ -369,7 +369,7 @@ brain to see belongs in \`tasks-private.md\` or \`../$D_PERSONAL/tasks.md\` inst
 
 | ID | Task | Assignee | Status | Sprint | Due | Linear |
 |----|------|----------|--------|--------|-----|--------|
-| TT1 | Example team task | $OWNER | Todo | — | — | — |
+| TT1 | Example team task | $OWNER | ready | — | — | — |
 
 <!--
 Optional columns (brain-api v1.2) — add any of these to project a structured board into your
@@ -393,7 +393,7 @@ for task-shaped notes you don't want to project into a PM tool.
 
 | ID | Task | Status | Sprint | Due | Notes |
 |----|------|--------|--------|-----|-------|
-| TP1 | Example private task | Todo | — | — | — |
+| TP1 | Example private task | ready | — | — | — |
 EOF
 
 # Hours: billable framing for consultant, lightweight for employee — both stay local (no access tier → never syncs).
@@ -437,7 +437,7 @@ outside the sync boundary entirely (belt-and-suspenders alongside
 
 | ID | Task | Status | Due |
 |----|------|--------|-----|
-| P1 | Example personal task | Todo | — |
+| P1 | Example personal task | ready | — |
 EOF
 
 # ── 6-business: business-owner only — a sanctioned sibling root to the 0-5 spine ──

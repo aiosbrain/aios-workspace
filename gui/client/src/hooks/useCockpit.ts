@@ -22,7 +22,15 @@ export type ViewKey = "chat" | "tasks" | "review" | "maturity" | "cost" | "loop"
  * established session dropped and we're backing off; "offline" = retries exhausted
  * (a manual Retry is offered). No infinite silent "Connecting…".
  */
-export type ConnectionStatus = "draft" | "connecting" | "connected" | "reconnecting" | "offline";
+export type ConnectionStatus =
+  | "draft"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  // The session was taken over by a newer connection (another tab). Deliberately NOT
+  // auto-reconnecting — that would steal it straight back. Retry = take it back.
+  | "superseded";
 
 const RECONNECT_MAX_ATTEMPTS = 6;
 const RECONNECT_BASE_MS = 500;
@@ -60,6 +68,7 @@ export function useCockpit() {
   const [sessionUsage, setSessionUsage] = useState<Usage | null>(null);
   const [chats, setChats] = useState<SessionListResponse["sessions"]>([]);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
+  const [chatsLoadFailed, setChatsLoadFailed] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const resultUsageRef = useRef<Usage | null>(null); // pending usage for the result line
@@ -67,6 +76,34 @@ export function useCockpit() {
   const connectSeqRef = useRef(0); // ignore callbacks from superseded sockets
   const capsRef = useRef<Capabilities>(DEFAULT_CAPS); // fresh caps inside the ws handler
   capsRef.current = capabilities;
+  const modelRef = useRef(model); // current model inside async callbacks (changeModel rollback)
+  modelRef.current = model;
+  const openChatSeqRef = useRef(0); // rapid chat switching: stale replay fetches must not win
+  const changeModelSeqRef = useRef(0); // rapid model switching: stale failure replies must not roll back
+  const msgUidRef = useRef(0); // monotonic uid per rendered message (stable React keys)
+  const permissionsRef = useRef<PendingPermission[]>([]); // live view for disconnect cleanup
+  permissionsRef.current = permissions;
+  // Stall watchdog: a turn that produces NO events (adapter hung — bad key, dead runtime)
+  // must not look like silent progress. Armed on send, cleared by any server event.
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearStall = useCallback(() => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+  const armStall = useCallback(() => {
+    clearStall();
+    stallTimerRef.current = setTimeout(() => {
+      stallTimerRef.current = null;
+      append({
+        kind: "meta",
+        // Honest about both worlds: some runtimes are legitimately slow to first
+        // output (a long think, a cold start), so this must not assert failure.
+        text: "still waiting — no output from the agent runtime for 30s. It may just be slow to respond, or it may have failed to start (check the key/runtime or the server log at <workspace>/.aios/gui-server.log).",
+      });
+    }, 30_000);
+  }, [clearStall]);
 
   // Reconnect machinery (Phase 4): back off on an unexpected drop of an established session.
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -91,7 +128,10 @@ export function useCockpit() {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
 
-  const append = useCallback((m: UiMessage) => setMessages((prev) => [...prev, m]), []);
+  const append = useCallback(
+    (m: UiMessage) => setMessages((prev) => [...prev, { ...m, uid: ++msgUidRef.current }]),
+    []
+  );
 
   const appendDelta = useCallback((text: string) => {
     setMessages((prev) => {
@@ -99,7 +139,7 @@ export function useCockpit() {
       if (last?.kind === "assistant" && last.streaming) {
         return [...prev.slice(0, -1), { ...last, text: last.text + text }];
       }
-      return [...prev, { kind: "assistant", text, streaming: true }];
+      return [...prev, { kind: "assistant", text, streaming: true, uid: ++msgUidRef.current }];
     });
   }, []);
 
@@ -115,8 +155,12 @@ export function useCockpit() {
     try {
       const d = await api.get<SessionListResponse>("/api/sessions");
       setChats(d.sessions || []);
+      setChatsLoadFailed(false);
       return d;
     } catch {
+      // Keep the last-good list; only flag the failure so an EMPTY sidebar can say
+      // "couldn't load" instead of impersonating a workspace with no history.
+      setChatsLoadFailed(true);
       return { sessions: [], lastSelected: null };
     }
   }, []);
@@ -154,9 +198,37 @@ export function useCockpit() {
           resolve(ws);
         };
         ws.onerror = () => fail("WebSocket connection failed");
-        ws.onclose = () => {
+        ws.onclose = (ev) => {
           if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
           setConnected(false);
+          // A dead socket can't deliver events — a still-armed watchdog would append a
+          // spurious "still waiting" line onto a connection that already announced its fate.
+          clearStall();
+          // The server denies every pending approval when a connection tears down —
+          // leaving the cards up would invite decisions that can no longer apply.
+          if (permissionsRef.current.length) {
+            setPermissions([]);
+            toast.warning(
+              "The pending approval was cancelled — the connection dropped, so the run was denied it.",
+              { id: "perm-cancelled" }
+            );
+          }
+          // 4001 = the server closed us because this session was opened by a newer
+          // connection (another tab, or a reconnect that superseded us). Reconnecting
+          // would steal the session straight back, so park offline instead — the
+          // user can Retry deliberately to take the session over again.
+          if (ev.code === 4001) {
+            applyConn("superseded");
+            setBusy(false); // a mid-turn takeover must not strand the composer as busy
+            toast.warning(
+              "This chat was opened in another tab or window — Retry to take it back.",
+              {
+                id: "session-superseded", // dedupe: repeated takeovers replace, not stack
+              }
+            );
+            fail("session superseded by a newer connection");
+            return;
+          }
           // Always settle on a terminal state — never leave a stuck "Connecting…". If there
           // is a session to resume (an established drop, a failed reconnect attempt, OR an
           // initial open failure for an existing chat) back off and retry; otherwise it was
@@ -173,6 +245,7 @@ export function useCockpit() {
         } catch {
           return;
         }
+        if (msg.type !== "hello" && msg.type !== "echo_user") clearStall(); // the run is alive
         switch (msg.type) {
           case "hello":
             setRepo(msg.repo);
@@ -206,7 +279,14 @@ export function useCockpit() {
           case "permission_request":
             setPermissions((prev) => [
               ...prev,
-              { id: msg.id, tool: msg.tool, input: msg.input, options: msg.options },
+              {
+                id: msg.id,
+                tool: msg.tool,
+                input: msg.input,
+                options: msg.options,
+                timeoutMs: msg.timeoutMs,
+                receivedAt: Date.now(),
+              },
             ]);
             break;
           case "usage":
@@ -242,7 +322,9 @@ export function useCockpit() {
             break;
           case "error":
             setBusy(false);
-            // Live → a longer-lived error toast so it isn't missed; replay keeps it inline.
+            // Inline FIRST (same shape replay reconstructs — lib/transcript.ts), so a run
+            // failure is durable in the transcript view, not only a missable toast.
+            append({ kind: "meta", text: `error: ${msg.message}` });
             toast.error(msg.message, { duration: 10_000 });
             break;
           case "memory_updated": {
@@ -270,7 +352,7 @@ export function useCockpit() {
       };
       return opened;
     },
-    [append, appendDelta, finishAssistant, loadChats, applyConn, clearReconnect]
+    [append, appendDelta, finishAssistant, loadChats, applyConn, clearReconnect, clearStall]
   );
 
   // Exponential backoff (+jitter) reconnect to the active session. Stops at OFFLINE after
@@ -280,6 +362,21 @@ export function useCockpit() {
     const attempt = reconnectAttemptsRef.current;
     if (attempt >= RECONNECT_MAX_ATTEMPTS) {
       applyConn("offline");
+      // Fail honest: "server down" and "server restarted → this tab's token is stale"
+      // look identical over the WS (both close before open). Probe an authed endpoint
+      // once — a 401/403 means the server is UP and it's the LINK that expired.
+      api
+        .get("/api/me")
+        .then(() => {})
+        .catch((e: unknown) => {
+          const status = (e as { status?: number })?.status;
+          if (status === 401 || status === 403)
+            toast.error(
+              "The server restarted, so this tab's link is stale — open the fresh link printed by `npm run gui` (or the desktop app).",
+              // Terminal + actionable: stays until dismissed; id dedupes across Retry ladders.
+              { duration: Infinity, id: "stale-gui-link" }
+            );
+        });
       return;
     }
     reconnectAttemptsRef.current = attempt + 1;
@@ -315,14 +412,17 @@ export function useCockpit() {
   const resetChatState = useCallback(() => {
     setBusy(false);
     setPermissions([]);
+    clearStall(); // a chat switch abandons the old turn — its watchdog must not fire into the new one
     resultUsageRef.current = null;
     setUsage(null);
     setSessionUsage(null);
     prevCostRef.current = 0;
-  }, []);
+  }, [clearStall]);
 
   const newChat = useCallback(() => {
     connectSeqRef.current++;
+    openChatSeqRef.current++; // a slow in-flight openChat replay must not hijack the fresh draft
+    currentSessionRef.current = null;
     clearReconnect();
     reconnectAttemptsRef.current = 0;
     try {
@@ -346,13 +446,17 @@ export function useCockpit() {
       clearReconnect();
       reconnectAttemptsRef.current = 0;
       currentSessionRef.current = id; // resume target before any close handler can fire
+      const seq = ++openChatSeqRef.current; // rapid switching: only the newest open wins
       setApprovalMode("default"); // approval mode is session-scoped; never inherit it across chats
       resetChatState();
       setView("chat");
       try {
         const d = await api.get<SessionTranscriptResponse>(`/api/sessions/${id}`);
+        if (openChatSeqRef.current !== seq) return; // a newer chat was opened while we fetched
         const events = d.events || [];
-        setMessages(buildMessagesFromEvents(events));
+        setMessages(
+          buildMessagesFromEvents(events).map((m) => ({ ...m, uid: ++msgUidRef.current }))
+        );
         let lastCost = 0;
         let contextUsage: Usage | null = null;
         let aggregateUsage: Usage | null = null;
@@ -375,8 +479,19 @@ export function useCockpit() {
         setUsage(contextUsage);
         setSessionUsage(aggregateUsage);
       } catch {
-        setMessages([]);
+        if (openChatSeqRef.current !== seq) return; // superseded — don't touch the newer chat
+        // A failed replay must not masquerade as an empty chat — say so, and keep the
+        // session resumable (new turns still work; history is just not shown).
+        setMessages([
+          {
+            kind: "meta",
+            text: "Couldn't load this chat's history — new messages will still work. Reopen the chat to retry.",
+            uid: ++msgUidRef.current,
+          },
+        ]);
+        toast.error("Failed to load chat history.");
       }
+      if (openChatSeqRef.current !== seq) return;
       setCurrentSession(id);
       connect(id).catch((e: Error) => append({ kind: "meta", text: `error: ${e.message}` }));
     },
@@ -384,8 +499,16 @@ export function useCockpit() {
   );
 
   const changeModel = useCallback((m: string) => {
+    const prev = modelRef.current;
+    const seq = ++changeModelSeqRef.current;
     setModel(m); // applies to the NEXT send (sent on each user_message → setModel)
-    api.post("/api/config/model", { model: m }).catch(() => {});
+    api.post("/api/config/model", { model: m }).catch(() => {
+      // The picker must not lie: roll back if the server rejected the change — but only
+      // if a newer switch hasn't superseded this one (out-of-order failure replies).
+      if (changeModelSeqRef.current !== seq) return;
+      setModel(prev);
+      toast.error("Couldn't switch model — reverted.");
+    });
   }, []);
 
   const sendMessage = useCallback(
@@ -409,6 +532,7 @@ export function useCockpit() {
           payload.approvalMode = approvalMode;
         }
         ws.send(JSON.stringify(payload));
+        armStall();
       } catch (e) {
         setBusy(false);
         // The message never left the client. Roll back the optimistic user bubble
@@ -433,6 +557,16 @@ export function useCockpit() {
 
   const respondPermissionOption = useCallback((id: number, optionId: string) => {
     wsRef.current?.send(JSON.stringify({ type: "permission_response", id, optionId }));
+    setPermissions((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  // The server auto-denied this approval at its deadline — remove the dead card and
+  // say what happened, so a late Allow can't look like it worked (it would be a no-op).
+  const expirePermission = useCallback((id: number) => {
+    if (!permissionsRef.current.some((p) => p.id === id)) return;
+    toast.warning("The approval request timed out and was denied automatically.", {
+      id: `perm-expired-${id}`,
+    });
     setPermissions((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
@@ -529,6 +663,7 @@ export function useCockpit() {
     usage,
     sessionUsage,
     chats,
+    chatsLoadFailed,
     currentSession,
     // actions
     changeModel,
@@ -537,6 +672,7 @@ export function useCockpit() {
     sendMessage,
     respondPermission,
     respondPermissionOption,
+    expirePermission,
     undoMemory,
     loadChats,
     retryConnection,
