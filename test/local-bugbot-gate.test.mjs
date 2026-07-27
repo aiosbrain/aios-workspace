@@ -2268,3 +2268,57 @@ test("AIO-555: a probe aggregates to a probe and keeps a fingerprint for dedup",
   assert.match(merged.fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(merged.fingerprints.length, 2);
 });
+
+/**
+ * AIO-564 — a cached blocked verdict must keep its evidence.
+ *
+ * Regression from AIO-555: the aggregate read only `output`, but cachedResult puts the explanation
+ * in `reason`. Every Stop after the first on an unchanged diff therefore rendered a worktree path
+ * and nothing else, which reads as a broken gate rather than a real finding.
+ */
+
+test("AIO-564: a cached block renders its reason, not an empty entry", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, fingerprint: "f", reason: "R-CACHED", worktree: "/wt/a" },
+  ]);
+  assert.equal(merged.status, "blocked");
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /R-CACHED/);
+  // The exact live failure: evidence that is nothing but a bracketed worktree path.
+  assert.notEqual(merged.output.replace(/\[[^\]]*\]/g, "").trim(), "");
+});
+
+test("AIO-564: a mixed cached + fresh sweep renders both bodies, each attributed", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, reason: "R-CACHED", worktree: "/wt/a" },
+    { status: "blocked", cached: false, output: "High: fresh finding", worktree: "/wt/b" },
+  ]);
+  for (const fragment of ["/wt/a", "R-CACHED", "/wt/b", "High: fresh finding"]) {
+    assert.match(merged.output, new RegExp(fragment.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")));
+  }
+  assert.equal(merged.cached, false, "a sweep containing a fresh block is not wholly cached");
+});
+
+test("AIO-564: a block with neither output nor reason still names the worktree and a next step", () => {
+  const merged = aggregateGateResults([{ status: "blocked", worktree: "/wt/a" }]);
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /manual review/);
+});
+
+test("AIO-564: the hook message carries the finding text, not just worktree paths", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, reason: "R-CACHED", worktree: "/wt/a" },
+  ]);
+  const formatted = formatHookResult("claude", merged);
+  assert.equal(formatted.decision, "block");
+  assert.match(formatted.reason, /R-CACHED/);
+});
+
+test("AIO-564: an errored worktree keeps its reason in the aggregated output too", () => {
+  const merged = aggregateGateResults([
+    { status: "error", reason: "review died", worktree: "/wt/a" },
+  ]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /review died/);
+});
