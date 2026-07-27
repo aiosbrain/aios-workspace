@@ -1102,7 +1102,9 @@ async function cmdPull(repo, cfg, args = []) {
   console.log(
     c.green(
       `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
-        (mergedSyncOrigin ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain` : "") +
+        (mergedSyncOrigin
+          ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain`
+          : "") +
         (registered ? `, registered ${registered} brain project(s)` : "") +
         "."
     )

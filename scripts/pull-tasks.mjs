@@ -35,9 +35,7 @@ export function resolveTasksPath(repo) {
 
 /** Merge the dashboard writeback feed's rows for `project` into `tasksPath`; returns the count. */
 export function mergeWritebackFeed(tasksPath, res, project) {
-  const rows = (res?.tasks || [])
-    .filter((g) => g.project === project)
-    .flatMap((g) => g.rows || []);
+  const rows = (res?.tasks || []).filter((g) => g.project === project).flatMap((g) => g.rows || []);
   if (!existsSync(tasksPath) || !rows.length) return 0;
   writeFileSync(tasksPath, mergeTaskWriteback(readFileSync(tasksPath, "utf8"), rows));
   return rows.length;

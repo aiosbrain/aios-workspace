@@ -39,8 +39,10 @@ test("requests the versioned mode + project + cursor", () => {
   assert.equal(qs.get("mode"), "sync-origin");
   assert.equal(qs.get("project"), "mine");
   assert.equal(qs.get("since"), "2026-07-01T00:00:00Z");
-  assert.equal(new URLSearchParams(syncOriginRoute("mine", null).split("?")[1]).get("since"),
-    "1970-01-01T00:00:00Z");
+  assert.equal(
+    new URLSearchParams(syncOriginRoute("mine", null).split("?")[1]).get("since"),
+    "1970-01-01T00:00:00Z"
+  );
 });
 
 test("merges a real brain status change into the markdown", async () => {
@@ -49,13 +51,20 @@ test("merges a real brain status change into the markdown", async () => {
     project: "mine",
     tasksPath,
     since: null,
-    fetchFeed: async () => feed([{ row_key: "T-01", status: "done", assignee: "alex", raw_status: null }]),
+    fetchFeed: async () =>
+      feed([{ row_key: "T-01", status: "done", assignee: "alex", raw_status: null }]),
   });
   assert.equal(res.supported, true);
   assert.ok(res.cursor > "2026-", "a drained feed advances the cursor to now");
-  assert.deepEqual(res.rows.map((r) => r.row_key), ["T-01"]);
+  assert.deepEqual(
+    res.rows.map((r) => r.row_key),
+    ["T-01"]
+  );
   const after = readFileSync(tasksPath, "utf8");
-  assert.match(after, /\| T-01 \| Ship the thing \| alex \| done \| sprint-1 \| — \| linear:AIO-1 \| http:\/\/l\/1 \|/);
+  assert.match(
+    after,
+    /\| T-01 \| Ship the thing \| alex \| done \| sprint-1 \| — \| linear:AIO-1 \| http:\/\/l\/1 \|/
+  );
 });
 
 test("a pre-1.13 brain (writeback feed) merges NOTHING and does not advance the cursor", async () => {
@@ -102,12 +111,18 @@ test("drains every page before advancing the cursor", async () => {
     fetchFeed: async (route) => {
       seen.push(new URLSearchParams(route.split("?")[1]).get("since"));
       return seen.length === 1
-        ? feed([{ row_key: "T-02", status: "done", assignee: "", raw_status: null }], "2026-07-10T00:00:00.000Z")
+        ? feed(
+            [{ row_key: "T-02", status: "done", assignee: "", raw_status: null }],
+            "2026-07-10T00:00:00.000Z"
+          )
         : feed([{ row_key: "T-01", status: "blocked", assignee: "", raw_status: null }]);
     },
   });
   assert.deepEqual(seen, ["1970-01-01T00:00:00Z", "2026-07-10T00:00:00.000Z"]);
-  assert.deepEqual(res.rows.map((r) => r.row_key), ["T-02", "T-01"]);
+  assert.deepEqual(
+    res.rows.map((r) => r.row_key),
+    ["T-02", "T-01"]
+  );
   const after = readFileSync(tasksPath, "utf8");
   assert.match(after, /\| T-01 \| Ship the thing \| alex \| blocked \|/);
   assert.match(after, /\| T-02 \| Review the thing \| sam \| done \|/);

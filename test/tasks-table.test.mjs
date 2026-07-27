@@ -240,9 +240,7 @@ const planned = (rows) => planSyncOriginWriteback(RETURN_TABLE, rows);
 
 // 1. A REAL brain-side change overwrites an unknown local status (`todo`). The brain cleared
 //    raw_status when Linear set the status authoritatively, which is what makes it real.
-const real = planned([
-  { row_key: "T-01", status: "done", assignee: "alex", raw_status: null },
-]);
+const real = planned([{ row_key: "T-01", status: "done", assignee: "alex", raw_status: null }]);
 check("real brain status change is applied to an unknown local status", real.rows.length === 1);
 check("…with the brain's status", real.rows[0]?.status === "done");
 const realMerged = mergeTaskWriteback(RETURN_TABLE, real.rows);
@@ -252,7 +250,10 @@ check(
     realMerged
   )
 );
-check("…the untouched row is left alone", /\| T-02 \| Review the thing \| alex \| In Progress \|/.test(realMerged));
+check(
+  "…the untouched row is left alone",
+  /\| T-02 \| Review the thing \| alex \| In Progress \|/.test(realMerged)
+);
 
 // 2. ECHO GUARD: a non-null raw_status proves NO authoritative writer has touched this row since
 //    our push (the brain clears it on every authoritative status write) — so the brain's `backlog`
@@ -291,7 +292,10 @@ check(
 const movedAndReassigned = planned([
   { row_key: "T-02", status: "done", assignee: "sam", raw_status: null },
 ]);
-check("a real status change carries the brain assignee too", movedAndReassigned.rows[0]?.assignee === "sam");
+check(
+  "a real status change carries the brain assignee too",
+  movedAndReassigned.rows[0]?.assignee === "sam"
+);
 check("…with the new status", movedAndReassigned.rows[0]?.status === "done");
 const blanked = planned([{ row_key: "T-02", status: "done", assignee: "", raw_status: null }]);
 check("an empty brain assignee never blanks the local one", blanked.rows[0]?.assignee === "alex");
@@ -299,7 +303,10 @@ check("an empty brain assignee never blanks the local one", blanked.rows[0]?.ass
 // 5. The return leg never CREATES a row: an unknown row_key is skipped, not appended (it would
 //    resurrect a row the owner deliberately deleted).
 const unknown = planned([{ row_key: "T-99", status: "done", assignee: "x", raw_status: null }]);
-check("unknown row_key is not merged", unknown.rows.length === 0 && unknown.skipped.includes("T-99"));
+check(
+  "unknown row_key is not merged",
+  unknown.rows.length === 0 && unknown.skipped.includes("T-99")
+);
 check(
   "…and nothing is appended to the table",
   !/T-99/.test(mergeTaskWriteback(RETURN_TABLE, unknown.rows))
@@ -311,7 +318,10 @@ check(
 check(
   "a pre-1.13 (writeback) response yields no sync-origin rows",
   syncOriginRowsFor(
-    { mode: "writeback", tasks: [{ project: "mine", rows: [{ row_key: "T-01", status: "done" }] }] },
+    {
+      mode: "writeback",
+      tasks: [{ project: "mine", rows: [{ row_key: "T-01", status: "done" }] }],
+    },
     "mine"
   ).length === 0
 );
@@ -326,7 +336,10 @@ const detected = syncOriginRowsFor(
   },
   "mine"
 );
-check("a 1.13 response yields only this project's rows", detected.length === 1 && detected[0].row_key === "T-01");
+check(
+  "a 1.13 response yields only this project's rows",
+  detected.length === 1 && detected[0].row_key === "T-01"
+);
 
 console.log(failed ? `\n${RED}${failed} failed${NC}` : `\n${GREEN}all passed${NC}`);
 process.exit(failed ? 1 : 0);
