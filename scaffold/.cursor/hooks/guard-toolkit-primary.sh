@@ -71,8 +71,25 @@ probe() {
   if [ "$_gd" = "$_cd" ]; then echo "primary $_br"; else echo "worktree $_br"; fi
 }
 
+# canon <path> -> physical path, resolving symlinks in the deepest existing
+# ancestor (the leaf may not exist yet, e.g. a redirect creating a new file).
+# TOOLKIT is already physical (pwd -P in resolve_toolkit_root), so comparing
+# canonical-to-canonical is what makes the prefix test meaningful: a symlink
+# pointing into the primary must not read as "outside the toolkit".
+canon() {
+  _cp=$1
+  if [ -d "$_cp" ]; then
+    (CDPATH= cd -- "$_cp" 2>/dev/null && pwd -P) || printf '%s' "$_cp"
+    return
+  fi
+  _cdir=$(dirname -- "$_cp")
+  _cbase=$(basename -- "$_cp")
+  _cres=$(CDPATH= cd -- "$_cdir" 2>/dev/null && pwd -P) || { printf '%s' "$_cp"; return; }
+  printf '%s/%s' "$_cres" "$_cbase"
+}
+
 path_under_toolkit() {
-  _p=$1
+  _p=$(canon "$1")
   case "$_p" in
     "$TOOLKIT"/*) return 0 ;;
     "$TOOLKIT") return 0 ;;
@@ -126,6 +143,7 @@ if [ "$MODE" = "pre_command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
+  TDIR=$(canon "$TDIR")
 
   # ── shell file mutations aimed at the toolkit primary (>, >>, cp, mv, rm, sed -i,
   # tee, curl -o, …). pre_edit blocks Write/Edit into the primary; this closes the
