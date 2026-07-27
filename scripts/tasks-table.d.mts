@@ -34,3 +34,25 @@ export interface TaskRow {
 export function parseTaskRows(body: string): TaskRow[];
 
 export function mergeTaskWriteback(content: string, rows: TaskRow[]): string;
+
+/** Canonical brain task statuses (mirrors the brain's `normalizeTaskStatus`). */
+export const CANONICAL_TASK_STATUSES: string[];
+/** Canonical form of a markdown status cell, or null when it isn't canonical (e.g. `todo`). */
+export function canonicalTaskStatus(raw: string | null | undefined): string | null;
+
+/** One row of the brain-api 1.13 sync-origin feed (writeback row + the echo-guard `raw_status`). */
+export interface SyncOriginRow extends TaskRow {
+  raw_status?: string | null;
+}
+
+/**
+ * Rows carrying a REAL status/assignee change, rebuilt from the local cells, plus the row_keys
+ * skipped (unknown locally, or a normalization echo). Feed `rows` to `mergeTaskWriteback`.
+ */
+export function planSyncOriginWriteback(
+  content: string,
+  rows: SyncOriginRow[]
+): { rows: TaskRow[]; skipped: string[] };
+
+/** Sync-origin rows for `project`, or [] unless the brain echoed `mode: "sync-origin"`. */
+export function syncOriginRowsFor(res: unknown, project: string): SyncOriginRow[];

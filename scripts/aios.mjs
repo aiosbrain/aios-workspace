@@ -39,6 +39,7 @@ import {
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
 import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
 import {
   parseFrontmatter,
   normalizeTier,
@@ -441,11 +442,14 @@ async function api(cfg, method, route, body = null) {
 // GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
 // `fallback`; surface any other failure (auth/server) as a visible warning rather than
 // silently swallowing it. Never throws — a missing writeback endpoint must not break pull.
-async function apiOptional(cfg, route, fallback) {
+// `quietCodes` widens that silence (brain-api 1.13's sync-origin feed also answers 400 on a brain
+// that predates the `mode` parameter).
+async function apiOptional(cfg, route, fallback, quietCodes = [404]) {
   try {
     return await api(cfg, "GET", route);
   } catch (e) {
-    if (/^404\b/.test(String(e?.message))) return fallback;
+    if (quietCodes.some((code) => new RegExp(`^${code}\\b`).test(String(e?.message))))
+      return fallback;
     console.warn(c.yellow(`  ${route} unavailable: ${e?.message ?? e}`));
     return fallback;
   }
@@ -1025,31 +1029,26 @@ async function cmdPull(repo, cfg, args = []) {
     cursor = res.next_cursor || null;
   } while (cursor);
 
-  // Task writeback: UI-created/modified rows → merge into the workspace's team-synced
-  // tasks file. AIO-364: prefer the new 3-log/tasks-team.md home (what a freshly
-  // scaffolded workspace has); fall back through the legacy single-file spine for
-  // workspaces that haven't migrated. Dashboard-authored rows are always team-tier by
-  // construction (the /tasks endpoint is tier-scoped — see docs/brain-api.md), so they
-  // never belong in tasks-private.md or 5-personal/tasks.md.
+  // Task writeback: UI rows → the team-synced tasks file (path + merge: scripts/pull-tasks.mjs).
   const tasksRes = await api(
     cfg,
     "GET",
     `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
   );
-  let merged = 0;
-  const tasksPath = existsSync(path.join(repo, "3-log", "tasks-team.md"))
-    ? path.join(repo, "3-log", "tasks-team.md")
-    : existsSync(path.join(repo, "3-log", "tasks.md"))
-      ? path.join(repo, "3-log", "tasks.md")
-      : path.join(repo, "03-status", "tasks.md");
-  const incomingTaskRows = (tasksRes.tasks || [])
-    .filter((g) => g.project === cfg.project)
-    .flatMap((g) => g.rows || []);
-  if (existsSync(tasksPath) && incomingTaskRows.length) {
-    let content = mergeTaskWriteback(readFileSync(tasksPath, "utf8"), incomingTaskRows);
-    merged += incomingTaskRows.length;
-    writeFileSync(tasksPath, content);
-  }
+  const tasksPath = resolveTasksPath(repo);
+  const merged = mergeWritebackFeed(tasksPath, tasksRes, cfg.project);
+
+  // Sync-origin return leg (brain-api 1.13, AIO-537) — brain-side status/assignee moves on rows
+  // THIS workspace pushed. Feature-detected + cursor-safe inside scripts/pull-tasks.mjs.
+  const leg = await pullSyncOriginTasks({
+    project: cfg.project,
+    tasksPath,
+    since: state.last_sync_tasks_pull,
+    fetchFeed: (route) => apiOptional(cfg, route, null, [400, 404]),
+    log: (line) => console.log(`  ${c.green("✓")} ${line}`),
+  });
+  const mergedSyncOrigin = leg.rows.length;
+  if (leg.supported) state.last_sync_tasks_pull = new Date().toISOString();
 
   // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
   // (mirrors the task writeback; keyed on the `#` column = row_key).
@@ -1106,6 +1105,7 @@ async function cmdPull(repo, cfg, args = []) {
   console.log(
     c.green(
       `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
+        (mergedSyncOrigin ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain` : "") +
         (registered ? `, registered ${registered} brain project(s)` : "") +
         "."
     )
