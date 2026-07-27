@@ -38,7 +38,24 @@ resolve_toolkit_root() {
   return 1
 }
 
-TOOLKIT=$(resolve_toolkit_root) || exit 0
+# Resolution failure is treated two different ways on purpose:
+#   AIOS_TOOLKIT_DIR set but unresolvable -> MISCONFIGURATION, fail closed. Someone
+#     declared a toolkit; a broken pointer must not silently drop the guard.
+#   nothing declared and no sibling found -> there is no toolkit checkout on this
+#     machine to protect, so allow. Failing closed here would block every command
+#     in every IC workspace that legitimately has no toolkit clone.
+# Note this guard is not an adversary-proof boundary: an agent that can relocate
+# the toolkit checkout can also defeat discovery. The authoritative backstops are
+# the tracked pre-commit primary guard inside the toolkit repo and, for the
+# product repo, its own .cursor/hooks.json harness wiring.
+if ! TOOLKIT=$(resolve_toolkit_root); then
+  if [ -n "${AIOS_TOOLKIT_DIR:-}" ]; then
+    echo "BLOCKED by guard-toolkit-primary: AIOS_TOOLKIT_DIR is set to '$AIOS_TOOLKIT_DIR' but does not resolve to a git checkout." >&2
+    echo "Fix: point AIOS_TOOLKIT_DIR at a real aios-workspace checkout, or unset it if this machine has no toolkit clone." >&2
+    exit 2
+  fi
+  exit 0
+fi
 HARNESS="$TOOLKIT/.harness"
 EXEMPT_BASENAMES=${HARNESS_PRIMARY_EXEMPT:-aios.yaml}
 
