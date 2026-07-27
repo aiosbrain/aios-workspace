@@ -151,14 +151,16 @@ and any diff hunk inside the moved bodies is a review-blocking signal.
 - `node scripts/test-suite.mjs` exits 0; `npm run lint` reports no unused imports in
   `scripts/aios.mjs`.
 - `node scripts/run-mutation.mjs --nightly --group access-governance --list` shows exactly three
-  entries — `hooks/file-governance-guard.mjs`, `scripts/sync-plan.mjs`, `scripts/brain-client.mjs` —
-  and the campaign's mutant count is within ±10% of **~625**: `buildPlan`'s 106 plus
-  `file-governance-guard.mjs`'s 343 and `brain-client.mjs`'s 176, all three measured in the
-  2026-07-26 artifact. (The ±10% band absorbs the four small helpers — `walkFiles`, `loadState`,
-  `saveState`, `contentShaForPush` — that move alongside `buildPlan` and were not separately
-  counted.)
+  entries — `hooks/file-governance-guard.mjs`, `scripts/sync-plan.mjs`, `scripts/brain-client.mjs`.
+  **Measured on landing (2026-07-27): 714 mutants** — `file-governance-guard.mjs` 343 and
+  `brain-client.mjs` 176 exactly as in the 2026-07-26 artifact, plus `sync-plan.mjs` 195. The
+  pre-landing projection of ~625 ±10% undercounted by 14%: it priced `buildPlan` alone (106) and
+  the four helpers that move with it — `walkFiles`, `loadState`, `saveState`, `contentShaForPush` —
+  add 89 more. Every mutant is inside the module boundary; nothing else leaked into scope.
 - The campaign completes in **under 25 minutes** — the `access-governance` leg goes from a
-  timeout to a reported score for the first time.
+  timeout to a reported score for the first time. **Measured on landing: 5m47s, overall score
+  43.98% (sync-plan.mjs 33.33%, 0 no-coverage mutants)** — the group's first honest baseline;
+  raising it is the separate, Deferred piece of work.
 - `grep -c "^function \(walkFiles\|loadState\|saveState\|contentShaForPush\|buildPlan\)"
 scripts/aios.mjs` returns 0, and `wc -l scripts/aios.mjs` drops by ~160 lines.
 - `node --test test/mutation-config.test.mjs` exits 0, with line 123 now naming `scripts/sync-plan.mjs`.
