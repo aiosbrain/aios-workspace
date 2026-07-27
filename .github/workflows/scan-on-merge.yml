@@ -39,7 +39,7 @@ jobs:
       # to pick up — otherwise test_coverage_pct lands null and the Codebases dashboard shows
       # "no reports" even though the suite exists and runs. `|| true`: this is a metrics
       # source, not a gate — never block the scan on coverage (the real gate lives in ci.yml).
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: env.AIOS_API_KEY != ''
         with:
           node-version: "20"
