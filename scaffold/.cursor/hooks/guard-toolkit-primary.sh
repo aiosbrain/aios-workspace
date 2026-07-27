@@ -42,7 +42,7 @@ TOOLKIT=$(resolve_toolkit_root) || exit 0
 HARNESS="$TOOLKIT/.harness"
 EXEMPT_BASENAMES=${HARNESS_PRIMARY_EXEMPT:-aios.yaml}
 
-if [ ! -f "$HARNESS/adapters/cursor/normalize.sh" ] || [ ! -f "$HARNESS/hooks/guard-worktree.sh" ]; then
+if [ ! -f "$HARNESS/adapters/cursor/normalize.sh" ] || [ ! -f "$HARNESS/hooks/guard-worktree.sh" ] || [ ! -f "$HARNESS/hooks/guard-destructive.sh" ]; then
   echo "BLOCKED by guard-toolkit-primary: toolkit harness missing at $HARNESS" >&2
   echo "Fix: clone aios-workspace or set AIOS_TOOLKIT_DIR to a checkout with .harness/." >&2
   exit 2
@@ -169,10 +169,22 @@ Attempted path: $tok"
     done
   fi
 
-  # ── git discipline: delegate to guard-worktree when the target is toolkit primary
+  # ── git discipline: delegate to the harness guards when the target is toolkit
+  # primary. guard-destructive runs first — commit policy alone does not cover
+  # force-push/hard-reset/restore-style rewrites of the primary.
   if path_under_toolkit "$TDIR"; then
     set -- $(probe "$TDIR"); KIND=${1:-none}
     if [ "$KIND" = "primary" ]; then
+      # Working-tree rewrites are categorically destructive against a checkout
+      # that is read-only for agents — guard-destructive only catches these when
+      # a protected branch is named, which reset/restore/checkout-- rarely do.
+      if printf '%s' "$CMD" | grep -qE 'git[[:space:]]+[^;|&]*(reset[[:space:]]+[^;|&]*--hard|[[:space:]]restore([[:space:]]|$)|checkout[[:space:]]+([^;|&]*[[:space:]])?--([[:space:]]|$)|[[:space:]](apply|am)([[:space:]]|$)|clean[[:space:]]+[^;|&]*-[a-zA-Z]*f|stash[[:space:]]+(pop|apply|drop|clear))'; then
+        block "destructive git operation against the toolkit primary checkout" \
+          "Command: $CMD"
+      fi
+      printf '%s' "$NORMALIZED" | "$HARNESS/hooks/guard-destructive.sh"
+      _rc=$?
+      [ "$_rc" -eq 0 ] || exit "$_rc"
       printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
       exit $?
     fi

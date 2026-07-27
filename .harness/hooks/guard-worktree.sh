@@ -148,6 +148,45 @@ if [ "$MODE" = "command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
+
+  # Under strict edit policy, shell file mutations are held to the same rule as
+  # pre_edit Write/Edit: no writes into a PRIMARY checkout (>, >>, cp, mv, rm,
+  # sed -i, tee, curl -o, …). Each candidate token is classified by its own repo
+  # (per-token probe), and relative candidates resolve against the command's
+  # target dir. Known limits: interpreter one-liners (node -e / python -c) and
+  # command substitution are not evaluated — the tracked pre-commit primary
+  # guard remains the commit-time backstop.
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
+    _muts='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
+    _cands=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
+    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
+      _cands="$_cands
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync")"
+    elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+      _cands="$_cands
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+    fi
+    for _tok in $(printf '%s\n' "$_cands" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
+      case "$_tok" in -*) continue ;; *=/*) _tok=${_tok#*=} ;; esac
+      case "$_tok" in
+        "~") _tok=$HOME ;;
+        "~/"*) _tok=$HOME/${_tok#\~/} ;;
+      esac
+      case "$_tok" in
+        /*) : ;;
+        *) _tok="$TDIR/$_tok" ;;
+      esac
+      _tpd=$_tok; [ -d "$_tpd" ] || _tpd=$(dirname "$_tok")
+      [ -d "$_tpd" ] || continue
+      set -- $(probe "$_tpd"); [ "${1:-none}" = "primary" ] || continue
+      _tb=$(basename "$_tok"); _tsk=0
+      for e in $EXEMPT_BASENAMES; do [ "$_tb" = "$e" ] && _tsk=1; done
+      [ "$_tsk" = 1 ] && continue
+      block "shell write to '$_tok' in the primary checkout (strict edit policy)" \
+        "The primary checkout is read-only for agents — shell redirects/copies are held to the same rule as Write/Edit."
+    done
+  fi
+
   set -- $(probe "$TDIR"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || exit 0
 
