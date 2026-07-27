@@ -1,0 +1,57 @@
+{
+  "$comment": "Copy to <repo>/.cursor/hooks.json (merge if one exists). Assumes the pack is vendored at .harness/. Cursor honors exit code 2 = deny, so the portable policies' exit codes flow straight through run-hook.sh; failClosed:true blocks on unexpected hook failure. `stop` goes through cursor/stop-gate.sh because Cursor continues via {followup_message}, not an exit code. `sessionStart` context injection is ADDITIVE and smoke-gated (verified on cursor-agent 2026.07.23): the generated always-apply rule (.cursor/rules/harness-context.mdc, written by install.sh) is the guaranteed context path; no failClosed here because losing injection must never block a session.",
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor session_start inject-context.sh",
+        "timeout": 15
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-destructive.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-worktree.sh",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-secrets.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-protected-paths.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-worktree.sh",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor post_edit post-edit-format.sh",
+        "timeout": 120
+      }
+    ],
+    "stop": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
+        "timeout": 600,
+        "loop_limit": 5
+      }
+    ]
+  }
+}

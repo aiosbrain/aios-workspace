@@ -1,0 +1,123 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned exact Bun version (also used by plugin-test). Bump deliberately.
+  BUN_VERSION: "1.2.23"
+
+jobs:
+  lint-shell:
+    name: Shell lint (shellcheck + bash -n)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: ShellCheck (severity warning) over tracked shell scripts
+        # `.shellcheckrc` at repo root scopes out a short, reviewed allowlist of
+        # pre-existing deliberate patterns (see the file for the rationale per code).
+        # Only tracked files — evals/scratch/ and evals/results/ are gitignored
+        # run artifacts and must never be scanned.
+        run: shellcheck --severity=warning $(git ls-files '*.sh')
+
+      - name: bash -n syntax check over tracked shell scripts
+        run: |
+          set -u
+          fail=0
+          while IFS= read -r -d '' f; do
+            bash -n "$f" || fail=1
+          done < <(git ls-files -z '*.sh')
+          exit "$fail"
+
+  tests:
+    name: Eval-lab test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # conformance.test.sh shells out to `bun test` for the OpenCode adapter suite,
+      # so bun must be present here even though plugin-test also runs it directly.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: runner.test.sh
+        run: bash evals/runner.test.sh
+      - name: guards.test.sh
+        run: bash evals/guards.test.sh
+      - name: graders.test.sh
+        run: bash evals/graders.test.sh
+      - name: conformance.test.sh
+        run: bash evals/conformance.test.sh
+      - name: codex-driver.test.sh
+        run: bash evals/codex-driver.test.sh
+      - name: inject-context.test.sh
+        run: bash evals/inject-context.test.sh
+      - name: route-skills.test.sh
+        run: bash evals/route-skills.test.sh
+      - name: stop-continuation.test.sh
+        run: bash evals/stop-continuation.test.sh
+      - name: evidence.test.py
+        run: python3 evals/evidence.test.py
+
+  plugin-test:
+    name: OpenCode plugin tests (bun, pinned)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: bun test evals/opencode-plugin.test.ts
+        run: bun test evals/opencode-plugin.test.ts
+
+  schema:
+    name: Judge schema + fixture validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: "pip install --only-binary :all: jsonschema==4.26.0"
+      - name: Validate evals/judge.schema.json + evals/fixtures/judge/*
+        run: python3 evals/validate_judge_schema.py
+
+  secret-scan:
+    name: Secret scan (tracked tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Self-test the scanner (synthetic secret, assembled at runtime)
+        run: bash hooks/scan-tree-secrets.test.sh
+      - name: Scan tracked files for committed secrets
+        run: bash hooks/scan-tree-secrets.sh
+
+  conformance-smoke:
+    name: Conformance smoke (mock runtime, all scenarios)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Eval lab smoke (mock driver + mock judge, all scenarios)
+        # Proves the lab's own wiring (setup -> install -> grade -> judge -> aggregate)
+        # runs end to end, and that a normal run leaves the tree clean (results-dir is
+        # a mktemp, not the repo — evals/scratch|results/ are gitignored regardless).
+        run: |
+          RESULTS_DIR="$(mktemp -d)"
+          bash evals/run.sh --runtime mock --scenario all --runs 1 --judge mock \
+            --results-dir "$RESULTS_DIR"
+          jq -e '.total > 0 and .by_status.pass == .total' "$RESULTS_DIR/summary.json"
+      - name: Working tree is clean after a normal run
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "evals/run.sh left the working tree dirty:" >&2
+            git status --porcelain >&2
+            exit 1
+          fi

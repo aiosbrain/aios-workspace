@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+#
+# pre-commit-primary-guard — block feature commits in the PRIMARY checkout.
+#
+# The portable, repo-neutral commit-time backstop for the worktree convention.
+# It is the durable pair to the agent-hook `hooks/guard-worktree.sh`: the agent
+# hook intercepts edits and branch-creation inside supported runtimes, while this
+# git hook catches every commit path (manual commits, runtimes without hooks,
+# scripts) regardless of which agent — if any — is driving.
+#
+# A commit is BLOCKED when the working copy is the PRIMARY checkout (not a linked
+# worktree) and the policy says so:
+#   default-ok (default) — block only on a NON-default branch (a feature branch
+#                stranded in the primary); commits on the default branch are allowed.
+#   strict               — block EVERY authored commit in the primary, including on
+#                the default branch. The primary then only advances via
+#                `git merge --ff-only` (which moves the ref without creating a commit,
+#                so no pre-commit hook fires); a non-ff merge in the primary IS the
+#                anti-pattern and is blocked too. This matches aios-workspace's rule.
+#
+# It is always a NO-OP inside a linked worktree (where feature work belongs).
+#
+# Config / override:
+#   HARNESS_PRIMARY_COMMIT_POLICY  default-ok | strict   (default: default-ok)
+#   HARNESS_DEFAULT_BRANCH         default branch name (default: main)
+#   HARNESS_ALLOW_PRIMARY_COMMIT   set to 1 for a genuine primary-checkout commit
+#   AIOS_ALLOW_PRIMARY_COMMIT      honored too, for parity with aios-workspace #388
+#
+# Installed to `.git/hooks/pre-commit` by `install-primary-commit-guard.sh`, which
+# chains any pre-existing pre-commit hook to `.git/hooks/pre-commit.chained`.
+# git hooks are not version-controlled; this tracked source is the durable copy.
+set -euo pipefail
+
+# DEFAULT_BRANCH is only for the block message; branch matching uses is_default_branch.
+if [[ -n "${HARNESS_DEFAULT_BRANCH:-}" ]]; then
+  DEFAULT_BRANCH="$HARNESS_DEFAULT_BRANCH"
+else
+  DEFAULT_BRANCH="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  [[ -n "$DEFAULT_BRANCH" ]] || DEFAULT_BRANCH="$(git config --get init.defaultBranch 2>/dev/null || true)"
+fi
+
+# is_default_branch <branch>: 0 if <branch> is allowed to live in the primary.
+# HARNESS_DEFAULT_BRANCH is authoritative when set; otherwise the accepted set is the
+# UNION of {main, master} (never bricked) plus origin/HEAD and init.defaultBranch when
+# they resolve. Detached HEAD ("HEAD") is not a feature branch -> allowed.
+is_default_branch() {
+  [[ "$1" == "HEAD" ]] && return 0
+  if [[ -n "${HARNESS_DEFAULT_BRANCH:-}" ]]; then [[ "$1" == "$HARNESS_DEFAULT_BRANCH" ]]; return; fi
+  case "$1" in main|master) return 0 ;; esac
+  local oh id
+  oh="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  [[ -n "$oh" && "$1" == "$oh" ]] && return 0
+  id="$(git config --get init.defaultBranch 2>/dev/null || true)"
+  [[ -n "$id" && "$1" == "$id" ]] && return 0
+  return 1
+}
+
+# Resolve both to PHYSICAL paths (pwd -P) so a /var↔/private-style symlink can't
+# make the primary checkout look like a linked worktree (git reports the git dir
+# physically but a plain `pwd` is logical).
+git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+if [[ -n "$git_dir" ]]; then
+  git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P || echo "$git_dir")"
+fi
+common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "$common_dir" ]]; then
+  common_dir="$(cd "$common_dir" 2>/dev/null && pwd -P || echo "$common_dir")"
+fi
+
+is_primary=0
+if [[ -n "$git_dir" && "$git_dir" == "$common_dir" ]]; then
+  is_primary=1
+fi
+
+if [[ "$is_primary" == "1" ]]; then
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+  policy="${HARNESS_PRIMARY_COMMIT_POLICY:-default-ok}"
+  blocked=0
+  case "$policy" in
+    strict) blocked=1 ;;
+    *) is_default_branch "$branch" || blocked=1 ;;
+  esac
+  if [[ "$blocked" == "1" ]]; then
+    if [[ "${HARNESS_ALLOW_PRIMARY_COMMIT:-${AIOS_ALLOW_PRIMARY_COMMIT:-}}" == "1" ]]; then
+      echo "[harness] ALLOW_PRIMARY_COMMIT set — allowing commit on '$branch' in the primary checkout." >&2
+    else
+      repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+      cat >&2 <<EOF
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  harness worktree guard: commit BLOCKED in the PRIMARY checkout              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+You are committing to branch '$branch' inside the PRIMARY checkout:
+  $repo_root
+
+Feature work must live in a dedicated git worktree, never on a branch committed
+in the primary checkout (it collides with concurrent work and produces duplicate
+PRs). Do this instead:
+
+  aios worktree add $branch      # in an AIOS repo
+  # or, generically:
+  git worktree add -b $branch ../$(basename "$repo_root")-worktrees/${branch//\//-} origin/${DEFAULT_BRANCH:-main}
+  # then commit there
+
+If this really is an intentional primary-checkout commit (rare hotfix), re-run:
+
+  HARNESS_ALLOW_PRIMARY_COMMIT=1 git commit ...
+
+EOF
+      exit 1
+    fi
+  fi
+fi
+
+# Chain to any pre-existing hook of the same name (e.g. a secrets/leak gate).
+# Works whether installed as pre-commit or pre-merge-commit.
+hook_name="$(basename "$0")"
+chained="$(git rev-parse --git-path "hooks/${hook_name}.chained" 2>/dev/null || true)"
+if [[ -n "$chained" && -x "$chained" ]]; then
+  exec "$chained" "$@"
+fi
+
+exit 0

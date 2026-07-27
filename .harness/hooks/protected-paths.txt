@@ -1,0 +1,24 @@
+# One POSIX extended regex per line, matched against the file path being written.
+# Lines starting with # are comments. Repos override this list by shipping their
+# own .harness/protected-paths.txt (which REPLACES this default set).
+(^|/)\.env($|\.[A-Za-z0-9.]+$)
+(^|/)\.env\.keys$
+(^|/)node_modules/
+(^|/)vendor/
+(^|/)dist/
+(^|/)build/
+\.lock$
+(^|/)package-lock\.json$
+(^|/)pnpm-lock\.yaml$
+(^|/)yarn\.lock$
+(^|/)composer\.lock$
+(^|/)poetry\.lock$
+(^|/)uv\.lock$
+(^|/)Cargo\.lock$
+(^|/)go\.sum$
+(^|/)(db/)?migrations?/
+(^|/)\.git/
+(^|/)id_(rsa|ed25519)
+# CI workflows: uncomment if agents must not self-modify CI
+# (^|/)\.github/workflows/
+# (^|/)\.gitlab-ci\.yml$

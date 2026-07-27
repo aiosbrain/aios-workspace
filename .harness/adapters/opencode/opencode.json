@@ -1,0 +1,41 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "$comment": "Starter mapping of the harness onto opencode. Merge into your repo's opencode.json. Pin your opencode version — upstream ships breaking changes often. Lanes per models/routing.yaml: set your real provider/model ids.",
+  "instructions": ["AGENTS.md", "CONSTITUTION.md"],
+  "agent": {
+    "plan": {
+      "$comment": "frontier lane — planning/review; keep read-only",
+      "model": "anthropic/claude-opus"
+    },
+    "build": {
+      "$comment": "bulk lane — implementation against an approved plan (GLM via Anthropic-compatible provider); its output merges only after a frontier-lane review (rubric MG6)",
+      "model": "zhipu/glm-coding"
+    },
+    "reviewer": {
+      "$comment": "fresh-context reviewer agent — mirror of agents/code-reviewer.md",
+      "mode": "subagent",
+      "model": "anthropic/claude-opus",
+      "prompt": "{file:./.harness/agents/code-reviewer.md}",
+      "permission": { "edit": "deny" }
+    },
+    "verifier": {
+      "$comment": "adversarial verifier — mirror of agents/adversarial-verifier.md",
+      "mode": "subagent",
+      "model": "anthropic/claude-opus",
+      "prompt": "{file:./.harness/agents/adversarial-verifier.md}",
+      "permission": { "edit": "deny" }
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "git status *": "allow",
+      "git diff *": "allow",
+      "git log *": "allow",
+      "rm -rf /*": "deny",
+      "git push --force*": "ask",
+      "git reset --hard*": "ask",
+      "*": "ask"
+    }
+  }
+}

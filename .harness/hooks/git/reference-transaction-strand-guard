@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# reference-transaction-strand-guard — parse-free backstop that stops the PRIMARY
+# checkout from being STRANDED on a non-default branch.
+#
+# The agent hook `guard-worktree.sh` blocks branch creation by pattern-matching the
+# raw shell command, which is inherently leaky: `git -C <primary> checkout -b`, a
+# non-leading/subshell `cd`, or leading global options can all hide the target from
+# a regex. This hook is the authoritative pair: it fires from git's own ref
+# machinery, so it triggers no matter HOW the agent reached the primary repo (`-C`,
+# `cd`, `pushd`, a subshell, globals) — git runs it in the primary's git dir either
+# way. It is what makes the branch-creation guard real, the way pre-commit-primary-
+# guard makes the commit guard real.
+#
+# It BLOCKS moving the primary checkout's HEAD onto a non-default branch — what
+# `git checkout -b`, `git switch -c`, and `git switch <feature-branch>` all do.
+# It is a NO-OP:
+#   - inside a linked worktree (feature work belongs there);
+#   - for the default branch (auto-detected: HARNESS_DEFAULT_BRANCH, else
+#     origin/HEAD, else init.defaultBranch, else the main|master allowlist);
+#   - for `git worktree add -b <branch>`, which creates a branch and sets the NEW
+#     worktree's HEAD (never the primary's). That in-progress worktree is detected
+#     by an entry under <common>/worktrees/ that has no finalized HEAD file yet;
+#     a primary `checkout -b` never creates such an entry, even in a repo that
+#     already has established worktrees.
+#   - `git branch <name>` (no checkout) does not move HEAD and is not this hook's
+#     concern; the agent hook covers that hygiene case.
+#
+# reference-transaction fires with state {prepared,committed,aborted} as $1 and ref
+# updates ("<old> <new> <refname>") on stdin. Only 'prepared' can abort (non-zero
+# exit), so that is the only state we gate.
+#
+# Config / override:
+#   HARNESS_DEFAULT_BRANCH        default branch name (else auto-detected)
+#   HARNESS_ALLOW_PRIMARY_CHECKOUT set to 1 for a genuine primary-checkout switch
+#   AIOS_ALLOW_PRIMARY_CHECKOUT   honored too, for parity with aios-workspace
+#
+# Installed to `.git/hooks/reference-transaction` by install-primary-commit-guard.sh,
+# which chains any pre-existing hook of that name to `<name>.chained`.
+# git hooks are not version-controlled; this tracked source is the durable copy.
+set -uo pipefail
+
+INPUT="$(cat 2>/dev/null || true)"
+STATE="${1:-}"
+
+chain() {
+  # Chain to a pre-existing reference-transaction hook, re-feeding the stdin we read.
+  hook_name="$(basename "$0")"
+  chained="$(git rev-parse --git-path "hooks/${hook_name}.chained" 2>/dev/null || true)"
+  if [[ -n "$chained" && -x "$chained" ]]; then
+    printf '%s' "$INPUT" | "$chained" "$@"
+    exit $?
+  fi
+  exit 0
+}
+
+# Only the 'prepared' phase can veto the transaction; other phases are informational.
+[[ "$STATE" == "prepared" ]] || chain "$@"
+[[ "${HARNESS_ALLOW_PRIMARY_CHECKOUT:-${AIOS_ALLOW_PRIMARY_CHECKOUT:-0}}" == "1" ]] && chain "$@"
+
+# Primary-only: in the primary checkout the git dir equals the common git dir; a
+# linked worktree's git dir is <common>/worktrees/<name>. Both physically resolved
+# (pwd -P) so a /var<->/private symlink can't disguise the primary as a worktree.
+git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+[[ -n "$git_dir" ]] && git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P || echo "$git_dir")"
+common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+[[ -n "$common_dir" ]] && common_dir="$(cd "$common_dir" 2>/dev/null && pwd -P || echo "$common_dir")"
+[[ -n "$git_dir" && "$git_dir" == "$common_dir" ]] || chain "$@"
+
+DEFAULT_BRANCH="${HARNESS_DEFAULT_BRANCH:-}"
+is_default_branch() {
+  [[ "$1" == "HEAD" ]] && return 0
+  if [[ -n "$DEFAULT_BRANCH" ]]; then [[ "$1" == "$DEFAULT_BRANCH" ]]; return; fi
+  case "$1" in main|master) return 0 ;; esac
+  local oh id
+  oh="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  [[ -n "$oh" && "$1" == "$oh" ]] && return 0
+  id="$(git config --get init.defaultBranch 2>/dev/null || true)"
+  [[ -n "$id" && "$1" == "$id" ]] && return 0
+  return 1
+}
+
+# worktree_add_in_progress: `git worktree add` registers the new worktree dir (with
+# a `locked` marker + HEAD.lock) BEFORE finalizing its HEAD, so at 'prepared' it has
+# no HEAD file. A primary `checkout -b` never creates such an entry. If one exists,
+# the incoming HEAD update is that new worktree's, not the primary's — allow it.
+worktree_add_in_progress() {
+  local d
+  for d in "$common_dir"/worktrees/*/; do
+    [[ -d "$d" ]] || continue
+    [[ -f "${d}HEAD" ]] || return 0
+  done
+  return 1
+}
+
+blocked_branch=""
+while read -r _old _new _ref; do
+  [[ "$_ref" == "HEAD" ]] || continue
+  case "$_new" in ref:refs/heads/*) _br="${_new#ref:refs/heads/}" ;; *) continue ;; esac
+  is_default_branch "$_br" && continue
+  blocked_branch="$_br"
+done <<<"$INPUT"
+
+[[ -n "$blocked_branch" ]] || chain "$@"
+worktree_add_in_progress && chain "$@"
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+cat >&2 <<EOF
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  harness worktree guard: primary checkout would be STRANDED — blocked        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Refusing to move the PRIMARY checkout's HEAD onto non-default branch
+'$blocked_branch':
+  $repo_root
+
+That strands the primary on a feature branch and collides with concurrent work.
+Do feature work in a dedicated worktree instead:
+
+  aios worktree add $blocked_branch      # in an AIOS repo
+  # or, generically:
+  git worktree add -b $blocked_branch ../$(basename "$repo_root")-worktrees/${blocked_branch//\//-} origin/${DEFAULT_BRANCH:-main}
+
+If this really is an intentional primary-checkout switch, re-run with:
+
+  HARNESS_ALLOW_PRIMARY_CHECKOUT=1 <your git command>
+
+EOF
+exit 1
