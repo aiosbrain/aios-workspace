@@ -38,7 +38,7 @@ import {
 // import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
-import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import { parseTaskRows } from "./tasks-table.mjs";
 import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
 import {
   parseFrontmatter,
