@@ -28,13 +28,19 @@ any agent (or any future you) can start any slice cold, with zero archaeology.
 
 ### What "pick-up-able" means
 
-Every deferred slice is an issue that carries, at minimum:
+Every deferred slice is an issue that carries the sections in
+[`aios-issue-template.md`](./aios-issue-template.md) — the canonical scaffold for
+Linear issue bodies and local spec files. At minimum:
 
 1. **What / why** — the behavior and the reason it matters, in the epic's language.
-2. **Concrete integration points** — file paths, module names, contracts it builds on.
-3. **Acceptance** — observable criteria a builder can self-verify.
-4. **Build-with** — the model/effort tier the work deserves (see §3).
-5. **Deps** — which slices must land first.
+2. **Outcomes** — target state without over-constraining implementation.
+3. **Concrete integration points** — file paths, module names, contracts it builds on.
+4. **Acceptance** — observable criteria a builder can self-verify (Automated / Manual / Visual).
+5. **Build-with** — the model/effort tier the work deserves (see §3).
+6. **Deps** — which slices must land first.
+
+Author with `aios spec init`, grade with `aios spec eval`, push to Linear with
+`linear.mjs set-desc` or `create --template aios`.
 
 The test: an agent with no conversation history can read the issue and start correctly. If the
 issue needs a human to explain it, it is not done being written.

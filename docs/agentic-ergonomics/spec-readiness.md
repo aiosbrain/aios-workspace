@@ -35,8 +35,13 @@ as soft context; it never blocks (empty on any error).
 ```
 aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--json] [--no-llm] [--rubric <path>]
 aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]
+aios spec init <path> [--title "..."]  write the aios-issue-template scaffold
 aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]
 ```
+
+Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issue-template.md):
+`aios spec init spec.md --title "…"` → fill sections → `aios spec eval spec.md` →
+`linear.mjs set-desc AIO-n spec.md` or `create --template aios`.
 
 - **eval** grades the spec. `--no-llm` runs the deterministic layer only (offline, no key).
 - **Rubric resolution:** `--rubric <path>` (explicit) → the target repo's own
