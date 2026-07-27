@@ -10,8 +10,8 @@ matching edits in `scripts/aios.mjs`, and the mutation-config update. No behavio
 
 `scripts/run-mutation.mjs` line 27 states the problem in its own words:
 
-> *"The sync-plan safety gate (`buildPlan`: admin never syncs, default-deny on missing `access:`)
-> lives in `scripts/aios.mjs` — **there is no sync-plan.mjs**."*
+> _"The sync-plan safety gate (`buildPlan`: admin never syncs, default-deny on missing `access:`)
+> lives in `scripts/aios.mjs` — **there is no sync-plan.mjs**."_
 
 That comment records a structural gap and then works around it by aiming the mutator at the whole
 2,519-line file. The workaround became permanent configuration: 96.4% of the file's 2,984 mutants
@@ -19,10 +19,18 @@ land in CLI subcommands the group's tests never invoke, which is why the campaig
 and why its score (3.5% for the file) describes file size rather than test quality — the full
 evidence is in [`mutation-denominator.md`](./mutation-denominator.md).
 
-That spec buys the correct denominator with a line range (`scripts/aios.mjs:334-412`). A line
-range is a **coordinate, not a boundary**: it silently stops describing `buildPlan` the moment
-anyone inserts a function above it. It ships with an anti-drift guard test precisely because it is
-fragile. This spec makes the boundary real, so the guard becomes unnecessary.
+AIO-539 applies one principle across the lane: **every group mutates the safety unit it protects,
+and that unit is a module.** Four of the five groups already satisfy it — their units
+(`src/operator-loop/inbox/capability.ts`, `scripts/toolkit-merge.mjs`,
+`hooks/local-bugbot-gate.mjs`) are real files, so they need only an honest scope. `buildPlan` is
+the sole exception, and this spec is what makes it satisfiable.
+
+The alternative — pointing Stryker at a line range like `scripts/aios.mjs:334-412` — was
+considered and rejected in AIO-539. A line range is a **coordinate, not a boundary**: it silently
+stops describing `buildPlan` the moment anyone inserts a function above it, and it would need a
+drift-guard test to stay honest. Building that mechanism only to delete it here is throwaway work
+that leaves a speculative parser behind. Extraction gets the same denominator with no new
+mechanism at all.
 
 The repo already has the seam. `scripts/aios.mjs` imports from `workspace-parse.mjs`,
 `scripts/tasks-table.mjs`, `scripts/brain-client.mjs`, `scripts/cli-common.mjs`, and `scripts/cli/dispatch.mjs` — the decomposition
@@ -34,9 +42,10 @@ takes the smallest, highest-stakes unit first to prove the pattern; the rest are
 
 ## Dependencies
 
-- **Sequenced after** [`mutation-denominator.md`](./mutation-denominator.md), which lands the
-  per-group matrix and the range contract. This spec deletes the range that spec adds, so landing
-  it first would leave the nightly starved with no fallback.
+- **Independent of** [`mutation-denominator.md`](./mutation-denominator.md) (AIO-539) — they touch
+  different groups and can land in either order or in parallel. AIO-539 leaves `access-governance`
+  deliberately unscoped so its leg fails visibly rather than going green by dropping the safety
+  gate; this spec is what turns that leg green, by making the group's coverage claim true.
 - No new runtime or dev dependencies. `scripts/` stays zero-dep at runtime.
 
 ## Reuse (shipped, KEEP — moved verbatim, not rewritten)
@@ -51,8 +60,9 @@ takes the smallest, highest-stakes unit first to prove the pattern; the rest are
 - `test/sync-plan.test.mjs` — the behavior oracle. It drives the real CLI (`aios status --json`,
   offline) against a throwaway workspace and asserts the blocked list and reasons, so it passes
   unchanged if and only if the extraction is behavior-preserving.
-- `test/mutation-config.test.mjs` — the config-integrity suite, including the anti-drift guard
-  added by the preceding spec.
+- `test/mutation-config.test.mjs` — the config-integrity suite, including line 123 (_"the sync-plan
+  safety gate lives in scripts/aios.mjs and is mutation-covered"_) and the `nightlyExcludes`
+  completeness assertion added by AIO-539.
 
 ## Contract
 
@@ -84,13 +94,12 @@ output format, or exit code changes.
 - **`scripts/aios.mjs`** — delete lines 254–412; add one import from `./sync-plan.mjs`. Any helper
   that becomes unused in `scripts/aios.mjs` as a result is removed from its import list (`lint` enforces).
 - **`scripts/run-mutation.mjs`** — `access-governance` `nightly` entry becomes
-  `scripts/sync-plan.mjs` (the range postfix from the preceding spec is deleted); the `match`
-  regex gains `sync-plan` and drops `aios`. The changed-code lane then scopes correctly by
-  construction, with no range.
-- **`test/mutation-config.test.mjs`** — the anti-drift guard added by the preceding spec is
-  **removed**, replaced by an assertion that the access-governance nightly scope contains
-  `scripts/sync-plan.mjs` and no line-range postfix. Removing the guard is the point: a module
-  boundary cannot drift the way a coordinate can.
+  `scripts/sync-plan.mjs`; the `match` regex gains `sync-plan` and drops `aios`. Both the nightly
+  and changed-code lanes then scope correctly by construction, with no range mechanism.
+- **`test/mutation-config.test.mjs`** — line 123 is updated to assert the safety gate now lives in
+  `scripts/sync-plan.mjs` and that the group mutates it. AIO-539's `nightlyExcludes` completeness
+  assertion keeps passing unchanged: `scripts/aios.mjs` leaves the group's `match` entirely, so it
+  needs no exclusion entry — the boundary, not a list, is what keeps the claim honest.
 
 ## Scope
 
@@ -98,10 +107,10 @@ output format, or exit code changes.
 config-test update.
 
 **Deferred:** waves 2+ (`scripts/update.mjs`, `scripts/review-bugbot.mjs`, `scripts/toolkit-pull.mjs`, `scripts/inbox.mjs`, and
-the 9,051-line `src/operator-loop/inbox/` tree); moving any *other* function out of `scripts/aios.mjs`;
+the 9,051-line `src/operator-loop/inbox/` tree); moving any _other_ function out of `scripts/aios.mjs`;
 splitting `cmd*` handlers behind `scripts/cli/dispatch.mjs`; adding new tests for `buildPlan` beyond the
 existing oracle (raising the score is a separate, honest piece of work once the denominator is
-right); `stripMutationRange` itself, which stays for future ranged targets.
+right).
 
 ## Tier safety
 
@@ -123,19 +132,19 @@ and any diff hunk inside the moved bodies is a review-blocking signal.
   `scripts/aios.mjs`.
 - `node scripts/run-mutation.mjs --nightly --group access-governance --list` shows
   `scripts/sync-plan.mjs` with **no** `:` postfix, and the campaign's mutant count is within ±5%
-  of the ~625 the preceding spec established (same code, now bounded by a module).
-- The campaign score is within ±2 points of the ~46% baseline recorded by the preceding spec —
-  demonstrating the extraction moved no behavior, only boundaries.
+  of the ~625 projected for `buildPlan` + the two small files (same code, now bounded by a module).
+- The campaign completes in **under 25 minutes** — the `access-governance` leg goes from a
+  timeout to a reported score for the first time.
 - `grep -c "^function \(walkFiles\|loadState\|saveState\|contentShaForPush\|buildPlan\)"
-  scripts/aios.mjs` returns 0, and `wc -l scripts/aios.mjs` drops by ~160 lines.
-- `node --test test/mutation-config.test.mjs` exits 0 with the range guard removed.
+scripts/aios.mjs` returns 0, and `wc -l scripts/aios.mjs` drops by ~160 lines.
+- `node --test test/mutation-config.test.mjs` exits 0, with line 123 now naming `scripts/sync-plan.mjs`.
 
 ## Implementation
 
 1. Create `scripts/sync-plan.mjs` with the five functions moved verbatim plus their imports.
 2. Delete 254–412 from `scripts/aios.mjs`; add the import; prune now-unused imports.
 3. Run `node --test test/sync-plan.test.mjs` and the full suite — green before any config change.
-4. Repoint `access-governance` (`nightly` + `match`) at `scripts/sync-plan.mjs`; remove the range
-   guard from `test/mutation-config.test.mjs`.
+4. Repoint `access-governance` (`nightly` + `match`) at `scripts/sync-plan.mjs`; update line 123
+   of `test/mutation-config.test.mjs`.
 5. Run `node scripts/run-mutation.mjs --nightly --group access-governance` and record the mutant
-   count and score in the PR body against the preceding spec's baseline.
+   count and score in the PR body as the group's first real baseline.
