@@ -52,8 +52,10 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
   );
 });
 
+// The item-payload contract carries its OWN version (last changed at 1.12) and is deliberately
+// decoupled from the document/API revision: 1.13 (the sync-origin task return leg) touched the
+// tasks feed, not the item payload, so these fixtures must stay pinned at 1.12.
 test("item payload contract is content-addressed at Brain API 1.12", () => {
-  assert.equal(fixture.version, "1.12");
   assert.equal(fixture.itemPayloadContract.version, "1.12");
   for (const key of ["schema", "fixtures"]) {
     const ref = fixture.itemPayloadContract[key];

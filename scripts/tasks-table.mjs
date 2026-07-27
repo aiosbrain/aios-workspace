@@ -119,6 +119,123 @@ export function parseTaskRows(body) {
     .filter((r) => r.row_key);
 }
 
+// ── sync-origin return leg (brain-api 1.13, AIO-537) ─────────────────────────────────────────
+// The brain→Linear projection is one-way and the dashboard writeback feed is UI-origin only, so
+// a row this workspace PUSHED could change status in Linear and never come back — the markdown
+// silently decayed (field audit: 6 rows said `todo` while Linear said Done). `aios pull` now also
+// asks for `mode=sync-origin`, and these helpers decide which of those rows represent a REAL
+// change worth writing.
+
+// Mirrors the brain's `normalizeTaskStatus` (lib/api/schemas.ts): the canonical set plus the
+// case/space/dash folding it applies. Returns null when the local text is NOT canonical (e.g.
+// `todo`, `waiting on legal`) — the brain stored that verbatim in `raw_status` and mapped the row
+// to `backlog`.
+export const CANONICAL_TASK_STATUSES = ["backlog", "ready", "in_progress", "blocked", "done"];
+export function canonicalTaskStatus(raw) {
+  const s = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return CANONICAL_TASK_STATUSES.includes(s) ? s : null;
+}
+
+/**
+ * Plan the sync-origin merge: given the current markdown and the brain's sync-origin rows, return
+ * the (few) rows that carry a REAL status/assignee change, each rebuilt from the LOCAL cells so
+ * `mergeTaskWriteback` rewrites only those two fields and leaves every other column verbatim.
+ *
+ * Rules (contract, docs/brain-api.md § sync-origin return leg):
+ *   • status/assignee only — body, title, sprint, due, hierarchy stay local/brain-canonical here.
+ *   • never create or delete a row: a row_key with no local line is skipped (the return leg must
+ *     not resurrect a row the owner deleted; genuinely new rows arrive via push/writeback).
+ *   • ECHO GUARD: skip the status whenever the brain's value can only be a normalization of what
+ *     this workspace pushed. That is TWO cases, both required:
+ *       – the local text already canonicalizes to the brain's status (`In Progress` ≡ in_progress);
+ *       – `raw_status` is non-null. A non-null `raw_status` structurally means NO authoritative
+ *         writer has set this row's status since the push: the brain clears it in the same
+ *         statement as every authoritative status write (provider apply/adopt, dashboard move,
+ *         work-event completion, meetings bulk apply — guarded on the brain side). Comparing it to
+ *         the local cell instead would clobber a LOCAL edit made after the push: cell edited
+ *         `todo` → `done`, brain still `backlog`/raw `todo`, pull-before-push ⇒ the edit is lost.
+ *     So an unknown local status like `todo` is overwritten only by a real brain-side change.
+ *   • assignee: only alongside a REAL status change on the same row. The brain has no independent
+ *     assignee author for sync-origin rows (neither the inbound apply nor the dashboard actions
+ *     write `assignee`), so on its own the value is always the echo of our own last push and
+ *     merging it would silently revert a local reassignment. An empty brain assignee never blanks
+ *     a local name.
+ */
+export function planSyncOriginWriteback(content, rows) {
+  const table = parseTableRows(content);
+  const skipped = [];
+  if (!table.length) return { rows: [], skipped: (rows || []).map((r) => r.row_key) };
+  const header = table[0].map((h) => h.toLowerCase());
+  if (!header.includes("id") || !header.includes("task"))
+    return { rows: [], skipped: (rows || []).map((r) => r.row_key) };
+  const at = (cells, name) => {
+    const i = header.indexOf(name);
+    return i >= 0 ? (cells[i] ?? "") : "";
+  };
+  const byKey = new Map();
+  for (const cells of table.slice(1)) {
+    const key = at(cells, "id");
+    if (key && !byKey.has(key)) byKey.set(key, cells);
+  }
+
+  const out = [];
+  for (const row of rows || []) {
+    const cells = byKey.get(row.row_key);
+    if (!cells) {
+      skipped.push(row.row_key);
+      continue;
+    }
+    const localStatus = at(cells, "status").trim();
+    const localAssignee = at(cells, "assignee").trim();
+    const brainStatus = String(row.status ?? "").trim();
+    const brainAssignee = String(row.assignee ?? "").trim();
+    const rawStatus = row.raw_status == null ? null : String(row.raw_status).trim();
+
+    let status = localStatus;
+    if (brainStatus && rawStatus === null && canonicalTaskStatus(localStatus) !== brainStatus) {
+      status = brainStatus;
+    }
+    const statusChanged = status !== localStatus;
+    const assignee =
+      statusChanged && brainAssignee && brainAssignee !== localAssignee
+        ? brainAssignee
+        : localAssignee;
+    if (status === localStatus && assignee === localAssignee) {
+      skipped.push(row.row_key);
+      continue;
+    }
+    // Rebuild from the LOCAL cells (raw text, not re-parsed values) so `due: —`, a retired `pm`
+    // cell, or a comma-spacing choice survives byte-for-byte; only status/assignee move.
+    out.push({
+      row_key: row.row_key,
+      title: at(cells, "task"),
+      assignee,
+      status,
+      sprint: at(cells, "sprint"),
+      due: at(cells, "due"),
+      parent: at(cells, "parent"),
+      labels: at(cells, "labels"),
+      priority: at(cells, "priority"),
+      pm_raw: at(cells, "pm"),
+      pm_url: at(cells, "pm url"),
+    });
+  }
+  return { rows: out, skipped };
+}
+
+/**
+ * Feature-detection for the return leg: a PRE-1.13 brain ignores `mode` and answers with the
+ * dashboard writeback feed, which must NEVER be merged as if it were sync-origin. Trust only a
+ * response that echoes `mode: "sync-origin"`, and only the requested project's group.
+ */
+export function syncOriginRowsFor(res, project) {
+  if (!res || res.mode !== "sync-origin") return [];
+  return (res.tasks || []).filter((g) => g.project === project).flatMap((g) => g.rows || []);
+}
+
 // Merge dashboard-writeback task rows into a markdown tasks.md table. Matches by row_key
 // (updates in place; appends unknown rows; never deletes). v1.2: when the brain returns
 // hierarchy fields (parent/labels/priority), the optional Parent|Labels|Priority columns are
