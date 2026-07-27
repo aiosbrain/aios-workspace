@@ -20,9 +20,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  aggregateGateResults,
   evaluateLocalBugbotGate as evaluateProductionGate,
   formatHookResult,
   hardenedChildEnv,
+  listGateTargets,
   reviewChildArgs,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
@@ -2135,4 +2137,134 @@ test("an oversized per-attempt timeout is clamped, never crash-shaped", async ()
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+/**
+ * AIO-555 — target selection and fail-closed aggregation.
+ *
+ * The gate used to review whichever directory the session started in, which under the mandated
+ * worktree workflow (CLAUDE.md §5) is the primary checkout — the one tree that by construction
+ * holds no work. Targets now come from git's worktree registry.
+ *
+ * Selection deliberately does NO filtering: an earlier revision skipped worktrees that looked
+ * clean or pushed, which an agent could forge with one `git update-ref` or `git update-index
+ * --skip-worktree`. evaluateLocalBugbotGate already excludes empty diffs against a base resolved
+ * from the canonical remote, so exclusion happens against a signal the agent cannot write.
+ */
+
+const PRIMARY_ROOT = REPO;
+const DIRTY_ROOT = path.join(REPO, "scripts");
+const PUSHED_ROOT = path.join(REPO, "test");
+
+function nulListing(roots) {
+  return roots.map((root) => `worktree ${root}\0HEAD abc\0`).join("");
+}
+
+test("AIO-555: every existing registered worktree is a target, unfiltered", () => {
+  const roots = [PRIMARY_ROOT, DIRTY_ROOT, PUSHED_ROOT];
+  const selected = listGateTargets(PRIMARY_ROOT, () => nulListing(roots));
+  assert.deepEqual(selected, roots);
+});
+
+test("AIO-555: a forged origin/main or skip-worktree cannot drop a target", () => {
+  // Selection consults no ref, no upstream, and no `git status`, so the writes that emptied the
+  // target list in the first revision have nothing to act on: only `worktree list` is read.
+  const roots = [PRIMARY_ROOT, DIRTY_ROOT];
+  const gitFn = (args) => {
+    assert.deepEqual(args, ["worktree", "list", "--porcelain", "-z"]);
+    return nulListing(roots);
+  };
+  assert.deepEqual(listGateTargets(PRIMARY_ROOT, gitFn), roots);
+});
+
+test("AIO-555: a stale worktree registration is skipped, not fatal", () => {
+  const missing = path.join(tmpdir(), "aios-bugbot-does-not-exist-555");
+  rmSync(missing, { recursive: true, force: true });
+  const selected = listGateTargets(PRIMARY_ROOT, () => nulListing([missing, DIRTY_ROOT]));
+  assert.deepEqual(selected, [DIRTY_ROOT]);
+});
+
+test("AIO-555: a worktree path containing a newline survives NUL parsing", () => {
+  // `git worktree list --porcelain` does not quote paths; without -z this path would split into
+  // two bogus entries and the real worktree would be silently skipped.
+  const weird = path.join(REPO, "scripts");
+  const listing = `worktree ${weird}\0HEAD abc\0worktree ${PUSHED_ROOT}\0`;
+  assert.deepEqual(
+    listGateTargets(PRIMARY_ROOT, () => listing),
+    [weird, PUSHED_ROOT]
+  );
+});
+
+test("AIO-555: aggregation is fail-closed — one block outweighs a clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    {
+      status: "blocked",
+      cached: false,
+      fingerprint: "f1",
+      output: "High: boom",
+      worktree: "/wt/b",
+    },
+  ]);
+  assert.equal(merged.status, "blocked");
+  assert.deepEqual(merged.worktrees, ["/wt/b"]);
+  assert.match(merged.output, /\/wt\/b/);
+  assert.match(merged.output, /High: boom/);
+});
+
+test("AIO-555: an error outweighs a clear but not a block", () => {
+  assert.equal(
+    aggregateGateResults([
+      { status: "clear", verified: true, worktree: "/wt/a" },
+      { status: "error", reason: "review died", worktree: "/wt/b" },
+    ]).status,
+    "error"
+  );
+  assert.equal(
+    aggregateGateResults([
+      { status: "error", reason: "review died", worktree: "/wt/a" },
+      { status: "blocked", cached: false, output: "High", worktree: "/wt/b" },
+    ]).status,
+    "blocked"
+  );
+});
+
+test("AIO-555: an unrecognised status is an error, never a clear", () => {
+  const merged = aggregateGateResults([{ status: "weird", worktree: "/wt/a" }]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.reason, /refusing to treat as clear/);
+});
+
+test("AIO-555: a clear that is not verified is an error, never a clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    { status: "clear", verified: false, worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.reason, /\/wt\/b/);
+});
+
+test("AIO-555: an all-verified-clear sweep clears", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    { status: "skipped", reason: "no changes against Bugbot base", worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "clear");
+  assert.equal(merged.verified, true);
+});
+
+test("AIO-555: no target reviewed is skipped, not a positive clear", () => {
+  const empty = aggregateGateResults([]);
+  assert.notEqual(empty.status, "clear");
+  assert.equal(empty.status, "skipped");
+});
+
+test("AIO-555: a probe aggregates to a probe and keeps a fingerprint for dedup", () => {
+  const merged = aggregateGateResults([
+    { status: "probe", fingerprint: "aaa", worktree: "/wt/a" },
+    { status: "probe", fingerprint: "bbb", worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "probe");
+  assert.match(merged.fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(merged.fingerprints.length, 2);
 });
