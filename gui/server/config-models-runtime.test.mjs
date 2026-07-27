@@ -12,109 +12,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createServer } from "node:net";
 import { WebSocket } from "ws";
 import { RUNTIME_MODEL_CATALOGS } from "../../scripts/runtimes.mjs";
+// Shared with ws-session-guard.test.mjs — one spawn/boot helper, not two.
+import { withServer } from "./server-test-harness.mjs";
 
-const SERVER = fileURLToPath(new URL("./index.mjs", import.meta.url));
-const TOKEN = "test-token-aio536";
 const CLAUDE_MODELS = RUNTIME_MODEL_CATALOGS["claude-code"].models.map((m) => m.id);
 const OPENCODE_SEED = RUNTIME_MODEL_CATALOGS.opencode.models.map((m) => m.id);
-
-/** Minimal but real workspace root: aios.yaml is what marks a dir as a workspace. */
-function makeWorkspace(extraYaml = "") {
-  const dir = mkdtempSync(path.join(tmpdir(), "aio536-"));
-  writeFileSync(
-    path.join(dir, "aios.yaml"),
-    ["version: 1", 'brain_url: ""', 'team_id: ""', extraYaml].filter(Boolean).join("\n") + "\n"
-  );
-  return dir;
-}
-
-/** Reserve a free TCP port by binding :0 and immediately releasing it. */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-/**
- * Boot the real server on a free port and return a handle with the base URL, a
- * token-gated fetch, and a stop(). Readiness is taken from the startup banner
- * ("open: http://127.0.0.1:PORT/?token=…") rather than a sleep.
- */
-async function bootServer(repo) {
-  const port = await freePort();
-  const child = spawn(process.execPath, [SERVER, "--repo", repo, "--port", String(port)], {
-    cwd: repo,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AIOS_GUI_TOKEN: TOKEN },
-  });
-  let stderrTail = "";
-  child.stderr.on("data", (d) => {
-    stderrTail = (stderrTail + d).slice(-2000);
-  });
-  const base = await new Promise((resolve, reject) => {
-    let buf = "";
-    const timer = setTimeout(
-      () => reject(new Error(`server did not start in 30s: ${stderrTail}`)),
-      30000
-    );
-    child.stdout.on("data", (d) => {
-      buf += d;
-      const m = buf.match(/http:\/\/127\.0\.0\.1:(\d+)\//);
-      if (m) {
-        clearTimeout(timer);
-        resolve(`http://127.0.0.1:${m[1]}`);
-      }
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`server exited (${code}): ${stderrTail}`));
-    });
-  });
-  return {
-    base,
-    wsUrl: base.replace("http", "ws"),
-    async get(p) {
-      const res = await fetch(`${base}${p}${p.includes("?") ? "&" : "?"}token=${TOKEN}`);
-      return { status: res.status, body: await res.json() };
-    },
-    async post(p, payload) {
-      const res = await fetch(`${base}${p}?token=${TOKEN}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      return { status: res.status, body: await res.json() };
-    },
-    stop() {
-      child.kill("SIGKILL");
-    },
-  };
-}
-
-/** Run `fn` against a freshly booted server over a throwaway workspace. */
-async function withServer(extraYaml, fn) {
-  const repo = makeWorkspace(extraYaml);
-  const srv = await bootServer(repo);
-  try {
-    await fn(srv, repo);
-  } finally {
-    srv.stop();
-    rmSync(repo, { recursive: true, force: true });
-  }
-}
 
 const aiosYaml = (repo) => readFileSync(path.join(repo, "aios.yaml"), "utf8");
 
@@ -278,9 +184,9 @@ test("AC3: the runtime endpoint is token-gated", async () => {
 // ── AC7: the WS capability handshake downgrades honestly ─────────────────────
 
 /** Connect one WebSocket and resolve its `hello` frame. */
-function readHello(wsUrl) {
+function readHello(srv) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${TOKEN}`);
+    const ws = new WebSocket(`${srv.wsUrl}/ws?token=${srv.token}`);
     const timer = setTimeout(() => {
       ws.close();
       reject(new Error("no hello in 20s"));
@@ -306,7 +212,7 @@ function readHello(wsUrl) {
 
 test("AC7: opencode hello advertises memoryReviewer:false, a safety note, and its catalog", async () => {
   await withServer('agent_runtime: "opencode"', async (srv) => {
-    const hello = await readHello(srv.wsUrl);
+    const hello = await readHello(srv);
     assert.equal(hello.runtime, "opencode");
     assert.equal(hello.capabilities.memoryReviewer, false);
     assert.match(hello.safetyNote, /validated after each turn/);
@@ -318,7 +224,7 @@ test("AC7: opencode hello advertises memoryReviewer:false, a safety note, and it
 
 test("AC7 regression: claude-code hello is unchanged (reviewer on, no safety note)", async () => {
   await withServer("", async (srv) => {
-    const hello = await readHello(srv.wsUrl);
+    const hello = await readHello(srv);
     assert.equal(hello.runtime, "claude-code");
     assert.equal(hello.safetyNote, null);
     assert.equal(hello.capabilities.memoryReviewer, true);

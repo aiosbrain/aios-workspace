@@ -3,42 +3,18 @@
 // the friendly EADDRINUSE exit. Boots the real server against a throwaway workspace.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+// Shared with config-models-runtime.test.mjs — one spawn/boot helper, not two.
+import { startServer, waitForToken } from "./server-test-harness.mjs";
 
-const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.mjs");
 const PORT = 18000 + Math.floor(Math.random() * 2000);
 
 let repo;
 let child;
 let token;
-
-function startServer(port, repoDir) {
-  return spawn(process.execPath, [SERVER, "--repo", repoDir, "--port", String(port)], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ANTHROPIC_API_KEY: "" }, // adapter idles; no model calls in this test
-  });
-}
-
-function waitForToken(proc, timeoutMs = 10000) {
-  return new Promise((resolve, reject) => {
-    let out = "";
-    const t = setTimeout(() => reject(new Error(`server did not start:\n${out}`)), timeoutMs);
-    proc.stdout.on("data", (d) => {
-      out += d.toString();
-      const m = out.match(/token=([a-f0-9]+)/);
-      if (m) {
-        clearTimeout(t);
-        resolve(m[1]);
-      }
-    });
-    proc.on("exit", (code) => reject(new Error(`server exited ${code} before ready:\n${out}`)));
-  });
-}
 
 function connect(port, tok, session) {
   return new Promise((resolve, reject) => {
