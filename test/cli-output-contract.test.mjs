@@ -220,7 +220,7 @@ test("D: detectSafetyToken requires STRICT equality — the most fragile detecto
   // a space-separated word, a glyph, a reset sequence — turns approval into refusal.
   assert.equal(detectSafetyToken(`${SAFETY_APPROVED_TOKEN} - looks good`), false);
   assert.equal(detectSafetyToken(`${SAFETY_APPROVED_TOKEN}.`), false);
-  assert.equal(detectSafetyToken(`${SAFETY_APPROVED_TOKEN}[0m`), false, "a reset breaks it");
+  assert.equal(detectSafetyToken(`${SAFETY_APPROVED_TOKEN}\x1b[0m`), false, "a reset breaks it");
   assert.equal(detectSafetyToken(null), false);
 });
 
@@ -254,7 +254,7 @@ test("D: decoration in a captured verdict stream breaks each detector", () => {
 
 test("D: an ANSI-wrapped token is NOT detected — markers must be written raw", () => {
   // Proves markers cannot be routed through a colour helper.
-  const wrap = (s) => `[0;32m${s}[0m`;
+  const wrap = (s) => `\x1b[0;32m${s}\x1b[0m`;
   assert.equal(detectMergeToken(wrap(MERGE_READY_TOKEN)), false);
   assert.equal(detectSafetyToken(wrap(SAFETY_APPROVED_TOKEN)), false);
   assert.equal(detectSimplifyToken(wrap(SIMPLIFY_DONE_TOKEN)), null);
