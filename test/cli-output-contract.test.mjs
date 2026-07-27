@@ -18,6 +18,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { MERGE_READY_TOKEN, PLAN_READY_TOKEN } from "../scripts/relay-core.mjs";
 import {
@@ -25,6 +30,9 @@ import {
   BUGBOT_BLOCKED_TOKEN,
   BUGBOT_CLEAR_MARKER,
   BUGBOT_BLOCKED_MARKER,
+  detectBugbotClear,
+  detectBugbotBlocked,
+  emitBugbotHookResult,
 } from "../scripts/review-bugbot.mjs";
 import {
   SIMPLIFY_DONE_TOKEN,
@@ -32,7 +40,16 @@ import {
   detectSimplifyToken,
 } from "../scripts/simplify.mjs";
 import { detectMergeToken } from "../scripts/build.mjs";
-import { SAFETY_APPROVED_TOKEN, detectSafetyToken } from "../scripts/ship.mjs";
+import {
+  SAFETY_APPROVED_TOKEN,
+  SHIP_GATE_PLAN_MARKER,
+  SHIP_GATE_MERGE_MARKER,
+  detectSafetyToken,
+  emitShipGateMarker,
+} from "../scripts/ship.mjs";
+import { cmdConsolidateFindings } from "../scripts/consolidate-findings.mjs";
+
+const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── Class E: the emitted markers, byte for byte ─────────────────────────────
 
@@ -58,10 +75,150 @@ test("E: the two hook-protocol markers are distinguishable, not prefixes of each
   assert.ok(!BUGBOT_CLEAR_MARKER.includes(BUGBOT_BLOCKED_MARKER));
 });
 
+test("E: the real Bugbot hook emitter preserves exact bytes and stream separation", () => {
+  const stdout = [];
+  const stderr = [];
+  const streams = {
+    enabled: true,
+    stdout: (line) => stdout.push(line),
+    stderr: (line) => stderr.push(line),
+  };
+
+  emitBugbotHookResult(true, streams);
+  assert.deepEqual(stdout, [`\n${BUGBOT_CLEAR_MARKER}`]);
+  assert.deepEqual(stderr, []);
+
+  stdout.length = 0;
+  emitBugbotHookResult(false, streams);
+  assert.deepEqual(stdout, []);
+  assert.deepEqual(stderr, [`\n${BUGBOT_BLOCKED_MARKER}`]);
+
+  stderr.length = 0;
+  emitBugbotHookResult(true, { ...streams, enabled: false });
+  assert.deepEqual(stdout, [], "the marker is forbidden without --hook-protocol");
+  assert.deepEqual(stderr, []);
+});
+
+test("E: the real ship gate emitter writes exact undecorated marker lines", () => {
+  const lines = [];
+  emitShipGateMarker("plan", (line) => lines.push(line));
+  emitShipGateMarker("merge", (line) => lines.push(line));
+  assert.deepEqual(lines, [SHIP_GATE_PLAN_MARKER, SHIP_GATE_MERGE_MARKER]);
+  assert.equal(SHIP_GATE_PLAN_MARKER, "SHIP_GATE plan pending");
+  assert.equal(SHIP_GATE_MERGE_MARKER, "SHIP_GATE merge pending");
+  assert.throws(() => emitShipGateMarker("unknown", () => {}), /unknown ship gate marker/);
+});
+
+test("E: the real consolidator emits a final stdout verdict and returns its documented code", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-contract-consolidate-"));
+  const localReview = path.join(dir, "local-bugbot.md");
+  const out = path.join(dir, "findings.md");
+  writeFileSync(localReview, `${BUGBOT_CLEAR_TOKEN}\n`);
+  const logs = [];
+  const originalLog = console.log;
+
+  try {
+    console.log = (line = "") => logs.push(String(line));
+    const runGh = (args) => {
+      if (args[0] === "pr" && args[1] === "checks") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([{ name: "test", state: "SUCCESS", bucket: "pass" }]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "diff") return "diff --git a/x b/x\n+ok\n";
+      if (args[0] === "api" && args[1].endsWith("/commits")) {
+        return JSON.stringify({ sha: "head123", committed_at: "2026-07-27T00:00:00Z" });
+      }
+      if (args[0] === "api") return "[]";
+      throw new Error(`unexpected gh call: ${args.join(" ")}`);
+    };
+    const clearOutput = readFileSync(
+      path.join(REPO, "test", "fixtures", "consolidate", "agent-clear.md"),
+      "utf8"
+    );
+    const blockedOutput = readFileSync(
+      path.join(REPO, "test", "fixtures", "consolidate", "agent-blocked.md"),
+      "utf8"
+    );
+    const args = [
+      "--pr",
+      "423",
+      "--issue",
+      "AIO-423",
+      "--repo",
+      "acme/repo",
+      "--local-bugbot-review",
+      localReview,
+      "--out",
+      out,
+    ];
+    const deps = (modelOutput) => ({
+      runGh,
+      readReviewerPrompt: () => "Return a structured verdict.",
+      callPromptModel: async () => modelOutput,
+    });
+    const code = await cmdConsolidateFindings(REPO, args, deps(clearOutput));
+
+    assert.equal(code, 0);
+    assert.equal(logs.at(-1), "VERDICT=CLEAR", "verdict must be the final stdout line");
+    assert.ok(!logs.at(-1).includes("\u001b["), "verdict must not be styled");
+
+    logs.length = 0;
+    const blockedCode = await cmdConsolidateFindings(REPO, args, deps(blockedOutput));
+    assert.equal(blockedCode, 3);
+    assert.equal(logs.at(-1), "VERDICT=BLOCKED", "blocked verdict must be final on stdout");
+    assert.ok(!logs.at(-1).includes("\u001b["), "blocked verdict must not be styled");
+  } finally {
+    console.log = originalLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("E: the real leak gate preserves marker line shape and exit codes", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-contract-leak-"));
+  const terms = path.join(dir, "terms.sh");
+  const source = path.join(dir, "source.txt");
+  const gate = path.join(REPO, "scripts", "leak-gate.sh");
+  const term = "contract" + "-secret";
+  const run = (env) =>
+    spawnSync("bash", [gate, source], {
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+  const lastLine = (text) =>
+    String(text)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1);
+
+  try {
+    writeFileSync(terms, `STRONG='${term}'\nWORDS=''\nPATTERNS=''\n`);
+    writeFileSync(source, "ordinary content\n");
+    const clean = run({ AIOS_LEAK_TERMS_FILE: terms });
+    assert.equal(clean.status, 0);
+    assert.match(lastLine(clean.stdout), /^leak-gate: CLEAN\b/);
+
+    writeFileSync(source, `contains ${term}\n`);
+    const blocked = run({ AIOS_LEAK_TERMS_FILE: terms });
+    assert.equal(blocked.status, 1);
+    assert.match(lastLine(blocked.stdout), /^leak-gate: FAILED\b/);
+
+    const absent = path.join(dir, "absent-terms.sh");
+    const skipped = run({ AIOS_LEAK_TERMS_FILE: absent, AIOS_LEAK_TERMS_B64: "" });
+    assert.equal(skipped.status, 0);
+    assert.match(lastLine(skipped.stdout), /^leak-gate: SKIPPED\b/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ── Class D: the detection dialect, via the real detectors ──────────────────
 
-// Every Class-D detector reads the LAST NON-BLANK line, trimmed, anchored at line start.
-// These cases pin that dialect against the shipped implementations.
+// Class-D detectors intentionally use different dialects. These cases pin each dialect
+// against the shipped implementation instead of testing a copied, over-generalised rule.
 
 const REVIEW_PREAMBLE = "I reviewed the diff.\n\nLooks fine to me.\n";
 
@@ -108,14 +265,32 @@ test("D: detectSafetyToken requires STRICT equality — the most fragile detecto
   assert.equal(detectSafetyToken(null), false);
 });
 
-test("D: a decoration appended to a captured stream breaks EVERY Class-D detector", () => {
-  // The single rule the GRAIN writer facade must obey, stated as a test: never write to a
-  // stream that is being captured for token detection. A live region that collapses to a
-  // static line on completion would land exactly here.
+test("D: Bugbot CLEAR accepts only pure token repetitions across the whole capture", () => {
+  assert.equal(detectBugbotClear(BUGBOT_CLEAR_TOKEN), true);
+  assert.equal(detectBugbotClear(` ${BUGBOT_CLEAR_TOKEN} \n${BUGBOT_CLEAR_TOKEN}`), true);
+  assert.equal(detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}${BUGBOT_CLEAR_TOKEN}`), true);
+  assert.equal(detectBugbotClear(`None.\n${BUGBOT_CLEAR_TOKEN}`), false, "prose is a hedge");
+  assert.equal(detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}\n✓ done`), false);
+  assert.equal(detectBugbotClear(null), false);
+});
+
+test("D: Bugbot BLOCKED requires the entire trimmed capture to be exactly the token", () => {
+  assert.equal(detectBugbotBlocked(BUGBOT_BLOCKED_TOKEN), true);
+  assert.equal(detectBugbotBlocked(` \n${BUGBOT_BLOCKED_TOKEN}\n `), true);
+  assert.equal(detectBugbotBlocked(`finding\n${BUGBOT_BLOCKED_TOKEN}`), false);
+  assert.equal(detectBugbotBlocked(`${BUGBOT_BLOCKED_TOKEN}\n✓ done`), false);
+  assert.equal(detectBugbotBlocked(null), false);
+});
+
+test("D: decoration in a captured verdict stream breaks each detector", () => {
+  // Placement depends on the detector: after the token for last-line detection, anywhere
+  // in the whole capture for Bugbot's all-lines / whole-capture dialects.
   const decoration = "\n      ▞  review      done · 4.2s";
   assert.equal(detectMergeToken(`${MERGE_READY_TOKEN}${decoration}`), false);
   assert.equal(detectSimplifyToken(`${SIMPLIFY_DONE_TOKEN}${decoration}`), null);
   assert.equal(detectSafetyToken(`${SAFETY_APPROVED_TOKEN}${decoration}`), false);
+  assert.equal(detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}${decoration}`), false);
+  assert.equal(detectBugbotBlocked(`${BUGBOT_BLOCKED_TOKEN}${decoration}`), false);
 });
 
 test("D: an ANSI-wrapped token is NOT detected — markers must be written raw", () => {
@@ -124,6 +299,8 @@ test("D: an ANSI-wrapped token is NOT detected — markers must be written raw",
   assert.equal(detectMergeToken(wrap(MERGE_READY_TOKEN)), false);
   assert.equal(detectSafetyToken(wrap(SAFETY_APPROVED_TOKEN)), false);
   assert.equal(detectSimplifyToken(wrap(SIMPLIFY_DONE_TOKEN)), null);
+  assert.equal(detectBugbotClear(wrap(BUGBOT_CLEAR_TOKEN)), false);
+  assert.equal(detectBugbotBlocked(wrap(BUGBOT_BLOCKED_TOKEN)), false);
 });
 
 // ── token literals ──────────────────────────────────────────────────────────

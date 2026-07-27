@@ -53,10 +53,9 @@ three consumers — see `SECURITY.md`.
 
 ## Class D — detected by AIOS from captured output
 
-These are emitted by a **reviewer model or subprocess** and parsed by AIOS. Every detector
-uses the same dialect, and it is stricter than "on its own line":
-
-> **Last non-blank line, trimmed, anchored at line start.**
+These are emitted by a **reviewer model or subprocess** and parsed by AIOS. Detection is
+deliberately token-specific; there is no universal Class-D dialect. Do not generalise one
+row's tolerance to another.
 
 | Token | Detector | Match rule |
 |---|---|---|
@@ -65,20 +64,24 @@ uses the same dialect, and it is stricter than "on its own line":
 | `SIMPLIFY_NOOP` | `detectSimplifyToken` (`simplify.mjs`) | `^SIMPLIFY_NOOP\b` |
 | `PLAN_READY` | `relay.mjs`, `ship.mjs` | **strict equality** with the last non-blank line |
 | `SAFETY_APPROVED` | `detectSafetyToken` (`ship.mjs`) | **strict equality** |
-| `BUGBOT_CLEAR` | `review-bugbot.mjs` prompt contract | the model is instructed the token must be the FINAL line, alone, nothing after it |
+| `BUGBOT_CLEAR` | `detectBugbotClear` (`review-bugbot.mjs`) | **every non-blank line** must consist only of one or more repeated `BUGBOT_CLEAR` tokens; repetition tolerates a known streaming artifact, while any prose is rejected |
+| `BUGBOT_BLOCKED` | `detectBugbotBlocked` (`review-bugbot.mjs`) | **strict equality with the entire trimmed capture** |
 
-**The strict-equality tokens (`PLAN_READY`, `SAFETY_APPROVED`) are the most fragile thing in
-the CLI.** Any trailing character — a space, a glyph, a reset sequence, a collapsed spinner
-line — turns approval into "not approved" and jams the gate.
+**The strict-equality tokens (`PLAN_READY`, `SAFETY_APPROVED`, `BUGBOT_BLOCKED`) are the most
+fragile thing in the CLI.** Any non-whitespace decoration in their comparison scope — a
+glyph, a reset sequence, or a collapsed spinner line — turns the verdict into "not
+approved" and jams the gate. `BUGBOT_CLEAR` is equally hostile to prose or decoration even
+though it tolerates repeated bare tokens.
 
 ### The rule this imposes on the output layer
 
 > **Never write anything to a stream that is being captured for token detection.**
 
 A live region, a progress rail, a celebration, or a "collapse to a static line on
-completion" flourish that lands *after* the model's final line will break every Class-D
-detector. Concretely: the writer must close and clear any live region **before** a captured
-subprocess starts, and must not append to that stream when it ends.
+completion" flourish in a captured verdict stream will break the affected Class-D
+detector: after the final line for last-line detectors, or anywhere in the capture for the
+whole-capture Bugbot detectors. Concretely: the writer must close and clear any live region
+**before** a captured subprocess starts, and must not append to that stream when it ends.
 
 ---
 
