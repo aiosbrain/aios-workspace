@@ -128,7 +128,12 @@ fi
 # ── opt-in detail sink: the ONLY place matched content may be written ───────
 DETAIL_FILE="${AIOS_LEAK_GATE_DETAIL_FILE:-}"
 if [ -n "$DETAIL_FILE" ]; then
-  if : > "$DETAIL_FILE" 2>/dev/null; then
+  # The subshell matters: `: > "$DETAIL_FILE" 2>/dev/null` applies redirections left to
+  # right, so the open failure is reported to the REAL stderr before 2>/dev/null takes
+  # effect — and bash prefixes that diagnostic with this script's absolute path, which can
+  # itself contain a confidential directory segment. Redirecting the whole subshell keeps
+  # the diagnostic contained.
+  if ( : > "$DETAIL_FILE" ) 2>/dev/null; then
     chmod 600 "$DETAIL_FILE" 2>/dev/null || true
   else
     # Never fail the run over the debug sink — but never silently pretend it worked
@@ -243,7 +248,11 @@ else
   if [ -n "$DETAIL_FILE" ]; then
     echo "  full detail written to \$AIOS_LEAK_GATE_DETAIL_FILE (mode 0600)."
   else
-    echo "  to see it locally: AIOS_LEAK_GATE_DETAIL_FILE=/tmp/leak-detail.txt $0"
+    # A fixed relative string, never "$0": callers invoke this as an ABSOLUTE path, so $0
+    # would put the whole checkout path — which can itself contain a confidential directory
+    # segment — into the captured stdout that build/promote/timeline re-emit. Same
+    # disclosure class this script blocks for $ROOT and for match paths.
+    echo "  to see it locally: AIOS_LEAK_GATE_DETAIL_FILE=/tmp/leak-detail.txt scripts/leak-gate.sh"
   fi
   echo "leak-gate: FAILED — forbidden identifiers above must be removed."
   exit 1

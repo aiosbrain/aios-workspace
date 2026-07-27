@@ -57,6 +57,14 @@ function assertNoForbiddenBytes(out, context) {
         `Output must never contain the matched text; got:\n${out}`
     );
   }
+  // Absolute paths are the same disclosure class: a checkout can live under a
+  // confidentially-named directory, and callers invoke the gate by absolute path, so any
+  // echo of $0 or $ROOT would carry that name into the captured stdout they re-emit.
+  assert.ok(
+    !out.includes(REPO),
+    `the gate emitted its own absolute path (${context}) — a checkout directory can ` +
+      `itself be confidential; use a fixed relative string instead:\n${out}`
+  );
 }
 
 function termsFileIn(dir) {
