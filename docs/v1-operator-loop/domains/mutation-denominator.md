@@ -4,8 +4,16 @@ Governed by [`ENGINEERING-CONSTITUTION.md`](../../ENGINEERING-CONSTITUTION.md). 
 Test-infrastructure domain. Build-with: **sonnet / medium** — CI configuration against three
 well-understood files, with the correctness argument carried by the measurements below rather than
 by new design. Increment: **one reviewable PR** — `scripts/run-mutation.mjs` +
-`.github/workflows/mutation.yml` + `.github/workflows/ci.yml` + `test/mutation-config.test.mjs`.
-No production code changes.
+`.github/workflows/mutation.yml` + `.github/workflows/ci.yml` + `test/mutation-config.test.mjs` +
+this spec. No production code changes.
+
+> **Revision 2 (2026-07-27).** An adversarial review with local measurements corrected revision 1's
+> cost model: per-mutant cost is the group's **whole kill-command runtime**, not a flat ~3s, so
+> narrowing the mutate scope alone does not deliver feasible legs. This revision adds the
+> `nightlyTests` contract field (nightly kill command = the unit's own tests), re-derives every
+> projection from measured suite runtimes, moves `bugbot-security` into the deliberate-red column
+> (test speed is its blocker → **AIO-554**), and corrects the acceptance criteria. The
+> `nightlyExcludes` contract, matrix design, and access-governance stance are unchanged.
 
 ## Why
 
@@ -29,33 +37,54 @@ intended to.
 ### The cost model, and why this is systemic
 
 `configFor` sets `coverageAnalysis: "off"` for command-runner groups (Stryker cannot map
-`node:test` cases to mutants), so every mutant re-runs the group's whole command. Cost is therefore
-`mutants × suite × concurrency⁻¹`, and mutants scale with **lines of code in scope**, not with what
-the tests actually exercise. Calibrating against the artifact above — 3,503 mutants over 3,009
-lines (**1.16 mutants/line**), ~3s per mutant on a cold CI runner, `concurrency: 2` — projects
-every group:
+`node:test` cases to mutants), so every mutant re-runs the group's whole command:
 
-| group                | lines in scope | ~mutants | ~minutes                        |
-| -------------------- | -------------- | -------- | ------------------------------- |
-| access-governance    | 3,009          | 3,490    | **87** (actual: 3,503 / 89m41s) |
-| bugbot-security      | 2,055          | 2,383    | **59**                          |
-| update-safety        | 3,049          | 3,536    | **88**                          |
-| inbox-authorization  | 9,903          | 11,487   | **287**                         |
-| runtime-capabilities | 884            | 1,025    | 25                              |
+```
+campaign cost ≈ mutants × killCommandRuntime ÷ concurrency
+```
 
-The model predicts the one observed group to within **0.4%**. **Four of the five command-runner
-groups cannot finish in any reasonable CI budget**; `inbox-authorization` needs 4.8 hours and has
-therefore never been measured once. This is not one bad group — it is every group whose scope was
-declared as "the files this concerns" rather than "the unit this protects".
+**Both factors vary per group.** Mutants scale with lines of code in scope (~1.16 mutants/line from
+the artifact above), and the kill-command runtime is the group's whole test command — measured
+(2026-07-27, local M-series; the one CI calibration point is access-governance at 3.07s/mutant of
+compute for a 0.48s-local suite, i.e. 3,503 mutants in 89m41s at `concurrency: 2`):
+
+| group's kill command                                 | local runtime | dominated by                        |
+| ---------------------------------------------------- | ------------- | ----------------------------------- |
+| access-governance (4 files, 42 tests)                | 0.48s         | —                                   |
+| bugbot-security (2 files)                            | 14.7s         | `local-bugbot-gate.test.mjs` alone is 14.9s (spawns the real hook per case) |
+| update-safety (7 files)                              | 17.7s         | toolkit-update end-to-end git cases |
+| inbox-authorization (`test/operator-loop/*.test.mjs`) | 42.1s         | 73 files, 735 tests                 |
+| runtime-capabilities (4 files)                       | 0.33s         | —                                   |
+
+Projecting whole-group nightly campaigns with per-group runtimes (CI scaling bounded between
+"overhead-dominated" and "×5.4 suite slowdown", the two readings consistent with the one measured
+CI point):
+
+| group                | lines in scope | ~mutants | projected                             |
+| -------------------- | -------------- | -------- | ------------------------------------- |
+| access-governance    | 3,009          | 3,490    | **~90 min** (actual: 3,503 / 89m41s)  |
+| bugbot-security      | 2,055          | 2,383    | **~7–22 h**                           |
+| update-safety        | 3,049          | 3,536    | **~10–47 h**                          |
+| inbox-authorization  | 9,903          | 11,487   | **~80–360 h**                         |
+| runtime-capabilities | 884            | 1,025    | ~20–30 min                            |
+
+Revision 1 applied access-governance's ~3s/mutant to every group and concluded inbox needed 4.8
+hours; the truth is far worse, because a flat per-mutant cost only holds for sub-second suites.
+Either way the conclusion stands, stronger: **four of the five command-runner groups cannot finish
+in any reasonable CI budget**, and `inbox-authorization` has never been measured once. This is not
+one bad group — it is every group whose scope was declared as "the files this concerns" rather
+than "the unit this protects", killed by "every test that might be related" rather than the unit's
+own tests.
 
 ### Three live consequences
 
 1. **Nightly starvation.** The single 90-minute job died at 89m41s having produced one of six group
    reports. Groups 2–6 have never produced a score.
-2. **The PR-level lane silently no-ops on the riskiest file.** The `Changed-code mutation
+2. **The PR-level lane silently no-ops on the riskiest files.** The `Changed-code mutation
 (calibration)` job in `.github/workflows/ci.yml` (line 331) pairs `timeout-minutes: 20` with
-   `continue-on-error: true`. A PR touching `scripts/aios.mjs` needs ~75 minutes, so it times
-   out — and reports **green**. The gate looks strongest exactly where it is absent.
+   `continue-on-error: true`. A PR touching `scripts/aios.mjs` needs ~90 minutes, and one touching
+   `scripts/update.mjs` or an inbox module needs hours (umbrella-suite kill command), so the lane
+   times out — and reports **green**. The gate looks strongest exactly where it is absent.
 3. **The metric drove a real incident.** A whole-group score of 10.11% is uninterpretable, so a
    usable number can only be obtained by narrowing scope — precisely the "silent scope extension"
    retro (a 96.43% single-file `src/operator-loop/inbox/capability.ts` measurement documented as
@@ -64,113 +93,158 @@ declared as "the files this concerns" rather than "the unit this protects".
 
 ## The principle
 
-**Every group declares the safety unit it protects, and mutates that unit — not the files that
-happen to surround it.** A group's scope is a claim about what is verified; it must be narrow
-enough to be true.
+**Every group declares the safety unit it protects, mutates that unit — not the files that happen
+to surround it — and kills nightly mutants with the unit's own tests.** A group's scope is a claim
+about what is verified; it must be narrow enough to be true. The score then measures the quality
+of the unit's oracle, not the incidental kill rate of an umbrella suite.
 
-Applied, four of five groups need no code change at all, because their safety unit is already a
-module:
+Applied, four of five groups need only configuration (their safety unit is already a module), and
+one of those four is still blocked on oracle speed:
 
-| group                | declared safety unit                              | module exists?                         | scoped cost        |
-| -------------------- | ------------------------------------------------- | -------------------------------------- | ------------------ |
-| inbox-authorization  | `src/operator-loop/inbox/capability.ts` (175)     | **yes**                                | ~5 min             |
-| update-safety        | `scripts/toolkit-merge.mjs` — `decideMerge` (117) | **yes**                                | ~3 min             |
-| bugbot-security      | `hooks/local-bugbot-gate.mjs` (612)               | **yes**                                | ~18 min            |
-| runtime-capabilities | already scoped (884)                              | **yes**                                | ~25 min, unchanged |
-| access-governance    | `buildPlan`                                       | **no — trapped in `scripts/aios.mjs`** | needs extraction   |
+| group                | declared safety unit                              | nightly kill command                            | scoped cost                                 |
+| -------------------- | ------------------------------------------------- | ----------------------------------------------- | ------------------------------------------- |
+| inbox-authorization  | `src/operator-loop/inbox/capability.ts` (175)     | `inbox-capability.test.mjs` (0.19s)             | **~5–10 min** (+ one dist build)            |
+| update-safety        | `scripts/toolkit-merge.mjs` — `decideMerge` (117) | `toolkit-merge.test.mjs` (0.79s)                | **~3–7 min**                                |
+| runtime-capabilities | already scoped (884)                              | unchanged (0.33s)                               | ~20–30 min, unchanged                       |
+| bugbot-security      | `hooks/local-bugbot-gate.mjs` (612)               | its own test **is** the 14.9s → **AIO-554**     | **red at 45 min** until the oracle is fast  |
+| access-governance    | `buildPlan`                                       | **no module — trapped in `scripts/aios.mjs`**   | **red at 45 min** until extraction (AIO-540) |
 
 `scripts/aios.mjs` is the **only** place a refactor sits on the critical path, and that is
 [`safety-unit-extraction.md`](./safety-unit-extraction.md) (AIO-540). This spec deliberately does
 **not** introduce a Stryker line-range mechanism to paper over it: a line range is a coordinate,
 not a boundary, and building one here only to delete it in AIO-540 is throwaway work that leaves a
-speculative parser behind.
+speculative parser behind. `bugbot-security` is the dual case: its unit is a module but its oracle
+spawns the real hook per test case, so no test *selection* can make the leg fit — that is a test
+*speed* problem, extracted to **AIO-554** the same way the access-governance module problem is
+extracted to AIO-540.
 
 ## Dependencies
 
 - None blocking. This spec ships alone and improves the lane on its own.
-- **Not** a prerequisite of AIO-540 and not blocked by it: AIO-540 fixes the one remaining group
-  (access-governance) and the two can land in either order or in parallel.
+- **Not** a prerequisite of AIO-540 and not blocked by it: AIO-540 fixes the access-governance
+  group and the two can land in either order or in parallel. Likewise **AIO-554** (bugbot oracle
+  speed) lands independently and turns the bugbot leg green afterwards.
 - Both should precede the AIO-531 / AIO-532 build waves, which assert against nightly scores that
   do not yet exist.
 
 ## Reuse (shipped, KEEP)
 
 - `scripts/run-mutation.mjs` — `MUTATION_GROUPS`, `configFor`, `toMutateTarget`, `runAllCampaigns`,
-  `main`. The orchestration is correct; only per-group scope and job isolation change.
+  `main`. The orchestration is correct; only per-group scope, nightly kill commands, and job
+  isolation change.
 - `.github/workflows/mutation.yml` — the nightly job, its split cache restore/save, and the
   `if: always()` artifact upload. The matrix reuses this job body.
 - `.github/workflows/ci.yml` line 331 — the `Changed-code mutation (calibration)` job.
 - `test/mutation-config.test.mjs` — the config-integrity suite, including line 123's test
   _"the sync-plan safety gate lives in scripts/aios.mjs and is mutation-covered"_, which must stay
-  true (access-governance keeps `scripts/aios.mjs` in scope here — see Scope).
+  true (access-governance keeps `scripts/aios.mjs` in scope here — see Scope), and its
+  `globToRegExp`/`matchesTrackedFile` helpers, which the new assertions reuse.
 - `configFor` line 167 — `breakThreshold` applies only when `mutate.length === 1`. Scoping
-  `inbox-authorization` to its single declared unit therefore **activates** the already-calibrated
-  `dist/operator-loop/inbox/capability.js: 90` floor, turning that group from advisory to enforcing
-  as a side effect of telling the truth about its scope.
+  `inbox-authorization` to its single declared unit therefore **activates** the calibrated
+  `dist/operator-loop/inbox/capability.js: 90` floor. One caveat revision 1 missed: that floor was
+  calibrated with the full operator-loop suite as the killer. With the narrowed `nightlyTests`
+  killer the score can only drop, so the calibration dispatch **re-measures before the floor is
+  trusted**: if the unit test alone scores < 90, widen `nightlyTests` to the capability-exercising
+  subset (`inbox-audit`, `inbox-journal-store`, `inbox-capability`, `inbox-outbox`,
+  `inbox-journal-replay`, `inbox-reply-policy`, `inbox-outbox-gog`) rather than silently lowering
+  the floor.
 
 ## Contract
 
-Each entry in `MUTATION_GROUPS` gains one optional field:
+Each entry in `MUTATION_GROUPS` gains two optional fields:
 
 ```
-nightlyExcludes: string[]   // files matched by `match` that are deliberately NOT mutated
+nightlyExcludes: string[]  // files matched by `match` that are deliberately NOT mutated nightly
+nightlyTests?: string[]    // nightly kill command: the unit's own tests (subset of `tests`)
 ```
 
-This is the anti-silent-scope-extension mechanism, and it is the load-bearing part of this spec.
-Narrowing scope without recording what was dropped is exactly the inference that caused the
-incident. So:
+`nightlyExcludes` is the anti-silent-scope-extension mechanism, and it is the load-bearing part of
+this spec. Narrowing scope without recording what was dropped is exactly the inference that caused
+the incident. So:
 
 - `test/mutation-config.test.mjs` asserts that **every tracked file matching a group's `match`
-  regex appears in either `nightly` or `nightlyExcludes`**. A file cannot silently fall out of
-  mutation coverage, and a newly added file in a critical directory fails the build until someone
-  states which side of the line it is on.
+  regex appears in either `nightly` or `nightlyExcludes`** (glob entries expand via the existing
+  `globToRegExp`). A file cannot silently fall out of mutation coverage, and a newly added file in
+  a critical directory fails the build until someone states which side of the line it is on.
+- Every `nightlyExcludes` entry must itself be tracked, matched by the group's regex, and disjoint
+  from `nightly` — a dead or redundant entry is a test failure, not noise.
 - Each `nightlyExcludes` entry carries an inline comment naming why it is out of scope and, where
   applicable, the issue that would bring it back.
 - `nightlyExcludes` is documentation with teeth, not configuration: it changes no campaign
   behavior, only what the config is allowed to leave unsaid.
 
+`nightlyTests` is the other half of the denominator fix — the kill-command side:
+
+- When present, the **nightly** campaign's command runs only these tests; the changed-code lane
+  always keeps the group's umbrella `tests` (a PR touching any matched file still gets the widest
+  available oracle).
+- Every `nightlyTests` entry must be tracked and a subset of `tests` — the nightly oracle cannot
+  drift away from the reviewed test set.
+- Without it, per-mutant cost is the umbrella suite and the matrix legs above are infeasible; with
+  it, the score finally means "how good are this unit's own tests".
+
 ## Build (net-new)
 
-- **`scripts/run-mutation.mjs`** — add `nightlyExcludes` to the four narrowed groups and reduce
-  their `nightly` arrays to the declared unit:
-  - `inbox-authorization` → `["src/operator-loop/inbox/capability.ts"]`; excludes the other 13
-    `src/operator-loop/inbox/*.ts` files and `scripts/inbox.mjs`.
-  - `update-safety` → `["scripts/toolkit-merge.mjs"]`; excludes `scripts/update.mjs`,
+- **`scripts/run-mutation.mjs`** — every group gains `nightlyExcludes` (empty where nothing is
+  dropped); the narrowed groups gain `nightlyTests`; `nightly` arrays reduce to the declared unit:
+  - `inbox-authorization` → `nightly: ["src/operator-loop/inbox/capability.ts"]`,
+    `nightlyTests: ["test/operator-loop/inbox-capability.test.mjs"]`; excludes `scripts/inbox.mjs`
+    and the other **20** `src/operator-loop/inbox/*.ts` files.
+  - `update-safety` → `nightly: ["scripts/toolkit-merge.mjs"]`,
+    `nightlyTests: ["test/toolkit-merge.test.mjs"]`; excludes `scripts/update.mjs`,
     `scripts/toolkit-pull.mjs`, `scripts/toolkit-manifest.mjs`, `scripts/toolkit-meta.mjs`.
-  - `bugbot-security` → `["hooks/local-bugbot-gate.mjs"]`; excludes `scripts/review-bugbot.mjs`.
+  - `bugbot-security` → `nightly: ["hooks/local-bugbot-gate.mjs"]`; excludes
+    `scripts/review-bugbot.mjs`. No `nightlyTests` — the unit's own test is the cost (AIO-554);
+    the leg is a deliberate red until that lands.
   - `runtime-capabilities` — unchanged (already fits); `nightlyExcludes: []`.
   - `access-governance` — **unchanged in this PR**; see Scope.
-- **`test/mutation-config.test.mjs`** — add the `nightly ∪ nightlyExcludes ⊇ match` completeness
-  assertion above. Existing tests keep passing unmodified.
+  - `nodeCommand` gains the nightly flag (already threaded through `configFor`) and uses
+    `nightlyTests` when set.
+- **`test/mutation-config.test.mjs`** — the completeness assertion (`nightly ∪ nightlyExcludes ⊇
+  match` over tracked files), the `nightlyExcludes` hygiene assertions, the `nightlyTests ⊆ tests`
+  assertion, a check that nightly configs use `nightlyTests` while changed-code configs use
+  `tests`, and a parity check that `mutation.yml`'s matrix lists exactly the `MUTATION_GROUPS`
+  names. Existing tests keep passing unmodified.
 - **`.github/workflows/mutation.yml`** — convert the single job to
   `strategy: { matrix: { group: [access-governance, bugbot-security, update-safety,
 inbox-authorization, runtime-capabilities, client-auth-permissions] }, fail-fast: false }`,
-  running `node scripts/run-mutation.mjs --nightly --group ${{ matrix.group }}`. Per-group
-  `timeout-minutes: 45`; cache key and artifact name gain a `-${{ matrix.group }}` suffix so six
-  concurrent legs cannot collide on one cache key or clobber one artifact.
-- **`.github/workflows/ci.yml`** — raise the changed-code lane to `timeout-minutes: 45`, so a PR
-  touching a large file produces a real result instead of a timeout reported as success. Keep
-  `continue-on-error: true` (the lane is explicitly advisory/calibration).
+  running `node scripts/run-mutation.mjs --nightly --group ${{ matrix.group }}`. The 45-minute
+  timeout goes on the campaign **step**, not the job (a job-level timeout marks the run *cancelled*
+  and skips `if: always()` cache-save/upload — both observed nightlies read "cancelled" for this
+  reason); the job gets ~55 as a backstop. The cache key inserts the group **before** the sha —
+  `stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}`
+  with a matching restore-keys prefix — because a plain suffix after the sha would let restore-keys
+  cross-restore another group's incremental state. Artifact name gains `-${{ matrix.group }}`. A
+  comment names the two expected-red legs and their unblocking issues (AIO-540, AIO-554).
+- **`.github/workflows/ci.yml`** — raise the changed-code lane to `timeout-minutes: 45`. Keep
+  `continue-on-error: true` (the lane is explicitly advisory/calibration). Honesty note: this
+  raise helps mid-size files; it does **not** make an `scripts/aios.mjs`-touching PR complete
+  (~90 min) — that too is AIO-540's payoff — and umbrella-suite groups stay slow in this lane
+  until their PR-lane cost model is revisited (Deferred).
 
 ## Scope
 
-**In:** the `nightlyExcludes` contract and its completeness test, the four group re-scopings, the
-nightly matrix, and the two timeout raises.
+**In:** the `nightlyExcludes` + `nightlyTests` contract and their assertions, the four group
+re-scopings, the nightly matrix, and the two timeout raises.
 
-**Deliberately unchanged: `access-governance`.** Its declared unit has no module, so the honest
-options are to leave it whole-file (the leg fails visibly at 45 minutes) or to drop
-`scripts/aios.mjs` from the group. **This spec chooses the visible failure.** Dropping the file
-would make the leg green while silently removing the sync-plan safety gate from mutation coverage —
-the exact inference this spec exists to prevent, and it would falsify line 123 of
-`test/mutation-config.test.mjs`. A red leg that means "this group is genuinely not measured" is
-strictly better than the current state, where the same fact is hidden inside one truncated job.
-AIO-540 turns it green by making the claim true.
+**Deliberately red: `access-governance` and `bugbot-security`.** Access-governance's declared unit
+has no module, so the honest options are to leave it whole-file (the leg fails visibly at 45
+minutes) or to drop `scripts/aios.mjs` from the group. **This spec chooses the visible failure.**
+Dropping the file would make the leg green while silently removing the sync-plan safety gate from
+mutation coverage — the exact inference this spec exists to prevent, and it would falsify line 123
+of `test/mutation-config.test.mjs`. Bugbot-security gets the same treatment for the dual reason:
+its oracle is intrinsically too slow (14.9s per mutant run), and no green obtainable tonight would
+mean anything. A red leg that means "this group is genuinely not measured" is strictly better than
+the current state, where the same fact is hidden inside one truncated job. AIO-540 turns the first
+leg green by making its claim true; AIO-554 turns the second green by making its oracle fast.
 
 **Deferred:** widening any narrowed group back out once its unit scores well (each is a separate,
 measured decision recorded in `nightlyExcludes`); re-calibrating `breakThreshold` away from 0 for
 multi-file campaigns; `client-auth-permissions` scoping (Vitest + `coverageAnalysis: "perTest"` is
-a different cost model and is not known to be starved); nightly-schedule reliability — GitHub
-silently skipped the 2026-07-27 02:23 UTC run entirely and fired the 2026-07-26 run 3h20m late, a
+a different cost model and is not known to be starved — its first measured leg duration falls out
+of the calibration dispatch for free); a PR-lane cost model for umbrella-suite groups (incremental
+mode or unit-scoped changed-code runs); nightly-schedule reliability — GitHub fired the 2026-07-26
+run 3h20m late and the 2026-07-27 run 3h39m late (both then cancelled at the 90-minute timeout), a
 real gap but a detection problem, not a denominator one.
 
 ## Tier safety
@@ -182,8 +256,9 @@ default-deny on missing `access:`) and `inbox-authorization` (the capability bro
 load-bearing invariant is that **no group's declared safety unit is narrowed away**.
 `access-governance` keeps `scripts/aios.mjs` in scope precisely for this reason, and
 `inbox-authorization` narrows _onto_ its safety unit rather than away from it, gaining an enforcing
-90% floor in the process. The `nightlyExcludes` completeness test is what keeps this checkable
-rather than asserted.
+90% floor in the process (subject to the re-measurement caveat in Reuse — the floor may only be
+relaxed with recorded evidence, never silently). The `nightlyExcludes` completeness test is what
+keeps this checkable rather than asserted.
 
 ## Acceptance (observable)
 
@@ -192,24 +267,35 @@ rather than asserted.
   completeness assertion is live and a file cannot silently leave coverage.
 - `node scripts/run-mutation.mjs --nightly --group inbox-authorization --list` shows exactly
   `dist/operator-loop/inbox/capability.js`, and the generated
-  `.stryker-tmp/inbox-authorization.conf.json` shows `thresholds.break: 90` — the calibrated floor
-  now enforcing, not advisory.
-- One nightly run produces **six** `mutation-report-<group>` artifacts, one per matrix leg.
-- `inbox-authorization`, `update-safety`, and `bugbot-security` each complete and report a score
-  for the **first time**, in **under 45 minutes** each (projected ~5, ~3, ~18).
-- The `access-governance` leg fails on timeout **in isolation**, without preventing the other five
-  legs from reporting — the behavior the single-job layout made impossible.
+  `.stryker-tmp/inbox-authorization.conf.json` shows `thresholds.break: 90` and a kill command
+  containing only `test/operator-loop/inbox-capability.test.mjs` — the calibrated floor now
+  enforcing against the unit's own oracle (after the re-measurement check above).
+- One nightly run produces a `mutation-report-<group>` artifact for **every leg that completes** —
+  expected: four (`inbox-authorization`, `update-safety`, `runtime-capabilities`,
+  `client-auth-permissions`). A timed-out leg writes no JSON report (the reporter runs at
+  completion), so the two red legs upload nothing; **six** artifacts is the post-AIO-540/AIO-554
+  end state, not this PR's.
+- `inbox-authorization` and `update-safety` each complete and report a score for the **first
+  time**, in **under 45 minutes** each (projected ~5–10 and ~3–7).
+- The `access-governance` and `bugbot-security` legs fail on their step timeout **in isolation**,
+  as step failures (not run-level cancellations), without preventing the other legs from
+  reporting — the behavior the single-job layout made impossible.
 - `.github/workflows/ci.yml` shows `timeout-minutes: 45` on the changed-code lane.
-- The six per-group scores are recorded in the PR body as the first complete campaign baseline.
+- All six per-leg outcomes — four scores plus the two expected timeouts — are recorded in the PR
+  body as the first complete campaign baseline.
 
 ## Implementation
 
-1. Add `nightlyExcludes` to `MUTATION_GROUPS` and the completeness assertion to
-   `test/mutation-config.test.mjs`, with every group's excludes filled in at current scope so the
-   test passes before any scope changes. Tests green.
+1. Add `nightlyExcludes` (+ assertions) to `MUTATION_GROUPS` and `test/mutation-config.test.mjs`,
+   with every group's excludes filled in at current scope so the test passes before any scope
+   changes. Tests green.
 2. Narrow `inbox-authorization`, `update-safety`, and `bugbot-security` to their declared units,
-   moving the dropped files into `nightlyExcludes` with inline reasons.
-3. Matrix `.github/workflows/mutation.yml` (per-group cache key, artifact name, 45m timeout).
+   moving the dropped files into `nightlyExcludes` with inline reasons; add `nightlyTests` to the
+   first two and thread the nightly flag through `nodeCommand`.
+3. Matrix `.github/workflows/mutation.yml` (per-group cache key with the group before the sha,
+   per-group artifact name, step-level 45m timeout, expected-red comment).
 4. Raise the `.github/workflows/ci.yml` changed-code lane timeout to 45m.
-5. Dispatch the nightly manually (`gh workflow run mutation.yml`) and record all six per-group
-   outcomes — five scores plus the expected access-governance timeout — in the PR body.
+5. Dispatch the nightly manually from the PR branch (`gh workflow run mutation.yml --ref <branch>`)
+   as the calibration run: verify the four completing legs and their durations, check the inbox
+   score against the 90 floor (widen `nightlyTests` per Reuse if it dips), confirm both red legs
+   fail in isolation, and record all six outcomes in the PR body.
