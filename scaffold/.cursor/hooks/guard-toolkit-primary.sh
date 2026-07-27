@@ -126,26 +126,25 @@ if [ "$MODE" = "pre_command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
-  if path_under_toolkit "$TDIR"; then
-    set -- $(probe "$TDIR"); KIND=${1:-none}
-    if [ "$KIND" = "primary" ]; then
-      printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
-      exit $?
-    fi
-  fi
 
-  # ── shell file mutations aimed at the toolkit primary from elsewhere (>, >>, cp,
-  # mv, rm, sed -i, tee, …). pre_edit blocks Write/Edit into the primary; this closes
-  # the equivalent shell route. Commands whose cwd/-C target IS the primary were
-  # already delegated above, so only explicit toolkit paths can match here — bare
-  # words resolve under the caller's own cwd and never hit the toolkit prefix.
-  CANDIDATES=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
-  if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install)[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
+  # ── shell file mutations aimed at the toolkit primary (>, >>, cp, mv, rm, sed -i,
+  # tee, curl -o, …). pre_edit blocks Write/Edit into the primary; this closes the
+  # equivalent shell route. Runs BEFORE the git-discipline delegation so a primary
+  # cwd/-C target cannot skip it (guard-worktree pre_command is git-only). Relative
+  # candidates resolve against TDIR, so `cd <toolkit> && echo x > file` is caught.
+  # Known limits (defense-in-depth, not the sole boundary — the pre-commit primary
+  # guard and pre_edit hook remain authoritative): interpreter one-liners
+  # (node -e / python -c), arbitrary command substitution, and variables other than
+  # $AIOS_TOOLKIT_DIR are not evaluated.
+  SCAN=$(printf '%s' "$CMD" | sed "s|\${AIOS_TOOLKIT_DIR}|$TOOLKIT|g; s|\$AIOS_TOOLKIT_DIR|$TOOLKIT|g")
+  MUTATORS='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
+  CANDIDATES=$(printf '%s' "$SCAN" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
+  if printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])('"$MUTATORS"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
     CANDIDATES="$CANDIDATES
-$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF')"
-  elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+$(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$MUTATORS|sed|cp|mv|rsync")"
+  elif printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
     CANDIDATES="$CANDIDATES
-$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+$(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
   fi
   if [ -n "$(printf '%s' "$CANDIDATES" | awk 'NF')" ]; then
     for tok in $(printf '%s\n' "$CANDIDATES" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
@@ -156,7 +155,7 @@ $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~
       esac
       case "$tok" in
         /*) : ;;
-        *) tok="$CWD/$tok" ;;
+        *) tok="$TDIR/$tok" ;;
       esac
       path_under_toolkit "$tok" || continue
       _pd=$tok; [ -d "$_pd" ] || _pd=$(dirname "$tok")
@@ -168,6 +167,15 @@ $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~
       block "shell write targeting toolkit primary checkout" "Command: $CMD
 Attempted path: $tok"
     done
+  fi
+
+  # ── git discipline: delegate to guard-worktree when the target is toolkit primary
+  if path_under_toolkit "$TDIR"; then
+    set -- $(probe "$TDIR"); KIND=${1:-none}
+    if [ "$KIND" = "primary" ]; then
+      printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
+      exit $?
+    fi
   fi
   exit 0
 fi
