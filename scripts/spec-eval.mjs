@@ -472,7 +472,11 @@ export function runDeterministicChecks(specText, { repo } = {}) {
     hasHeading(/\b(scope|deferred|out of scope|non-?goals|not doing|outcomes?)\b/i) ||
     /\b(out of scope|deferred|non-?goals?|in scope)\b/i.test(specText);
   if (!scopePresent) {
-    add("SR5", "blocker", "scope/deferred not stated — declare what is in and what is cut (## Scope or ## Outcomes)");
+    add(
+      "SR5",
+      "blocker",
+      "scope/deferred not stated — declare what is in and what is cut (## Scope or ## Outcomes)"
+    );
   }
 
   // SR2 advisory — Automated subsection should name observable checks when present
@@ -1377,7 +1381,7 @@ export async function cmdSpecInit(repo, args) {
     }
   }
   if (!outPath) {
-    console.error(c.red("error: output path required — aios spec init <path> [--title \"...\"]"));
+    console.error(c.red('error: output path required — aios spec init <path> [--title "..."]'));
     process.exit(4);
   }
   const abs = path.isAbsolute(outPath) ? outPath : path.join(repo, outPath);
@@ -1402,7 +1406,7 @@ const HELP = [
   "usage:",
   "  aios spec eval <file|dir|glob> [--tier full|deterministic] [--concurrency N] [--publishable] [--json] [--no-llm] [--rubric <path>]",
   "  aios spec fix  <file> [--tier full|deterministic] [--budget N] [--write | --out <path>] [--no-llm] [--rubric <path>]",
-  "  aios spec init <path> [--title \"...\"]  write aios-issue-template.md scaffold",
+  '  aios spec init <path> [--title "..."]  write aios-issue-template.md scaffold',
   "  aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]",
   "  aios spec publish AIO-<n> <candidate> --eval-artifact <json> --expected-remote-sha <sha256> [--dry-run]",
   "",

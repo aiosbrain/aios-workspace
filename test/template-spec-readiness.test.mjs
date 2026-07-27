@@ -3,12 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  existsSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +37,10 @@ test("unfilled template fails deterministic SR3 (placeholder integration path)",
   const text = readFileSync(TEMPLATE, "utf8");
   const findings = runDeterministicChecks(text, { repo: REPO });
   const blockers = findings.filter((f) => f.severity === "blocker");
-  assert.ok(blockers.some((f) => f.ruleId === "SR3"), blockers.map((f) => f.detail).join("; "));
+  assert.ok(
+    blockers.some((f) => f.ruleId === "SR3"),
+    blockers.map((f) => f.detail).join("; ")
+  );
 });
 
 test("filled aios-issue fixture is deterministic-clean (--no-llm → exit 3)", () => {

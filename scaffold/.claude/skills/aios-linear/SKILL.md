@@ -49,11 +49,11 @@ Author specs with the canonical template in `docs/agentic-ergonomics/aios-issue-
 Use `patch-desc` when an agent must update part of a description without wiping verification checklists:
 
 ```markdown
-<<<<<<< SEARCH
+ <<<<<<< SEARCH
 (old exact text)
-=======
+ =======
 (new text)
->>>>>>> REPLACE
+ >>>>>>> REPLACE
 ```
 
 ## Agentic Linear factory (triage → batches → closeout)
