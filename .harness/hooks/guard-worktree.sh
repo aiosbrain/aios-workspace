@@ -18,10 +18,11 @@
 #                  (strict: any branch; default-ok: non-default branch only). The
 #                  command's TARGET repo is resolved from `git -C <dir>` / a leading
 #                  `cd <dir> &&`, not the session cwd.
-#   pre_edit     — block edits when HEAD is a non-default branch (you branched into
-#                  the primary). Editing on the default branch is allowed (config /
-#                  rare hotfix); basenames in HARNESS_PRIMARY_EXEMPT are always
-#                  allowed. Each edited path is classified by its own repo.
+#   pre_edit     — block edits in the primary checkout. default-ok: only when HEAD is
+#                  a non-default branch (you branched into the primary). strict: every
+#                  primary edit (including on the default branch). Basenames in
+#                  HARNESS_PRIMARY_EXEMPT are always allowed. Each edited path is
+#                  classified by its own repo.
 #
 # The default branch is HARNESS_DEFAULT_BRANCH if set, else auto-detected from
 # origin/HEAD, else init.defaultBranch, else the main|master allowlist. Detached
@@ -29,6 +30,7 @@
 #
 # Overrides: HARNESS_ALLOW_PRIMARY_CHECKOUT=1 disables the guard entirely.
 #            HARNESS_PRIMARY_COMMIT_POLICY=strict blocks every primary commit.
+#            HARNESS_PRIMARY_EDIT_POLICY=strict blocks every primary edit (incl. main).
 #            HARNESS_PRIMARY_EXEMPT (default `aios.yaml`) space-separated basenames.
 set -u
 
@@ -189,13 +191,20 @@ while IFS= read -r p || [ -n "$p" ]; do
   [ -d "$pdir" ] || pdir="$CWD"
   set -- $(probe "$pdir"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || continue
-  is_default_branch "$BRANCH" "$pdir" && continue
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" != "strict" ]; then
+    is_default_branch "$BRANCH" "$pdir" && continue
+  fi
   base=$(basename "$p")
   _exempt=0
   for e in $EXEMPT_BASENAMES; do [ "$base" = "$e" ] && _exempt=1; done
   [ "$_exempt" = "1" ] && continue
-  block "editing '$p' on non-default branch '$BRANCH' in the primary checkout" \
-    "You are on a feature branch checked out in the primary checkout — feature work belongs in a linked worktree."
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
+    block "editing '$p' in the primary checkout (branch '$BRANCH', strict edit policy)" \
+      "The primary checkout is read-only for agents — feature work belongs in a linked worktree."
+  else
+    block "editing '$p' on non-default branch '$BRANCH' in the primary checkout" \
+      "You are on a feature branch checked out in the primary checkout — feature work belongs in a linked worktree."
+  fi
 done <<EOF
 $FILE_PATHS
 EOF

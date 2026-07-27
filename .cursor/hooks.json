@@ -1,7 +1,57 @@
 {
+  "$comment": "Toolkit product repo: full harness adapter with strict primary-checkout edit/commit policies, plus the local Bugbot stop gate. IC workspaces ship scaffold/.cursor/hooks.json instead (cross-repo guard only).",
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor session_start inject-context.sh",
+        "timeout": 15
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_command guard-destructive.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_command guard-worktree.sh",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|StrReplace",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-secrets.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|StrReplace",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor pre_edit guard-protected-paths.sh",
+        "timeout": 30,
+        "failClosed": true
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|StrReplace",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/run-hook.sh\" cursor post_edit post-edit-format.sh",
+        "timeout": 120
+      }
+    ],
     "stop": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
+        "timeout": 600,
+        "loop_limit": 5
+      },
       {
         "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
         "timeout": 86400

@@ -128,6 +128,8 @@ printf '%s' "$(wpc "$WT" 'git commit -m x')" | HARNESS_PRIMARY_COMMIT_POLICY=str
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main commit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main commit"; fi
 t "allows commit inside worktree"     0 "$H/guard-worktree.sh" "$(wpc "$WT/wt" 'git commit -m x')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
+printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
 t "allows edit inside worktree"       0 "$H/guard-worktree.sh" "$(wpe "$WT/wt" "$WT/wt/a.txt")"
 t "no-op outside a git repo"          0 "$H/guard-worktree.sh" "$(wpe /tmp /tmp/x.txt)"
 tc "codex adapter blocks checkout -b" 2 pre_command guard-worktree.sh "$(jq -cn --arg cwd "$WT" '{tool_name:"Bash",tool_input:{command:"git checkout -b feat/adapter"},cwd:$cwd}')"
