@@ -545,6 +545,118 @@ export function evaluateLocalBugbotGate({
   }
 }
 
+/**
+ * Select, from git state alone, the worktrees this gate is responsible for.
+ *
+ * Target selection must not come from the agent (see `main`): an agent that could name the
+ * directory to review could dodge review entirely by naming a clean one. But anchoring to the
+ * session's start directory is equally wrong — CLAUDE.md §5 requires all work to happen in a
+ * linked worktree, so the session directory is normally the PRIMARY checkout, which is the one
+ * tree the pre-commit guard forbids committing to. Pinned there, the gate reviews a tree that by
+ * construction holds no work, and never sees the change it is meant to gate.
+ *
+ * So: enumerate the repo's registered worktrees — git state, not agent input — and return every
+ * one holding work that has not yet reached the remote (uncommitted changes, or commits absent
+ * from its upstream). Once a branch is pushed, the PR-level gates (CI, cloud Bugbot, CodeRabbit)
+ * own it; a local pre-PR gate owns exactly what has not reached them yet.
+ *
+ * This is strictly stronger than pinning: the agent cannot choose the target, and cannot hide work
+ * by changing directory, because every in-play worktree is reviewed.
+ */
+export function listInPlayWorktrees(projectDir, gitFn = git) {
+  const listing = gitFn(["worktree", "list", "--porcelain"], projectDir);
+  const roots = listing
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim())
+    .filter(Boolean);
+
+  const inPlay = [];
+  for (const root of roots) {
+    // A stale registration (directory deleted without `git worktree prune`) holds no work and
+    // must not fail the whole gate.
+    if (!existsSync(root)) continue;
+    let dirty;
+    try {
+      dirty = gitFn(["status", "--porcelain"], root);
+    } catch {
+      continue;
+    }
+    if (dirty || hasUnpushedCommits(root, gitFn)) inPlay.push(root);
+  }
+  return inPlay;
+}
+
+function hasUnpushedCommits(root, gitFn) {
+  const ahead = (range) => {
+    try {
+      const parsed = Number.parseInt(gitFn(["rev-list", "--count", range], root), 10);
+      return Number.isNaN(parsed) ? null : parsed;
+    } catch {
+      return null;
+    }
+  };
+  const vsUpstream = ahead("@{upstream}..HEAD");
+  if (vsUpstream !== null) return vsUpstream > 0;
+  // No upstream configured (never pushed): fall back to the integration branch.
+  const vsMain = ahead("origin/main..HEAD");
+  return vsMain !== null && vsMain > 0;
+}
+
+/**
+ * Combine per-worktree verdicts fail-closed: any block blocks, then any error errors, and only an
+ * all-clear sweep clears. Findings stay attributed to the worktree they came from — conflating
+ * them is what made the pinned gate's output unactionable.
+ */
+export function aggregateGateResults(results) {
+  if (!results.length) {
+    return {
+      status: "clear",
+      verified: true,
+      cached: false,
+      worktrees: [],
+      reason: "no worktree holds unpushed work",
+    };
+  }
+  const tag = (result) => (result.worktree ? `[${result.worktree}]\n` : "");
+
+  const blocked = results.filter((result) => result.status === "blocked");
+  if (blocked.length) {
+    return {
+      status: "blocked",
+      cached: blocked.every((result) => result.cached === true),
+      fingerprint: blocked[0].fingerprint,
+      worktrees: blocked.map((result) => result.worktree),
+      output: blocked.map((result) => `${tag(result)}${result.output ?? ""}`).join("\n\n"),
+    };
+  }
+
+  const errored = results.filter((result) => result.status === "error");
+  if (errored.length) {
+    return {
+      status: "error",
+      worktrees: errored.map((result) => result.worktree),
+      reason: errored
+        .map((result) => `${result.worktree ?? "?"}: ${result.reason ?? "unknown error"}`)
+        .join("; "),
+      output: errored
+        .map((result) => (result.output ? `${tag(result)}${result.output}` : ""))
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+  }
+
+  if (results.every((result) => result.status === "skipped")) {
+    return { status: "skipped", reason: results[0].reason };
+  }
+  return {
+    status: "clear",
+    verified: results.every((result) => result.status !== "clear" || result.verified === true),
+    cached: false,
+    worktrees: results.map((result) => result.worktree),
+  };
+}
+
 export function formatHookResult(runtime, result) {
   if (!VALID_RUNTIMES.has(runtime)) throw new Error(`unsupported hook runtime: ${runtime}`);
   if (["clear", "skipped"].includes(result.status)) return {};
@@ -595,12 +707,24 @@ function main() {
   readHookInput();
   let result;
   try {
-    result = evaluateLocalBugbotGate({
-      // Hook payloads are agent-controlled input. Anchor the gate to the process
-      // working directory selected by the checked-in native adapter.
-      repo: process.cwd(),
-      probeOnly: args.probe,
+    // Hook payloads are agent-controlled input, so the target is never taken from them — nor from
+    // the process working directory, which the checked-in adapter pins to the session's start
+    // directory (normally the primary checkout, where CLAUDE.md §5 forbids doing work). Targets
+    // come from git's own worktree registry instead; see listInPlayWorktrees().
+    const results = listInPlayWorktrees(process.cwd()).map((repo) => {
+      try {
+        return { ...evaluateLocalBugbotGate({ repo, probeOnly: args.probe }), worktree: repo };
+      } catch (error) {
+        // One unreviewable worktree must not mask a finding in another, so this degrades to a
+        // per-target error and still lets every other target report.
+        return {
+          status: "error",
+          worktree: repo,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
     });
+    result = aggregateGateResults(results);
   } catch (error) {
     result = { status: "error", reason: error instanceof Error ? error.message : String(error) };
   }

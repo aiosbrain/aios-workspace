@@ -20,9 +20,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  aggregateGateResults,
   evaluateLocalBugbotGate as evaluateProductionGate,
   formatHookResult,
   hardenedChildEnv,
+  listInPlayWorktrees,
   reviewChildArgs,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
@@ -2135,4 +2137,134 @@ test("an oversized per-attempt timeout is clamped, never crash-shaped", async ()
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+/**
+ * AIO-555 — target selection.
+ *
+ * The gate used to review whichever directory the session started in, which under the mandated
+ * worktree workflow (CLAUDE.md §5) is the primary checkout — the one tree that by construction
+ * holds no work. Targets now come from git's worktree registry, so the agent cannot pick them.
+ */
+
+// Real directories, because listInPlayWorktrees existsSync-checks each registration to skip stale
+// ones. Git itself is stubbed, so their contents are irrelevant.
+const PRIMARY_ROOT = REPO;
+const DIRTY_ROOT = path.join(REPO, "scripts");
+const PUSHED_ROOT = path.join(REPO, "test");
+
+/** A stub git that answers only the three commands listInPlayWorktrees issues. */
+function stubGit(worktrees) {
+  const byRoot = new Map(worktrees.map((entry) => [entry.root, entry]));
+  return (args, cwd) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      return worktrees.map((entry) => `worktree ${entry.root}\nHEAD abc\n`).join("\n");
+    }
+    const entry = byRoot.get(cwd);
+    if (!entry) throw new Error(`unexpected cwd: ${cwd}`);
+    if (args[0] === "status") return entry.dirty ? " M some/file.mjs" : "";
+    if (args[0] === "rev-list") {
+      const range = args[2];
+      if (range === "@{upstream}..HEAD") {
+        if (entry.upstream === null) throw new Error("no upstream configured");
+        return String(entry.upstream);
+      }
+      if (range === "origin/main..HEAD") return String(entry.vsMain ?? 0);
+    }
+    throw new Error(`unexpected git args: ${args.join(" ")}`);
+  };
+}
+
+test("AIO-555: a dirty worktree is selected and a pushed, clean one is not", () => {
+  const roots = [
+    { root: PRIMARY_ROOT, dirty: false, upstream: 0 },
+    { root: DIRTY_ROOT, dirty: true, upstream: 0 },
+    { root: PUSHED_ROOT, dirty: false, upstream: 0 },
+  ];
+  const selected = listInPlayWorktrees(PRIMARY_ROOT, stubGit(roots));
+  assert.deepEqual(selected, [DIRTY_ROOT]);
+});
+
+test("AIO-555: a clean worktree with unpushed commits is selected", () => {
+  const roots = [
+    { root: PRIMARY_ROOT, dirty: false, upstream: 0 },
+    { root: PUSHED_ROOT, dirty: false, upstream: 3 },
+  ];
+  assert.deepEqual(listInPlayWorktrees(PRIMARY_ROOT, stubGit(roots)), [PUSHED_ROOT]);
+});
+
+test("AIO-555: a never-pushed branch falls back to origin/main and is selected", () => {
+  const roots = [{ root: PUSHED_ROOT, dirty: false, upstream: null, vsMain: 2 }];
+  assert.deepEqual(listInPlayWorktrees(PUSHED_ROOT, stubGit(roots)), [PUSHED_ROOT]);
+});
+
+test("AIO-555: a never-pushed branch level with origin/main is not selected", () => {
+  const roots = [{ root: PUSHED_ROOT, dirty: false, upstream: null, vsMain: 0 }];
+  assert.deepEqual(listInPlayWorktrees(PUSHED_ROOT, stubGit(roots)), []);
+});
+
+test("AIO-555: a stale worktree registration is skipped, not fatal", () => {
+  const missing = path.join(tmpdir(), "aios-bugbot-does-not-exist-555");
+  rmSync(missing, { recursive: true, force: true });
+  const roots = [
+    { root: missing, dirty: true, upstream: 0 },
+    { root: DIRTY_ROOT, dirty: true, upstream: 0 },
+  ];
+  assert.deepEqual(listInPlayWorktrees(DIRTY_ROOT, stubGit(roots)), [DIRTY_ROOT]);
+});
+
+test("AIO-555: aggregation is fail-closed — one block outweighs a clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    {
+      status: "blocked",
+      cached: false,
+      fingerprint: "f1",
+      output: "High: boom",
+      worktree: "/wt/b",
+    },
+  ]);
+  assert.equal(merged.status, "blocked");
+  assert.deepEqual(merged.worktrees, ["/wt/b"]);
+  assert.match(merged.output, /\/wt\/b/);
+  assert.match(merged.output, /High: boom/);
+});
+
+test("AIO-555: an error outweighs a clear but not a block", () => {
+  assert.equal(
+    aggregateGateResults([
+      { status: "clear", verified: true, worktree: "/wt/a" },
+      { status: "error", reason: "review died", worktree: "/wt/b" },
+    ]).status,
+    "error"
+  );
+  assert.equal(
+    aggregateGateResults([
+      { status: "error", reason: "review died", worktree: "/wt/a" },
+      { status: "blocked", cached: false, output: "High", worktree: "/wt/b" },
+    ]).status,
+    "blocked"
+  );
+});
+
+test("AIO-555: an all-clear sweep clears, and no in-play worktree clears without reviewing", () => {
+  assert.equal(
+    aggregateGateResults([
+      { status: "clear", verified: true, worktree: "/wt/a" },
+      { status: "clear", verified: true, worktree: "/wt/b" },
+    ]).status,
+    "clear"
+  );
+  const empty = aggregateGateResults([]);
+  assert.equal(empty.status, "clear");
+  assert.match(empty.reason, /no worktree holds unpushed work/);
+});
+
+test("AIO-555: an unverified clear does not aggregate to a verified clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    { status: "clear", verified: false, worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "clear");
+  assert.equal(merged.verified, false);
 });
