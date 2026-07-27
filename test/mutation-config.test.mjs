@@ -120,11 +120,21 @@ test("group match regexes agree with their nightly scope", () => {
   }
 });
 
-test("the sync-plan safety gate lives in scripts/aios.mjs and is mutation-covered", () => {
+test("the sync-plan safety gate lives in scripts/sync-plan.mjs and is mutation-covered", () => {
   const group = MUTATION_GROUPS.find((entry) => entry.name === "access-governance");
-  assert.ok(group.match.test("scripts/aios.mjs"), "changed-code lane must cover scripts/aios.mjs");
-  assert.ok(group.nightly.includes("scripts/aios.mjs"));
-  assert.ok(!group.nightly.includes("scripts/sync-plan.mjs"), "sync-plan.mjs does not exist");
+  assert.ok(
+    group.match.test("scripts/sync-plan.mjs"),
+    "changed-code lane must cover scripts/sync-plan.mjs"
+  );
+  assert.ok(group.nightly.includes("scripts/sync-plan.mjs"));
+  assert.ok(
+    !group.nightly.includes("scripts/aios.mjs"),
+    "the gate moved out of scripts/aios.mjs (AIO-540); mutating the whole CLI is the timeout the move fixed"
+  );
+  assert.ok(
+    !group.match.test("scripts/aios.mjs"),
+    "scripts/aios.mjs left the group entirely — the module boundary, not a list, scopes the campaign"
+  );
   assert.ok(group.tests.includes("test/sync-plan.test.mjs"));
 });
 

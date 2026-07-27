@@ -24,10 +24,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const MUTATION_GROUPS = [
   {
     name: "access-governance",
-    // The sync-plan safety gate (buildPlan: admin never syncs, default-deny on
-    // missing `access:`) lives in scripts/aios.mjs — there is no sync-plan.mjs.
-    match: /^(hooks\/file-governance-guard|scripts\/aios|scripts\/brain-client)\.mjs$/,
-    nightly: ["hooks/file-governance-guard.mjs", "scripts/aios.mjs", "scripts/brain-client.mjs"],
+    match: /^(hooks\/file-governance-guard|scripts\/sync-plan|scripts\/brain-client)\.mjs$/,
+    nightly: [
+      "hooks/file-governance-guard.mjs",
+      "scripts/sync-plan.mjs",
+      "scripts/brain-client.mjs",
+    ],
     tests: [
       "test/file-governance-guard.test.mjs",
       "test/sync-plan.test.mjs",
