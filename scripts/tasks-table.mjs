@@ -90,11 +90,23 @@ export function parseTaskRows(body) {
   const header = rows[0].map((h) => h.toLowerCase());
   if (!header.includes("id") || !header.includes("task")) return [];
   const idx = (name) => header.indexOf(name);
+  // The scaffold has always shipped this column with the header "Linear" — accept it as
+  // the PM column (a bare cell value like "AIO-485" is a Linear issue id).
+  const pmIdx = idx("pm") >= 0 ? idx("pm") : idx("linear");
   return rows
     .slice(1)
     .map((cells) => {
       const rowKey = cells[idx("id")] || "";
-      const pm = idx("pm") >= 0 ? parsePmCell(cells[idx("pm")] || "", rowKey) : {};
+      let pm = {};
+      if (pmIdx >= 0) {
+        const raw = (cells[pmIdx] || "").trim();
+        if (raw && raw !== "—" && raw !== "-") {
+          pm =
+            header[pmIdx] === "linear" && !/^[a-z]+[:\s]/i.test(raw)
+              ? { pm_provider: "linear", pm_external_id: raw }
+              : parsePmCell(raw, rowKey);
+        }
+      }
       const row = {
         row_key: rowKey,
         title: cells[idx("task")] || "",
@@ -105,6 +117,10 @@ export function parseTaskRows(body) {
         ...pm,
         pm_url: idx("pm url") >= 0 ? cells[idx("pm url")] || null : null,
       };
+      // Derivable deep link: Linear serves https://linear.app/issue/<ID> as a universal
+      // redirect into the viewer's workspace — fill it when no explicit URL was given.
+      if (!row.pm_url && row.pm_provider === "linear" && row.pm_external_id)
+        row.pm_url = `https://linear.app/issue/${row.pm_external_id}`;
       // v1.2 hierarchy fields — only emit when the column is present (keep six-column tables clean).
       if (idx("parent") >= 0) row.parent = (cells[idx("parent")] || "").trim() || null;
       if (idx("labels") >= 0) {

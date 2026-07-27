@@ -76,18 +76,36 @@ describe("task presentation modes", () => {
   });
 });
 
+describe("board status normalization", () => {
+  test("todo and case/spacing variants land in real lanes, junk stays in Other", () => {
+    const rows = [
+      { row_key: "T1", title: "a", assignee: "", status: "todo", sprint: "", due: null },
+      { row_key: "T2", title: "b", assignee: "", status: "Todo", sprint: "", due: null },
+      { row_key: "T3", title: "c", assignee: "", status: "In Progress", sprint: "", due: null },
+      { row_key: "T4", title: "d", assignee: "", status: "someday", sprint: "", due: null },
+    ] as Parameters<typeof groupTasksForBoard>[0];
+    const lanes = groupTasksForBoard(rows);
+    const byKey = Object.fromEntries(lanes.map((l) => [l.key, l.rows.map((r) => r.row_key)]));
+    expect(byKey.backlog).toEqual(["T1", "T2"]); // brain aliases todo → backlog
+    expect(byKey.in_progress).toEqual(["T3"]);
+    expect(byKey.other).toEqual(["T4"]); // truly unknown stays honest
+  });
+});
+
 describe("task view preference", () => {
   test("accepts only known modes and survives unavailable storage", () => {
     expect(taskViewStorage()).toBeNull();
     expect(readTaskViewPreference({ getItem: () => "board" })).toBe("board");
-    expect(readTaskViewPreference({ getItem: () => "spreadsheet" })).toBe("list");
+    expect(readTaskViewPreference({ getItem: () => "list" })).toBe("list");
+    // Unknown/unset values fall back to the DEFAULT view, which is board (kanban).
+    expect(readTaskViewPreference({ getItem: () => "spreadsheet" })).toBe("board");
     expect(
       readTaskViewPreference({
         getItem: () => {
           throw new Error("blocked");
         },
       })
-    ).toBe("list");
+    ).toBe("board");
   });
 
   test("stores the chosen view under the scoped key", () => {

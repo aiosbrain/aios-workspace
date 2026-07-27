@@ -14,8 +14,6 @@ type SaveTask = (row: TaskRow, patch: TaskPatch) => void | Promise<void>;
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
 
-const CONTROL =
-  "rounded-md border border-transparent bg-transparent px-2 py-1 text-[12px] text-foreground hover:border-border-visible hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-40";
 const FIELD =
   "min-w-0 rounded-md border border-border-visible bg-background px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent-line)] focus:outline-none disabled:opacity-50";
 
@@ -38,12 +36,12 @@ const STATUS_LABELS: Record<(typeof TASK_STATUSES)[number], string> = {
 };
 
 export function readTaskViewPreference(storage?: StorageReader | null): TaskViewMode {
-  if (!storage) return "list";
+  if (!storage) return "board";
   try {
     const value = storage.getItem(TASK_VIEW_STORAGE_KEY);
-    return value === "grid" || value === "board" || value === "list" ? value : "list";
+    return value === "grid" || value === "board" || value === "list" ? value : "board";
   } catch {
-    return "list";
+    return "board";
   }
 }
 
@@ -72,6 +70,17 @@ export interface TaskBoardLane {
   rows: TaskRow[];
 }
 
+/**
+ * Mirror the brain's status normalization (lowercase, whitespace/dash → underscore) so the
+ * board shows what the brain/Linear will actually see. `todo` is aliased to backlog — that
+ * is exactly where the brain's unknown-status rule lands it. The RAW cell value is never
+ * rewritten (StatusSelect still shows it); this is display grouping only.
+ */
+export function normalizeStatusForBoard(status: string): string {
+  const s = (status || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return s === "todo" ? "backlog" : s;
+}
+
 /** Canonical lanes plus an honest catch-all: no row disappears because its status is unfamiliar. */
 export function groupTasksForBoard(rows: TaskRow[]): TaskBoardLane[] {
   const byStatus = new Map<string, TaskRow[]>();
@@ -79,7 +88,7 @@ export function groupTasksForBoard(rows: TaskRow[]): TaskBoardLane[] {
   const other: TaskRow[] = [];
 
   for (const row of rows) {
-    const lane = byStatus.get(row.status);
+    const lane = byStatus.get(normalizeStatusForBoard(row.status));
     if (lane) lane.push(row);
     else other.push(row);
   }
@@ -211,16 +220,15 @@ function TaskIdentity({ row }: { row: TaskRow }) {
         <span className="truncate text-[13px] font-medium text-foreground">{row.title}</span>
         {safePmUrl && (
           <a
-            className={cn(
-              CONTROL,
-              "inline-flex shrink-0 items-center gap-1 px-1.5 text-muted-foreground"
-            )}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border-visible bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)] hover:text-foreground"
             href={safePmUrl}
             target="_blank"
             rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
             aria-label={`Open ${row.title} in ${row.pm_provider || "project manager"}`}
           >
-            <ExternalLink size={12} aria-hidden="true" />
+            {row.pm_external_id || row.pm_provider || "PM"}
+            <ExternalLink size={10} aria-hidden="true" />
           </a>
         )}
       </div>
