@@ -28,13 +28,50 @@ export function normalizeSubstance(value: string): string {
     .trim();
 }
 
+/** Drop YAML frontmatter and speaker-turn markdown before grounding checks. */
+export function stripTranscriptMarkup(content: string): string {
+  let body = content;
+  if (body.startsWith("---\n")) {
+    const end = body.indexOf("\n---\n", 4);
+    if (end >= 0) body = body.slice(end + 5);
+  }
+  return body
+    .replace(/\*\*[^*\n]+:\*\*/g, " ")
+    .replace(/^#+ .+$/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function substanceTokens(value: string): readonly string[] {
+  const normalized = normalizeSubstance(value);
+  return normalized.length === 0 ? [] : normalized.split(" ");
+}
+
+/** True when every quote token appears in the same order inside the transcript text. */
+export function isOrderedTokenSubsequence(quote: string, transcript: string): boolean {
+  const quoteTokens = substanceTokens(quote);
+  if (quoteTokens.length === 0) return false;
+  const transcriptTokens = substanceTokens(stripTranscriptMarkup(transcript));
+  let index = 0;
+  for (const token of transcriptTokens) {
+    if (token === quoteTokens[index]) index += 1;
+    if (index === quoteTokens.length) return true;
+  }
+  return false;
+}
+
 export function isNearVerbatim(quote: string, transcript: string): boolean {
   const normalizedQuote = normalizeSubstance(quote);
   if (normalizedQuote.length === 0) return false;
-  const normalizedTranscript = normalizeSubstance(transcript);
-  return normalizedQuote.length >= 8
-    ? normalizedTranscript.includes(normalizedQuote)
-    : ` ${normalizedTranscript} `.includes(` ${normalizedQuote} `);
+  const groundingText = stripTranscriptMarkup(transcript);
+  const normalizedTranscript = normalizeSubstance(groundingText);
+  if (normalizedQuote.length >= 8) {
+    if (normalizedTranscript.includes(normalizedQuote)) return true;
+    // Granola-style turn files often split one sentence across speaker blocks
+    // (e.g. "...on the front" / "page."). Accept ordered token subsequences.
+    return isOrderedTokenSubsequence(quote, groundingText);
+  }
+  return ` ${normalizedTranscript} `.includes(` ${normalizedQuote} `);
 }
 
 export function decisionKey(candidate: Pick<DecisionCandidate, "decision">): string {
