@@ -92,7 +92,10 @@ export function Sidebar() {
   const filtered = !q
     ? null
     : hits !== null
-      ? hits.map((h) => ({ ...(byId.get(h.id) ?? { id: h.id, title: h.title, createdAt: "", updatedAt: "" }), snippet: h.snippet }))
+      ? hits.map((h) => ({
+          ...(byId.get(h.id) ?? { id: h.id, title: h.title, createdAt: "", updatedAt: "" }),
+          snippet: h.snippet,
+        }))
       : chats.filter((c) => (c.title || "").toLowerCase().includes(q));
   const groups = filtered ? null : groupChatsByRecency(chats);
 

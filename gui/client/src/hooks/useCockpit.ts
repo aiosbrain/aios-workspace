@@ -218,9 +218,12 @@ export function useCockpit() {
           if (ev.code === 4001) {
             applyConn("superseded");
             setBusy(false); // a mid-turn takeover must not strand the composer as busy
-            toast.warning("This chat was opened in another tab or window — Retry to take it back.", {
-              id: "session-superseded", // dedupe: repeated takeovers replace, not stack
-            });
+            toast.warning(
+              "This chat was opened in another tab or window — Retry to take it back.",
+              {
+                id: "session-superseded", // dedupe: repeated takeovers replace, not stack
+              }
+            );
             fail("session superseded by a newer connection");
             return;
           }
@@ -449,7 +452,9 @@ export function useCockpit() {
         const d = await api.get<SessionTranscriptResponse>(`/api/sessions/${id}`);
         if (openChatSeqRef.current !== seq) return; // a newer chat was opened while we fetched
         const events = d.events || [];
-        setMessages(buildMessagesFromEvents(events).map((m) => ({ ...m, uid: ++msgUidRef.current })));
+        setMessages(
+          buildMessagesFromEvents(events).map((m) => ({ ...m, uid: ++msgUidRef.current }))
+        );
         let lastCost = 0;
         let contextUsage: Usage | null = null;
         let aggregateUsage: Usage | null = null;

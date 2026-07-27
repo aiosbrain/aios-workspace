@@ -85,10 +85,18 @@ export function PermissionCard({
           ))
         ) : (
           <>
-            <button className={ALLOW} disabled={expired} onClick={() => !expired && onRespond(id, true)}>
+            <button
+              className={ALLOW}
+              disabled={expired}
+              onClick={() => !expired && onRespond(id, true)}
+            >
               Allow
             </button>
-            <button className={DENY} disabled={expired} onClick={() => !expired && onRespond(id, false)}>
+            <button
+              className={DENY}
+              disabled={expired}
+              onClick={() => !expired && onRespond(id, false)}
+            >
               Deny
             </button>
           </>

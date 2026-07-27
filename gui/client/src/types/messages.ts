@@ -35,7 +35,9 @@ export interface MetaMessage {
 /** Monotonic per-render uid — stable React list keys over a mutating stream. */
 export type WithUid = { uid?: number };
 
-export type UiMessage = (UserMessage | AssistantMessage | ToolMessage | MemoryMessage | MetaMessage) &
+export type UiMessage = (
+  UserMessage | AssistantMessage | ToolMessage | MemoryMessage | MetaMessage
+) &
   WithUid;
 
 /** A pending interactive permission request awaiting the user's response. */

@@ -77,7 +77,10 @@ export interface TaskBoardLane {
  * rewritten (StatusSelect still shows it); this is display grouping only.
  */
 export function normalizeStatusForBoard(status: string): string {
-  const s = (status || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const s = (status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   return s === "todo" ? "backlog" : s;
 }
 

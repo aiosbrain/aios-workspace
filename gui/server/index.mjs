@@ -17,7 +17,14 @@
 
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync, existsSync, mkdirSync, appendFileSync, readdirSync, unlinkSync } from "node:fs";
+import {
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  appendFileSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -1430,15 +1437,12 @@ wss.on("connection", (ws, req) => {
     const allow = await new Promise((resolve) => {
       pending.set(id, resolve);
       // auto-deny after 5 minutes so a closed tab can't wedge the run
-      setTimeout(
-        () => {
-          if (pending.has(id)) {
-            pending.delete(id);
-            resolve(false);
-          }
-        },
-        PERM_TIMEOUT_MS
-      ).unref?.();
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          resolve(false);
+        }
+      }, PERM_TIMEOUT_MS).unref?.();
     });
     // Broker + durable consume. On the happy path this is the audit + one-time tombstone; if the
     // runtime rejects (a replayed/tampered handle), deny for safety. Guarded so a store/broker
@@ -1490,15 +1494,12 @@ wss.on("connection", (ws, req) => {
     });
     return new Promise((resolve) => {
       pending.set(id, resolve);
-      setTimeout(
-        () => {
-          if (pending.has(id)) {
-            pending.delete(id);
-            resolve(null);
-          }
-        },
-        PERM_TIMEOUT_MS
-      ).unref?.();
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          resolve(null);
+        }
+      }, PERM_TIMEOUT_MS).unref?.();
     });
   };
 
