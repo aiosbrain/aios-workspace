@@ -14,13 +14,14 @@
 //      build/promote/timeline all depend on) — unchanged, and there is no new exit code;
 //   2. the literal `leak-gate: FAILED` line survives as the stable machine-visible marker;
 //   3. `leak-gate: CLEAN` survives on the clean path;
-//   4. NONE of the configured STRONG / WORDS / PATTERNS terms appear anywhere in the
-//      COMBINED stdout+stderr — that combination is precisely what the callers capture;
+//   4. no source-derived matched line appears in COMBINED stdout+stderr — that combination
+//      is precisely what the callers capture. Fixed diagnostic vocabulary may coincidentally
+//      overlap a broadly configured regex, so the security boundary is provenance, not an
+//      impossible promise that arbitrary regexes cannot match fixed output;
 //   5. a matching file's path is never printed, because a path segment can itself carry a
 //      protected identifier. Location is allowlisted to known-safe top-level directory
 //      names, or withheld;
-//   6. the opt-in $AIOS_LEAK_GATE_DETAIL_FILE is the ONLY place matched content is written,
-//      and it is mode 0600.
+//   6. a scanner/configuration error fails closed, and no debug env var can mutate an input.
 //
 // Every protected-looking string is assembled at runtime by concatenation so this committed
 // file never contains a literal the gate (or the NDA pre-commit hook) would flag.
@@ -28,7 +29,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -213,6 +221,21 @@ test("leak-gate: multiple hits across categories are counted, never quoted", () 
   });
 });
 
+test("leak-gate: fixed diagnostic vocabulary may overlap a broad configured term", () => {
+  withDirs((dir, termsDir) => {
+    const broad = "work";
+    writeFileSync(path.join(dir, "2-work", "draft.md"), `engagement ${broad}\n`);
+    const terms = path.join(termsDir, "broad.sh");
+    writeFileSync(terms, `STRONG='${broad}'\nWORDS=''\nPATTERNS=''\n`);
+    const r = run([dir], { AIOS_LEAK_TERMS_FILE: terms });
+
+    assert.equal(r.code, 1, `a real source hit must still block:\n${r.out}`);
+    assert.match(r.out, /leak-gate: FAILED/);
+    assert.ok(!r.out.includes("draft.md"), "the untrusted source path must stay contained");
+    assert.ok(!r.out.includes(`engagement ${broad}`), "the matched source line must stay contained");
+  });
+});
+
 test("leak-gate: a clean tree still reports CLEAN and exits 0", () => {
   withDirs((dir, termsDir) => {
     writeFileSync(path.join(dir, "2-work", "fine.md"), "nothing sensitive here\n");
@@ -242,41 +265,49 @@ test("leak-gate: the CLEAN line does not echo ROOT (a path may itself be confide
   }
 });
 
-// ── the opt-in detail sink ──────────────────────────────────────────────────
+// ── no operator-selected raw-detail sink may mutate scan inputs ──────────────
 
-test("leak-gate: detail goes ONLY to the opt-in file, which is mode 0600", () => {
+test("leak-gate: a legacy detail env path cannot truncate the leaking input", () => {
   withDirs((dir, termsDir) => {
-    writeFileSync(path.join(dir, "2-work", "draft.md"), `client ${STRONG_TERM}\n`);
-    const detail = path.join(termsDir, "detail.txt");
+    const source = path.join(dir, "2-work", "draft.md");
+    const original = `client ${STRONG_TERM}\n`;
+    writeFileSync(source, original);
     const r = run([dir], {
       AIOS_LEAK_TERMS_FILE: termsFileIn(termsDir),
-      AIOS_LEAK_GATE_DETAIL_FILE: detail,
+      AIOS_LEAK_GATE_DETAIL_FILE: source,
     });
 
-    assert.equal(r.code, 1, `expected exit 1, got ${r.code}:\n${r.out}`);
-    // Still nothing on the streams the callers capture.
-    assertNoForbiddenBytes(r.out, "detail-file mode");
-
-    const body = readFileSync(detail, "utf8");
-    assert.ok(body.includes(STRONG_TERM), "the opt-in detail file must contain the match");
-    assert.ok(body.includes("draft.md"), "the opt-in detail file must contain the path");
-
-    const mode = statSync(detail).mode & 0o777;
-    assert.equal(mode, 0o600, `detail file must be 0600, got ${mode.toString(8)}`);
+    assert.equal(r.code, 1, `the original leak must still block:\n${r.out}`);
+    assert.equal(readFileSync(source, "utf8"), original, "the scan input must remain byte-identical");
+    assertNoForbiddenBytes(r.out, "legacy detail path equals source");
   });
 });
 
-test("leak-gate: an unwritable detail file degrades without weakening the gate", () => {
+test("leak-gate: a legacy detail env path cannot overwrite an existing file or symlink target", () => {
   withDirs((dir, termsDir) => {
     writeFileSync(path.join(dir, "2-work", "draft.md"), `client ${STRONG_TERM}\n`);
-    const r = run([dir], {
+    const existing = path.join(termsDir, "existing.txt");
+    const target = path.join(termsDir, "target.txt");
+    const link = path.join(termsDir, "detail-link.txt");
+    writeFileSync(existing, "keep existing\n");
+    writeFileSync(target, "keep target\n");
+    symlinkSync(target, link);
+
+    const existingRun = run([dir], {
       AIOS_LEAK_TERMS_FILE: termsFileIn(termsDir),
-      AIOS_LEAK_GATE_DETAIL_FILE: "/nonexistent-dir/detail.txt",
+      AIOS_LEAK_GATE_DETAIL_FILE: existing,
+    });
+    const symlinkRun = run([dir], {
+      AIOS_LEAK_TERMS_FILE: termsFileIn(termsDir),
+      AIOS_LEAK_GATE_DETAIL_FILE: link,
     });
 
-    assert.equal(r.code, 1, `the gate must still block, got ${r.code}:\n${r.out}`);
-    assert.match(r.out, /leak-gate: FAILED/);
-    assertNoForbiddenBytes(r.out, "unwritable detail file");
+    assert.equal(existingRun.code, 1);
+    assert.equal(symlinkRun.code, 1);
+    assert.equal(readFileSync(existing, "utf8"), "keep existing\n");
+    assert.equal(readFileSync(target, "utf8"), "keep target\n");
+    assertNoForbiddenBytes(existingRun.out, "legacy existing detail path");
+    assertNoForbiddenBytes(symlinkRun.out, "legacy symlink detail path");
   });
 });
 
@@ -297,39 +328,39 @@ test("leak-gate: an inherited `set -x` cannot trace the protected terms out", ()
   });
 });
 
-// ── a grep without --null must fail CLOSED, never silently clean ───────────
+// ── scanner/configuration failures must fail CLOSED ─────────────────────────
 
-test("leak-gate: a grep that rejects --null still blocks (no silent fail-open)", () => {
+test("leak-gate: an invalid configured regex fails closed instead of reporting CLEAN", () => {
   withDirs((dir, termsDir) => {
     writeFileSync(path.join(dir, "2-work", "draft.md"), `client ${STRONG_TERM}\n`);
+    const terms = path.join(termsDir, "invalid.sh");
+    writeFileSync(terms, "STRONG=''\nWORDS=''\nPATTERNS='['\n");
+    const r = run([dir], { AIOS_LEAK_TERMS_FILE: terms });
 
-    // Shadow `grep` with one that rejects --null the way an old//minimal grep would.
-    // Without the capability probe this makes every sweep return empty, and the gate
-    // would report CLEAN over a leaking tree — the fail-open this guards against.
+    assert.equal(r.code, 2, `invalid regex must be a contained scanner error:\n${r.out}`);
+    assert.match(r.out, /leak-gate: ERROR/);
+    assert.doesNotMatch(r.out, /leak-gate: CLEAN/);
+    assert.ok(!r.out.includes("["), "the invalid confidential pattern must not be echoed");
+  });
+});
+
+test("leak-gate: a grep execution failure fails closed instead of reporting CLEAN", () => {
+  withDirs((dir, termsDir) => {
+    writeFileSync(path.join(dir, "2-work", "draft.md"), `client ${STRONG_TERM}\n`);
     const binDir = path.join(termsDir, "bin");
     mkdirSync(binDir, { recursive: true });
     const shim = path.join(binDir, "grep");
-    writeFileSync(
-      shim,
-      "#!/usr/bin/env bash\n" +
-        'for a in "$@"; do\n' +
-        '  if [ "$a" = "--null" ]; then\n' +
-        "    echo \"grep: unrecognized option '--null'\" >&2; exit 2\n" +
-        "  fi\n" +
-        "done\n" +
-        'exec /usr/bin/grep "$@"\n'
-    );
+    writeFileSync(shim, "#!/usr/bin/env bash\nexit 2\n");
     execFileSync("chmod", ["+x", shim]);
-
     const r = run([dir], {
       AIOS_LEAK_TERMS_FILE: termsFileIn(termsDir),
       PATH: `${binDir}:${process.env.PATH}`,
     });
 
-    assert.equal(r.code, 1, `a --null-less grep must still block, got ${r.code}:\n${r.out}`);
-    assert.match(r.out, /leak-gate: FAILED/);
-    assert.match(r.out, /1 file\(s\)/, `expected the hit to be counted:\n${r.out}`);
-    assertNoForbiddenBytes(r.out, "grep without --null");
+    assert.equal(r.code, 2, `grep failure must fail closed:\n${r.out}`);
+    assert.match(r.out, /leak-gate: ERROR/);
+    assert.doesNotMatch(r.out, /leak-gate: CLEAN/);
+    assertNoForbiddenBytes(r.out, "grep execution failure");
   });
 });
 

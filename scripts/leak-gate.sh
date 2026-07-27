@@ -26,31 +26,24 @@
 # log whenever $AIOS_LEAK_TERMS_B64 is set. A CI log is usually readable by more people than
 # the repository the gate is protecting.
 #
-# So this script NEVER writes matched text, matched line content, or a matching file's path
-# to stdout or stderr. It reports a category, a file count, and a location ALLOWLISTED to a
-# known-safe top-level directory name — a path segment can itself carry a protected
-# identifier, so anything unrecognised is withheld rather than guessed at. Matches are
-# derived with `grep -l`, so the matched bytes never enter a shell variable at all.
-#
-# To see full detail while fixing a hit, opt in locally:
-#   AIOS_LEAK_GATE_DETAIL_FILE=/tmp/leak-detail.txt scripts/leak-gate.sh
-# That file is created mode 0600 and is the ONLY place matched content is ever written.
-# Never point it inside the repo or at a CI artifact directory.
+# So this script NEVER writes source-derived matched text, matched line content, or a
+# matching file's path to stdout or stderr. It reports only the category and aggregate
+# count. grep output is discarded; only trusted filenames from the enumerated input set
+# are written to a private temporary file for counting.
 #
 # Usage: scripts/leak-gate.sh [ROOT]   (defaults to repo root)
-# Exit 0 = clean (or no term set configured); exit 1 = at least one forbidden term found.
-# The non-zero exit is the fail-closed boundary documented in SECURITY.md and relied on by
-# build.mjs / promote.mjs / timeline.mjs. It is 1 for ANY detected leak — there is no
-# separate exit code for "held", because every caller treats non-zero as the boundary.
+# Exit 0 = clean (or no term set configured); exit 1 = at least one forbidden term found;
+# exit 2 = the scan could not complete safely. Any non-zero exit is the fail-closed boundary
+# documented in SECURITY.md and relied on by build.mjs / promote.mjs / timeline.mjs.
 
 set -euo pipefail
 
 # Tracing is disabled BEFORE the term set is sourced, and stays off. `bash -x` (or an
 # inherited SHELLOPTS/BASH_XTRACEFD) would otherwise echo `++ STRONG=<protected term>` as
 # the terms file is sourced — turning the gate into the disclosure. This script is
-# deliberately untraceable; use $AIOS_LEAK_GATE_DETAIL_FILE to debug a hit instead.
-# The umask clamp is here for the same reason: the opt-in detail file must never be
-# created group- or world-readable, whatever the caller's umask was.
+# deliberately opaque at this boundary; inspect candidate inputs separately in a trusted
+# local workflow when debugging a hit.
+# The umask clamp also protects every private temporary file this gate creates.
 set +x
 umask 077
 
@@ -109,38 +102,26 @@ emit_if_scannable() {
 }
 
 if [ -d "$ROOT" ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  {
+  if ! {
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files -z -o --exclude-standard
   } | while IFS= read -r -d '' rel; do
     emit_if_scannable "$rel"
-  done > "$FILE_LIST"
+  done > "$FILE_LIST"; then
+    echo "leak-gate: ERROR — scan target enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
 elif [ -d "$ROOT" ]; then
-  find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f -print0 2>/dev/null |
+  if ! find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f -print0 2>/dev/null |
     while IFS= read -r -d '' abs; do
       emit_if_scannable "${abs#"$ROOT"/}"
-    done > "$FILE_LIST" || true
+    done > "$FILE_LIST"; then
+    echo "leak-gate: ERROR — scan target enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
 else
   # A single file (aios promote scans one copied deliverable).
   printf '%s\0' "$ROOT" > "$FILE_LIST"
-fi
-
-# ── opt-in detail sink: the ONLY place matched content may be written ───────
-DETAIL_FILE="${AIOS_LEAK_GATE_DETAIL_FILE:-}"
-if [ -n "$DETAIL_FILE" ]; then
-  # The subshell matters: `: > "$DETAIL_FILE" 2>/dev/null` applies redirections left to
-  # right, so the open failure is reported to the REAL stderr before 2>/dev/null takes
-  # effect — and bash prefixes that diagnostic with this script's absolute path, which can
-  # itself contain a confidential directory segment. Redirecting the whole subshell keeps
-  # the diagnostic contained.
-  if ( : > "$DETAIL_FILE" ) 2>/dev/null; then
-    chmod 600 "$DETAIL_FILE" 2>/dev/null || true
-  else
-    # Never fail the run over the debug sink — but never silently pretend it worked
-    # either, or someone would try to "fix" a leak they cannot actually see.
-    echo "leak-gate: cannot write \$AIOS_LEAK_GATE_DETAIL_FILE — continuing without detail." >&2
-    DETAIL_FILE=""
-  fi
 fi
 
 # Top-level path segments that are safe to name in output. An ALLOWLIST, not a denylist:
@@ -161,20 +142,6 @@ sanitize_location() {
 
 fail=0
 
-# Does this grep support `--null`? Probe once, because getting it wrong FAILS OPEN: an
-# unsupported option makes grep exit 2, `2>/dev/null || true` swallows it, the match list
-# comes back empty and the gate would report CLEAN over a leaking tree. A security gate must
-# never be able to pass because an option was unrecognised.
-#
-# `--null` is spelled long deliberately: `-Z` means `--null` in GNU and BSD grep but
-# `--fuzzy` in ugrep (the default `grep` on some developer machines) — silently changing the
-# MATCHING semantics of a security gate is exactly the bug class this file must not have.
-NULL_SEP=1
-_probe=$(mktemp "${TMPDIR:-/tmp}/aios-leak-probe.XXXXXX")
-printf 'probe\n' > "$_probe"
-grep -EIl --null -e 'probe' -- "$_probe" >/dev/null 2>&1 || NULL_SEP=0
-rm -f "$_probe"
-
 # Accumulators for the current category, filled by tally_match.
 _count=0
 _locs=""
@@ -188,43 +155,42 @@ tally_match() { # $1 = absolute path of a matching file
   fi
 }
 
-# `grep -I` still skips binary files; the file list only decides WHICH files are opened.
-# Guard the empty list: xargs with no input would run grep with no file operands, which
-# reads stdin and hangs.
-#
-# -l (files-with-matches) is what keeps the matched bytes out of this process entirely:
-# the matched text never enters a shell variable, so it cannot reach a stream by accident.
+# Scan one file at a time so grep's three-state result remains observable:
+#   0 = match, 1 = no match, >1 = invalid regex / unreadable input / scanner failure.
+# `xargs grep || true` cannot preserve that distinction and previously turned a malformed
+# configured regex into CLEAN. Match content is redirected away; only the trusted filename
+# enters MATCH_LIST, NUL-terminated.
 scan() { # $1 = extra grep flag(s) or "", $2 = pattern, $3 = human category label
   [ -s "$FILE_LIST" ] || return 0
-  local sep=""
-  [ "$NULL_SEP" -eq 1 ] && sep="--null"
-  # shellcheck disable=SC2086
-  xargs -0 grep -EIl $sep $1 -e "$2" -- < "$FILE_LIST" > "$MATCH_LIST" 2>/dev/null || true
+  : > "$MATCH_LIST"
+  local extra="$1" pattern="$2" f rc
+  while IFS= read -r -d '' f; do
+    rc=0
+    if [ -n "$extra" ]; then
+      grep -EI "$extra" -e "$pattern" -- "$f" >/dev/null 2>&1 || rc=$?
+    else
+      grep -EI -e "$pattern" -- "$f" >/dev/null 2>&1 || rc=$?
+    fi
+    case "$rc" in
+      0) printf '%s\0' "$f" >> "$MATCH_LIST" ;;
+      1) ;;
+      *)
+        echo "leak-gate: ERROR — scan could not complete; refusing to report clean." >&2
+        exit 2
+        ;;
+    esac
+  done < "$FILE_LIST"
   [ -s "$MATCH_LIST" ] || return 0
   fail=1
 
   _count=0
   _locs=""
-  local f
-  if [ "$NULL_SEP" -eq 1 ]; then
-    while IFS= read -r -d '' f; do tally_match "$f"; done < "$MATCH_LIST"
-  else
-    # Newline-separated fallback. A filename containing a newline would be counted twice —
-    # an over-count, never an under-report, and the path is not printed either way.
-    while IFS= read -r f; do [ -n "$f" ] && tally_match "$f"; done < "$MATCH_LIST"
-  fi
+  while IFS= read -r -d '' f; do tally_match "$f"; done < "$MATCH_LIST"
 
   local where="location withheld"
   [ -n "$_locs" ] && where="under: $_locs"
   printf '  %-52s %d file(s)  %s\n' "$3" "$_count" "$where"
 
-  if [ -n "$DETAIL_FILE" ]; then
-    {
-      printf '\n=== %s ===\n' "$3"
-      # shellcheck disable=SC2086
-      xargs -0 grep -EInH $1 -e "$2" -- < "$FILE_LIST" 2>/dev/null || true
-    } >> "$DETAIL_FILE" || true
-  fi
 }
 
 if [ -n "${STRONG:-}" ]; then
@@ -244,16 +210,7 @@ if [ "$fail" -eq 0 ]; then
   echo "leak-gate: CLEAN — no forbidden identifiers found."
   exit 0
 else
-  echo "  the matched text is withheld on purpose — it is what this gate exists to contain."
-  if [ -n "$DETAIL_FILE" ]; then
-    echo "  full detail written to \$AIOS_LEAK_GATE_DETAIL_FILE (mode 0600)."
-  else
-    # A fixed relative string, never "$0": callers invoke this as an ABSOLUTE path, so $0
-    # would put the whole checkout path — which can itself contain a confidential directory
-    # segment — into the captured stdout that build/promote/timeline re-emit. Same
-    # disclosure class this script blocks for $ROOT and for match paths.
-    echo "  to see it locally: AIOS_LEAK_GATE_DETAIL_FILE=/tmp/leak-detail.txt scripts/leak-gate.sh"
-  fi
+  echo "  matched source content and untrusted paths are withheld on purpose."
   echo "leak-gate: FAILED — forbidden identifiers above must be removed."
   exit 1
 fi
