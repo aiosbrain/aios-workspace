@@ -17,6 +17,9 @@ import {
   readSessionCost,
   splitModel,
   run,
+  resolveProviderCatalog,
+  cachedProviderCatalog,
+  _resetCatalogCache,
 } from "./opencode.mjs";
 import { modelCatalog } from "../../../scripts/runtimes.mjs";
 
@@ -434,4 +437,110 @@ test("AC5: result carries the per-turn cost delta from the server, null when it 
   const failed = await runAgainstStub({ turns: [{ text: "a" }], costFails: true });
   const nulls = failed.events.filter((e) => e.type === "result").map((e) => e.cost_usd);
   assert.deepEqual(nulls, [null], "a failed cost read is null — never an estimate");
+});
+
+// ── AIO-536: the cached catalog resolver (boots a stub `opencode serve`) ──────
+
+const CATALOG_STUB = `
+import http from "node:http";
+import { appendFileSync } from "node:fs";
+const srv = http.createServer((req, res) => {
+  appendFileSync(process.env.STUB_BOOTS, "boot\\n");
+  if (req.url === "/config/providers") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({
+      providers: [{
+        id: "openrouter",
+        name: "OpenRouter",
+        key: "sk-SECRET-must-not-escape",
+        models: { "qwen/qwen3.7-plus": { id: "qwen/qwen3.7-plus", name: "Qwen3.7 Plus" } },
+      }],
+    }));
+  }
+  res.writeHead(404);
+  res.end("{}");
+});
+srv.listen(0, "127.0.0.1", () => console.log("listening on http://127.0.0.1:" + srv.address().port));
+`;
+
+/** Install a fake \`opencode\` on PATH for the duration of \`fn\`. */
+async function withStubOpencode(script, fn) {
+  const dir = mkdtempSync(path.join(tmpdir(), "oc-cat-"));
+  const bootLog = path.join(dir, "boots.txt");
+  writeFileSync(bootLog, "");
+  const prevPath = process.env.PATH;
+  const prevBoots = process.env.STUB_BOOTS;
+  process.env.STUB_BOOTS = bootLog;
+  if (script) {
+    const js = path.join(dir, "stub.mjs");
+    writeFileSync(js, script);
+    writeFileSync(path.join(dir, "opencode"), `#!/bin/sh\nexec "${process.execPath}" "${js}"\n`, {
+      mode: 0o755,
+    });
+    process.env.PATH = `${dir}:${prevPath}`;
+  } else {
+    // No `opencode` anywhere on PATH → the ENOENT / not-installed branch.
+    process.env.PATH = dir;
+  }
+  try {
+    return await fn({
+      boots: () => readFileSync(bootLog, "utf8").trim().split("\n").filter(Boolean).length,
+    });
+  } finally {
+    process.env.PATH = prevPath;
+    if (prevBoots === undefined) delete process.env.STUB_BOOTS;
+    else process.env.STUB_BOOTS = prevBoots;
+    rmSync(dir, { recursive: true, force: true });
+    _resetCatalogCache();
+  }
+}
+
+test("AC6: resolveProviderCatalog boots a server, maps the listing, and caches it", async () => {
+  _resetCatalogCache();
+  await withStubOpencode(CATALOG_STUB, async ({ boots }) => {
+    const repo = mkdtempSync(path.join(tmpdir(), "oc-repo-"));
+    try {
+      assert.equal(cachedProviderCatalog(repo), null, "nothing cached before the first resolve");
+
+      const models = await resolveProviderCatalog(repo);
+      assert.deepEqual(models, [
+        { id: "openrouter/qwen/qwen3.7-plus", label: "Qwen3.7 Plus", group: "OpenRouter" },
+      ]);
+      assert.ok(!JSON.stringify(models).includes("SECRET"), "the provider key must not escape");
+      const after = boots();
+      assert.ok(after >= 1, "the first resolve boots a server");
+
+      // Cached: neither accessor re-boots.
+      assert.deepEqual(cachedProviderCatalog(repo), models);
+      assert.deepEqual(await resolveProviderCatalog(repo), models);
+      assert.equal(boots(), after, "a cached read must not boot another server");
+
+      // Concurrent cold callers share ONE boot.
+      _resetCatalogCache();
+      const before = boots();
+      const [a, b, c] = await Promise.all([
+        resolveProviderCatalog(repo),
+        resolveProviderCatalog(repo),
+        resolveProviderCatalog(repo),
+      ]);
+      assert.deepEqual(a, b);
+      assert.deepEqual(b, c);
+      assert.ok(boots() - before <= 2, "three concurrent resolves must not boot three servers");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+test("AC6: a missing OpenCode install resolves to [] and is not cached", async () => {
+  _resetCatalogCache();
+  await withStubOpencode(null, async () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "oc-repo-"));
+    try {
+      assert.deepEqual(await resolveProviderCatalog(repo), [], "no throw when opencode is absent");
+      assert.equal(cachedProviderCatalog(repo), null, "a failed probe must be retried, not cached");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });
