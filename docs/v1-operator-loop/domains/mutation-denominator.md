@@ -288,11 +288,14 @@ payload, brain, hook, or frontmatter surface is modified, and no content becomes
 groups defend tier boundaries directly — `access-governance` (`buildPlan`: admin never syncs,
 default-deny on missing `access:`) and `inbox-authorization` (the capability broker) — so the
 load-bearing invariant is that **no group's declared safety unit is narrowed away**.
-`access-governance` keeps `scripts/aios.mjs` in scope precisely for this reason, and
-`inbox-authorization` narrows _onto_ its safety unit rather than away from it, gaining an enforcing
-90% floor in the process (subject to the re-measurement caveat in Reuse — the floor may only be
-relaxed with recorded evidence, never silently). The `nightlyExcludes` completeness test is what
-keeps this checkable rather than asserted.
+`access-governance` keeps its safety unit fully in scope — post-AIO-540 that unit is
+`scripts/sync-plan.mjs` (where `buildPlan` now lives), plus `hooks/file-governance-guard.mjs` and
+`scripts/brain-client.mjs`; `scripts/aios.mjs` left the group entirely with the extraction, so it
+is no longer matched, not silently dropped. `inbox-authorization` narrows _onto_ its safety unit
+rather than away from it, gaining an enforcing 90% floor in the process (subject to the
+re-measurement caveat in Reuse — the floor may only be relaxed with recorded evidence, never
+silently). The `nightlyExcludes` completeness test is what keeps this checkable rather than
+asserted.
 
 ## Acceptance (observable)
 
