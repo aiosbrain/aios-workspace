@@ -242,7 +242,13 @@ export function configFor(group, mutate, nightly) {
     reporters: ["clear-text", "progress", "json"],
     jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
     thresholds: { high: 80, low: 60, break: breakThreshold },
-    incremental: nightly,
+    // Incremental is UNSOUND with the command runner: it reports no per-test
+    // information, so Stryker cannot see test changes and reuses stale
+    // verdicts — measured on the AIO-539 calibration, where a strengthened
+    // oracle kept "losing" to cached Survived results. Narrowed scopes made
+    // full nightly re-runs cheap, so only the Vitest (perTest) client group
+    // keeps incremental state.
+    incremental: nightly && Boolean(group.client),
     incrementalFile: `.stryker-tmp/${group.name}.json`,
   };
   if (group.client) {

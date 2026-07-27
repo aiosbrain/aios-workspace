@@ -358,6 +358,23 @@ test("GUI mutation uses Vitest per-test coverage", () => {
   assert.equal(config.incremental, true);
 });
 
+test("command-runner groups never use incremental mode", () => {
+  // The command runner reports no per-test information, so Stryker cannot see
+  // test changes and incremental mode reuses stale verdicts — measured on the
+  // AIO-539 calibration: a strengthened oracle could not flip cached Survived
+  // results until incremental was disabled. Only the Vitest (perTest) client
+  // group may keep incremental state.
+  for (const group of MUTATION_GROUPS) {
+    if (group.client) continue;
+    const config = configFor(group, [toMutateTarget(group, group.nightly[0])], true);
+    assert.equal(
+      config.incremental,
+      false,
+      `${group.name}: incremental must stay off for command-runner groups (stale-verdict hazard)`
+    );
+  }
+});
+
 test("mutation CLI validates value-taking flags", () => {
   for (const flag of ["--base", "--group", "--mutate"]) {
     assert.throws(() => parseArgs([flag]), new RegExp(`${flag} requires a value`));

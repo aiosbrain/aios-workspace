@@ -28,6 +28,21 @@ this spec. No production code changes.
 > scores **100.00% (26/26)** and the 90 floor enforces. That is this mechanism working end-to-end:
 > the narrowed denominator found real assertion gaps in the safety unit's only oracle on its first
 > measured run. The affected sections below are updated in place.
+>
+> **Revision 2.2 (2026-07-27).** The second calibration dispatch exposed a latent unsoundness:
+> **Stryker incremental mode + the command runner reuses stale verdicts when tests change**,
+> because the command runner reports no per-test information. Measured directly — the
+> strengthened oracle scored 100.00% locally (fresh state) but the CI leg restored the previous
+> run's incremental JSON and re-reported the same four mutants as Survived without ever executing
+> the new test. Command-runner groups now run with `incremental: false` (narrowed scopes made full
+> re-runs cheap — the incremental cache was a crutch for the 90-minute monolith); only the Vitest
+> (`perTest`) client group keeps incremental state, and the workflow's cache steps are scoped to
+> that leg. Enforced by the config test *"command-runner groups never use incremental mode"*. Two
+> discoveries from the same dispatch are filed separately: **AIO-563** (the `runtime-capabilities`
+> group's first-ever score is 0.00% because no test in its kill command imports the mutated
+> modules — a dead oracle now visible nightly) and the runner-speed variance note (the July-26
+> "89m41s" access-governance measurement ran ~4× slower than the same campaign on a 2026-07-27
+> runner, 19m16s — projections in this spec are runner-relative).
 
 ## Why
 
