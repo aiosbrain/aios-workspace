@@ -89,7 +89,9 @@ agent_base_url: ""
 > and cheap) instead of Claude Code's heavier default, and the chat header lets you
 > switch between `claude-sonnet-4-6` and `claude-opus-4-8` live (persisted back to
 > `agent_model`). An unknown value degrades to Sonnet with a visible warning rather
-> than breaking chat.
+> than breaking chat. Both `agent_runtime` and `agent_model` are also settable from
+> **Settings → Agent** — see *[Choose your model](#choose-your-model-aio-536)* for the
+> per-runtime catalogs and the OpenRouter/Qwen recipe.
 
 Phase-1 scope:
 - `agent_runtime` (+ optional `agent_model`, `agent_base_url`) added to
@@ -214,6 +216,76 @@ All `gui:true` runtimes now resolve to an adapter (OGR07 enforces this).
 
 The session announces its active runtime in the UI (a runtime badge), selected
 from `agent_runtime` in `aios.yaml` (Phase-1 config).
+
+---
+
+## Choose your model (AIO-536)
+
+The cockpit's model choice is **catalog-driven per runtime**, not a hardcoded
+Anthropic list. Two controls, both in **Settings → Agent**:
+
+- **Agent runtime** — writes `agent_runtime` via `POST /api/config/runtime`. Only
+  GUI-drivable runtimes are offered (`claude-api` is deliberately absent — it has no
+  tool harness). A change **applies to the NEXT chat**: a live session pinned its
+  runtime at the WebSocket `hello`, so switching never mutates a running turn.
+- **Model** — writes `agent_model` via `POST /api/config/model`, validated against
+  the **active runtime's** catalog. The composer's model picker changes the model
+  mid-session (no reconnect) for runtimes that support it.
+
+### Runtime × provider matrix
+
+| `agent_runtime` | Model catalog | Where it comes from | Providers reachable |
+|-----------------|---------------|---------------------|---------------------|
+| `claude-code` *(default)* | static: `claude-sonnet-4-6`, `claude-opus-4-8` (default Sonnet) | `RUNTIME_MODEL_CATALOGS` in `scripts/runtimes.mjs` | Anthropic only — the Agent SDK path is Anthropic by nature |
+| `opencode` | **dynamic**, grouped by provider | the local OpenCode server's `GET /config/providers` | whatever **OpenCode's own auth** is configured for — OpenRouter, OpenAI, Anthropic, Google, … |
+| `hermes`, `openclaw`, `codex` | none (no picker) | — | the runtime's own config |
+
+The opencode catalog is read from a short-lived `opencode serve` and cached for five
+minutes. When the listing is unavailable (OpenCode not installed, not authenticated,
+or the endpoint moved) the picker falls back to a **seeded list** and the API stays
+**permissive**: any well-formed `provider/model` id is accepted, because OpenCode's
+auth store — not this allow-list — decides what actually resolves. A malformed id
+(no `/`, whitespace, quotes) is still a 400.
+
+### Run the same model as the Team Brain
+
+The brain runs an open-weights model through OpenRouter. To match it in your cockpit:
+
+```yaml
+# aios.yaml
+agent_runtime: "opencode"
+agent_model: "openrouter/qwen/qwen3.7-plus"
+```
+
+The id is split at the **first** slash into OpenCode's `{providerID, modelID}` —
+`openrouter` / `qwen/qwen3.7-plus`. Model-id parity with the brain is a **convention,
+not shared config**: nothing synchronises the two, and the brain's model is per-team
+DB config that this workspace never reads or writes.
+
+### Where the keys live
+
+**The workspace never stores provider API keys.** `aios.yaml` holds only the runtime
+name and the model id.
+
+- `claude-code` uses the Agent SDK's ambient auth (`ANTHROPIC_API_KEY` or a Claude
+  subscription login).
+- `opencode` uses **OpenCode's own auth store** (`opencode providers` / `opencode auth`).
+  The server's provider listing does embed each provider's key; the adapter projects
+  only `{id, label, group}` out of it, so a key is never logged, never returned by the
+  GUI API, and never written to disk by AIOS.
+
+### Capability differences to expect
+
+Switching away from `claude-code` is an honest downgrade, advertised through the
+`hello` capability handshake (the UI never branches on a runtime name):
+
+| | `claude-code` | `opencode` |
+|---|---|---|
+| Write governance | **pre-gated** per tool call (PreToolUse hook) | **post-turn sweep** + a visible safety banner |
+| Background memory reviewer | available | **off** (BYOA — no silent Anthropic call) |
+| Model picker | Sonnet / Opus | the live provider catalog |
+| Per-turn cost | SDK-reported | read from the OpenCode session API (`GET /session/{id}` → `cost`); the reported number is that turn's delta of the session's cumulative cost, and is **`null` on any read failure — never estimated** |
+| Token usage / context meter | yes | not reported |
 
 ### OpenClaw: "no model output" (a prompt turn produces nothing)
 

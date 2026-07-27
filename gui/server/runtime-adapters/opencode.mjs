@@ -94,6 +94,197 @@ export function authHeader(password) {
   return { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` };
 }
 
+// ── model catalog (AIO-536) ──────────────────────────────────────────────────
+//
+// OpenCode brokers whatever providers the owner authenticated in ITS OWN auth store
+// (OpenRouter, OpenAI, Anthropic, …). The server exposes them at GET /config/providers.
+//
+// SECURITY: that payload embeds each provider's plaintext API `key`. We project ONLY
+// {id, label, group} out of it — the raw response never leaves this function, is never
+// logged, and is never written to aios.yaml.
+
+/** `providerID` + `modelID` → the flat `provider/model` id used everywhere else. */
+function catalogModelId(providerId, modelId) {
+  return `${providerId}/${modelId}`;
+}
+
+/**
+ * Project GET /config/providers → [{id,label,group}], grouped (sorted) by provider.
+ * Pure + defensive: any unexpected shape yields [] so the caller falls back to the
+ * seeded catalog rather than rendering a broken picker.
+ */
+export function mapProviderCatalog(payload) {
+  const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+  const out = [];
+  for (const p of providers) {
+    const providerId = typeof p?.id === "string" ? p.id : null;
+    if (!providerId) continue;
+    const providerLabel = typeof p?.name === "string" && p.name ? p.name : providerId;
+    // `models` is a map of modelID → model descriptor (arrays tolerated too).
+    const models = Array.isArray(p?.models) ? p.models : Object.values(p?.models ?? {});
+    for (const m of models) {
+      const modelId = typeof m?.id === "string" ? m.id : null;
+      if (!modelId) continue;
+      if (m?.status === "deprecated") continue;
+      out.push({
+        id: catalogModelId(providerId, modelId),
+        label: typeof m?.name === "string" && m.name ? m.name : modelId,
+        group: providerLabel,
+      });
+    }
+  }
+  out.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+  return out;
+}
+
+/**
+ * Boot a short-lived `opencode serve`, hand its base URL to `fn`, and always reap it.
+ * Used for one-shot reads (the model catalog) outside a chat session. Resolves to
+ * `fallback` on any failure — a missing / broken OpenCode install must degrade the
+ * picker, never throw into the config route.
+ */
+async function withOpencodeServer(fn, { cwd, timeoutMs = 15000, fallback = null } = {}) {
+  let child;
+  try {
+    child = spawn("opencode", ["serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return fallback;
+  }
+  child.on("error", () => {
+    /* ENOENT — the boot promise resolves null below */
+  });
+  const timer = setTimeout(() => {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* */
+    }
+  }, timeoutMs);
+  timer.unref?.();
+  try {
+    const baseUrl = await new Promise((resolve) => {
+      let buf = "";
+      const onData = (d) => {
+        buf += d;
+        const m = buf.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (m) {
+          child.stdout.off("data", onData);
+          resolve(m[0]);
+        }
+      };
+      child.stdout?.on("data", onData);
+      child.on("close", () => resolve(null));
+      child.on("error", () => resolve(null));
+    });
+    if (!baseUrl) return fallback;
+    return await fn(baseUrl);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timer);
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* */
+    }
+  }
+}
+
+/**
+ * Read the live provider/model catalog from a running OpenCode server.
+ * Returns [] (never throws) when the endpoint is missing or unparseable, which the
+ * caller reads as "use the seeded fallback".
+ */
+export async function fetchProviderCatalog(baseUrl, { fetchImpl = fetch, headers = {} } = {}) {
+  try {
+    const res = await fetchImpl(`${baseUrl}/config/providers`, { headers });
+    if (!res?.ok) return [];
+    return mapProviderCatalog(await res.json());
+  } catch {
+    return [];
+  }
+}
+
+// Catalog cache: booting a server per /api/config call would make the settings page
+// crawl. One resolve is shared by all in-flight callers and reused for CATALOG_TTL_MS.
+const CATALOG_TTL_MS = 5 * 60 * 1000;
+const catalogCache = new Map(); // repo → { at, models }
+const catalogInflight = new Map(); // repo → Promise
+
+/** Cached models for `repo`, or null when nothing has resolved yet (→ seeded fallback). */
+export function cachedProviderCatalog(repo) {
+  const hit = catalogCache.get(repo);
+  if (!hit || Date.now() - hit.at > CATALOG_TTL_MS) return null;
+  return hit.models;
+}
+
+/**
+ * Resolve the live catalog for `repo`, caching the result. Concurrent callers share
+ * one server boot. `[]` means "unavailable" — callers fall back to the seeded list.
+ */
+export function resolveProviderCatalog(repo, { fetchImpl = fetch } = {}) {
+  const fresh = cachedProviderCatalog(repo);
+  if (fresh) return Promise.resolve(fresh);
+  const running = catalogInflight.get(repo);
+  if (running) return running;
+  const headers = authHeader(process.env.OPENCODE_SERVER_PASSWORD);
+  const p = withOpencodeServer((baseUrl) => fetchProviderCatalog(baseUrl, { fetchImpl, headers }), {
+    cwd: repo,
+    fallback: [],
+  })
+    .then((models) => {
+      // Only cache a real answer; a failed probe should be retried on the next call.
+      if (models.length) catalogCache.set(repo, { at: Date.now(), models });
+      return models;
+    })
+    .catch(() => [])
+    .finally(() => catalogInflight.delete(repo));
+  catalogInflight.set(repo, p);
+  return p;
+}
+
+/** Test seam: drop cached catalogs so a test can re-resolve. */
+export function _resetCatalogCache() {
+  catalogCache.clear();
+  catalogInflight.clear();
+}
+
+/**
+ * Read the session's AUTHORITATIVE cumulative cost from the OpenCode server
+ * (GET /session/{id} → `cost`, a number). Returns null on any failure or a
+ * non-finite value — we never estimate a cost.
+ */
+export async function readSessionCost(
+  baseUrl,
+  sessionId,
+  { fetchImpl = fetch, headers = {} } = {}
+) {
+  try {
+    const res = await fetchImpl(`${baseUrl}/session/${sessionId}`, { headers });
+    if (!res?.ok) return null;
+    const cost = (await res.json())?.cost;
+    return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `provider/model` → the `{providerID, modelID}` body opencode expects, split at the
+ * FIRST slash so a nested model id survives (`openrouter/qwen/qwen3.7-plus` →
+ * `{providerID:"openrouter", modelID:"qwen/qwen3.7-plus"}`). Returns undefined for an
+ * empty/malformed id, which means "let opencode use its own default".
+ */
+export function splitModel(id) {
+  if (typeof id !== "string") return undefined;
+  const i = id.indexOf("/");
+  if (i <= 0 || i >= id.length - 1) return undefined;
+  return { providerID: id.slice(0, i), modelID: id.slice(i + 1) };
+}
+
 // Parse the chosen permission optionId → opencode's response vocabulary.
 function toPermissionResponse(choice) {
   if (choice === "once" || choice === "always" || choice === "reject") return choice;
@@ -285,18 +476,24 @@ export async function run(host) {
     }
   })();
 
-  // model "providerID/modelID" → {providerID, modelID}; omit to use opencode's default.
-  let modelBody;
-  if (model && model.includes("/")) {
-    const i = model.indexOf("/");
-    modelBody = { providerID: model.slice(0, i), modelID: model.slice(i + 1) };
-  }
+  // The model in force right now. Seeded from aios.yaml's agent_model and updated
+  // per turn when the cockpit picker sends a different one (AIO-536) — opencode
+  // takes the model per message, so a switch needs no reconnect.
+  let activeModel = typeof model === "string" ? model : "";
 
   // 4. Turn loop: POST a message per user turn (synchronous — resolves at turn end).
+  // `lastCost` tracks the session's cumulative cost as of the previous result, so each
+  // turn reports its own delta. Both numbers come from the server; nothing is estimated.
+  let lastCost = 0;
   try {
     for await (const turn of input) {
       if (aborted || signal?.aborted) break;
       const turnStart = Date.now();
+      if (typeof turn.model === "string" && turn.model && turn.model !== activeModel) {
+        activeModel = turn.model;
+        emit({ type: "model", model: activeModel });
+      }
+      const modelBody = splitModel(activeModel);
       turnErrored = false;
       let failed = false;
       // Resolve when the session goes idle (true turn-end), with a fallback so a
@@ -352,7 +549,15 @@ export async function run(host) {
         failed = true;
       }
 
-      emit({ type: "result", subtype: failed ? "error" : "success", cost_usd: null });
+      // Authoritative per-turn cost: the server's cumulative session cost minus the
+      // previous turn's. `null` on ANY read failure — never an estimate (AIO-536).
+      let costUsd = null;
+      const total = await readSessionCost(baseUrl, sessionId, { headers: authHeaders });
+      if (total !== null) {
+        costUsd = Math.max(0, total - lastCost);
+        lastCost = total;
+      }
+      emit({ type: "result", subtype: failed ? "error" : "success", cost_usd: costUsd });
     }
   } finally {
     try {
