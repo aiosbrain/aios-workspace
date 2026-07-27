@@ -19,7 +19,7 @@ PASS=0; FAIL=0
 
 # Runtime-assembled fixtures (never literal in this file)
 AWS_KEY="AKIA""ABCDEFGHIJKLMNOP"
-ANT_KEY="sk-""ant-api03-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ANT_KEY="sk-""ant-api03-""aaaaaaaaaaaaaaaaaaaa""aaaaaaaaaaaaaaaaaaaa"
 GH_PAT="ghp_""ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef123456"
 PEM_HDR="-----BEGIN RSA ""PRIVATE KEY-----"
 DB_URL="postgres""://admin:hunter2@db.internal/prod"
