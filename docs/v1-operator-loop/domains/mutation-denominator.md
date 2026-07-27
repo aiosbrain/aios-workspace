@@ -14,6 +14,20 @@ this spec. No production code changes.
 > projection from measured suite runtimes, moves `bugbot-security` into the deliberate-red column
 > (test speed is its blocker → **AIO-554**), and corrects the acceptance criteria. The
 > `nightlyExcludes` contract, matrix design, and access-governance stance are unchanged.
+>
+> **Revision 2.1 (2026-07-27, post-calibration).** Two facts changed while the calibration
+> dispatch ran. (1) **AIO-540 merged** (PR #428): `scripts/sync-plan.mjs` exists, the
+> access-governance group is scoped to it, and that leg is now expected **green** (measured 714
+> mutants / 5m47s in #428) — `bugbot-security` is the only remaining deliberate-red leg. (2) The
+> calibration **measured the inbox floor dip this spec anticipated**: 84.62% (22/26) against the
+> unit-only oracle, and widening `nightlyTests` to the capability-adjacent subset changed nothing,
+> because `test/operator-loop/inbox-capability.test.mjs` is the **only** test in the repo that
+> invokes the broker — no oracle widening can kill what no test asserts. The remediation was the
+> third, most honest option: **strengthen the unit oracle** (assert the journalled event payloads
+> and the optional-journal guard Stryker proved unasserted) — after which the unit-only oracle
+> scores **100.00% (26/26)** and the 90 floor enforces. That is this mechanism working end-to-end:
+> the narrowed denominator found real assertion gaps in the safety unit's only oracle on its first
+> measured run. The affected sections below are updated in place.
 
 ## Why
 
@@ -107,16 +121,17 @@ one of those four is still blocked on oracle speed:
 | update-safety        | `scripts/toolkit-merge.mjs` — `decideMerge` (117) | `toolkit-merge.test.mjs` (0.79s)                | **~3–7 min**                                |
 | runtime-capabilities | already scoped (884)                              | unchanged (0.33s)                               | ~20–30 min, unchanged                       |
 | bugbot-security      | `hooks/local-bugbot-gate.mjs` (612)               | its own test **is** the 14.9s → **AIO-554**     | **red at 45 min** until the oracle is fast  |
-| access-governance    | `buildPlan`                                       | **no module — trapped in `scripts/aios.mjs`**   | **red at 45 min** until extraction (AIO-540) |
+| access-governance    | `scripts/sync-plan.mjs` (extracted by AIO-540)    | its 4-file suite (0.48s)                        | green, ~6 min (714 mutants, measured in #428) |
 
-`scripts/aios.mjs` is the **only** place a refactor sits on the critical path, and that is
-[`safety-unit-extraction.md`](./safety-unit-extraction.md) (AIO-540). This spec deliberately does
-**not** introduce a Stryker line-range mechanism to paper over it: a line range is a coordinate,
-not a boundary, and building one here only to delete it in AIO-540 is throwaway work that leaves a
-speculative parser behind. `bugbot-security` is the dual case: its unit is a module but its oracle
-spawns the real hook per test case, so no test *selection* can make the leg fit — that is a test
-*speed* problem, extracted to **AIO-554** the same way the access-governance module problem is
-extracted to AIO-540.
+`scripts/aios.mjs` was the **only** place a refactor sat on the critical path, and that was
+[`safety-unit-extraction.md`](./safety-unit-extraction.md) (AIO-540, **merged** as PR #428 — the
+group now mutates `scripts/sync-plan.mjs`). This spec deliberately did **not** introduce a Stryker
+line-range mechanism to bridge the gap: a line range is a coordinate, not a boundary, and building
+one only to delete it when AIO-540 landed would have been throwaway work leaving a speculative
+parser behind. `bugbot-security` is the dual case: its unit is a module but its oracle spawns the
+real hook per test case, so no test *selection* can make the leg fit — that is a test *speed*
+problem, extracted to **AIO-554** the same way the access-governance module problem was extracted
+to AIO-540.
 
 ## Dependencies
 
@@ -135,19 +150,20 @@ extracted to AIO-540.
 - `.github/workflows/mutation.yml` — the nightly job, its split cache restore/save, and the
   `if: always()` artifact upload. The matrix reuses this job body.
 - `.github/workflows/ci.yml` line 331 — the `Changed-code mutation (calibration)` job.
-- `test/mutation-config.test.mjs` — the config-integrity suite, including line 123's test
-  _"the sync-plan safety gate lives in scripts/aios.mjs and is mutation-covered"_, which must stay
-  true (access-governance keeps `scripts/aios.mjs` in scope here — see Scope), and its
-  `globToRegExp`/`matchesTrackedFile` helpers, which the new assertions reuse.
+- `test/mutation-config.test.mjs` — the config-integrity suite, including the sync-plan gate test
+  (post-AIO-540: _"the sync-plan safety gate lives in scripts/sync-plan.mjs and is
+  mutation-covered"_), and its `globToRegExp`/`matchesTrackedFile` helpers, which the new
+  assertions reuse.
 - `configFor` line 167 — `breakThreshold` applies only when `mutate.length === 1`. Scoping
   `inbox-authorization` to its single declared unit therefore **activates** the calibrated
   `dist/operator-loop/inbox/capability.js: 90` floor. One caveat revision 1 missed: that floor was
   calibrated with the full operator-loop suite as the killer. With the narrowed `nightlyTests`
   killer the score can only drop, so the calibration dispatch **re-measures before the floor is
-  trusted**: if the unit test alone scores < 90, widen `nightlyTests` to the capability-exercising
-  subset (`inbox-audit`, `inbox-journal-store`, `inbox-capability`, `inbox-outbox`,
-  `inbox-journal-replay`, `inbox-reply-policy`, `inbox-outbox-gog`) rather than silently lowering
-  the floor.
+  trusted**. *Measured outcome (rev 2.1):* the unit test alone scored 84.62% (22/26); widening to
+  the capability-adjacent subset changed nothing because no other test invokes the broker; the
+  remediation was to **strengthen the unit oracle** — assert the journalled event payloads and the
+  optional-journal guard — after which the unit-only oracle scores **100.00%** and the floor
+  enforces. The floor was never lowered.
 
 ## Contract
 
@@ -215,7 +231,7 @@ inbox-authorization, runtime-capabilities, client-auth-permissions] }, fail-fast
   `stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}`
   with a matching restore-keys prefix — because a plain suffix after the sha would let restore-keys
   cross-restore another group's incremental state. Artifact name gains `-${{ matrix.group }}`. A
-  comment names the two expected-red legs and their unblocking issues (AIO-540, AIO-554).
+  comment names the expected-red leg and its unblocking issue (bugbot-security → AIO-554).
 - **`.github/workflows/ci.yml`** — raise the changed-code lane to `timeout-minutes: 45`. Keep
   `continue-on-error: true` (the lane is explicitly advisory/calibration). Honesty note: this
   raise helps mid-size files; it does **not** make an `scripts/aios.mjs`-touching PR complete
@@ -227,20 +243,23 @@ inbox-authorization, runtime-capabilities, client-auth-permissions] }, fail-fast
 **In:** the `nightlyExcludes` + `nightlyTests` contract and their assertions, the four group
 re-scopings, the nightly matrix, and the two timeout raises.
 
-**Deliberately red: `access-governance` and `bugbot-security`.** Access-governance's declared unit
-has no module, so the honest options are to leave it whole-file (the leg fails visibly at 45
-minutes) or to drop `scripts/aios.mjs` from the group. **This spec chooses the visible failure.**
-Dropping the file would make the leg green while silently removing the sync-plan safety gate from
-mutation coverage — the exact inference this spec exists to prevent, and it would falsify line 123
-of `test/mutation-config.test.mjs`. Bugbot-security gets the same treatment for the dual reason:
-its oracle is intrinsically too slow (14.9s per mutant run), and no green obtainable tonight would
-mean anything. A red leg that means "this group is genuinely not measured" is strictly better than
-the current state, where the same fact is hidden inside one truncated job. AIO-540 turns the first
-leg green by making its claim true; AIO-554 turns the second green by making its oracle fast.
+**Deliberately red: `bugbot-security`.** Its oracle is intrinsically too slow (14.9s per mutant
+run), and no green obtainable tonight would mean anything: a red leg that means "this group is
+genuinely not measured" is strictly better than the pre-matrix state, where the same fact was
+hidden inside one truncated job. **AIO-554** turns the leg green by making the oracle fast — the
+leg's timeout must not be widened and the gate file must not be dropped to silence it.
+(Access-governance carried the same deliberate-red stance while `buildPlan` had no module; AIO-540
+merged mid-calibration and resolved it — dropping `scripts/aios.mjs` *without* the extraction
+would have silently removed the sync-plan safety gate from coverage, the exact inference this spec
+exists to prevent.)
 
 **Deferred:** widening any narrowed group back out once its unit scores well (each is a separate,
-measured decision recorded in `nightlyExcludes`); re-calibrating `breakThreshold` away from 0 for
-multi-file campaigns; `client-auth-permissions` scoping (Vitest + `coverageAnalysis: "perTest"` is
+measured decision recorded in `nightlyExcludes`); the `runtime-capabilities` dead oracle — its
+first measured leg scored **0.00% (631 mutants, 0 killed)** because no test in its kill command
+imports the mutated modules (`guard.mjs` and `runtime-adapters/index.mjs` have no test importer at
+all; `capability-store.mjs`'s only oracle lives in the inbox group) → **AIO-563**, which also
+considers a config assertion that every mutate target is reachable from its group's tests;
+re-calibrating `breakThreshold` away from 0 for multi-file campaigns; `client-auth-permissions` scoping (Vitest + `coverageAnalysis: "perTest"` is
 a different cost model and is not known to be starved — its first measured leg duration falls out
 of the calibration dispatch for free); a PR-lane cost model for umbrella-suite groups (incremental
 mode or unit-scoped changed-code runs); nightly-schedule reliability — GitHub fired the 2026-07-26
@@ -271,17 +290,17 @@ keeps this checkable rather than asserted.
   containing only `test/operator-loop/inbox-capability.test.mjs` — the calibrated floor now
   enforcing against the unit's own oracle (after the re-measurement check above).
 - One nightly run produces a `mutation-report-<group>` artifact for **every leg that completes** —
-  expected: four (`inbox-authorization`, `update-safety`, `runtime-capabilities`,
-  `client-auth-permissions`). A timed-out leg writes no JSON report (the reporter runs at
-  completion), so the two red legs upload nothing; **six** artifacts is the post-AIO-540/AIO-554
-  end state, not this PR's.
+  post-AIO-540 (rev 2.1): five (`access-governance`, `inbox-authorization`, `update-safety`,
+  `runtime-capabilities`, `client-auth-permissions`). A timed-out leg writes no JSON report (the
+  reporter runs at completion), so the bugbot-security red leg uploads nothing; **six** artifacts
+  is the post-AIO-554 end state.
 - `inbox-authorization` and `update-safety` each complete and report a score for the **first
   time**, in **under 45 minutes** each (projected ~5–10 and ~3–7).
-- The `access-governance` and `bugbot-security` legs fail on their step timeout **in isolation**,
-  as step failures (not run-level cancellations), without preventing the other legs from
-  reporting — the behavior the single-job layout made impossible.
+- The `bugbot-security` leg fails on its step timeout **in isolation**, as a step failure (not a
+  run-level cancellation), without preventing the other legs from reporting — the behavior the
+  single-job layout made impossible.
 - `.github/workflows/ci.yml` shows `timeout-minutes: 45` on the changed-code lane.
-- All six per-leg outcomes — four scores plus the two expected timeouts — are recorded in the PR
+- All six per-leg outcomes — five scores plus the expected bugbot timeout — are recorded in the PR
   body as the first complete campaign baseline.
 
 ## Implementation
