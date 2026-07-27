@@ -10,7 +10,7 @@
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
     "declaration": false,
-    "sourceMap": false,
+    "sourceMap": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

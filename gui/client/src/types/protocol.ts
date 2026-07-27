@@ -68,6 +68,8 @@ export interface PermissionRequestEvent {
 export interface UsageEvent {
   type: "usage";
   usage: Usage;
+  /** Current prompt occupancy vs. cumulative runtime totals. Absent means legacy/current. */
+  scope?: "context" | "session";
 }
 export interface ModelEvent {
   type: "model";

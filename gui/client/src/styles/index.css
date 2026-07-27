@@ -8,7 +8,7 @@
      4. @source              → so @aios-alpha/ui's compiled utilities get generated
                                (node_modules is workspace-hoisted to the repo root)
      5. @custom-variant dark → class-driven dark mode
-   Self-host the three ecosystem fonts (no Google CDN). Latin-subset files only
+   Self-host the two ecosystem fonts (no Google CDN). Latin-subset files only
    (fontsource's bare "400.css" etc. bundle latin + latin-ext + cyrillic + greek +
    vietnamese per weight — 6 subsets each for jetbrains-mono alone, the bulk of the
    40+ font files in a production build) — every string in this UI is English today;
@@ -18,8 +18,6 @@
 @import "@aios-alpha/design/tokens.css";
 @import "@aios-alpha/design/tailwind-theme.css";
 @import "tailwindcss";
-@import "@fontsource/instrument-serif/latin-400.css";
-@import "@fontsource/instrument-serif/latin-400-italic.css";
 @import "@fontsource/instrument-sans/latin-400.css";
 @import "@fontsource/instrument-sans/latin-500.css";
 @import "@fontsource/instrument-sans/latin-600.css";
@@ -60,7 +58,9 @@
   --live: var(--aios-accent);
   --green: var(--aios-emerald);
   --red: var(--aios-destructive);
-  --display: var(--aios-font-display);
+  /* This cockpit is application UI, not editorial print: one sans family throughout. */
+  --aios-font-display: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --display: var(--aios-font-body);
   --body: var(--aios-font-body);
   --mono: var(--aios-font-mono);
   --shadow-card: var(--aios-shadow-card);
@@ -76,7 +76,9 @@ html,
 body,
 #root {
   height: 100%;
+  min-height: 0;
   margin: 0;
+  overflow: hidden;
 }
 body {
   background: var(--bg);

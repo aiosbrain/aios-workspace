@@ -38,12 +38,19 @@ import {
 // import time; only the interactive onboarding wizard needs @clack/prompts.
 import { parseFlatYaml } from "./flat-yaml.mjs";
 import { loadDotEnv, envGet, resolveBrainConfig, dotenvxEncryptedHint } from "./brain-config.mjs";
-import { parseTaskRows, mergeTaskWriteback } from "./tasks-table.mjs";
+import { parseTaskRows } from "./tasks-table.mjs";
+import { pullSyncOriginTasks, resolveTasksPath, mergeWritebackFeed } from "./pull-tasks.mjs";
 import {
   parseFrontmatter,
   normalizeTier,
   classifyKind,
   parseDecisionRows,
+  redactAdminDecisionRows,
+  DECISION_REDACTION_VERSION,
+  parseEvidenceRows,
+  validateItemPayload,
+  evidencePayloadContent,
+  validEvidenceDeclaration,
 } from "./workspace-parse.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
@@ -57,34 +64,9 @@ import {
   loadSecretPatterns,
   findSecret,
 } from "./cli-common.mjs";
-import { cmdAnalyze } from "./analyze/index.mjs";
-import { cmdBuild } from "./build.mjs";
-import { cmdSimplify } from "./simplify.mjs";
-import { cmdSpec } from "./spec-eval.mjs";
-import { runCouncil } from "./council.mjs";
-import { cmdReviewBugbot } from "./review-bugbot.mjs";
-import { cmdPr } from "./pr.mjs";
-import { cmdConsolidateFindings } from "./consolidate-findings.mjs";
-import { cmdShip } from "./ship.mjs";
-import { cmdRoadmapRun } from "./roadmap-run.mjs";
-import { cmdRails } from "./rails.mjs";
-import { cmdMember } from "./member-cli.mjs";
+import { dispatch } from "./cli/dispatch.mjs";
 import { createBrainClient } from "./brain-client.mjs";
-import { cmdInstincts } from "./instincts.mjs";
-import { cmdMode } from "./mode.mjs";
-import { cmdWorktree } from "./worktree.mjs";
-import { cmdUpdate } from "./update.mjs";
-import { cmdMaturityWeek } from "./maturity-week-cmd.mjs";
-import { cmdTime } from "./time.mjs";
-import { cmdTimeline } from "./timeline.mjs";
-import { cmdAsks } from "./asks.mjs";
-import { cmdInbox } from "./inbox.mjs";
-import { cmdDecisions } from "./decisions.mjs";
-import { cmdLoop } from "./loop.mjs";
-import { cmdPromote } from "./promote.mjs";
-import { cmdTranscripts } from "./transcripts.mjs";
-import { cmdPm, printProjectionHealth } from "./pm.mjs";
-import { runContextHealthCli } from "./context-health.mjs";
+import * as skillContext from "./skill-context.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SYNCABLE_TIERS = ["team", "external"]; // canonical; `client` normalizes to external
@@ -326,6 +308,30 @@ function saveState(repo, state) {
 
 // ── plan: classify every candidate file ─────────────────────────────────────
 
+// content_sha256 MUST describe the payload actually sent on the wire, not the raw file hash — else
+// brain-api dedupe (identical sha → "unchanged", body NOT overwritten) can leave stale/leaked content
+// upstream while the client marks the resync done. This matters for:
+//   - decision: body+rows are redacted (H3 #380) before send — hash the REDACTED body.
+//   - fact / stakeholder_mention: evidencePayloadContent() strips the raw body/source-quotes and
+//     replaces them with a placeholder; the actual synced content is `rows` — hash the pushed
+//     frontmatter+body+rows so the fingerprint matches the transmitted payload, not the raw file
+//     (which may still contain the admin-tier transcript body/quotes that never leave the machine).
+// Local change-detection (re-push decisioning) keeps the raw item.hash separately.
+function contentShaForPush(item) {
+  if (item.kind !== "decision" && item.kind !== "fact" && item.kind !== "stakeholder_mention") {
+    return item.hash;
+  }
+  return sha256(
+    JSON.stringify({
+      decision_redaction_version: DECISION_REDACTION_VERSION,
+      access: item.tier,
+      frontmatter: item.frontmatter || {},
+      body: item.body,
+      rows: item.rows || [],
+    })
+  );
+}
+
 function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
   const plan = { push: [], blocked: [], clean: [] };
@@ -341,6 +347,13 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     const { frontmatter, body } = parseFrontmatter(raw);
     const kind = classifyKind(rel, frontmatter);
     const hash = sha256(raw);
+    if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {
+      plan.blocked.push({
+        rel,
+        reason: "evidence files require their explicit kind at a canonical approved path",
+      });
+      continue;
+    }
 
     const tier = normalizeTier(frontmatter?.access || "");
     if (!frontmatter || !frontmatter.access) {
@@ -362,20 +375,36 @@ function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     }
 
     const prev = state.items[rel];
-    if (prev && prev.sha === hash) {
+    // A decision-log needs re-push if its redaction is stale, even when the SHA is unchanged.
+    const redactionStale =
+      kind === "decision" && (prev?.redaction_version || 0) < DECISION_REDACTION_VERSION;
+    if (prev && prev.sha === hash && !redactionStale) {
       plan.clean.push({ rel });
       continue;
     }
+    // decision → H3 (#380) redaction of BOTH body + rows (contentShaForPush hashes the
+    // redacted body); fact/stakeholder_mention → strip raw body/source-quotes, push only parsed rows
+    // (admin/private evidence is already blocked above by the file-tier gate + validEvidenceDeclaration).
     let rows;
+    let pushFrontmatter = frontmatter;
+    let pushBody = body;
     if (kind === "task") rows = parseTaskRows(body);
-    if (kind === "decision") rows = parseDecisionRows(body);
+    else if (kind === "decision") ({ body: pushBody, rows } = redactAdminDecisionRows(body, tier));
+    else if (kind === "fact" || kind === "stakeholder_mention") {
+      rows = parseEvidenceRows(kind, body);
+      ({ frontmatter: pushFrontmatter, body: pushBody } = evidencePayloadContent(
+        kind,
+        frontmatter,
+        body
+      ));
+    }
     plan.push.push({
       rel,
       kind,
       hash,
       tier,
-      frontmatter,
-      body,
+      frontmatter: pushFrontmatter,
+      body: pushBody,
       rows,
       isNew: !prev,
     });
@@ -498,7 +527,9 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
       )
     );
   }
-  await printProjectionHealth(cfg, { optional: true });
+  await import("./pm.mjs").then(({ printProjectionHealth }) =>
+    printProjectionHealth(cfg, { optional: true })
+  );
 }
 
 // Best-effort: open a URL in the user's default browser. Returns false (caller prints the
@@ -907,7 +938,9 @@ async function cmdPush(repo, cfg, patterns, args) {
       project: cfg.project,
       path: item.rel,
       kind: item.kind,
-      content_sha256: item.hash,
+      // For decisions this is the sha of the REDACTED body (not item.hash) so the brain's dedupe
+      // actually overwrites a previously-leaked copy; other kinds keep the raw-file hash.
+      content_sha256: contentShaForPush(item),
       actor: member,
       access: item.tier,
       frontmatter: item.frontmatter || {},
@@ -915,18 +948,28 @@ async function cmdPush(repo, cfg, patterns, args) {
     };
     if (item.rows) payload.rows = item.rows;
     try {
+      if (!validateItemPayload(payload).success)
+        throw new Error("local Brain API 1.12 payload validation failed");
       const res = await api(cfg, "POST", "/items", payload);
       state.items[item.rel] = {
         sha: item.hash,
         remote_id: res.id || null,
         pushed_at: new Date().toISOString(),
+        // Record which redaction the pushed copy reflects so a later version bump forces a resync.
+        ...(item.kind === "decision" ? { redaction_version: DECISION_REDACTION_VERSION } : {}),
       };
       pushed++;
       result.pushed.add(item.rel);
       console.log(`  ${c.green("✓")} ${item.rel} ${c.dim(res.status || "")}`);
     } catch (e) {
-      result.failed.set(item.rel, e.message);
-      console.log(`  ${c.red("✗")} ${item.rel} — ${e.message}`);
+      const needs112 =
+        (item.kind === "fact" || item.kind === "stakeholder_mention") &&
+        /unknown (?:item )?kind|invalid (?:item_)?kind|item_kind.*(?:invalid|unknown)|kind.*(?:unsupported|not supported)/i.test(
+          e.message
+        );
+      const message = needs112 ? `Brain API 1.12 required: ${e.message}` : e.message;
+      result.failed.set(item.rel, message);
+      console.log(`  ${c.red("✗")} ${item.rel} — ${message}`);
     }
   }
   saveState(repo, state);
@@ -935,7 +978,9 @@ async function cmdPush(repo, cfg, patterns, args) {
   if (plan.blocked.length)
     console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
   if (plan.push.some((item) => item.kind === "task" && result.pushed.has(item.rel)))
-    await printProjectionHealth(cfg, { optional: true });
+    await import("./pm.mjs").then(({ printProjectionHealth }) =>
+      printProjectionHealth(cfg, { optional: true })
+    );
   return result;
 }
 
@@ -959,9 +1004,9 @@ async function cmdPull(repo, cfg, args = []) {
     if (cursor) qs.set("cursor", cursor);
     const res = await api(cfg, "GET", `/items?${qs}`);
     for (const item of res.items || []) {
-      // Append-only: never overwrite working files; flatten path under from-brain/
-      const flat = `${item.project}__${item.path.replace(/\//g, "__")}`;
-      const dest = path.join(destRoot, flat);
+      // H1: flatten BOTH project and path (a MITM brain can put `..` in either) + safeJoin.
+      const flat = `${String(item.project).replace(/\//g, "__")}__${item.path.replace(/\//g, "__")}`;
+      const dest = safeJoin(destRoot, flat);
       if (existsSync(dest) && sha256(readFileSync(dest)) === item.content_sha256) continue;
       const fm = [
         "---",
@@ -981,31 +1026,26 @@ async function cmdPull(repo, cfg, args = []) {
     cursor = res.next_cursor || null;
   } while (cursor);
 
-  // Task writeback: UI-created/modified rows → merge into the workspace's team-synced
-  // tasks file. AIO-364: prefer the new 3-log/tasks-team.md home (what a freshly
-  // scaffolded workspace has); fall back through the legacy single-file spine for
-  // workspaces that haven't migrated. Dashboard-authored rows are always team-tier by
-  // construction (the /tasks endpoint is tier-scoped — see docs/brain-api.md), so they
-  // never belong in tasks-private.md or 5-personal/tasks.md.
+  // Task writeback: UI rows → the team-synced tasks file (path + merge: scripts/pull-tasks.mjs).
   const tasksRes = await api(
     cfg,
     "GET",
     `/tasks?${new URLSearchParams({ since: state.last_tasks_pull || "1970-01-01T00:00:00Z" })}`
   );
-  let merged = 0;
-  const tasksPath = existsSync(path.join(repo, "3-log", "tasks-team.md"))
-    ? path.join(repo, "3-log", "tasks-team.md")
-    : existsSync(path.join(repo, "3-log", "tasks.md"))
-      ? path.join(repo, "3-log", "tasks.md")
-      : path.join(repo, "03-status", "tasks.md");
-  const incomingTaskRows = (tasksRes.tasks || [])
-    .filter((g) => g.project === cfg.project)
-    .flatMap((g) => g.rows || []);
-  if (existsSync(tasksPath) && incomingTaskRows.length) {
-    let content = mergeTaskWriteback(readFileSync(tasksPath, "utf8"), incomingTaskRows);
-    merged += incomingTaskRows.length;
-    writeFileSync(tasksPath, content);
-  }
+  const tasksPath = resolveTasksPath(repo);
+  const merged = mergeWritebackFeed(tasksPath, tasksRes, cfg.project);
+
+  // Sync-origin return leg (brain-api 1.13, AIO-537) — brain-side status/assignee moves on rows
+  // THIS workspace pushed. Feature-detected + cursor-safe inside scripts/pull-tasks.mjs.
+  const leg = await pullSyncOriginTasks({
+    project: cfg.project,
+    tasksPath,
+    since: state.last_sync_tasks_pull,
+    fetchFeed: (route) => apiOptional(cfg, route, null),
+    log: (line) => console.log(`  ${c.green("✓")} ${line}`),
+  });
+  const mergedSyncOrigin = leg.rows.length;
+  if (leg.supported) state.last_sync_tasks_pull = leg.cursor;
 
   // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
   // (mirrors the task writeback; keyed on the `#` column = row_key).
@@ -1062,6 +1102,9 @@ async function cmdPull(repo, cfg, args = []) {
   console.log(
     c.green(
       `pulled ${fetched} item(s); merged ${merged} task row(s), ${mergedDecisions} decision row(s)` +
+        (mergedSyncOrigin
+          ? `, updated ${mergedSyncOrigin} pushed task row(s) from the brain`
+          : "") +
         (registered ? `, registered ${registered} brain project(s)` : "") +
         "."
     )
@@ -2059,6 +2102,7 @@ function readWorkspaceSkills(repo) {
   const dir = path.join(repo, ".claude", "skills");
   const out = [];
   if (!existsSync(dir)) return out;
+  const suiteById = skillContext.loadSkillSuiteIndex(repo);
   for (const name of readdirSync(dir).sort()) {
     const sub = path.join(dir, name);
     if (!statSync(sub).isDirectory()) continue;
@@ -2078,9 +2122,9 @@ function readWorkspaceSkills(repo) {
       kind: fm.kind || "skill",
       version: fm.version || "1.0.0",
       description,
-      triggers: Array.isArray(fm.triggers) ? fm.triggers : [],
       workflow: fm.workflow || null,
       body: (body || "").trim(),
+      ...skillContext.skillSuiteExportFields(suiteById.get(fm.name), fm.triggers),
     });
   }
   return out;
@@ -2155,18 +2199,15 @@ function cmdSkills(repo, args) {
   const only = flagValue(args, "--skill");
   const outBase = flagValue(args, "--out") || path.join(repo, ".aios", "export", runtime);
   const doInstall = args.includes("--install");
-
-  let skills = readWorkspaceSkills(repo);
-  if (only) skills = skills.filter((s) => s.name === only);
+  const skills = skillContext.selectSkillsForExport(readWorkspaceSkills(repo), only);
   if (!skills.length) {
     die(
       only ? `no skill named '${only}' in .claude/skills/` : "no skills found in .claude/skills/"
     );
   }
-
   mkdirSync(outBase, { recursive: true });
   const degraded = [];
-  const installable = []; // {name, md} for SKILL.md-layout runtimes
+  const installable = [];
   for (const s of skills) {
     const willDegrade = s.kind === "workflow-harness" && !rt.harness;
     if (willDegrade) degraded.push(s.name);
@@ -2183,6 +2224,7 @@ function cmdSkills(repo, args) {
     }
     console.log(`  ${s.name}${willDegrade ? " (harness→single-agent)" : ""}`);
   }
+  skillContext.writeSkillExportRoutings(skills, outBase, rt.layout === "claude");
   console.log(
     `\nexported ${skills.length} skill(s) for '${runtime}' → ${path.relative(repo, outBase)}/`
   );
@@ -2415,388 +2457,62 @@ async function cmdWork(repo, cfg, patterns, args) {
   }
   await postWorkEvent(repo, cfg, key, member);
 }
-
-// ── operator loop (C1 collector + manifest, C2 evidence ledger) ──────────────
-// loadOperatorLoop now lives in ./operator-loop-loader.mjs (shared with the extracted
-// mode/loop/asks/decisions/time handler modules). Imported at the top of this file.
-
-// aios loop (V1 Operator Loop CLI): collect / daily / manifest --explain / verify / weekly /
-// writeback / telemetry. Extracted to ./loop.mjs (AIO-315); dispatched below as
-// cmdLoop(repo, cfg, rest).
-
-// aios time (AIO-139): native agent-session runtime capture. Extracted to ./time.mjs
-// (AIO-315); dispatched below as cmdTime(repo, cfg, rest).
-
-// aios asks (AIO-167): non-blocking escalation queue + hook wiring. Extracted to ./asks.mjs
-// (AIO-315); dispatched below as cmdAsks(repo, cfg, rest).
-
-// aios decisions (AIO-170 / EE4): human-in-the-loop decision-capture corpus. Extracted to
-// ./decisions.mjs (AIO-315); dispatched below as cmdDecisions(repo, cfg, rest).
-
-// aios mode (AIO-168): deep-work / orchestration attention toggle. Extracted to
-// ./mode.mjs (AIO-315); dispatched below as cmdMode(repo, cfg, rest).
-
-// aios maturity-week — local weekly AEM report + belts (AM6, AIO-231). Extracted to
-// ./maturity-week-cmd.mjs (AIO-315); dispatched below as cmdMaturityWeek(repo, rest).
-
-// aios timeline (AIO-203): screenshot-rich weekly summaries, team + external.
-// Extracted to ./timeline.mjs (AIO-315); dispatched below as
-// process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0).
-
 // ── main ────────────────────────────────────────────────────────────────────
+//
+// Every subcommand — its root-resolution mode, its lazy module loader, its argument shape,
+// its exit semantics AND its help text — is declared exactly once in scripts/cli/registry.mjs
+// and executed by scripts/cli/dispatch.mjs (AIO-512 Phase 1). There is no if/else-if dispatch
+// chain and no hand-maintained USAGE string in this file any more; `aios help` is rendered
+// from the descriptors, so a command can no longer exist without help text (or vice versa).
+//
+// Command modules are loaded lazily by the descriptors, so `aios status` no longer parses
+// ship.mjs / build.mjs / spec-eval.mjs / roadmap-run.mjs on the way to printing a diff.
+//
+// The handlers still defined above (cmdStatus, cmdPush, cmdPull, cmdQuery, cmdGraph,
+// cmdStakeholders, the connect/OAuth family, the skill/blueprint sync family, export-okf …)
+// are injected as `local` — Phase 2 extracts them into their own modules.
 
-const argv = process.argv.slice(2);
-const cmd = argv[0];
-const rest = argv.slice(1);
-
-// `pr` and `consolidate-findings` own their own `--repo` flag — a GitHub owner/repo slug,
-// NOT the workspace path. `timeline` owns it too — repeatable TARGET repo paths (its
-// workspace root comes from the cwd walk-up or its own `--workspace`). Don't consume it
-// here, or the command never sees the target-repo override.
-const repoFlagIdx =
-  cmd === "pr" || cmd === "consolidate-findings" || cmd === "timeline"
-    ? -1
-    : rest.indexOf("--repo");
-let repoArg = null;
-if (repoFlagIdx !== -1) {
-  repoArg = rest[repoFlagIdx + 1];
-  rest.splice(repoFlagIdx, 2);
-}
-
-// aios worktree — git worktree wrapper with automatic config propagation.
-// Extracted to ./worktree.mjs (AIO-315); dispatched below as cmdWorktree(repo, cfg, rest).
-
-const USAGE = `aios — AIOS Team Brain sync client (contract: docs/brain-api.md)
-
-usage:
-  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)
-  aios onboard                          guided first-run setup (brain + tools, one multi-select)
-    --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state
-  aios connect [<id>]                   connect an integration (guided + live-validated)
-    [--token <v>] [--set ENV=v]         non-interactive credential input
-  aios review                           interactive: toggle inclusion, then push selected
-  aios push [--dry-run] [paths…]
-  aios work done <key> [--push]         mark a task done; --push notifies Brain/PM sync
-  aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain
-  aios push blueprint                   publish the team's tool set (lead/admin only)
-  aios pull blueprint                   fetch the team's tool set → .aios/blueprint.json
-  aios pull                             fetch team updates → 1-inbox/from-brain/
-  aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/
-  aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand
-  aios promote <file>                   anonymize-then-promote reusable IP: COPY a private
-    [--to 2-work|4-shared] [--dry-run]  file (5-personal/, or any dir outside sync_include)
-                                         to 2-work/ (team) or 4-shared/ (client|company); scans
-                                         the copy (secrets + leak-gate), sets access frontmatter,
-                                         logs the promotion; omit --to to be prompted
-  aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)
-  aios query "question"                 ask the Team Brain
-  aios member invite <email>            create/re-invite a member + cascade tool invites
-    --name <n> --handle <h>              (Linear/Slack/GitHub); admin-key only (brain-api v1.7)
-    [--role member|lead|admin]           role default member; tolerates a pre-v1.7 brain (404)
-    [--tools linear,slack,github|all|none]  tools default "all"
-  aios member list                      team roster (GET /members; team-tier key required)
-  aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)
-    | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from
-    [--json]                            meeting items; external key → 403 forbidden_tier
-  aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest
-    [--json]                            (.aios/loop/manifests/; offline, never synced)
-  aios loop manifest --explain          inspect a manifest's evidence + tiers
-    [--as team|external] [--daily]      simulate what a digest audience would see
-  aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →
-    --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed
-    [--smoke]                           --smoke derives a debug ledger from a fresh manifest
-  aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),
-    [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;
-    [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)
-  aios loop daily [--as team|external]  fast daily orientation: changed / blocked / owed today
-    [--no-record] [--json]              (read-only; owner run records a local change-snapshot)
-  aios loop writeback <stamp>           approval-gated promotion of a saved closeout (default: preview)
-    [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push
-  aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics
-    [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)
-  aios loop install [--dry-run]         installs the real scheduler for daily+weekly+analyze
-    [--uninstall] [--status]            (launchd on macOS, cron elsewhere); see docs/loop-install.md
-    [--scheduler launchd|cron]
-  aios timeline [--since <date|Nd>]     cross-repo "what we shipped": merged PRs + commits →
-    --repo <path[=liveUrl]> [...]       screenshot-rich, self-contained HTML per audience
-    [--as team|external|all] [--open]   (.aios/timeline/<stamp>/index-<audience>.html);
-    [--until <date>] [--dry-run]        external render is tier-filtered + leak-gate swept,
-    [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);
-    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json
-  aios mcp                              run the Team Brain MCP server over stdio, for
-                                        GUI-only agents (Claude Desktop/Cowork/Codex/Conductor)
-                                        that can't shell out; env-first, no workspace needed
-  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs
-    [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)
-    [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle
-    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/
-  aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria
-  aios instincts distill [--limit N] [--dry-run] [--json]  batch-distill observations → homunculus instincts
-    [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)
-  aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md
-    [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs
-  aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]
-  aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)
-    [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]
-  aios asks list [--status open|resolved|orphaned|all]  escalation queue (local, admin-tier, never synced)
-    [--json]                            list open (default) / resolved / orphaned / all
-  aios asks add --kind <k>              enqueue an ask (severity: blocker|decision|fyi)
-    --severity <s> --title <t> [--body <b>] [--ref <r>] [--json]
-  aios asks show <id> | resolve <id...> inspect one ask; mark ask(s) resolved (bookkeeping)
-  aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)
-  aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue
-    [--json]                            via the tier-gated comms sender (collect→detect→dispatch)
-  aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into
-    [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes
-                                         worktrees whose checked-out branch predates the hooks
-  aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline
-  aios pm status [--json]               projection health + recent-run observability
-  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges
-    [--json]                            (preferredNotifChannel); orchestration restores it — push untouched
-  aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)
-    [--since date] [--json]             AskUserQuestion + plan-approval prompts, newest first
-  aios decisions show <id> [--json]     full record: options, choice, notes, outcome
-  aios decisions outcome <id> <text>    annotate a decision's outcome (append; decisions never mutate)
-  aios decisions export [--json]        dump all records as a JSON array (the training-corpus read path)
-  aios decisions backfill [--all]       recover historical decisions from ~/.claude transcripts
-    [--home d] [--since date]           --all ingests allowlisted repos (foreign origin redacted);
-    [--include tag,…] [--dry-run]       client/unknown roots skipped + counted, never ingested
-  aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW
-    [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress
-    [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md
-  aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)
-    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet
-                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)
-  aios export-okf [output-dir]          emit OKF bundle (no brain needed)
-    [--tier external|team]              default: external (includes team + external)
-  aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json
-  aios graph [--from <file>]            traverse local OKF link graph (no brain needed)
-    [--depth N] [--format text|json]
-  aios skills export --runtime <name>   export skills to another agent runtime (BYOA)
-    [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api
-    [--install]                         for hermes: also run hermes skills install on each
-  aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)
-    [--json]                            machine output; the Team Brain scanner records scores
-  aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,
-                                        read-only, 0-4): context files, tiers, catalog, sync
-  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
-    [--base <ref>]                     --base defaults to origin/main; links node_modules,
-                                       copies opencode.json/.claude/settings, wires hooks
-  aios worktree init                  hydrate the current worktree dir (idempotent)
-  aios worktree list                  list all worktrees for this repo
-  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]
-                                       get latest AIOS: pull the toolkit (git + npm ci) +
-                                       3-way-merge governance (personal + uncommitted edits kept);
-                                       --preview/--check never pull; --contribute opens a toolkit PR
-  aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log
-    [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds
-    [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything
-  aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)
-    [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched
-  aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)
-    [--json]                            reuses assess-codebase scoring; each with a how-to pointer
-  aios learn                            prescribe your next AM patterns from MATURITY.md (offline)
-  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)
-    [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan
-    [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)
-    [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops
-    [--build] [--build-rounds N]        after approval, hand the plan to the build phase
-  aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)
-    [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch
-    [--pr] [--issue AIO-<n>]            --pr pushes + opens a PR on approval (mutually exclusive with --merge)
-    [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review
-    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)
-    [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)
-  aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,
-    [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')
-  aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md
-    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)
-  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready
-    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites
-  aios spec author <plan> --slices <dir> fan out one author per Markdown issue slice, then run
-    [--out <dir>] [--concurrency N]       deterministic cross-spec consistency checks
-    [--model id] [--effort level]          override the configured author for this batch only
-  aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)
-    [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported
-  aios consolidate-findings --pr <n>    merge CI + Bugbot + CodeRabbit + GPT reviews + the PR
-    --issue AIO-<n> [--round N]         diff into one severity-ranked finding list (fail-closed)
-    [--repo owner/repo] [--gpt-review p]  → .aios/loop/<issue>/findings-r<N>.md; feed to aios build
-    [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)
-  aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)
-    [--base ref] [--worktree path]      requires an existing build worktree for the branch
-  aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→
-    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup (plan + merge gates default on)
-    [--reviewers b,g] [--dry-run]        --dry-run prints the step plan (offline, no key needed)
-    [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)
-  aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time
-    --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run
-    [--comment-digest [--digest-target   (requires LINEAR_API_KEY except ship --dry-run)
-    AIO-<n>]] [--dry-run]
-options:
-  --repo <path>               team-ops repo (default: walk up from cwd)`;
-
-if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
-  console.log(USAGE);
-  process.exit(0);
-}
-
-// `mcp` is the GUI-surface bridge: a long-lived stdio MCP server for agents that can't
-// shell out to this CLI (Claude Desktop/Cowork/Codex/Conductor). It must run with NO
-// workspace — config is env-first — so it's handled before any repo resolution, and it
-// owns the process (blocks on stdin) until the client disconnects.
-if (cmd === "mcp") {
-  const { resolveBrainConfig, runStdio } = await import("./brain-mcp.mjs");
-  const mcpCfg = resolveBrainConfig();
-  if (mcpCfg.missing.length) {
-    // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
-    // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
-    // error when called. With neither brain config nor a workspace, there's nothing to do.
-    // Use the offline resolver so project.yaml / engagement.yaml workspaces are recognized too
-    // (matches `aios loop` + the MCP tool's findWorkspaceRoot, not just aios.yaml).
-    const ws = findRepoRootOffline(process.cwd());
-    if (!ws) {
-      die(
-        `aios mcp: missing brain config: ${mcpCfg.missing.join(", ")} and no workspace at cwd. ` +
-          `Set the brain env (AIOS_BRAIN_URL/AIOS_API_KEY/AIOS_TEAM) or run from a workspace.`
-      );
-    }
-    process.stderr.write(
-      `aios mcp: brain not configured (${mcpCfg.missing.join(", ")}); ` +
-        `starting in local-only mode — aios_* tools available.\n`
-    );
-  }
-  await runStdio(mcpCfg);
-  process.exit(0);
-}
-
-// export-okf, graph, install-skill, connect, skills, assess-codebase, learn, analyze, relay
-// are offline-capable: no aios.yaml required (analyze reads local ~/.<tool> logs; time reads
-// ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
-const OFFLINE_CMDS = new Set([
-  "export-okf",
-  "graph",
-  "install-skill",
-  "connect",
-  "onboard",
-  "skills",
-  "assess-codebase",
-  "context-health",
-  "learn",
-  "analyze",
-  "relay",
-  "build",
-  "simplify",
-  "spec",
-  "pr",
-  "consolidate-findings",
-  "review-bugbot",
-  // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (the generic walk-up, like
-  // build/relay) — NOT a GitHub slug — so they are NOT in the pr/consolidate --repo opt-out.
-  // Ship derives the GitHub slug internally via detectRepo(repo).
-  "ship",
-  "roadmap-run",
-  "loop",
-  "time",
-  "asks",
-  "inbox",
-  "decisions",
-  "mode",
-  "rails",
-  "council",
-  "maturity-week",
-  "instincts",
-  "worktree",
-
-  // timeline reads arbitrary --repo paths + .aios/timeline-config.json; no brain needed
-  // (the brain only enriches avatars when configured).
-  "timeline",
-]);
-
-let repo, cfg;
-if (cmd === "update") {
-  // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
-  // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed at
-  // an arbitrary directory to re-vendor governance into. May run inside the toolkit (no
-  // aios.yaml), so config loads offline.
-  repo = repoArg ? path.resolve(repoArg) : findUpdateRoot(process.cwd());
-  if (!repo || !isUpdateRoot(repo))
-    die(
-      "`aios update` must run in a workspace (aios.yaml) or the toolkit checkout — pass --repo <path>"
-    );
-  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
-} else if (OFFLINE_CMDS.has(cmd)) {
-  repo = repoArg ? path.resolve(repoArg) : findRepoRootOffline(process.cwd());
-  if (!repo && cmd === "onboard" && rest.includes("--inspect")) repo = process.cwd();
-  if (!repo) die("could not locate repo root — pass --repo <path>");
-  cfg = existsSync(path.join(repo, "aios.yaml")) ? loadConfig(repo) : loadOfflineConfig(repo);
-} else {
-  repo = repoArg ? path.resolve(repoArg) : findRepoRoot(process.cwd());
-  if (!repo) die("no aios.yaml found walking up from cwd — pass --repo <path>");
-  cfg = loadConfig(repo);
-}
-const patterns = loadSecretPatterns();
-
-try {
-  if (cmd === "status") await cmdStatus(repo, cfg, patterns, rest);
-  else if (cmd === "review") await cmdReview(repo, cfg, patterns, rest);
-  else if (cmd === "push") await cmdPush(repo, cfg, patterns, rest);
-  else if (cmd === "work") await cmdWork(repo, cfg, patterns, rest);
-  else if (cmd === "pull") await cmdPull(repo, cfg, rest);
-  else if (cmd === "install-skill") cmdInstallSkill(repo, rest);
-  else if (cmd === "connect") await cmdConnect(repo, rest);
-  else if (cmd === "onboard") {
-    const { cmdOnboard } = await import("./onboard-command.mjs");
-    await cmdOnboard(repo, cfg, rest, { connectFlow, nextAction });
-  } else if (cmd === "whoami") await cmdWhoami(repo, cfg);
-  else if (cmd === "stakeholders") await cmdStakeholders(repo, cfg, rest);
-  else if (cmd === "query") await cmdQuery(repo, cfg, rest);
-  else if (cmd === "member")
-    await cmdMember(repo, cfg, rest, { api: (m, r, b) => api(cfg, m, r, b) });
-  else if (cmd === "export-okf") await cmdExportOkf(repo, cfg, rest);
-  else if (cmd === "pull-bundle") await cmdPullBundle(repo, cfg, rest);
-  else if (cmd === "graph") cmdGraph(repo, cfg, rest);
-  else if (cmd === "skills") cmdSkills(repo, rest);
-  else if (cmd === "assess-codebase") await cmdAssessCodebase(repo, cfg, patterns, rest);
-  else if (cmd === "context-health") runContextHealthCli(repo, rest, c);
-  else if (cmd === "learn") cmdLearn(repo, cfg, patterns, rest);
-  else if (cmd === "analyze") await cmdAnalyze(repo, cfg, rest, { api, resolveMember, loadDotEnv });
-  else if (cmd === "relay")
-    await import("./relay.mjs").then(({ cmdRelay }) => cmdRelay(repo, rest));
-  else if (cmd === "build") await cmdBuild(repo, rest);
-  else if (cmd === "simplify") process.exit(await cmdSimplify(repo, rest));
-  else if (cmd === "spec") await cmdSpec(repo, rest);
-  else if (cmd === "pr") await cmdPr(repo, rest);
-  else if (cmd === "consolidate-findings") process.exit(await cmdConsolidateFindings(repo, rest));
-  else if (cmd === "review-bugbot") await cmdReviewBugbot(repo, rest);
-  else if (cmd === "ship") process.exit(await cmdShip(repo, rest));
-  else if (cmd === "roadmap-run") process.exit(await cmdRoadmapRun(repo, rest));
-  else if (cmd === "loop") await cmdLoop(repo, cfg, rest);
-  else if (cmd === "time") await cmdTime(repo, cfg, rest);
-  else if (cmd === "asks") await cmdAsks(repo, cfg, rest);
-  else if (cmd === "inbox") await cmdInbox(repo, cfg, rest);
-  else if (cmd === "transcripts") await cmdTranscripts(repo, cfg, rest);
-  else if (cmd === "pm") await cmdPm(cfg, rest);
-  else if (cmd === "decisions") await cmdDecisions(repo, cfg, rest);
-  else if (cmd === "mode") await cmdMode(repo, cfg, rest);
-  else if (cmd === "timeline") process.exit((await cmdTimeline(repo, cfg, rest)) ?? 0);
-  else if (cmd === "rails") process.exitCode = (await cmdRails(repo, cfg, rest)) ?? 0;
-  else if (cmd === "council") await runCouncil(repo, rest);
-  else if (cmd === "maturity-week") cmdMaturityWeek(repo, rest);
-  else if (cmd === "instincts") await cmdInstincts(repo, rest);
-  else if (cmd === "worktree") await cmdWorktree(repo, cfg, rest);
-  else if (cmd === "update") {
-    // cmdUpdate returns an exit status instead of exiting (programmatic callers like
-    // onboarding must survive it) — the CLI maps a failed self-update re-exec onto exitCode.
-    const status = await cmdUpdate(repo, cfg, rest);
-    if (status) process.exitCode = status;
-  } else if (cmd === "promote")
-    await cmdPromote(repo, cfg, rest, {
-      resolveMember: () => resolveMember(repo, cfg, loadDotEnv(repo)),
-    });
-  else {
-    console.log(USAGE);
-    process.exit(1);
-  }
-} catch (e) {
-  die(e.message);
-}
+// The trailing .catch is the outer safety net: dispatch's own try/catch only wraps the
+// handler call, so a throw from root resolution, loadSecretPatterns(), or the pre-config
+// (mcp) path would otherwise surface as a bare unhandled rejection instead of the CLI's
+// `error: <message>` + exit 1.
+await dispatch({
+  argv: process.argv.slice(2),
+  local: {
+    cmdStatus,
+    cmdReview,
+    cmdPush,
+    cmdWork,
+    cmdPull,
+    cmdConnect,
+    cmdWhoami,
+    cmdStakeholders,
+    cmdQuery,
+    cmdExportOkf,
+    cmdPullBundle,
+    cmdGraph,
+    cmdSkills,
+    cmdInstallSkill,
+    cmdAssessCodebase,
+    cmdLearn,
+    // helpers the extracted command modules are handed
+    connectFlow,
+    nextAction,
+    api,
+    resolveMember,
+    loadDotEnv,
+    findRepoRootOffline,
+    die,
+    c,
+  },
+  resolvers: {
+    findRepoRoot,
+    findRepoRootOffline,
+    findUpdateRoot,
+    isUpdateRoot,
+    loadConfig,
+    loadOfflineConfig,
+    loadSecretPatterns,
+    die,
+  },
+}).catch((e) => die(e?.message || String(e)));

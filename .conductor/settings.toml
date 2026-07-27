@@ -1,0 +1,7 @@
+# Conductor (conductor.build) — AIOS adapter for THIS toolkit checkout.
+# Mirror of scaffold/.conductor/settings.toml (which ships into every scaffolded
+# workspace). See docs/integrations.md#conductor.
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "node scripts/aios.mjs worktree init || true"

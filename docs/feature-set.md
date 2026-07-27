@@ -54,7 +54,9 @@ The template (`scaffold/.claude/`) ships:
 - **Conventions** (`rules/`): decision-log format + type/audience taxonomy, frontmatter
   schema by directory, the promotion/publishing flow, hours logging, and **design-system**
   rules (when you add UI — pin `@aios-alpha/design` + `@aios-alpha/ui`; see `docs/design-system.md`).
-- **Harnesses** (`skills/`): the dynamic-workflow skills below.
+- **Workflow harnesses** (`skills/`): the dynamic-workflow skills below. The
+  `transcript-decisions` skill is a portable CLI adapter to the typed meetings engine,
+  not a Workflow harness.
 
 ---
 
@@ -70,6 +72,14 @@ CI:
 | `check-secrets.sh` | API keys, tokens, private keys, `.env` files (**critical** — hard fail) |
 
 `validate-all.sh` runs all three, with `--critical` and `--quick` modes.
+
+Every validator enumerates its targets **via git** — `git ls-files` (tracked) plus
+`git ls-files -o --exclude-standard` (untracked but not ignored) — never a filesystem
+walk with an exclude list. That union is exactly the content that can reach a commit, and
+it makes gitignored build trees structurally invisible: a 1.6 GB `src-tauri/target` used
+to exhaust the secret scan's window so the gate never finished (AIO-517). A directory
+that is not a git work tree (the throwaway change-set dir `aios build` assembles) falls
+back to a scoped walk.
 
 ---
 
@@ -87,13 +97,13 @@ control.
 
 The heart of the system. Instead of asking one agent to do a whole task in one
 context, a harness spawns focused sub-agents and adds **adversarial verification** so
-its output is trustworthy. Three ship today; more are on the roadmap.
+its output is trustworthy. The workflow harnesses below are distinct from the typed
+transcript review CLI; more harnesses are on the roadmap.
 
 | Harness | What it does | Pattern |
 |---------|--------------|---------|
 | **decision-audit** | Lints the decision log against governance rules; returns only verified findings | one-verifier-per-rule + adversarial verify |
 | **scope-creep** | Flags deliverables that drift from the scope baseline/ledger | per-deliverable classify + severity-downgrade refuter |
-| **transcript-decisions** | Turns meeting transcripts into novel, grounded decision rows | fan-out extract + dedup + adversarial grounding |
 
 These came out of a controlled A/B study (single-pass vs harness on identical inputs).
 The headline finding: **adversarial verification — not parallelism — is what makes a
@@ -103,6 +113,30 @@ conventions distilled from that study (`workflows.md`, `scaffold/.claude/skills/
 
 Every harness is a **template**, tuned per workspace via `args`, read-only (it returns
 data; the caller writes), and demonstrated against the synthetic `examples/sample-engagement/`.
+
+### Transcript review pipeline (typed CLI)
+
+Transcript review is intentionally separate from the dynamic-workflow harnesses. The
+`transcript-decisions` skill uses the same portable, typed engine across supported
+runtimes; its sole canonical execution path is the `aios transcripts` CLI:
+
+```bash
+aios transcripts draft --transcripts 1-inbox/transcripts/meeting.md
+aios transcripts list
+aios transcripts approve .aios/staging/transcript-decisions/<stage>.json
+```
+
+`draft` extracts both grounded decisions and explicit task commitments, grades the full
+transcript batch with TD1–TD6, and writes a private `0600` V2 review stage only when
+there is a review record to preserve. The owner inspects the stage and `approve` is the
+single local write gate for both `3-log/decision-log.md` and `3-log/tasks-team.md`.
+Approval attempts the existing `aios push` path only after local apply is durable;
+`--no-push` records an explicit skip and a failed push can be retried without reapplying.
+`aios loop daily` may show the owner-local pending/failed/unreadable aggregate, while
+team and external views omit transcript review. Drafting remains explicit: scheduled,
+connector-triggered, and daily-triggered drafting, plus stakeholder enrichment, are
+deferred. The retired Workflow file is a non-executable notice only and is never
+invoked, adapted, or exported as transcript execution behavior.
 
 ### The agentic build pipeline (`aios ship` / `aios roadmap-run`)
 
@@ -120,15 +154,15 @@ The same adversarial discipline drives an end-to-end build loop:
 - **`aios pr`** pushes the current worktree branch and opens a GitHub PR **idempotently** (an
   already-open PR for the head branch is reused), always carrying the `AIO-<n>` key in the title so
   the repo automations fire. `aios build --pr` chains it after the pre-ship gates.
-- **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, bot
-  comments/reviews, and an optional GPT-5.5 review into **one severity-ranked, fail-closed finding
+- **`aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>`** merges CI checks, the PR diff,
+  mandatory Local Bugbot, current-head CodeRabbit comments/reviews, and an optional GPT-5.5 review into **one severity-ranked, fail-closed finding
   list** (`VERDICT=CLEAR|BLOCKED`; red or still-pending CI can never be CLEAR), which
   `aios build --findings <file>` then fixes from.
 
 The pipeline is tunable and hardened for unattended runs: a **per-step model/effort/timeout config**
 (`.aios/loop-models.yaml`, gitignored) with fail-closed cross-family diversity + Claude-runner
-guards; **review resilience** (auto-retry once on timeout, diff-size-adaptive review timeouts); a
-**require-all bot gate** (`wait-for-bots` exits 2 on a missing bot — `--any` to opt out); and a
+guards; **review resilience** (auto-retry once on timeout, diff-size-adaptive review timeouts);
+mandatory exact-head Local Bugbot plus label-gated current-head CodeRabbit for selected/safety PRs; and a
 **fenced builder** (no push/PR policy + `GIT_CEILING_DIRECTORIES` + a primary-checkout tripwire,
 with `ANTHROPIC_API_KEY` stripped from the builder child so it stays on login auth). Overnight
 operation on an always-on host: [`docs/hermes-runbook.md`](./hermes-runbook.md).
@@ -161,10 +195,14 @@ Every workspace generates two catalogs (`scripts/gen-catalog.mjs`, `npm run gen:
 - **Skills catalog** (`.claude/skills/INDEX.md`) — every installed skill, what it does,
   and when it runs, parsed from each `SKILL.md`. Surfaced in `CLAUDE.md` and the GUI.
 - **Integrations catalog** (`.claude/INTEGRATIONS.md` from `.claude/integrations.json`)
-  — connectable tools (Slack, Jira, Confluence, Linear, Notion, GitHub, Gmail/gog-cli,
-  Granola, Mattermost, Toggl) with status + how-to-connect. A live `.mcp.json` stub and
-  `.mcp.example.json` starter servers ship in the scaffold; `docs/integrations.md` has
-  per-tool setup. *Wiring a starter set live is the remaining fast-follow.*
+  — connectable tools (Slack, Linear, Notion, GitHub, Gmail/gog-cli, Granola, Mattermost,
+  Toggl) with status + how-to-connect. Jira/Confluence ship **example-only** (manual
+  setup): the `atlassian` server relies on the unofficial, single-maintainer
+  `mcp-atlassian` package, so it was demoted out of the auto-connectable set in V1.0
+  hardening and lives pinned + provenance-warned in `.mcp.example.json`. A live
+  `.mcp.json` stub and `.mcp.example.json` starter servers ship in the scaffold;
+  `docs/integrations.md` has per-tool setup. *Wiring a starter set live is the remaining
+  fast-follow.*
 
 ## 9. Skill + artifact share/pull
 

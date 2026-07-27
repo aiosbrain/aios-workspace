@@ -91,6 +91,38 @@ test("billing/session actuals are month-scoped ledger lines with provenance", ()
   }
 });
 
+test("provider-reported OpenRouter usage is exact, month-scoped, and config still wins", () => {
+  const live = buildCostsPayload(JSON.stringify({ window: null, costs: {} }), {
+    period: PERIOD,
+    providerActuals: {
+      openrouter: { monthly_usd: 8.40879405, period: PERIOD, scope: "current_api_key" },
+    },
+  });
+  const line = live.lines.find((entry) => entry.provider === "openrouter");
+  assert.equal(line.amount_usd, 8.40879405);
+  assert.equal(line.source, "billing");
+  assert.match(line.note, /current API key/);
+  assert.equal(provider(live, "openrouter").status, "billing");
+
+  const configured = buildCostsPayload(JSON.stringify({ window: null, costs: {} }), {
+    period: PERIOD,
+    config: { metered: { openrouter: { [PERIOD]: 12.34 } } },
+    providerActuals: {
+      openrouter: { monthly_usd: 8.40879405, period: PERIOD, scope: "current_api_key" },
+    },
+  });
+  assert.equal(provider(configured, "openrouter").total_usd, 12.34);
+  assert.equal(provider(configured, "openrouter").status, "config");
+
+  const stale = buildCostsPayload(JSON.stringify({ window: null, costs: {} }), {
+    period: PERIOD,
+    providerActuals: {
+      openrouter: { monthly_usd: 99, period: "2026-06", scope: "current_api_key" },
+    },
+  });
+  assert.equal(provider(stale, "openrouter"), undefined);
+});
+
 test("detected Claude subscription is used when no config exists (never the estimate)", () => {
   const p = build();
   const claude = p.lines.find((l) => l.provider === "claude");

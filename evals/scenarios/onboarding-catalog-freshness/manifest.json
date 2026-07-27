@@ -1,0 +1,7 @@
+{
+  "id": "onboarding-catalog-freshness",
+  "title": "Workspace stays catalog-consistent after a skill change",
+  "timeout_seconds": 600,
+  "semantic_required": false,
+  "forbidden_paths": [".env", ".aios-toolkit-version"]
+}

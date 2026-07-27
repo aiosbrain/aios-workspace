@@ -13,6 +13,7 @@ import {
   findReferencedPaths,
   touchesSyncSurface,
   classifyPathContext,
+  assessScopeBound,
 } from "../scripts/spec-eval.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,17 @@ test("strong-spec → no deterministic blockers", () => {
 test("acceptance-demo-weak → the full deterministic blocker set", () => {
   const b = blockerIds(runDeterministicChecks(read("acceptance-demo-weak.md"), { repo: REPO }));
   for (const id of ["SR2", "SR3", "SR4", "SR5", "SR6", "SR7", "SR16"]) assert.ok(b.has(id), id);
+});
+
+test("SR6 accepts every build-with spelling — hyphen, space, joined", () => {
+  for (const heading of ["## Build-with", "## Build with", "## Buildwith"]) {
+    const b = blockerIds(
+      runDeterministicChecks(`# T\n\n${heading}\n\nSonnet 5 / high effort\n`, { repo: REPO })
+    );
+    assert.ok(!b.has("SR6"), `SR6 should pass for heading "${heading}"`);
+  }
+  const b = blockerIds(runDeterministicChecks("# T\n\nno tier here\n", { repo: REPO }));
+  assert.ok(b.has("SR6"), "SR6 should still block when no build-with tier is stated");
 });
 
 test("looksObservable — concrete signals pass, vibes fail", () => {
@@ -111,4 +123,87 @@ test("classifyPathContext — existing vs new vs ambiguous", () => {
     "new"
   );
   assert.equal(classifyPathContext({ section: "Notes", lineText: "see `x.ts`" }), "ambiguous");
+});
+
+test("SR17 — oversized multi-surface spec is a blocker (many tasks AND many surfaces)", () => {
+  const b = blockerIds(runDeterministicChecks(read("oversized-multi-surface.md"), { repo: REPO }));
+  assert.ok(b.has("SR17"), "SR17 blocks the mixed-concern, many-task spec");
+});
+
+test("SR17 — strong (bounded, single-purpose) spec is not a blocker", () => {
+  const findings = runDeterministicChecks(read("strong-spec.md"), { repo: REPO }).filter(
+    (f) => f.ruleId === "SR17"
+  );
+  assert.ok(
+    !findings.some((f) => f.severity === "blocker"),
+    "a bounded 2-surface spec never SR17-blocks"
+  );
+});
+
+test("SR17 — a single tripped signal is advisory, not a blocker", () => {
+  // 4 surfaces but only 3 tasks → surface signal trips alone → minor, never blocker.
+  const spec = [
+    "# Spec",
+    "## Tasks",
+    "- edit `scripts/a.mjs`",
+    "- edit `gui/client/src/b.tsx`",
+    "- edit `hooks/c.mjs`",
+    "- also touch `validation/d.sh`",
+  ].join("\n");
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.equal(sr17.length, 1);
+  assert.equal(sr17[0].severity, "minor");
+});
+
+test("SR17 — thorough single-feature spec (code + test + docs + scaffold refs) never blocks", () => {
+  // Regression (2026-07-22): a spec that dutifully names its test file, docs page, and scaffold
+  // mirror is COMPLETE, not mixed-concern — those refs must not count as surfaces and hard-block.
+  const spec = [
+    "# Spec — one feature, thoroughly specified",
+    "## Implementation Tasks",
+    "- edit `scripts/feature.mjs`",
+    "- extract helper in `scripts/feature-lib.mjs`",
+    "- add unit tests in `test/feature.test.mjs`",
+    "- add fixture `test/fixtures/feature/basic.md`",
+    "- document in `docs/feature.md`",
+    "- mirror into `scaffold/.claude/rules/feature.md`",
+    "- wire the command in `scripts/aios.mjs`",
+  ].join("\n");
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.ok(
+    !sr17.some((f) => f.severity === "blocker"),
+    "single code surface + test/docs/scaffold refs must not SR17-block"
+  );
+  assert.deepEqual(assessScopeBound(spec).surfaces, ["scripts"]);
+});
+
+test("SR17 — explicit increment statement downgrades the oversized blocker to advisory", () => {
+  const spec = [
+    read("oversized-multi-surface.md"),
+    "",
+    "One PR; follow-ups deferred to a sibling spec.",
+  ].join("\n");
+  const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
+  assert.equal(sr17.length, 1);
+  assert.equal(sr17[0].severity, "minor", "author-bounded increment must not hard-block");
+});
+
+test("assessScopeBound — counts tasks, distinct surfaces, and increment statement", () => {
+  const spec = [
+    "# Spec",
+    "One PR; follow-ups deferred to a sibling spec.",
+    "## Implementation",
+    "- edit `scripts/a.mjs`",
+    "- edit `scripts/b.mjs`",
+    "- edit `gui/server/c.mjs`",
+  ].join("\n");
+  const s = assessScopeBound(spec);
+  assert.equal(s.taskCount, 3);
+  assert.deepEqual(s.surfaces, ["gui/server", "scripts"]);
+  assert.equal(s.incrementStated, true);
+
+  const bare = assessScopeBound("# Spec\nno tasks, no paths, no increment note");
+  assert.equal(bare.taskCount, 0);
+  assert.deepEqual(bare.surfaces, []);
+  assert.equal(bare.incrementStated, false);
 });

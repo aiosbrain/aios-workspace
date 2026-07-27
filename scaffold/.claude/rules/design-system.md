@@ -9,7 +9,7 @@ use the shared AIOS design system — do not invent a one-off palette, font stac
 - **`@aios-alpha/ui`** — React components (buttons, badges, terminal frames, etc.).
 
 Both are public on npm; no auth. The human/agent contract is **`DESIGN.md`** inside
-`@aios-alpha/design` (also at [github.com/AIOS-alpha/aios-design](https://github.com/AIOS-alpha/aios-design)).
+`@aios-alpha/design` (also at [github.com/aiosbrain/aios-design](https://github.com/aiosbrain/aios-design)).
 
 ## Consumption recipe
 

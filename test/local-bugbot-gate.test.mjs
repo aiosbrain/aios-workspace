@@ -12,6 +12,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -21,20 +22,29 @@ import { fileURLToPath } from "node:url";
 import {
   evaluateLocalBugbotGate as evaluateProductionGate,
   formatHookResult,
+  hardenedChildEnv,
+  reviewChildArgs,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
   BUGBOT_BLOCKED_MARKER,
   BUGBOT_CLEAR_MARKER,
   BUGBOT_CLEAR_TOKEN,
+  buildBugbotPrompt,
+  buildSecurityReviewPrompt,
+  ATTEMPT_RESERVE_MARGIN_MS,
   captureBranchDiff,
   hasFindingsAtOrAbove,
+  inspectLockDelta,
   REQUIRED_BUGBOT_MODEL,
   resolveRequiredBugbotBase,
   retryReviewTimeoutOnce,
+  REVIEW_WALL_CLOCK_BUDGET_MS,
+  runExcludedPathGates,
   runLocalSecretsPreflight,
   runLocalPrePrReview,
   runLocalBugbotReview,
   trustedReviewerEnv,
+  UNTRACKED_HASH_SIZE_CAP,
 } from "../scripts/review-bugbot.mjs";
 import {
   enqueueContinuation,
@@ -86,6 +96,7 @@ test("Medium+ matcher is strict while Low remains advisory", async () => {
   assert.equal(hasFindingsAtOrAbove("Medium — stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("Medium - stale status", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("**[Medium]** scripts/x.mjs:1 — stale", "medium"), true);
+  assert.equal(hasFindingsAtOrAbove("**High Severity**\n\nUnsafe retry loop.", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("| High | x | unsafe |", "medium"), true);
   assert.equal(hasFindingsAtOrAbove("- Low: wording", "medium"), false);
   assert.equal(hasFindingsAtOrAbove("No Critical, High, or Medium findings.", "medium"), false);
@@ -133,6 +144,28 @@ test("review timeouts retry once with a doubled per-call budget", async () => {
     }, 400_000),
     /exited 1/
   );
+});
+
+test("hook child kill is the shared wall-clock budget plus a real grace", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    let hookTimeoutMs = 0;
+    const result = evaluateLocalBugbotGate({
+      repo,
+      runReview: ({ timeoutMs }) => {
+        hookTimeoutMs = timeoutMs;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      },
+    });
+    assert.equal(result.status, "clear");
+    // The child's own absolute deadline is the budget; the parent kill must sit strictly
+    // AFTER it so the child always gets to fail closed with a verdict of its own.
+    assert.equal(hookTimeoutMs, REVIEW_WALL_CLOCK_BUDGET_MS + 60_000);
+    assert.ok(hookTimeoutMs > REVIEW_WALL_CLOCK_BUDGET_MS);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("pre-PR review shares the Medium+ full-worktree policy", async () => {
@@ -198,8 +231,13 @@ test("noncompliant reviewer prose fails closed without a verdict model", async (
     });
     assert.equal(review.ok, false);
     assert.equal(review.error, true);
-    assert.equal(calls.length, 2);
+    // 3, not 2, since AIO-468: the code pass returns an unreadable verdict and is re-asked
+    // ONCE (the security pass answers cleanly first time, so it is asked once). The
+    // fail-closed outcome above is unchanged — a re-ask that stays unreadable still blocks.
+    assert.equal(calls.length, 3);
     assert.match(review.output, /review protocol error/);
+    // The retry must reuse the SAME review pass, never introduce a separate
+    // verdict-normalization model call to launder noncompliant prose into a verdict.
     assert.ok(calls.every((call) => !call.label.includes("verdict normalization")));
 
     const blocked = await runLocalPrePrReview({
@@ -215,6 +253,103 @@ test("noncompliant reviewer prose fails closed without a verdict model", async (
     assert.equal(blocked.finding, false);
     assert.equal(blocked.error, true);
     assert.equal(blocked.pass, "code");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("terminal clear ignores progress prose but cannot override a streamed finding", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    const baseSha = git(repo, "rev-parse", "main");
+    const progressOnly = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(progressOnly.ok, true);
+
+    const resultOnlyClear = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async () => ({
+        transcript: "Launching validators for evidence.",
+        result: "Still checking validators.",
+        eventResult: BUGBOT_CLEAR_TOKEN,
+      }),
+    });
+    assert.equal(resultOnlyClear.ok, true);
+
+    const contradictory = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "- Medium: streamed correctness regression",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(contradictory.ok, false);
+    assert.equal(contradictory.finding, true);
+    assert.match(contradictory.output, /streamed correctness regression/);
+
+    const legacyContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript:
+                "**High Severity**\n\nThis retry loop has no upper bound and can hang the process.",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(legacyContradiction.ok, false);
+    assert.equal(legacyContradiction.finding, true);
+    assert.match(legacyContradiction.output, /High Severity/);
+
+    const streamedBlockedToken = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "BUGBOT_BLOCKED",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(streamedBlockedToken.ok, false);
+    assert.equal(streamedBlockedToken.finding, true);
+    assert.match(streamedBlockedToken.output, /BUGBOT_BLOCKED/);
+
+    const unstructuredContradiction = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha,
+      branch: "feat/gate",
+      reviewPrompt: async ({ label }) =>
+        label.includes("code review")
+          ? {
+              transcript: "Critical auth bypass in the callback route",
+              result: BUGBOT_CLEAR_TOKEN,
+            }
+          : { transcript: "", result: BUGBOT_CLEAR_TOKEN },
+    });
+    assert.equal(unstructuredContradiction.ok, false);
+    assert.equal(unstructuredContradiction.finding, true);
+    assert.match(unstructuredContradiction.output, /Critical auth bypass/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -333,6 +468,55 @@ test("all untracked content is withheld and blocked before external review", asy
     assert.equal(review.ok, false);
     assert.equal(review.error, true);
     assert.equal(calls, 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- untracked-file size cap: a large untracked artifact must not stall the gate --------
+// statSync happens before readFileSync; above the cap the fingerprint records the apparent
+// size instead of hashed content, so hashing a multi-megabyte stray artifact can't block the
+// gate on every run while still invalidating the fingerprint when the file's size changes.
+
+test("an oversized untracked file is fingerprinted by size, not read", async () => {
+  const repo = fixture();
+  try {
+    const big = path.join(repo, "big-artifact.bin");
+    // Sparse file: truncateSync only sets the apparent length, so this never writes
+    // UNTRACKED_HASH_SIZE_CAP bytes of real data to disk.
+    writeFileSync(big, "");
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 1);
+    const base = git(repo, "rev-parse", "main");
+
+    const captured = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.deepEqual(captured.withheldUntrackedFiles, ["big-artifact.bin"]);
+    assert.match(captured.diff, /too large to hash/);
+    assert.doesNotMatch(captured.diff, /sha256/);
+
+    // Growing the file changes the recorded size, so the fingerprint still invalidates.
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 2);
+    const grown = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.notEqual(grown.fingerprint, captured.fingerprint);
+
+    // Shrinking back to the same size reproduces the same fingerprint — proof the size
+    // marker, not file content, drives it (content was never read either time).
+    truncateSync(big, UNTRACKED_HASH_SIZE_CAP + 1);
+    const back = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.equal(back.fingerprint, captured.fingerprint);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a small untracked file is still content-hashed", async () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "small.txt"), "hello\n");
+    const base = git(repo, "rev-parse", "main");
+    const captured = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.deepEqual(captured.withheldUntrackedFiles, ["small.txt"]);
+    assert.match(captured.diff, /sha256 [a-f0-9]{64}/);
+    assert.doesNotMatch(captured.diff, /too large to hash/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -961,15 +1145,42 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   assert.match(openCode, /env:\s*hardenedGateEnv\(\)/);
   assert.match(hydration, /cp -Rn.*scaffold\/\.opencode/s);
 
-  const gate = readFileSync(path.join(REPO, "hooks", "local-bugbot-gate.mjs"), "utf8");
   const build = readFileSync(path.join(REPO, "scripts", "build.mjs"), "utf8");
   const ship = readFileSync(path.join(REPO, "scripts", "ship.mjs"), "utf8");
-  assert.match(gate, /--cursor-timeout/);
-  assert.match(gate, /--read-only/);
-  assert.match(gate, /--hook-protocol/);
-  assert.match(gate, /const model = REQUIRED_BUGBOT_MODEL/);
-  assert.match(gate, /reviewTimeoutMs \+ NATIVE_HOOK_GRACE_MS/);
-  assert.match(gate, /env\.PATH = "\/usr\/bin:\/bin:/);
+  // Assert the gate's BEHAVIOUR, never its source text: source-text matching breaks under
+  // the mutation lane (Stryker rewrites the very literals a regex is looking for) and does
+  // not actually prove the child is invoked correctly.
+  const args = reviewChildArgs({
+    repo: "/repo",
+    baseSha: "abc123",
+    branch: "feat/x",
+    model: REQUIRED_BUGBOT_MODEL,
+  });
+  for (const flag of [
+    "--cursor-timeout",
+    "--read-only",
+    "--hook-protocol",
+    "--exclude-generated",
+    "--include-worktree",
+  ]) {
+    assert.ok(args.includes(flag), `the child reviewer is invoked with ${flag}`);
+  }
+  assert.equal(args[args.indexOf("--model") + 1], REQUIRED_BUGBOT_MODEL);
+  assert.equal(args[0], path.join("/repo", "scripts", "aios.mjs"));
+  const childEnv = hardenedChildEnv({
+    PATH: "/hostile/bin",
+    NODE_OPTIONS: "--require /hostile.js",
+    GIT_DIR: "/hostile/.git",
+    HTTPS_PROXY: "https://attacker.invalid",
+    AIOS_BUGBOT_MODEL: "cursor:forged",
+    KEEP: "yes",
+  });
+  assert.equal(childEnv.PATH, "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin");
+  assert.equal(childEnv.NODE_OPTIONS, undefined);
+  assert.equal(childEnv.GIT_DIR, undefined);
+  assert.equal(childEnv.HTTPS_PROXY, undefined);
+  assert.equal(childEnv.AIOS_BUGBOT_MODEL, undefined);
+  assert.equal(childEnv.KEEP, "yes");
   assert.doesNotMatch(build, /AIOS_BUGBOT_MODEL/);
   assert.match(build, /model:\s*REQUIRED_BUGBOT_MODEL/);
   assert.match(ship, /const reviewModel = REQUIRED_BUGBOT_MODEL/);
@@ -991,6 +1202,936 @@ test("manual check-exit mode returns non-zero on an infrastructure failure", () 
     );
     assert.equal(child.status, 1);
     assert.equal(JSON.parse(child.stdout).status, "error");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- AIO-468: an unreadable verdict is re-asked once; a FINDING never is ----------------
+// The reviewing model nondeterministically prefaces the clear token with narration
+// ("Reviewing the diff for bugs."), which `detectBugbotClear` rejects by design (prose
+// alongside a verdict may be a hedge). That produced a protocol error, and the hook treats
+// a protocol error as a hard block — so the gate false-blocked ~3 runs in 6. The cure is at
+// the caller: re-ask ONCE when there is no readable verdict. The verdict predicate itself
+// stays strict, and a real finding is never re-asked (that would be a bypass).
+
+function narrationThenToken() {
+  return `Reviewing the diff for bugs. I'll check a few areas the diff may have truncated.\n${BUGBOT_CLEAR_TOKEN}`;
+}
+
+test("AIO-468: an unreadable verdict is re-asked once and can then clear", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        // First attempt of each pass narrates (unreadable); the re-ask answers bare.
+        const attempt = calls.filter((label) => label === input.label).length;
+        return attempt === 1 ? narrationThenToken() : BUGBOT_CLEAR_TOKEN;
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, true, "a re-asked, readable clear verdict passes the gate");
+    assert.equal(calls.length, 4, "each of the two passes was asked exactly twice");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: a Medium finding is NEVER re-asked (re-asking a finding would be a bypass)", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        return "- Medium: real regression";
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, false, "the finding blocks");
+    assert.equal(calls.length, 2, "one call per pass — a finding is a verdict, not a retry");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: two consecutive unreadable verdicts stay blocked and name the failing pass", async () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    git(repo, "add", "tracked.txt");
+    git(repo, "commit", "-qm", "change");
+    const calls = [];
+    const review = await runLocalBugbotReview({
+      worktree: repo,
+      baseSha: "HEAD~1",
+      branch: "feat/test",
+      failOn: "medium",
+      readOnly: true,
+      reviewPrompt: async (input) => {
+        calls.push(input.label);
+        return narrationThenToken(); // never becomes readable
+      },
+      secretsPreflight: () => ({ ok: true }),
+    });
+    assert.equal(review.ok, false, "fail-closed: still no readable verdict after the re-ask");
+    assert.equal(calls.length, 4, "exactly one re-ask per pass — bounded, not a loop");
+    assert.match(review.output, /protocol error in the .*(code|security) review pass/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-468: both prompts demand the verdict as a bare final line", () => {
+  const shared = {
+    branch: "feat/x",
+    baseSha: "abc123",
+    diffStat: " a | 1 +",
+    diff: "+line",
+    logOneline: "abc feat",
+  };
+  const code = buildBugbotPrompt({ skill: "/review-bugbot", ...shared });
+  const security = buildSecurityReviewPrompt({ ...shared });
+  for (const [name, prompt] of [
+    ["code", code],
+    ["security", security],
+  ]) {
+    assert.match(
+      prompt,
+      /FINAL line of your response/,
+      `${name} prompt demands a final-line verdict`
+    );
+    assert.match(prompt, /no preamble or narration/i, `${name} prompt forbids preamble`);
+  }
+});
+
+test("AIOS_BUGBOT_DISABLE=1 skips the local gate without running any review", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    let calls = 0;
+    const review = () => {
+      calls++;
+      return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+    };
+    const gated = evaluateLocalBugbotGate({
+      repo,
+      env: { AIOS_BUGBOT_BASE: "HEAD", AIOS_BUGBOT_DISABLE: "1" },
+      runReview: review,
+    });
+    // `skipped` is non-blocking (formatHookResult maps it to a pass); the review never runs.
+    assert.equal(gated.status, "skipped");
+    assert.match(gated.reason, /AIOS_BUGBOT_DISABLE/);
+    assert.equal(calls, 0, "no external review may be dispatched while disabled");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("only the literal 1 disables the gate — a stray truthy value still reviews", () => {
+  for (const value of ["true", "0", "yes", " ", ""]) {
+    const repo = fixture();
+    try {
+      appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+      let calls = 0;
+      const review = () => {
+        calls++;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      };
+      const gated = evaluateLocalBugbotGate({
+        repo,
+        env: { AIOS_BUGBOT_BASE: "HEAD", AIOS_BUGBOT_DISABLE: value },
+        runReview: review,
+      });
+      assert.notEqual(gated.status, "skipped", `value ${JSON.stringify(value)} must not disable`);
+      assert.equal(calls, 1, `value ${JSON.stringify(value)} must still run the review`);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test("check-secrets: anchored Basic Auth pattern ignores URLs but catches real credentials", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  const run = () => {
+    try {
+      execFileSync("bash", [script, dir], { encoding: "utf8", stdio: "pipe" });
+      return 0;
+    } catch (e) {
+      return e.status ?? 1;
+    }
+  };
+  try {
+    // Minified-CSS shape: an at-rule `@` and a `prop:val` colon that the un-anchored pattern used to
+    // stitch into a false "user:pass@host" match. Must NOT trip.
+    writeFileSync(
+      path.join(dir, "app.css"),
+      ".a{color:red}@layer p{background:url(https://cdn.tailwindcss.com/x.png)}@media(min-width:1px){b:c}\n"
+    );
+    assert.equal(run(), 0, "an ordinary URL beside CSS colons/at-rules is not a basic-auth secret");
+
+    // A genuine embedded credential — including an `s`-initial username, which a `\s`-in-bracket
+    // pattern would silently miss — must be caught. Assembled at runtime by joining on the `:` so
+    // this committed test file never contains a literal `://user:pass@` that check-secrets would
+    // (correctly) flag against itself in CI.
+    const credentialUrl = ["https://svc", "s3cr3tpass@internal.example.com/x"].join(":");
+    writeFileSync(path.join(dir, "leak.txt"), `HOOK=${credentialUrl}\n`);
+    assert.equal(run(), 1, "a real basic-auth credential must still be flagged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("check-secrets treats leading-hyphen private-key patterns as patterns", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-private-key-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  try {
+    const privateKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    writeFileSync(path.join(dir, "leak.txt"), `${privateKeyHeader}\n`);
+
+    const result = spawnSync("bash", [script, dir], { encoding: "utf8" });
+    assert.equal(result.status, 1, "a private-key header must remain a hard failure");
+    assert.match(result.stdout, /Private Key Header/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("check-secrets ignores a gitignored .env but blocks the same file when tracked", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-check-secrets-env-"));
+  const script = path.join(REPO, "validation", "check-secrets.sh");
+  const run = () => spawnSync("bash", [script, dir], { encoding: "utf8" });
+  try {
+    git(dir, "init", "-q");
+    writeFileSync(path.join(dir, ".gitignore"), ".env\n");
+    writeFileSync(path.join(dir, ".env"), `TOGGL_API_TOKEN=${"a".repeat(32)}\n`);
+
+    const ignored = run();
+    assert.equal(ignored.status, 0, "a gitignored local .env must not enter the content scan");
+
+    git(dir, "add", "-f", ".env");
+    const tracked = run();
+    assert.equal(tracked.status, 1, "a tracked .env must remain a hard failure");
+    assert.match(tracked.stdout, /\.env file committed/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- AIO wall-clock budget: one absolute deadline for the whole review run ---------------
+// Before this, the budget was DERIVED (attempts × 3 × per-call timeout), the AIO-468 protocol
+// re-ask silently doubled the real worst case, and the parent hook SIGTERMed its own child
+// mid-review — producing "Bugbot exited without a status" and no verdict at all. Every test
+// below drives an INJECTED clock; none of them waits on real time.
+
+function fakeClock(startMs = 0) {
+  let current = startMs;
+  return {
+    now: () => current,
+    advance: (ms) => {
+      current += ms;
+    },
+    sleep: async (ms) => {
+      current += ms;
+    },
+  };
+}
+
+function changedRepo() {
+  const repo = fixture();
+  appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+  return repo;
+}
+
+test("the shared deadline reserves the security pass a full attempt", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    const calls = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      // Larger than the code pass's allowance: only the deadline may bound the calls.
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ label, timeoutMs, deadlineAt }) => {
+        calls.push({ label, timeoutMs, deadlineAt, startedAt: clock.now() });
+        clock.advance(deadlineAt - clock.now()); // each pass spends everything it is allowed
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(calls.length, 2, "both mandatory passes ran, sequentially");
+    assert.ok(calls[0].label.includes("code review"));
+    assert.ok(calls[1].label.includes("security review"));
+    const reserveMs = 400_000 + ATTEMPT_RESERVE_MARGIN_MS;
+    assert.equal(
+      calls[0].deadlineAt,
+      REVIEW_WALL_CLOCK_BUDGET_MS - reserveMs,
+      "the code pass may not spend the security pass's reservation"
+    );
+    assert.equal(calls[1].deadlineAt, REVIEW_WALL_CLOCK_BUDGET_MS);
+    assert.equal(calls[1].startedAt, REVIEW_WALL_CLOCK_BUDGET_MS - reserveMs);
+    assert.equal(
+      calls[1].timeoutMs,
+      400_000,
+      "the security pass gets a FULL attempt, not just enough to start"
+    );
+    assert.ok(reserveMs > 400_000, "the reservation exceeds one per-attempt timeout");
+    assert.ok(
+      clock.now() <= REVIEW_WALL_CLOCK_BUDGET_MS,
+      `total elapsed ${clock.now()}ms exceeded the wall-clock budget`
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("each call's timeout is clamped to the smaller of the per-attempt and remaining budget", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    const timeouts = [];
+    await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        timeouts.push(timeoutMs);
+        clock.advance(timeoutMs);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.deepEqual(timeouts, [400_000, 400_000], "the per-attempt timeout wins while it fits");
+    assert.ok(clock.now() + 0 <= REVIEW_WALL_CLOCK_BUDGET_MS);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a protocol re-ask is taken with budget and skipped without it", async () => {
+  const affordable = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: affordable,
+      baseSha: git(affordable, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async () => {
+        calls++;
+        clock.advance(1_000);
+        // Narration alongside the token is unreadable by design — a protocol error.
+        return calls % 2 === 1 ? `Reviewing the diff.\n${BUGBOT_CLEAR_TOKEN}` : BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(calls, 4, "with budget left, each pass is re-asked exactly once");
+  } finally {
+    rmSync(affordable, { recursive: true, force: true });
+  }
+
+  const broke = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: broke,
+      baseSha: git(broke, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 5_000_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        calls++;
+        clock.advance(timeoutMs); // the first attempt consumes the pass's whole budget
+        return `Reviewing the diff.\n${BUGBOT_CLEAR_TOKEN}`;
+      },
+    });
+    assert.equal(review.ok, false, "an unreadable verdict still fails closed");
+    assert.equal(review.error, true);
+    assert.equal(calls, 2, "no pass may fund a re-ask it cannot pay for");
+    assert.match(review.output, /insufficient review budget for protocol retry/);
+  } finally {
+    rmSync(broke, { recursive: true, force: true });
+  }
+});
+
+test("an exhausted deadline fails closed instead of skipping the security pass", async () => {
+  const repo = changedRepo();
+  try {
+    const clock = fakeClock();
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async () => {
+        calls++;
+        clock.advance(REVIEW_WALL_CLOCK_BUDGET_MS * 2); // the code pass overruns
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(calls, 1, "the security pass must not start past the deadline");
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.equal(review.reason, "deadline exhausted before security pass");
+    assert.equal(review.pass, "security");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a killed review surfaces the signal, elapsed time, and deadline cause", () => {
+  const repo = changedRepo();
+  try {
+    const killed = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => ({
+        ok: false,
+        status: null,
+        signal: "SIGTERM",
+        elapsedMs: 912_000,
+        parentDeadlineFired: true,
+        output: "",
+      }),
+    });
+    assert.equal(killed.status, "error");
+    assert.match(killed.reason, /killed by SIGTERM/);
+    assert.match(killed.reason, /912s/);
+    assert.match(killed.reason, /wall-clock budget exceeded/);
+    assert.match(killed.reason, /not a clear/);
+    // Never a pass for any runtime adapter.
+    assert.equal(formatHookResult("claude", killed).decision, "block");
+    assert.equal(formatHookResult("codex", killed).continue, false);
+
+    // A concurrent waiter reuses the terminal error instead of spawning a duplicate review.
+    const waiter = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => assert.fail("a terminal error handoff must not spawn a duplicate review"),
+    });
+    assert.equal(waiter.status, "error");
+    assert.equal(waiter.cached, true);
+    assert.match(waiter.reason, /killed by SIGTERM/);
+
+    // …and it EXPIRES: an error is not evidence about the diff, so it must never harden
+    // into a permanent block the way an exact-diff `blocked` finding does.
+    const state = path.resolve(
+      repo,
+      git(repo, "rev-parse", "--git-path", "aios/local-bugbot-gate.json")
+    );
+    const handoff = JSON.parse(readFileSync(state, "utf8"));
+    assert.equal(handoff.status, "error");
+    assert.equal(handoff.parentDeadlineFired, true);
+    assert.equal(handoff.expiresAt > Date.now(), true);
+    assert.ok(
+      handoff.expiresAt - Date.now() <= 120_000,
+      "the handoff must not lock its own owner out of a retry"
+    );
+    writeFileSync(state, `${JSON.stringify({ ...handoff, expiresAt: Date.now() - 1 })}\n`);
+
+    let retried = 0;
+    const afterExpiry = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => {
+        retried++;
+        return { ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT };
+      },
+    });
+    assert.equal(retried, 1, "an expired handoff must let an independent run retry");
+    assert.equal(afterExpiry.status, "clear");
+    assert.equal(existsSync(state), false, "a clear never persists a trusted verdict on disk");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an on-disk error handoff is never laundered into a clear", () => {
+  const repo = changedRepo();
+  try {
+    const state = path.resolve(
+      repo,
+      git(repo, "rev-parse", "--git-path", "aios/local-bugbot-gate.json")
+    );
+    const probe = evaluateLocalBugbotGate({ repo, probeOnly: true });
+    mkdirSync(path.dirname(state), { recursive: true });
+    writeFileSync(
+      state,
+      `${JSON.stringify({
+        status: "error",
+        fingerprint: probe.fingerprint,
+        expiresAt: Date.now() + 60_000,
+        signal: "SIGKILL",
+        elapsedMs: 5_000,
+      })}\n`
+    );
+    const result = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => assert.fail("the live handoff must be returned without a new review"),
+    });
+    assert.equal(result.status, "error");
+    assert.notEqual(result.status, "clear");
+    assert.equal(result.verified, undefined);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- Lockfile/dist exclusion: PROMPT-only, lifecycle-hook-only, gate-compensated ---------
+
+function lockfileRepo() {
+  const repo = fixture();
+  writeFileSync(
+    path.join(repo, "package-lock.json"),
+    `${JSON.stringify({ name: "aios-workspace", lockfileVersion: 3, packages: {} })}\n`
+  );
+  git(repo, "add", "package-lock.json");
+  git(repo, "commit", "-qm", "add lockfile");
+  return repo;
+}
+
+test("an excluded-only edit still changes the fingerprint and stays out of the prompt", () => {
+  const repo = lockfileRepo();
+  try {
+    const base = git(repo, "rev-parse", "main");
+    const lock = path.join(repo, "package-lock.json");
+    const first = captureBranchDiff(repo, base, {
+      includeWorktree: true,
+      excludeFromPrompt: true,
+    });
+    assert.deepEqual(
+      first.excluded.map((file) => file.path),
+      ["package-lock.json"]
+    );
+    assert.match(first.excluded[0].sha256, /^[a-f0-9]{64}$/);
+    assert.ok(first.excluded[0].bytes > 0);
+    assert.doesNotMatch(first.reviewDiff, /lockfileVersion/);
+
+    appendFileSync(lock, "\n");
+    const second = captureBranchDiff(repo, base, {
+      includeWorktree: true,
+      excludeFromPrompt: true,
+    });
+    assert.notEqual(
+      second.fingerprint,
+      first.fingerprint,
+      "excluded bytes must still feed the fingerprint"
+    );
+
+    // Hook-only: standalone review / aios build / aios ship keep the full atomic diff.
+    const unfiltered = captureBranchDiff(repo, base, { includeWorktree: true });
+    assert.match(unfiltered.reviewDiff, /lockfileVersion/);
+    assert.deepEqual(unfiltered.excluded, []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("both prompts disclose every excluded path with its byte count and digest", () => {
+  const excluded = [
+    { path: "package-lock.json", bytes: 4242, sha256: "a".repeat(64) },
+    { path: "dist/operator-loop/index.js", bytes: 17, sha256: "b".repeat(64) },
+  ];
+  const shared = {
+    branch: "feat/x",
+    baseSha: "abc123",
+    diffStat: " a | 1 +",
+    diff: "+line",
+    logOneline: "abc feat",
+    excluded,
+  };
+  for (const [name, prompt] of [
+    ["code", buildBugbotPrompt({ skill: "/review-bugbot", ...shared })],
+    ["security", buildSecurityReviewPrompt({ ...shared })],
+  ]) {
+    assert.match(prompt, /Changed, not shown/, `${name} prompt announces the exclusion`);
+    for (const file of excluded) {
+      assert.ok(
+        prompt.includes(`${file.path} — ${file.bytes} bytes, sha256 ${file.sha256}`),
+        `${name} prompt lists ${file.path} with its byte count and digest`
+      );
+    }
+  }
+});
+
+test("a lockfile change without its manifest blocks", async () => {
+  const repo = lockfileRepo();
+  try {
+    const gates = runExcludedPathGates(
+      repo,
+      [{ path: "package-lock.json", bytes: 10, sha256: "c".repeat(64) }],
+      ["package-lock.json", "tracked.txt"]
+    );
+    assert.equal(gates.ok, false);
+    assert.match(gates.reason, /without a matching package\.json change/);
+
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    let calls = 0;
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      excludeFromPrompt: true,
+      reviewPrompt: async () => {
+        calls++;
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, false);
+    assert.equal(review.error, true);
+    assert.equal(calls, 0, "a failed compensating gate blocks before any reviewer runs");
+    assert.match(review.output, /compensating gate failed/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- H3: the lockfile delta is the reviewable form of an excluded lockfile ---------------
+// `npm ci --dry-run` resolves the tree FROM the lockfile and never fetches a tarball, so it
+// proves lock↔manifest agreement and nothing else: a tampered integrity hash and a `resolved`
+// repointed at an attacker mirror both exit 0. These checks are the actual content control.
+
+const NPM_TARBALL = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz";
+
+function lockWith(entry) {
+  return {
+    name: "aios-workspace",
+    lockfileVersion: 3,
+    packages: { "": { name: "aios-workspace" }, "node_modules/left-pad": entry },
+  };
+}
+
+function lockDelta(before, after) {
+  const repo = fixture();
+  try {
+    const lock = path.join(repo, "package-lock.json");
+    writeFileSync(lock, `${typeof before === "string" ? before : JSON.stringify(before)}\n`);
+    git(repo, "add", "package-lock.json");
+    git(repo, "commit", "-qm", "lockfile");
+    const base = git(repo, "rev-parse", "HEAD");
+    writeFileSync(lock, `${typeof after === "string" ? after : JSON.stringify(after)}\n`);
+    return inspectLockDelta(repo, "package-lock.json", base);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+const PINNED = { version: "1.3.0", resolved: NPM_TARBALL, integrity: "sha512-AAA" };
+
+test("a lockfile entry repointed at a foreign registry host blocks", () => {
+  const delta = lockDelta(
+    lockWith(PINNED),
+    lockWith({ ...PINNED, resolved: "https://evil.example.com/left-pad-1.3.0.tgz" })
+  );
+  assert.equal(delta.failures.length, 1);
+  assert.match(delta.failures[0], /evil\.example\.com.*not an allowed registry host/);
+});
+
+test("a tampered integrity hash on an unchanged version blocks", () => {
+  const delta = lockDelta(lockWith(PINNED), lockWith({ ...PINNED, integrity: "sha512-EVIL" }));
+  assert.equal(delta.failures.length, 1);
+  assert.match(delta.failures[0], /without changing version or resolved URL/);
+});
+
+test("an entry that loses or never had an integrity hash blocks", () => {
+  const dropped = lockDelta(
+    lockWith(PINNED),
+    lockWith({ version: PINNED.version, resolved: PINNED.resolved })
+  );
+  assert.match(dropped.failures.join(" "), /lost its integrity hash/);
+
+  const added = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ version: "1.3.0", resolved: NPM_TARBALL })
+  );
+  assert.match(added.failures.join(" "), /added with a tarball but no integrity hash/);
+});
+
+test("an honest version bump passes and is summarized for the reviewer", () => {
+  const delta = lockDelta(
+    lockWith(PINNED),
+    lockWith({
+      version: "1.4.0",
+      resolved: "https://registry.npmjs.org/left-pad/-/left-pad-1.4.0.tgz",
+      integrity: "sha512-BBB",
+    })
+  );
+  assert.deepEqual(delta.failures, []);
+  assert.equal(delta.summary.length, 1);
+  assert.match(delta.summary[0], /node_modules\/left-pad 1\.3\.0 → 1\.4\.0/);
+  assert.match(delta.summary[0], /registry\.npmjs\.org/);
+  assert.match(delta.summary[0], /integrity changed/);
+
+  const removed = lockDelta(lockWith(PINNED), {
+    name: "x",
+    lockfileVersion: 3,
+    packages: { "": { name: "x" } },
+  });
+  assert.deepEqual(removed.failures, []);
+  assert.match(removed.summary.join(" "), /left-pad 1\.3\.0 → \(removed\)/);
+});
+
+test("an unparseable or pre-v2 lockfile fails closed", () => {
+  const broken = lockDelta(lockWith(PINNED), "{ not json");
+  assert.equal(broken.failures.length, 1);
+  assert.match(broken.failures[0], /could not be parsed for review/);
+
+  const legacy = lockDelta(lockWith(PINNED), {
+    name: "x",
+    lockfileVersion: 1,
+    dependencies: { "left-pad": { version: "9.9.9" } },
+  });
+  assert.match(legacy.failures.join(" "), /lockfileVersion 2\+ is required/);
+});
+
+test("the summarized lockfile delta reaches both prompts", async () => {
+  const repo = lockfileRepo();
+  try {
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    appendFileSync(path.join(repo, "package.json"), "\n");
+    const prompts = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      excludeFromPrompt: true,
+      // Stand in for the real gates; their own outputs are covered above and below.
+      excludedPathGates: () => ({
+        ok: true,
+        summaries: {
+          "package-lock.json": ["node_modules/left-pad 1.3.0 → 1.4.0 [registry.npmjs.org]"],
+        },
+      }),
+      reviewPrompt: async ({ prompt }) => {
+        prompts.push(prompt);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.equal(prompts.length, 2);
+    for (const prompt of prompts) {
+      assert.match(prompt, /Changed, not shown in full/);
+      assert.match(prompt, /package-lock\.json — \d+ bytes, sha256 [a-f0-9]{64}/);
+      assert.match(prompt, /node_modules\/left-pad 1\.3\.0 → 1\.4\.0 \[registry\.npmjs\.org\]/);
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- H1/M4: the compensating gate runs REAL npm against this repo's own lockfile ---------
+// It shipped broken (a sanitized PATH stripped `node`, so npm's `#!/usr/bin/env node`
+// shebang died in 34 ms and EVERY lockfile change was hard-blocked) because only stand-ins
+// were ever exercised. This test invokes the real thing.
+
+test("the real compensating gate clears this repo's own real lockfile", () => {
+  // Seeded from THIS repo's actual manifests, so real npm resolves the real 900-package
+  // lock — but in a self-contained fixture, independent of the ambient checkout's git state
+  // (the mutation lane runs these tests from a sandbox copy).
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-bugbot-real-lock-"));
+  try {
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "config", "user.name", "AIOS Test");
+    git(repo, "config", "user.email", "test@aios.invalid");
+    const seeded = [
+      "package.json",
+      "package-lock.json",
+      ".nvmrc",
+      "gui/client/package.json",
+      "gui/server/package.json",
+    ].filter((rel) => existsSync(path.join(REPO, rel)));
+    for (const rel of seeded) {
+      mkdirSync(path.join(repo, path.dirname(rel)), { recursive: true });
+      writeFileSync(path.join(repo, rel), readFileSync(path.join(REPO, rel)));
+    }
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "seed real manifests");
+
+    const gates = runExcludedPathGates(
+      repo,
+      [{ path: "package-lock.json", bytes: 0, sha256: "e".repeat(64) }],
+      ["package-lock.json", "package.json"],
+      { baseSha: git(repo, "rev-parse", "HEAD") }
+    );
+    assert.equal(gates.ok, true, `real npm verification must succeed, got: ${gates.reason}`);
+    assert.deepEqual(gates.summaries["package-lock.json"], []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("the compensating gates run before the review clock starts", async () => {
+  const repo = lockfileRepo();
+  try {
+    appendFileSync(path.join(repo, "package-lock.json"), "\n");
+    const clock = fakeClock();
+    const gateCostMs = 300_000;
+    let gateFinishedAt = 0;
+    const calls = [];
+    await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 400_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      excludeFromPrompt: true,
+      excludedPathGates: () => {
+        clock.advance(gateCostMs); // an expensive precondition, e.g. a real `npm ci`
+        gateFinishedAt = clock.now();
+        return { ok: true, summaries: {} };
+      },
+      reviewPrompt: async ({ deadlineAt }) => {
+        calls.push({ deadlineAt, startedAt: clock.now() });
+        clock.advance(1_000);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(gateFinishedAt, gateCostMs);
+    assert.equal(
+      calls[1].deadlineAt - gateFinishedAt,
+      REVIEW_WALL_CLOCK_BUDGET_MS,
+      "gate time must not be charged against the reviewer's budget"
+    );
+    assert.equal(calls[0].deadlineAt - gateFinishedAt, REVIEW_WALL_CLOCK_BUDGET_MS - 430_000);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a workspace link entry is not judged by the tarball rules", () => {
+  // This repo's own lockfile carries `link: true` workspace entries with a RELATIVE
+  // `resolved` and no `integrity` — by construction, not by tampering. Judging them with
+  // the registry-host and integrity rules would hard-block every real workspace change.
+  const linkEntry = { resolved: "gui/client", link: true };
+  const added = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith(linkEntry)
+  );
+  assert.deepEqual(added.failures, []);
+  assert.match(added.summary.join(" "), /workspace link gui\/client/);
+
+  // A non-registry tarball source is still fail-closed.
+  const gitDep = lockDelta(
+    lockWith(PINNED),
+    lockWith({
+      version: "1.3.0",
+      resolved: "git+ssh://git@github.com/x/y.git#abc",
+      integrity: "sha512-AAA",
+    })
+  );
+  assert.match(gitDep.failures.join(" "), /not a registry tarball/);
+});
+
+// ---- L4: a link target must resolve inside the worktree, not just be well-formed --------
+// `npm ci` itself refuses an out-of-tree `link` target with an EUSAGE error, but that
+// defense lives in npm, not in this inspector — a reviewer reading `inspectLockDelta`'s
+// output alone would never see it enforced. The gate must assert containment itself.
+
+test("a relative link target that escapes the worktree blocks", () => {
+  const escaped = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "../../evil", link: true })
+  );
+  assert.equal(escaped.failures.length, 1);
+  assert.match(escaped.failures[0], /resolves outside the worktree/);
+});
+
+test("an absolute out-of-tree link target blocks", () => {
+  const escaped = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "/etc/passwd", link: true })
+  );
+  assert.equal(escaped.failures.length, 1);
+  assert.match(escaped.failures[0], /resolves outside the worktree/);
+});
+
+test("legitimate in-tree workspace links still pass containment", () => {
+  const client = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "gui/client", link: true })
+  );
+  assert.deepEqual(client.failures, []);
+
+  const server = lockDelta(
+    { name: "x", lockfileVersion: 3, packages: { "": { name: "x" } } },
+    lockWith({ resolved: "gui/server", link: true })
+  );
+  assert.deepEqual(server.failures, []);
+});
+
+test("an oversized per-attempt timeout is clamped, never crash-shaped", async () => {
+  const repo = changedRepo();
+  try {
+    // A caller-supplied timeout at or above the whole budget used to leave the code pass a
+    // non-positive allowance, so `attemptBudgetMs` threw out of the run — a crash instead of
+    // a verdict. The reserve is clamped to half the budget, so both passes stay fundable.
+    const clock = fakeClock();
+    const timeouts = [];
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: REVIEW_WALL_CLOCK_BUDGET_MS * 2,
+      now: clock.now,
+      sleep: clock.sleep,
+      reviewPrompt: async ({ timeoutMs }) => {
+        timeouts.push(timeoutMs);
+        clock.advance(timeoutMs);
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(review.ok, true);
+    assert.deepEqual(timeouts, [REVIEW_WALL_CLOCK_BUDGET_MS / 2, REVIEW_WALL_CLOCK_BUDGET_MS / 2]);
+    assert.ok(clock.now() <= REVIEW_WALL_CLOCK_BUDGET_MS);
+
+    // A budget that genuinely cannot fund two passes fails closed and SAYS SO.
+    let calls = 0;
+    const starved = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      wallClockBudgetMs: 60_000,
+      now: fakeClock().now,
+      reviewPrompt: async () => {
+        calls++;
+        return BUGBOT_CLEAR_TOKEN;
+      },
+    });
+    assert.equal(starved.ok, false);
+    assert.equal(starved.error, true);
+    assert.equal(calls, 0, "no reviewer runs on a budget that cannot fund both passes");
+    assert.match(starved.output, /review budget too small for two passes/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

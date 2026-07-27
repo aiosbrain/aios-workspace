@@ -87,4 +87,15 @@ describe("buildMessagesFromEvents", () => {
     expect(msgs.map((m) => m.kind)).toEqual(["user", "assistant", "meta"]);
     expect((msgs[1] as { text: string }).text).toBe("Hello");
   });
+
+  it("does not mislabel cumulative session usage as the latest turn", () => {
+    const events: TranscriptEvent[] = [
+      { type: "usage", scope: "context", usage: { input_tokens: 12, output_tokens: 3 } },
+      { type: "usage", scope: "session", usage: { input_tokens: 681_000, output_tokens: 4_200 } },
+      { type: "result" },
+    ];
+    const [meta] = buildMessagesFromEvents(events) as MetaMessage[];
+    expect(meta.text).toContain("12 in / 3 out");
+    expect(meta.text).not.toContain("681k");
+  });
 });

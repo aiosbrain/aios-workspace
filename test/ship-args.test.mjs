@@ -22,7 +22,7 @@ console.log("parseShipArgs defaults");
   check("issue parsed", o.issue === "AIO-163");
   check("gates default on (auto false)", o.auto === false && o.autoMerge === false);
   check(
-    "reviewers default gpt-5.5 only (bugbot opt-in)",
+    "reviewers default gpt-5.5 only (Local Bugbot is outside selection)",
     JSON.stringify(o.reviewers) === JSON.stringify(["gpt-5.5"])
   );
   check("max-fix-rounds default 3", o.maxFixRounds === 3);
@@ -69,6 +69,7 @@ console.log("parseShipArgs overrides");
   check("--plan-runner sdk", o.planRunner === "sdk");
   check("--loop light", o.loop === "light");
   check("--dry-run", o.dryRun === true);
+  check("bugbot alias is marked deprecated", o.deprecatedBugbotReviewer === true);
   check("issue still first positional", o.issue === "AIO-9");
 }
 
@@ -129,12 +130,16 @@ console.log("validateShipArgs");
       null
   );
   check(
-    "unknown reviewer → error",
-    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot,coderabbit"])) !== null
+    "coderabbit + deprecated bugbot alias are accepted",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot,coderabbit"])) === null
   );
   check(
     "known reviewers subset → null",
     validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "bugbot"])) === null
+  );
+  check(
+    "unknown reviewer → error",
+    validateShipArgs(parseShipArgs(["AIO-1", "--reviewers", "cursor-bot"])) !== null
   );
   check(
     "reviewers that normalize to empty (',') → error (never silently disable gates)",

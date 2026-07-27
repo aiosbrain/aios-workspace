@@ -52,3 +52,48 @@ test("consistency pass deterministically surfaces duplicate titles and shared pa
     "shared_path",
   ]);
 });
+
+test("authoring remains compatible when the focused skill suite is not installed", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "spec-author-repo-"));
+  const slice = path.join(repo, "one.md");
+  writeFileSync(slice, "# one");
+  try {
+    const run = await runSpecAuthor({
+      plan: "# plan",
+      slices: [slice],
+      repo,
+      rubric: RUBRIC,
+      authorCfg: { model: "stub" },
+      authorFn: async () => STRONG,
+    });
+    assert.equal(run.results.length, 1);
+    assert.equal(run.results[0].error, undefined);
+    assert.deepEqual(run.injectedSkills, []);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("one invalid skill declaration does not discard successful sibling slices", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "spec-author-partial-"));
+  const good = path.join(root, "good.md");
+  const bad = path.join(root, "bad.md");
+  writeFileSync(good, "# good");
+  writeFileSync(bad, "# bad");
+  try {
+    const run = await runSpecAuthor({
+      plan: "# plan",
+      slices: [good, bad],
+      repo: REPO,
+      rubric: RUBRIC,
+      authorCfg: { model: "stub" },
+      authorFn: async ({ slice }) =>
+        slice.includes("# bad") ? `---\nskills: [not-a-real-skill]\n---\n${STRONG}` : STRONG,
+    });
+    assert.equal(run.results.length, 2);
+    assert.equal(run.results.find((item) => item.file === good).error, undefined);
+    assert.match(run.results.find((item) => item.file === bad).error, /unknown skill/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -55,7 +55,8 @@ function sortValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     const src = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(src).sort()) out[key] = sortValue(src[key]);
+    for (const key of Object.keys(src).sort((a, b) => a.localeCompare(b)))
+      out[key] = sortValue(src[key]);
     return out;
   }
   return value;

@@ -59,6 +59,7 @@ import { resolveLoopModels } from "./loop-models.mjs";
 import { parseModelRef } from "./model-providers.mjs";
 import { cmdPr } from "./pr.mjs";
 import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
+import { loadSkillContext, parseDeclaredSkills } from "./skill-context.mjs";
 
 const DEFAULT_REVIEW_SKILL = "/ai-code-review";
 export const BASE_SHA_MARK = ".aios-build-base-sha";
@@ -137,6 +138,7 @@ export function parseBuildArgs(args) {
     "--issue",
     "--model",
     "--findings",
+    "--builder-skill",
   ];
 
   const rounds = parseInt(flag("--rounds") ?? flag("--build-rounds") ?? String(DEFAULT_ROUNDS), 10);
@@ -150,6 +152,9 @@ export function parseBuildArgs(args) {
     (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
   );
   const [planSource, branch] = positional;
+  const builderSkills = args
+    .flatMap((arg, index) => (arg === "--builder-skill" ? [args[index + 1]] : []))
+    .filter(Boolean);
 
   const merge = hasFlag("--merge");
   const pr = hasFlag("--pr");
@@ -175,6 +180,7 @@ export function parseBuildArgs(args) {
     base: flag("--base") ?? "origin/main",
     verify: flag("--verify") ?? null,
     findingsFile: flag("--findings") ?? null,
+    builderSkills,
     logFile: flag("--log") ?? null,
     merge,
     pr,
@@ -187,6 +193,22 @@ export function parseBuildArgs(args) {
     // set true by `relay --build` so the shared --log file is appended, not overwritten.
     chained: false,
   };
+}
+
+export function resolveBuilderSkillContext({ repo, plan, builderSkills = [] }) {
+  const manifest = path.join(repo, ".claude", "skill-suite.json");
+  if (!existsSync(manifest)) {
+    if (builderSkills.length) die("--builder-skill requires .claude/skill-suite.json");
+    return { source: "none", stage: "builder", bytes: 0, skills: [], prompt: "", audit: [] };
+  }
+  const declared = parseDeclaredSkills(plan);
+  const ids = builderSkills.length ? builderSkills : declared;
+  return loadSkillContext({
+    repo,
+    ids,
+    stage: "builder",
+    source: builderSkills.length ? "flag" : declared.length ? "spec" : "none",
+  });
 }
 
 // Pull the plan text out of a relay --log file. Prefers the approved section, falls
@@ -353,7 +375,10 @@ export function selectBuilderStep({ hasPriorFeedback, fixAttempt, reviewText }) 
   return "fix_escalated";
 }
 
-export function buildImplementPrompt(plan, { review, resumeLog, branch, constitution } = {}) {
+export function buildImplementPrompt(
+  plan,
+  { review, resumeLog, branch, constitution, builderContext } = {}
+) {
   const parts = [
     `You are implementing an approved plan in THIS git worktree (branch \`${branch ?? "?"}\`).`,
     "You may edit files, run commands, and make git commits. Do ALL work inside this worktree only.",
@@ -362,6 +387,9 @@ export function buildImplementPrompt(plan, { review, resumeLog, branch, constitu
     "",
     plan,
     "",
+    ...(builderContext?.skills?.length
+      ? ["## Selected builder skills", "", builderContext.prompt, ""]
+      : []),
     "## Rules",
     "- Implement every step. Make small, logical commits as you go (commit after each completed step).",
     "- Run the project's tests/validators and fix failures before you finish.",
@@ -404,6 +432,7 @@ export function buildCodeReviewPrompt({
   branch,
   round,
   maxRounds,
+  builderSkillAudit = [],
 }) {
   const isLast = round >= maxRounds;
   const roundNote = isLast
@@ -421,6 +450,18 @@ export function buildCodeReviewPrompt({
     "",
     plan,
     "",
+    ...(builderSkillAudit.length
+      ? [
+          "## Builder skill conformance",
+          "",
+          ...builderSkillAudit.map(
+            (entry) => `- ${entry.id} sha256=${entry.sha256} bytes=${entry.bytes}`
+          ),
+          "",
+          "Verify the implementation honors the applicable hard constraints of these selected skills.",
+          "",
+        ]
+      : []),
     "## Commits (base..HEAD)",
     "",
     logOneline || "(none)",
@@ -844,6 +885,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
   if (!branch) {
     branch = `feat/aios-build-${slugify(plan.split("\n")[0] || "task")}`;
   }
+  const builderContext =
+    opts.builderContext ??
+    resolveBuilderSkillContext({ repo, plan, builderSkills: opts.builderSkills ?? [] });
 
   const {
     rounds,
@@ -939,6 +983,18 @@ export async function runBuild({ repo, plan, branch, opts }) {
   const log = makeLogger(logFile, `# aios build\n\nBranch: ${branch}\nWorktree: ${wt}\n`, {
     append: true,
   });
+  log(
+    "Builder skill context",
+    JSON.stringify(
+      {
+        source: builderContext.source,
+        bytes: builderContext.bytes,
+        skills: builderContext.audit,
+      },
+      null,
+      2
+    )
+  );
 
   // Tripwire baseline: movement of the primary checkout is CLASSIFIED per round (non-fatal;
   // see tripwireReport) — head-only movement is normal under parallel agents.
@@ -948,6 +1004,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
   console.log(`Branch:     ${branch}`);
   console.log(`Worktree:   ${wt}${resumed ? c.dim(" (resumed)") : ""}`);
   console.log(`Review:     ${skill}`);
+  console.log(
+    `Skills:     ${builderContext.audit.length ? builderContext.audit.map((entry) => entry.id).join(", ") : c.dim("none")}`
+  );
   console.log(`Max rounds: ${rounds}`);
   console.log(`Merge:      ${merge ? "yes (on approval)" : c.dim("no (review diff yourself)")}`);
   if (bugbot && (merge || pr))
@@ -1014,6 +1073,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
           : null,
       branch,
       constitution,
+      builderContext,
     });
     // Every builder call carries the git rules (no push/PR, worktree-only) at the prompt
     // layer AND GIT_CEILING_DIRECTORIES = the worktree's parent dir, which blocks git's
@@ -1159,6 +1219,7 @@ export async function runBuild({ repo, plan, branch, opts }) {
       branch,
       round,
       maxRounds: rounds,
+      builderSkillAudit: builderContext.audit,
     });
     // Per-round review timeout: explicit (operator-set) wins; otherwise adapt to this round's
     // real review payload size. Logged so the choice is visible in the console + --log trail.
@@ -1426,6 +1487,7 @@ export async function cmdBuild(repo, args) {
         "  --build-timeout N       seconds before killing a stalled builder call (default: 1800)",
         "  --cursor-timeout N      seconds before killing a stalled review call (default: 300)",
         "  --skill /name           Cursor review skill (default: /ai-code-review)",
+        "  --builder-skill <id>    focused builder skill (repeatable, maximum 2)",
         '  --verify "<cmd>"        run this command in the worktree before each review;',
         '                          a failure loops feedback to the builder (e.g. "npm test")',
         "  --findings <file>       seed round 1 from a consolidated findings file (the must-fix",

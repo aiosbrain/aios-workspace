@@ -1,5 +1,9 @@
 # Domain spec — Unified Inbox (`aios inbox`)
 
+> **V1.0 scope (2026-07-22):** the inbox **CLI + engine described here ship in V1.0**; the **GUI
+> layer is cut** (PR #377) and returns in **v2**. Treat any GUI-API / cockpit-view / GUI-send
+> requirement below as v2. See [`../../release-status-v1.md`](../../release-status-v1.md).
+
 Governed by [`ENGINEERING-CONSTITUTION.md`](../../ENGINEERING-CONSTITUTION.md). Part of the
 **Unified Human+Agent Inbox** epic (AIO-381), issue **AIO-382 / I-01** — the Track 0 contract
 that every downstream issue (I-02…I-16, except the I-12/I-13 design work) is `blocked-by` in
@@ -22,6 +26,15 @@ external channels and given a durable, replayable spine. It supersedes the visio
 [`prd-unified-agent-inbox.md`](../../prd-unified-agent-inbox.md) — that PRD argued the shape of the
 whole; this spec is the buildable contract.
 
+## Delivery metadata
+
+- **V1 delivery:** the inbox journal, read model, ranking, recovery view, reply policy, and outbox
+  are consumed through `aios inbox` and the operator-loop modules. The former AIO-386 GUI
+  refresh/API/Comms/Telegram notify-and-ack lane is a V2 dependency, not a shipped V1 surface.
+- **Build-with:** Opus-class implementation at high effort. The V1 work crosses durable journal
+  semantics, cross-process coordination, and CLI/operator-loop integration; GUI lifecycle evidence
+  belongs to the deferred V2 lane.
+
 ## Reuse (shipped, KEEP)
 - **Asks store lock discipline** (`src/operator-loop/asks/store.ts`) — the `O_CREAT|O_EXCL`
   lockfile, stale-lock reclaim, and 7-day GC. The `inbox-events.ndjson` journal writer copies this
@@ -29,7 +42,8 @@ whole; this spec is the buildable contract.
   after asks compaction).
 - **Comms sender** (`src/operator-loop/comms/sender.ts`) — the tier-gated `dispatchOnEvent` and its
   four gates. **Untouched, byte-for-byte** by this epic; the reply PDP is a *new, separate* contract
-  layered beside it, never a modification of it. `comms-sender.test.mjs` stays green unchanged.
+  layered beside it, never a modification of it.
+  `test/operator-loop/comms-sender.test.mjs` stays green unchanged.
 - **GOG → activity writer** (`scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`)
   — the current activity writer whose `tier: admin` default caused the v3 reply deadlock. The
   enriched observation record is emitted *alongside* the legacy `activity.jsonl` (which stays
@@ -51,22 +65,25 @@ whole; this spec is the buildable contract.
 - **Reply PDP** — origin-confined disclosure policy decision point, a new separate contract (I-10).
 - **Enriched adapter-observation record** — versioned observation type with account/tenant identity
   and a corrected dedup key (I-06).
-- **`aios inbox` CLI + notify lane** — ranked read-only queue, `--overdue` recovery view, Telegram
-  content-free notification lane (I-04/I-05/I-09), outbox + Gmail send (I-11).
+- **`aios inbox` CLI + operator-loop actions** — ranked local queue, `--overdue` recovery view,
+  outbox, and Gmail send (I-04/I-05/I-09/I-11). The Telegram notification primitive remains
+  available for domain contract coverage, while recovery continues to power the shipped CLI
+  `--overdue` surface; no GUI-driven notify/ack loop ships in V1.
 
-### Current connector reachability
+### V1 surface and V2 deferral
 
-The local GUI refreshes Gmail/Calendar through the reviewed, toolkit-owned GOG observation adapter on
-a bounded, non-overlapping cadence. An installed workspace descriptor is only the explicit opt-in marker:
-its bytes are never loaded or executed. A selected workspace never supplies connector executable code,
-and the child receives a minimal environment allowlist. Scheduled and manual/cron pulls share an atomic
-workspace lock; timeout/shutdown terminate the full connector process group before another pull can run.
-Public freshness comes from the last successful ingestion refresh, never from a source event's occurrence
-time. The Telegram integration is deliberately
-**outbound-only**: it sends
-content-free Bot API notifications, but no `getUpdates` poller or webhook ingestion contract is
-shipped. Until that inbound contract exists, the GUI labels Telegram as alerts-only and must not
-project Telegram conversations into the inbox.
+In V1, `aios inbox` reads the durable local asks, observation, activity, and journal state. The GUI
+does not refresh Gmail or Calendar for the inbox, mount inbox-specific localhost routes, render an
+inbox Comms view, start an automatic Telegram notifier, or record GUI acknowledgment evidence.
+Operators use the CLI and existing non-GUI ingestion workflows; connector occurrence time is not a
+substitute for a recorded successful ingestion refresh.
+
+V2 may add that GUI/API/Telegram lane under a separately reviewed contract. It must preserve the
+existing safety properties: toolkit-owned connector execution with bounded concurrency and a
+minimal environment, AIOS-scoped Telegram credentials with an immediate disable switch,
+content-free alerts, durable delivery evidence, explicit human action before `human-ack`, and no
+Telegram inbound projection or reply affordance until its own policy contract passes. These are V2
+requirements, not claims about the V1 runtime.
 
 ## Contract
 
@@ -176,7 +193,8 @@ explicit allow is granted:
 Group-thread, quoting/attachment, mixed-tier, and unknown-participant rules are enumerated; an
 unknown or unverifiable participant is treated as outside the origin set (deny). The full **Sol r2
 reply-policy fixture matrix** (e.g. reply-same-sender → content-free Telegram) lives in
-`test/operator-loop/inbox-reply-policy.test.mjs`, with `comms-sender.test.mjs` untouched.
+`test/operator-loop/inbox-reply-policy.test.mjs`, with
+`test/operator-loop/comms-sender.test.mjs` untouched.
 
 ### 6. Observation record
 The enriched adapter-observation record is a **versioned** type carrying account/tenant identity,
@@ -227,11 +245,15 @@ Locked here so no gate can move after the fact:
 Every Sol r1+r2 verification item maps to a named test file (naming follows
 `test/operator-loop/asks-store.test.mjs` conventions):
 
+Telegram mentions in this matrix cover the retained notification contract and cases that exercise
+the shipped CLI recovery semantics. They do not imply that the deferred GUI notifier or
+acknowledgment endpoint ships in V1.
+
 | Verification item | Test file |
 |---|---|
 | Journal replay byte-equivalence (incl. post-asks-GC) + truncation at every byte boundary | `test/operator-loop/inbox-journal-replay.test.mjs` |
 | Legacy-record compat + multi-account collision fixtures (dual-read) | `test/operator-loop/inbox-observations-dualread.test.mjs` |
-| Reply-policy fixture matrix (reply-same-sender → content-free Telegram), `comms-sender.test.mjs` untouched | `test/operator-loop/inbox-reply-policy.test.mjs` |
+| Reply-policy fixture matrix (reply-same-sender → content-free Telegram), `test/operator-loop/comms-sender.test.mjs` untouched | `test/operator-loop/inbox-reply-policy.test.mjs` |
 | Capability tamper / replay-before-and-after-restart / rotation / crash-after-consume / crash-after-action / `outcome_unknown` idempotency-class retry | `test/operator-loop/inbox-capability.test.mjs` |
 | G5 bypass tests scoped to the claimed surface ("inbox path gated") | `test/operator-loop/inbox-send-bypass.test.mjs` |
 | G3 recovery: Telegram disabled, token revoked, API-success-without-ack, coordinator restart, phone offline | `test/operator-loop/inbox-recovery.test.mjs` |
@@ -243,9 +265,11 @@ Every Sol r1+r2 verification item maps to a named test file (naming follows
 [`prd-unified-agent-inbox.md`](../../prd-unified-agent-inbox.md); the domains README table row; the
 D5 and D6 rulings recorded above; the verification-matrix table reproduced above.
 
-**Deferred:** all implementation (I-02+); any `docs/brain-api.md` change (if a ranking-graph contract
-ever lands, brain-api updates **first** — a G6b concern); adapter-contract publication (stays behind
-its maturity gate).
+**Deferred:** for the V1 release, the Unified Inbox GUI Gmail/Calendar refresher, localhost inbox
+API, React Comms surface, and automatic Telegram notify/ack wiring are deferred together to V2.
+Any `docs/brain-api.md` change also remains deferred (if a ranking-graph contract ever lands,
+brain-api updates **first** — a G6b concern), as does adapter-contract publication behind its
+maturity gate.
 
 ## Tier safety
 The standing posture, enforced two layers deep:
@@ -283,4 +307,6 @@ recovery), I-06 (enriched observations), I-09/I-10/I-11 (Gmail read → reply �
 I-15/I-16 (host + retention/audit-anchor package). Integration points the modules stay consistent
 with: `src/operator-loop/asks/store.ts`, `src/operator-loop/comms/sender.ts`,
 `scaffold/.claude/descriptors/skills/gog-activity/gog-activity-pull.mjs`, and
-`gui/server/runtime-adapters/claude-code.mjs`.
+`gui/server/runtime-adapters/claude-code.mjs`. The Telegram notification primitive remains a
+domain-level building block, while recovery continues to power `aios inbox --overdue`; their former
+GUI/API notify-and-ack wiring is deferred to V2 as stated above.

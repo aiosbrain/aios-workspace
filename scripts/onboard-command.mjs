@@ -13,8 +13,99 @@ import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { persistBrainOrigin } from "./onboard-config.mjs";
 import { formatInspection, inspectOnboarding } from "./onboard-inspect.mjs";
 import { cmdUpdate } from "./update.mjs";
+import { installPostCheckoutHook } from "./worktree.mjs";
 
 const TEAM_BRAIN_PSEUDO_ID = "__team_brain__";
+
+/**
+ * The toolkit-upgrade subsection of onboarding — extracted so its sequencing can be unit
+ * tested with a stubbed `cmdUpdate` (via the `cmdUpdate` option), without shelling real
+ * git per assertion. `cmdUpdate` never throws its own expected-failure type (`UpdateError`
+ * — it's always caught internally and converted into a returned result), but code it calls
+ * into can still throw something genuinely unexpected, so both the preview and the apply
+ * call are guarded regardless.
+ *
+ * ONE read-only `--preview` call (which implies `--no-pull` — no mutation, no child, no
+ * exit) both gates and describes the upgrade: its structured result —
+ * `.applyAllowed`/`.reasons`, not console text — decides whether to offer the apply
+ * confirmation at all (a conflicted, dirty, uninspectable, or diverged toolkit is skipped
+ * with one clear warning), and its merge report is what the user actually confirms.
+ *
+ * The confirmed apply is pinned to EXACTLY what was previewed: it passes `--no-pull` (the
+ * preview classified the checkout's current HEAD, so the apply must not fast-forward past
+ * it) plus `--expect-src-head <previewed sha>` (refused if the checkout moved between the
+ * two steps). Consent binds to the report the user saw, never to whatever the source
+ * happens to contain by apply time; if the toolkit's remote had newer commits, we say so
+ * and leave pulling them to a plain `aios update` after onboarding.
+ */
+export async function runToolkitUpgrade(
+  repo,
+  cfg,
+  inspection,
+  { confirm, clack, cmdUpdate: cmdUpdateFn = cmdUpdate }
+) {
+  if (!inspection.toolkit) return;
+  if (inspection.toolkit.git.dirty || inspection.toolkit.relation === "diverged") {
+    clack.log.warn(
+      `Toolkit checkout ${inspection.toolkit.path} is ${inspection.toolkit.git.dirty ? "dirty" : "not fast-forward compatible"}; it will not be modified or used to upgrade this workspace.`
+    );
+    return;
+  }
+
+  // One read-only pass: --preview computes the same gating signals --check would
+  // (`applyAllowed` is derived identically in both modes) AND shows the user the actual
+  // merge report — running --check first only added a second `git ls-remote` round-trip
+  // and a second full vendor-safety scan to learn the same answer.
+  let previewResult;
+  try {
+    previewResult = await cmdUpdateFn(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
+  } catch (error) {
+    clack.log.warn(
+      `Toolkit upgrade check failed unexpectedly (${error.message}) — skipping for now, run \`aios update\` later.`
+    );
+    return;
+  }
+
+  // `!== true`, not `=== false`: the apply is offered ONLY on an explicit positive
+  // permission. Every real `cmdUpdate` path derives a boolean `applyAllowed` through
+  // `buildResult`, so today the two spellings agree — but `=== false` treats a MISSING
+  // field as permission, which is the wrong default for a consent gate and would silently
+  // start offering unvetted applies the moment a result shape changed. Fail closed on
+  // anything that isn't an explicit yes.
+  if (previewResult?.applyAllowed !== true) {
+    const reasons = [...new Set(previewResult?.reasons || [])];
+    clack.log.warn(
+      `Toolkit isn't safe to update right now${reasons.length ? ` (${reasons.join("; ")})` : ""} — skipping the upgrade offer. Resolve it, then run \`aios update\` later.`
+    );
+    return;
+  }
+
+  if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
+    // --no-pull + --expect-src-head: apply exactly the state the user just previewed and
+    // confirmed. Without the pin, apply would fast-forward the toolkit first and vendor a
+    // NEWER head — a different (possibly larger) change set than the approved report.
+    const applyArgs = ["--from", inspection.toolkit.path, "--no-pull"];
+    if (previewResult?.srcHead) applyArgs.push("--expect-src-head", previewResult.srcHead);
+    let applyResult;
+    try {
+      applyResult = await cmdUpdateFn(repo, cfg, applyArgs);
+    } catch (error) {
+      clack.log.warn(
+        `Managed-file update failed unexpectedly (${error.message}) — finish it with \`aios update\` after onboarding.`
+      );
+      return;
+    }
+    if (applyResult.exitStatus) {
+      clack.log.warn(
+        "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
+      );
+    } else if (previewResult?.remoteState?.state === "behind") {
+      clack.log.info(
+        "The toolkit checkout itself is behind its remote — run `aios update` after onboarding to pull the newest toolkit."
+      );
+    }
+  }
+}
 
 /** Guided onboarding, isolated from the main CLI so basic command loading stays small and dependency-free. */
 export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction }) {
@@ -41,6 +132,12 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     );
     return;
   }
+
+  // AIO-482: install the auto-hydration post-checkout hook as a silent side effect of
+  // onboarding. It's per-machine `.git/hooks/` state that a fresh clone can't inherit,
+  // and installing it here means a worktree later created by a tool that never calls
+  // `aios worktree add` (Conductor et al) hydrates at creation time. Idempotent.
+  installPostCheckoutHook(repo, { quiet: true });
 
   const connectors = listConnectors(repo);
   if (!process.stdin.isTTY) {
@@ -102,24 +199,7 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     return;
   }
 
-  if (inspection.toolkit?.git.dirty || inspection.toolkit?.relation === "diverged") {
-    clack.log.warn(
-      `Toolkit checkout ${inspection.toolkit.path} is ${inspection.toolkit.git.dirty ? "dirty" : "not fast-forward compatible"}; it will not be modified or used to upgrade this workspace.`
-    );
-  } else if (inspection.toolkit) {
-    // --check and --preview are read-only: preview implies --no-pull, so neither mutates the
-    // toolkit checkout, re-execs, or exits this process. The apply MAY pull + hand off to the
-    // freshly-pulled CLI in a child process; cmdUpdate returns that child's exit status.
-    await cmdUpdate(repo, cfg, ["--check", "--from", inspection.toolkit.path]);
-    await cmdUpdate(repo, cfg, ["--preview", "--from", inspection.toolkit.path]);
-    if (await confirm("Apply the previewed managed-file update through the three-way merge?")) {
-      const status = await cmdUpdate(repo, cfg, ["--from", inspection.toolkit.path]);
-      if (status)
-        clack.log.warn(
-          "Managed-file update did not complete cleanly — finish it with `aios update` after onboarding."
-        );
-    }
-  }
+  await runToolkitUpgrade(repo, cfg, inspection, { confirm, clack });
 
   const backedUp = backupConfig(repo);
   if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);

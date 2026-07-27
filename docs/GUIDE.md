@@ -516,7 +516,7 @@ flowchart LR
     task["Task / spec / AIO-issue"] --> relay["aios relay<br/>Opus plan ↔ Cursor review<br/>until PLAN_READY"]
     relay --> build["aios build<br/>Opus implements on a worktree<br/>Cursor reviews → MERGE_READY"]
     build --> pr["aios pr / --pr<br/>push + open PR (AIO-key in title)"]
-    pr --> bots["wait-for-bots → GPT review"]
+    pr --> bots["Local Bugbot → optional/required CodeRabbit → GPT review"]
     bots --> cons["aios consolidate-findings<br/>one severity-ranked list (fail-closed)"]
     cons --> fix["aios build --findings<br/>fix the must-fix subset"]
     fix --> merge["merge + cleanup"]
@@ -528,7 +528,7 @@ flowchart LR
 | `aios build <plan-file\|task> [branch]` | Implement a plan with Opus, reviewed by Cursor, until `MERGE_READY`; `--merge` / `--pr` / `--bugbot` |
 | `aios ship AIO-<n>` | The whole gated loop for one issue: recon → plan → build → PR → review → fix → merge → cleanup, behind plan + merge gates (both default ON) |
 | `aios pr [--branch b] [--issue AIO-n]` | Push the branch + open a PR idempotently (prints `PR_NUMBER`; carries the `AIO-<n>` key so board automations fire) |
-| `aios consolidate-findings --pr <n> --issue AIO-<n>` | Merge CI + Bugbot + CodeRabbit + GPT reviews + the PR diff into one severity-ranked, fail-closed finding list |
+| `aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>` | Merge CI + exact-head Local Bugbot + current-head CodeRabbit + GPT reviews + the PR diff into one severity-ranked, fail-closed finding list |
 | `aios review-bugbot [branch]` | Local Cursor Bugbot on a build worktree's diff (offline) |
 | `aios roadmap-run (--label\|--epic\|--project)` | Unattended serial walker: ship one unblocked issue at a time; deterministic digest each run |
 
@@ -610,7 +610,7 @@ speeds up *safe repetition*.
 - `aios skills` — list the workspace's skills.
 
 **Reaching the brain from a shell-less agent — `aios mcp` (built, read-only):** agents that can't
-shell out (Claude Desktop, Cowork, Codex, Conductor) reach the brain through `aios mcp`, a stdio MCP
+shell out (Claude Desktop, Cowork, claude.ai) reach the brain through `aios mcp`, a stdio MCP
 server bridge (`scripts/brain-mcp.mjs`). It's intentionally **thin and read-only** — it wraps the v1
 read endpoints and reuses the brain's server-side tier filtering as its safety boundary, and needs no
 workspace (config is env-first). The tool surface: `brain_status`, `brain_query`,
@@ -620,6 +620,12 @@ the `aios mcp` command; what is still **planned** (in the same PRD) is the one-c
 bundle, an `npx` distribution, and write/push support — so the current bridge validates the protocol
 but does not yet deliver the "no terminal, ≤5 min" desktop experience. Design + phasing:
 [`prd-team-brain-mcp-connector.md`](prd-team-brain-mcp-connector.md).
+
+> **Conductor and Codex are NOT in that list.** Both run a real local agent process with a shell
+> and git, so they use the `aios` CLI directly — same as terminal Claude Code. They get harness
+> parity from the worktree-hydration adapter (`aios worktree doctor` reports it), not from the
+> bridge. See [`integrations.md#conductor`](integrations.md#conductor). The bridge is still
+> available to them as an optional path when no scaffolded workspace is open.
 
 > Don't confuse the **MCP bridge** (which *AI surfaces* can reach the brain) with **BYOA** (which
 > *agent runtimes* can run the local harness — `aios skills export`, the runtime adapters). Different

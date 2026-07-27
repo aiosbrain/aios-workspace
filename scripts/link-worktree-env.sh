@@ -48,17 +48,25 @@ if [[ ! -e "$here/opencode.json" ]]; then
   fi
 fi
 
-# .claude/settings.json — hooks + rails allowlist. Always copy from primary
-# (overwrites any git-tracked version — primary is source of truth).
-# `aios asks wire` (run below) corrects hook paths for this worktree.
+# .claude/settings.json — hooks + rails allowlist. Copy from primary (overwrites
+# any git-tracked version — primary is source of truth), but only when the content
+# actually differs: this script now also runs as a per-session self-heal
+# (hooks/worktree-self-heal.mjs), and a no-op re-copy every session would churn
+# the file's mtime for nothing.
+copy_settings_from() {
+  local src="$1" label="$2"
+  if cmp -s "$src" "$here/.claude/settings.json"; then
+    echo "skip .claude/settings.json — already current"
+    return
+  fi
+  mkdir -p "$here/.claude"
+  cp "$src" "$here/.claude/settings.json"
+  echo "copied .claude/settings.json${label}"
+}
 if [[ -f "$main_worktree/.claude/settings.json" ]]; then
-  mkdir -p "$here/.claude"
-  cp "$main_worktree/.claude/settings.json" "$here/.claude/settings.json"
-  echo "copied .claude/settings.json"
+  copy_settings_from "$main_worktree/.claude/settings.json" ""
 elif [[ -f "$scaffold/.claude/settings.json" ]]; then
-  mkdir -p "$here/.claude"
-  cp "$scaffold/.claude/settings.json" "$here/.claude/settings.json"
-  echo "copied .claude/settings.json (from scaffold)"
+  copy_settings_from "$scaffold/.claude/settings.json" " (from scaffold)"
 fi
 
 # .claude/ — full directory: rules, skills, commands, agents, memory, personalities, rubrics, descriptors
@@ -93,9 +101,21 @@ fi
 
 # .opencode/ — agents and plugins. The product Bugbot adapter is tracked, so the
 # directory can already exist in a fresh worktree; fill only missing hydrated files.
+# NB: `cp -Rn` is NOT safe here under `set -e`. BSD/macOS `cp -n` exits non-zero
+# when it *declines* to overwrite an existing file (GNU `cp -n` exits 0), so on a
+# fresh worktree — where .opencode/opencode.json + plugins/aios-bugbot.mjs are
+# already checked out — it would abort the whole hydration mid-run. Copy each
+# missing file individually instead: portable, preserves the fill-only-missing
+# intent, and still lets a genuine copy failure (permissions, disk) surface
+# rather than being swallowed by a blanket `|| true`.
 if [[ -d "$scaffold/.opencode" ]]; then
   mkdir -p "$here/.opencode"
-  cp -Rn "$scaffold/.opencode/." "$here/.opencode/"
+  while IFS= read -r -d '' src; do
+    dest="$here/.opencode/${src#"$scaffold/.opencode/"}"
+    [[ -e "$dest" ]] && continue
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+  done < <(find "$scaffold/.opencode" -type f -print0)
   echo "hydrated .opencode/"
 fi
 
@@ -109,6 +129,16 @@ if command -v node >/dev/null 2>&1 && [[ -f "$main_worktree/scripts/aios.mjs" ]]
   node "$main_worktree/scripts/aios.mjs" asks wire --repo "$here" 2>/dev/null || echo "aios asks wire: skipped (CLI may not be built)"
 fi
 
+# ── native-module ABI guard ─────────────────────────────────────────────────
+# node_modules is symlinked from the primary above, so this worktree runs the
+# primary's compiled better_sqlite3.node. If the active Node's ABI differs from
+# what that addon was built for (the classic ABI 127-vs-147 crash), the
+# operator-loop DB tests fail for an environment-only reason. Probe it now and
+# auto-rebuild or point at the pinned Node (.nvmrc) — best-effort, never aborts.
+if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-native-abi.mjs" ]]; then
+  (cd "$here" && node scripts/ensure-native-abi.mjs) || echo "native-abi: better-sqlite3 needs attention (see message above)"
+fi
+
 # ── operator-loop build ─────────────────────────────────────────────────────
 # `aios loop`/asks/decisions/time/timeline/mode/maturity-week all require
 # dist/operator-loop (compiled from src/operator-loop, src/timeline — see
@@ -119,6 +149,16 @@ fi
 if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-loop-built.mjs" ]]; then
   (cd "$here" && node scripts/ensure-loop-built.mjs) || echo "operator-loop build: skipped (see message above)"
 fi
+
+# ── hydration marker ────────────────────────────────────────────────────────
+# Derived, disposable, per-worktree local state under the gitignored `.aios/`.
+# Written once, last, atomically (write + rename); read only as a boolean
+# "hydrated?" test by hooks/git/post-checkout and hooks/worktree-self-heal.mjs.
+# Deleting it is always safe — the next session simply re-hydrates.
+mkdir -p "$here/.aios"
+printf 'hydrated-by=link-worktree-env.sh\nat=%s\nfrom=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$main_worktree" > "$here/.aios/.worktree-hydrated.tmp"
+mv -f "$here/.aios/.worktree-hydrated.tmp" "$here/.aios/.worktree-hydrated"
 
 echo ""
 echo "Worktree $here is ready."

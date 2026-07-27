@@ -34,8 +34,16 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import { PLAN_PRICES } from "../../scripts/analyze/claude-plan.mjs";
 
-export const SUBSCRIPTION_PROVIDERS = ["claude", "cursor", "codex"];
-export const METERED_PROVIDERS = ["anthropic", "cursor", "codex", "opencode"];
+export const SUBSCRIPTION_PROVIDERS = ["claude", "cursor", "codex", "opencode", "zai"];
+export const METERED_PROVIDERS = [
+  "anthropic",
+  "cursor",
+  "codex",
+  "openai",
+  "opencode",
+  "openrouter",
+  "zai",
+];
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_USD = 1_000_000; // sanity ceiling for a single monthly figure
 

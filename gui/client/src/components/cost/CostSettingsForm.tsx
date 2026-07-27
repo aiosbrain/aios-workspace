@@ -20,13 +20,20 @@ export function parseUsd(raw: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : NaN;
 }
 
-export type CostSettingsFormValues = Record<"claude" | "cursor" | "codex" | "anthropic", string>;
+export type CostSettingsFormValues = Record<
+  "claude" | "cursor" | "codex" | "opencode" | "zai" | "anthropic" | "openai" | "openrouter",
+  string
+>;
 
 export const EMPTY_FORM: CostSettingsFormValues = {
   claude: "",
   cursor: "",
   codex: "",
+  opencode: "",
+  zai: "",
   anthropic: "",
+  openai: "",
+  openrouter: "",
 };
 
 /** Hydrate the form from the server's editable config (same values the ledger reads). */
@@ -36,7 +43,11 @@ export function formFromConfig(cfg: CostConfigResponse, period: string): CostSet
     claude: s(cfg.subscriptions.claude),
     cursor: s(cfg.subscriptions.cursor),
     codex: s(cfg.subscriptions.codex),
+    opencode: s(cfg.subscriptions.opencode),
+    zai: s(cfg.subscriptions.zai),
     anthropic: s(cfg.metered.anthropic?.[period]),
+    openai: s(cfg.metered.openai?.[period]),
+    openrouter: s(cfg.metered.openrouter?.[period]),
   };
 }
 
@@ -50,15 +61,34 @@ export function buildConfigPatch(
   period: string
 ): { patch: object } | { error: string } {
   const parsed = {} as Record<keyof CostSettingsFormValues, number | null>;
-  for (const key of ["claude", "cursor", "codex", "anthropic"] as const) {
+  for (const key of [
+    "claude",
+    "cursor",
+    "codex",
+    "opencode",
+    "zai",
+    "anthropic",
+    "openai",
+    "openrouter",
+  ] as const) {
     const v = parseUsd(form[key]);
     if (Number.isNaN(v)) return { error: `"${form[key]}" isn't a valid USD amount` };
     parsed[key] = v;
   }
   return {
     patch: {
-      subscriptions: { claude: parsed.claude, cursor: parsed.cursor, codex: parsed.codex },
-      metered: { anthropic: { [period]: parsed.anthropic } },
+      subscriptions: {
+        claude: parsed.claude,
+        cursor: parsed.cursor,
+        codex: parsed.codex,
+        opencode: parsed.opencode,
+        zai: parsed.zai,
+      },
+      metered: {
+        anthropic: { [period]: parsed.anthropic },
+        openai: { [period]: parsed.openai },
+        openrouter: { [period]: parsed.openrouter },
+      },
     },
   };
 }
@@ -67,6 +97,14 @@ const SUB_FIELDS = [
   { key: "claude", label: "Claude subscription" },
   { key: "cursor", label: "Cursor subscription" },
   { key: "codex", label: "Codex subscription" },
+  { key: "opencode", label: "OpenCode subscription" },
+  { key: "zai", label: "Z.ai subscription" },
+] as const;
+
+const METERED_FIELDS = [
+  { key: "anthropic", label: "Anthropic API spend" },
+  { key: "openai", label: "OpenAI API spend" },
+  { key: "openrouter", label: "OpenRouter spend" },
 ] as const;
 
 /**
@@ -132,20 +170,25 @@ export function CostSettingsForm({
             />
           </label>
         ))}
-        <label className="flex items-center justify-between gap-3 text-[12px] text-foreground">
-          <span>
-            Anthropic API spend <span className="text-muted-foreground">({period}, $)</span>
-          </span>
-          <input
-            className={INPUT}
-            inputMode="decimal"
-            placeholder="—"
-            disabled={!loaded}
-            value={form.anthropic}
-            onChange={(e) => onChange("anthropic", e.target.value)}
-            aria-label={`Exact Anthropic API spend for ${period} in US dollars`}
-          />
-        </label>
+        {METERED_FIELDS.map((f) => (
+          <label
+            key={f.key}
+            className="flex items-center justify-between gap-3 text-[12px] text-foreground"
+          >
+            <span>
+              {f.label} <span className="text-muted-foreground">({period}, $)</span>
+            </span>
+            <input
+              className={INPUT}
+              inputMode="decimal"
+              placeholder="—"
+              disabled={!loaded}
+              value={form[f.key]}
+              onChange={(e) => onChange(f.key, e.target.value)}
+              aria-label={`Exact ${f.label} for ${period} in US dollars`}
+            />
+          </label>
+        ))}
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button className={REV_BTN} onClick={onSave} disabled={busy || !loaded}>

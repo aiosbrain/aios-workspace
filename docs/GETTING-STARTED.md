@@ -250,6 +250,11 @@ context: employee
 > Leave `brain_url` empty to stay fully offline — every non-sync part of the workspace
 > still works (see §8).
 
+> **Rehearsing against staging.** To test a push without touching live team data, set
+> `brain_url` to the staging brain — `https://aios-team-brain-staging.up.railway.app` — a
+> separate deployment with its own database. It is invite-only, so you also need a member
+> row and an API key issued **on staging**; a production key will not authenticate there.
+
 A filled reference also lives at
 [`scaffold/aios.yaml.example`](../scaffold/aios.yaml.example) — **in the toolkit
 (folder A)**, for you to eyeball or hand-copy values from. Don't copy

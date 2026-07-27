@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { gitEnv } from "./cli-common.mjs";
 
 /**
  * Pure decision for a single file given the three versions (undefined = absent).
@@ -88,9 +89,12 @@ export function threeWayMerge(base, mine, theirs, labels = {}) {
 export function gitShow(toolkitDir, sha, relPath) {
   if (!sha || sha === "unknown") return undefined;
   try {
+    // gitEnv(): this is the 3-way merge's BASE content — an inherited GIT_DIR would
+    // silently source the baseline from another repository.
     return execFileSync("git", ["-C", toolkitDir, "show", `${sha}:${relPath}`], {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: gitEnv(),
     });
   } catch {
     return undefined; // sha not present (shallow clone) or path didn't exist then
@@ -104,7 +108,7 @@ export function lsTree(toolkitDir, sha, prefix) {
     const out = execFileSync(
       "git",
       ["-C", toolkitDir, "ls-tree", "-r", "--name-only", sha, "--", prefix],
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], env: gitEnv() }
     );
     return out.split("\n").filter(Boolean);
   } catch {

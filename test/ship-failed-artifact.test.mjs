@@ -48,6 +48,7 @@ function makeDeps(repo, auditFiles, over = {}) {
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,
@@ -55,8 +56,11 @@ function makeDeps(repo, auditFiles, over = {}) {
     callCursorAgent: async () => "looks good\nPLAN_READY",
     callDeepSeekDirect: async () => "looks good\nPLAN_READY",
     waitForBots: () => 0,
-    gitExec: () => "",
-    ghExec: () => ({ code: 0, stdout: greenChecks, stderr: "" }),
+    gitExec: (argv) => (argv[0] === "rev-parse" ? "fakehead\n" : ""),
+    ghExec: (argv) =>
+      argv.join(" ").includes("headRefOid")
+        ? { code: 0, stdout: "fakehead\n", stderr: "" }
+        : { code: 0, stdout: greenChecks, stderr: "" },
     gitLsFiles: () => new Set(["scripts/aios.mjs"]),
     statFile: () => ({ size: 100 }),
     readFile: () => "file contents",

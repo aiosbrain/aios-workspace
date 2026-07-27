@@ -8,7 +8,6 @@ import {
   ListChecks,
   Coins,
   Repeat,
-  Inbox,
   MessageSquare,
 } from "lucide-react";
 import { useConnection, useSession } from "../../state/cockpit";
@@ -133,20 +132,6 @@ export function Sidebar() {
         aria-label="Workspace"
       >
         <div className="px-2.5 pt-1 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-          Comms
-        </div>
-        <button
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-[7px] text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
-            FOCUS_RING,
-            view === "comms" &&
-              "border-[var(--accent-line)] bg-[var(--accent-soft)] text-foreground"
-          )}
-          onClick={() => setView("comms")}
-        >
-          <Inbox size={15} strokeWidth={2} /> Inbox
-        </button>
-        <div className="px-2.5 pt-2 pb-[3px] font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
           Build
         </div>
         <button

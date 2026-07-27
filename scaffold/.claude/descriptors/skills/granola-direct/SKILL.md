@@ -49,7 +49,7 @@ node .claude/descriptors/skills/granola-direct/granola-pull.mjs \
 | `--access` | frontmatter `access:` tier for written files (default `team`; use `private` for sensitive/prospect calls) |
 | `--speaker` | label for the non-microphone party on 1:1 calls (default `Speaker`) — e.g. `--speaker "Abdul Bahri"` |
 | `--local` | force the local-app-token path (skip the public API) |
-| `--force` | explicitly replace an existing transcript; without it, local tier edits are preserved |
+| `--force` | explicitly replace an existing transcript's content while preserving its local `access:` tier |
 | `--dry-run` | list what would be written without touching the filesystem |
 
 Each meeting becomes one Markdown file at `1-inbox/transcripts/<date>-<slug>.md` with
@@ -61,11 +61,34 @@ Re-pulls match existing files by `granola_id`, not filename. They preserve an ex
 when the fetched transcript did not grow, and preserve its local `access:` tier when new
 transcript text is appended. Use `--force` only for an intentional connector overwrite.
 
+**Protecting a manual redaction (`redacted: true`).** If you hand-edit a transcript to
+strip sensitive content before it syncs outward, a redaction is *shorter* than the
+original — so the next re-pull's "did it grow?" heuristic would otherwise clobber it back
+to the full text. Add one line to the file's frontmatter:
+
+```yaml
+---
+type: transcript
+access: team
+redacted: true      # ← connector will never overwrite this file (skip-redacted)
+---
+```
+
+With `redacted: true` set, the connector always **skips** the file (reported distinctly as
+`redaction-protected` in the run summary, `skip-redacted` internally), regardless of how much
+the upstream transcript has grown. Only `--force` overrides the marker — use it deliberately
+when you actually want the original content back. The existing `access:` tier is preserved. If
+the meeting later grows, recover it with `--force`, redact the restored transcript again, and
+re-add `redacted: true` before it syncs.
+
 ## After pulling
 
-Chain into `transcript-decisions` to turn the new transcripts into decision-log rows,
-or `weekly-synthesis` for a digest. Promotion to the brain stays a deliberate
-`aios push` — pull sensitive calls with `--access private` so they never sync.
+Review the new transcripts with the typed `transcript-decisions` CLI —
+`aios transcripts draft|list|approve` extracts grounded decisions **and** explicit
+tasks into a private V2 owner-review stage and applies both local logs on one
+approval (which then attempts `aios push` unless you pass `--no-push`). Or run
+`weekly-synthesis` for a digest. Pull sensitive calls with `--access private` so they
+never sync.
 
 ## Connect / troubleshoot
 

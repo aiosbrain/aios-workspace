@@ -5,9 +5,12 @@ V1 build and dogfood hub is [`docs/v1-operator-loop/README.md`](./v1-operator-lo
 This page records what must be true before V1 is presented publicly or included in
 an OSS release.
 
-V1 beta scope is Unified Inbox plus the CLI-canonical Verified Operator Loop. The entire managed
-GitHub / Executor gateway workstream (AIO-399–AIO-409) is routed to V2 and is not part of the V1
-beta product or demo claim.
+V1 beta scope is **CLI-first**: the CLI-canonical Verified Operator Loop plus the Unified Inbox
+**CLI** (`aios inbox`). The Unified Inbox **GUI was cut from V1.0 on 2026-07-22** (John + Chetan;
+PR #377 removed it, GUI + ingestion extensions labeled `v2` in Linear — see
+[`release-status-v1.md`](./release-status-v1.md)). The entire managed GitHub / Executor gateway
+workstream (AIO-399–AIO-409) is likewise routed to V2 and is not part of the V1 beta product or
+demo claim.
 
 ## Current Gate Status
 

@@ -82,6 +82,24 @@ async function run() {
     check("startOAuth throws on non-200", threw);
   }
 
+  // startOAuth rejects an unsafe authorize_url (non-https, or credentials smuggled in)
+  {
+    for (const bad of [
+      "javascript:alert(1)",
+      "http://slack.com/oauth",
+      "https://accounts.google.com@evil.com/phish",
+    ]) {
+      const fetchImpl = async () => reply({ authorize_url: bad });
+      let threw = false;
+      try {
+        await startOAuth(D, CFG, { fetchImpl });
+      } catch (e) {
+        threw = /unsafe authorize_url/.test(e.message);
+      }
+      check(`startOAuth rejects unsafe authorize_url (${bad})`, threw);
+    }
+  }
+
   // ── checkOAuthStatus ─────────────────────────────────────────────────────
   {
     const fetchImpl = async (url) => {

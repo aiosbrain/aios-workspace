@@ -22,7 +22,19 @@ export const CATEGORIES = {
   },
   Dev: {
     description: "contributing to this toolkit",
-    scripts: ["lint", "lint:fix", "format", "format:check", "test", "test:ux", "test:coverage"],
+    scripts: [
+      "lint",
+      "lint:fix",
+      "format",
+      "format:check",
+      "test",
+      "test:client",
+      "test:rust",
+      "test:ux",
+      "test:coverage",
+      "test:install-smoke",
+      "test:mutation",
+    ],
   },
   Build: {
     description: "packaging the desktop app / GUI bundle",
@@ -39,10 +51,17 @@ export const CATEGORIES = {
       "check:domains",
       "check:size",
       "check:inbox-audit",
+      "eval:transcripts",
       "pr:backlog",
       "test:gateway-contracts", // focused gateway contract conformance suite
       "test:gateway-approval-contracts", // AIO-407 durable approval/admin extension
-      "pretest", // npm runs this automatically before `npm test`
+      "test:prepare",
+      "pretest:node",
+      "test:node",
+      "test:node:list",
+      "test:coverage:report",
+      "test:mutation:smoke",
+      "test:mutation:nightly",
       "postinstall", // npm runs this automatically after `npm install` — never invoked by hand
     ],
   },

@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-// test/wait-for-bots-exit.test.mjs — the require-all-by-default exit contract.
-//
-// The timeout path can't be spawned quickly (the poll loop has a 1-minute floor), so
-// the exit-code decision is unit-tested via the pure decideTimeoutExit helper. A fast
-// spawn with a fake `gh` on PATH (bots already ready) covers the all-ready exit-0 path
-// and that --any / --require-all are accepted. Zero-dep, no live gh/git.
+// CodeRabbit wait command exit contract. Fake gh only; no network.
 
 import { decideTimeoutExit } from "../scripts/wait-for-bots.mjs";
 import { execFileSync } from "node:child_process";
@@ -28,65 +23,73 @@ function check(label, cond) {
   }
 }
 
-console.log("decideTimeoutExit — require-all by default");
+console.log("decideTimeoutExit");
 {
-  const d1 = decideTimeoutExit({ proceedOnTimeout: false, missing: ["cursor[bot]"] });
-  check("missing bot, default → exit 2, do not proceed", d1.code === 2 && d1.proceed === false);
-
-  const d2 = decideTimeoutExit({ proceedOnTimeout: true, missing: ["cursor[bot]"] });
-  check("missing bot, --any → exit 0, proceed", d2.code === 0 && d2.proceed === true);
-
+  const d1 = decideTimeoutExit({ proceedOnTimeout: false, missing: ["coderabbitai[bot]"] });
+  check("missing CodeRabbit, default → exit 2", d1.code === 2 && d1.proceed === false);
+  const d2 = decideTimeoutExit({ proceedOnTimeout: true, missing: ["coderabbitai[bot]"] });
+  check("missing CodeRabbit, --any → exit 0", d2.code === 0 && d2.proceed === true);
   const d3 = decideTimeoutExit({ proceedOnTimeout: false, missing: [] });
-  check("no missing bot → exit 0, proceed", d3.code === 0 && d3.proceed === true);
+  check("no missing evidence → exit 0", d3.code === 0 && d3.proceed === true);
 }
 
-// A fake `gh` reporting both bots as completed check runs → the script exits 0 on the
-// first poll (no waiting). Both --require-all (no-op) and --any must still exit 0 here.
-const ghDir = mkdtempSync(path.join(tmpdir(), "wfb-gh-"));
-const ghBin = path.join(ghDir, "gh");
-writeFileSync(
-  ghBin,
-  [
-    "#!/usr/bin/env node",
-    "const a = process.argv.slice(2).join(' ');",
-    "if (a.includes('check-runs')) {",
-    "  process.stdout.write(JSON.stringify([",
-    "    {name:'Bugbot',status:'completed',conclusion:'success',completed_at:'2020-01-01T00:00:00Z'},",
-    "    {name:'CodeRabbit',status:'completed',conclusion:'success',completed_at:'2020-01-01T00:00:00Z'}",
-    "  ]));",
-    "} else if (a.includes('/commits')) {",
-    "  process.stdout.write('');", // no latest-push time → no timestamp filtering
-    "} else if (a.startsWith('pr view') || a.includes('headRefOid')) {",
-    "  process.stdout.write('deadbeef');",
-    "} else {",
-    "  process.stdout.write('[]');",
-    "}",
-  ].join("\n")
-);
-chmodSync(ghBin, 0o755);
+function makeGh({ ready }) {
+  const dir = mkdtempSync(path.join(tmpdir(), "wfb-gh-"));
+  const bin = path.join(dir, "gh");
+  const body =
+    "CodeRabbit reviewed the exact current head and found the implementation consistent. " +
+    "It checked the changed control flow, failure handling, and the relevant regression tests. " +
+    "<!-- commit: abc123def4567890abc123def4567890abc123de -->";
+  writeFileSync(
+    bin,
+    [
+      "#!/usr/bin/env node",
+      "const a = process.argv.slice(2).join(' ');",
+      "if (a.includes('/pulls/1/commits')) {",
+      "  process.stdout.write(JSON.stringify({ sha: 'abc123def4567890abc123def4567890abc123de', committedAt: '2026-07-01T00:00:00Z' }));",
+      "} else if (a.includes('/issues/1/comments')) {",
+      ready
+        ? `  process.stdout.write(${JSON.stringify(JSON.stringify([{ user: "coderabbitai[bot]", body, created_at: "2026-07-01T00:00:01Z" }]))});`
+        : "  process.stdout.write('[]');",
+      "} else {",
+      "  process.stdout.write('[]');",
+      "}",
+    ].join("\n")
+  );
+  chmodSync(bin, 0o755);
+  return dir;
+}
 
-function runReady(extraArgs) {
+function run(ghDir, extraArgs = []) {
   try {
     execFileSync(process.execPath, [SCRIPT, "--pr", "1", "--repo", "acme/repo", ...extraArgs], {
       env: { ...process.env, PATH: [ghDir, process.env.PATH].join(path.delimiter) },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30000,
+      timeout: 30_000,
     });
     return 0;
-  } catch (e) {
-    return e.status ?? -1;
+  } catch (error) {
+    return error.status ?? -1;
   }
 }
 
-console.log("spawn with ready bots (fake gh)");
+console.log("spawn with current-head CodeRabbit evidence");
 {
-  check("default → exit 0 (all ready)", runReady([]) === 0);
-  check("--any accepted → exit 0", runReady(["--any"]) === 0);
-  check("--require-all accepted (no-op) → exit 0", runReady(["--require-all"]) === 0);
+  const ghDir = makeGh({ ready: true });
+  check("default → exit 0", run(ghDir) === 0);
+  check("explicit CodeRabbit → exit 0", run(ghDir, ["--bots", "coderabbitai[bot]"]) === 0);
+  check("unknown Cursor selector → exit 1", run(ghDir, ["--bots", "cursor[bot]"]) === 1);
+  rmSync(ghDir, { recursive: true, force: true });
 }
 
-rmSync(ghDir, { recursive: true, force: true });
+console.log("timeout behavior");
+{
+  const ghDir = makeGh({ ready: false });
+  check("zero-minute timeout without evidence → exit 2", run(ghDir, ["--timeout", "0"]) === 2);
+  check("--any explicitly permits timeout → exit 0", run(ghDir, ["--timeout", "0", "--any"]) === 0);
+  rmSync(ghDir, { recursive: true, force: true });
+}
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);
 process.exit(failed ? 1 : 0);

@@ -162,6 +162,8 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
     const rl = createInterface({ input: proc.stdout });
     const errBufs = [];
     let text = "";
+    let finalResult = null;
+    let lastAssistantText = null;
 
     proc.stderr.on("data", (d) => errBufs.push(d));
 
@@ -175,12 +177,15 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
         // Shape 1: {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
         // (Cursor and Claude Code both use this; tool_use blocks are ignored.)
         if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
+          let assistantText = "";
           for (const block of ev.message.content) {
             if (block.type === "text") {
               process.stdout.write(block.text);
               text += block.text;
+              assistantText += block.text;
             }
           }
+          if (assistantText) lastAssistantText = assistantText;
           return;
         }
         // Shape 2: {type:"text", text:"..."}
@@ -189,9 +194,13 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
           text += ev.text;
           return;
         }
-        // Shape 3: {type:"result", result:"..."} (final summary — Cursor + Claude Code)
-        if (ev.type === "result" && typeof ev.result === "string" && !text) {
-          text = ev.result;
+        // Shape 3: {type:"result", result:"..."} (final summary — Cursor + Claude Code).
+        // Keep it separately even when progress text was already streamed. Strict protocol
+        // callers can inspect the terminal verdict independently while still scanning the
+        // complete transcript for contradictory findings.
+        if (ev.type === "result" && typeof ev.result === "string") {
+          finalResult = ev.result;
+          if (!text) text = ev.result;
           return;
         }
         // Shape 4: {type:"content_block_delta", delta:{type:"text_delta",text:"..."}}
@@ -207,8 +216,23 @@ function spawnAgentStream(label, bin, args, timeoutMs, opts = {}) {
 
     proc.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0 || (code === null && text)) {
-        resolve(text.trim());
+      // A null exit code means the process was killed by a signal (OOM killer, external
+      // kill) — partial streamed text is NOT proof of completion. Only a terminal result
+      // event demonstrates the agent finished its turn before the process died.
+      if (code === 0 || (code === null && finalResult)) {
+        if (opts.resultEventBundle) {
+          // Cursor's result event can contain the accumulated assistant narration on
+          // long agent runs. Expose both event shapes so strict callers can accept an
+          // exact token from either while scanning both for contradictions.
+          const terminal = lastAssistantText ?? finalResult ?? (text || null);
+          resolve({
+            transcript: text.trim(),
+            result: terminal?.trim() ?? null,
+            eventResult: finalResult?.trim() ?? null,
+          });
+        } else {
+          resolve(text.trim());
+        }
       } else {
         const errMsg = Buffer.concat(errBufs).toString().trim();
         reject(

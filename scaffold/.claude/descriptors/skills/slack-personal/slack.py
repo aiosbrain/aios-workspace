@@ -126,6 +126,17 @@ def token():
     _TOKEN = os.environ.get("SLACK_USER_TOKEN", "").strip() or _brain_token()
     if not _TOKEN:
         die("no Slack token: set SLACK_USER_TOKEN, or connect via `aios connect slack` so the brain holds it.", 3)
+    # Catches a common footgun: `export SLACK_USER_TOKEN=$(dotenvx run -- printenv KEY)` (or similar
+    # command-substitution wrapping) captures the wrapper's own log banner into the value alongside the
+    # real token, embedding a control character mid-string. That corrupts the Authorization header and,
+    # uncaught, dumps the raw (secret-bearing) header value in a Python traceback. Fail fast here instead,
+    # with a message that never echoes the value itself.
+    if any(c in _TOKEN for c in ("\n", "\r", "\t")) or not _TOKEN.startswith(("xoxp-", "xoxb-")):
+        die("SLACK_USER_TOKEN looks malformed (embedded whitespace/control chars, or missing xoxp-/xoxb- "
+            "prefix) — likely picked up extra output from a wrapper command (e.g. `dotenvx run -- printenv "
+            "...` captures dotenvx's own log banner into the value). Export the token directly, or run this "
+            "CLI itself under the wrapper (`dotenvx run --quiet -- slack ...`) instead of capturing its "
+            "output into a variable. Value intentionally not shown.", 2)
     return _TOKEN
 
 
@@ -152,6 +163,12 @@ def call(method, params=None, retries=4):
             if attempt < retries:
                 time.sleep(min(30, 2 ** attempt) + random.uniform(0, 0.5)); continue
             die(f"network error calling {method}: {e}", 5)
+        except ValueError:
+            # e.g. "Invalid header value" — Python's own ValueError embeds the offending header
+            # (which contains the bearer token) in its message/repr. Never let that reach stdout/stderr
+            # or an uncaught traceback; die() here prints only this fixed, secret-free string.
+            die(f"malformed HTTP request calling {method} (bad token or header value — value not shown; "
+                "check SLACK_USER_TOKEN for stray whitespace/control characters)", 5)
         if not payload.get("ok"):
             err = payload.get("error", "unknown_error")
             if err == "ratelimited" and attempt < retries:
@@ -382,4 +399,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except Exception as e:
+        # Last-resort safety net: an unexpected exception's default traceback can include local
+        # variables (headers, tokens) via str(e)/repr(e). Print only the exception type, never its
+        # message, so a future bug here can't become a second token-leak incident like this one.
+        die(f"unexpected error ({type(e).__name__}) — rerun with a fresh token if this persists", 5)

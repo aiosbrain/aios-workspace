@@ -16,7 +16,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +37,27 @@ export const c = {
 export function die(msg) {
   console.error(c.red(`error: ${msg}`));
   process.exit(1);
+}
+
+/**
+ * Thrown (never exits) by the update/pull module family (toolkit-pull.mjs, update.mjs)
+ * for every expected failure that used to call `die()` — a dirty toolkit tree, a
+ * non-fast-forward branch, an unresolved conflict, a bad `--from`, an unknown flag, etc.
+ * Lives here (a shared leaf module) rather than in update.mjs so toolkit-pull.mjs can
+ * throw it without importing back through update.mjs (which already imports
+ * toolkit-pull.mjs) and creating a cycle.
+ *
+ * Exactly one place — `cmdUpdate`'s outer try/catch — catches this and converts it into
+ * a printed message + a non-zero structured result instead of exiting, so
+ * `pullToolkitCheckout`/`cmdUpdate` are safely callable in-process by programmatic
+ * callers (onboarding) and in tests. Any OTHER thrown error is a genuinely unexpected
+ * bug and is deliberately left to propagate to the CLI dispatcher's own catch-all.
+ */
+export class UpdateError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UpdateError";
+  }
 }
 
 /** Hex SHA-256 of a string/Buffer. */
@@ -66,11 +87,64 @@ export function slugify(s, { maxLen, fallback } = {}) {
   return out;
 }
 
+/**
+ * Environment for a git subprocess that must resolve the repository **from its `-C`
+ * argument alone** — every repo-redirecting variable removed.
+ *
+ * `git -C <dir>` does NOT override an inherited `GIT_DIR`/`GIT_WORK_TREE`: with `GIT_DIR`
+ * set, `git -C <non-git-dir> rev-parse --show-toplevel` cheerfully answers `<non-git-dir>`
+ * (verified), so a containment probe reads as "this dir is its own git toplevel" when it
+ * is not a repository at all — a FAIL-OPEN on exactly the gate that exists to stop git
+ * operations landing on an unrelated repo. Git exports these itself when it runs a hook,
+ * so anything invoking the toolkit from a hook (or `rebase --exec`, `bisect run`, a husky
+ * wrapper, some CI harnesses) inherits them without the user ever setting one by hand.
+ *
+ * Use for EVERY git invocation whose answer is about a specific directory. Deliberately
+ * not applied to `git clone` (no repo to resolve) — but harmless there too.
+ */
+export function gitEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+  ])
+    delete env[key];
+  return env;
+}
+
+/**
+ * Canonicalize a path for COMPARISON — resolving symlinks when the path exists, falling
+ * back to a plain absolute resolve when it doesn't (a not-yet-created destination is still
+ * comparable). Returns `null` for a falsy input so an unset path can never collide with a
+ * real one: `path.resolve("")` is the CWD, which would silently compare equal to whatever
+ * the process happens to be running in.
+ *
+ * The one implementation. Containment and identity checks (is this dir its own git
+ * toplevel? is this cwd inside the repo?) must agree across macOS `/var` → `/private/var`,
+ * worktree symlinks, and `~` expansion, so they cannot each carry their own copy.
+ */
+export function safeReal(p) {
+  if (!p) return null;
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
 /** Read a single git config value for a repo, or "" if unset/unavailable. */
 export function gitConfig(repo, key) {
   try {
     return execFileSync("git", ["-C", repo, "config", "--get", key], {
       encoding: "utf8",
+      env: gitEnv(),
     }).trim();
   } catch {
     return "";

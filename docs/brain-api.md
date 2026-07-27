@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.11** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.11**
+**Version: 1.13** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.13**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -145,6 +145,25 @@ writeback/registration pulls), so a newer client still works against an older br
   returns `already_claimed`. Credential identity is still revalidated at claim time and recorded
   on the audit row — it is just never part of the idempotency fingerprint. The extension fixture
   bytes were amended in place; the pinned SHA-256 above is the amended value.*
+- *2026-07-24 — **v1.12**: added strict item kinds `fact` and `stakeholder_mention` for
+  human-approved local transcript extraction. Each row carries a deterministic `row_key`, its
+  approved source path, and an exact approved source quote. The complete payload and row contract
+  is machine-readable in
+  [`contract/item-payload-1.12.schema.json`](./contract/item-payload-1.12.schema.json), with
+  canonical parity fixtures in
+  [`contract/item-payload-1.12-fixtures.json`](./contract/item-payload-1.12-fixtures.json).
+  Unknown payload/row keys and malformed rows fail the whole request with 422 before item writes.
+  Raw transcripts remain local; stakeholder mentions are evidence records and never mutate members
+  or the canonical company graph. Existing item kinds and clients remain compatible.*
+- *2026-07-27 — **v1.13**: added the **sync-origin return leg** —
+  `GET /api/v1/tasks?mode=sync-origin&project=<slug>` — so a workspace can pull status/assignee
+  changes back onto the task rows it PUSHED (previously the writeback feed was dashboard-origin
+  only, the brain→Linear projection was one-way, and `3-log/tasks-team.md` decayed silently). The
+  `mode` selector is additive and defaults to the pre-1.13 behaviour, so an old client's requests
+  and responses are byte-identical; a new client feature-detects by checking the echoed `mode`
+  (a pre-1.13 brain ignores the parameter and answers `mode: "writeback"`) and tolerates `400`/`404`.
+  Sync-origin rows additionally carry `raw_status` (the echo guard) and the mode is paged via
+  `next_cursor`. Tier scoping is unchanged.*
 
 ---
 
@@ -166,16 +185,19 @@ Canonical values: **`admin` | `team` | `external`**.
 
 ### Item kinds
 
-`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint`
+`deliverable` | `transcript` | `decision` | `task` | `artifact` | `skill` | `blueprint` |
+`fact` | `stakeholder_mention`
 
-`decision` and `task` items are markdown files containing the canonical status tables
+`decision`, `task`, `fact`, and `stakeholder_mention` items are markdown files containing canonical
+tables. Decision and task items use the existing status tables
 (`3-log/decision-log.md`; tasks live in one of `3-log/tasks-team.md`,
 `3-log/tasks-private.md`, `5-personal/tasks.md`, or the legacy `3-log/tasks.md` — the
 client classifies any `tasks*.md` basename as kind `task`). For these, the client also
 parses table rows into `rows[]` so the brain can materialize structured entities. Only
 `tasks-team.md` (or an equivalent `team`/`external`-tier file) is ever eligible to push —
 `tasks-private.md` and `5-personal/tasks.md` are tier-blocked/outside `sync_include` by
-design (AIO-364).
+design (AIO-364). Facts and stakeholder mentions are emitted only from approved, tier-specific
+files; their raw source transcripts remain admin-only and are never item bodies.
 
 **Forward-compat:** clients MUST ignore item kinds they don't recognize (a v1 client
 that predates `skill` simply skips those items on pull). New kinds are additive.
@@ -327,8 +349,7 @@ One item per request. Idempotent.
   "actor": "alex",
   "access": "team",
   "frontmatter": { "status": "review", "owner": "alex", "sprint": "sprint-1" },
-  "body": "full markdown body (frontmatter stripped)",
-  "rows": []
+  "body": "full markdown body (frontmatter stripped)"
 }
 ```
 
@@ -336,7 +357,8 @@ One item per request. Idempotent.
   legacy: `project.yaml` / `engagement.yaml` — slugified).
 - `actor`: the resolved member identity (must match a member `actor_handle` on the
   brain side; unknown actors are accepted but flagged in the dashboard provenance).
-- `rows`: present **only** for `kind: decision|task`. Shapes below.
+- `rows`: optional for `decision|task`, required for `fact|stakeholder_mention`, and absent for
+  every other kind. The request is strict: unknown root or row keys return 422. Shapes below.
 
 **Task rows** (parsed from a `tasks*.md` file's `| ID | Task | Assignee | Status | Sprint | Due |`;
 newer CLIs also accept optional `PM`, `PM URL`, and the v1.2 `Parent`, `Labels`, `Priority` columns):
@@ -372,15 +394,42 @@ The six-column table remains valid and is the default scaffold; the optional col
   "decided_by": "Priya Sharma", "impact": "...", "tier": 2, "audience": "team" }
 ```
 
+**Fact rows** (parsed only from an approved facts file):
+
+```json
+{ "row_key": "fact-4f11", "title": "The beta has 24 participants",
+  "occurred_at": "2026-07-24", "fact_type": "fact",
+  "source_path": "1-inbox/transcripts/beta.md",
+  "source_quote": "The beta has 24 participants." }
+```
+
+`occurred_at` is optional. `fact_type` is exactly `fact|event`. Required strings are non-empty and
+bounded; the exact limits are normative in the versioned JSON Schema.
+
+**Stakeholder-mention rows** (parsed only from an approved stakeholder-mentions file):
+
+```json
+{ "row_key": "stakeholder-91a2", "name": "Morgan Lee",
+  "role": "Launch reviewer", "context": "Requested the accessibility checklist.",
+  "source_path": "1-inbox/transcripts/launch.md",
+  "source_quote": "Morgan Lee requested the accessibility checklist." }
+```
+
+`role` and `context` are optional. These are unverified evidence records, never canonical member or
+company-graph mutations. Source quotes leave the workstation only after approval and only in a
+team/external-tier item.
+
 **Server semantics (normative):**
 
 1. Upsert project on `(team_id, project)`.
 2. If an item exists at `(team_id, project, path)` with identical `content_sha256` →
    `200 {"status":"unchanged"}`; only `synced_at` is bumped.
 3. Otherwise upsert the item; if the body changed, append an immutable version record.
-4. If `rows[]` present: **diff-sync by `row_key`** — upsert all incoming rows; rows
-   absent from the payload are deleted **only if** they originated from sync
-   (UI-created rows are never deleted by a push).
+4. If `rows[]` is present, rows upsert by their project-scoped `row_key`. Task rows retain the
+   existing origin-aware project diff (UI rows survive), and decision rows retain their existing
+   upsert behavior. Fact and stakeholder rows diff-delete only rows whose `source_item_id` is the
+   same item currently syncing. They inherit the containing item's normalized access as audience;
+   the wire cannot override it.
 5. `access: client`/`company` → stored as `external`. `access: admin`/`private` →
    `422 forbidden_tier`.
 6. Every accepted push is audit-logged with key id, member, and item path.
@@ -471,6 +520,77 @@ append unknown rows to the table; never delete local rows. When the brain sends 
 hierarchy fields, the client emits the optional `Parent | Labels | Priority` columns
 (`labels` comma-joined in one cell); a six-column local table is upgraded in place and an
 existing six-column table without these edits is left untouched.
+
+## `GET /api/v1/tasks?mode=sync-origin&project=<slug>&since=<ISO8601>` — sync-origin return leg (1.13)
+
+The **return leg** for rows the workspace itself pushed. The plain writeback feed above emits only
+dashboard-origin rows (plus sync rows the brain touched after the push), and the brain→PM
+projection is one-way — so a row whose status moved in Linear (applied inbound, see v1.4) never
+reached the workspace markdown and `3-log/tasks-team.md` decayed. This mode closes that loop.
+
+**`mode` (1.13, additive).** `mode=writeback` (the default when the parameter is absent),
+`mode=table` (equivalent to the pre-existing `?all=1`), `mode=sync-origin`. An unrecognized value
+is `400 invalid_request` — never a silent downgrade to the writeback feed. Requests that omit
+`mode` are answered exactly as before 1.13, so old clients are unaffected. **Precedence:** an
+explicit `mode` wins over `?all=1` (so `?mode=writeback&all=1` is the writeback feed).
+
+**Feature detection (normative).** A pre-1.13 brain ignores the unknown `mode` parameter and
+answers with the writeback feed. A 1.13 client therefore MUST check the echoed `mode` field and
+merge only when it equals `"sync-origin"`, and MUST tolerate `400`/`404` from an older brain (in
+which case it merges nothing and pull still succeeds).
+
+- **`project` is required** in this mode (`400 invalid_request` otherwise): a workspace merges only
+  its own project's table. An unknown slug returns an **empty feed**, not an error.
+- Rows are `origin='sync'` only — dashboard-origin rows stay the writeback feed's job, so the two
+  feeds never double-merge one row.
+- **Tier-scoped identically** to the writeback feed (`visibleTasks`): an `external`-tier key
+  receives only `audience: "external"` rows; `admin` content never exists on the brain (422 at the
+  push boundary).
+- **Paged.** `since` is the caller's cursor over `updated_at` (rows come back oldest-first, 500 per
+  page). A **full page** returns `next_cursor` = the last row's `updated_at`; the client MUST keep
+  fetching from it until `next_cursor` is null before advancing its stored cursor, or the remainder
+  of the backlog is skipped forever. `next_cursor` stays null in the `writeback`/`table` modes.
+
+```json
+{
+  "mode": "sync-origin",
+  "tasks": [
+    { "project": "northwind-aios",
+      "rows": [ { "row_key": "T-09", "title": "...", "assignee": "riley",
+                  "status": "done", "raw_status": null, "sprint": "sprint-2", "due": null,
+                  "parent": null, "labels": [], "priority": "medium" } ] }
+  ],
+  "next_cursor": null
+}
+```
+
+**`raw_status` (1.13, this mode only).** The original markdown status string the workspace pushed
+when it did not map onto a canonical status (`backlog|ready|in_progress|blocked|done`) — e.g. a
+local `todo` is stored as `status: "backlog"`, `raw_status: "todo"`. **Every authoritative status
+writer on the brain clears it** (provider inbound apply/adopt, dashboard board move, work-event
+completion, meetings bulk apply; the push path is the only writer that sets it). So a **non-null
+`raw_status` means: no authoritative writer has touched this row's status since your push** — the
+value you are being handed is your own, normalized. That is the signal the client's echo guard
+uses. It is omitted from the `writeback`/`table` responses so those stay byte-identical for
+pre-1.13 clients.
+
+**Merge semantics on the client (normative).** Match by `row_key`; **`status` and `assignee` only**
+— title, sprint, due, hierarchy and `body` are not written by this leg (`body` remains
+dashboard/Postgres-only). Specifically:
+
+- **Never create or delete a row.** A `row_key` with no local line is skipped — the return leg must
+  not resurrect a row the owner deleted; genuinely new rows arrive via push/the writeback feed.
+- **Echo guard.** Skip the status when the brain's value can only be a normalization of what this
+  workspace pushed: when the local cell canonicalizes to the brain's status (`In Progress` ≡
+  `in_progress`, compared after trimming), **or whenever `raw_status` is non-null**. A
+  non-canonical local status such as `todo` is overwritten **only** by a real brain-side change.
+  (Comparing `raw_status` to the local cell instead is NOT sufficient — a cell edited locally after
+  the push would then be reverted to the brain's normalization of the *old* value.)
+- **Assignee.** Applied only alongside a real status change on the same row, and only when the
+  brain's value is non-empty and differs (an empty one never blanks a local name). The brain has no
+  independent assignee author for sync-origin rows today, so an assignee-only difference is an echo
+  of the client's own last push and merging it would revert a local reassignment.
+- Every other column of a touched row is rewritten verbatim from the local cells.
 
 ## `GET /api/v1/pm-sync/health?limit=<N>` — projection observability (team-tier only)
 
@@ -1092,9 +1212,9 @@ work.
 {
   "project": "northwind-aios",
   "event_kind": "merged",
-  "repo": "AIOS-alpha/aios-team-brain",
+  "repo": "aiosbrain/aios-team-brain",
   "merged_sha": "abc123...",
-  "pr_url": "https://github.com/AIOS-alpha/aios-team-brain/pull/42",
+  "pr_url": "https://github.com/aiosbrain/aios-team-brain/pull/42",
   "pr_title": "W1.2.1 Add per-member cost aggregation",
   "pr_body": "AIOS-Work: W1.2.1",
   "work_keys": ["W1.2.1"],

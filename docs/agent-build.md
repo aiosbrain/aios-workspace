@@ -237,10 +237,12 @@ Manual diagnostic invocation (the OpenCode shape returns the raw structured resu
 node hooks/local-bugbot-gate.mjs --runtime opencode --json --check-exit
 ```
 
-Poll remote GitHub Bugbot on a PR (no email):
+`bugbot-status.sh` is deprecated because the hook cache cannot prove a local clear result. Run the
+local review directly, or wait for CodeRabbit when that reviewer is required:
 
 ```bash
-scripts/bugbot-status.sh <pr-number>
+aios review-bugbot <branch> --worktree <path>
+node scripts/wait-for-bots.mjs --pr <pr-number> --repo aiosbrain/aios-workspace
 ```
 
 > The straggler auto-commit in step 2 uses `git commit --no-verify`, so repo commit hooks (format,
@@ -280,26 +282,27 @@ a transient review timeout. Two mechanisms fix this:
 For a PR-based flow (as opposed to `--merge`), the resilient pipeline is:
 
 ```
-aios build … --pr   →   wait-for-bots   →   GPT-5.5 PR review   →   aios consolidate-findings   →   aios build --findings <file>
+aios build … --pr → Local Bugbot → [label-gated CodeRabbit] → GPT-5.5 → consolidate-findings → fix
 ```
 
 1. **`aios build … --pr`** opens the PR after the local gates (including local Bugbot).
-2. **`scripts/wait-for-bots.mjs`** blocks until the gated bots (Bugbot + CodeRabbit by default)
-   post substantive feedback. **Require-all is the default**: a bot still missing at timeout
-   exits `2`, so the caller never proceeds to the reviewer on incomplete signals. `--any` opts
-   back into the old proceed-on-timeout behavior (exit 0), `--bots <list>` (e.g. `cursor[bot]`)
-   gates on a subset, and `--require-all` remains as a no-op alias for the default.
-3. An optional **GPT-5.5 PR review** writes a markdown findings file.
-4. **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the
+2. **Local Bugbot is mandatory and canonical.** `aios ship` persists its artifact with the exact
+   reviewed branch head and verified base SHA, and reruns it whenever either changes.
+3. **`scripts/wait-for-bots.mjs`** is CodeRabbit-only. It accepts only substantive issue comments,
+   inline comments, or submitted reviews at or after the latest PR commit; a successful check run
+   alone is insufficient. It exits `2` when current-head evidence times out.
+4. An optional **GPT-5.5 PR review** writes a markdown findings file.
+5. **`aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>`** merges CI checks, the PR diff, the
    bot comments/reviews, and the GPT review into **one severity-ranked finding list** at
    `.aios/loop/<issue>/findings-r<N>.md`, printing `VERDICT=CLEAR|BLOCKED`.
-5. On `BLOCKED`, feed it back with **`aios build --findings <file>`** — round 1 becomes a fix
+6. On `BLOCKED`, feed it back with **`aios build --findings <file>`** — round 1 becomes a fix
    round seeded from the **must-fix subset** (all Critical/High + `(plan-conformance)` Medium).
 
 ### `aios consolidate-findings`
 
 ```
 aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/repo]
+                          --local-bugbot-review <path>
                           [--gpt-review <path>] [--out <path>]
 ```
 
@@ -307,8 +310,8 @@ aios consolidate-findings --pr <n> --issue AIO-<n> [--round N] [--repo owner/rep
   never forked) and **supplies the PR diff** so its AIOS-rule / plan-conformance instructions
   stay grounded.
 - **Inputs** (per `code-reviewer.md` "How to gather inputs"): CI checks (`gh pr checks --json`,
-  tolerant of a red/pending board), the PR diff (capped at `DIFF_CAP` = 50000 chars), Bugbot +
-  CodeRabbit issue/inline comments + submitted reviews, and an optional GPT-5.5 review markdown
+  tolerant of a red/pending board), the PR diff (capped at `DIFF_CAP` = 50000 chars), the required
+  Local Bugbot markdown, current-head CodeRabbit issue/inline comments + submitted reviews, and an optional GPT-5.5 review markdown
   (`--gpt-review`, capped at `GPT_REVIEW_CAP` = 20000 chars). Truncations carry an explicit marker.
 - **Fail-closed max-severity inheritance.** After the model consolidates, a deterministic pass
   forces `BLOCKED` when **CI is red** (a red board is ≥ High and can never be CLEAR), when **CI is
@@ -338,7 +341,7 @@ aios ship AIO-<n>
   ├─ 4. follow-up    file `## Deferred (out of scope)` items as Linear children
   ├─ 5. build        runBuild on an isolated worktree (secrets gate inside)
   ├─ 6. PR           cmdPr push + open PR (title carries AIO-<n>)
-  ├─ 7. review       wait-for-bots (Bugbot) + GPT-5.5 review + consolidate-findings
+  ├─ 7. review       exact-head Local Bugbot + optional/required CodeRabbit + GPT-5.5 + consolidation
   ├─ 8. fix loop     re-build from the must-fix subset until CLEAR or --max-fix-rounds
   ├─ 9. merge gate   CI green + consolidator CLEAR + path-gated safety review  ──▶ [MERGE GATE]
   └─ 10. cleanup     ff-only main → worktree remove → prune → branch delete
@@ -346,17 +349,21 @@ aios ship AIO-<n>
 
 ```
 aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
-                  [--reviewers b,g] [--plan-runner cli|sdk] [--skip-spec-gate] [--dry-run]
+                  [--reviewers coderabbit,gpt-5.5] [--plan-runner cli|sdk]
+                  [--skip-spec-gate] [--dry-run]
 ```
 
-- **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate. In a
+- **Gates default ON.** `--auto` skips the plan gate; `--auto-merge` skips the merge gate for
+  Standard PRs. Safety-sensitive PRs reject `--auto-merge` and require the interactive operator
+  gate or a deliberate resumed `--approve-merge`. In a
   **non-TTY** context with a gate still active (no matching flag), ship **runs up to the gate**,
   persists everything needed to judge it (`GATE-<plan|merge>.pending.md` + `state.json` in the
   audit dir), prints a machine-greppable `SHIP_GATE <name> pending` marker, and exits with the
   gate's `*_GATE_BLOCKED` code — **resumable, never hanging**. (Interactive prompts print the same
   marker before the `[y/N]`.)
 - **Checkpoint + resume.** Every stage checkpoint lands in `.aios/loop/<issue>/state.json`
-  (recon text, `specReady`, plan text, gate approvals, branch, PR number, review round).
+  (recon text, `specReady`, plan text, gate approvals, branch, PR number, review round, reviewed
+  branch head, verified base SHA, and exact Local Bugbot artifact path).
   `aios ship AIO-<n> --resume` skips completed stages and re-enters at the first incomplete one —
   an aborted run costs minutes, not a fresh plan loop. `--resume --approve-plan` / `--resume --approve-merge` satisfy a pending
   gate after you've inspected it (an honest audit record of who approved what).
@@ -398,7 +405,8 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
 - **Path-gated safety review.** If the diff touches a safety surface (`hooks/`, `validation/`,
   `scripts/leak-gate.sh`, `scaffold/.claude/`, `docs/brain-api.md`, `scripts/brain-client.mjs`,
   `scripts/brain-config.mjs`, `scripts/workspace-parse.mjs`), the merge gate runs a `safety_review`
-  over the diff and **blocks unless** it emits `SAFETY_APPROVED` alone on the final line.
+  over the diff, requires current-head CodeRabbit evidence behind the `ready-for-review` label, and
+  **blocks unless** the safety review emits `SAFETY_APPROVED` alone on the final line.
 - **Plan runner.** `--plan-runner cli` (**default**) drives the planner through Claude Code, which
   strips `ANTHROPIC_API_KEY` and uses its own login auth — sidestepping a dotenvx key with no API
   credits. `--plan-runner sdk` is the **documented alternative**: it drives the plan loop through
@@ -407,9 +415,10 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   dotenvx key has no API credits; a missing `ANTHROPIC_API_KEY` is caught up front as a usage error
   (credit exhaustion on a present key can only surface at call time). The Cursor plan review is
   identical for both runners; the Anthropic client is constructed lazily only when `sdk` is selected.
-- **`--reviewers`.** Selects which gating reviewers actually run: `bugbot` waits on the
-  `cursor[bot]` check via wait-for-bots; `gpt-5.5` runs the Cursor GPT PR review. Unknown reviewer
-  names are a usage error. CodeRabbit, when present, is swept by the consolidator but never gated on.
+- **`--reviewers`.** Selects optional reviewers: `gpt-5.5` is the default and `coderabbit` requires
+  current-head CodeRabbit evidence plus the `ready-for-review` label. Local Bugbot is mandatory and
+  outside selection. `bugbot` remains temporarily accepted as a deprecated no-op alias; unknown
+  names are usage errors. After a fix push, ship posts `@coderabbitai review` before waiting again.
 - **Verify chain.** Every build/fix round runs the repo verify chain
   (`npm run build:loop && npm test && npm run lint && npm run format:check`) inside the worktree via
   `runBuild`'s `--verify`, and again pre-merge — `aios ship` can never merge code that hasn't passed it.
@@ -419,7 +428,8 @@ aios ship AIO-<n> [--auto] [--auto-merge] [--max-fix-rounds N]
   changed-path metadata fails **closed** (`MERGE_BLOCKED`), never treated as green.
 - All run artifacts land under `.aios/loop/<issue>/` (gitignored) — `task.md`, `recon.md`,
   `recon-skipped.md`, `spec.md`, `spec-eval-r1.md`, `plan-r<N>.md`, `plan.md`, `deferred.md`,
-  `build.md`, `review-gpt-r<N>.md`, `findings-r<N>.md`, `safety-review.md`, `ship-transcript.md`.
+  `build.md`, `local-bugbot-<head>.md`, `review-gpt-r<N>.md`, `findings-r<N>.md`,
+  `safety-review.md`, `ship-transcript.md`.
   Nothing under `.aios/` is committed.
 - **Spec-readiness gate (EE5).** After recon and before the plan loop, ship runs `aios spec eval`
   against the Linear issue body (description + comments). Only `SPEC_READY` proceeds; otherwise ship

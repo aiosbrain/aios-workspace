@@ -3,6 +3,7 @@
 node_modules
 **/dist
 src-tauri/target
+src-tauri/gen
 scaffold
 examples
 docs

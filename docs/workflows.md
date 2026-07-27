@@ -1,10 +1,20 @@
 # Dynamic-Workflow Harnesses — Design Study
 
-The skills in `scaffold/.claude/skills/` are **dynamic multi-agent workflow
+Several skills in `scaffold/.claude/skills/` are **dynamic multi-agent workflow
 harnesses**: instead of asking one agent to do a whole task in one context, they
 spawn focused sub-agents and add an independent verification stage. This doc records
 what we learned building and A/B-testing them — single-pass skill vs. harness, on
 identical inputs — so contributors know *when* a harness helps and *how* to build one.
+
+> **Superseded — transcript review.** Transcript → decisions is **no longer** one of
+> these harnesses. It was rebuilt as the canonical typed `aios transcripts
+> draft|list|approve` CLI/engine (grounded decisions **and** explicit tasks, a private
+> `0600` V2 owner-review stage, one approval gate before either log changes, default
+> post-approval `aios push` unless `--no-push`). The A/B row below is retained as
+> **historical** design context only — it does not describe the current transcript path,
+> which is not a Workflow or read-only harness and does not use the `args`/read-only
+> conventions in this doc. See
+> [`v1-operator-loop/domains/meetings.md`](v1-operator-loop/domains/meetings.md).
 
 > This doc is the *design study* behind the harnesses and the agent pipeline. For the
 > task-oriented walkthrough of every command — the daily/weekly loop, the asks queue and attention
@@ -34,7 +44,7 @@ scored by an independent judge.
 |----------|---------|--------|
 | Decision-log audit | **Harness wins, decisively** | A single pass emitted many findings, ~80%+ false positives; adversarial verification cut them to a small verified set. One-verifier-per-rule made coverage *structural*, not asserted. |
 | Scope-creep detection | **Harness wins on precision** | A binary keep/drop refuter drove false accusations to zero — but also discarded true positives. Fix: **re-grade severity** (out-of-scope → watch → in-scope) instead of keep/drop. |
-| Transcript → decisions | **Tie on extraction; harness wins on pipeline** | Both extract equally well on a short transcript; the harness's value is automatic **dedup** + per-decision **grounding**, not raw recall. |
+| Transcript → decisions *(historical — superseded; now the typed `aios transcripts` CLI, see note above)* | **Tie on extraction; harness wins on pipeline** | Both extract equally well on a short transcript; the harness's value is automatic **dedup** + per-decision **grounding**, not raw recall. This finding informed the rebuild: transcript review now ships as the typed CLI/engine, not a Workflow harness. |
 | Weekly synthesis | **Single-pass wins** | With no fidelity check, fan-out *amplified* one reader's hallucination into the headline. When sources fit one context, single-pass kept fidelity. (This harness is on the roadmap, to be rebuilt **with** a fidelity verifier.) |
 
 **The deciding variable was always verification, not parallelism.** A fan-out without
@@ -143,14 +153,16 @@ For a PR-based flow, `aios build --pr` is one stage of a resilient loop that sur
 overnight runs on an always-on host (see the [Hermes runbook](./hermes-runbook.md)):
 
 ```
-aios build … --pr → wait-for-bots → GPT-5.5 PR review → aios consolidate-findings → aios build --findings <file>
+aios build … --pr → Local Bugbot → [CodeRabbit] → GPT-5.5 → consolidate-findings → fix
 ```
 
-- **`scripts/wait-for-bots.mjs`** blocks until Bugbot + CodeRabbit post substantive feedback
-  (require-all by default; exit 2 on a missing bot at timeout — `--any` opts back into
-  proceed-on-timeout, `--bots <list>` gates on a subset).
-- **`aios consolidate-findings --pr <n> --issue AIO-<n>`** merges CI checks, the PR diff, the bot
-  comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
+- **Local Bugbot** is mandatory, saved as markdown, and scoped to the exact branch head plus
+  verified base SHA. Any fix commit or base movement forces a fresh local review.
+- **`scripts/wait-for-bots.mjs`** waits only for substantive current-head CodeRabbit comments or
+  reviews. It is used when `coderabbit` is selected and always for safety-sensitive PRs; the
+  `ready-for-review` label is required. A successful check run alone is not evidence.
+- **`aios consolidate-findings --pr <n> --issue AIO-<n> --local-bugbot-review <path>`** merges CI checks, the PR diff, mandatory Local Bugbot,
+  current-head CodeRabbit comments/reviews, and an optional GPT-5.5 review into **one severity-ranked finding list** at
   `.aios/loop/<issue>/findings-r<N>.md`, using `.claude/agents/code-reviewer.md` as its (single,
   un-forked) prompt. A deterministic **fail-closed** pass forces `BLOCKED` on red **or still-pending**
   CI or a dropped source-level Critical/High. Exit `0` CLEAR · `3` BLOCKED · `1` error (red/pending

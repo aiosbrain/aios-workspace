@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../state/cockpit";
 import { ApiError } from "../../lib/api";
 import { cn } from "../../lib/cn";
+import { isSafeExternalUrl } from "../../lib/safe-url";
 import {
   WIZ_OVERLAY,
   WIZ,
@@ -84,6 +85,12 @@ export function ConnectWizard({
   const [result, setResult] = useState<ConnectorStoreResponse | ConnectorValidation | null>(null);
   const required = (connector.secrets || []).filter((s) => s.required);
   const filled = required.every((s) => (secrets[s.env] || "").trim());
+  // Same distrusted API surface as authorize_url (catalog descriptor merged with the brain's
+  // team blueprint) — drop the link rather than render a javascript:/data: href.
+  const tokenCreateUrl =
+    connector.docs?.token_create_url && isSafeExternalUrl(connector.docs.token_create_url)
+      ? connector.docs.token_create_url
+      : null;
 
   // Stop polling if the wizard is closed mid-flow.
   const cancelled = useRef(false);
@@ -121,6 +128,7 @@ export function ConnectWizard({
       const start = await api.post<OAuthStartResponse>(`/api/connectors/${connector.id}/start`, {});
       if (cancelled.current) return;
       if (!start.authorize_url) throw new Error(start.error || "couldn’t start sign-in");
+      if (!isSafeExternalUrl(start.authorize_url)) throw new Error("unsafe authorize URL");
       window.open(start.authorize_url, "_blank", "noopener,noreferrer");
 
       const deadline = Date.now() + 120000;
@@ -224,13 +232,8 @@ export function ConnectWizard({
               <>
                 <div className={WIZ_STEP}>
                   <div className={WIZ_STEP_N}>1 · Get your key</div>
-                  {connector.docs?.token_create_url ? (
-                    <a
-                      className={WIZ_LINK}
-                      href={connector.docs.token_create_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                  {tokenCreateUrl ? (
+                    <a className={WIZ_LINK} href={tokenCreateUrl} target="_blank" rel="noreferrer">
                       Open {connector.name} to create a key →
                     </a>
                   ) : (
@@ -295,8 +298,8 @@ export function ConnectWizard({
             {phase === "error" && (
               <div className={WIZ_ERROR}>
                 Couldn’t connect{res?.error ? ` (${res.error})` : ""}.
-                {connector.docs?.token_create_url && (
-                  <a href={connector.docs.token_create_url} target="_blank" rel="noreferrer">
+                {tokenCreateUrl && (
+                  <a href={tokenCreateUrl} target="_blank" rel="noreferrer">
                     {" "}
                     Create a fresh key →
                   </a>

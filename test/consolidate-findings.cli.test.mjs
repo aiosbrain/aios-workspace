@@ -15,6 +15,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
 const FIX = path.join(DIR, "fixtures", "consolidate");
+const LOCAL_BUGBOT = path.join(FIX, "local-bugbot-clear.md");
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -43,6 +44,7 @@ writeFileSync(
     "  process.exit(process.env.FAKE_CHECKS_FAIL ? 1 : 0);",
     "}",
     "if (a[0] === 'pr' && a[1] === 'diff') { process.stdout.write('diff --git a/x b/x\\n+line\\n'); process.exit(0); }",
+    "if (a[0] === 'api' && a[1].endsWith('/commits')) { process.stdout.write(JSON.stringify({sha:'head123',committed_at:'2026-07-01T00:00:00Z'})); process.exit(0); }",
     "if (a[0] === 'api') { process.stdout.write('[]'); process.exit(0); }",
     "process.exit(0);",
   ].join("\n")
@@ -78,11 +80,21 @@ function runCli(args, env) {
 }
 
 const outDir = mkdtempSync(path.join(tmpdir(), "consol-out-"));
+const withLocalBugbot = (args) => [...args, "--local-bugbot-review", LOCAL_BUGBOT];
 
 console.log("blocked fixture → process exits 3, stdout VERDICT=BLOCKED");
 {
   const r = runCli(
-    ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo", "--out", path.join(outDir, "b.md")],
+    withLocalBugbot([
+      "--pr",
+      "44",
+      "--issue",
+      "AIO-161",
+      "--repo",
+      "acme/repo",
+      "--out",
+      path.join(outDir, "b.md"),
+    ]),
     {
       FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
       FAKE_AGENT_OUT: path.join(FIX, "agent-blocked.md"),
@@ -95,7 +107,16 @@ console.log("blocked fixture → process exits 3, stdout VERDICT=BLOCKED");
 console.log("clear fixture → process exits 0");
 {
   const r = runCli(
-    ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo", "--out", path.join(outDir, "c.md")],
+    withLocalBugbot([
+      "--pr",
+      "44",
+      "--issue",
+      "AIO-161",
+      "--repo",
+      "acme/repo",
+      "--out",
+      path.join(outDir, "c.md"),
+    ]),
     {
       FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
       FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md"),
@@ -108,7 +129,16 @@ console.log("clear fixture → process exits 0");
 console.log("red CI board → exits 3 (data, not error)");
 {
   const r = runCli(
-    ["--pr", "44", "--issue", "AIO-161", "--repo", "acme/repo", "--out", path.join(outDir, "r.md")],
+    withLocalBugbot([
+      "--pr",
+      "44",
+      "--issue",
+      "AIO-161",
+      "--repo",
+      "acme/repo",
+      "--out",
+      path.join(outDir, "r.md"),
+    ]),
     {
       FAKE_CHECKS: path.join(FIX, "pr-checks-fail.json"),
       FAKE_CHECKS_FAIL: "1",
@@ -123,7 +153,7 @@ console.log("--repo slug is honored (carve-out), not treated as a path");
   // If --repo were consumed as the workspace path, dispatch would fail to find a repo root.
   // Reaching a VERDICT proves the slug flowed through to the command as a GitHub target.
   const r = runCli(
-    [
+    withLocalBugbot([
       "--pr",
       "44",
       "--issue",
@@ -132,7 +162,7 @@ console.log("--repo slug is honored (carve-out), not treated as a path");
       "some-owner/some-repo",
       "--out",
       path.join(outDir, "s.md"),
-    ],
+    ]),
     {
       FAKE_CHECKS: path.join(FIX, "pr-checks-pass.json"),
       FAKE_AGENT_OUT: path.join(FIX, "agent-clear.md"),

@@ -193,3 +193,37 @@ test("compact at a partial boundary: rebuild still byte-equivalent (snapshot + p
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A non-blocking append (lockRetries: 0) must still reclaim a STALE lock rather than fail:
+// reclaiming is not contention, so it must not consume the single permitted attempt. Regression for
+// the ack/notify non-blocking paths, which would otherwise report notify-busy against a dead lock.
+test("lockRetries:0 reclaims a stale lock but yields to a live one", async () => {
+  const { appendInboxEvent } = await import(DIST_INDEX);
+  const { mkdirSync, writeFileSync: wf, utimesSync } = await import("node:fs");
+  const root = ws("inbox-stale-lock-");
+  const lockDir = path.join(root, ".aios", "loop", "inbox");
+  const lockPath = path.join(lockDir, "inbox-events.lock");
+  const append = () =>
+    appendInboxEvent(
+      root,
+      { kind: "human-ack", correlation_id: "ask-x", payload: { lane: "telegram" } },
+      { lockRetries: 0 }
+    );
+  try {
+    mkdirSync(lockDir, { recursive: true });
+
+    // STALE lock (mtime well past the 30s threshold): a non-blocking append reclaims and succeeds.
+    wf(lockPath, "dead-owner-token");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lockPath, old, old);
+    const result = append();
+    assert.ok(result?.seq >= 0, "a stale lock must be reclaimed, not reported busy");
+
+    // FRESH lock (a live writer): the non-blocking append refuses immediately with the busy code.
+    wf(lockPath, "live-owner-token");
+    utimesSync(lockPath, new Date(), new Date());
+    assert.throws(append, (e) => e?.code === "INBOX_JOURNAL_LOCK_BUSY");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -20,8 +20,8 @@
 .assistant-prose h3,
 .assistant-prose h4 {
   margin: 14px 0 6px;
-  font-family: var(--display);
-  font-weight: 400;
+  font-family: var(--body);
+  font-weight: 600;
   letter-spacing: var(--aios-tracking-snug);
   line-height: var(--aios-leading-snug);
 }

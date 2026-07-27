@@ -58,16 +58,19 @@ function makeDeps(over = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), "ship-spec-eval-"));
   seedRubric(repo);
   let evalCalls = 0;
+  let evalInput = null;
   const evaluateResult = over.evaluateResult;
   const deps = {
     repo,
     evalCalls: () => evalCalls,
+    evalInput: () => evalInput,
     linear: {
       getIssue: async () => makeIssue(),
       createIssue: async () => ({ identifier: "AIO-9" }),
     },
     resolveModels: resolveLoopModels,
     resolveBugbotBase: () => ({ ok: true, baseSha: "test-base" }),
+    runLocalPrePrReview: async () => ({ ok: true, output: "BUGBOT_CLEAR" }),
     runBuild: async () => BUILD_EXIT.OK,
     cmdPr: async () => 77,
     cmdConsolidateFindings: async () => 0,
@@ -85,6 +88,7 @@ function makeDeps(over = {}) {
     },
     ghExec: (argv) => {
       const a = argv.join(" ");
+      if (a.includes("headRefOid")) return { code: 0, stdout: "fakehead\n", stderr: "" };
       if (a.includes("pr checks"))
         return {
           code: 0,
@@ -102,8 +106,9 @@ function makeDeps(over = {}) {
     confirm: async () => true,
     isTty: true,
     makeAnthropic: async () => ({ fake: true }),
-    evaluateSpec: async () => {
+    evaluateSpec: async (input) => {
       evalCalls++;
+      evalInput = input;
       return (
         evaluateResult ?? {
           verdict: "SPEC_READY",
@@ -152,6 +157,20 @@ console.log("light-loop helpers preserve only the approved spec contract");
     "safety flag only reads leading frontmatter",
     specSafetyFlag("# title\n---\nsafety: true\n---") === false
   );
+  // H5 regression: ship must read the flag from the RAW issue body, because
+  // buildSpecTextFromIssue prepends a `# <id>: <title>` heading that would push the
+  // frontmatter off the start of the string (masking safety: true → fail-open).
+  {
+    const safetyIssue = { identifier: "AIO-999", title: "risky", description: spec };
+    check(
+      "buildSpecTextFromIssue masks the leading frontmatter (why the caller must not use it)",
+      specSafetyFlag(buildSpecTextFromIssue(safetyIssue)) === false
+    );
+    check(
+      "reading the flag from issue.description sees safety: true",
+      specSafetyFlag(safetyIssue.description) === true
+    );
+  }
   check("includes interfaces", plan.includes("## Interfaces") && plan.includes("public API"));
   check(
     "includes implementation",
@@ -271,7 +290,13 @@ console.log("resume with specReady skips evaluateSpec");
     opts: optsFor({ resume: true }),
     deps: {
       ...deps,
-      readState: () => ({ specReady: true, recon: "RECON", plan: PLAN_TEXT, planReviewed: true }),
+      readState: () => ({
+        builderSkillContext: { source: "none", bytes: 0, skills: [] },
+        specReady: true,
+        recon: "RECON",
+        plan: PLAN_TEXT,
+        planReviewed: true,
+      }),
     },
   });
   check("reaches OK", code === SHIP_EXIT.OK);
@@ -290,6 +315,10 @@ console.log("SPEC_READY proceeds to plan/build");
   });
   check("exit OK", code === SHIP_EXIT.OK);
   check("eval ran once", deps.evalCalls() === 1);
+  check(
+    "eval validates declarations from the raw issue frontmatter",
+    deps.evalInput()?.skillDeclarationText === makeIssue().description
+  );
   rmSync(deps.repo, { recursive: true, force: true });
 }
 

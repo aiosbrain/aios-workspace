@@ -17,7 +17,8 @@ can schedule a nightly run that:
 
 1. builds an approved plan on an isolated worktree (`aios build`),
 2. opens a PR (`aios build --pr`),
-3. waits for the async bots (`scripts/wait-for-bots.mjs`),
+3. runs mandatory exact-head Local Bugbot and, when selected or safety-required, waits for
+   current-head CodeRabbit (`scripts/wait-for-bots.mjs`),
 4. consolidates every review into one finding list (`aios consolidate-findings`), and
 5. feeds blocking findings back into a fix round (`aios build --findings <file>`).
 
@@ -75,7 +76,8 @@ Placeholder paths only. Redirect console output to a gitignored per-day log unde
 30 2 * * *  cd /home/<user>/<workspace> && /usr/bin/npm run aios -- build plan.md feat/AIO-<n>-x --pr --issue AIO-<n> >> /home/<user>/<workspace>/.aios/loop/nightly-$(date +\%F).log 2>&1
 
 # Unattended roadmap walker: ship up to 3 unblocked issues from an epic each night at 03:00.
-# roadmap-run invokes `aios ship --auto --auto-merge` internally, so both gates are skipped.
+# roadmap-run invokes `aios ship --auto --auto-merge`; safety-sensitive work stops because
+# --auto-merge is forbidden there and must be resumed through the operator gate.
 0 3 * * *  cd /home/<user>/<workspace> && /usr/bin/npm run aios -- roadmap-run --epic AIO-<n> --max-issues 3 --comment-digest >> /home/<user>/<workspace>/.aios/loop/roadmap-$(date +\%F).log 2>&1
 ```
 

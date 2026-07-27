@@ -3,8 +3,12 @@ import {
   detectBugbotClear,
   buildBugbotPrompt,
   hasCriticalOrHighFindings,
+  hasUnstructuredSeverityClaim,
   SEVERITY_RANK,
   BUGBOT_CLEAR_TOKEN,
+  retryReviewOnRetriable,
+  MIN_ATTEMPT_MS,
+  REVIEW_WALL_CLOCK_BUDGET_MS,
 } from "../scripts/review-bugbot.mjs";
 
 let failed = 0;
@@ -19,6 +23,72 @@ function check(label, cond) {
   }
 }
 
+console.log("hasUnstructuredSeverityClaim — assertive prose fails closed");
+{
+  check(
+    "severity-leading auth bypass blocks",
+    hasUnstructuredSeverityClaim("Critical auth bypass in the callback route", "medium")
+  );
+  check(
+    "assertive finding prose blocks",
+    hasUnstructuredSeverityClaim("Found a High correctness regression in retry handling", "medium")
+  );
+  check(
+    "progress narration is ignored",
+    !hasUnstructuredSeverityClaim("Checking for Critical or High findings", "medium")
+  );
+  check(
+    "negative result prose is ignored",
+    !hasUnstructuredSeverityClaim("There are no Critical or High security findings", "medium")
+  );
+  check(
+    "generic confidence prose is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence after reviewing the validators", "medium")
+  );
+  check(
+    "risk classification prose is ignored",
+    !hasUnstructuredSeverityClaim("Low risk change", "low")
+  );
+  check(
+    "covered regression evidence is ignored",
+    !hasUnstructuredSeverityClaim("Medium regression covered by tests", "medium")
+  );
+  check(
+    "risk classification with a concrete bypass still blocks",
+    hasUnstructuredSeverityClaim("High risk change exposes an auth bypass", "medium")
+  );
+  check(
+    "severity-leading unresolved regression still blocks",
+    hasUnstructuredSeverityClaim("Medium correctness regression in retry handling", "medium")
+  );
+  check(
+    "negated mitigation does not hide a concrete bypass",
+    hasUnstructuredSeverityClaim("High auth bypass is not mitigated", "medium")
+  );
+  check(
+    "high-level security narration is ignored",
+    !hasUnstructuredSeverityClaim(
+      "High-level review of the security surface: no concerns.",
+      "medium"
+    )
+  );
+  check(
+    "medium confidence narration is ignored",
+    !hasUnstructuredSeverityClaim("Medium confidence the auth changes are correct.", "medium")
+  );
+  check(
+    "high-level summary narration is ignored",
+    !hasUnstructuredSeverityClaim("High-level summary: the error handling looks fine.", "medium")
+  );
+  check(
+    "medium-level accepted risk narration is ignored",
+    !hasUnstructuredSeverityClaim(
+      "Medium-level risk in the retry path is acceptable and well covered.",
+      "medium"
+    )
+  );
+}
+
 console.log("detectBugbotClear");
 {
   check("exact CLEAR token passes", detectBugbotClear(BUGBOT_CLEAR_TOKEN));
@@ -29,6 +99,102 @@ console.log("detectBugbotClear");
     "contradictory finding plus token blocks",
     !detectBugbotClear(`High: bug\n${BUGBOT_CLEAR_TOKEN}`)
   );
+  // AIO-472 — tolerate the composer-2.5 streaming artifact (pure repeated tokens) while still
+  // rejecting any prose alongside the token.
+  check("doubled/concatenated token passes", detectBugbotClear("BUGBOT_CLEARBUGBOT_CLEAR"));
+  check(
+    "repeated token on separate lines passes",
+    detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}\n${BUGBOT_CLEAR_TOKEN}`)
+  );
+  check(
+    'token followed by prose ("not appropriate here") blocks',
+    !detectBugbotClear(`${BUGBOT_CLEAR_TOKEN} is not appropriate here`)
+  );
+  check(
+    "token glued to a trailing word blocks",
+    !detectBugbotClear(`${BUGBOT_CLEAR_TOKEN}Reviewing the diff`)
+  );
+  check("empty response blocks", !detectBugbotClear(""));
+}
+
+console.log("retryReviewOnRetriable (AIO-472)");
+{
+  const run = async (label, fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      return { threw: e };
+    } finally {
+      void label;
+    }
+  };
+
+  // retries a transient resource_exhausted, then succeeds
+  {
+    let calls = 0;
+    const result = await run("retriable-then-ok", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          if (calls === 1) throw new Error("RetriableError: [resource_exhausted] slow down");
+          return "OK";
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check("retriable error retried then succeeds", result === "OK" && calls === 2);
+  }
+
+  // a non-retriable error rethrows immediately without retrying
+  {
+    let calls = 0;
+    const result = await run("non-retriable", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("bad prompt — hard failure");
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check(
+      "non-retriable error rethrows without retry",
+      result?.threw?.message?.includes("hard failure") && calls === 1
+    );
+  }
+
+  // a timeout is NOT retriable here — that path is owned by retryReviewTimeoutOnce
+  {
+    let calls = 0;
+    const result = await run("timeout-not-retried", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("cursor timed out after 400s");
+        },
+        { attempts: 3, baseDelayMs: 1 }
+      )
+    );
+    check("timeout error is not retried by retriable-retry", result?.threw && calls === 1);
+  }
+
+  // exhausts all attempts on a persistent retriable error, throwing the last one
+  {
+    let calls = 0;
+    const result = await run("exhausted", () =>
+      retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("429 rate limit");
+        },
+        { attempts: 2, baseDelayMs: 1 }
+      )
+    );
+    check(
+      "persistent retriable error throws after attempts exhausted",
+      result?.threw?.message?.includes("429") && calls === 2
+    );
+  }
 }
 
 console.log("buildBugbotPrompt");
@@ -92,6 +258,75 @@ console.log("hasCriticalOrHighFindings: markdown-decorated severities still matc
     !hasCriticalOrHighFindings("There are no Critical or High findings.")
   );
   check("bold Medium does NOT match", !hasCriticalOrHighFindings("**[Medium]** meh"));
+}
+
+console.log("retryReviewOnRetriable — the exhaustion backoff is clamped by the deadline");
+{
+  // The backoff used to sleep a fixed delay with no idea of the run's deadline, so a retry
+  // could sleep straight through the parent hook's child kill. Injected clock — no real waits.
+  let clock = 0;
+  const sleeper = (ms) => {
+    clock += ms;
+    return Promise.resolve();
+  };
+
+  {
+    const slept = [];
+    let calls = 0;
+    await retryReviewOnRetriable(
+      () => {
+        calls++;
+        if (calls === 1) throw new Error("resource_exhausted");
+        return "OK";
+      },
+      {
+        attempts: 2,
+        baseDelayMs: 60_000,
+        deadlineAt: 5_000,
+        now: () => clock,
+        sleep: (ms) => {
+          slept.push(ms);
+          return sleeper(ms);
+        },
+      }
+    );
+    check("backoff is clamped to the remaining budget", slept.length === 1 && slept[0] === 5_000);
+    check("the clamped sleep never passes the deadline", clock === 5_000);
+  }
+
+  {
+    let calls = 0;
+    let threw = null;
+    clock = 10_000;
+    try {
+      await retryReviewOnRetriable(
+        () => {
+          calls++;
+          throw new Error("resource_exhausted");
+        },
+        { attempts: 3, baseDelayMs: 1_000, deadlineAt: 5_000, now: () => clock, sleep: sleeper }
+      );
+    } catch (error) {
+      threw = error;
+    }
+    check(
+      "an already-exhausted deadline skips the retry entirely",
+      calls === 1 && /resource_exhausted/.test(threw?.message ?? "")
+    );
+  }
+}
+
+console.log("wall-clock budget constants");
+{
+  check(
+    "the budget is a single absolute value, not derived",
+    REVIEW_WALL_CLOCK_BUDGET_MS === 900_000
+  );
+  check("the protocol re-ask floor is a meaningful attempt", MIN_ATTEMPT_MS === 180_000);
+  check(
+    "the budget funds both mandatory passes with a reservation left",
+    REVIEW_WALL_CLOCK_BUDGET_MS - MIN_ATTEMPT_MS >= MIN_ATTEMPT_MS
+  );
 }
 
 console.log(failed ? `${RED}${failed} check(s) failed${NC}` : `${GREEN}all checks passed${NC}`);

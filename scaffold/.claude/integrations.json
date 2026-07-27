@@ -13,16 +13,6 @@
       "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"]
     },
     {
-      "id": "jira",
-      "name": "Jira",
-      "category": "issue-tracking",
-      "transport": "mcp",
-      "status": "available",
-      "summary": "Search issues, read/comment/transition tickets, manage sprints and worklogs.",
-      "connect": "Add the mcp-atlassian server to .mcp.json with your site URL and an API token. Covers Jira + Confluence.",
-      "env": ["ATLASSIAN_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN"]
-    },
-    {
       "id": "confluence",
       "name": "Confluence",
       "category": "knowledge-base",
@@ -78,8 +68,8 @@
       "category": "meetings",
       "transport": "cli",
       "status": "available",
-      "summary": "Pull meeting notes/transcripts to feed transcript-decisions and weekly-synthesis.",
-      "connect": "Export Granola notes to 1-inbox/transcripts/ (manual export or the Granola API/CLI), then run the transcript-decisions harness.",
+      "summary": "Pull meeting notes/transcripts into 1-inbox/transcripts/ for the typed `aios transcripts` review CLI and weekly-synthesis.",
+      "connect": "Export Granola notes to 1-inbox/transcripts/ (manual export or the Granola API/CLI), then review them with the typed CLI: `aios transcripts draft|list|approve` (grounded decisions and explicit tasks, a private V2 owner-review stage, one approval gate before either log changes; approval then attempts `aios push` unless `--no-push`).",
       "env": ["GRANOLA_API_KEY"]
     },
     {

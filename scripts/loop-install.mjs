@@ -91,7 +91,13 @@ const JOB_DEFS = [
     key: "analyze",
     label: (slug) => `com.aios.${slug}.analyze`,
     argsList: [["analyze"]],
-    startInterval: 3600,
+    // StartCalendarInterval with only Minute set fires once per hour, at :00 (Apple's
+    // launchd.plist docs) — the same ~3600s cadence as the old plain StartInterval, but computed
+    // from wall-clock time so it gets the same catch-up-on-wake behavior as daily/weekly (see
+    // file header). Plain StartInterval's elapsed-time timer has been observed to silently stop
+    // advancing across repeated sleep/DarkWake cycles on macOS, requiring a manual
+    // `launchctl kickstart -k` to un-stick — StartCalendarInterval doesn't have that failure mode.
+    calendar: { Minute: 0 },
     cronSchedule: "0 * * * *",
   },
 ];
@@ -103,6 +109,11 @@ export function buildInstallPlan({
   home = os.homedir(),
   scheduler,
   execPath = process.execPath,
+  // The installing shell's PATH (nvm/homebrew/~/.local/bin already resolved correctly for this
+  // user). launchd/cron give a minimal default PATH (/usr/bin:/bin:/usr/sbin:/sbin) to jobs they
+  // run, so connector child processes spawned by bare name (gog, slack, granola, ...) can't find
+  // user-installed CLIs unless we capture + thread the real PATH through at install time.
+  envPath = process.env.PATH || "",
 } = {}) {
   // Refuse native win32 even with a --scheduler override: neither launchd nor crontab//bin/sh
   // exists there, so the install could only fail later with an opaque ENOENT (AIO-451).
@@ -139,7 +150,7 @@ export function buildInstallPlan({
     };
   });
 
-  return { repo, slug, scheduler: chosenScheduler, jobs, logsDir, home };
+  return { repo, slug, scheduler: chosenScheduler, jobs, logsDir, home, envPath };
 }
 
 // ── launchd ──────────────────────────────────────────────────────────────────────────────────
@@ -163,6 +174,7 @@ export function buildLaunchdPlist({
   startInterval,
   stdoutPath,
   stderrPath,
+  envPath,
 }) {
   const argsXml = programArguments.map((a) => `    <string>${xmlEscape(a)}</string>`).join("\n");
   let scheduleXml = "";
@@ -181,6 +193,15 @@ export function buildLaunchdPlist({
   } else if (startInterval) {
     scheduleXml = `  <key>StartInterval</key>\n  <integer>${startInterval}</integer>\n`;
   }
+  // launchd's default environment for a LaunchAgent with no EnvironmentVariables key is just
+  // /usr/bin:/bin:/usr/sbin:/sbin — not the interactive shell PATH. Connector child processes
+  // (gog, slack, granola, ...) spawned by bare name inside `aios loop daily` inherit this job's
+  // env, so without an explicit PATH here they fail ENOENT even though the CLI is installed.
+  // Threading the installing shell's real PATH through fixes this at the source, with no change
+  // needed in the connectors themselves.
+  const envXml = envPath
+    ? `  <key>EnvironmentVariables</key>\n  <dict>\n    <key>PATH</key>\n    <string>${xmlEscape(envPath)}</string>\n  </dict>\n`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -193,7 +214,7 @@ ${argsXml}
   </array>
   <key>WorkingDirectory</key>
   <string>${xmlEscape(workingDirectory)}</string>
-${scheduleXml}  <key>StandardOutPath</key>
+${scheduleXml}${envXml}  <key>StandardOutPath</key>
   <string>${xmlEscape(stdoutPath)}</string>
   <key>StandardErrorPath</key>
   <string>${xmlEscape(stderrPath)}</string>
@@ -214,6 +235,7 @@ export function renderLaunchdPlan(plan) {
       startInterval: j.startInterval,
       stdoutPath: j.logPath,
       stderrPath: j.logPath,
+      envPath: plan.envPath,
     }),
   }));
 }
@@ -285,9 +307,14 @@ export function cronMarkers(slug) {
 
 export function buildCronBlock(plan) {
   const { begin, end } = cronMarkers(plan.slug);
+  // cron has the exact same minimal-PATH problem as launchd: connector child processes spawned
+  // by bare name (gog, slack, granola, ...) can't be found unless the installing shell's PATH is
+  // threaded through explicitly. `export PATH=...;` is scoped inside this job's own `{ ...; }`
+  // subshell group, so it never leaks into unrelated crontab entries above/below our block.
+  const pathPrefix = plan.envPath ? `export PATH=${shellQuote(plan.envPath)}; ` : "";
   const lines = plan.jobs.map(
     (j) =>
-      `${j.cronSchedule} cd ${shellQuote(j.workingDirectory)} && { ${j.commandLine}; } >> ${shellQuote(j.logPath)} 2>&1`
+      `${j.cronSchedule} cd ${shellQuote(j.workingDirectory)} && { ${pathPrefix}${j.commandLine}; } >> ${shellQuote(j.logPath)} 2>&1`
   );
   return [begin, ...lines, end].join("\n");
 }
@@ -367,6 +394,14 @@ function firstShellToken(commandLine) {
   return s.split(/\s+/)[0] || null;
 }
 
+/** Strip a leading `export PATH=<shellQuote'd value>; ` prefix (buildCronBlock's bug-1 PATH fix)
+ * so callers that want the pinned runtime binary — not the PATH assignment — see the real first
+ * token. No-op if there's no such prefix. */
+function stripCronPathPrefix(commandLine) {
+  const m = commandLine.match(/^export PATH=(?:'(?:[^'\\]|\\.)*'|\S+);\s*/);
+  return m ? commandLine.slice(m[0].length) : commandLine;
+}
+
 /** Extract the pinned runtime binary from an installed LaunchAgent plist (the first token of
  * the `/bin/sh -c <commandLine>` string). Returns null if the plist doesn't match. */
 export function pinnedRuntimeFromPlist(plistContent) {
@@ -391,7 +426,7 @@ export function pinnedRuntimesFromCrontab(crontab, slug) {
     if (!inBlock) continue;
     const m = line.match(/&& \{ (.*); \} >> /);
     if (!m) continue;
-    const runtime = firstShellToken(m[1]);
+    const runtime = firstShellToken(stripCronPathPrefix(m[1]));
     if (runtime) runtimes.add(runtime);
   }
   return [...runtimes];

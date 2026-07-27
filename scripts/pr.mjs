@@ -10,7 +10,8 @@
  * moves it to Done on merge.
  *
  * Exported:
- *   cmdPr(repo, args, opts)              — CLI + chained from `aios build --pr`
+ *   cmdPr(repo, args, opts)              — CLI + chained from `aios build --pr`; callers may
+ *                                          request `{ number, reused }` metadata
  *   PrError                              — thrown (not die()) when opts.throwOnError is set
  *   buildPushArgv(branch)                — pure: git push argv
  *   buildPrCreateArgv({repo,title,bodyFile,branch}) — pure: gh pr create argv
@@ -87,7 +88,7 @@ function existingPrNumber(repo, branch) {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function cmdPr(repo, args, { throwOnError = false } = {}) {
+export async function cmdPr(repo, args, { throwOnError = false, returnMetadata = false } = {}) {
   // fail() = die() for the CLI (exit 1), throw for the build path so finish() can map it
   // to a gate-failure exit code. Every recoverable abort below goes through fail().
   const fail = throwOnError
@@ -211,7 +212,7 @@ export async function cmdPr(repo, args, { throwOnError = false } = {}) {
     if (existing) {
       console.log(c.dim(`PR already exists for ${branch}: #${existing}`));
       console.log(`PR_NUMBER=${existing}`);
-      return existing;
+      return returnMetadata ? { number: existing, reused: true } : existing;
     }
 
     let createOut = "";
@@ -245,7 +246,7 @@ export async function cmdPr(repo, args, { throwOnError = false } = {}) {
       );
     }
     console.log(`PR_NUMBER=${prNumber}`);
-    return prNumber;
+    return returnMetadata ? { number: prNumber, reused: false } : prNumber;
   } finally {
     if (tmpDir) {
       try {

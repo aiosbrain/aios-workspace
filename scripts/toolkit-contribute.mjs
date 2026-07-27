@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync, readFileSync, mkdirSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { c, die } from "./cli-common.mjs";
+import { c, UpdateError, gitEnv } from "./cli-common.mjs";
 import { MANAGED_PATHS } from "./toolkit-manifest.mjs";
 
 /** Strip the merge sidecar suffixes so `--contribute foo.md.aios-incoming` maps to foo.md. */
@@ -61,7 +61,10 @@ export function contributeBranch(destRel, content) {
 
 function hasRemote(dir) {
   try {
-    execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { stdio: "ignore" });
+    execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], {
+      stdio: "ignore",
+      env: gitEnv(),
+    });
     return true;
   } catch {
     return false;
@@ -84,17 +87,18 @@ function ghAvailable() {
 export async function cmdContribute(repo, srcInfo, args, rawPath) {
   const color = c;
   if (!rawPath || rawPath.startsWith("--")) {
-    die("usage: aios update --contribute <path/to/managed-file> [--dry-run]");
+    throw new UpdateError("usage: aios update --contribute <path/to/managed-file> [--dry-run]");
   }
   const target = contributeTarget(rawPath);
   if (!target) {
-    die(
+    throw new UpdateError(
       `${rawPath} isn't a toolkit-managed file — only governance files synced by \`aios update\`\n` +
         `  can be contributed upstream (see scripts/toolkit-manifest.mjs). Personal content stays local.`
     );
   }
   const localAbs = path.join(repo, target.destRel);
-  if (!existsSync(localAbs)) die(`${target.destRel} doesn't exist in this workspace.`);
+  if (!existsSync(localAbs))
+    throw new UpdateError(`${target.destRel} doesn't exist in this workspace.`);
   const content = readFileSync(localAbs, "utf8");
   const branch = contributeBranch(target.destRel, content);
   const dryRun = args.includes("--dry-run");
@@ -128,17 +132,43 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
   }
 
   if (ephemeral) {
-    die(
+    throw new UpdateError(
       "no local toolkit checkout with push access — `--contribute` needs your aios-workspace\n" +
         "  clone. Point at it with `--from /path/to/aios-workspace` or set AIOS_TOOLKIT_DIR."
     );
   }
-  if (!hasRemote(toolkitDir)) die(`toolkit at ${toolkitDir} has no \`origin\` remote to push to.`);
+  if (!hasRemote(toolkitDir))
+    throw new UpdateError(`toolkit at ${toolkitDir} has no \`origin\` remote to push to.`);
   if (!ghAvailable())
-    die("`gh` (GitHub CLI) is required to open the PR — install it or open the PR by hand.");
+    throw new UpdateError(
+      "`gh` (GitHub CLI) is required to open the PR — install it or open the PR by hand."
+    );
 
   // Work in a throwaway worktree off origin/main so the primary checkout is untouched.
-  const git = (dir, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" });
+  //
+  // Every git/gh invocation below is wrapped so its failure surfaces as an UpdateError —
+  // an expected, diagnosable local condition (offline remote, no push access, an
+  // unauthenticated `gh`, a branch that already exists), not a bug in this CLI. The
+  // pre-flights above only prove that an `origin` is CONFIGURED and `gh` is INSTALLED;
+  // whether either actually works is only discoverable by trying. Without this, those
+  // failures escaped `cmdUpdate`'s UpdateError-only catch as an unstructured crash, which
+  // contradicted the documented never-exits contract for `--contribute` and gave the user
+  // a stack trace instead of the stderr git actually printed.
+  const runGit = (dir, ...a) => {
+    try {
+      return execFileSync("git", ["-C", dir, ...a], {
+        encoding: "utf8",
+        env: gitEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const detail = String(error?.stderr || error?.message || error)
+        .trim()
+        .split("\n")[0];
+      throw new UpdateError(`git ${a[0]} failed while contributing ${target.destRel}: ${detail}`);
+    }
+  };
+  const git = runGit;
   git(toolkitDir, "fetch", "origin", "main", "-q");
   const wt = mkdtempSync(path.join(os.tmpdir(), "aios-contribute-"));
   try {
@@ -148,7 +178,9 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
     copyFileSync(localAbs, destInToolkit);
     const status = git(wt, "status", "--porcelain").trim();
     if (!status) {
-      die(`${target.destRel} already matches the toolkit — nothing to contribute.`);
+      throw new UpdateError(
+        `${target.destRel} already matches the toolkit — nothing to contribute.`
+      );
     }
     git(wt, "add", "--", target.srcRel);
     const subject = `chore(toolkit): contribute ${path.basename(target.srcRel)} from a workspace`;
@@ -158,24 +190,37 @@ export async function cmdContribute(repo, srcInfo, args, rawPath) {
       `Review the change; once merged, \`aios update\` converges instead of re-flagging it.`;
     git(wt, "commit", "-q", "-m", `${subject}\n\n${body}`);
     git(wt, "push", "-q", "-u", "origin", branch);
-    const url = execFileSync(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        "aiosbrain/aios-workspace",
-        "--base",
-        "main",
-        "--head",
-        branch,
-        "--title",
-        subject,
-        "--body",
-        body,
-      ],
-      { cwd: wt, encoding: "utf8" }
-    ).trim();
+    let url;
+    try {
+      url = execFileSync(
+        "gh",
+        [
+          "pr",
+          "create",
+          "--repo",
+          "aiosbrain/aios-workspace",
+          "--base",
+          "main",
+          "--head",
+          branch,
+          "--title",
+          subject,
+          "--body",
+          body,
+        ],
+        { cwd: wt, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+      ).trim();
+    } catch (error) {
+      // The branch IS pushed at this point — say so, so the user can open the PR by hand
+      // rather than assuming the whole contribution was lost.
+      const detail = String(error?.stderr || error?.message || error)
+        .trim()
+        .split("\n")[0];
+      throw new UpdateError(
+        `the branch ${branch} was pushed, but \`gh pr create\` failed: ${detail}\n` +
+          `  Open the PR by hand from that branch (gh auth status may need attention).`
+      );
+    }
     console.log(color.green(`  opened toolkit PR: ${url}`));
     return { ...plan, url };
   } finally {

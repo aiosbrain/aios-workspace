@@ -5,7 +5,7 @@ This document is the workspace toolkit's pinned pointer to the unified AIOS desi
 the UI counterpart to `brain-api.md` (sync). Both sides and every surface build against
 the published packages; never hand-maintain a copy of the tokens in a consumer repo.
 
-**Source of truth:** [`aios-design/DESIGN.md`](https://github.com/AIOS-alpha/aios-design)
+**Source of truth:** [`aios-design/DESIGN.md`](https://github.com/aiosbrain/aios-design)
 (compiled to npm). Change tokens and `DESIGN.md` there first, publish, then bump consumers.
 
 **Public summary:** [Design System reference](https://aios-alpha.github.io/reference/design-system/)

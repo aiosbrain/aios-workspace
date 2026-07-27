@@ -29,10 +29,20 @@ const canonical = (v) =>
 
 test("fixture contentHash is intact (no out-of-band edit)", () => {
   // v1.7 added provisioningTools (the member-invite tool vocabulary) to the pinned content.
-  const { version, tierAliases, sse, provisioningTools, gatewayContract } = fixture;
+  const { version, tierAliases, sse, provisioningTools, gatewayContract, itemPayloadContract } =
+    fixture;
   const recomputed = createHash("sha256")
     .update(
-      JSON.stringify(canonical({ version, tierAliases, sse, provisioningTools, gatewayContract }))
+      JSON.stringify(
+        canonical({
+          version,
+          tierAliases,
+          sse,
+          provisioningTools,
+          gatewayContract,
+          itemPayloadContract,
+        })
+      )
     )
     .digest("hex");
   assert.equal(
@@ -40,6 +50,18 @@ test("fixture contentHash is intact (no out-of-band edit)", () => {
     fixture.contentHash,
     "edit the fixture via the generator so contentHash updates"
   );
+});
+
+// The item-payload contract carries its OWN version (last changed at 1.12) and is deliberately
+// decoupled from the document/API revision: 1.13 (the sync-origin task return leg) touched the
+// tasks feed, not the item payload, so these fixtures must stay pinned at 1.12.
+test("item payload contract is content-addressed at Brain API 1.12", () => {
+  assert.equal(fixture.itemPayloadContract.version, "1.12");
+  for (const key of ["schema", "fixtures"]) {
+    const ref = fixture.itemPayloadContract[key];
+    const bytes = readFileSync(path.join(ROOT, "docs/contract", ref.path));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), ref.sha256, key);
+  }
 });
 
 test("gateway contract reference is content-addressed and independently versioned", () => {
