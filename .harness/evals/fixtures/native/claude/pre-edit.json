@@ -1,0 +1,11 @@
+{
+  "session_id": "claude-fixture",
+  "cwd": "__CWD__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_use_id": "tool-1",
+  "tool_input": {
+    "file_path": "src/config.ts",
+    "content": "__CONTENT__"
+  }
+}

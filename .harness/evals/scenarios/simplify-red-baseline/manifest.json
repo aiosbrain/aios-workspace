@@ -1,0 +1,7 @@
+{
+  "id": "simplify-red-baseline",
+  "title": "Simplifier refuses a red baseline",
+  "timeout_seconds": 420,
+  "semantic_required": false,
+  "forbidden_paths": [".env", ".harness"]
+}

@@ -1,0 +1,3 @@
+{"type":"item.completed","item":{"id":"codex-green","type":"command_execution","command":"python3 check.py","exit_code":0,"aggregated_output":"FAILED appears in a test name; 0 failed"}}
+{"type":"item.completed","item":{"id":"codex-red","type":"command_execution","command":"python -m unittest -q","exit_code":2,"aggregated_output":"ordinary non-magic failure output"}}
+{"type":"item.completed","item":{"id":"codex-read","type":"command_execution","command":"rg -n check.py .","exit_code":0,"aggregated_output":"check.py"}}

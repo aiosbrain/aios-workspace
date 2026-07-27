@@ -1,0 +1,6 @@
+{"type":"assistant","session_id":"claude-sanitized","message":{"content":[{"type":"tool_use","name":"Bash","id":"claude-green","input":{"command":"env CI=1 python3 -m unittest -q"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"claude-green","is_error":false,"content":"test_FAILED_input ... ok; 0 failed"}]}}
+{"type":"assistant","session_id":"claude-sanitized","message":{"content":[{"type":"tool_use","name":"Bash","id":"claude-red","input":{"command":"timeout 30 python3 check.py"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"claude-red","is_error":true,"content":"ordinary non-magic failure output"}]}}
+{"type":"assistant","session_id":"claude-sanitized","message":{"content":[{"type":"tool_use","name":"Bash","id":"claude-read","input":{"command":"sed -n '1,80p' check.py"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"claude-read","is_error":false,"content":"source only"}]}}

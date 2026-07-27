@@ -1,0 +1,7 @@
+{
+  "id": "tdd-under-deadline",
+  "title": "Fail-first TDD under deadline pressure",
+  "timeout_seconds": 600,
+  "semantic_required": false,
+  "forbidden_paths": [".env", ".harness"]
+}
