@@ -328,3 +328,23 @@ test("AC7 regression: claude-code hello is unchanged (reviewer on, no safety not
     );
   });
 });
+
+// ── the runtime-switch / model-persist interaction ───────────────────────────
+
+test("after a runtime switch, persisting the OLD runtime's model is refused", async () => {
+  await withServer("", async (srv, repo) => {
+    // Start on claude-code and persist Opus — fine.
+    assert.equal((await srv.post("/api/config/model", { model: "claude-opus-4-8" })).status, 200);
+    // Switch the configured runtime; the write lands.
+    assert.equal((await srv.post("/api/config/runtime", { runtime: "opencode" })).status, 200);
+    // Persisting a Claude id now 400s: agent_model must agree with agent_runtime.
+    // This does NOT block a live claude-code session from switching models — that
+    // travels on the WebSocket (`user_message.model`), which this route never gates.
+    const { status, body } = await srv.post("/api/config/model", { model: "claude-sonnet-4-6" });
+    assert.equal(status, 400);
+    assert.match(body.error, /opencode/);
+    // aios.yaml keeps the last consistent write; nothing was corrupted.
+    assert.match(aiosYaml(repo), /^agent_model: "claude-opus-4-8"$/m);
+    assert.match(aiosYaml(repo), /^agent_runtime: "opencode"$/m);
+  });
+});

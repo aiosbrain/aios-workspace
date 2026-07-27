@@ -325,6 +325,13 @@ const server = http.createServer((req, res) => {
       // closed list (unchanged); opencode also accepts any well-formed
       // `provider/model` id, because ITS auth store — not this allow-list — decides
       // what actually resolves. The 400 names the runtime so the reason is obvious.
+      //
+      // "Active" deliberately means the runtime in aios.yaml, NOT a live session's
+      // pinned runtime. This route only PERSISTS the default `agent_model`; the actual
+      // mid-session switch travels on the WebSocket (`user_message.model`) and is never
+      // gated here. So after a runtime switch, persisting the old runtime's model is
+      // correctly refused — writing it would leave aios.yaml self-inconsistent — while
+      // the live session keeps switching models freely until it reconnects.
       const { runtime } = readAgentConfig(repo);
       const catalog = await catalogFor(runtime);
       if (!isModelAllowed(catalog, model)) {
