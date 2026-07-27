@@ -222,6 +222,18 @@ export interface ConfigResponse {
   capabilities?: Capabilities;
 }
 
+/** One GUI-drivable agent runtime offered by GET /api/config/runtime. */
+export interface RuntimeChoice {
+  id: string;
+  driver: string;
+}
+
+/** GET /api/config/runtime — the runtime in aios.yaml plus the selectable set. */
+export interface RuntimesResponse {
+  runtime: string;
+  runtimes: RuntimeChoice[];
+}
+
 export interface SessionSummary {
   id: string;
   title: string;

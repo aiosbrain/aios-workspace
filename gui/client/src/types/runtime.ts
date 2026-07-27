@@ -12,6 +12,12 @@
 export interface ModelOption {
   id: string;
   label: string;
+  /**
+   * Optional provider grouping (e.g. "OpenRouter") for runtimes that broker several
+   * providers. When present the picker renders one <optgroup> per group; absent (the
+   * claude-code case) the options render flat, exactly as before.
+   */
+  group?: string;
 }
 
 /** A composer approval-mode choice (e.g. claude-sdk SDK permission modes). */

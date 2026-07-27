@@ -3,7 +3,14 @@ import { useConnection, useRuntime, useSession } from "../../state/cockpit";
 import { cn } from "../../lib/cn";
 import { SET_SECTION, SET_SECTION_TITLE, SET_SECTION_HINT } from "./SettingsView";
 import { INT_GRID, INT_CONNECT, SKELETON_CARD, intCard } from "../integrations/intCard";
-import type { ConfigResponse, PersonalitiesResponse, Personality } from "../../types/protocol";
+import { ModelOptions } from "../chat/ModelOptions";
+import type {
+  ConfigResponse,
+  PersonalitiesResponse,
+  Personality,
+  RuntimeChoice,
+  RuntimesResponse,
+} from "../../types/protocol";
 
 const MODEL_PICK_SELECT =
   "cursor-pointer rounded-md border border-border-visible bg-secondary px-[9px] py-[5px] text-[13px] text-foreground outline-none focus:border-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:cursor-default disabled:opacity-50";
@@ -22,8 +29,37 @@ export function AgentSettings() {
   const [current, setCurrent] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [memReview, setMemReview] = useState<boolean | null>(null); // null = loading
+  const [runtimes, setRuntimes] = useState<RuntimeChoice[] | null>(null); // null = loading
+  const [pickedRuntime, setPickedRuntime] = useState<string | null>(null);
+  const [savingRuntime, setSavingRuntime] = useState(false);
 
   const models = capabilities.models;
+
+  useEffect(() => {
+    api
+      .get<RuntimesResponse>("/api/config/runtime")
+      .then((d) => {
+        setRuntimes(d.runtimes || []);
+        setPickedRuntime(d.runtime);
+      })
+      .catch(() => setRuntimes([]));
+  }, [api]);
+
+  // Switching runtimes only takes effect on the next chat (a session pins its runtime
+  // at hello), so this writes aios.yaml and leaves the live session alone.
+  const pickRuntime = async (id: string) => {
+    if (!id || id === pickedRuntime || savingRuntime) return;
+    const prev = pickedRuntime;
+    setPickedRuntime(id);
+    setSavingRuntime(true);
+    try {
+      const d = await api.post<{ ok: boolean }>("/api/config/runtime", { runtime: id });
+      if (!d.ok) setPickedRuntime(prev);
+    } catch {
+      setPickedRuntime(prev); // revert on failure
+    }
+    setSavingRuntime(false);
+  };
 
   useEffect(() => {
     api
@@ -70,9 +106,26 @@ export function AgentSettings() {
     <>
       <section className={SET_SECTION}>
         <h3 className={SET_SECTION_TITLE}>Runtime</h3>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Agent runtime</span>
+          <select
+            className={MODEL_PICK_SELECT}
+            value={pickedRuntime ?? runtime ?? ""}
+            disabled={!runtimes || savingRuntime}
+            onChange={(e) => pickRuntime(e.target.value)}
+          >
+            {(runtimes ?? [{ id: runtime || "—" }]).map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.id}
+              </option>
+            ))}
+          </select>
+        </label>
         <p className={SET_SECTION_HINT}>
-          Agent runtime: <code>{runtime || "—"}</code>. Set <code>agent_runtime</code> in{" "}
-          <code>aios.yaml</code> — it applies on the next chat.
+          Applies to the <strong>next chat</strong> — the current session keeps the runtime it
+          started with. Each runtime brings its own model catalog and its own capabilities (the
+          memory reviewer and pre-gated writes are Claude-only; other runtimes are validated by a
+          post-turn sweep).
         </p>
       </section>
 
@@ -86,11 +139,7 @@ export function AgentSettings() {
               value={model}
               onChange={(e) => changeModel(e.target.value)}
             >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
+              <ModelOptions models={models} selected={model} />
             </select>
           </label>
         </section>

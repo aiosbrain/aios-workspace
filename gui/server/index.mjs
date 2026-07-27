@@ -42,7 +42,6 @@ import {
   containsSecret,
   redactSecrets,
 } from "./memory-reviewer.mjs";
-import { ALLOWED_MODELS, MODEL_OPTIONS } from "./runtime-adapters/claude-code.mjs";
 // I-03 (AIO-384): runtime-issued capability handle. The owning-runtime durable store is plain ESM
 // (no dist dependency, safe to load at server start); the coordinator-side broker/fallback lives in
 // the compiled operator-loop and is loaded lazily + guarded so `npm run gui` never hard-depends on a
@@ -53,7 +52,14 @@ import {
   capabilityTargets,
 } from "./runtime-adapters/capability-store.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
-import { GUI_RUNTIMES, runtimeCapabilities } from "../../scripts/runtimes.mjs";
+import {
+  GUI_RUNTIMES,
+  runtimeCapabilities,
+  modelCatalog,
+  isModelAllowed,
+  modelRejectionMessage,
+} from "../../scripts/runtimes.mjs";
+import { cachedProviderCatalog, resolveProviderCatalog } from "./runtime-adapters/opencode.mjs";
 import {
   readSkills,
   readIntegrations,
@@ -204,6 +210,33 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
+// ── per-runtime model catalogs (AIO-536) ──────────────────────────────────────
+// The cockpit picker is catalog-driven. claude-code's catalog is static, so that path
+// stays byte-identical to before this change; opencode's is read live from the local
+// OpenCode server (whatever providers the owner authenticated) and degrades to the
+// seeded list in the registry whenever the listing is unavailable.
+const CATALOG_WAIT_MS = 8000; // cold `opencode serve` boot + provider fetch ≈ 5s
+
+/** Catalog for `runtime` using only what is already cached — never blocks. */
+function catalogNow(runtime) {
+  if (runtime !== "opencode") return modelCatalog(runtime);
+  const cached = cachedProviderCatalog(repo);
+  if (!cached) resolveProviderCatalog(repo).catch(() => {}); // warm it for the next read
+  return modelCatalog(runtime, cached);
+}
+
+/** Catalog for `runtime`, waiting briefly for a live resolve before falling back. */
+async function catalogFor(runtime) {
+  if (runtime !== "opencode") return modelCatalog(runtime);
+  const cached = cachedProviderCatalog(repo);
+  if (cached) return modelCatalog(runtime, cached);
+  const models = await Promise.race([
+    resolveProviderCatalog(repo).catch(() => []),
+    new Promise((r) => setTimeout(() => r(null), CATALOG_WAIT_MS).unref?.()),
+  ]);
+  return modelCatalog(runtime, models);
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   if (url.pathname === "/api/info") {
@@ -221,20 +254,27 @@ const server = http.createServer((req, res) => {
       return res.end("unauthorized");
     }
     const cfg = readAgentConfig(repo);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(
-      JSON.stringify({
-        model: cfg.model,
-        personality: cfg.personality,
-        runtime: cfg.runtime,
-        memoryReview: cfg.memoryReview,
-        models: [...ALLOWED_MODELS],
-        // Additive: same capability descriptor the `hello` event carries, so the
-        // cockpit can drive capability-gated chrome from config BEFORE the first
-        // WebSocket hello — closing the pre-connect flash on non-Claude runtimes.
-        capabilities: runtimeCapabilities(cfg.runtime, MODEL_OPTIONS),
-      })
-    );
+    // The ACTIVE runtime's catalog, not a hardcoded Claude list (AIO-536). For
+    // claude-code this resolves synchronously to exactly the previous values.
+    catalogFor(cfg.runtime).then((catalog) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          model: cfg.model,
+          personality: cfg.personality,
+          runtime: cfg.runtime,
+          memoryReview: cfg.memoryReview,
+          models: catalog.models.map((m) => m.id),
+          // NOTE: no new keys here. Under claude-code this body stays byte-identical to
+          // pre-AIO-536. The runtime *choices* are served by GET /api/config/runtime.
+          // Additive: same capability descriptor the `hello` event carries, so the
+          // cockpit can drive capability-gated chrome from config BEFORE the first
+          // WebSocket hello — closing the pre-connect flash on non-Claude runtimes.
+          capabilities: runtimeCapabilities(cfg.runtime, catalog.models),
+        })
+      );
+    });
+    return;
   }
   if (url.pathname === "/api/config/memory-review" && req.method === "POST") {
     if (url.searchParams.get("token") !== TOKEN) {
@@ -274,21 +314,22 @@ const server = http.createServer((req, res) => {
       body += c;
       if (body.length > 1e4) req.destroy();
     });
-    req.on("end", () => {
+    req.on("end", async () => {
       let model = "";
       try {
         model = String(JSON.parse(body || "{}").model || "");
       } catch {
         /* bad body */
       }
-      if (!ALLOWED_MODELS.has(model)) {
+      // Validate against the ACTIVE runtime's catalog (AIO-536). claude-code is a
+      // closed list (unchanged); opencode also accepts any well-formed
+      // `provider/model` id, because ITS auth store — not this allow-list — decides
+      // what actually resolves. The 400 names the runtime so the reason is obvious.
+      const { runtime } = readAgentConfig(repo);
+      const catalog = await catalogFor(runtime);
+      if (!isModelAllowed(catalog, model)) {
         res.writeHead(400, { "Content-Type": "application/json" });
-        return res.end(
-          JSON.stringify({
-            ok: false,
-            error: `model must be one of: ${[...ALLOWED_MODELS].join(", ")}`,
-          })
-        );
+        return res.end(JSON.stringify({ ok: false, error: modelRejectionMessage(catalog) }));
       }
       try {
         setAiosKey(repo, "agent_model", model);
@@ -298,6 +339,65 @@ const server = http.createServer((req, res) => {
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, model }));
+    });
+    return;
+  }
+  // ── agent runtime (AIO-536) — list the GUI-drivable runtimes / switch to one ──
+  // A switch applies to the NEXT chat: a live session pinned its runtime at hello.
+  if (url.pathname === "/api/config/runtime") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    if (req.method === "GET") {
+      const { runtime } = readAgentConfig(repo);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(
+        JSON.stringify({
+          runtime,
+          // Only GUI-drivable runtimes are offered. `claude-api` is deliberately absent
+          // (gui: null in the registry — a bare API loop with no tool harness).
+          runtimes: Object.keys(GUI_RUNTIMES).map((id) => ({
+            id,
+            driver: GUI_RUNTIMES[id].driver,
+          })),
+        })
+      );
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405);
+      return res.end("method not allowed");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e4) req.destroy();
+    });
+    req.on("end", () => {
+      let runtime = "";
+      try {
+        runtime = String(JSON.parse(body || "{}").runtime || "");
+      } catch {
+        /* bad body */
+      }
+      // Enumerated against the registry — never a free-form aios.yaml write.
+      if (!Object.prototype.hasOwnProperty.call(GUI_RUNTIMES, runtime)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: `runtime must be one of: ${Object.keys(GUI_RUNTIMES).join(", ")}`,
+          })
+        );
+      }
+      try {
+        setAiosKey(repo, "agent_runtime", runtime);
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, runtime, appliesTo: "next-chat" }));
     });
     return;
   }
@@ -1033,8 +1133,14 @@ const analysisCache = createAnalysisCache({
 });
 
 // Keys the GUI is allowed to write into aios.yaml. Callers validate the VALUE
-// (model ∈ ALLOWED_MODELS; personality ∈ scanned dir) before calling.
-const AIOS_WRITABLE_KEYS = new Set(["agent_model", "agent_personality", "memory_review"]);
+// (model ∈ the active runtime's catalog; runtime ∈ GUI_RUNTIMES; personality ∈
+// scanned dir) before calling. Grows only by an enumerated, registry-validated key.
+const AIOS_WRITABLE_KEYS = new Set([
+  "agent_model",
+  "agent_personality",
+  "agent_runtime",
+  "memory_review",
+]);
 
 // Set a single flat key in aios.yaml, preserving the rest. Replaces an existing
 // non-comment `key:` line (anchored at column 0, so a commented "# key:" is left
@@ -1522,7 +1628,10 @@ wss.on("connection", (ws, req) => {
       : null;
   // BYOA: additive capability descriptor so the cockpit UI adapts to the active
   // runtime without branching on its name. Older clients ignore the extra field.
-  const capabilities = runtimeCapabilities(runtime, MODEL_OPTIONS);
+  // Catalog for THIS session's runtime (AIO-536). Non-blocking: hello must not wait on
+  // an OpenCode server boot, so it uses the cached catalog and warms it for next time —
+  // the seeded fallback is a correct list either way.
+  const capabilities = runtimeCapabilities(runtime, catalogNow(runtime).models);
   send({ type: "hello", repo, sessionId, runtime, safetyNote, capabilities, resumed: !!resumeId });
 
   (async () => {
