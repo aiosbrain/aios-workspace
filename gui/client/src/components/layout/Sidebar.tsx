@@ -50,10 +50,10 @@ export function Sidebar() {
   const [hits, setHits] = useState<SessionSearchResult[] | null>(null);
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
-      setHits(null);
-      return;
-    }
+    // Every query change invalidates prior server hits immediately — the instant title
+    // filter covers the debounce window, so the list never shows results for an older query.
+    setHits(null);
+    if (!q) return;
     let cancelled = false;
     const t = setTimeout(() => {
       api

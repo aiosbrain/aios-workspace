@@ -54,7 +54,9 @@ function connect(port, tok, session) {
           clearTimeout(t);
           resolve({ ws, sessionId: ev.sessionId, closed });
         }
-      } catch {}
+      } catch {
+        /* non-JSON frame — ignore, we only wait for hello */
+      }
     });
     ws.on("error", (e) => {
       clearTimeout(t);

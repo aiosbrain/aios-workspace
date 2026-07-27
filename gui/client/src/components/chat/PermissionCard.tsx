@@ -56,10 +56,14 @@ export function PermissionCard({
         <span>
           Approve <strong>{tool}</strong>?
         </span>
-        {remaining && (
-          <span className="ml-auto font-mono text-xs text-muted-foreground">
-            auto-denies in {remaining}
-          </span>
+        {expired ? (
+          <span className="ml-auto font-mono text-xs text-muted-foreground">auto-denied</span>
+        ) : (
+          remaining && (
+            <span className="ml-auto font-mono text-xs text-muted-foreground">
+              auto-denies in {remaining}
+            </span>
+          )
         )}
       </div>
       <pre className="max-h-[180px] overflow-y-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
@@ -71,17 +75,20 @@ export function PermissionCard({
             <button
               key={o.optionId}
               className={/deny|reject|cancel/i.test(o.kind || "") ? DENY : ALLOW}
-              onClick={() => onRespondOption(id, o.optionId)}
+              // Past the deadline the server has already denied — a click must not
+              // look like a decision that took effect (the card unmounts via onExpired).
+              disabled={expired}
+              onClick={() => !expired && onRespondOption(id, o.optionId)}
             >
               {o.name}
             </button>
           ))
         ) : (
           <>
-            <button className={ALLOW} onClick={() => onRespond(id, true)}>
+            <button className={ALLOW} disabled={expired} onClick={() => !expired && onRespond(id, true)}>
               Allow
             </button>
-            <button className={DENY} onClick={() => onRespond(id, false)}>
+            <button className={DENY} disabled={expired} onClick={() => !expired && onRespond(id, false)}>
               Deny
             </button>
           </>

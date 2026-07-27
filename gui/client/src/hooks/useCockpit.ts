@@ -199,6 +199,9 @@ export function useCockpit() {
         ws.onclose = (ev) => {
           if (connectSeqRef.current !== seq) return; // superseded by a deliberate (re)connect
           setConnected(false);
+          // A dead socket can't deliver events — a still-armed watchdog would append a
+          // spurious "still waiting" line onto a connection that already announced its fate.
+          clearStall();
           // The server denies every pending approval when a connection tears down —
           // leaving the cards up would invite decisions that can no longer apply.
           if (permissionsRef.current.length) {
@@ -344,7 +347,7 @@ export function useCockpit() {
       };
       return opened;
     },
-    [append, appendDelta, finishAssistant, loadChats, applyConn, clearReconnect]
+    [append, appendDelta, finishAssistant, loadChats, applyConn, clearReconnect, clearStall]
   );
 
   // Exponential backoff (+jitter) reconnect to the active session. Stops at OFFLINE after
@@ -404,11 +407,12 @@ export function useCockpit() {
   const resetChatState = useCallback(() => {
     setBusy(false);
     setPermissions([]);
+    clearStall(); // a chat switch abandons the old turn — its watchdog must not fire into the new one
     resultUsageRef.current = null;
     setUsage(null);
     setSessionUsage(null);
     prevCostRef.current = 0;
-  }, []);
+  }, [clearStall]);
 
   const newChat = useCallback(() => {
     connectSeqRef.current++;
