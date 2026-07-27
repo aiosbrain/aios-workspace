@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -118,6 +119,118 @@ test("group match regexes agree with their nightly scope", () => {
       );
     }
   }
+});
+
+function entryMatches(entry, file) {
+  return /[*{]/.test(entry) ? globToRegExp(entry).test(file) : entry === file;
+}
+
+test("every tracked file matching a group's regex is explicitly in or out of nightly scope", () => {
+  // The anti-silent-scope-extension contract (AIO-539): narrowing a group's
+  // nightly denominator is only honest if every dropped file is recorded. A
+  // new file in a critical directory must fail here until someone states
+  // which side of the line it is on.
+  for (const group of MUTATION_GROUPS) {
+    assert.ok(
+      Array.isArray(group.nightlyExcludes),
+      `${group.name}: nightlyExcludes must be declared (empty array when nothing is dropped)`
+    );
+    for (const file of TRACKED) {
+      if (!group.match.test(file)) continue;
+      assert.ok(
+        group.nightly.some((entry) => entryMatches(entry, file)) ||
+          group.nightlyExcludes.includes(file),
+        `${group.name}: "${file}" matches the group's regex but appears in neither nightly nor nightlyExcludes — declare it in scope or record why it is out`
+      );
+    }
+  }
+});
+
+test("nightlyExcludes entries are tracked, regex-matched, and disjoint from nightly", () => {
+  for (const group of MUTATION_GROUPS) {
+    for (const entry of group.nightlyExcludes ?? []) {
+      assert.ok(
+        TRACKED_SET.has(entry),
+        `${group.name}: nightlyExcludes entry "${entry}" matches no tracked file — dead entry`
+      );
+      assert.ok(
+        group.match.test(entry),
+        `${group.name}: nightlyExcludes entry "${entry}" is not matched by the group's regex — it was never in scope`
+      );
+      assert.ok(
+        !group.nightly.some((nightlyEntry) => entryMatches(nightlyEntry, entry)),
+        `${group.name}: "${entry}" is covered by nightly and listed in nightlyExcludes — pick one`
+      );
+    }
+  }
+});
+
+test("nightlyTests are tracked subsets of the group's umbrella tests", () => {
+  for (const group of MUTATION_GROUPS) {
+    assert.notEqual(
+      group.nightlyTests?.length,
+      0,
+      `${group.name}: nightlyTests must not be an empty array — omit the field to keep the umbrella tests (an empty node --test arg list runs full default discovery per mutant)`
+    );
+    for (const entry of group.nightlyTests ?? []) {
+      assert.ok(
+        matchesTrackedFile(entry),
+        `${group.name}: nightlyTests entry "${entry}" matches no tracked file`
+      );
+      assert.ok(
+        (group.tests ?? []).some((testEntry) => entryMatches(testEntry, entry)),
+        `${group.name}: nightlyTests entry "${entry}" is not covered by the group's umbrella tests — the nightly oracle cannot drift from the reviewed test set`
+      );
+    }
+  }
+});
+
+test("nightly kill commands use the unit's own tests; the changed-code lane keeps the umbrella", () => {
+  // With coverageAnalysis "off" every mutant re-runs the whole command, so the
+  // nightly per-mutant cost is the kill command's runtime — the umbrella
+  // operator-loop suite (73 files) costs hours/night, the unit oracle minutes.
+  const inbox = MUTATION_GROUPS.find((entry) => entry.name === "inbox-authorization");
+  const nightlyCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], true)
+    .commandRunner.command;
+  const changedCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], false)
+    .commandRunner.command;
+  assert.match(nightlyCommand, /test\/operator-loop\/inbox-capability\.test\.mjs/);
+  assert.doesNotMatch(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
+  assert.match(changedCommand, /test\/operator-loop\/\*\.test\.mjs/);
+
+  const updateSafety = MUTATION_GROUPS.find((entry) => entry.name === "update-safety");
+  const updateNightly = configFor(updateSafety, ["scripts/toolkit-merge.mjs"], true).commandRunner
+    .command;
+  assert.match(updateNightly, /test\/toolkit-merge\.test\.mjs/);
+  assert.doesNotMatch(updateNightly, /toolkit-update\.test\.mjs/);
+  // A group without nightlyTests keeps its umbrella tests in both lanes.
+  const bugbot = MUTATION_GROUPS.find((entry) => entry.name === "bugbot-security");
+  for (const nightly of [false, true]) {
+    assert.match(
+      configFor(bugbot, ["hooks/local-bugbot-gate.mjs"], nightly).commandRunner.command,
+      /test\/local-bugbot-gate\.test\.mjs test\/review-bugbot\.test\.mjs/
+    );
+  }
+});
+
+test("the nightly workflow matrix lists exactly the mutation groups", () => {
+  // The matrix in mutation.yml is a hand-written list; a group added or
+  // renamed in MUTATION_GROUPS without a matching leg would silently never
+  // run nightly (or a ghost leg would fail on --group validation).
+  const workflow = readFileSync(path.join(ROOT, ".github", "workflows", "mutation.yml"), "utf8");
+  const matrixBlock = /matrix:\s*\n(?:\s*#[^\n]*\n)*\s*group:\s*\n((?:\s*-\s*\S+\n)+)/.exec(
+    workflow
+  );
+  assert.ok(matrixBlock, "mutation.yml must declare a matrix group list");
+  const legs = matrixBlock[1]
+    .trim()
+    .split("\n")
+    .map((line) => line.replace(/^\s*-\s*/, "").trim());
+  assert.deepEqual(
+    legs,
+    MUTATION_GROUPS.map((group) => group.name),
+    "mutation.yml matrix legs must match MUTATION_GROUPS exactly (same names, same order)"
+  );
 });
 
 test("the sync-plan safety gate lives in scripts/sync-plan.mjs and is mutation-covered", () => {
