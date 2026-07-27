@@ -24,6 +24,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SHIP_GATE_PLAN_MARKER = "SHIP_GATE plan pending";
+const SHIP_GATE_MERGE_MARKER = "SHIP_GATE merge pending";
 
 function seedRubric(repo) {
   const rubricSrc = path.join(REPO_ROOT, ".claude", "rubrics", "spec-readiness.md");
@@ -41,6 +43,21 @@ function check(label, cond) {
   else {
     console.log(`  ${RED}✗${NC} ${label}`);
     failed++;
+  }
+}
+
+async function captureStdout(run, onLine = () => {}) {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => {
+    const line = args.map(String).join(" ");
+    lines.push(line);
+    onLine(line);
+  };
+  try {
+    return { result: await run(), lines };
+  } finally {
+    console.log = original;
   }
 }
 
@@ -210,6 +227,74 @@ console.log("resolveGates: --approve-* yields 'approved'; --auto still wins");
   check("merge still blocked", g1.merge === "blocked");
   const g2 = resolveGates({ auto: true, approvePlan: true, isTty: false });
   check("--auto wins over --approve-plan (skip)", g2.plan === "skip");
+}
+
+console.log("interactive SHIP_GATE markers are exact and precede their prompts");
+{
+  const planEvents = [];
+  const planDeps = makeDeps({
+    isTty: true,
+    confirm: async (prompt) => {
+      planEvents.push(`prompt:${prompt}`);
+      return false;
+    },
+  });
+  const plan = await captureStdout(
+    async () => {
+      const result = await runShip({
+        repo: planDeps.repo,
+        issue: "AIO-163",
+        opts: optsFor(),
+        deps: planDeps,
+      });
+      planEvents.push(`result:${result.code}`);
+      return result;
+    },
+    (line) => planEvents.push(`stdout:${line}`)
+  );
+  const planMarkerAt = plan.lines.indexOf(SHIP_GATE_PLAN_MARKER);
+  const planPromptAt = planEvents.findIndex((event) => event.startsWith("prompt:"));
+  check("plan marker is an exact standalone stdout write", planMarkerAt >= 0);
+  check(
+    "plan marker precedes interactive confirmation",
+    planEvents.indexOf(`stdout:${SHIP_GATE_PLAN_MARKER}`) < planPromptAt
+  );
+  check("plan rejection remains the documented exit", plan.result.code === SHIP_EXIT.PLAN_REJECTED);
+  rmSync(planDeps.repo, { recursive: true, force: true });
+
+  const mergeEvents = [];
+  const mergeDeps = makeDeps({
+    isTty: true,
+    confirm: async (prompt) => {
+      mergeEvents.push(`prompt:${prompt}`);
+      return false;
+    },
+  });
+  const merge = await captureStdout(
+    async () => {
+      const result = await runShip({
+        repo: mergeDeps.repo,
+        issue: "AIO-163",
+        opts: optsFor({ auto: true }),
+        deps: mergeDeps,
+      });
+      mergeEvents.push(`result:${result.code}`);
+      return result;
+    },
+    (line) => mergeEvents.push(`stdout:${line}`)
+  );
+  const mergeMarkerAt = merge.lines.indexOf(SHIP_GATE_MERGE_MARKER);
+  const mergePromptAt = mergeEvents.findIndex((event) => event.startsWith("prompt:"));
+  check("merge marker is an exact standalone stdout write", mergeMarkerAt >= 0);
+  check(
+    "merge marker precedes interactive confirmation",
+    mergeEvents.indexOf(`stdout:${SHIP_GATE_MERGE_MARKER}`) < mergePromptAt
+  );
+  check(
+    "merge rejection remains the documented exit",
+    merge.result.code === SHIP_EXIT.MERGE_REJECTED
+  );
+  rmSync(mergeDeps.repo, { recursive: true, force: true });
 }
 
 console.log("pre-feature resume checkpoint without builder skill evidence fails closed");
