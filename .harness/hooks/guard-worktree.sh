@@ -60,13 +60,17 @@ EXEMPT_BASENAMES=${HARNESS_PRIMARY_EXEMPT:-aios.yaml}
 # origin/HEAD and init.defaultBranch when they resolve (covers develop/trunk defaults).
 # Detached HEAD (branch "HEAD") is not a feature branch -> allowed (bisect / tags).
 is_default_branch() {
-  [ "$1" = "HEAD" ] && return 0
-  if [ -n "${HARNESS_DEFAULT_BRANCH:-}" ]; then [ "$1" = "$HARNESS_DEFAULT_BRANCH" ]; return; fi
-  case "$1" in main|master) return 0 ;; esac
-  _oh=$(git -C "$2" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-  [ -n "$_oh" ] && [ "$1" = "$_oh" ] && return 0
-  _id=$(git -C "$2" config --get init.defaultBranch 2>/dev/null)
-  [ -n "$_id" ] && [ "$1" = "$_id" ] && return 0
+  _b=$1; _dir=$2
+  [ "$_b" = "HEAD" ] && return 0
+  if [ -n "${HARNESS_DEFAULT_BRANCH:-}" ]; then [ "$_b" = "$HARNESS_DEFAULT_BRANCH" ]; return; fi
+  case "$_b" in
+    main|master) return 0 ;;
+    *) ;;
+  esac
+  _oh=$(git -C "$_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+  [ -n "$_oh" ] && [ "$_b" = "$_oh" ] && return 0
+  _id=$(git -C "$_dir" config --get init.defaultBranch 2>/dev/null)
+  [ -n "$_id" ] && [ "$_b" = "$_id" ] && return 0
   return 1
 }
 
@@ -87,9 +91,10 @@ probe() {
 }
 
 block() {
+  _reason=$1; _detail=$2
   {
-    echo "BLOCKED by guard-worktree: $1"
-    echo "$2"
+    echo "BLOCKED by guard-worktree: $_reason"
+    echo "$_detail"
     echo "Fix: create a dedicated worktree instead —"
     echo "  aios worktree add feat/<name>        # (or: git worktree add -b feat/<name> ../<repo>-worktrees/<name> origin/<default>)"
     echo "Override for a genuine primary-checkout action: HARNESS_ALLOW_PRIMARY_CHECKOUT=1"
@@ -127,7 +132,9 @@ target_dir() {
 # short (`-p`) and long (`--no-pager`) options are stripped generically so a new global
 # option doesn't silently reopen a bypass. Stops at the first non-option token.
 norm_git() {
-  printf '%s' "$1" | sed -E "s#(^|[^[:alnum:]_])git[[:space:]]+(((-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)(=|[[:space:]]+)([^[:space:]'\"]|'[^']*'|\"[^\"]*\")+|--exec-path(=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")+)?|--[A-Za-z][A-Za-z-]*|-[A-Za-z])[[:space:]]+)+#\1git #g"
+  _cmd=$1
+  printf '%s' "$_cmd" | sed -E "s#(^|[^[:alnum:]_])git[[:space:]]+(((-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)(=|[[:space:]]+)([^[:space:]'\"]|'[^']*'|\"[^\"]*\")+|--exec-path(=([^[:space:]'\"]|'[^']*'|\"[^\"]*\")+)?|--[A-Za-z][A-Za-z-]*|-[A-Za-z])[[:space:]]+)+#\1git #g"
+  return
 }
 
 CWD=$(printf '%s' "$EVENT" | jq -r '.cwd // empty')

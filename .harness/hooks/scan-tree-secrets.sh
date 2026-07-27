@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATTERNS_FILE="$ROOT/hooks/secret-patterns.txt"
 SCAN_DIR="${1:-$ROOT}"
 
-if [ ! -f "$PATTERNS_FILE" ]; then
+if [[ ! -f "$PATTERNS_FILE" ]]; then
   echo "scan-tree-secrets: patterns file not found: $PATTERNS_FILE" >&2
   exit 1
 fi
@@ -47,7 +47,7 @@ while IFS= read -r -d '' FILE; do
     continue
   fi
   ABS="$TOPLEVEL/$FILE"
-  [ -f "$ABS" ] || continue
+  [[ -f "$ABS" ]] || continue
   if grep -Eq -f "$PATTERNS_FILE" -- "$ABS" 2>/dev/null; then
     echo "POTENTIAL SECRET: $FILE" >&2
     grep -En -f "$PATTERNS_FILE" -- "$ABS" >&2 || true
@@ -55,7 +55,7 @@ while IFS= read -r -d '' FILE; do
   fi
 done < <(git -C "$TOPLEVEL" ls-files -z)
 
-if [ "$FOUND" -ne 0 ]; then
+if [[ "$FOUND" -ne 0 ]]; then
   echo "scan-tree-secrets: potential secrets found in tracked files (see above)" >&2
   exit 1
 fi

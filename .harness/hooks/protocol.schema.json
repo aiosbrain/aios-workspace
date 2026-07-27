@@ -8,7 +8,15 @@
   "properties": {
     "protocol_version": { "enum": ["1.0", "1.1"] },
     "event": {
-      "enum": ["pre_edit", "pre_command", "post_edit", "stop", "session_start", "subagent_start", "user_prompt_submit"]
+      "enum": [
+        "pre_edit",
+        "pre_command",
+        "post_edit",
+        "stop",
+        "session_start",
+        "subagent_start",
+        "user_prompt_submit"
+      ]
     },
     "runtime": {
       "type": "object",

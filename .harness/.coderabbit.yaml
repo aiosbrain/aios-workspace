@@ -69,7 +69,7 @@ reviews:
     - "!**/*.lock"
     - "!package-lock.json"
     - "!code-review-*.md"
-    - "!evals/**/results/**"     # eval output artifacts, not source
+    - "!evals/**/results/**" # eval output artifacts, not source
 
   path_instructions:
     - path: "skills/**"
@@ -157,9 +157,9 @@ reviews:
     autofix:
       enabled: true
     unit_tests:
-      enabled: false      # PRO+ ONLY
+      enabled: false # PRO+ ONLY
     simplify:
-      enabled: false      # PRO+ ONLY
+      enabled: false # PRO+ ONLY
 
   tools:
     eslint:
@@ -171,7 +171,7 @@ reviews:
     markdownlint:
       enabled: false
     languagetool:
-      enabled: false      # this repo is nearly all prose; would be pure noise
+      enabled: false # this repo is nearly all prose; would be pure noise
     # The highest-value tool here: scans SKILL.md manifests and MCP configs for
     # malicious patterns (prompt injection, exfiltration, unsafe tool grants).
     skillspector:

@@ -19,14 +19,14 @@ REPO_ROOT=""
 declare -a WANT=()
 ALL=0
 
-while [ $# -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
-      [ -n "${2:-}" ] || { echo "install: --repo requires a directory" >&2; exit 2; }
+      [[ -n "${2:-}" ]] || { echo "install: --repo requires a directory" >&2; exit 2; }
       REPO_ROOT="$2"; shift 2
       ;;
     --runtime)
-      [ -n "${2:-}" ] || { echo "install: --runtime requires a name" >&2; exit 2; }
+      [[ -n "${2:-}" ]] || { echo "install: --runtime requires a name" >&2; exit 2; }
       WANT+=("$2"); shift 2
       ;;
     --all) ALL=1; shift ;;
@@ -35,7 +35,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -z "$REPO_ROOT" ]; then
+if [[ -z "$REPO_ROOT" ]]; then
   case "$HARNESS_DIR" in
     */.harness) REPO_ROOT="$(dirname "$HARNESS_DIR")" ;;
     *) REPO_ROOT="$(git -C "$HARNESS_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)" ;;
@@ -54,13 +54,13 @@ for rt in ${WANT[@]+"${WANT[@]}"}; do
   esac
 done
 
-if [ "$ALL" = 1 ]; then WANT=(claude-code codex opencode cursor); fi
-if [ ${#WANT[@]} -eq 0 ]; then
-  [ -d "$REPO_ROOT/.claude" ]   && WANT+=(claude-code)
-  [ -d "$REPO_ROOT/.codex" ]    && WANT+=(codex)
-  [ -d "$REPO_ROOT/.opencode" ] && WANT+=(opencode)
-  [ -d "$REPO_ROOT/.cursor" ]   && WANT+=(cursor)
-  [ ${#WANT[@]} -eq 0 ] && WANT=(claude-code)
+if [[ "$ALL" = 1 ]]; then WANT=(claude-code codex opencode cursor); fi
+if [[ ${#WANT[@]} -eq 0 ]]; then
+  [[ -d "$REPO_ROOT/.claude" ]]   && WANT+=(claude-code)
+  [[ -d "$REPO_ROOT/.codex" ]]    && WANT+=(codex)
+  [[ -d "$REPO_ROOT/.opencode" ]] && WANT+=(opencode)
+  [[ -d "$REPO_ROOT/.cursor" ]]   && WANT+=(cursor)
+  [[ ${#WANT[@]} -eq 0 ]] && WANT=(claude-code)
 fi
 
 # Keep repeated --runtime arguments idempotent too.
@@ -68,9 +68,9 @@ declare -a UNIQUE_WANT=()
 for rt in "${WANT[@]}"; do
   FOUND=0
   for existing in ${UNIQUE_WANT[@]+"${UNIQUE_WANT[@]}"}; do
-    [ "$existing" = "$rt" ] && FOUND=1
+    [[ "$existing" = "$rt" ]] && FOUND=1
   done
-  [ "$FOUND" = 1 ] || UNIQUE_WANT+=("$rt")
+  [[ "$FOUND" = 1 ]] || UNIQUE_WANT+=("$rt")
 done
 WANT=("${UNIQUE_WANT[@]}")
 
@@ -82,63 +82,68 @@ command -v jq >/dev/null 2>&1 || {
 echo "[harness] runtimes: ${WANT[*]}"
 
 path_exists() {
-  [ -e "$1" ] || [ -L "$1" ]
+  local p; p="$1"
+  [[ -e "$p" ]] || [[ -L "$p" ]]
 }
 
 reject_symlink_dir() {
-  if [ -L "$1" ]; then
-    echo "install: refusing symlinked destination directory $1" >&2
+  local dir; dir="$1"
+  if [[ -L "$dir" ]]; then
+    echo "install: refusing symlinked destination directory $dir" >&2
     return 1
   fi
 }
 
 seed() {  # seed <src> <dst> — copy only when dst is absent
-  if path_exists "$2"; then echo "[harness] keep   $2"; else mkdir -p "$(dirname "$2")"; cp "$1" "$2"; echo "[harness] seed   $2"; fi
+  local src dst; src="$1"; dst="$2"
+  if path_exists "$dst"; then echo "[harness] keep   $dst"; else mkdir -p "$(dirname "$dst")"; cp "$src" "$dst"; echo "[harness] seed   $dst"; fi
 }
 
 install_json() {  # install_json <src> <dst> — strip $comment; never overwrite an existing file
-  local tmp; tmp="$(mktemp)"
-  if ! jq 'del(."$comment")' "$1" > "$tmp"; then
+  local src dst tmp; src="$1"; dst="$2"; tmp="$(mktemp)"
+  if ! jq 'del(."$comment")' "$src" > "$tmp"; then
     rm -f "$tmp"
-    echo "install: failed to normalize $1" >&2
+    echo "install: failed to normalize $src" >&2
     return 1
   fi
-  if ! path_exists "$2"; then
-    mkdir -p "$(dirname "$2")"; cp "$tmp" "$2"; echo "[harness] write  $2"
-  elif cmp -s "$tmp" "$2"; then
-    echo "[harness] ok     $2"
+  if ! path_exists "$dst"; then
+    mkdir -p "$(dirname "$dst")"; cp "$tmp" "$dst"; echo "[harness] write  $dst"
+  elif cmp -s "$tmp" "$dst"; then
+    echo "[harness] ok     $dst"
   else
-    if path_exists "$2.harness-incoming"; then
+    if path_exists "$dst.harness-incoming"; then
       rm -f "$tmp"
-      echo "install: refusing to overwrite existing merge artifact $2.harness-incoming" >&2
+      echo "install: refusing to overwrite existing merge artifact $dst.harness-incoming" >&2
       return 1
     fi
-    cp "$tmp" "$2.harness-incoming"; echo "[harness] MERGE  $2 exists -> wrote $2.harness-incoming (merge its keys; never auto-overwritten)"
+    cp "$tmp" "$dst.harness-incoming"; echo "[harness] MERGE  $dst exists -> wrote $dst.harness-incoming (merge its keys; never auto-overwritten)"
   fi
   rm -f "$tmp"
 }
 
 install_file() {  # install_file <src> <dst> — seed when absent; NEVER overwrite a differing file
-  if ! path_exists "$2"; then
-    mkdir -p "$(dirname "$2")"; cp "$1" "$2"
-  elif cmp -s "$1" "$2"; then
+  local src dst; src="$1"; dst="$2"
+  if ! path_exists "$dst"; then
+    mkdir -p "$(dirname "$dst")"; cp "$src" "$dst"
+  elif cmp -s "$src" "$dst"; then
     :
   else
-    if path_exists "$2.harness-incoming"; then
-      echo "install: refusing to overwrite existing merge artifact $2.harness-incoming" >&2
+    if path_exists "$dst.harness-incoming"; then
+      echo "install: refusing to overwrite existing merge artifact $dst.harness-incoming" >&2
       return 1
     fi
-    cp "$1" "$2.harness-incoming"
-    echo "[harness] MERGE  $2 differs -> wrote $2.harness-incoming (local edits kept; never auto-overwritten)"
+    cp "$src" "$dst.harness-incoming"
+    echo "[harness] MERGE  $dst differs -> wrote $dst.harness-incoming (local edits kept; never auto-overwritten)"
   fi
 }
 
 sync_tree() {  # sync_tree <src-dir> <dst-dir> — install_file for every file in the tree
-  local f
+  local src_dir dst_dir f
+  src_dir="$1"; dst_dir="$2"
   while IFS= read -r -d '' f; do
     f="${f#./}"
-    install_file "$1/$f" "$2/$f" || return 1
-  done < <(cd "$1" && find . -type f -print0)
+    install_file "$src_dir/$f" "$dst_dir/$f" || return 1
+  done < <(cd "$src_dir" && find . -type f -print0)
 }
 
 # Abort before any writes if pending configuration merge work already exists.
@@ -168,6 +173,7 @@ for rt in "${WANT[@]}"; do
       reject_symlink_dir "$REPO_ROOT/.cursor/rules"
       CONFIG_DST="$REPO_ROOT/.cursor/hooks.json"
       ;;
+    *) ;;
   esac
   if path_exists "$CONFIG_DST.harness-incoming"; then
     echo "install: refusing to overwrite existing merge artifact $CONFIG_DST.harness-incoming" >&2
@@ -230,6 +236,7 @@ for rt in "${WANT[@]}"; do
         printf '%s\n' "$ROUTING_MAP"
       } > "$REPO_ROOT/.cursor/rules/harness-context.mdc"
       echo "[harness] write  $REPO_ROOT/.cursor/rules/harness-context.mdc (generated)" ;;
+    *) ;;
   esac
   echo "[harness] wired  $rt"
 done

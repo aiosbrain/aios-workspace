@@ -24,32 +24,32 @@
 version: 1
 
 lanes:
-  frontier:        # planning, architecture, review, merge decisions, hard debugging
+  frontier: # planning, architecture, review, merge decisions, hard debugging
     use_for: [plan, review, verify, merge-gate, architecture, hard-debugging]
     chain:
       - provider: anthropic
-        model: claude-opus        # pin your current frontier tier
+        model: claude-opus # pin your current frontier tier
       - provider: openai
-        model: gpt-5              # cross-lab fallback keeps you unblocked
+        model: gpt-5 # cross-lab fallback keeps you unblocked
     notes: >
       The Oracle. Use the smartest model with thinking for anything whose
       mistakes are expensive to catch. E1: it steers less, so it's often
       cheaper end-to-end than a "cheap" model you babysit.
 
-  bulk:            # high-volume implementation against an approved plan
+  bulk: # high-volume implementation against an approved plan
     use_for: [implement, refactor-mechanical, test-writing, migration-sweeps]
     chain:
-      - provider: zhipu           # GLM coding plan — Anthropic-compatible endpoint
-        model: glm-coding         # pin the current GLM coding tier
+      - provider: zhipu # GLM coding plan — Anthropic-compatible endpoint
+        model: glm-coding # pin the current GLM coding tier
         endpoint_env: GLM_BASE_URL
         key_env: GLM_AUTH_TOKEN
       - provider: anthropic
-        model: claude-sonnet      # fallback when the bulk lane is down/unavailable
+        model: claude-sonnet # fallback when the bulk lane is down/unavailable
     notes: >
       The Worker. Large context, ~5-8x cheaper than frontier. Everything it
       produces goes through the frontier review gate (MG6) — no exceptions.
 
-  utility:         # cheap, fast, low-stakes turns
+  utility: # cheap, fast, low-stakes turns
     use_for: [search, summarize-logs, grep-triage, commit-messages, formatting-chores]
     chain:
       - provider: moonshot
@@ -69,6 +69,6 @@ policies:
   fallback:
     rule: "on provider error/timeout, walk the chain in order; never silently downgrade frontier work to a cheaper lane"
   concurrency:
-    per_provider_max: 4          # respect provider rate limits when parallelizing
+    per_provider_max: 4 # respect provider rate limits when parallelizing
   provenance:
     rule: "record which lane produced each change (commit trailer or PR label) so review gates and postmortems can see it"

@@ -44,7 +44,7 @@ jobs:
 
       # conformance.test.sh shells out to `bun test` for the OpenCode adapter suite,
       # so bun must be present here even though plugin-test also runs it directly.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: bun test evals/opencode-plugin.test.ts
@@ -86,7 +86,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install jsonschema
+      - run: "pip install --only-binary :all: jsonschema==4.26.0"
       - name: Validate evals/judge.schema.json + evals/fixtures/judge/*
         run: python3 evals/validate_judge_schema.py
 

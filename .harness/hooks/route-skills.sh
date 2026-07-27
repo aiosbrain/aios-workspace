@@ -35,7 +35,8 @@ ROOT=$(CDPATH= cd -P -- "$SCRIPT_DIR/.." && pwd)
 # CRLF is stripped per line (a Windows checkout must not silently kill routing);
 # frontmatter only counts when the opening fence is LINE 1 (no body smuggling).
 raw_trigger_items() {
-  head -n 80 "$1" | awk '
+  _file=$1
+  head -n 80 "$_file" | awk '
     { sub(/\r$/, "") }
     NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit }
     /^---[[:space:]]*$/ { n++; next }
@@ -49,13 +50,15 @@ raw_trigger_items() {
         } else if ($0 !~ /^[[:space:]]*(#.*)?$/) { t = 0 }
       }
     }'
+  return
 }
 
 # extract_triggers <file> — only PLAIN-SCALAR literals (quotes stripped). Nested
 # maps (`- name: x`), flow collections (`- [a]`), block scalars (`- |`), and YAML
 # anchors/aliases are NOT literal phrases and never become triggers.
 extract_triggers() {
-  raw_trigger_items "$1" | awk '
+  _file=$1
+  raw_trigger_items "$_file" | awk '
     /^[\[{|>&*]/ { next }
     /:[[:space:]]/ { next }
     /:$/ { next }
@@ -63,28 +66,33 @@ extract_triggers() {
       gsub(/^["'\''"]|["'\''"]$/, "")
       if ($0 != "") print
     }'
+  return
 }
 
 # has_triggers_key <file> — 0 when the frontmatter declares a triggers: key at all.
 has_triggers_key() {
-  head -n 80 "$1" | awk '
+  _file=$1
+  head -n 80 "$_file" | awk '
     { sub(/\r$/, "") }
     NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit 1 }
     /^---[[:space:]]*$/ { n++; next }
     n >= 2 { exit (found ? 0 : 1) }
     n == 1 && /^triggers:/ { found = 1; exit }
     END { exit found ? 0 : 1 }'
+  return
 }
 
 # has_inline_triggers <file> — 0 when the FRONTMATTER (only) uses the inline form.
 has_inline_triggers() {
-  head -n 80 "$1" | awk '
+  _file=$1
+  head -n 80 "$_file" | awk '
     { sub(/\r$/, "") }
     NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit 1 }
     /^---[[:space:]]*$/ { n++; next }
     n >= 2 { exit (found ? 0 : 1) }
     n == 1 && /^triggers:[[:space:]]*\[/ { found = 1; exit }
     END { exit found ? 0 : 1 }'
+  return
 }
 
 # --emit-map: print the literal trigger→skill routing map (used by install.sh to

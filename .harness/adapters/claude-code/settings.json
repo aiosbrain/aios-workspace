@@ -36,21 +36,30 @@
       {
         "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code session_start inject-context.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code session_start inject-context.sh"
+          }
         ]
       }
     ],
     "SubagentStart": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code subagent_start inject-context.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code subagent_start inject-context.sh"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code user_prompt_submit route-skills.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code user_prompt_submit route-skills.sh"
+          }
         ]
       }
     ],
@@ -58,16 +67,31 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-secrets.sh" },
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-protected-paths.sh" },
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-worktree.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-secrets.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-protected-paths.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_edit guard-worktree.sh"
+          }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_command guard-destructive.sh" },
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_command guard-worktree.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_command guard-destructive.sh"
+          },
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code pre_command guard-worktree.sh"
+          }
         ]
       }
     ],
@@ -75,14 +99,20 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code post_edit post-edit-format.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code post_edit post-edit-format.sh"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code stop stop-verify-gate.sh" }
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/run-hook.sh\" claude-code stop stop-verify-gate.sh"
+          }
         ]
       }
     ]
