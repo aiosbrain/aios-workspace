@@ -40,7 +40,7 @@
 
 | Tool | Status | How | What you get |
 |---|---|---|---|
-| **Granola** | ○ available | CLI | Pull meeting notes/transcripts to feed transcript-decisions and weekly-synthesis. |
+| **Granola** | ○ available | CLI | Pull meeting notes/transcripts into 1-inbox/transcripts/ for the typed `aios transcripts` review CLI and weekly-synthesis. |
 
 ## Time Tracking
 
