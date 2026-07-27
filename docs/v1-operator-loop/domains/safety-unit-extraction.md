@@ -32,7 +32,7 @@ drift-guard test to stay honest. Building that mechanism only to delete it here 
 that leaves a speculative parser behind. Extraction gets the same denominator with no new
 mechanism at all.
 
-The repo already has the seam. `scripts/aios.mjs` imports from `workspace-parse.mjs`,
+The repo already has the seam. `scripts/aios.mjs` imports from `scripts/workspace-parse.mjs`,
 `scripts/tasks-table.mjs`, `scripts/brain-client.mjs`, `scripts/cli-common.mjs`, and `scripts/cli/dispatch.mjs` — the decomposition
 pattern is established and the safety gate is simply one of the units that never got moved out.
 
@@ -93,13 +93,33 @@ output format, or exit code changes.
   the access-governance group.
 - **`scripts/aios.mjs`** — delete lines 254–412; add one import from `./sync-plan.mjs`. Any helper
   that becomes unused in `scripts/aios.mjs` as a result is removed from its import list (`lint` enforces).
-- **`scripts/run-mutation.mjs`** — `access-governance` `nightly` entry becomes
-  `scripts/sync-plan.mjs`; the `match` regex gains `sync-plan` and drops `aios`. Both the nightly
-  and changed-code lanes then scope correctly by construction, with no range mechanism.
+- **`scripts/run-mutation.mjs`** — in the `access-governance` group, the **`scripts/aios.mjs`
+  entry is replaced by `scripts/sync-plan.mjs`**; the group's other two entries are untouched. The
+  array in full, so there is no ambiguity about scope:
+
+  ```js
+  nightly: [
+    "hooks/file-governance-guard.mjs",
+    "scripts/sync-plan.mjs",   // was "scripts/aios.mjs"
+    "scripts/brain-client.mjs",
+  ],
+  match: /^(hooks\/file-governance-guard|scripts\/sync-plan|scripts\/brain-client)\.mjs$/,
+  ```
+
+  This is a one-for-one swap, **not** a narrowing to a single file: the group keeps mutating all
+  three of its units and its denominator drops only by the 2,878 mutants that were never in scope
+  to begin with. Both the nightly and changed-code lanes then scope correctly by construction, with
+  no range mechanism.
+
 - **`test/mutation-config.test.mjs`** — line 123 is updated to assert the safety gate now lives in
   `scripts/sync-plan.mjs` and that the group mutates it. AIO-539's `nightlyExcludes` completeness
-  assertion keeps passing unchanged: `scripts/aios.mjs` leaves the group's `match` entirely, so it
-  needs no exclusion entry — the boundary, not a list, is what keeps the claim honest.
+  assertion keeps passing with **`nightlyExcludes: []` unchanged**, and this is checkable rather
+  than asserted: `scripts/aios.mjs` is removed from `match` in the same edit, so it is no longer a
+  file the group claims; `file-governance-guard.mjs` and `brain-client.mjs` stay in **both** `match`
+  and `nightly`, so the `nightly ∪ nightlyExcludes ⊇ match` union stays complete with no new
+  exclusion entries. Were the group instead narrowed to `sync-plan.mjs` alone, those two files
+  would have to move into `nightlyExcludes` — that is precisely the coverage loss this spec does
+  not make.
 
 ## Scope
 
@@ -130,9 +150,13 @@ and any diff hunk inside the moved bodies is a review-blocking signal.
   the behavior-preservation oracle.
 - `node scripts/test-suite.mjs` exits 0; `npm run lint` reports no unused imports in
   `scripts/aios.mjs`.
-- `node scripts/run-mutation.mjs --nightly --group access-governance --list` shows
-  `scripts/sync-plan.mjs` with **no** `:` postfix, and the campaign's mutant count is within ±5%
-  of the ~625 projected for `buildPlan` + the two small files (same code, now bounded by a module).
+- `node scripts/run-mutation.mjs --nightly --group access-governance --list` shows exactly three
+  entries — `hooks/file-governance-guard.mjs`, `scripts/sync-plan.mjs`, `scripts/brain-client.mjs` —
+  and the campaign's mutant count is within ±10% of **~625**: `buildPlan`'s 106 plus
+  `file-governance-guard.mjs`'s 343 and `brain-client.mjs`'s 176, all three measured in the
+  2026-07-26 artifact. (The ±10% band absorbs the four small helpers — `walkFiles`, `loadState`,
+  `saveState`, `contentShaForPush` — that move alongside `buildPlan` and were not separately
+  counted.)
 - The campaign completes in **under 25 minutes** — the `access-governance` leg goes from a
   timeout to a reported score for the first time.
 - `grep -c "^function \(walkFiles\|loadState\|saveState\|contentShaForPush\|buildPlan\)"
