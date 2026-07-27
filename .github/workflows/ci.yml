@@ -221,7 +221,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Download shard coverage data
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-shard-*
           path: coverage-shards
