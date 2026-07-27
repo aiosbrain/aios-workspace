@@ -29,14 +29,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -232,7 +225,10 @@ test("leak-gate: fixed diagnostic vocabulary may overlap a broad configured term
     assert.equal(r.code, 1, `a real source hit must still block:\n${r.out}`);
     assert.match(r.out, /leak-gate: FAILED/);
     assert.ok(!r.out.includes("draft.md"), "the untrusted source path must stay contained");
-    assert.ok(!r.out.includes(`engagement ${broad}`), "the matched source line must stay contained");
+    assert.ok(
+      !r.out.includes(`engagement ${broad}`),
+      "the matched source line must stay contained"
+    );
   });
 });
 
@@ -278,7 +274,11 @@ test("leak-gate: a legacy detail env path cannot truncate the leaking input", ()
     });
 
     assert.equal(r.code, 1, `the original leak must still block:\n${r.out}`);
-    assert.equal(readFileSync(source, "utf8"), original, "the scan input must remain byte-identical");
+    assert.equal(
+      readFileSync(source, "utf8"),
+      original,
+      "the scan input must remain byte-identical"
+    );
     assertNoForbiddenBytes(r.out, "legacy detail path equals source");
   });
 });
