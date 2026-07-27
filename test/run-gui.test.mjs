@@ -17,11 +17,35 @@ function dotenvKeypair() {
 }
 
 import {
+  assertGuiRepo,
   buildGuiClient,
   guiLaunchPlan,
   normalizeGuiLauncherArgs,
   scrubGuiWorkspaceEnv,
 } from "../scripts/run-gui.mjs";
+
+test("assertGuiRepo accepts a marker-bearing workspace and exits(1) on anything else", (t) => {
+  const repo = mkdtempSync(path.join(tmpdir(), "run-gui-repo-"));
+  try {
+    writeFileSync(path.join(repo, "aios.yaml"), "workspace: true\n");
+    assertGuiRepo(repo); // must return, not exit
+
+    rmSync(path.join(repo, "aios.yaml"));
+    const exits = [];
+    const errors = [];
+    t.mock.method(process, "exit", (code) => {
+      exits.push(code);
+    });
+    t.mock.method(console, "error", (line) => {
+      errors.push(String(line));
+    });
+    assertGuiRepo(repo);
+    assert.deepEqual(exits, [1]);
+    assert.ok(errors.some((line) => line.includes("does not look like an AIOS workspace")));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test("builds the GUI client on every launch instead of trusting a stale dist", () => {
   const calls = [];

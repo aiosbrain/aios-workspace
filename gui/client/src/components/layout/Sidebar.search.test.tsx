@@ -69,9 +69,7 @@ beforeEach(() => {
 async function mountSidebar() {
   sessionStorage.setItem("aios.gui.token", "test-token");
   vi.resetModules();
-  const { CockpitProvider } = (await import(
-    "../../state/cockpit"
-  )) as typeof CockpitStateModule;
+  const { CockpitProvider } = (await import("../../state/cockpit")) as typeof CockpitStateModule;
   const { Sidebar } = await import("./Sidebar");
   host = document.createElement("div");
   document.body.appendChild(host);

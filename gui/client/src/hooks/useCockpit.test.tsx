@@ -85,9 +85,10 @@ function installFetch() {
   });
 }
 
-const flush = () => act(async () => {
-  await vi.advanceTimersByTimeAsync(0);
-});
+const flush = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -165,7 +166,12 @@ describe("useCockpit session lifecycle", () => {
     expect(state().sessionUsage).toEqual({ input_tokens: 12, output_tokens: 3 });
 
     await act(async () => {
-      ws.serverEvent({ type: "hello", repo: "/tmp/acme-workspace", runtime: "claude", cost_usd: 1 });
+      ws.serverEvent({
+        type: "hello",
+        repo: "/tmp/acme-workspace",
+        runtime: "claude",
+        cost_usd: 1,
+      });
       await vi.advanceTimersByTimeAsync(0);
     });
 
@@ -178,9 +184,9 @@ describe("useCockpit session lifecycle", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
-    expect(state().messages.some((m) => m.kind === "meta" && m.text.includes("still waiting"))).toBe(
-      true
-    );
+    expect(
+      state().messages.some((m) => m.kind === "meta" && m.text.includes("still waiting"))
+    ).toBe(true);
 
     // a live server event clears the (re-armed) watchdog instead of double-reporting
     await act(async () => {
@@ -293,6 +299,68 @@ describe("useCockpit session lifecycle", () => {
       state().respondPermissionOption(2, "allow-once");
       state().expirePermission(3); // no such pending card → silent no-op
       state().undoMemory("mem-1");
+    });
+    expect(state().permissions).toEqual([]);
+  });
+
+  test("a failed sessions fetch flags chatsLoadFailed instead of faking an empty workspace", async () => {
+    routes["/api/sessions"] = () => errJson(500);
+    const state = await mountHook();
+    expect(state().chatsLoadFailed).toBe(true);
+    expect(state().chats).toEqual([]);
+  });
+
+  test("a failed history replay says so and keeps the session resumable", async () => {
+    routes["/api/sessions/s1"] = () => errJson(500);
+    const state = await mountHook();
+    await act(async () => {
+      state().openChat("s1");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(
+      state().messages.some(
+        (m) => m.kind === "meta" && m.text.includes("Couldn't load this chat's history")
+      )
+    ).toBe(true);
+    expect(state().currentSession).toBe("s1"); // still resumable — new turns work
+  });
+
+  test("permission cards: expiry removes the dead card; a dropped connection cancels the rest", async () => {
+    const state = await mountHook();
+    await act(async () => {
+      state().openChat("s1");
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const ws = FakeWebSocket.instances.at(-1)!;
+    await act(async () => {
+      ws.serverOpen();
+    });
+
+    const perm = (id: number) => ({
+      type: "permission_request",
+      id,
+      tool: "Bash",
+      input: { command: "ls" },
+      options: [],
+      timeoutMs: 30_000,
+    });
+    await act(async () => {
+      ws.serverEvent(perm(7));
+      ws.serverEvent(perm(8));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(state().permissions.map((p) => p.id)).toEqual([7, 8]);
+
+    // server auto-denied #7 at its deadline → the dead card disappears
+    await act(async () => {
+      state().expirePermission(7);
+    });
+    expect(state().permissions.map((p) => p.id)).toEqual([8]);
+
+    // the connection tears down → the remaining card is cancelled, not left clickable
+    await act(async () => {
+      ws.serverClose(1006);
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(state().permissions).toEqual([]);
   });
