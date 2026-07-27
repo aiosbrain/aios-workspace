@@ -18,10 +18,35 @@
 # the standing protection is the local write-time PreToolUse hook + the pre-commit hook,
 # which read the same term file. Set $AIOS_LEAK_TERMS_B64 as a CI secret to enforce in CI too.
 #
+# ── OUTPUT CONTAINMENT: the gate must not become the leak ────────────────────
+# This gate used to print the matching `grep -n` lines. That wrote the very identifier it
+# exists to contain into terminal scrollback AND — because scripts/build.mjs,
+# scripts/promote.mjs and scripts/timeline.mjs each CAPTURE this script's stdout+stderr and
+# re-emit it into findings / review context — into downstream artifacts, and into the CI job
+# log whenever $AIOS_LEAK_TERMS_B64 is set. A CI log is usually readable by more people than
+# the repository the gate is protecting.
+#
+# So this script NEVER writes source-derived matched text, matched line content, or a
+# matching file's path to stdout or stderr. It reports only the category and aggregate
+# count. grep output is discarded; only trusted filenames from the enumerated input set
+# are written to a private temporary file for counting.
+#
 # Usage: scripts/leak-gate.sh [ROOT]   (defaults to repo root)
-# Exit 0 = clean (or no term set configured); exit 1 = at least one forbidden term found.
+# Exit 0 = clean (or no term set configured); exit 1 = at least one forbidden term found;
+# exit 2 = the scan could not complete safely. Any non-zero exit is the fail-closed boundary
+# documented in SECURITY.md and relied on by build.mjs / promote.mjs / timeline.mjs.
 
 set -euo pipefail
+
+# Tracing is disabled BEFORE the term set is sourced, and stays off. `bash -x` (or an
+# inherited SHELLOPTS/BASH_XTRACEFD) would otherwise echo `++ STRONG=<protected term>` as
+# the terms file is sourced — turning the gate into the disclosure. This script is
+# deliberately opaque at this boundary; inspect candidate inputs separately in a trusted
+# local workflow when debugging a hit.
+# The umask clamp also protects every private temporary file this gate creates.
+set +x
+umask 077
+
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # ── load the confidential term set (never hardcoded in this public repo) ─────
@@ -58,7 +83,8 @@ fi
 # (docs/strategy/ was deleted from the repo entirely (PR #336) — nothing strategy-related is
 #  excluded; the full docs tree is scanned like everything else.)
 FILE_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-gate.XXXXXX")
-trap 'rm -f "$FILE_LIST"' EXIT
+MATCH_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-match.XXXXXX")
+trap 'rm -f "$FILE_LIST" "$MATCH_LIST"' EXIT
 
 # $1 = path relative to $ROOT. Emits the path to scan, NUL-terminated, when in scope.
 emit_if_scannable() {
@@ -76,54 +102,115 @@ emit_if_scannable() {
 }
 
 if [ -d "$ROOT" ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  {
+  if ! {
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files -z -o --exclude-standard
   } | while IFS= read -r -d '' rel; do
     emit_if_scannable "$rel"
-  done > "$FILE_LIST"
+  done > "$FILE_LIST"; then
+    echo "leak-gate: ERROR — scan target enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
 elif [ -d "$ROOT" ]; then
-  find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f -print0 2>/dev/null |
+  if ! find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f -print0 2>/dev/null |
     while IFS= read -r -d '' abs; do
       emit_if_scannable "${abs#"$ROOT"/}"
-    done > "$FILE_LIST" || true
+    done > "$FILE_LIST"; then
+    echo "leak-gate: ERROR — scan target enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
 else
   # A single file (aios promote scans one copied deliverable).
   printf '%s\0' "$ROOT" > "$FILE_LIST"
 fi
 
-fail=0
-hit() { echo "LEAK: $1"; echo "$2" | sed 's/^/    /'; fail=1; }
+# Top-level path segments that are safe to name in output. An ALLOWLIST, not a denylist:
+# a directory can itself be named after a protected client, so anything unrecognised is
+# reported as "location withheld".
+SAFE_SEGMENTS='0-context 1-inbox 2-work 3-log 4-shared 5-personal 6-business .claude .github docs examples gui hooks scaffold scripts src src-tauri test validation'
 
-# `grep -I` still skips binary files; the file list only decides WHICH files are opened.
-# Guard the empty list: xargs with no input would run grep with no file operands, which
-# reads stdin and hangs.
-sweep() { # $1 = extra grep flag(s) or "", $2 = pattern
+# $1 = absolute path of a matching file. Echoes an allowlisted top-level segment, or "".
+sanitize_location() {
+  local rel seg
+  rel="${1#"$ROOT"/}"
+  if [ "$rel" = "$1" ]; then return 0; fi   # ROOT is a single file: its name may be sensitive
+  seg="${rel%%/*}"
+  if [ "$seg" = "$rel" ]; then return 0; fi # file at the top level: no directory to name
+  case "$seg" in ""|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  case " $SAFE_SEGMENTS " in *" $seg "*) printf '%s' "$seg" ;; esac
+}
+
+fail=0
+
+# Accumulators for the current category, filled by tally_match.
+_count=0
+_locs=""
+
+tally_match() { # $1 = absolute path of a matching file
+  local loc
+  _count=$((_count + 1))
+  loc=$(sanitize_location "$1")
+  if [ -n "$loc" ]; then
+    case " $_locs " in *" $loc "*) ;; *) _locs="${_locs:+$_locs, }$loc" ;; esac
+  fi
+}
+
+# Scan one file at a time so grep's three-state result remains observable:
+#   0 = match, 1 = no match, >1 = invalid regex / unreadable input / scanner failure.
+# `xargs grep || true` cannot preserve that distinction and previously turned a malformed
+# configured regex into CLEAN. Match content is redirected away; only the trusted filename
+# enters MATCH_LIST, NUL-terminated.
+scan() { # $1 = extra grep flag(s) or "", $2 = pattern, $3 = human category label
   [ -s "$FILE_LIST" ] || return 0
-  # shellcheck disable=SC2086
-  # -H is required: with an explicit file list, grep omits the filename prefix whenever a
-  # batch happens to contain exactly one file (recursive grep always printed it), so a hit
-  # in the last xargs batch would be reported with no path.
-  xargs -0 grep -EInH $1 -e "$2" -- < "$FILE_LIST" 2>/dev/null || true
+  : > "$MATCH_LIST"
+  local extra="$1" pattern="$2" f rc
+  while IFS= read -r -d '' f; do
+    rc=0
+    if [ -n "$extra" ]; then
+      grep -EI "$extra" -e "$pattern" -- "$f" >/dev/null 2>&1 || rc=$?
+    else
+      grep -EI -e "$pattern" -- "$f" >/dev/null 2>&1 || rc=$?
+    fi
+    case "$rc" in
+      0) printf '%s\0' "$f" >> "$MATCH_LIST" ;;
+      1) ;;
+      *)
+        echo "leak-gate: ERROR — scan could not complete; refusing to report clean." >&2
+        exit 2
+        ;;
+    esac
+  done < "$FILE_LIST"
+  [ -s "$MATCH_LIST" ] || return 0
+  fail=1
+
+  _count=0
+  _locs=""
+  while IFS= read -r -d '' f; do tally_match "$f"; done < "$MATCH_LIST"
+
+  local where="location withheld"
+  [ -n "$_locs" ] && where="under: $_locs"
+  printf '  %-52s %d file(s)  %s\n' "$3" "$_count" "$where"
+
 }
 
 if [ -n "${STRONG:-}" ]; then
-  out=$(sweep -i "$STRONG")
-  [ -n "$out" ] && hit "client/person/firm identifier (substring)" "$out"
+  scan -i "$STRONG" "client/person/firm identifier (substring)"
 fi
 if [ -n "${WORDS:-}" ]; then
-  out=$(sweep -w "$WORDS")
-  [ -n "$out" ] && hit "client/person identifier (word)" "$out"
+  scan -w "$WORDS" "client/person identifier (word)"
 fi
 if [ -n "${PATTERNS:-}" ]; then
-  out=$(sweep "" "$PATTERNS")
-  [ -n "$out" ] && hit "business-data pattern (ticket/CO/invoice/amount)" "$out"
+  scan "" "$PATTERNS" "business-data pattern (ticket/CO/invoice/amount)"
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "leak-gate: CLEAN — no forbidden identifiers found under $ROOT"
+  # $ROOT is deliberately NOT echoed: callers pass arbitrary paths (aios promote passes a
+  # single deliverable, aios timeline a render dir) and a path can itself carry a protected
+  # identifier. The literal "leak-gate: CLEAN" prefix is the asserted contract.
+  echo "leak-gate: CLEAN — no forbidden identifiers found."
   exit 0
 else
+  echo "  matched source content and untrusted paths are withheld on purpose."
   echo "leak-gate: FAILED — forbidden identifiers above must be removed."
   exit 1
 fi

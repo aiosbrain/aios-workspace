@@ -169,18 +169,22 @@ test("leak-gate: a gitignored tree is invisible; tracked and untracked-non-ignor
     assert.match(clean.out, /leak-gate: CLEAN/);
     assert.ok(!clean.out.includes("build-out"), `ignored tree was swept:\n${clean.out}`);
 
-    // Untracked but not ignored → must block.
+    // Untracked but not ignored → must block. The location is reported as the allowlisted
+    // parent directory only: the gate never prints the matching file's path or the matched
+    // text (see test/leak-gate-output-containment.test.mjs for that contract).
     writeFileSync(path.join(dir, "2-work", "draft.md"), `engagement with ${NDA_TERM}\n`);
     const untracked = run(LEAK_GATE, [dir], env);
     assert.equal(untracked.code, 1, `expected a leak block, got:\n${untracked.out}`);
-    assert.match(untracked.out, /2-work\/draft\.md/);
+    assert.match(untracked.out, /under: 2-work/);
+    assert.ok(!untracked.out.includes(NDA_TERM), "the gate must not echo the matched term");
 
-    // Tracked → must block, and the path must still be reported (grep -H).
+    // Tracked → must block, with the same containment.
     execFileSync("git", ["-C", dir, "add", "-A"], { stdio: "ignore" });
     execFileSync("git", ["-C", dir, "commit", "-qm", "leak"], { stdio: "ignore" });
     const tracked = run(LEAK_GATE, [dir], env);
     assert.equal(tracked.code, 1, `expected a leak block, got:\n${tracked.out}`);
-    assert.match(tracked.out, /2-work\/draft\.md/);
+    assert.match(tracked.out, /under: 2-work/);
+    assert.ok(!tracked.out.includes(NDA_TERM), "the gate must not echo the matched term");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(termsDir, { recursive: true, force: true });
@@ -195,7 +199,11 @@ test("leak-gate: a single file argument is still swept (aios promote)", () => {
     writeFileSync(file, `client: ${NDA_TERM}\n`);
     const { code, out } = run(LEAK_GATE, [file], { AIOS_LEAK_TERMS_FILE: ndaTermsFile(termsDir) });
     assert.equal(code, 1, `expected a leak block on a single file, got:\n${out}`);
-    assert.match(out, /promoted\.md/);
+    // A single-file target has no allowlisted parent to name, and the filename itself may
+    // carry a protected identifier — so the location is withheld, not guessed at.
+    assert.match(out, /location withheld/);
+    assert.ok(!out.includes("promoted.md"), "the gate must not print the matching path");
+    assert.ok(!out.includes(NDA_TERM), "the gate must not echo the matched term");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(termsDir, { recursive: true, force: true });

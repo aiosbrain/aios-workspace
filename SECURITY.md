@@ -28,7 +28,19 @@ machine until you deliberately `aios push`**, and even then only tier-tagged con
   writes that contain secrets or that place `admin`-tier content into shared directories.
   Validators (`validation/validate-all.sh` → `check-secrets.sh`, frontmatter, config) must pass.
 - **Confidentiality leak gate.** `scripts/leak-gate.sh` scans for NDA-protected names/identifiers
-  before content can be shared; it is fail-closed (non-zero exit blocks).
+  before content can be shared; it is fail-closed (non-zero exit blocks — exit `1` for any
+  detected leak, which is the boundary `build.mjs`, `promote.mjs` and `timeline.mjs` rely on).
+  **Its output is contained: it never echoes source-derived matched lines or a matching file's
+  untrusted path**, because those callers capture its stdout+stderr and re-emit them into
+  findings and rendered output, and because CI logs are often readable by more people than the
+  repository. Fixed diagnostic vocabulary can coincidentally overlap a broadly configured
+  regular expression; containment means no source content or untrusted path is copied out.
+  It reports a category, a file count, and a location allowlisted to known-safe top-level
+  directory names; anything else is withheld. Tracing is disabled before the term set is
+  sourced, so `bash -x` cannot echo the terms. The gate never writes raw-match detail to an
+  operator-selected path: doing so could overwrite or mutate an input before it is scanned.
+  Invalid regular expressions, unreadable inputs, and scanner failures exit nonzero rather
+  than being misreported as clean. Contract tests: `test/leak-gate-output-containment.test.mjs`.
 - **API keys are referenced, never stored.** `aios.yaml` holds `api_key_env` — the *name* of an
   environment variable — never the key itself. Keys come from the environment / `.env` (git-ignored).
 - **Local GUI is localhost-only.** `gui/server` binds `127.0.0.1` exclusively and gates the
