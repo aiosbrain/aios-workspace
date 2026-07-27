@@ -14,8 +14,6 @@ import {
   expandHomePath,
   buildPlanReviewPrompt,
   SHIP_EXIT,
-  SHIP_GATE_PLAN_MARKER,
-  SHIP_GATE_MERGE_MARKER,
 } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
@@ -26,6 +24,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SHIP_GATE_PLAN_MARKER = "SHIP_GATE plan pending";
+const SHIP_GATE_MERGE_MARKER = "SHIP_GATE merge pending";
 
 function seedRubric(repo) {
   const rubricSrc = path.join(REPO_ROOT, ".claude", "rubrics", "spec-readiness.md");

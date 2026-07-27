@@ -58,17 +58,6 @@ export const MIN_ATTEMPT_MS = 180_000;
 /** Headroom added to the security pass's reserved full attempt. */
 export const ATTEMPT_RESERVE_MARGIN_MS = 30_000;
 
-/**
- * Emit the hook-only machine verdict on its contractually assigned stream.
- * Kept separate from the surrounding human prose so tests can pin exact bytes and stream.
- */
-export function emitBugbotHookResult(ok, { enabled = false, stdout, stderr } = {}) {
-  if (!enabled) return;
-  const writeOut = stdout ?? ((line) => console.log(line));
-  const writeErr = stderr ?? ((line) => console.error(line));
-  (ok ? writeOut : writeErr)(`\n${ok ? BUGBOT_CLEAR_MARKER : BUGBOT_BLOCKED_MARKER}`);
-}
-
 /** Real clock + sleeper. Injected in tests so no test ever waits on wall-clock time. */
 const REAL_CLOCK = {
   now: () => Date.now(),
@@ -1442,13 +1431,13 @@ export async function cmdReviewBugbot(repo, args) {
       console.error(output);
       process.exit(1);
     }
-    emitBugbotHookResult(false, { enabled: args.includes("--hook-protocol") });
+    if (args.includes("--hook-protocol")) console.error(`\n${BUGBOT_BLOCKED_MARKER}`);
     console.error(c.red(`\n✗ Bugbot found ${canonicalSeverity(failOn)}+ issues — merge blocked.`));
     console.error(output);
     process.exit(1);
   }
   // Cursor streams review text without guaranteeing a trailing newline. Prefix the
   // machine marker so the parent can require an exact standalone protocol line.
-  emitBugbotHookResult(true, { enabled: args.includes("--hook-protocol") });
+  if (args.includes("--hook-protocol")) console.log(`\n${BUGBOT_CLEAR_MARKER}`);
   console.log(c.green(`\n✓ ${BUGBOT_CLEAR_TOKEN} — no blocking Bugbot findings.`));
 }

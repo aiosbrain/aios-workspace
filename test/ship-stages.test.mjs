@@ -185,6 +185,38 @@ console.log("happy path → OK, deferred deduped, audit written, merge issued");
   rmSync(deps.repo, { recursive: true, force: true });
 }
 
+console.log("PLAN_READY detection uses the real strict last-nonblank-line contract");
+{
+  const cases = [
+    ["trimmed last non-blank line", "review notes\n\n  PLAN_READY  \n\n", SHIP_EXIT.OK],
+    ["glued prose", "review notes\nPLAN_READY looks good", SHIP_EXIT.PLAN_UNAPPROVED],
+    ["later non-blank line", "PLAN_READY\nreview footer", SHIP_EXIT.PLAN_UNAPPROVED],
+    [
+      "decorated completion line",
+      "PLAN_READY\n      ▞  review      done · 4.2s",
+      SHIP_EXIT.PLAN_UNAPPROVED,
+    ],
+    ["ANSI-wrapped token", "\x1b[0;32mPLAN_READY\x1b[0m", SHIP_EXIT.PLAN_UNAPPROVED],
+  ];
+
+  for (const [label, review, expected] of cases) {
+    const deps = makeDeps({
+      callCursorAgent: async (prompt) =>
+        prompt.includes("/review-plan") ? review : "- `Low` `f`: nit",
+      callDeepSeekDirect: async (prompt) =>
+        prompt.includes("/review-plan") ? review : "- `Low` `f`: nit",
+    });
+    const { code } = await runShip({
+      repo: deps.repo,
+      issue: "AIO-163",
+      opts: optsFor(),
+      deps,
+    });
+    check(label, code === expected);
+    rmSync(deps.repo, { recursive: true, force: true });
+  }
+}
+
 console.log("selected builder skills fail closed when the suite manifest is absent");
 {
   let buildCalls = 0;

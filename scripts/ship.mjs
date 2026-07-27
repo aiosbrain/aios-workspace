@@ -92,16 +92,6 @@ export const SHIP_EXIT = {
 };
 
 export const SAFETY_APPROVED_TOKEN = "SAFETY_APPROVED";
-export const SHIP_GATE_PLAN_MARKER = "SHIP_GATE plan pending";
-export const SHIP_GATE_MERGE_MARKER = "SHIP_GATE merge pending";
-
-/** Emit an exact Class-E gate marker without colour or decoration. */
-export function emitShipGateMarker(kind, write = console.log) {
-  const marker =
-    kind === "plan" ? SHIP_GATE_PLAN_MARKER : kind === "merge" ? SHIP_GATE_MERGE_MARKER : null;
-  if (!marker) throw new Error(`unknown ship gate marker: ${kind}`);
-  write(marker);
-}
 
 // The agent tool-access tiers (NO_TOOLS / PLAN_DISALLOWED) now live in relay-core.mjs so ship and
 // roadmap-run share one source of truth; re-exported here for back-compat (tests import NO_TOOLS
@@ -1563,7 +1553,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         }
         record("plan-gate", { blocked: true });
         saveState({ planGatePending: true });
-        emitShipGateMarker("plan"); // machine-greppable marker (AIO-239 R7c)
+        console.log("SHIP_GATE plan pending"); // machine-greppable marker (AIO-239 R7c)
         writeGate(
           issueId,
           "plan",
@@ -1589,7 +1579,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         return { code: SHIP_EXIT.PLAN_GATE_BLOCKED, records };
       }
       if (gates.plan === "prompt") {
-        emitShipGateMarker("plan"); // marker precedes the prompt (AIO-239 R7c)
+        console.log("SHIP_GATE plan pending"); // marker precedes the prompt (AIO-239 R7c)
         const ok = await confirm("Approve this plan and proceed to build?");
         if (!ok) {
           record("plan-gate", { rejected: true });
@@ -2409,7 +2399,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       }
       record("merge-gate", { blocked: true });
       saveState({ mergeGatePending: true });
-      emitShipGateMarker("merge"); // machine-greppable marker (AIO-239 R7c)
+      console.log("SHIP_GATE merge pending"); // machine-greppable marker (AIO-239 R7c)
       writeGate(
         issueId,
         "merge",
@@ -2431,7 +2421,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
       return { code: SHIP_EXIT.MERGE_GATE_BLOCKED, records };
     }
     if (gates.merge === "prompt") {
-      emitShipGateMarker("merge"); // marker precedes the prompt (AIO-239 R7c)
+      console.log("SHIP_GATE merge pending"); // marker precedes the prompt (AIO-239 R7c)
       const ok = await confirm(`Merge PR #${prNumber} for ${issue.identifier}?`);
       if (!ok) {
         record("merge-gate", { rejected: true });

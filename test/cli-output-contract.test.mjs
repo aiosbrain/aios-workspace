@@ -32,7 +32,6 @@ import {
   BUGBOT_BLOCKED_MARKER,
   detectBugbotClear,
   detectBugbotBlocked,
-  emitBugbotHookResult,
 } from "../scripts/review-bugbot.mjs";
 import {
   SIMPLIFY_DONE_TOKEN,
@@ -40,13 +39,7 @@ import {
   detectSimplifyToken,
 } from "../scripts/simplify.mjs";
 import { detectMergeToken } from "../scripts/build.mjs";
-import {
-  SAFETY_APPROVED_TOKEN,
-  SHIP_GATE_PLAN_MARKER,
-  SHIP_GATE_MERGE_MARKER,
-  detectSafetyToken,
-  emitShipGateMarker,
-} from "../scripts/ship.mjs";
+import { SAFETY_APPROVED_TOKEN, detectSafetyToken } from "../scripts/ship.mjs";
 import { cmdConsolidateFindings } from "../scripts/consolidate-findings.mjs";
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,40 +66,6 @@ test("E: the two hook-protocol markers are distinguishable, not prefixes of each
   assert.notEqual(BUGBOT_CLEAR_MARKER, BUGBOT_BLOCKED_MARKER);
   assert.ok(!BUGBOT_BLOCKED_MARKER.includes(BUGBOT_CLEAR_MARKER));
   assert.ok(!BUGBOT_CLEAR_MARKER.includes(BUGBOT_BLOCKED_MARKER));
-});
-
-test("E: the real Bugbot hook emitter preserves exact bytes and stream separation", () => {
-  const stdout = [];
-  const stderr = [];
-  const streams = {
-    enabled: true,
-    stdout: (line) => stdout.push(line),
-    stderr: (line) => stderr.push(line),
-  };
-
-  emitBugbotHookResult(true, streams);
-  assert.deepEqual(stdout, [`\n${BUGBOT_CLEAR_MARKER}`]);
-  assert.deepEqual(stderr, []);
-
-  stdout.length = 0;
-  emitBugbotHookResult(false, streams);
-  assert.deepEqual(stdout, []);
-  assert.deepEqual(stderr, [`\n${BUGBOT_BLOCKED_MARKER}`]);
-
-  stderr.length = 0;
-  emitBugbotHookResult(true, { ...streams, enabled: false });
-  assert.deepEqual(stdout, [], "the marker is forbidden without --hook-protocol");
-  assert.deepEqual(stderr, []);
-});
-
-test("E: the real ship gate emitter writes exact undecorated marker lines", () => {
-  const lines = [];
-  emitShipGateMarker("plan", (line) => lines.push(line));
-  emitShipGateMarker("merge", (line) => lines.push(line));
-  assert.deepEqual(lines, [SHIP_GATE_PLAN_MARKER, SHIP_GATE_MERGE_MARKER]);
-  assert.equal(SHIP_GATE_PLAN_MARKER, "SHIP_GATE plan pending");
-  assert.equal(SHIP_GATE_MERGE_MARKER, "SHIP_GATE merge pending");
-  assert.throws(() => emitShipGateMarker("unknown", () => {}), /unknown ship gate marker/);
 });
 
 test("E: the real consolidator emits a final stdout verdict and returns its documented code", async () => {
