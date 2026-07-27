@@ -126,12 +126,50 @@ if [ "$MODE" = "pre_command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
-  path_under_toolkit "$TDIR" || exit 0
-  set -- $(probe "$TDIR"); KIND=${1:-none}
-  [ "$KIND" = "primary" ] || exit 0
+  if path_under_toolkit "$TDIR"; then
+    set -- $(probe "$TDIR"); KIND=${1:-none}
+    if [ "$KIND" = "primary" ]; then
+      printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
+      exit $?
+    fi
+  fi
 
-  printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
-  exit $?
+  # ── shell file mutations aimed at the toolkit primary from elsewhere (>, >>, cp,
+  # mv, rm, sed -i, tee, …). pre_edit blocks Write/Edit into the primary; this closes
+  # the equivalent shell route. Commands whose cwd/-C target IS the primary were
+  # already delegated above, so only explicit toolkit paths can match here — bare
+  # words resolve under the caller's own cwd and never hit the toolkit prefix.
+  CANDIDATES=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
+  if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install)[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
+    CANDIDATES="$CANDIDATES
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF')"
+  elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+    CANDIDATES="$CANDIDATES
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+  fi
+  if [ -n "$(printf '%s' "$CANDIDATES" | awk 'NF')" ]; then
+    for tok in $(printf '%s\n' "$CANDIDATES" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
+      case "$tok" in -*) continue ;; *=/*) tok=${tok#*=} ;; esac
+      case "$tok" in
+        "~") tok=$HOME ;;
+        "~/"*) tok=$HOME/${tok#\~/} ;;
+      esac
+      case "$tok" in
+        /*) : ;;
+        *) tok="$CWD/$tok" ;;
+      esac
+      path_under_toolkit "$tok" || continue
+      _pd=$tok; [ -d "$_pd" ] || _pd=$(dirname "$tok")
+      [ -d "$_pd" ] || continue
+      set -- $(probe "$_pd"); [ "${1:-none}" = "primary" ] || continue
+      _b=$(basename "$tok"); _skip=0
+      for e in $EXEMPT_BASENAMES; do [ "$_b" = "$e" ] && _skip=1; done
+      [ "$_skip" = 1 ] && continue
+      block "shell write targeting toolkit primary checkout" "Command: $CMD
+Attempted path: $tok"
+    done
+  fi
+  exit 0
 fi
 
 # ── pre_edit: block EVERY write into the toolkit primary checkout (including main)
