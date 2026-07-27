@@ -92,7 +92,7 @@ console.log("getIssue normalization");
   check("blockedBy empty when no relations", iss.blockedBy.length === 0);
 }
 
-console.log("createIssue + addComment mutation inputs");
+console.log("createIssue + addComment + updateIssueDescription mutation inputs");
 {
   const calls = [];
   const fetchFn = async (url, init) => {
@@ -114,6 +114,11 @@ console.log("createIssue + addComment mutation inputs");
     }
     if (/commentCreate/.test(body.query)) {
       return jsonResponse({ data: { commentCreate: { success: true } } });
+    }
+    if (/issueUpdate/.test(body.query)) {
+      return jsonResponse({
+        data: { issueUpdate: { success: true, issue: { identifier: "AIO-1" } } },
+      });
     }
     return jsonResponse({ data: {} });
   };
@@ -138,6 +143,15 @@ console.log("createIssue + addComment mutation inputs");
     "addComment input carries issueId + body",
     commentBody.variables.input.issueId === "uuid-parent" &&
       commentBody.variables.input.body === "escalation note"
+  );
+  const updated = await client.updateIssueDescription("AIO-1", "replacement");
+  check("updateIssueDescription ok", updated.ok === true);
+  const updateBody = calls.find((b) => /issueUpdate/.test(b.query));
+  check(
+    "updateIssueDescription carries UUID + description only",
+    updateBody.variables.id === "uuid-parent" &&
+      updateBody.variables.input.description === "replacement" &&
+      Object.keys(updateBody.variables.input).length === 1
   );
 }
 

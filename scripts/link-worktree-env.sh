@@ -48,17 +48,25 @@ if [[ ! -e "$here/opencode.json" ]]; then
   fi
 fi
 
-# .claude/settings.json — hooks + rails allowlist. Always copy from primary
-# (overwrites any git-tracked version — primary is source of truth).
-# `aios asks wire` (run below) corrects hook paths for this worktree.
+# .claude/settings.json — hooks + rails allowlist. Copy from primary (overwrites
+# any git-tracked version — primary is source of truth), but only when the content
+# actually differs: this script now also runs as a per-session self-heal
+# (hooks/worktree-self-heal.mjs), and a no-op re-copy every session would churn
+# the file's mtime for nothing.
+copy_settings_from() {
+  local src="$1" label="$2"
+  if cmp -s "$src" "$here/.claude/settings.json"; then
+    echo "skip .claude/settings.json — already current"
+    return
+  fi
+  mkdir -p "$here/.claude"
+  cp "$src" "$here/.claude/settings.json"
+  echo "copied .claude/settings.json${label}"
+}
 if [[ -f "$main_worktree/.claude/settings.json" ]]; then
-  mkdir -p "$here/.claude"
-  cp "$main_worktree/.claude/settings.json" "$here/.claude/settings.json"
-  echo "copied .claude/settings.json"
+  copy_settings_from "$main_worktree/.claude/settings.json" ""
 elif [[ -f "$scaffold/.claude/settings.json" ]]; then
-  mkdir -p "$here/.claude"
-  cp "$scaffold/.claude/settings.json" "$here/.claude/settings.json"
-  echo "copied .claude/settings.json (from scaffold)"
+  copy_settings_from "$scaffold/.claude/settings.json" " (from scaffold)"
 fi
 
 # .claude/ — full directory: rules, skills, commands, agents, memory, personalities, rubrics, descriptors
@@ -141,6 +149,16 @@ fi
 if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-loop-built.mjs" ]]; then
   (cd "$here" && node scripts/ensure-loop-built.mjs) || echo "operator-loop build: skipped (see message above)"
 fi
+
+# ── hydration marker ────────────────────────────────────────────────────────
+# Derived, disposable, per-worktree local state under the gitignored `.aios/`.
+# Written once, last, atomically (write + rename); read only as a boolean
+# "hydrated?" test by hooks/git/post-checkout and hooks/worktree-self-heal.mjs.
+# Deleting it is always safe — the next session simply re-hydrates.
+mkdir -p "$here/.aios"
+printf 'hydrated-by=link-worktree-env.sh\nat=%s\nfrom=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$main_worktree" > "$here/.aios/.worktree-hydrated.tmp"
+mv -f "$here/.aios/.worktree-hydrated.tmp" "$here/.aios/.worktree-hydrated"
 
 echo ""
 echo "Worktree $here is ready."

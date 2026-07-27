@@ -39,8 +39,19 @@ reach it**, chosen by a single question: *does the calling agent have a shell?*
 
 | Caller | Surface | Why |
 |--------|---------|-----|
-| Shell-capable agents (Claude Code, Codex, OpenCode, cron, CI) | the **`aios` CLI** — *primary, canonical* | faster, cheaper, no per-turn tool-schema cost; it owns the contract and the tier default-deny |
-| Shell-less agents (Claude Desktop, Claude Cowork, Claude.ai, Conductor) | **`aios mcp`** — a stdio MCP server bridge | MCP is the only way an agent without a shell can call out; same contract, schema-described tools |
+| Shell-capable agents (Claude Code, Codex, Conductor, OpenCode, cron, CI) | the **`aios` CLI** — *primary, canonical* | faster, cheaper, no per-turn tool-schema cost; it owns the contract and the tier default-deny |
+| Shell-less agents (Claude Desktop, Claude Cowork, Claude.ai) | **`aios mcp`** — a stdio MCP server bridge | MCP is the only way an agent without a shell can call out; same contract, schema-described tools |
+
+**Conductor and Codex are shell-capable, not GUI-only.** Both run a real local
+agent process with full Bash and git access — Conductor ships a managed Claude Code
+binary and launches it against a git worktree it creates itself — so they reach the
+brain through the same `aios` CLI as terminal Claude Code. What they need is not the
+MCP bridge but **worktree hydration**: their worktrees are created outside
+`aios worktree add`, so the harness is re-hydrated by an adapter instead
+(`hooks/git/post-checkout` + the `SessionStart` `hooks/worktree-self-heal.mjs` hook —
+see [`integrations.md#conductor`](integrations.md#conductor)). The MCP bridge stays
+available to both as an *optional* secondary path, e.g. reading the brain with no
+scaffolded workspace open.
 
 The MCP bridge (`scripts/brain-mcp.mjs`) is intentionally **thin and read-only**: it
 wraps the v1 read endpoints (`query`, `projects`, `tasks`, `decisions`, `items`) and

@@ -31,9 +31,9 @@ The catalog of what's connectable lives in
 
 Most integrations here pull *other* tools **into** your workspace agent. This one points
 the other way: it exposes **your Team Brain** to an AI surface that can't run the `aios`
-CLI — Claude Desktop, Claude Cowork, claude.ai, Codex, Conductor. Shell-capable agents
-(Claude Code in the terminal) should keep using `aios query` / `aios pull` directly; the
-MCP bridge exists for agents with no shell. See the
+CLI — Claude Desktop, Claude Cowork, claude.ai. Shell-capable agents (Claude Code in the
+terminal, and also **Codex and Conductor** — see [Conductor](#conductor) below) should keep
+using `aios query` / `aios pull` directly; the MCP bridge exists for agents with no shell. See the
 [access-surface architecture](architecture.md#access-surfaces--how-callers-reach-the-brain)
 and the [MCP connector PRD](prd-team-brain-mcp-connector.md).
 
@@ -62,6 +62,48 @@ It exposes read tools only — `brain_status` (connection probe; call it first),
 `brain_pull_items`, `brain_get_item` — each tier-filtered server-side. For non-technical
 users, the PRD's `.mcpb` one-click desktop extension wraps the same server with an
 install-time form (no terminal). Writes (`push`) are deliberately out of v1.
+
+### Conductor
+
+[Conductor](https://conductor.build) runs Claude Code agents in parallel **git worktrees**
+it creates itself. **Nothing to configure** — if your toolkit is current
+(`aios update`), open your workspace repo in Conductor and every workspace it creates
+gets the full AIOS harness.
+
+Why an adapter is needed: `aios worktree add` is what normally hydrates a worktree
+(`node_modules` symlink, `.mcp.json`, `.claude/` config, `aios asks wire`), and
+Conductor never calls it. Three independent layers close that, earliest first:
+
+| Layer | Fires | Ships as |
+|-------|-------|----------|
+| `.conductor/settings.toml` → `[scripts] setup` | at workspace creation, before the agent's first turn | tracked repo content |
+| `.git/hooks/post-checkout` | on `git worktree add` | per-machine, installed silently by `aios update` / `aios onboard` |
+| `SessionStart` → `hooks/worktree-self-heal.mjs` | at the start of every Claude Code session | tracked repo content (the guarantee) |
+
+All three run the same `scripts/link-worktree-env.sh`, and all three are no-ops once
+`.aios/.worktree-hydrated` exists — so they can't fight each other. The third layer is
+why a Conductor workspace created *before* you updated also self-heals: it hydrates on
+its next turn, with no manual step and no re-creating the workspace.
+
+Verify from Conductor's integrated terminal (or the agent's Bash tool):
+
+```bash
+aios worktree doctor    # → "Conductor support: ready"
+aios status             # the CLI works with no setup
+```
+
+Conductor reads project-root `.mcp.json` for MCP servers and `CLAUDE.md`/`AGENTS.md`
+for instructions, exactly as terminal Claude Code does — hydration puts both in place.
+Because Conductor has a real shell, it does **not** need the `aios mcp` bridge above;
+that stays available as an optional path for reaching the brain with no workspace open.
+
+### Codex
+
+Same shape as Conductor: a real local shell/git session, so it uses the `aios` CLI
+directly and benefits from the same `SessionStart` self-heal when it runs inside a
+worktree. Its worktree-creation behaviour has not been verified as closely as
+Conductor's — if you hit a worktree that didn't hydrate, `aios worktree init` fixes it
+in place and is worth reporting.
 
 ### Slack (MCP)
 Create a Slack app, add bot scopes (`channels:history`, `channels:read`,

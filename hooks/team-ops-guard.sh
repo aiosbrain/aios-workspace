@@ -136,12 +136,24 @@ if echo "$FILE_PATH" | grep -qE "(2-work|02-deliverables|4-shared|04-shared|04-c
   if echo "$FILE_PATH" | grep -qE "\.md$" 2>/dev/null; then
     # For Write tool, check if content starts with ---
     if [ "$(echo "$TOOL_INPUT" | jq -r '.content // empty' 2>/dev/null)" != "" ]; then
-      if ! echo "$CONTENT" | head -1 | grep -q "^---" 2>/dev/null; then
-        echo "BLOCKED by team-ops-guard: Markdown files in deliverables/client-surface require YAML frontmatter" >&2
-        echo "File: $FILE_PATH" >&2
-        echo "Add frontmatter with at least: status, owner" >&2
-        exit 2
-      fi
+      # Pure-bash first-line check (same semantics as the previous
+      # `echo | head -1 | grep -q "^---"`). This is the guard's only
+      # INVERTED pipeline check — under `set -o pipefail`, a transient
+      # pipeline failure (fork EAGAIN under load, SIGPIPE, grep error)
+      # read as "no frontmatter" and spuriously blocked compliant writes
+      # (one-off CI flake in approval-mode-governance.test.mjs). A case
+      # match forks no processes, so it cannot fail transiently.
+      case "$CONTENT" in
+        ---*)
+          : # frontmatter present — allowed
+          ;;
+        *)
+          echo "BLOCKED by team-ops-guard: Markdown files in deliverables/client-surface require YAML frontmatter" >&2
+          echo "File: $FILE_PATH" >&2
+          echo "Add frontmatter with at least: status, owner" >&2
+          exit 2
+          ;;
+      esac
     fi
   fi
 fi

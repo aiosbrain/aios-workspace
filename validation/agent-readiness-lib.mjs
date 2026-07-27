@@ -11,6 +11,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gitFiles } from "../scripts/git-files.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IGNORE_DIRS = new Set([
@@ -39,8 +40,32 @@ export function loadRubric(rubricPath) {
   return JSON.parse(readFileSync(p, "utf8"));
 }
 
-// Walk the repo once, returning repo-relative POSIX paths (dirs end with "/").
+// Index the repo once, returning repo-relative POSIX paths (dirs end with "/").
+//
+// Enumeration is via GIT, never a filesystem walk (AIO-517). A walk descends into
+// gitignored build trees — `src-tauri/target` alone is 1.6 GB / 35k files — which both
+// costs a fortune in syscalls and can blow past MAX_FILES, silently TRUNCATING the index
+// so real signals stop matching and the score drops for no reason. IGNORE_DIRS was the
+// old defence, but an ad-hoc name list can only ever cover the ignored dirs someone
+// remembered. Git already knows: tracked + untracked-but-not-ignored is precisely the
+// content a rubric should be scored on. Non-git dirs (tests, throwaway sandboxes) keep
+// the walk. Directory entries are derived from the file paths — a git-empty directory
+// carries no content to score, so it is not indexed.
 function indexRepo(repo) {
+  const listed = gitFiles(repo);
+  if (listed) {
+    const out = [];
+    const dirs = new Set();
+    for (const rel of listed) {
+      const segments = rel.split("/");
+      if (segments.some((s) => IGNORE_DIRS.has(s))) continue;
+      if (segments.length > 13) continue; // mirror the walk's depth > 12 cutoff
+      for (let i = 1; i < segments.length; i++) dirs.add(segments.slice(0, i).join("/") + "/");
+      out.push(rel);
+      if (out.length > MAX_FILES) break;
+    }
+    return [...dirs, ...out];
+  }
   const out = [];
   const walk = (dir, rel, depth) => {
     if (out.length > MAX_FILES || depth > 12) return;

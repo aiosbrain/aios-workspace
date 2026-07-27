@@ -1,0 +1,275 @@
+/**
+ * usage.mjs — the raw `aios help` text, split into per-command blocks (AIO-512 Phase 1).
+ *
+ * Pure data, no imports. Each key is a command name and its value is the exact block of help
+ * lines that command owns ([] = hidden from help). scripts/cli/registry.mjs attaches these to
+ * the descriptors and renderUsage() concatenates them in registry order — there is no other
+ * copy of the help text anywhere in the tree.
+ */
+export const USAGE_HEADER = [
+  "aios — AIOS Team Brain sync client (contract: docs/brain-api.md)",
+  "",
+  "usage:",
+];
+
+export const USAGE_FOOTER = [
+  "options:",
+  "  --repo <path>               team-ops repo (default: walk up from cwd)",
+];
+
+export const USAGE_LINES = {
+  status: ["  aios status [--json|--porcelain]      what would sync (new/modified/blocked/clean)"],
+  onboard: [
+    "  aios onboard                          guided first-run setup (brain + tools, one multi-select)",
+    "    --inspect [--json]                  read-only live preflight: workspace/toolkit/git/Brain state",
+  ],
+  connect: [
+    "  aios connect [<id>]                   connect an integration (guided + live-validated)",
+    "    [--token <v>] [--set ENV=v]         non-interactive credential input",
+  ],
+  review: [
+    "  aios review                           interactive: toggle inclusion, then push selected",
+  ],
+  push: [
+    "  aios push [--dry-run] [paths…]",
+    "  aios push skill <name> [--dry-run]    share a skill (SKILL.md + references) to the brain",
+    "  aios push blueprint                   publish the team's tool set (lead/admin only)",
+  ],
+  work: ["  aios work done <key> [--push]         mark a task done; --push notifies Brain/PM sync"],
+  pull: [
+    "  aios pull blueprint                   fetch the team's tool set → .aios/blueprint.json",
+    "  aios pull                             fetch team updates → 1-inbox/from-brain/",
+    "  aios pull skill <name>                fetch a shared skill → 1-inbox/from-brain/skills/<name>/",
+    "  aios pull deliverable <path>          fetch one item (or a folder by prefix) on demand",
+  ],
+  promote: [
+    "  aios promote <file>                   anonymize-then-promote reusable IP: COPY a private",
+    "    [--to 2-work|4-shared] [--dry-run]  file (5-personal/, or any dir outside sync_include)",
+    "                                         to 2-work/ (team) or 4-shared/ (client|company); scans",
+    "                                         the copy (secrets + leak-gate), sets access frontmatter,",
+    "                                         logs the promotion; omit --to to be prompted",
+  ],
+  "install-skill": [
+    "  aios install-skill <name> [--force]   promote a pulled skill into .claude/skills/ (explicit)",
+  ],
+  query: ['  aios query "question"                 ask the Team Brain'],
+  member: [
+    "  aios member invite <email>            create/re-invite a member + cascade tool invites",
+    "    --name <n> --handle <h>              (Linear/Slack/GitHub); admin-key only (brain-api v1.7)",
+    "    [--role member|lead|admin]           role default member; tolerates a pre-v1.7 brain (404)",
+    '    [--tools linear,slack,github|all|none]  tools default "all"',
+    "  aios member list                      team roster (GET /members; team-tier key required)",
+  ],
+  stakeholders: [
+    "  aios stakeholders (--owns <domain>    query the team Company-Graph (team-tier only)",
+    "    | --who <person> | --meeting <t>)    owners/org from GET /company-graph; attendees from",
+    "    [--json]                            meeting items; external key → 403 forbidden_tier",
+  ],
+  loop: [
+    "  aios loop collect [--daily|--weekly]  collect local work signals → tier-tagged run manifest",
+    "    [--json]                            (.aios/loop/manifests/; offline, never synced)",
+    "  aios loop manifest --explain          inspect a manifest's evidence + tiers",
+    "    [--as team|external] [--daily]      simulate what a digest audience would see",
+    "  aios loop verify --manifest <p>       verify a drafted ledger (evidence + tier-policy) →",
+    "    --ledger <p> [--as ...] [--json]    pass/failed (corrected needs C5's drafter); non-zero on failed",
+    "    [--smoke]                           --smoke derives a debug ledger from a fresh manifest",
+    "  aios loop weekly [--as team|external] weekly closeout: private owner brief + shareable digest(s),",
+    "    [--all] [--remote] [--json]         C3-verified + bounded correction → .aios/loop/closeouts/;",
+    "    [--manifest <p>] [--dry-run]        offline by default (--remote sends ≤-audience projection only)",
+    "  aios loop daily [--as team|external]  fast daily orientation: changed / blocked / owed today",
+    "    [--no-record] [--json]              (read-only; owner run records a local change-snapshot)",
+    "  aios loop writeback <stamp>           approval-gated promotion of a saved closeout (default: preview)",
+    "    [--local] [--sync] [--pm] [--json]  --local/--sync/--pm each opt in one target; stages for aios push",
+    "  aios loop telemetry [--window <days>] local dogfood dashboard: the six V1 exit-criteria metrics",
+    "    [--all] [--json]                    (owner-only; reads .aios/loop/telemetry/, never synced)",
+    "  aios loop install [--dry-run]         installs the real scheduler for daily+weekly+analyze",
+    "    [--uninstall] [--status]            (launchd on macOS, cron elsewhere); see docs/loop-install.md",
+    "    [--scheduler launchd|cron]",
+  ],
+  timeline: [
+    '  aios timeline [--since <date|Nd>]     cross-repo "what we shipped": merged PRs + commits →',
+    "    --repo <path[=liveUrl]> [...]       screenshot-rich, self-contained HTML per audience",
+    "    [--as team|external|all] [--open]   (.aios/timeline/<stamp>/index-<audience>.html);",
+    "    [--until <date>] [--dry-run]        external render is tier-filtered + leak-gate swept,",
+    "    [--no-shots] [--config <p>] [--json]  fail-closed (exit 2 leak · 3 sweep unavailable);",
+    "    [--workspace <p>] [--max-shots N]   repos/tiers/live URLs: .aios/timeline-config.json",
+  ],
+  mcp: [
+    "  aios mcp                              run the Team Brain MCP server over stdio, for",
+    "                                        GUI-only agents (Claude Desktop/Cowork/claude.ai)",
+    "                                        that can't shell out; env-first, no workspace needed.",
+    "                                        Codex + Conductor DO have a shell — they use this CLI",
+    "                                        directly (see `aios worktree doctor`)",
+  ],
+  analyze: [
+    "  aios analyze [--since 7d|billing] [--tool x]   agentic-maturity + cost from local session logs",
+    "    [--report] [--json] [--push]        --push also sends Cursor dashboard billing (W2.1)",
+    "    [--full] [--no-cache]               tools: claude|codex|cursor; billing = Cursor cycle",
+    "    [--calibrate]                       CE Phase-B verdict (rho vs autonomy); analysis-only, writes .aios/",
+  ],
+  "maturity-week": [
+    "  aios maturity-week [--json] [--out p]  weekly AEM trajectory: Spine delta, axis gains, next-belt criteria",
+  ],
+  instincts: [
+    "  aios instincts distill [--limit N] [--dry-run] [--json]  batch-distill observations → homunculus instincts",
+    "    [--project <slug>]                  belts White→Black; ≥5 sessions/week → 3-log/maturity/ (admin, never synced)",
+  ],
+  time: [
+    "  aios time capture [--dry-run] [--json]   native agent-session runtime → admin-tier 3-log/time-log.md",
+    "    [--config <p>] [--repos <a,b>]      scopes by realpath allowlist (.aios/time-config.json); never syncs",
+    "  aios time report [--window daily|weekly]  local runtime-by-tag from the store (read-only) [--json]",
+    "  aios time reconcile --id <a,b>        confirm/correct rows (confirmed rows are immutable)",
+    "    [--set-tag <t>] [--set-tier <t>] [--confirm] [--dry-run] [--json]",
+  ],
+  asks: [
+    "  aios asks list [--status open|resolved|orphaned|all]  escalation queue (local, admin-tier, never synced)",
+    "    [--json]                            list open (default) / resolved / orphaned / all",
+    "  aios asks add --kind <k>              enqueue an ask (severity: blocker|decision|fyi)",
+    "    --severity <s> --title <t> [--body <b>] [--ref <r>] [--json]",
+    "  aios asks show <id> | resolve <id...> inspect one ask; mark ask(s) resolved (bookkeeping)",
+    "  aios asks drain [--keep-open] [--json]  orphan-detect → resolve open → GC old closed (inbox-zero)",
+    "  aios asks harvest [--cadence d|w]     surface loop events (decisions/assignments/…) into the queue",
+    "    [--json]                            via the tier-gated comms sender (collect→detect→dispatch)",
+    "  aios asks wire [--all-worktrees]      stamp/refresh the asks+decision capture hooks into",
+    "    [--dry-run] [--json]                .claude/settings.json via ABSOLUTE toolkit paths — fixes",
+    "                                         worktrees whose checked-out branch predates the hooks",
+  ],
+  transcripts: [
+    "  aios transcripts <enable-sync|draft|list|approve>  one-gate transcript → decisions/tasks pipeline",
+  ],
+  pm: ["  aios pm status [--json]               projection health + recent-run observability"],
+  mode: [
+    "  aios mode [status|deep-work|orchestration]  attention toggle: deep-work silences AIOS ambient nudges",
+    "    [--json]                            (preferredNotifChannel); orchestration restores it — push untouched",
+  ],
+  decisions: [
+    "  aios decisions list [--kind k]        human-in-the-loop decision corpus (local, admin-tier, never synced)",
+    "    [--since date] [--json]             AskUserQuestion + plan-approval prompts, newest first",
+    "  aios decisions show <id> [--json]     full record: options, choice, notes, outcome",
+    "  aios decisions outcome <id> <text>    annotate a decision's outcome (append; decisions never mutate)",
+    "  aios decisions export [--json]        dump all records as a JSON array (the training-corpus read path)",
+    "  aios decisions backfill [--all]       recover historical decisions from ~/.claude transcripts",
+    "    [--home d] [--since date]           --all ingests allowlisted repos (foreign origin redacted);",
+    "    [--include tag,…] [--dry-run]       client/unknown roots skipped + counted, never ingested",
+    "  aios decisions distill --remote       draft reusable steering mental models for HUMAN REVIEW",
+    "    [--context tag] [--min-support n]   --remote = consent to third-party (Anthropic) egress",
+    "    [--out file]                        default draft: .aios/loop/decisions/decision-principles.draft.md",
+  ],
+  council: [
+    '  aios council "<question>"             fan a question out to a cross-lab model panel (OpenRouter)',
+    "    [--models id,id,id]                 P0 prototype: stage-1 first opinions only, no ranking yet",
+    "                                         (AIO-225; needs OPENROUTER_API_KEY; fail-closed diversity guard)",
+  ],
+  verify: [
+    "  aios verify <sha> [--lanes N]         report-only multi-model review of one commit",
+    "    [--json] [--out <file>]             defaults to 3 lanes; hard cap 8; no repo mutations",
+    "                                         sends the commit diff to OpenRouter/model providers",
+    "                                         Exit 0 clear · 1 Medium+ · 2 key missing · 4 usage/output",
+  ],
+  "export-okf": [
+    "  aios export-okf [output-dir]          emit OKF bundle (no brain needed)",
+    "    [--tier external|team]              default: external (includes team + external)",
+  ],
+  "pull-bundle": [
+    "  aios pull-bundle [--include-body]     pull OKF link graph from Team Brain → .aios/bundle.json",
+  ],
+  graph: [
+    "  aios graph [--from <file>]            traverse local OKF link graph (no brain needed)",
+    "    [--depth N] [--format text|json]",
+  ],
+  skills: [
+    "  aios skills export --runtime <name>   export skills to another agent runtime (BYOA)",
+    "    [--skill <name>] [--out <dir>]      runtimes: claude-code|hermes|openclaw|codex|opencode|claude-api",
+    "    [--install]                         for hermes: also run hermes skills install on each",
+  ],
+  "assess-codebase": [
+    "  aios assess-codebase [path]           score a repo's AM agent-readiness (offline, read-only)",
+    "    [--json]                            machine output; the Team Brain scanner records scores",
+  ],
+  "context-health": [
+    "  aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,",
+    "                                        read-only, 0-4): context files, tiers, catalog, sync",
+  ],
+  worktree: [
+    "  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary",
+    "    [--base <ref>]                     --base defaults to origin/main; links node_modules,",
+    "                                       copies opencode.json/.claude/settings, wires hooks",
+    "  aios worktree init                  hydrate the current worktree dir (idempotent)",
+    "  aios worktree list                  list all worktrees for this repo",
+    "  aios worktree doctor                report auto-hydration readiness (Conductor et al)",
+  ],
+  update: [
+    "  aios update [--check|--preview|--no-pull|--stash|--no-install|--force|--contribute <path>]",
+    "                                       get latest AIOS: pull the toolkit (git + npm ci) +",
+    "                                       3-way-merge governance (personal + uncommitted edits kept);",
+    "                                       --preview/--check never pull; --contribute opens a toolkit PR",
+  ],
+  rails: [
+    "  aios rails suggest [--repo <path>]  propose a SAFE permissions.allow from the transcript log",
+    "    [--min-count N] [--json]            entries seen ≥N (default 3); denylist excludes dangerous cmds",
+    "    [--transcripts-dir <dir>]           NEVER writes; guards + human review still gate everything",
+    "  aios rails apply [--repo <path>]      merge proposals into .claude/settings.json (allow only)",
+    "    [--dry-run] [--from <json>]         --dry-run prints the diff; hooks + other keys untouched",
+    "  aios rails missing [--repo <path>]    list absent rails (CLAUDE.md/allowlist/guards/leak-gate…)",
+    "    [--json]                            reuses assess-codebase scoring; each with a how-to pointer",
+  ],
+  learn: [
+    "  aios learn                            prescribe your next AM patterns from MATURITY.md (offline)",
+  ],
+  relay: [
+    '  aios relay "task" [branch] [opts]     Opus 4.8 ↔ Cursor plan/review loop (PLAN_READY)',
+    "    [--rounds N] [--skill /name]        rounds default 3; skill default /review-plan",
+    "    [--merge] [--log <file>]            --merge auto-merges branch on approval (off by default)",
+    "    [--cursor-timeout N] [--dry-run]    cursor-timeout default 300s; --dry-run skips git ops",
+    "    [--build] [--build-rounds N]        after approval, hand the plan to the build phase",
+  ],
+  build: [
+    "  aios build <plan-file|task> [branch]  implement a plan with Opus, reviewed by Cursor (MERGE_READY)",
+    "    [--rounds N] [--merge] [--task]     build/review on a worktree; --merge → primary's current branch",
+    "    [--pr] [--issue AIO-<n>]            --pr pushes + opens a PR on approval (mutually exclusive with --merge)",
+    "    [--build-timeout N] [--verify cmd]  builder timeout default 1800s; --verify runs before review",
+    "    [--base ref] [--log <file>]         base default origin/main; --log saves rounds + reviews (appends)",
+    "    [--bugbot] [--no-bugbot]            local /review-bugbot before merge (default with --merge)",
+  ],
+  simplify: [
+    "  aios simplify [--range base..HEAD]    post-review cleanup pass on the branch diff (verify-gated,",
+    "    [--model m] [--verify cmd]          reverts on failure; default model from loop-models 'simplify')",
+  ],
+  spec: [
+    "  aios spec eval <file|dir|glob> [--json] score specs against .claude/rubrics/spec-readiness.md",
+    "    [--no-llm] [--rubric <path>]        deterministic + adversarial; exit 0/1/2/3 (verdict-gated)",
+    "  aios spec fix <file> [--budget N]     iterate a spec through the bounded fix loop until ready",
+    "    [--write | --out <path>] [--no-llm]   default writes <name>.improved.md; --write overwrites",
+    "  aios spec author <plan> --slices <dir> fan out one author per Markdown issue slice, then run",
+    "    [--out <dir>] [--concurrency N]       deterministic cross-spec consistency checks",
+    "    [--model id] [--effort level]          override the configured author for this batch only",
+  ],
+  pr: [
+    "  aios pr [--branch b] [--issue AIO-n]  push the branch + open a GitHub PR (idempotent; prints PR_NUMBER)",
+    "    [--title t] [--body-file p]         title default '<issue>: <branch>'; --repo/--dry-run supported",
+  ],
+  "consolidate-findings": [
+    "  aios consolidate-findings --pr <n>    merge CI + exact Local Bugbot + current-head CodeRabbit",
+    "    --issue AIO-<n> --local-bugbot-review <path>  + GPT + PR diff; [--round N] [--repo owner/repo]",
+    "    [--gpt-review p]                    → .aios/loop/<issue>/findings-r<N>.md; feed to aios build",
+    "    [--out p]                           --findings. Exit 0 CLEAR · 3 BLOCKED · 1 error (red CI → 3)",
+  ],
+  "review-bugbot": [
+    "  aios review-bugbot [branch] [opts]     local Cursor Bugbot on worktree branch diff (offline)",
+    "    [--base ref] [--worktree path]      requires an existing build worktree for the branch",
+  ],
+  ship: [
+    "  aios ship AIO-<n> [--auto]            run the whole gated loop for one issue: plan→build→PR→",
+    "    [--auto-merge] [--max-fix-rounds N]  review→fix→merge→cleanup; safety rejects --auto-merge",
+    "    [--reviewers coderabbit,gpt-5.5] [--dry-run]  Local Bugbot mandatory; bugbot alias deprecated",
+    "    [--plan-runner cli|sdk]              plan via Claude Code login (cli) or Opus SDK (sdk; needs key)",
+  ],
+  "roadmap-run": [
+    "  aios roadmap-run (--label|--epic|      serial Linear walker: ship one unblocked issue at a time",
+    "    --project) [--max-issues N]          --dry-run lists ordered candidates; digest every run",
+    "    [--comment-digest [--digest-target   (requires LINEAR_API_KEY except ship --dry-run)",
+    "    AIO-<n>]] [--dry-run]",
+  ],
+  whoami: [],
+  inbox: [],
+};

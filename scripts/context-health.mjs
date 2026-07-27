@@ -29,6 +29,7 @@ import { parseFrontmatter } from "./workspace-parse.mjs";
 import { missingSeedPaths, resolveLocalToolkitDir, gitSha } from "./update.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { readSkills, renderSkillsIndexMd } from "./gen-catalog.mjs";
+import { gitFiles } from "./git-files.mjs";
 
 export const SOFT_THRESHOLDS = {
   staleness_versions: 2,
@@ -54,9 +55,20 @@ function readIf(p) {
   return existsSync(p) ? readFileSync(p, "utf8") : null;
 }
 
-/** Recursively list every `.md` file under `dir` (repo-relative paths), skipping node_modules/.git. */
+/**
+ * List every `.md` file under `root` (paths relative to `root`).
+ *
+ * Enumeration is via GIT when `root` is a work tree, never a filesystem walk (AIO-517):
+ * skipping only node_modules/.git still descends into every gitignored build tree
+ * (`src-tauri/target` is 1.6 GB / 35k files here) to look for markdown that, by
+ * definition, is generated output and not workspace context. Non-git dirs keep the walk.
+ */
 function listMdFiles(root, dir = root, out = []) {
   if (!existsSync(dir)) return out;
+  if (dir === root) {
+    const listed = gitFiles(root);
+    if (listed) return listed.filter((rel) => rel.endsWith(".md"));
+  }
   for (const name of readdirSync(dir)) {
     if (name === "node_modules" || name === ".git") continue;
     const abs = path.join(dir, name);

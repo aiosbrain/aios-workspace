@@ -5,7 +5,7 @@
 // unchanged; aios.mjs re-imports these. Guarded by test/sync-plan.test.mjs.
 
 import { parseFlatYaml } from "./flat-yaml.mjs";
-import { parseTableRows } from "./tasks-table.mjs";
+import { parseTableRows, dateCell } from "./tasks-table.mjs";
 import {
   parsedFactMarkdownToWire,
   parsedStakeholderMarkdownToWire,
@@ -393,9 +393,14 @@ function parseDecisionRow(cells, schema) {
   if (!schema.valid || cells.length !== schema.columnCount) return null;
   const idx = (name) => schema.header.findIndex((c) => c.startsWith(name));
   const audienceCell = schema.audienceIdx >= 0 ? cells[schema.audienceIdx]?.trim() : null;
+  // AIO-524: `decided_at` writes straight into a Postgres `date` column (`decisions.decided_at
+  // date` in aios-team-brain's postgres/schema.sql) on the brain side — a literal `—` (the
+  // workspace-wide "no value" sentinel used across every scaffolded table) must normalize to
+  // null here too, not round-trip as text. Reuses tasks-table.mjs's `dateCell` (same shape of
+  // fix for its own `due` field) instead of a second, independently-drifting implementation.
   const row = {
     row_key: cells[idx("#")] ?? cells[0] ?? "",
-    decided_at: idx("date") >= 0 ? cells[idx("date")] || null : null,
+    decided_at: dateCell(cells, idx, "date"),
     title: cells[schema.decisionIdx] || "",
     rationale: idx("rationale") >= 0 ? cells[idx("rationale")] || "" : "",
     decided_by: idx("decided") >= 0 ? cells[idx("decided")] || "" : "",
