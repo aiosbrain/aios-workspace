@@ -38,6 +38,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "happy-dom": "^20.11.1",
     "tailwindcss": "^4.3.2",
     "typescript": "^7.0.2",
     "vite": "^6.0.0",

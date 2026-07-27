@@ -98,7 +98,9 @@ export function useCockpit() {
       stallTimerRef.current = null;
       append({
         kind: "meta",
-        text: "still waiting — the agent runtime has produced no output for 30s. It may have failed to start (check the key/runtime or the server log at <workspace>/.aios/gui-server.log).",
+        // Honest about both worlds: some runtimes are legitimately slow to first
+        // output (a long think, a cold start), so this must not assert failure.
+        text: "still waiting — no output from the agent runtime for 30s. It may just be slow to respond, or it may have failed to start (check the key/runtime or the server log at <workspace>/.aios/gui-server.log).",
       });
     }, 30_000);
   }, [clearStall]);
