@@ -9,13 +9,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pullSyncOriginTasks, syncOriginRoute } from "../scripts/pull-tasks.mjs";
+import { MAX_PAGES, pullSyncOriginTasks, syncOriginRoute } from "../scripts/pull-tasks.mjs";
 
 const TABLE = `# Tasks
 
 | ID | Task | Assignee | Status | Sprint | Due | PM | PM URL |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T-01 | Ship the thing | alex | todo | sprint-1 | — | linear:AIO-1 | http://l/1 |
+| T-02 | Review the thing | sam | in_progress | sprint-1 | — |  |  |
 `;
 
 function workspace() {
@@ -25,10 +26,10 @@ function workspace() {
   return tasksPath;
 }
 
-const feed = (rows) => ({
+const feed = (rows, next_cursor = null) => ({
   mode: "sync-origin",
   tasks: [{ project: "mine", rows }],
-  next_cursor: null,
+  next_cursor,
 });
 
 test("requests the versioned mode + project + cursor", () => {
@@ -51,6 +52,7 @@ test("merges a real brain status change into the markdown", async () => {
     fetchFeed: async () => feed([{ row_key: "T-01", status: "done", assignee: "alex", raw_status: null }]),
   });
   assert.equal(res.supported, true);
+  assert.ok(res.cursor > "2026-", "a drained feed advances the cursor to now");
   assert.deepEqual(res.rows.map((r) => r.row_key), ["T-01"]);
   const after = readFileSync(tasksPath, "utf8");
   assert.match(after, /\| T-01 \| Ship the thing \| alex \| done \| sprint-1 \| — \| linear:AIO-1 \| http:\/\/l\/1 \|/);
@@ -61,7 +63,7 @@ test("a pre-1.13 brain (writeback feed) merges NOTHING and does not advance the 
   const res = await pullSyncOriginTasks({
     project: "mine",
     tasksPath,
-    since: null,
+    since: "2026-07-01T00:00:00Z",
     // An older brain ignores the unknown `mode` and answers with the dashboard writeback feed.
     fetchFeed: async () => ({
       mode: "writeback",
@@ -69,6 +71,7 @@ test("a pre-1.13 brain (writeback feed) merges NOTHING and does not advance the 
     }),
   });
   assert.equal(res.supported, false);
+  assert.equal(res.cursor, "2026-07-01T00:00:00Z", "cursor must not move past unsent changes");
   assert.deepEqual(res.rows, []);
   assert.equal(readFileSync(tasksPath, "utf8"), TABLE);
 });
@@ -78,12 +81,52 @@ test("a 400/404 (fallback null) is tolerated: no merge, no cursor advance", asyn
   const res = await pullSyncOriginTasks({
     project: "mine",
     tasksPath,
-    since: null,
-    fetchFeed: async () => null, // apiOptional's fallback for 400/404
+    since: "2026-07-01T00:00:00Z",
+    fetchFeed: async () => null, // apiOptional's fallback for a 404/500
   });
   assert.equal(res.supported, false);
+  assert.equal(res.cursor, "2026-07-01T00:00:00Z");
   assert.deepEqual(res.rows, []);
   assert.equal(readFileSync(tasksPath, "utf8"), TABLE);
+});
+
+// A full page comes back with `next_cursor`; jumping the cursor to now would strand the rest of
+// the backlog forever (reachable on the first EPOCH-cursor pull over a long-lived table).
+test("drains every page before advancing the cursor", async () => {
+  const tasksPath = workspace();
+  const seen = [];
+  const res = await pullSyncOriginTasks({
+    project: "mine",
+    tasksPath,
+    since: null,
+    fetchFeed: async (route) => {
+      seen.push(new URLSearchParams(route.split("?")[1]).get("since"));
+      return seen.length === 1
+        ? feed([{ row_key: "T-02", status: "done", assignee: "", raw_status: null }], "2026-07-10T00:00:00.000Z")
+        : feed([{ row_key: "T-01", status: "blocked", assignee: "", raw_status: null }]);
+    },
+  });
+  assert.deepEqual(seen, ["1970-01-01T00:00:00Z", "2026-07-10T00:00:00.000Z"]);
+  assert.deepEqual(res.rows.map((r) => r.row_key), ["T-02", "T-01"]);
+  const after = readFileSync(tasksPath, "utf8");
+  assert.match(after, /\| T-01 \| Ship the thing \| alex \| blocked \|/);
+  assert.match(after, /\| T-02 \| Review the thing \| sam \| done \|/);
+});
+
+test("a brain that never stops paging is bounded, and resumes from the last cursor", async () => {
+  const tasksPath = workspace();
+  let calls = 0;
+  const res = await pullSyncOriginTasks({
+    project: "mine",
+    tasksPath,
+    since: null,
+    fetchFeed: async () => {
+      calls++;
+      return feed([], `2026-07-${String(Math.min(calls, 28)).padStart(2, "0")}T00:00:00.000Z`);
+    },
+  });
+  assert.equal(calls, MAX_PAGES);
+  assert.equal(res.cursor, `2026-07-${String(MAX_PAGES).padStart(2, "0")}T00:00:00.000Z`);
 });
 
 test("a normalization echo is a supported-but-empty pull (cursor may advance, file untouched)", async () => {

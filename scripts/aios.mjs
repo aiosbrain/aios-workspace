@@ -442,14 +442,11 @@ async function api(cfg, method, route, body = null) {
 // GET an OPTIONAL endpoint: tolerate a 404 (older brain that predates it) by returning
 // `fallback`; surface any other failure (auth/server) as a visible warning rather than
 // silently swallowing it. Never throws — a missing writeback endpoint must not break pull.
-// `quietCodes` widens that silence (brain-api 1.13's sync-origin feed also answers 400 on a brain
-// that predates the `mode` parameter).
-async function apiOptional(cfg, route, fallback, quietCodes = [404]) {
+async function apiOptional(cfg, route, fallback) {
   try {
     return await api(cfg, "GET", route);
   } catch (e) {
-    if (quietCodes.some((code) => new RegExp(`^${code}\\b`).test(String(e?.message))))
-      return fallback;
+    if (/^404\b/.test(String(e?.message))) return fallback;
     console.warn(c.yellow(`  ${route} unavailable: ${e?.message ?? e}`));
     return fallback;
   }
@@ -1044,11 +1041,11 @@ async function cmdPull(repo, cfg, args = []) {
     project: cfg.project,
     tasksPath,
     since: state.last_sync_tasks_pull,
-    fetchFeed: (route) => apiOptional(cfg, route, null, [400, 404]),
+    fetchFeed: (route) => apiOptional(cfg, route, null),
     log: (line) => console.log(`  ${c.green("✓")} ${line}`),
   });
   const mergedSyncOrigin = leg.rows.length;
-  if (leg.supported) state.last_sync_tasks_pull = new Date().toISOString();
+  if (leg.supported) state.last_sync_tasks_pull = leg.cursor;
 
   // Decision writeback: UI-created/edited rows → merge into 3-log/decision-log.md
   // (mirrors the task writeback; keyed on the `#` column = row_key).

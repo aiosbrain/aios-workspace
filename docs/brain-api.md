@@ -162,7 +162,8 @@ writeback/registration pulls), so a newer client still works against an older br
   `mode` selector is additive and defaults to the pre-1.13 behaviour, so an old client's requests
   and responses are byte-identical; a new client feature-detects by checking the echoed `mode`
   (a pre-1.13 brain ignores the parameter and answers `mode: "writeback"`) and tolerates `400`/`404`.
-  Sync-origin rows additionally carry `raw_status` (the echo guard). Tier scoping is unchanged.*
+  Sync-origin rows additionally carry `raw_status` (the echo guard) and the mode is paged via
+  `next_cursor`. Tier scoping is unchanged.*
 
 ---
 
@@ -530,7 +531,8 @@ reached the workspace markdown and `3-log/tasks-team.md` decayed. This mode clos
 **`mode` (1.13, additive).** `mode=writeback` (the default when the parameter is absent),
 `mode=table` (equivalent to the pre-existing `?all=1`), `mode=sync-origin`. An unrecognized value
 is `400 invalid_request` — never a silent downgrade to the writeback feed. Requests that omit
-`mode` are answered exactly as before 1.13, so old clients are unaffected.
+`mode` are answered exactly as before 1.13, so old clients are unaffected. **Precedence:** an
+explicit `mode` wins over `?all=1` (so `?mode=writeback&all=1` is the writeback feed).
 
 **Feature detection (normative).** A pre-1.13 brain ignores the unknown `mode` parameter and
 answers with the writeback feed. A 1.13 client therefore MUST check the echoed `mode` field and
@@ -543,7 +545,11 @@ which case it merges nothing and pull still succeeds).
   feeds never double-merge one row.
 - **Tier-scoped identically** to the writeback feed (`visibleTasks`): an `external`-tier key
   receives only `audience: "external"` rows; `admin` content never exists on the brain (422 at the
-  push boundary). `since` is the caller's cursor over `updated_at`; page bound 500 rows.
+  push boundary).
+- **Paged.** `since` is the caller's cursor over `updated_at` (rows come back oldest-first, 500 per
+  page). A **full page** returns `next_cursor` = the last row's `updated_at`; the client MUST keep
+  fetching from it until `next_cursor` is null before advancing its stored cursor, or the remainder
+  of the backlog is skipped forever. `next_cursor` stays null in the `writeback`/`table` modes.
 
 ```json
 {
@@ -560,10 +566,13 @@ which case it merges nothing and pull still succeeds).
 
 **`raw_status` (1.13, this mode only).** The original markdown status string the workspace pushed
 when it did not map onto a canonical status (`backlog|ready|in_progress|blocked|done`) — e.g. a
-local `todo` is stored as `status: "backlog"`, `raw_status: "todo"`. The brain **clears
-`raw_status` whenever a provider/inbound apply sets the status authoritatively**, which is what
-distinguishes a real change from a normalization echo. It is omitted from the `writeback`/`table`
-responses so those stay byte-identical for pre-1.13 clients.
+local `todo` is stored as `status: "backlog"`, `raw_status: "todo"`. **Every authoritative status
+writer on the brain clears it** (provider inbound apply/adopt, dashboard board move, work-event
+completion, meetings bulk apply; the push path is the only writer that sets it). So a **non-null
+`raw_status` means: no authoritative writer has touched this row's status since your push** — the
+value you are being handed is your own, normalized. That is the signal the client's echo guard
+uses. It is omitted from the `writeback`/`table` responses so those stay byte-identical for
+pre-1.13 clients.
 
 **Merge semantics on the client (normative).** Match by `row_key`; **`status` and `assignee` only**
 — title, sprint, due, hierarchy and `body` are not written by this leg (`body` remains
@@ -571,11 +580,16 @@ dashboard/Postgres-only). Specifically:
 
 - **Never create or delete a row.** A `row_key` with no local line is skipped — the return leg must
   not resurrect a row the owner deleted; genuinely new rows arrive via push/the writeback feed.
-- **Echo guard.** Skip the status when the brain's value is merely a normalization of what this
-  workspace pushed — i.e. when the local cell canonicalizes to the brain's status
-  (`In Progress` ≡ `in_progress`), or when `raw_status` still equals the local cell verbatim. A
+- **Echo guard.** Skip the status when the brain's value can only be a normalization of what this
+  workspace pushed: when the local cell canonicalizes to the brain's status (`In Progress` ≡
+  `in_progress`, compared after trimming), **or whenever `raw_status` is non-null**. A
   non-canonical local status such as `todo` is overwritten **only** by a real brain-side change.
-- **Assignee.** A non-empty brain assignee that differs wins; an empty one never blanks a local name.
+  (Comparing `raw_status` to the local cell instead is NOT sufficient — a cell edited locally after
+  the push would then be reverted to the brain's normalization of the *old* value.)
+- **Assignee.** Applied only alongside a real status change on the same row, and only when the
+  brain's value is non-empty and differs (an empty one never blanks a local name). The brain has no
+  independent assignee author for sync-origin rows today, so an assignee-only difference is an echo
+  of the client's own last push and merging it would revert a local reassignment.
 - Every other column of a touched row is rewritten verbatim from the local cells.
 
 ## `GET /api/v1/pm-sync/health?limit=<N>` — projection observability (team-tier only)

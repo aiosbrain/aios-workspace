@@ -7,8 +7,8 @@
 // while Linear said Done/In Progress). `aios pull` now also asks the brain for
 // `GET /tasks?mode=sync-origin&project=<slug>` and merges status/assignee back.
 //
-// Kept out of aios.mjs (which is under a ratcheting file-size cap) and given an injectable fetch so
-// the feature-detection fallback is directly testable — see test/task-return-leg.test.mjs.
+// The feed fetch is injectable so the feature-detection fallback and paging are directly
+// testable without a network — see test/pull-tasks.test.mjs.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -61,20 +61,39 @@ export function syncOriginRoute(project, since) {
  * because the echoed `mode` isn't `"sync-origin"`, so an old brain merges NOTHING rather than the
  * wrong thing.
  *
- * Returns `{ supported, rows }` — `rows` are the merged rows (for reporting); `supported` is false
- * when the brain has no return leg, in which case the caller must NOT advance its cursor (a later,
- * upgraded brain would otherwise never resend the changes the cursor skipped past).
+ * The feed pages at 500 rows: a full page comes back with `next_cursor` (the last row's
+ * `updated_at`), so this drains every page in one pull rather than letting the cursor jump past the
+ * remainder. `MAX_PAGES` bounds a pathological brain (e.g. 500 rows sharing one timestamp).
+ *
+ * Returns `{ supported, rows, cursor }` — `rows` are the merged rows (for reporting) and `cursor`
+ * is what the caller should store. `supported` is false when the brain has no return leg, in which
+ * case the caller must NOT advance its cursor (a later, upgraded brain would otherwise never
+ * resend the changes the cursor skipped past).
  */
-export async function pullSyncOriginTasks({ project, tasksPath, since, fetchFeed, log }) {
-  if (!existsSync(tasksPath)) return { supported: false, rows: [] };
-  const res = await fetchFeed(syncOriginRoute(project, since));
-  const rows = syncOriginRowsFor(res, project);
-  if (!rows.length) return { supported: !!res && res.mode === "sync-origin", rows: [] };
+export const MAX_PAGES = 20;
 
-  const plan = planSyncOriginWriteback(readFileSync(tasksPath, "utf8"), rows);
-  if (plan.rows.length)
-    writeFileSync(tasksPath, mergeTaskWriteback(readFileSync(tasksPath, "utf8"), plan.rows));
-  for (const row of plan.rows)
-    log?.(`${row.row_key} → ${row.status} (${row.assignee || "—"})`);
-  return { supported: true, rows: plan.rows };
+export async function pullSyncOriginTasks({ project, tasksPath, since, fetchFeed, log }) {
+  if (!existsSync(tasksPath)) return { supported: false, rows: [], cursor: since };
+  const merged = [];
+  let cursor = since || EPOCH;
+  let supported = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const res = await fetchFeed(syncOriginRoute(project, cursor));
+    if (!res || res.mode !== "sync-origin") break;
+    supported = true;
+    const rows = syncOriginRowsFor(res, project);
+    if (rows.length) {
+      const plan = planSyncOriginWriteback(readFileSync(tasksPath, "utf8"), rows);
+      if (plan.rows.length)
+        writeFileSync(tasksPath, mergeTaskWriteback(readFileSync(tasksPath, "utf8"), plan.rows));
+      for (const row of plan.rows) log?.(`${row.row_key} → ${row.status} (${row.assignee || "—"})`);
+      merged.push(...plan.rows);
+    }
+    // A `next_cursor` means the page was full: keep draining from it. Otherwise we're current, and
+    // the caller may move the cursor to now.
+    if (!res.next_cursor) return { supported, rows: merged, cursor: new Date().toISOString() };
+    cursor = res.next_cursor;
+  }
+  // Unsupported (cursor unchanged) or page-capped (resume from the last cursor next pull).
+  return { supported, rows: merged, cursor: supported ? cursor : since };
 }

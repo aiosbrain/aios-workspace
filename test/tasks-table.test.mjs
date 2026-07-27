@@ -254,13 +254,23 @@ check(
 );
 check("…the untouched row is left alone", /\| T-02 \| Review the thing \| alex \| In Progress \|/.test(realMerged));
 
-// 2. ECHO GUARD: the brain's `backlog` is only its normalization of the `todo` we pushed
-//    (raw_status still holds our word) — it must NOT clobber the author's status.
+// 2. ECHO GUARD: a non-null raw_status proves NO authoritative writer has touched this row since
+//    our push (the brain clears it on every authoritative status write) — so the brain's `backlog`
+//    is only its normalization of the `todo` we pushed and must NOT clobber the author's status.
 const echo = planned([
   { row_key: "T-01", status: "backlog", assignee: "alex", raw_status: "todo" },
 ]);
-check("normalization echo (raw_status === local) is skipped", echo.rows.length === 0);
+check("normalization echo (raw_status non-null) is skipped", echo.rows.length === 0);
 check("…and reported as skipped", echo.skipped.includes("T-01"));
+
+// 2b. STALE echo: the owner edited the cell after the push (todo → done) and pulls before pushing.
+//     raw_status still reads `todo` and no longer equals the local cell — comparing the two would
+//     revert the unpushed edit to `backlog`. Non-null raw_status alone must stop the write.
+const staleEcho = planSyncOriginWriteback(
+  RETURN_TABLE.replace("| alex | todo |", "| alex | done |"),
+  [{ row_key: "T-01", status: "backlog", assignee: "alex", raw_status: "todo" }]
+);
+check("a stale echo never reverts a newer local status edit", staleEcho.rows.length === 0);
 
 // 3. A formatting-only difference ("In Progress" vs in_progress) is not a change either.
 const formatting = planned([
@@ -268,12 +278,23 @@ const formatting = planned([
 ]);
 check("canonicalization-only difference is skipped", formatting.rows.length === 0);
 
-// 4. Assignee: a non-empty brain assignee wins; an empty one never blanks the local name.
-const reassigned = planned([{ row_key: "T-02", status: "in_progress", assignee: "sam", raw_status: null }]);
-check("assignee change is applied", reassigned.rows[0]?.assignee === "sam");
-check("…without touching the status", reassigned.rows[0]?.status === "In Progress");
-const blanked = planned([{ row_key: "T-02", status: "in_progress", assignee: "", raw_status: null }]);
-check("an empty brain assignee never blanks the local one", blanked.rows.length === 0);
+// 4. Assignee rides along with a REAL status change only. The brain has no independent assignee
+//    author for sync-origin rows, so on an otherwise-unchanged row its value is the echo of our own
+//    last push — merging it would silently revert a local reassignment made before the next push.
+const reassignedOnly = planned([
+  { row_key: "T-02", status: "in_progress", assignee: "sam", raw_status: null },
+]);
+check(
+  "an assignee-only difference never reverts a local reassignment",
+  reassignedOnly.rows.length === 0
+);
+const movedAndReassigned = planned([
+  { row_key: "T-02", status: "done", assignee: "sam", raw_status: null },
+]);
+check("a real status change carries the brain assignee too", movedAndReassigned.rows[0]?.assignee === "sam");
+check("…with the new status", movedAndReassigned.rows[0]?.status === "done");
+const blanked = planned([{ row_key: "T-02", status: "done", assignee: "", raw_status: null }]);
+check("an empty brain assignee never blanks the local one", blanked.rows[0]?.assignee === "alex");
 
 // 5. The return leg never CREATES a row: an unknown row_key is skipped, not appended (it would
 //    resurrect a row the owner deliberately deleted).

@@ -148,13 +148,21 @@ export function canonicalTaskStatus(raw) {
  *   • status/assignee only — body, title, sprint, due, hierarchy stay local/brain-canonical here.
  *   • never create or delete a row: a row_key with no local line is skipped (the return leg must
  *     not resurrect a row the owner deleted; genuinely new rows arrive via push/writeback).
- *   • ECHO GUARD: skip when the brain's status is merely a normalization of what this workspace
- *     pushed — either the local text already canonicalizes to the brain status, or the brain's
- *     `raw_status` still equals the local cell (the brain never re-derived it). An unknown local
- *     status like `todo` is overwritten ONLY by a real brain-side change (the brain clears
- *     `raw_status` when a provider sets the status authoritatively).
- *   • assignee: a non-empty brain assignee that differs wins; an empty one never blanks a local
- *     name (the brain's assignee is free text and often simply unset).
+ *   • ECHO GUARD: skip the status whenever the brain's value can only be a normalization of what
+ *     this workspace pushed. That is TWO cases, both required:
+ *       – the local text already canonicalizes to the brain's status (`In Progress` ≡ in_progress);
+ *       – `raw_status` is non-null. A non-null `raw_status` structurally means NO authoritative
+ *         writer has set this row's status since the push: the brain clears it in the same
+ *         statement as every authoritative status write (provider apply/adopt, dashboard move,
+ *         work-event completion, meetings bulk apply — guarded on the brain side). Comparing it to
+ *         the local cell instead would clobber a LOCAL edit made after the push: cell edited
+ *         `todo` → `done`, brain still `backlog`/raw `todo`, pull-before-push ⇒ the edit is lost.
+ *     So an unknown local status like `todo` is overwritten only by a real brain-side change.
+ *   • assignee: only alongside a REAL status change on the same row. The brain has no independent
+ *     assignee author for sync-origin rows (neither the inbound apply nor the dashboard actions
+ *     write `assignee`), so on its own the value is always the echo of our own last push and
+ *     merging it would silently revert a local reassignment. An empty brain assignee never blanks
+ *     a local name.
  */
 export function planSyncOriginWriteback(content, rows) {
   const table = parseTableRows(content);
@@ -187,14 +195,14 @@ export function planSyncOriginWriteback(content, rows) {
     const rawStatus = row.raw_status == null ? null : String(row.raw_status).trim();
 
     let status = localStatus;
-    if (
-      brainStatus &&
-      canonicalTaskStatus(localStatus) !== brainStatus &&
-      !(rawStatus !== null && rawStatus === localStatus)
-    ) {
+    if (brainStatus && rawStatus === null && canonicalTaskStatus(localStatus) !== brainStatus) {
       status = brainStatus;
     }
-    const assignee = brainAssignee && brainAssignee !== localAssignee ? brainAssignee : localAssignee;
+    const statusChanged = status !== localStatus;
+    const assignee =
+      statusChanged && brainAssignee && brainAssignee !== localAssignee
+        ? brainAssignee
+        : localAssignee;
     if (status === localStatus && assignee === localAssignee) {
       skipped.push(row.row_key);
       continue;
