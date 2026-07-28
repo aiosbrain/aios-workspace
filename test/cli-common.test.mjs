@@ -88,8 +88,49 @@ console.log("sha256");
 
 console.log("c (colours)");
 {
-  check("wraps in ANSI + reset", c.red("x") === "\x1b[0;31mx\x1b[0m");
-  check("has bold (the 6th key aios.mjs needed)", c.bold("x") === "\x1b[1mx\x1b[0m");
+  // Since AIO-545 (GRAIN W0-4) `c` is capability-aware: it emits SGR only when the stream
+  // it is bound to can render it, and this test's stdout is usually a pipe. So each case
+  // has to state the colour environment it is asserting for. The full detection table
+  // lives in test/cli-common-color-characterization.test.mjs.
+  //
+  // Every colour-deciding variable is cleared, not just the one under test: restoring the
+  // parent's FORCE_COLOR and then setting NO_COLOR would assert nothing, because
+  // FORCE_COLOR outranks NO_COLOR — under a runner with FORCE_COLOR set (common in CI)
+  // the suppression case would fail spuriously.
+  const COLOR_ENV_KEYS = [
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "CLICOLOR",
+    "CLICOLOR_FORCE",
+    "COLORTERM",
+    "TERM",
+    "CI",
+  ];
+  const withColorEnv = (overrides, fn) => {
+    const saved = Object.fromEntries(COLOR_ENV_KEYS.map((k) => [k, process.env[k]]));
+    for (const key of COLOR_ENV_KEYS) delete process.env[key];
+    process.env.TERM = "xterm";
+    Object.assign(process.env, overrides);
+    try {
+      fn();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  };
+
+  withColorEnv({ FORCE_COLOR: "1" }, () => {
+    check("wraps in ANSI + reset", c.red("x") === "\x1b[0;31mx\x1b[0m");
+    check("has bold (the 6th key aios.mjs needed)", c.bold("x") === "\x1b[1mx\x1b[0m");
+  });
+
+  // NO_COLOR rather than "is stdout a pipe?", so this holds whether the suite is run in a
+  // terminal or under CI.
+  withColorEnv({ NO_COLOR: "1" }, () => {
+    check("suppressed when the environment says no colour", c.red("x") === "x");
+  });
 }
 
 console.log("gitConfig");

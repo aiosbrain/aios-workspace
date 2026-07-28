@@ -38,16 +38,11 @@ import path from "node:path";
 import { parseJsonl } from "./analyze/parse-claude.mjs";
 import { discoverClaude } from "./analyze/sources.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
-import { safeReal } from "./cli-common.mjs";
-
-// Local ANSI helper (mirrors aios.mjs `c`; relay-core's `c` omits bold).
-const c = {
-  red: (s) => `\x1b[0;31m${s}\x1b[0m`,
-  green: (s) => `\x1b[0;32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-};
+// The shared, capability-aware palette. This file carried its own unconditional copy of
+// `c` until AIO-545 (GRAIN W0-4); that copy was the last of the four the AIO-315
+// consolidation set out to collapse, and it emitted escape codes into pipes like the
+// others did. Never reintroduce a local palette here — `c` is one object, or it drifts.
+import { c, safeReal } from "./cli-common.mjs";
 
 export const DEFAULT_MIN_COUNT = 3;
 
