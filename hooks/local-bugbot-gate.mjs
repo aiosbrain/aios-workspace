@@ -603,6 +603,17 @@ export function aggregateGateResults(results) {
     return { status: "skipped", reason: "no reviewable worktree found", worktrees: [] };
   }
   const tag = (result) => (result.worktree ? `[${result.worktree}]\n` : "");
+  // A CACHED blocked verdict carries its explanation in `reason`, not `output` (see cachedResult),
+  // so reading only `output` renders a worktree tag and nothing else — which is what the operator
+  // sees on every Stop after the first, the common case. Never emit a content-free entry: an empty
+  // block reads as a broken gate rather than a real finding, and the tag alone also defeats
+  // blockedReason's `output || reason` fallback by making `output` non-empty.
+  const evidence = (result) =>
+    `${tag(result)}${
+      result.output ||
+      result.reason ||
+      "no evidence recorded for this worktree; run the manual review command there to refresh it"
+    }`;
 
   const blocked = results.filter((result) => result.status === "blocked");
   if (blocked.length) {
@@ -611,7 +622,7 @@ export function aggregateGateResults(results) {
       cached: blocked.every((result) => result.cached === true),
       fingerprint: blocked[0].fingerprint,
       worktrees: blocked.map((result) => result.worktree),
-      output: blocked.map((result) => `${tag(result)}${result.output ?? ""}`).join("\n\n"),
+      output: blocked.map(evidence).join("\n\n"),
     };
   }
 
@@ -623,10 +634,7 @@ export function aggregateGateResults(results) {
       reason: errored
         .map((result) => `${result.worktree ?? "?"}: ${result.reason ?? "unknown error"}`)
         .join("; "),
-      output: errored
-        .map((result) => (result.output ? `${tag(result)}${result.output}` : ""))
-        .filter(Boolean)
-        .join("\n\n"),
+      output: errored.map(evidence).join("\n\n"),
     };
   }
 
