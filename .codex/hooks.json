@@ -1,5 +1,29 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/codex/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+            "timeout": 30,
+            "statusMessage": "Enforcing worktree discipline"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)/.harness/adapters/codex/run-strict-guard.sh\" pre_command guard-worktree.sh",
+            "timeout": 30,
+            "statusMessage": "Enforcing worktree discipline"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

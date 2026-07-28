@@ -38,6 +38,28 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_command guard-worktree.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "AskUserQuestion|ExitPlanMode",
