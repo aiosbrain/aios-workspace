@@ -48,6 +48,15 @@ const PUSH_GATE_INSTALLER = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "install-leak-gate-push-hook.sh"
 );
+/**
+ * Interpreter used to run the backstop installers. A bare `"bash"` is resolved through
+ * `$PATH`, so a writable directory earlier in `$PATH` could substitute the shell that
+ * installs our security guards — the one place in this file where that matters. Both
+ * installers are bash-3.2 compatible, so a fixed system path works on macOS and Linux
+ * alike; the bare name survives only as a last resort for layouts without either
+ * (e.g. NixOS), where the guard cannot be installed at all otherwise.
+ */
+const BASH = ["/bin/bash", "/usr/bin/bash"].find((candidate) => existsSync(candidate)) ?? "bash";
 
 /**
  * Where the post-checkout hook lives for `repo`. Resolved via `--git-common-dir`, not
@@ -114,7 +123,7 @@ function runBackstopInstaller(repo, installer, label, successMessage, { quiet = 
     return "skipped";
   }
   try {
-    execFileSync("bash", [installer], { cwd: repo, stdio: "pipe" });
+    execFileSync(BASH, [installer], { cwd: repo, stdio: "pipe" });
     if (!quiet) console.log(c.dim(`  installed ${successMessage}`));
     return "installed";
   } catch (error) {
