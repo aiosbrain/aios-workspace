@@ -22,10 +22,7 @@ const DIVERGED_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "diverg
 
 test("the pinned V2 contract describes the runtime's single inspect/preview path", () => {
   const contract = JSON.parse(
-    readFileSync(
-      new URL("../docs/contract/onboarding-orchestration.json", import.meta.url),
-      "utf8"
-    )
+    readFileSync(new URL("../docs/contract/onboarding-orchestration.json", import.meta.url), "utf8")
   );
   assert.equal(contract.version, 2);
   assert.deepEqual(contract.paths, ["Personal", "Join", "Create"]);
