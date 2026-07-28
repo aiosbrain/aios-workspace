@@ -48,6 +48,7 @@ import {
   trustedReviewerEnv,
   UNTRACKED_HASH_SIZE_CAP,
 } from "../scripts/review-bugbot.mjs";
+import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
 import {
   enqueueContinuation,
   hardenedGateEnv,
@@ -64,6 +65,8 @@ function evaluateLocalBugbotGate(options = {}) {
     resolveBase:
       options.resolveBase ??
       ((repo) => ({ ok: true, baseSha: git(repo, "merge-base", "HEAD", "origin/main") })),
+    // Fixtures have no canonical remote; never let a test reach the network ls-remote.
+    resolveBranchHead: options.resolveBranchHead ?? (() => null),
   });
 }
 
@@ -747,6 +750,134 @@ test("gate never trusts a disk clear cache but caches exact blocked verdict meta
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("a pushed clean worktree is owned by the PR gates and skips local review", () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "pushed change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "pushed change");
+    const head = git(repo, "rev-parse", "HEAD");
+    let calls = 0;
+    const review = () => {
+      calls++;
+      return { ok: false, status: 1, output: "reviewer ran" };
+    };
+
+    const unpushed = evaluateLocalBugbotGate({ repo, env: {}, runReview: review });
+    assert.notEqual(unpushed.status, "skipped", "an unpushed head must still be reviewed");
+    assert.equal(calls, 1);
+
+    evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => "f".repeat(40),
+    });
+    assert.equal(calls, 2, "a canonical head behind local HEAD must still be reviewed");
+
+    const skipped = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => head,
+    });
+    assert.equal(skipped.status, "skipped");
+    assert.match(skipped.reason, /canonical remote/);
+    assert.equal(calls, 2, "a pushed clean worktree must not spend a model call");
+
+    appendFileSync(path.join(repo, "tracked.txt"), "uncommitted\n");
+    const dirty = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => head,
+    });
+    assert.notEqual(dirty.status, "skipped", "worktree edits beyond the pushed head are reviewed");
+    assert.equal(calls, 3);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a stale blocked cache stops blocking once the branch head reaches the canonical remote", () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "in-flight change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "in-flight change");
+    const head = git(repo, "rev-parse", "HEAD");
+    let calls = 0;
+    const blockedReview = () => {
+      calls++;
+      return {
+        ok: false,
+        status: 1,
+        output: `${BUGBOT_BLOCKED_MARKER}\nBugbot found Medium+ issues\n- Medium: bug`,
+      };
+    };
+    assert.equal(
+      evaluateLocalBugbotGate({ repo, env: {}, runReview: blockedReview }).status,
+      "blocked"
+    );
+    assert.equal(evaluateLocalBugbotGate({ repo, env: {}, runReview: blockedReview }).cached, true);
+    assert.equal(calls, 1);
+
+    const afterPush = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: blockedReview,
+      resolveBranchHead: () => head,
+    });
+    assert.equal(
+      afterPush.status,
+      "skipped",
+      "PR gates own a pushed changeset, cached verdict or not"
+    );
+    assert.equal(calls, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("canonical branch head resolution reads only the canonical remote", () => {
+  const repo = fixture();
+  const bare = mkdtempSync(path.join(tmpdir(), "aios-canonical-"));
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "pushed change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "pushed change");
+    git(bare, "init", "-q", "--bare");
+    git(repo, "push", "-q", bare, "feat/gate");
+    const head = git(repo, "rev-parse", "HEAD");
+    assert.equal(resolveCanonicalBranchHead("feat/gate", { canonicalUrl: bare }), head);
+    assert.equal(resolveCanonicalBranchHead("missing", { canonicalUrl: bare }), null);
+    assert.equal(resolveCanonicalBranchHead("HEAD", { canonicalUrl: bare }), null);
+    assert.equal(resolveCanonicalBranchHead("", { canonicalUrl: bare }), null);
+    assert.equal(
+      resolveCanonicalBranchHead("feat/gate", { canonicalUrl: path.join(bare, "missing") }),
+      null,
+      "an unreachable canonical remote must read as not-pushed, never as pushed"
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test("a skipped sibling stays neutral in a probe sweep", () => {
+  const combined = aggregateGateResults([
+    { status: "probe", fingerprint: "aa11", worktree: "/wt/active" },
+    {
+      status: "skipped",
+      reason: "branch feat/x head is on the canonical remote",
+      worktree: "/wt/pushed",
+    },
+  ]);
+  assert.equal(combined.status, "probe");
+  assert.equal(combined.fingerprints.length, 1);
+  assert.equal(combined.fingerprints[0].worktree, "/wt/active");
 });
 
 test("gate waits through transient lock contention instead of returning a spurious error", () => {
