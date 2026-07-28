@@ -158,10 +158,14 @@ if [ "$MODE" = "command" ]; then
   # guard remains the commit-time backstop.
   if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
     _muts='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
+    # Archive extraction writes files too: tar/bsdtar in extract mode (-x/--extract,
+    # incl. old-style `tar xf`), and unzip/ditto (which always write). Creation
+    # (`tar -cf`) only reads and is deliberately NOT matched.
+    _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
     _cands=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
-    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
+    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re"; then
       _cands="$_cands
-$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync")"
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
     elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
       # Strip redirections BEFORE picking the last token as the destination —
       # otherwise `cp src <primary>/dst >/tmp/log` hides the real destination
@@ -172,7 +176,12 @@ $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep 
 $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
     fi
     for _tok in $(printf '%s\n' "$_cands" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
-      case "$_tok" in -*) continue ;; *=/*) _tok=${_tok#*=} ;; esac
+      case "$_tok" in
+        -*=/*) _tok=${_tok#*=} ;;
+        -*/*)  _tok="/${_tok#*/}" ;;  # attached path arg: -o/abs, -d/abs, -C/abs
+        -*)    continue ;;
+        *=/*)  _tok=${_tok#*=} ;;
+      esac
       case "$_tok" in
         "~") _tok=$HOME ;;
         "~/"*) _tok=$HOME/${_tok#\~/} ;;
@@ -226,7 +235,9 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
 fi
 
 # MODE = edit — classify EACH edited path by its own repo (not just the first).
-FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '.paths[]? | .path, (.from // empty)' | awk 'NF && !seen[$0]++') || exit 3
+# Move/rename destinations (.to / .destination) are held to the same rule as
+# sources — a move INTO a primary checkout is a write into it.
+FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '.paths[]? | .path, (.from // empty), (.to // empty), (.destination // empty)' | awk 'NF && !seen[$0]++') || exit 3
 [ -n "$FILE_PATHS" ] || exit 0
 
 while IFS= read -r p || [ -n "$p" ]; do

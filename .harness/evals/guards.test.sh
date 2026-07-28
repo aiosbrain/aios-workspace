@@ -149,6 +149,18 @@ ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x
 ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
 # pre_edit: multi-level new path in the primary must not fall back to session cwd
 ts "strict blocks edit at new deep primary path" 2 "$(wpe "$WT/wt" "$WT/newdir/sub/new.txt")"
+# archive extraction into the primary is a shell write (tar -C / old-style xf / unzip -d)
+ts "strict blocks tar -C extract into primary"   2 "$(wpc "$WT/wt" "tar -C $WT -xf /tmp/a431.tar")"
+ts "strict blocks old-style tar xf into primary" 2 "$(wpc "$WT/wt" "tar xf /tmp/a431.tar -C $WT")"
+ts "strict blocks unzip -d into primary"         2 "$(wpc "$WT/wt" "unzip /tmp/a431.zip -d $WT")"
+ts "strict blocks unzip attached -d into primary" 2 "$(wpc "$WT/wt" "unzip /tmp/a431.zip -d$WT")"
+ts "strict allows tar CREATE reading from primary" 0 "$(wpc "$WT/wt" "tar -cf /tmp/b431.tar -C $WT a.txt")"
+ts "strict allows tar extract outside primary"   0 "$(wpc "$WT/wt" 'tar -C /tmp -xf /tmp/a431.tar')"
+# a move DESTINATION into the primary is a write into it (.to on normalized events)
+ts "strict blocks move .to destination in primary" 2 "$(jq -cn --arg cwd "$WT/wt" --arg p /tmp/x431.txt --arg to "$WT/moved431.txt" '{protocol_version:"1.0",event:"pre_edit",runtime:{name:"mock"},cwd:$cwd,paths:[{path:$p,action:"update",to:$to}],added_content:[]}')"
+# cursor adapter maps Move/Rename destination keys into paths[]
+_nm=$(printf '{"tool_name":"Move","tool_input":{"path":"/tmp/a431.md","destination":"/tmp/b431.md"},"cwd":"/tmp"}' | "$ROOT/adapters/cursor/normalize.sh" pre_edit | jq -r '[.paths[].path] | sort | join(",")')
+if [ "$_nm" = "/tmp/a431.md,/tmp/b431.md" ]; then PASS=$((PASS+1)); echo "PASS: cursor normalize maps move destination into paths"; else FAIL=$((FAIL+1)); echo "FAIL: cursor normalize missed move destination (got '$_nm')"; fi
 tc "codex adapter blocks checkout -b" 2 pre_command guard-worktree.sh "$(jq -cn --arg cwd "$WT" '{tool_name:"Bash",tool_input:{command:"git checkout -b feat/adapter"},cwd:$cwd}')"
 # review finding 2 — -B / -C / --create / branch -m
 t "blocks checkout -B in primary"     2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git checkout -B feat/y')"

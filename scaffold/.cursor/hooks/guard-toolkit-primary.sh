@@ -173,13 +173,22 @@ touches_toolkit_primary() {
 RAWCWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || RAWCWD=""
 case "$RAWCWD" in /*) ;; *) RAWCWD=$WS ;; esac
 
+RAW_EDIT_PATHS=""
 if [ "$MODE" = "pre_edit" ]; then
   _cwd=${RAWCWD}
   _any=0
+  # Collect EVERY string in tool_input except known content keys — Move/Rename/
+  # Delete tools carry their targets under adapter-specific keys (destination,
+  # new_path, target, …); enumerating named keys fails open for the ones we
+  # didn't anticipate. Non-path strings resolve nowhere near the toolkit and
+  # are harmless.
   FILE_PATHS=$(printf '%s' "$INPUT" | jq -r '
     (.tool_input // {}) as $ti |
-    [$ti.file_path, $ti.filePath, $ti.path, $ti.target_file, .file_path, .filePath] |
+    ([$ti | del(.content, .contents, .new_string, .newString, .old_string,
+                .oldString, .edits, .code_edit, .instructions) | .. | strings] +
+     [.file_path, .filePath]) |
     map(select(type == "string" and length > 0)) | unique | .[]' 2>/dev/null) || exit 3
+  RAW_EDIT_PATHS="$FILE_PATHS"
   if [ -n "$FILE_PATHS" ]; then
     while IFS= read -r _p || [ -n "$_p" ]; do
       [ -n "$_p" ] || continue
@@ -275,10 +284,14 @@ if [ "$MODE" = "pre_command" ]; then
   # (node -e / python -c), arbitrary command substitution, and variables other than
   # $AIOS_TOOLKIT_DIR are not evaluated.
   MUTATORS='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
+  # Archive extraction writes files too: tar/bsdtar in extract mode (-x/--extract,
+  # incl. old-style `tar xf`), and unzip/ditto (which always write). Creation
+  # (`tar -cf`) only reads and is deliberately NOT matched.
+  EXTRACT_RE='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
   CANDIDATES=$(printf '%s' "$SCAN" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
-  if printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])('"$MUTATORS"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
+  if printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])('"$MUTATORS"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$EXTRACT_RE"; then
     CANDIDATES="$CANDIDATES
-$(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$MUTATORS|sed|cp|mv|rsync")"
+$(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$MUTATORS|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
   elif printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
     # Strip redirections BEFORE picking the last token as the destination —
     # otherwise `cp src <primary>/dst >/tmp/log` hides the real destination
@@ -290,7 +303,12 @@ $(printf '%s\n' "$NORED" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 
   fi
   if [ -n "$(printf '%s' "$CANDIDATES" | awk 'NF')" ]; then
     for tok in $(printf '%s\n' "$CANDIDATES" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
-      case "$tok" in -*) continue ;; *=/*) tok=${tok#*=} ;; esac
+      case "$tok" in
+        -*=/*) tok=${tok#*=} ;;
+        -*/*)  tok="/${tok#*/}" ;;  # attached path arg: -o/abs, -d/abs, -C/abs
+        -*)    continue ;;
+        *=/*)  tok=${tok#*=} ;;
+      esac
       case "$tok" in
         "~") tok=$HOME ;;
         "~/"*) tok=$HOME/${tok#\~/} ;;
@@ -344,7 +362,12 @@ fi
 CWD=$(printf '%s' "$NORMALIZED" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD="$WS"
 
-FILE_PATHS=$(printf '%s' "$NORMALIZED" | jq -r '.paths[]? | .path, (.from // empty)' | awk 'NF && !seen[$0]++') || exit 3
+# Union the normalized paths (including move/rename source AND destination
+# fields) with the raw tool_input strings collected in the fast path — an
+# adapter that doesn't map a destination key must not turn a cross-repo Move
+# into an allowed edit.
+NORM_PATHS=$(printf '%s' "$NORMALIZED" | jq -r '.paths[]? | .path, (.from // empty), (.to // empty), (.destination // empty)' | awk 'NF') || exit 3
+FILE_PATHS=$(printf '%s\n%s\n' "$NORM_PATHS" "$RAW_EDIT_PATHS" | awk 'NF && !seen[$0]++')
 [ -n "$FILE_PATHS" ] || exit 0
 
 while IFS= read -r p || [ -n "$p" ]; do
