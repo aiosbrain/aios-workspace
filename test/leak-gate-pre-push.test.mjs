@@ -89,6 +89,7 @@ test("push rejects a confidential commit even when a later commit deletes the fi
 
   rmSync(path.join(repo, "scripts", "leak-gate.sh"));
   mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
+  writeFileSync(path.join(repo, ".gitattributes"), "docs/bd/** export-ignore\n");
   writeFileSync(path.join(repo, "docs", "bd", "prospect.md"), "confidential prospect\n");
   execFileSync("git", ["-C", repo, "add", "-A"]);
   execFileSync("git", [
@@ -100,6 +101,7 @@ test("push rejects a confidential commit even when a later commit deletes the fi
     "add private brief without scanner signature",
   ]);
   rmSync(path.join(repo, "docs"), { recursive: true, force: true });
+  rmSync(path.join(repo, ".gitattributes"));
   copyFileSync(
     path.join(TOOLKIT, "scripts", "leak-gate.sh"),
     path.join(repo, "scripts", "leak-gate.sh")
@@ -122,6 +124,91 @@ test("push rejects a confidential commit even when a later commit deletes the fi
     encoding: "utf8",
   });
   assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
+});
+
+test("push rejects a lightweight tag that publishes a protected blob", () => {
+  const { repo } = makeRepo();
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-blob-remote-"));
+  const terms = path.join(repo, "terms.sh");
+  roots.push(remote);
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  writeFileSync(terms, "STRONG='sensitiveclient-name'\n");
+  const blob = execFileSync("git", ["-C", repo, "hash-object", "-w", "--stdin"], {
+    input: "sensitiveclient-name\n",
+    encoding: "utf8",
+  }).trim();
+  execFileSync("git", ["-C", repo, "update-ref", "refs/tags/leak-blob", blob]);
+  install(repo);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "refs/tags/leak-blob"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AIOS_LEAK_TERMS_FILE: terms,
+      CHAIN_MARKER: path.join(repo, "chain-ran"),
+    },
+  });
+  assert.notEqual(push.status, 0);
+  assert.match(push.stderr, /confidential material/i);
+});
+
+test("new-ref scanning ignores stale local remote-tracking refs", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-stale-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-stale-remote-"));
+  roots.push(repo, remote);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  mkdirSync(path.join(repo, "scaffold"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  writeFileSync(path.join(repo, "scaffold", ".keep"), "");
+  mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
+  writeFileSync(path.join(repo, "docs", "bd", "prospect.md"), "confidential prospect\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "private ancestor"]);
+  const privateCommit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", privateCommit]);
+  rmSync(path.join(repo, "docs"), { recursive: true, force: true });
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "clean tip"]);
+  install(repo);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "HEAD:refs/heads/new-branch"], {
+    encoding: "utf8",
+    env: { ...process.env, AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file" },
+  });
+  assert.notEqual(push.status, 0);
+  assert.match(push.stderr, /confidential material/i);
+});
+
+test("preserved hooks still resolve helper programs beside their original hook path", () => {
+  const { repo, hooksDir } = makeRepo();
+  const helper = path.join(hooksDir, "block-push-helper");
+  writeFileSync(helper, "#!/usr/bin/env bash\nexit 23\n");
+  chmodSync(helper, 0o755);
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    '#!/usr/bin/env bash\nhelper="$(dirname "$0")/block-push-helper"\n[ ! -x "$helper" ] || "$helper"\n'
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  assert.equal(spawnSync(path.join(hooksDir, "pre-push")).status, 23);
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 23, result.stderr);
 });
 
 test("reinstall preserves both an existing chain and a newer replacement hook", () => {

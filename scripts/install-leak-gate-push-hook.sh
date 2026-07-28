@@ -44,29 +44,37 @@ fi
 mkdir -p "$hooks_dir"
 dest="$hooks_dir/pre-push"
 chained="$hooks_dir/pre-push.chained"
-chain_dir="$hooks_dir/pre-push.chained.d"
+old_chain_dir="$hooks_dir/pre-push.chained.d"
 marker="pre-push-leak-gate"
 dispatcher_marker="aios-pre-push-chain-dispatcher"
 
 # Keep every foreign hook. A single `.chained` slot loses the newest hook when another tool
-# replaces `pre-push` after AIOS was installed, so the slot is a dispatcher over a private hook
-# directory. Reinstalls deduplicate byte-identical hooks and never overwrite an earlier guard.
+# replaces `pre-push` after AIOS was installed, so the slot dispatches to uniquely named siblings
+# in the ORIGINAL hooks directory. Keeping dirname($0) stable preserves hooks that locate helper
+# programs beside themselves. Reinstalls deduplicate byte-identical hooks.
 preserve_foreign_hook() {
   local source="$1" candidate saved
   [[ -f "$source" ]] || return 0
-  mkdir -p "$chain_dir"
-  for candidate in "$chain_dir"/*; do
+  for candidate in "$hooks_dir"/pre-push.chained-hook.*; do
     [[ -f "$candidate" ]] || continue
     if cmp -s "$source" "$candidate"; then
       return 0
     fi
   done
-  saved=$(mktemp "$chain_dir/hook.XXXXXX")
+  saved=$(mktemp "$hooks_dir/pre-push.chained-hook.XXXXXX")
   cp "$source" "$saved"
   chmod +x "$saved"
-  echo "install-leak-gate-push-hook: preserved existing pre-push guard in $chain_dir"
+  echo "install-leak-gate-push-hook: preserved existing pre-push guard beside $dest"
 }
 
+# Migrate guards preserved by the first dispatcher design without deleting its directory:
+# local hook state is user-owned, so migration copies and leaves recovery material intact.
+if [[ -d "$old_chain_dir" ]]; then
+  for old_hook in "$old_chain_dir"/*; do
+    [[ -f "$old_hook" ]] || continue
+    preserve_foreign_hook "$old_hook"
+  done
+fi
 if [[ -f "$chained" ]] && ! grep -q "$dispatcher_marker" "$chained" 2>/dev/null; then
   preserve_foreign_hook "$chained"
 fi
@@ -74,16 +82,16 @@ if [[ -f "$dest" ]] && ! grep -q "$marker" "$dest" 2>/dev/null; then
   preserve_foreign_hook "$dest"
 fi
 
-if [[ -d "$chain_dir" ]]; then
+if compgen -G "$hooks_dir/pre-push.chained-hook.*" >/dev/null; then
   cat > "$chained" <<'DISPATCHER'
 #!/usr/bin/env bash
 # aios-pre-push-chain-dispatcher — preserve every pre-existing pre-push guard.
 set -u
-chain_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pre-push.chained.d"
+hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 updates=$(mktemp "${TMPDIR:-/tmp}/aios-pre-push-chain.XXXXXX")
 trap 'rm -f "$updates"' EXIT
 cat > "$updates"
-for hook in "$chain_dir"/*; do
+for hook in "$hooks_dir"/pre-push.chained-hook.*; do
   [[ -x "$hook" ]] || continue
   "$hook" "$@" < "$updates"
   status=$?

@@ -130,17 +130,20 @@ function runBackstopInstaller(repo, installer, label, successMessage, { quiet = 
  * worktree add/init, onboarding, and update so a fresh clone cannot receive only the
  * post-checkout convenience hook while remaining publishable without commit/push guards.
  */
-export function installWorktreeSafetyBackstops(repo, { quiet = false } = {}) {
+export function installWorktreeSafetyBackstops(repo, { quiet = false, productOnly = false } = {}) {
   const gateAvailable = existsSync(path.join(repo, "scripts", "leak-gate.sh"));
   return {
     postCheckout: installPostCheckoutHook(repo, { quiet }),
-    primaryCommit: runBackstopInstaller(
-      repo,
-      PRIMARY_GUARD_INSTALLER,
-      "primary-commit-guard",
-      "primary-commit-guard → blocks all commits in the primary checkout",
-      { quiet }
-    ),
+    primaryCommit:
+      !productOnly || gateAvailable
+        ? runBackstopInstaller(
+            repo,
+            PRIMARY_GUARD_INSTALLER,
+            "primary-commit-guard",
+            "primary-commit-guard → blocks all commits in the primary checkout",
+            { quiet }
+          )
+        : "skipped",
     prePush: gateAvailable
       ? runBackstopInstaller(
           repo,

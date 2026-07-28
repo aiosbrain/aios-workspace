@@ -26,7 +26,7 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 
 updates_file=$(mktemp "${TMPDIR:-/tmp}/aios-pre-push-updates.XXXXXX")
 snapshot_root=$(mktemp -d "${TMPDIR:-/tmp}/aios-pre-push-snapshots.XXXXXX")
-seen_commits="$snapshot_root/seen-commits"
+seen_objects="$snapshot_root/seen-objects"
 gate_output="$snapshot_root/gate-output"
 trap 'rm -f "$updates_file"; rm -rf "$snapshot_root"' EXIT
 cat > "$updates_file"
@@ -80,58 +80,138 @@ scan_target() {
   return "$status"
 }
 
-scan_commit() {
-  local commit="$1" snapshot="$snapshot_root/tree"
-  grep -qxF "$commit" "$seen_commits" 2>/dev/null && return 0
-  printf '%s\n' "$commit" >> "$seen_commits"
+scan_treeish() {
+  local treeish="$1" snapshot="$snapshot_root/tree" index="$snapshot_root/index"
+  grep -qxF "$treeish" "$seen_objects" 2>/dev/null && return 0
+  printf '%s\n' "$treeish" >> "$seen_objects"
   rm -rf "$snapshot"
+  rm -f "$index"
   mkdir -p "$snapshot"
-  if ! git archive --format=tar "$commit" | tar -xf - -C "$snapshot"; then
-    echo "pre-push: could not materialize a commit snapshot for leak scanning." >&2
+  if ! GIT_INDEX_FILE="$index" git read-tree "$treeish" ||
+    ! GIT_INDEX_FILE="$index" git checkout-index --all --force --prefix="$snapshot/"; then
+    echo "pre-push: could not materialize a Git tree for leak scanning." >&2
     return 2
   fi
-  # The snapshot may itself delete the scanner or scaffold signature. It is still a commit from
-  # this product repository, so keep the name-free product rules active while judging it.
+  # The tree may itself delete the scanner or scaffold signature. It still comes from this
+  # product repository, so keep the name-free product rules active while judging it.
   scan_target "$snapshot" 1
 }
+
+scan_detached_object() {
+  local object="$1" object_type="$2" target="$snapshot_root/detached-object"
+  grep -qxF "$object" "$seen_objects" 2>/dev/null && return 0
+  printf '%s\n' "$object" >> "$seen_objects"
+  if ! git cat-file "$object_type" "$object" > "$target"; then
+    echo "pre-push: could not read a detached Git object for leak scanning." >&2
+    return 2
+  fi
+  scan_target "$target" 1
+}
+
+scan_commit_list() {
+  local commits="$1" commit status
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    if scan_treeish "$commit"; then
+      continue
+    else
+      status=$?
+      return "$status"
+    fi
+  done <<< "$commits"
+}
+
+# New refs have an all-zero remote SHA. Read the remote itself once so exclusions describe
+# what is actually published there now, never a stale refs/remotes/* cache. Unknown remote tips
+# are not trusted as exclusions; if the read fails, scanning safely expands to all ancestors.
+remote_tips="$snapshot_root/remote-tips"
+remote_tips_available=0
+if [ -s "$updates_file" ] && [ -n "${2:-}" ]; then
+  if git ls-remote --refs "$2" > "$remote_tips" 2>/dev/null; then
+    remote_tips_available=1
+  fi
+fi
 
 gate_status=0
 updates_seen=0
 zero_sha=0000000000000000000000000000000000000000
 while read -r local_ref local_sha _remote_ref remote_sha; do
+  local_type=""
+  target=""
+  target_type=""
   [ -n "${local_ref:-}" ] || continue
   updates_seen=1
   [ "$local_sha" = "$zero_sha" ] && continue
 
-  if [ "$remote_sha" != "$zero_sha" ]; then
-    commit_range="$remote_sha..$local_sha"
-    if ! commits=$(git rev-list "$commit_range"); then
-      gate_status=2
-      break
-    fi
-  elif [ -n "${1:-}" ] && git for-each-ref --format='%(refname)' "refs/remotes/$1/" |
-    grep -q .; then
-    if ! commits=$(git rev-list "$local_sha" --not --remotes="$1"); then
-      gate_status=2
-      break
-    fi
-  else
-    if ! commits=$(git rev-list "$local_sha"); then
-      gate_status=2
-      break
-    fi
+  if ! local_type=$(git cat-file -t "$local_sha" 2>/dev/null); then
+    gate_status=2
+    break
   fi
-
-  while IFS= read -r commit; do
-    [ -n "$commit" ] || continue
-    if scan_commit "$commit"; then
-      continue
+  if [ "$local_type" = "tag" ]; then
+    if scan_detached_object "$local_sha" tag; then
+      :
     else
       gate_status=$?
       break
     fi
-  done <<< "$commits"
-  [ "$gate_status" -eq 0 ] || break
+    if ! target=$(git rev-parse "$local_sha^{}" 2>/dev/null); then
+      gate_status=2
+      break
+    fi
+  else
+    target="$local_sha"
+  fi
+  if ! target_type=$(git cat-file -t "$target" 2>/dev/null); then
+    gate_status=2
+    break
+  fi
+
+  if [ "$target_type" = "commit" ]; then
+    if [ "$remote_sha" != "$zero_sha" ]; then
+      if ! remote_target=$(git rev-parse "$remote_sha^{}" 2>/dev/null) ||
+        ! commits=$(git rev-list "$remote_target..$target"); then
+        gate_status=2
+        break
+      fi
+    else
+      exclude_args=()
+      if [ "$remote_tips_available" -eq 1 ]; then
+        while read -r remote_tip _remote_ref_name; do
+          if git cat-file -e "$remote_tip^{commit}" 2>/dev/null; then
+            exclude_args+=(--not "$(git rev-parse "$remote_tip^{commit}")")
+          fi
+        done < "$remote_tips"
+      fi
+      if ! commits=$(git rev-list "$target" "${exclude_args[@]}"); then
+        gate_status=2
+        break
+      fi
+    fi
+    if scan_commit_list "$commits"; then
+      :
+    else
+      gate_status=$?
+      break
+    fi
+  elif [ "$target_type" = "tree" ]; then
+    if scan_treeish "$target"; then
+      :
+    else
+      gate_status=$?
+      break
+    fi
+  elif [ "$target_type" = "blob" ]; then
+    if scan_detached_object "$target" blob; then
+      :
+    else
+      gate_status=$?
+      break
+    fi
+  else
+    echo "pre-push: unsupported Git object type; refusing to publish unscanned." >&2
+    gate_status=2
+    break
+  fi
 done < "$updates_file"
 
 # A direct/manual hook invocation has no ref-update stream. Keep it useful by scanning the

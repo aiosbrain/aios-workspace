@@ -10,7 +10,7 @@ import { installWorktreeSafetyBackstops } from "./worktree.mjs";
 // already runs, so hydrate the commit/push backstops here as well as through `aios worktree`.
 // The shared installer skips the product-only leak gate when this CLI is serving a scaffolded
 // personal workspace that does not carry scripts/leak-gate.sh.
-installWorktreeSafetyBackstops(process.cwd(), { quiet: true });
+installWorktreeSafetyBackstops(process.cwd(), { quiet: true, productOnly: true });
 
 if (!process.env.CI) {
   console.log("");

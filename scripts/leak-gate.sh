@@ -111,8 +111,9 @@ fi
 #  excluded; the full docs tree is scanned like everything else.)
 FILE_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-gate.XXXXXX")
 PATH_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-paths.XXXXXX")
+SYMLINK_PAYLOADS=$(mktemp "${TMPDIR:-/tmp}/aios-leak-symlinks.XXXXXX")
 MATCH_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-match.XXXXXX")
-trap 'rm -f "$FILE_LIST" "$PATH_LIST" "$MATCH_LIST"' EXIT
+trap 'rm -f "$FILE_LIST" "$PATH_LIST" "$SYMLINK_PAYLOADS" "$MATCH_LIST"' EXIT
 
 # Path-shape rules must still see symlinks: a public tree path can disclose client/workspace
 # structure even when its entry is a symlink whose content scanner correctly refuses to follow.
@@ -178,6 +179,21 @@ else
   # A single file (aios promote scans one copied deliverable).
   printf '%s\0' "$ROOT" > "$PATH_LIST"
   printf '%s\0' "$ROOT" > "$FILE_LIST"
+fi
+
+# A Git symlink publishes its target string as blob content. Read that string directly without
+# following the link, then feed the private aggregate file through the same identifier scans.
+while IFS= read -r -d '' path_entry; do
+  if [ -L "$path_entry" ]; then
+    if ! readlink "$path_entry" >> "$SYMLINK_PAYLOADS"; then
+      echo "leak-gate: ERROR — symlink payload could not be read safely." >&2
+      exit 2
+    fi
+    printf '\n' >> "$SYMLINK_PAYLOADS"
+  fi
+done < "$PATH_LIST"
+if [ -s "$SYMLINK_PAYLOADS" ]; then
+  printf '%s\0' "$SYMLINK_PAYLOADS" >> "$FILE_LIST"
 fi
 
 # Top-level path segments that are safe to name in output. An ALLOWLIST, not a denylist:
@@ -314,7 +330,7 @@ if [ "$IS_PRODUCT_REPO" -eq 1 ] && [ -s "$FILE_LIST" ]; then
     printf '%s' "$rel" | grep -qE "$BASELINE_TIER_EXEMPT" && continue
     case "$f" in *.md) ;; *) continue ;; esac
     head -20 "$f" 2>/dev/null |
-      grep -qiE "^access:[[:space:]]*['\"]?(admin|private)['\"]?[[:space:]]*(#.*)?$" &&
+      grep -qiE "^access:[[:space:]]*['\"]?[[:space:]]*(admin|private)[[:space:]]*['\"]?[[:space:]]*(#.*)?$" &&
       printf '%s\0' "$f" >> "$MATCH_LIST"
   done < "$FILE_LIST"
   if [ -s "$MATCH_LIST" ]; then

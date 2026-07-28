@@ -29,6 +29,7 @@ import { MANAGED_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
 import {
   cmdWorktree,
   installPostCheckoutHook,
+  installWorktreeSafetyBackstops,
   postCheckoutHookPath,
 } from "../scripts/worktree.mjs";
 import {
@@ -308,6 +309,27 @@ test("postinstall hydrates backstops for a fresh product-repository clone", () =
     readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
     /pre-push-leak-gate/
   );
+});
+
+test("onboard and update invoke product-only safety hydration", () => {
+  for (const rel of ["scripts/onboard-command.mjs", "scripts/update.mjs"]) {
+    const source = readFileSync(path.join(TOOLKIT, rel), "utf8");
+    assert.match(
+      source,
+      /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true,\s*productOnly:\s*true\s*\}\)/,
+      rel
+    );
+  }
+});
+
+test("product-only lifecycle hydration leaves personal-workspace commit and push policy unchanged", () => {
+  const { repo } = makePrimary({ withLeakGate: false });
+
+  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+
+  assert.ok(existsSync(path.join(repo, ".git", "hooks", "post-checkout")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-push")));
 });
 
 test("a personal workspace without the product leak scanner does not receive its pre-push hook", async () => {

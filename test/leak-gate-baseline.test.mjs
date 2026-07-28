@@ -149,6 +149,18 @@ test("a symlink at a confidential product path is caught without following its t
   }
 });
 
+test("a protected identifier in a symlink payload is scanned without following the link", () => {
+  const root = repoWith({});
+  try {
+    mkdirSync(path.join(root, "notes"), { recursive: true });
+    symlinkSync("sensitiveclient-name", path.join(root, "notes", "reference"));
+    const { code } = runGateWithEncodedTerms(root, "STRONG='sensitiveclient-name'\n");
+    assert.equal(code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("owner-only frontmatter outside the teaching trees is caught", () => {
   const root = repoWith({ "notes/private-thing.md": "---\naccess: admin\n---\n\nowner only\n" });
   try {
@@ -171,7 +183,7 @@ test("owner-only frontmatter with an inline comment is caught", () => {
 
 test("quoted, case-insensitive owner-only frontmatter is caught", () => {
   const root = repoWith({
-    "notes/private-thing.md": '---\naccess: "ADMIN"\n---\n\nowner only\n',
+    "notes/private-thing.md": '---\naccess: " ADMIN "\n---\n\nowner only\n',
   });
   try {
     assert.equal(runGateWithoutTerms(root).code, 1);

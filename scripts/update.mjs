@@ -63,7 +63,7 @@ import { c, UpdateError, gitEnv } from "./cli-common.mjs";
 import { VERSION_FILE } from "./toolkit-manifest.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { cmdContribute } from "./toolkit-contribute.mjs";
-import { installPostCheckoutHook } from "./worktree.mjs";
+import { installWorktreeSafetyBackstops } from "./worktree.mjs";
 import {
   pullToolkitCheckout,
   sourceCleanliness,
@@ -538,12 +538,10 @@ async function cmdVendorApplyOnly(repo, args) {
   }
 
   writeFileSync(stampPath, stampBody(sha, meta, stampSource));
-  // AIO-482: the machine-level half of worktree auto-hydration. `.git/hooks/` is
-  // per-machine state that no amount of `git pull` can deliver, so a successful
-  // update is the moment to (re)install it — silently and idempotently, so a
-  // worktree created by a tool that never calls `aios worktree add` (Conductor et
-  // al) still hydrates at creation time. Never fails an update.
-  installPostCheckoutHook(repo, { quiet: true });
+  // AIO-482: restore machine-local worktree hooks after an update. Personal workspaces receive
+  // post-checkout hydration only; the public product repo also restores its commit/push
+  // backstops because it carries scripts/leak-gate.sh. Never fails an update.
+  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
   if (changedCount) {
     console.log(
       color.green(
