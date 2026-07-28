@@ -71,6 +71,11 @@ import {
   touchesSafetySurface,
   localBugbotEvidenceMatches,
   readChecks,
+  usableFrontmatterGate,
+  auditSpecText,
+  readSpecFrontmatter,
+  badSpecFrontmatter,
+  specEvalTier,
 } from "./ship/gates.mjs";
 import {
   parseDeferredScope,
@@ -116,10 +121,9 @@ import {
 // Re-export the extracted surfaces so existing `import { X } from "./ship.mjs"` call sites (tests,
 // scripts/cli/*, roadmap-run.mjs) keep working unchanged — ship.mjs stays the stable public entry
 // point; scripts/ship/{args,gates,prompts,runtime}.mjs are the internal seams this pulls apart
-// (AIO-560, wave 5 of docs/v1-operator-loop/domains/safety-unit-extraction.md). Only the symbols
-// that were public before the move are re-exported here — the newly-`export`ed default-dep helpers
-// (e.g. defaultWriteGate, makeBuildOpts) cross the new module boundary but were never part of
-// ship.mjs's own public surface, so they stay import-only.
+// (AIO-560, wave 5 of docs/v1-operator-loop/domains/safety-unit-extraction.md). Only symbols that
+// were public before the move are re-exported — the newly-`export`ed default-dep helpers (e.g.
+// defaultWriteGate, makeBuildOpts) were never part of ship.mjs's surface, so they stay import-only.
 export {
   parseShipArgs,
   validateShipArgs,
@@ -419,19 +423,15 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   }
 
   // ── 1b. SPEC EVAL (EE5) ─────────────────────────────────────────────────────
-  // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds —
-  // UNLESS the enforcement policy is `advisory` (run + warn + proceed) or `off` (don't run).
-  // Precedence: --spec-gate flag (or --skip-spec-gate → off) > spec frontmatter > config default.
-  let frontmatterGate;
-  try {
-    frontmatterGate = specEvalHintsDep(specText).specGate;
-  } catch {
-    frontmatterGate = undefined; // a bad frontmatter value surfaces in evaluateSpec below, not here
-  }
+  // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds
+  // — UNLESS the policy is `advisory` (run + warn + proceed) or `off` (don't run). Precedence:
+  // --spec-gate flag (or --skip-spec-gate → off) > spec frontmatter > config default.
+  const fm = readSpecFrontmatter(specEvalHintsDep, issue.description); // RAW body — see helper
+  if (fm.invalid) return badSpecFrontmatter(records, c, fm.invalid);
   const specGatePolicy =
     opts.specGate ??
     (opts.skipSpecGate ? "off" : undefined) ??
-    frontmatterGate ??
+    usableFrontmatterGate(fm.specGate, opts, c) ??
     models.spec_eval?.spec_gate ??
     DEFAULT_SPEC_GATE;
 
@@ -443,7 +443,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     record("spec-eval", { resumed: true });
     progress("spec eval: resumed from checkpoint (SPEC_READY)");
   } else {
-    writeAudit(issueId, "spec.md", specText);
+    writeAudit(issueId, "spec.md", auditSpecText(issue.description, specText));
     const specStartedAt = Date.now();
     let rubric;
     try {
@@ -462,7 +462,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         skillDeclarationText: issue.description || "",
         repo,
         rubric,
-        useLlm: true,
+        tier: specEvalTier(fm.tier, { lightLoop: isLightLoop, safety: specSafetyDeclared }),
         evalCfg: models.spec_eval,
         decisions,
         requireCleanRepo: true,
