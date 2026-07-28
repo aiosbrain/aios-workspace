@@ -25,7 +25,6 @@ import {
   GLYPH_SETS,
   MODES,
   TIERS,
-  resetOutputContextCache,
   resolveOutputContext,
 } from "../scripts/ui/output-context.mjs";
 
@@ -331,21 +330,21 @@ test("a present-but-empty variable is distinguished from an absent one", () => {
   );
 });
 
-test("resetOutputContextCache re-resolves a stream mutated in place", () => {
-  // The one case an env-keyed cache cannot see: `isTTY` flipping on the same object.
+test("changed stream capabilities invalidate the memoised context", () => {
   const stream = fakeStream({ isTTY: true, columns: 80 });
   const env = { TERM: "xterm" };
-  assert.equal(resolveOutputContext({ stream, env }).colorDepth, COLOR_DEPTH.ANSI16);
+  const initial = resolveOutputContext({ stream, env });
+  assert.equal(initial.width, 80);
+  assert.equal(initial.colorDepth, COLOR_DEPTH.ANSI16);
+
+  stream.columns = 120;
+  const resized = resolveOutputContext({ stream, env });
+  assert.equal(resized.width, 120);
 
   stream.isTTY = false;
-  assert.equal(
-    resolveOutputContext({ stream, env }).colorDepth,
-    COLOR_DEPTH.ANSI16,
-    "still the memoised answer — this is why the reset exists"
-  );
-
-  resetOutputContextCache();
-  assert.equal(resolveOutputContext({ stream, env }).colorDepth, COLOR_DEPTH.NONE);
+  const piped = resolveOutputContext({ stream, env });
+  assert.equal(piped.colorDepth, COLOR_DEPTH.NONE);
+  assert.equal(piped.motion, false);
 });
 
 test("an explicit colorDepth is never memoised into the shared entry", () => {

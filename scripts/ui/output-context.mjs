@@ -20,8 +20,9 @@
  * stdout with a TTY stderr is the normal shape of `aios … | tee` and progress on stderr
  * must stay coloured in it. Freezing at import time would also make the CLI untestable,
  * because a test that mutates `process.env` after the first import would see a stale
- * answer. Resolution happens on use and is memoised per `(stream, env-snapshot)`, so a
- * changed env yields a new key rather than a stale hit.
+ * answer. Resolution happens on use and is memoised per
+ * `(stream, isTTY, columns, env-snapshot)`, so a changed stream capability or env yields
+ * a new key rather than a stale hit.
  *
  * **3. No async probes.** No OSC 11 background query, no `CSI ?2026$p` synchronised-update
  * query. Both cost a terminal round trip on a CLI whose pitch includes being fast and
@@ -207,23 +208,22 @@ function resolveBackground(env) {
 }
 
 /**
- * Memoised contexts, keyed by stream identity then by an env snapshot. A WeakMap so a
- * short-lived fake stream in a test does not pin a context forever.
+ * Memoised contexts, keyed by stream identity then by capability and env snapshots. A
+ * WeakMap so a short-lived fake stream in a test does not pin a context forever.
  */
 const CACHE = new WeakMap();
 /** Contexts for calls that passed no stream at all (`stream: undefined`). */
 const NO_STREAM_CACHE = new Map();
-/**
- * Bumped by `resetOutputContextCache()` and folded into every cache key. A generation
- * counter rather than a registry of seen streams, because a registry would hold strong
- * references to the very streams the WeakMap exists to let go of.
- */
-let generation = 0;
 
 function envSnapshot(env) {
   // JSON, not a delimiter join: env values are arbitrary strings and any separator
   // byte we picked could appear inside one, silently aliasing two different environments.
   return JSON.stringify(ENV_KEYS.map((k) => (k in env ? String(env[k]) : null)));
+}
+
+function streamSnapshot(stream) {
+  const columns = Number(stream?.columns);
+  return JSON.stringify([stream?.isTTY === true, Number.isFinite(columns) ? columns : null]);
 }
 
 /**
@@ -239,7 +239,7 @@ function envSnapshot(env) {
  * @returns {Readonly<{mode: string, stream: object|undefined, colorDepth: number,
  *   motion: boolean, tier: string, glyphs: string, width: number, background: string}>}
  *   A frozen value object. Cheap and memoised — call it per write rather than caching it
- *   yourself, so a changed environment is picked up.
+ *   yourself, so changed stream capabilities or environment are picked up.
  */
 export function resolveOutputContext({
   mode = "human",
@@ -254,7 +254,7 @@ export function resolveOutputContext({
   // Only the cacheable shape (no explicit depth override) goes through the memo; an
   // explicit depth is a one-off by definition and must not pollute the shared entry.
   const cacheable = colorDepth === undefined || colorDepth === null;
-  const key = `${generation}|${mode}|${envSnapshot(env)}`;
+  const key = `${mode}|${streamSnapshot(stream)}|${envSnapshot(env)}`;
 
   if (cacheable) {
     const bucket = stream ? CACHE.get(stream) : NO_STREAM_CACHE;
@@ -304,17 +304,4 @@ function buildContext({ mode, stream, env, colorDepth }) {
     width: resolveWidth(stream, env),
     background: resolveBackground(env),
   });
-}
-
-/**
- * Drop every memoised context. Only needed by tests that mutate a stream's `isTTY` or
- * `columns` in place — a plain `process.env` change already produces a new cache key and
- * needs no reset.
- */
-export function resetOutputContextCache() {
-  NO_STREAM_CACHE.clear();
-  // A WeakMap cannot be enumerated or cleared, so per-stream entries are retired by
-  // bumping the generation that every key carries. Stale entries stay resident until
-  // their stream is collected, which is exactly what the WeakMap already guarantees.
-  generation += 1;
 }
