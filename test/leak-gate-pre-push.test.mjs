@@ -1,0 +1,105 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const INSTALLER = path.join(TOOLKIT, "scripts", "install-leak-gate-push-hook.sh");
+const roots = [];
+
+test.after(() => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
+function makeRepo({ hooksPath = null, gateExit = 0 } = {}) {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-"));
+  roots.push(repo);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  if (hooksPath) execFileSync("git", ["-C", repo, "config", "core.hooksPath", hooksPath]);
+
+  const hooksDir = path.join(repo, hooksPath ?? ".git/hooks");
+  const scriptsDir = path.join(repo, "scripts");
+  mkdirSync(hooksDir, { recursive: true });
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(
+    path.join(scriptsDir, "leak-gate.sh"),
+    `#!/usr/bin/env bash\nexit ${gateExit}\n`
+  );
+  chmodSync(path.join(scriptsDir, "leak-gate.sh"), 0o755);
+
+  const foreignHook = path.join(hooksDir, "pre-push");
+  writeFileSync(
+    foreignHook,
+    "#!/usr/bin/env bash\nprintf 'chained\\n' >> \"$CHAIN_MARKER\"\n"
+  );
+  chmodSync(foreignHook, 0o755);
+  return { repo, hooksDir };
+}
+
+function install(repo) {
+  execFileSync("bash", [INSTALLER], { cwd: repo, stdio: "pipe" });
+}
+
+function runHook(repo, hooksDir, env = {}) {
+  const marker = path.join(repo, "chain-ran");
+  const result = spawnSync(path.join(hooksDir, "pre-push"), [], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, CHAIN_MARKER: marker, ...env },
+  });
+  return {
+    ...result,
+    marker: (() => {
+      try {
+        return readFileSync(marker, "utf8");
+      } catch {
+        return "";
+      }
+    })(),
+  };
+}
+
+test("a custom core.hooksPath still runs the pre-existing chained hook", () => {
+  const { repo, hooksDir } = makeRepo({ hooksPath: ".githooks" });
+  install(repo);
+
+  const result = runHook(repo, hooksDir);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.marker, "chained\n");
+});
+
+test("the emergency leak-gate override still runs the pre-existing chained hook", () => {
+  const { repo, hooksDir } = makeRepo();
+  install(repo);
+
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.marker, "chained\n");
+  assert.match(result.stderr, /BYPASSED/);
+});
+
+test("a scanner error is reported as an incomplete scan, not a confirmed leak", () => {
+  const { repo, hooksDir } = makeRepo({ gateExit: 2 });
+  install(repo);
+
+  const result = runHook(repo, hooksDir);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /scan could not complete/i);
+  assert.doesNotMatch(result.stderr, /found confidential material/i);
+  assert.equal(result.marker, "", "the foreign hook must not run after an incomplete scan");
+});

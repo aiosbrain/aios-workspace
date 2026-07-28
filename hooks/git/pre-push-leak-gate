@@ -20,13 +20,35 @@
 
 set -euo pipefail
 
-if [ "${AIOS_ALLOW_UNGATED_PUSH:-}" = "1" ]; then
-  echo "pre-push: leak gate BYPASSED via AIOS_ALLOW_UNGATED_PUSH=1." >&2
-  exit 0
-fi
-
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$repo_root" ] || exit 0
+
+run_chained() {
+  local hooks_path hooks_dir common_dir chained
+  hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
+  if [ -n "$hooks_path" ]; then
+    case "$hooks_path" in
+      /*) hooks_dir="$hooks_path" ;;
+      *) hooks_dir="$repo_root/$hooks_path" ;;
+    esac
+  else
+    common_dir="$(git rev-parse --git-common-dir)"
+    case "$common_dir" in
+      /*) hooks_dir="$common_dir/hooks" ;;
+      *) hooks_dir="$repo_root/$common_dir/hooks" ;;
+    esac
+  fi
+  chained="$hooks_dir/pre-push.chained"
+  if [ -x "$chained" ]; then
+    exec "$chained" "$@"
+  fi
+}
+
+if [ "${AIOS_ALLOW_UNGATED_PUSH:-}" = "1" ]; then
+  echo "pre-push: leak gate BYPASSED via AIOS_ALLOW_UNGATED_PUSH=1." >&2
+  run_chained "$@"
+  exit 0
+fi
 
 gate="$repo_root/scripts/leak-gate.sh"
 # A missing gate script must not silently allow the push: that is the failure mode this
@@ -37,17 +59,24 @@ if [ ! -f "$gate" ]; then
   exit 1
 fi
 
+gate_status=0
 if bash "$gate" "$repo_root"; then
   # Hand off to any pre-existing pre-push the installer preserved, so adding this gate never
   # silently disables someone else's hook. Its exit status becomes ours.
-  chained="$(git rev-parse --git-common-dir)/hooks/pre-push.chained"
-  if [ -x "$chained" ]; then
-    exec "$chained" "$@"
-  fi
+  run_chained "$@"
   exit 0
+else
+  gate_status=$?
 fi
 
 echo >&2
+if [ "$gate_status" -ne 1 ]; then
+  echo "pre-push: BLOCKED — the leak-gate scan could not complete safely." >&2
+  echo "pre-push: no confidentiality verdict was produced; fix the scanner error before pushing." >&2
+  echo "pre-push: override with AIOS_ALLOW_UNGATED_PUSH=1 only if publication is intentional." >&2
+  exit 1
+fi
+
 echo "pre-push: BLOCKED — the leak gate found confidential material in the tree." >&2
 echo "pre-push: this repository is PUBLIC; pushing publishes immediately, and a later" >&2
 echo "pre-push: CI failure or branch deletion cannot fully undo that." >&2

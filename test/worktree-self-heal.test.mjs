@@ -230,6 +230,38 @@ test("T7: installPostCheckoutHook reports installed → present, and skips with 
   assert.equal(installPostCheckoutHook(bare, { quiet: true }), "skipped");
 });
 
+test("T7b: worktree install-hook installs the primary and pre-push safety backstops", async () => {
+  const { repo } = makePrimary();
+
+  await cmdWorktree(repo, {}, ["install-hook"]);
+
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
+    /pre-commit-primary-guard/
+  );
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
+    /pre-push-leak-gate/
+  );
+});
+
+test("T7c: worktree install-hook reports backstop installer failures without throwing", async () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-not-git-"));
+  tmpDirs.push(repo);
+
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await cmdWorktree(repo, {}, ["install-hook"]);
+  } finally {
+    console.log = original;
+  }
+
+  assert.match(lines.join("\n"), /primary-commit-guard install failed \(non-fatal\)/);
+  assert.match(lines.join("\n"), /leak-gate push hook install failed \(non-fatal\)/);
+});
+
 // ── T8: postCheckoutHookPath resolves the SHARED common dir from a worktree ────
 test("T8: postCheckoutHookPath resolves hooks from the common dir, not <worktree>/.git", () => {
   const { root, repo } = makePrimary();

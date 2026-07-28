@@ -123,6 +123,17 @@ test("owner-only frontmatter outside the teaching trees is caught", () => {
   }
 });
 
+test("owner-only frontmatter with an inline comment is caught", () => {
+  const root = repoWith({
+    "notes/private-thing.md": "---\naccess: private # owner-only scratch\n---\n\nowner only\n",
+  });
+  try {
+    assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ── the exemptions, which are what keep the gate credible ────────────────────
 // A gate that fires on legitimate work gets switched off. scaffold/, examples/ and test/ have
 // spine dirs and admin frontmatter as their literal subject matter.

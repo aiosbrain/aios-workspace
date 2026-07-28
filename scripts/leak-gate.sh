@@ -267,7 +267,8 @@ if [ "$IS_PRODUCT_REPO" -eq 1 ] && [ -s "$FILE_LIST" ]; then
     rel="${f#"$ROOT"/}"
     printf '%s' "$rel" | grep -qE "$BASELINE_TIER_EXEMPT" && continue
     case "$f" in *.md) ;; *) continue ;; esac
-    head -20 "$f" 2>/dev/null | grep -qE '^access:[[:space:]]*(admin|private)[[:space:]]*$' &&
+    head -20 "$f" 2>/dev/null |
+      grep -qE '^access:[[:space:]]*(admin|private)[[:space:]]*(#.*)?$' &&
       printf '%s\0' "$f" >> "$MATCH_LIST"
   done < "$FILE_LIST"
   if [ -s "$MATCH_LIST" ]; then
