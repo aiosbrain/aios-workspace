@@ -34,15 +34,20 @@ export function ConnectorRow({
             }`}
             title={wired ? "Connected" : savedNeedsSetup ? "Credential detected" : "Available"}
           />
-          <span className="truncate text-sm font-medium leading-tight text-card-foreground">
+          {/* The name owns this line outright. It used to share it with the transport badge, and
+              in a two-column grid the badge ("DIRECT API") took ~half the ~140px available — so
+              six of seven cards rendered as "Fir…", "G…", "Gr…", "Lin…", "Sla…" and no integration
+              was identifiable (audit S5-6). The badge is metadata; the name is the identity. */}
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-medium leading-tight text-card-foreground"
+            title={connector.name}
+          >
             {connector.name}
           </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-            {transport}
-          </span>
         </div>
-        <p className="mt-0.5 truncate text-xs leading-snug text-muted-foreground">
-          {connector.summary}
+        <p className="mt-0.5 flex items-baseline gap-1.5 text-xs leading-snug text-muted-foreground">
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide">{transport}</span>
+          <span className="min-w-0 flex-1 truncate">{connector.summary}</span>
         </p>
       </div>
 

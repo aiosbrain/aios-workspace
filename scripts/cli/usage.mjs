@@ -272,5 +272,10 @@ export const USAGE_LINES = {
     "    AIO-<n>]] [--dry-run]",
   ],
   whoami: [],
-  inbox: [],
+  inbox: [
+    "  aios inbox [list] [--raw] [--why]      one ranked queue over asks + comms (local, admin-tier)",
+    "    [--json]                            --why shows the ranker's reasoning per row",
+    "  aios inbox --overdue [--window <min>] unacknowledged asks past the escalation window",
+    "  aios inbox status [--json]            coordinator/adapter health for this host",
+  ],
 };

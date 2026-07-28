@@ -170,6 +170,16 @@ export function CostPanel() {
 
   const period = data.period || currentPeriod();
   const unknown = data.by_provider.filter((p) => p.total_usd == null);
+  // Two different kinds of "unknown" used to share one sentence, and the panel contradicted itself:
+  // it announced "no billing data exists" for Cursor while the ledger below showed Cursor as
+  // `billed $67.64` (audit S5-7). The server is right — `costs.mjs` degrades a provider to unknown
+  // when a real billed line exists but an unreported flat plan fee makes the TOTAL incomplete. So
+  // split the copy: nothing-at-all vs partial.
+  const noData = new Set(unknown.map((p) => p.provider));
+  const missingEntirely = data.config_status.unknown.filter((p) => noData.has(p));
+  const partial = data.config_status.unknown.filter((p) => !noData.has(p));
+  const labelOf = (id: string) =>
+    data.by_provider.find((p) => p.provider === id)?.label ?? id;
 
   return (
     <div className={PANEL}>
@@ -178,6 +188,9 @@ export function CostPanel() {
         <span>
           {period} actual spend {usd(data.totals.month_usd)}
           {unknown.length > 0 && " (+ unknown)"}
+          {/* Same scope caveat as Maturity (audit S5-8): this is your whole AI spend, not this
+              workspace's — a brand-new scaffold otherwise appears to have run up a bill. */}
+          <span className="ml-2 text-muted-foreground/70">· your workstation, all projects</span>
         </span>
         <span className="flex items-center gap-3">
           <Freshness meta={data} busy={busy} />
@@ -194,12 +207,22 @@ export function CostPanel() {
       {/* configuration completeness */}
       {(!data.config_status.complete || !data.config_status.window_covers_month) && (
         <div className={cn(CARD, "flex flex-col gap-1 text-[11px] text-muted-foreground")}>
-          {!data.config_status.complete && (
+          {missingEntirely.length > 0 && (
             <span>
               No actual-spend source for{" "}
-              <span className="text-foreground">{data.config_status.unknown.join(", ")}</span> —
-              usage was detected, but no owner-entered amount, billing data, or subscription exists.
-              Enter the real figure in Settings; nothing is estimated in the meantime.
+              <span className="text-foreground">
+                {missingEntirely.map(labelOf).join(", ")}
+              </span>{" "}
+              — usage was detected, but no owner-entered amount, billing data, or subscription
+              exists. Enter the real figure in Settings; nothing is estimated in the meantime.
+            </span>
+          )}
+          {partial.length > 0 && (
+            <span>
+              Partial spend for{" "}
+              <span className="text-foreground">{partial.map(labelOf).join(", ")}</span> — the
+              billed usage below is real, but a flat plan fee the billing API never reports is
+              missing, so the total is understated. Enter the plan fee in Settings.
             </span>
           )}
           {!data.config_status.window_covers_month && (
