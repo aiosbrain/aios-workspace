@@ -33,6 +33,7 @@ import {
   resolveRequiredBugbotBase,
   REVIEW_WALL_CLOCK_BUDGET_MS,
 } from "../scripts/review-bugbot.mjs";
+import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
 
 const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
 // Grace on top of the child's own absolute wall-clock budget. Raised from 20s: the parent
@@ -352,6 +353,7 @@ export function evaluateLocalBugbotGate({
   env = process.env,
   runReview = defaultReview,
   resolveBase = resolveRequiredBugbotBase,
+  resolveBranchHead = resolveCanonicalBranchHead,
   probeOnly = false,
 } = {}) {
   // Explicit operator opt-out, for teams that have adopted the paid cloud Cursor Bugbot as the
@@ -404,6 +406,26 @@ export function evaluateLocalBugbotGate({
       reason: `refusing to send untracked content to Bugbot; stage the files you intend to have reviewed, or gitignore them if they are machine-local (build output, runtime/session state): ${snapshot.withheldUntrackedFiles.join(", ")}`,
       fingerprint: snapshot.fingerprint,
     };
+  }
+  // Ownership handoff, per listGateTargets' own doctrine: once a branch is pushed, the
+  // PR-level gates (CI, cloud Bugbot, CodeRabbit) own it, and the local pre-PR gate owns
+  // exactly what has not reached them yet. Verified ONLY against the canonical remote —
+  // the same trust boundary as resolveRequiredBugbotBase — never a local ref, so the
+  // AIO-555 offline forgeries (`git update-ref refs/remotes/...`) cannot take this path;
+  // the only way onto it is an actual push, which by definition delivers the changeset to
+  // the stronger gates. Without this, a pushed in-flight branch with cached findings
+  // blocks every OTHER session's Stop hook repo-wide on work those sessions must not
+  // touch. `status --porcelain` is trustworthy here because skip-worktree/assume-unchanged
+  // suppression already failed closed above, and untracked files make it non-empty.
+  if (branch !== "HEAD" && git(["status", "--porcelain"], root) === "") {
+    const canonicalHead = resolveBranchHead(branch);
+    if (canonicalHead && canonicalHead === gitMaybe(["rev-parse", "HEAD"], root)) {
+      return {
+        status: "skipped",
+        reason: `branch ${branch} head is on the canonical remote with a clean worktree; PR-level gates own this changeset`,
+        fingerprint: snapshot.fingerprint,
+      };
+    }
   }
   if (snapshot.reviewTooLarge) {
     return {
@@ -640,8 +662,12 @@ export function aggregateGateResults(results) {
 
   // A probe never reviews; it reports the fingerprints callers dedup on
   // (.opencode/plugins/aios-bugbot.mjs requires `fingerprint`, and silently re-reviews without it).
+  // A skipped sibling (empty diff, or a pushed head the PR gates own) is neutral in a probe
+  // sweep — without this, one clean worktree beside one probed worktree fell through to the
+  // unrecognised-verdict error below.
   const probes = results.filter((result) => result.status === "probe");
-  if (probes.length === results.length) {
+  const skippedCount = results.filter((result) => result.status === "skipped").length;
+  if (probes.length && probes.length + skippedCount === results.length) {
     return {
       status: "probe",
       fingerprint: createHash("sha256")

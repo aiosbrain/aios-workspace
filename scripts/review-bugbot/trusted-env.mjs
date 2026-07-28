@@ -16,6 +16,7 @@
  *   gitQuiet(args, cwd)
  *   gitRaw(args, cwd)
  *   resolveRequiredBugbotBase(repo, { canonicalUrl })
+ *   resolveCanonicalBranchHead(branch, { canonicalUrl })
  *   runLocalSecretsPreflight(worktree, sourceEnv)
  *   CANONICAL_BUGBOT_MAIN_URL
  *   TRUSTED_CURSOR_BIN
@@ -217,6 +218,34 @@ export function resolveRequiredBugbotBase(repo, { canonicalUrl = CANONICAL_BUGBO
     return { ok: false, reason: "current HEAD has no merge base with canonical main" };
   }
   return { ok: true, baseSha, remoteSha };
+}
+
+/**
+ * The canonical remote's head for one branch, or null. Same trust boundary as
+ * resolveRequiredBugbotBase: fixed URL, trusted git binary, hardened env, resolved outside
+ * the checkout — never a local ref, so an agent cannot forge a "pushed" answer offline.
+ * Null on any failure (offline, missing ref, malformed output) so callers fail closed
+ * into a real review rather than a skip.
+ */
+export function resolveCanonicalBranchHead(
+  branch,
+  { canonicalUrl = CANONICAL_BUGBOT_MAIN_URL } = {}
+) {
+  if (!branch || branch === "HEAD") return null;
+  let listing;
+  try {
+    listing = gitRequired(
+      ["ls-remote", "--exit-code", canonicalUrl, `refs/heads/${branch}`],
+      tmpdir()
+    );
+  } catch {
+    return null;
+  }
+  for (const line of listing.split("\n")) {
+    const [sha, ref] = line.split("\t");
+    if (ref === `refs/heads/${branch}` && /^[a-f0-9]{40,64}$/.test(sha ?? "")) return sha;
+  }
+  return null;
 }
 
 export function runLocalSecretsPreflight(worktree, sourceEnv = process.env) {
