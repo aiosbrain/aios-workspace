@@ -89,25 +89,33 @@ if compgen -G "$hooks_dir/pre-push.chained-hook.*" >/dev/null; then
 set -u
 hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 updates=$(mktemp "${TMPDIR:-/tmp}/aios-pre-push-chain.XXXXXX")
-trap 'rm -f "$updates"' EXIT
+# `chain-slot.` deliberately does NOT match the installer's pre-push.chained-hook.* globs, so a
+# slot can never be mistaken for a preserved hook.
+slot=$(mktemp -d "$hooks_dir/pre-push.chain-slot.XXXXXX")
+trap 'rm -f "$updates"; rm -rf "$slot"' EXIT
 cat > "$updates"
-for hook in "$hooks_dir"/pre-push.chained-hook.*; do
-  [[ -x "$hook" ]] || continue
-  first_line=""
-  IFS= read -r first_line < "$hook" || true
-  runner=""
-  case "$first_line" in
-    *bash*) runner="bash" ;;
-    *zsh*) runner="zsh" ;;
-    *"/sh"* | *" env sh"*) runner="sh" ;;
-  esac
-  if [[ -n "$runner" ]]; then
-    # Source shell hooks in a child interpreter whose $0 is the canonical hook path. This
-    # preserves both dirname($0) helper lookup and basename($0) dispatch semantics.
-    "$runner" -c 'hook=$1; shift; . "$hook"' "$hooks_dir/pre-push" "$hook" "$@" < "$updates"
-  else
-    "$hook" "$@" < "$updates"
+# Mirror the real hooks dir beside the slot so dirname($0) still finds helper programs that a
+# preserved hook expects next to itself.
+for sibling in "$hooks_dir"/*; do
+  [[ -e "$sibling" ]] || continue
+  [[ "$sibling" == "$slot" ]] && continue
+  [[ "$(basename "$sibling")" == "pre-push" ]] && continue
+  if ! ln -s "$sibling" "$slot/$(basename "$sibling")"; then
+    echo "pre-push-chain: cannot build a faithful hook slot; refusing to skip preserved guards." >&2
+    exit 1
   fi
+done
+for hook in "$hooks_dir"/pre-push.chained-hook.*; do
+  [[ -f "$hook" && -x "$hook" ]] || continue
+  # Execute the preserved file directly, through a path named `pre-push`. The kernel then reads
+  # its original shebang byte-for-byte (so interpreter flags such as `-e` survive), and the path
+  # handed to execve keeps basename($0) canonical for hooks that dispatch on it. Reconstructing
+  # an interpreter here is what silently dropped both guarantees.
+  if ! ln -sfn "$hook" "$slot/pre-push"; then
+    echo "pre-push-chain: cannot build a faithful hook slot; refusing to skip preserved guards." >&2
+    exit 1
+  fi
+  "$slot/pre-push" "$@" < "$updates"
   status=$?
   [[ "$status" -eq 0 ]] || exit "$status"
 done

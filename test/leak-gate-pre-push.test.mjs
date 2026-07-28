@@ -410,6 +410,64 @@ test("push rejects a commit that a replacement ref hides from the gate", () => {
   assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
 });
 
+test("preserved hooks keep the interpreter flags declared in their shebang", () => {
+  const { repo, hooksDir } = makeRepo();
+  // `-e` must abort the hook at the failing command. Losing it lets a security check that
+  // formerly stopped the push fall through to `exit 0`.
+  writeFileSync(path.join(hooksDir, "pre-push"), "#!/bin/bash -e\nsh -c 'exit 23'\nexit 0\n");
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  assert.equal(
+    spawnSync(path.join(hooksDir, "pre-push")).status,
+    23,
+    "fixture is not real: the platform did not honour the shebang flag"
+  );
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 23, result.stderr);
+});
+
+test("preserved non-shell hooks still observe the canonical pre-push basename", () => {
+  const { repo, hooksDir } = makeRepo();
+  // Shebanged at this Node binary: deterministic, and it matches no arm of the interpreter
+  // case the dispatcher used to apply. argv[1] is the path handed to execve.
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    `#!${process.execPath}\n` +
+      'const path = require("node:path");\n' +
+      'process.exit(path.basename(process.argv[1]) === "pre-push" ? 23 : 0);\n'
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  assert.equal(spawnSync(path.join(hooksDir, "pre-push")).status, 23);
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 23, result.stderr);
+});
+
+// Characterization, not RED: green before and after. This is the only guard that catches the
+// dispatcher's sibling symlink farm being wrong or omitted.
+test("preserved non-shell hooks still resolve helper programs beside their original hook path", () => {
+  const { repo, hooksDir } = makeRepo();
+  const helper = path.join(hooksDir, "block-push-helper");
+  writeFileSync(helper, "#!/usr/bin/env bash\nexit 23\n");
+  chmodSync(helper, 0o755);
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    `#!${process.execPath}\n` +
+      'const path = require("node:path");\n' +
+      'const { spawnSync } = require("node:child_process");\n' +
+      'const helper = path.join(path.dirname(process.argv[1]), "block-push-helper");\n' +
+      "process.exit(spawnSync(helper).status ?? 0);\n"
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  assert.equal(spawnSync(path.join(hooksDir, "pre-push")).status, 23);
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 23, result.stderr);
+});
+
 // Characterization, not RED: pins the decision to scrub the gate's replace-blind override at
 // the boundary where foreign code runs, so preserved hooks see the environment git would give.
 test("preserved hooks do not inherit the gate's replace-blind override", () => {
