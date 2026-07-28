@@ -77,13 +77,17 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
+  // AIO-579 read-only slice — added after the pre-refactor snapshot, same convention as `inbox`.
+  delivery: "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
 };
 
-// Commands that owned their own `--repo` flag before the refactor and must keep it.
-const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline"];
+// Commands that owned their own `--repo` flag before the refactor and must keep it (plus
+// `delivery`, added later for the same reason: its `--repo` is a GitHub owner/repo slug filter,
+// not the workspace path).
+const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
 function run(args, opts = {}) {
   const r = spawnSync(process.execPath, [AIOS, ...args], {
@@ -308,6 +312,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     time: ["mod", "cmdTime", R, C, A],
     asks: ["mod", "cmdAsks", R, C, A],
     inbox: ["mod", "cmdInbox", R, C, A],
+    delivery: ["mod", "cmdDelivery", R, C, A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],
     mode: ["mod", "cmdMode", R, C, A],

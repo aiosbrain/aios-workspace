@@ -414,6 +414,19 @@ export const COMMANDS = [
     usage: U.inbox,
   },
 
+  // AIO-579 read-only slice: cross-repo PR/worktree/branch reconciliation. `--repo` here is a
+  // GitHub owner/repo slug filter (like pr/consolidate-findings), not the workspace path — it
+  // owns the flag for the same reason they do.
+  {
+    name: "delivery",
+    resolution: "offline",
+    ownsRepoFlag: true,
+    loader: () => import("../delivery-status.mjs"),
+    adapt: (ctx, mod) => mod.cmdDelivery(ctx.repo, ctx.cfg, ctx.rest),
+    exit: "exit-code",
+    usage: U.delivery,
+  },
+
   // ── hidden (no help text; reachable but undocumented, exactly as before) ────
   {
     name: "whoami",
