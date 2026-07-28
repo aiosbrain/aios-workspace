@@ -96,6 +96,7 @@ import {
   buildWeeklyCloseoutPayload,
   loopResponse,
 } from "./loop.mjs";
+import { parseAskIds, resolveAsksResponse, askDetailResponse } from "./asks.mjs";
 import {
   resolveTasksFile,
   resolveTaskFileByRel,
@@ -712,17 +713,9 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ error: e.message }));
     }
     runAsksCli(repo, ["show", id, "--json"]).then((cli) => {
-      if (cli.exitCode !== 0) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ error: cli.stderr.trim() || "ask not found" }));
-      }
-      try {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(JSON.parse(cli.stdout)));
-      } catch {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "could not parse ask detail" }));
-      }
+      const { status, json } = askDetailResponse(cli);
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
     });
     return;
   }
@@ -742,24 +735,15 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       let ids;
       try {
-        const j = JSON.parse(body || "{}");
-        const raw = Array.isArray(j.ids) ? j.ids : [j.id];
-        if (!raw.length || raw.every((v) => v == null))
-          throw Object.assign(new Error("id is required"), { statusCode: 400 });
-        ids = raw.map(validateAskId);
+        ids = parseAskIds(body);
       } catch (e) {
         res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: e.message }));
       }
       runAsksCli(repo, ["resolve", ...ids, "--json"]).then((cli) => {
-        if (cli.exitCode !== 0) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          return res.end(
-            JSON.stringify({ ok: false, error: cli.stderr.trim() || "asks resolve failed" })
-          );
-        }
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, resolved: ids }));
+        const { status, json } = resolveAsksResponse(cli, ids);
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(json));
       });
     });
     return;
