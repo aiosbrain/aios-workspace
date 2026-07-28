@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { runToolkitUpgrade } from "../scripts/onboard-command.mjs";
 
@@ -18,6 +19,25 @@ function fakeClack() {
 const CLEAN_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "behind" };
 const DIRTY_TOOLKIT = { path: "/tk", git: { dirty: true }, relation: "behind" };
 const DIVERGED_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "diverged" };
+
+test("the pinned V2 contract describes the runtime's single inspect/preview path", () => {
+  const contract = JSON.parse(
+    readFileSync(
+      new URL("../docs/contract/onboarding-orchestration.json", import.meta.url),
+      "utf8"
+    )
+  );
+  assert.equal(contract.version, 2);
+  assert.deepEqual(contract.paths, ["Personal", "Join", "Create"]);
+  assert.equal(contract.inspection.command, "aios onboard --inspect --json");
+  assert.equal(contract.inspection.readOnly, true);
+  assert.equal(contract.upgrade.previewCommand, "aios update --preview");
+  assert.equal(contract.upgrade.previewIncludesSafetyCheck, true);
+  assert.equal(contract.join.teamIdentitySource, "api_key");
+  assert.equal(contract.join.teamIdRequired, false);
+  assert.equal(contract.sharing.pushDuringOnboarding, false);
+  assert.ok(contract.forbiddenMarkers.includes("aios update --check"));
+});
 
 test("safe preview: apply is offered and called (no redundant --check round-trip)", async () => {
   const { clack, warnings } = fakeClack();
