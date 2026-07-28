@@ -34,7 +34,7 @@
         "failClosed": true
       },
       {
-        "matcher": "Write|Edit|MultiEdit|StrReplace",
+        "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
         "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/run-strict-guard.sh\" pre_edit guard-worktree.sh",
         "timeout": 30,
         "failClosed": true

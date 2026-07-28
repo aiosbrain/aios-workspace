@@ -59,16 +59,32 @@ fi
 HARNESS="$TOOLKIT/.harness"
 EXEMPT_BASENAMES=${HARNESS_PRIMARY_EXEMPT:-aios.yaml}
 
-# canon <path> -> physical path, resolving symlinks in the deepest existing
-# ancestor (the leaf may not exist yet, e.g. a redirect creating a new file).
+# canon <path> -> physical path. Resolves (a) an existing symlink LEAF (a link
+# inside the workspace pointing into the toolkit must not mask its target),
+# then (b) symlinks in the deepest EXISTING ancestor, walking up past
+# not-yet-created components (mkdir -p / redirects may create several levels).
+# Falls back to the raw path only when nothing along it exists.
 canon() {
   _cp=$1
+  _n=0
+  while [ -L "$_cp" ] && [ "$_n" -lt 8 ]; do
+    _lt=$(readlink "$_cp" 2>/dev/null) || break
+    case "$_lt" in
+      /*) _cp=$_lt ;;
+      *)  _cp=$(dirname -- "$_cp")/$_lt ;;
+    esac
+    _n=$((_n+1))
+  done
   if [ -d "$_cp" ]; then
     (CDPATH= cd -- "$_cp" 2>/dev/null && pwd -P) || printf '%s' "$_cp"
     return
   fi
   _cdir=$(dirname -- "$_cp")
   _cbase=$(basename -- "$_cp")
+  while [ ! -d "$_cdir" ] && [ "$_cdir" != "/" ] && [ "$_cdir" != "." ]; do
+    _cbase=$(basename -- "$_cdir")/$_cbase
+    _cdir=$(dirname -- "$_cdir")
+  done
   _cres=$(CDPATH= cd -- "$_cdir" 2>/dev/null && pwd -P) || { printf '%s' "$_cp"; return; }
   printf '%s/%s' "$_cres" "$_cbase"
 }
@@ -82,12 +98,64 @@ path_under_toolkit() {
   esac
 }
 
+# target_dir <command> <fallback> -> the dir a command operates in, honoring
+# `git -C <dir>` then a leading `cd <dir> &&` / `pushd <dir> &&`. Kept as a
+# minimal inline copy of guard-worktree.sh's target_dir (keep in sync).
+target_dir() {
+  _cmd=$1; _fb=$2
+  _t=$(printf '%s' "$_cmd" | sed -nE "s/.*(^|[^[:alnum:]_])git[[:space:]]+-C(=|[[:space:]]+)('[^']*'|\"[^\"]*\"|[^[:space:];&|]+).*/\3/p" | head -1)
+  if [ -z "$_t" ]; then
+    _t=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
+  fi
+  [ -n "$_t" ] || { printf '%s' "$_fb"; return; }
+  _t=$(printf '%s' "$_t" | sed "s/^['\"]//; s/['\"]\$//")
+  case "$_t" in
+    /*)    printf '%s' "$_t" ;;
+    "~")   printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
+    *)     printf '%s' "$_fb/$_t" ;;
+  esac
+}
+
+# scan_paths_touch_toolkit <scan> <cwd> <tdir> -> 0 if any path-like token in
+# the command resolves under the toolkit (relative tokens are resolved against
+# BOTH the session cwd and the command's cd/-C target). This keeps the
+# pre_command fast path honest: a relative `../aios-workspace/...` reference
+# must reach the full guard even though the absolute toolkit path never
+# appears in the command text.
+scan_paths_touch_toolkit() {
+  _sc=$1; _b1=$2; _b2=$3
+  for _tk in $(printf '%s\n' "$_sc" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
+    case "$_tk" in *=/*|*=../*|*=~/*) _tk=${_tk#*=} ;; esac
+    case "$_tk" in
+      "~") _tk=$HOME ;;
+      "~/"*) _tk=$HOME/${_tk#\~/} ;;
+    esac
+    case "$_tk" in
+      */*|..) ;;
+      *) continue ;;
+    esac
+    case "$_tk" in
+      /*) path_under_toolkit "$_tk" && return 0 ;;
+      *)
+        path_under_toolkit "$_b1/$_tk" && return 0
+        [ "$_b2" = "$_b1" ] || { path_under_toolkit "$_b2/$_tk" && return 0; }
+        ;;
+    esac
+  done
+  return 1
+}
+
 case "$MODE" in
   pre_command|pre_edit) ;;
   *) echo "guard-toolkit-primary: unsupported mode '$MODE'" >&2; exit 3 ;;
 esac
 
 INPUT=$(cat 2>/dev/null || true)
+
+# The hook is failClosed: an unparseable payload must deny (exit 3), never
+# silently allow — otherwise a malformed event fails open past the guard.
+printf '%s' "$INPUT" | jq -e 'type == "object"' >/dev/null 2>&1 || exit 3
 
 # Fast path: if the pending event cannot possibly target the toolkit primary tree,
 # do not require the harness (IC-local edits must never be blocked by a missing
@@ -102,13 +170,16 @@ touches_toolkit_primary() {
   path_under_toolkit "$(canon "$_p")"
 }
 
+RAWCWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || RAWCWD=""
+case "$RAWCWD" in /*) ;; *) RAWCWD=$WS ;; esac
+
 if [ "$MODE" = "pre_edit" ]; then
-  _cwd=${WS}
+  _cwd=${RAWCWD}
   _any=0
   FILE_PATHS=$(printf '%s' "$INPUT" | jq -r '
     (.tool_input // {}) as $ti |
     [$ti.file_path, $ti.filePath, $ti.path, $ti.target_file, .file_path, .filePath] |
-    map(select(type == "string" and length > 0)) | unique | .[]' 2>/dev/null) || FILE_PATHS=""
+    map(select(type == "string" and length > 0)) | unique | .[]' 2>/dev/null) || exit 3
   if [ -n "$FILE_PATHS" ]; then
     while IFS= read -r _p || [ -n "$_p" ]; do
       [ -n "$_p" ] || continue
@@ -119,12 +190,21 @@ EOF
   fi
   [ "$_any" = "1" ] || exit 0
 elif [ "$MODE" = "pre_command" ]; then
-  _cmd=$(printf '%s' "$INPUT" | jq -r '.command // .tool_input.command // empty' 2>/dev/null) || _cmd=""
+  _cmd=$(printf '%s' "$INPUT" | jq -r '.command // .tool_input.command // empty' 2>/dev/null) || exit 3
   [ -n "$_cmd" ] || exit 0
   _scan=$(printf '%s' "$_cmd" | sed "s|\${AIOS_TOOLKIT_DIR}|$TOOLKIT|g; s|\$AIOS_TOOLKIT_DIR|$TOOLKIT|g")
+  # The absolute-path text match alone is bypassable: a command run FROM the
+  # toolkit primary (pathless), a `cd ../aios-workspace && …`, or a relative
+  # `../aios-workspace/<file>` token never contains the absolute toolkit path.
+  # Check the session cwd, the command's cd/-C target, and every path-like
+  # token before concluding the toolkit cannot be touched.
+  _fasttd=$(target_dir "$_scan" "$RAWCWD")
   case "$_scan" in
     *"$TOOLKIT"*) ;;
-    *) exit 0 ;;
+    *)
+      path_under_toolkit "$RAWCWD" || path_under_toolkit "$_fasttd" ||
+        scan_paths_touch_toolkit "$_scan" "$RAWCWD" "$_fasttd" || exit 0
+      ;;
   esac
 fi
 
@@ -178,24 +258,10 @@ if [ "$MODE" = "pre_command" ]; then
   CMD=$(printf '%s' "$NORMALIZED" | jq -r '.command // empty')
   [ -n "$CMD" ] || exit 0
 
-  # Reuse guard-worktree's target_dir via a minimal inline copy (keep in sync with harness).
-  target_dir() {
-    _cmd=$1; _fb=$2
-    _t=$(printf '%s' "$_cmd" | sed -nE "s/.*(^|[^[:alnum:]_])git[[:space:]]+-C(=|[[:space:]]+)('[^']*'|\"[^\"]*\"|[^[:space:];&|]+).*/\3/p" | head -1)
-    if [ -z "$_t" ]; then
-      _t=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
-    fi
-    [ -n "$_t" ] || { printf '%s' "$_fb"; return; }
-    _t=$(printf '%s' "$_t" | sed "s/^['\"]//; s/['\"]\$//")
-    case "$_t" in
-      /*)    printf '%s' "$_t" ;;
-      "~")   printf '%s' "$HOME" ;;
-      "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
-      *)     printf '%s' "$_fb/$_t" ;;
-    esac
-  }
-
-  TDIR=$(target_dir "$CMD" "$CWD")
+  # Resolve the target dir from the SUBSTITUTED command so a
+  # `cd $AIOS_TOOLKIT_DIR && …` classifies against the real toolkit path.
+  SCAN=$(printf '%s' "$CMD" | sed "s|\${AIOS_TOOLKIT_DIR}|$TOOLKIT|g; s|\$AIOS_TOOLKIT_DIR|$TOOLKIT|g")
+  TDIR=$(target_dir "$SCAN" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
   TDIR=$(canon "$TDIR")
 
@@ -208,15 +274,19 @@ if [ "$MODE" = "pre_command" ]; then
   # guard and pre_edit hook remain authoritative): interpreter one-liners
   # (node -e / python -c), arbitrary command substitution, and variables other than
   # $AIOS_TOOLKIT_DIR are not evaluated.
-  SCAN=$(printf '%s' "$CMD" | sed "s|\${AIOS_TOOLKIT_DIR}|$TOOLKIT|g; s|\$AIOS_TOOLKIT_DIR|$TOOLKIT|g")
   MUTATORS='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
   CANDIDATES=$(printf '%s' "$SCAN" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
   if printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])('"$MUTATORS"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)'; then
     CANDIDATES="$CANDIDATES
 $(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$MUTATORS|sed|cp|mv|rsync")"
   elif printf '%s' "$SCAN" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+    # Strip redirections BEFORE picking the last token as the destination —
+    # otherwise `cp src <primary>/dst >/tmp/log` hides the real destination
+    # behind the redirect target. (Redirect targets themselves are already
+    # collected above from the unstripped command.)
+    NORED=$(printf '%s' "$SCAN" | sed -E 's/[0-9]*>&[0-9]+//g; s/[0-9]*(>>?|<)[[:space:]]*[^&<>[:space:];|]+//g')
     CANDIDATES="$CANDIDATES
-$(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+$(printf '%s\n' "$NORED" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
   fi
   if [ -n "$(printf '%s' "$CANDIDATES" | awk 'NF')" ]; then
     for tok in $(printf '%s\n' "$CANDIDATES" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
@@ -230,7 +300,10 @@ $(printf '%s\n' "$SCAN" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !
         *) tok="$TDIR/$tok" ;;
       esac
       path_under_toolkit "$tok" || continue
-      _pd=$tok; [ -d "$_pd" ] || _pd=$(dirname "$tok")
+      # Probe the deepest EXISTING ancestor — `mkdir -p <primary>/new/deep/…`
+      # must not slip through just because the parent doesn't exist yet.
+      _pd=$tok
+      while [ ! -d "$_pd" ] && [ "$_pd" != "/" ] && [ -n "$_pd" ]; do _pd=$(dirname "$_pd"); done
       [ -d "$_pd" ] || continue
       set -- $(probe "$_pd"); [ "${1:-none}" = "primary" ] || continue
       _b=$(basename "$tok"); _skip=0
@@ -254,10 +327,13 @@ Attempted path: $tok"
         block "destructive git operation against the toolkit primary checkout" \
           "Command: $CMD"
       fi
-      printf '%s' "$NORMALIZED" | "$HARNESS/hooks/guard-destructive.sh"
+      # Delegate with the SUBSTITUTED command so the harness guards resolve
+      # `$AIOS_TOOLKIT_DIR`-based targets to the real primary path too.
+      DELEGATED=$(printf '%s' "$NORMALIZED" | jq -c --arg c "$SCAN" '.command = $c') || exit 3
+      printf '%s' "$DELEGATED" | "$HARNESS/hooks/guard-destructive.sh"
       _rc=$?
       [ "$_rc" -eq 0 ] || exit "$_rc"
-      printf '%s' "$NORMALIZED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
+      printf '%s' "$DELEGATED" | HARNESS_PRIMARY_COMMIT_POLICY=strict "$HARNESS/hooks/guard-worktree.sh"
       exit $?
     fi
   fi

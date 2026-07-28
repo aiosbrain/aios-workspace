@@ -132,6 +132,23 @@ printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
 t "allows edit inside worktree"       0 "$H/guard-worktree.sh" "$(wpe "$WT/wt" "$WT/wt/a.txt")"
 t "no-op outside a git repo"          0 "$H/guard-worktree.sh" "$(wpe /tmp /tmp/x.txt)"
+# review round 4 (PR #431) — strict shell-write scan hardening
+ts() { # name expected_exit json — strict edit policy
+  local name="$1" want="$2" json="$3" got
+  printf '%s' "$json" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+  got=$?
+  if [ "$got" = "$want" ]; then PASS=$((PASS+1)); echo "PASS ($got): $name"; else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"; fi
+}
+# a trailing redirect must not mask the cp/mv destination
+ts "strict blocks cp dest hidden by redirect"  2 "$(wpc "$WT/wt" "cp /tmp/src $WT/b.txt >/tmp/cp431.log")"
+ts "strict blocks mv dest hidden by redirect"  2 "$(wpc "$WT/wt" "mv /tmp/src $WT/b.txt 2>/dev/null")"
+ts "strict allows cp outside primary w/ redirect" 0 "$(wpc "$WT/wt" 'cp /tmp/a /tmp/b >/tmp/cp431.log')"
+# a not-yet-existing multi-level path inside the primary is still classified by it
+ts "strict blocks mkdir -p new deep primary path" 2 "$(wpc "$WT/wt" "mkdir -p $WT/new1/new2")"
+ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x > $WT/new1/new2/f.txt")"
+ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
+# pre_edit: multi-level new path in the primary must not fall back to session cwd
+ts "strict blocks edit at new deep primary path" 2 "$(wpe "$WT/wt" "$WT/newdir/sub/new.txt")"
 tc "codex adapter blocks checkout -b" 2 pre_command guard-worktree.sh "$(jq -cn --arg cwd "$WT" '{tool_name:"Bash",tool_input:{command:"git checkout -b feat/adapter"},cwd:$cwd}')"
 # review finding 2 — -B / -C / --create / branch -m
 t "blocks checkout -B in primary"     2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git checkout -B feat/y')"

@@ -163,8 +163,13 @@ if [ "$MODE" = "command" ]; then
       _cands="$_cands
 $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync")"
     elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+      # Strip redirections BEFORE picking the last token as the destination —
+      # otherwise `cp src <primary>/dst >/tmp/log` hides the real destination
+      # behind the redirect target. (Redirect targets themselves are already
+      # collected above from the unstripped command.)
+      _nored=$(printf '%s' "$CMD" | sed -E 's/[0-9]*>&[0-9]+//g; s/[0-9]*(>>?|<)[[:space:]]*[^&<>[:space:];|]+//g')
       _cands="$_cands
-$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+$(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
     fi
     for _tok in $(printf '%s\n' "$_cands" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
       case "$_tok" in -*) continue ;; *=/*) _tok=${_tok#*=} ;; esac
@@ -176,7 +181,10 @@ $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~
         /*) : ;;
         *) _tok="$TDIR/$_tok" ;;
       esac
-      _tpd=$_tok; [ -d "$_tpd" ] || _tpd=$(dirname "$_tok")
+      # Probe the deepest EXISTING ancestor — `mkdir -p <primary>/new/deep/…`
+      # must not slip through just because the parent doesn't exist yet.
+      _tpd=$_tok
+      while [ ! -d "$_tpd" ] && [ "$_tpd" != "/" ] && [ -n "$_tpd" ]; do _tpd=$(dirname "$_tpd"); done
       [ -d "$_tpd" ] || continue
       set -- $(probe "$_tpd"); [ "${1:-none}" = "primary" ] || continue
       _tb=$(basename "$_tok"); _tsk=0
@@ -227,6 +235,9 @@ while IFS= read -r p || [ -n "$p" ]; do
     /*) pdir=$(dirname "$p") ;;
     *)  pdir="$CWD/$(dirname "$p")" ;;
   esac
+  # Walk up to the deepest EXISTING ancestor so a multi-level new path inside
+  # a primary checkout is still classified by that repo, not the session cwd.
+  while [ ! -d "$pdir" ] && [ "$pdir" != "/" ] && [ -n "$pdir" ]; do pdir=$(dirname "$pdir"); done
   [ -d "$pdir" ] || pdir="$CWD"
   set -- $(probe "$pdir"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || continue
