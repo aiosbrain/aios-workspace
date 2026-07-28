@@ -212,6 +212,9 @@ export function run(argv = process.argv.slice(2)) {
     env: {
       ...process.env,
       AIOS_TEST_SUITE: "1",
+      // A developer's ambient AIOS_BUGBOT_DISABLE=1 (aios/.envrc exports it for local
+      // convenience) must not leak into the test process — see test/local-bugbot-gate.test.mjs.
+      AIOS_BUGBOT_DISABLE: "",
       ...(options.liveInstall ? { AIOS_LIVE_INSTALL_TESTS: "1" } : {}),
     },
     stdio: "inherit",
