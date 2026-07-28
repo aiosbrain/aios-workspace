@@ -34,177 +34,6 @@
   ],
   "grandfathered": [
     {
-      "from": "scripts/aios.mjs",
-      "to": "scripts/cli/dispatch.mjs",
-      "reason": "R1: scripts/cli/ has no top-level barrel (scripts/cli.mjs) yet — aios.mjs is the de facto sole dispatch entry into it.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/cli-common.mjs",
-      "to": "scripts/ui/output-context.mjs",
-      "reason": "R1: scripts/ui/ has no top-level barrel (scripts/ui.mjs) yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/decisions.mjs",
-      "to": "scripts/analyze/sources.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel (scripts/analyze.mjs) yet — sibling scripts reach in directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/decisions.mjs",
-      "to": "scripts/analyze/parse-claude.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/rails.mjs",
-      "to": "scripts/analyze/parse-claude.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/rails.mjs",
-      "to": "scripts/analyze/sources.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/instincts.mjs",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/maturity-week.mjs",
-      "to": "scripts/analyze/aem.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/maturity-week.mjs",
-      "to": "scripts/analyze/guidance.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/maturity-week.mjs",
-      "to": "scripts/analyze/maturity-fold.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/maturity-week-cmd.mjs",
-      "to": "scripts/analyze/maturity-fold.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "scripts/maturity-week-cmd.mjs",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
-      "issue": "AIO-597"
-    },
-
-    {
-      "from": "hooks/instinct-observe.mjs",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly; no barrel exists to route through yet.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-brief.mjs",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-brief.mjs",
-      "to": "scripts/analyze/aem.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-brief.mjs",
-      "to": "scripts/analyze/guidance.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-brief.mjs",
-      "to": "scripts/analyze/maturity-fold.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-capture.mjs",
-      "to": "scripts/analyze/parse-claude.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-capture.mjs",
-      "to": "scripts/analyze/metrics.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-capture.mjs",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/maturity-nudge.mjs",
-      "to": "scripts/analyze/parse-claude.mjs",
-      "reason": "R2: hook reaches into scripts/analyze/ directly.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "hooks/local-bugbot-gate.mjs",
-      "to": "scripts/review-bugbot/trusted-env.mjs",
-      "reason": "R2: resolveCanonicalBranchHead is not re-exported from the scripts/review-bugbot.mjs barrel; hook reaches past it for that one helper.",
-      "issue": "AIO-597"
-    },
-
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/workspace-parse.mjs",
-      "reason": "R3: parsers.ts is the deliberate single cross-boundary import point (its own header comment) re-exporting the shared zero-dep .mjs parsers as typed contracts for the rest of src/operator-loop, pending the @aios-alpha/operator-loop extraction.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/tasks-table.mjs",
-      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/flat-yaml.mjs",
-      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/analyze/maturity-store.mjs",
-      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse, re-exported as a typed contract.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/analyze/maturity-fold.mjs",
-      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "src/operator-loop/parsers.ts",
-      "to": "scripts/analyze/aem.mjs",
-      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
-      "issue": "AIO-597"
-    },
-
-    {
       "from": "gui/server/config-routes.mjs",
       "to": "scripts/runtimes.mjs",
       "reason": "R4: known coupling, dies in the GUI decoupling; runtime catalog lookup used by the config routes.",
@@ -218,13 +47,7 @@
     },
     {
       "from": "gui/server/index.mjs",
-      "to": "scripts/runtimes.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/index.mjs",
-      "to": "scripts/gen-catalog.mjs",
+      "to": "scripts/brain-config.mjs",
       "reason": "R4: known coupling, dies in the GUI decoupling.",
       "issue": "AIO-597"
     },
@@ -236,14 +59,14 @@
     },
     {
       "from": "gui/server/index.mjs",
-      "to": "scripts/brain-config.mjs",
+      "to": "scripts/gen-catalog.mjs",
       "reason": "R4: known coupling, dies in the GUI decoupling.",
       "issue": "AIO-597"
     },
     {
-      "from": "gui/server/maturity.mjs",
-      "to": "scripts/analyze/guidance.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling; shares AEM guidance copy with the CLI maturity brief.",
+      "from": "gui/server/index.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling.",
       "issue": "AIO-597"
     },
     {
@@ -253,49 +76,11 @@
       "issue": "AIO-597"
     },
     {
-      "from": "gui/server/tasks.mjs",
-      "to": "scripts/tasks-table.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling; shares task-table parsing with the CLI.",
+      "from": "gui/server/maturity.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares AEM guidance copy with the CLI maturity brief.",
       "issue": "AIO-597"
     },
-    {
-      "from": "gui/server/tasks.mjs",
-      "to": "scripts/workspace-parse.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling; shares frontmatter parsing with the CLI.",
-      "issue": "AIO-597"
-    },
-
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/lock-skill-library.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate): skill-library route locking shares the CLI's lock helper.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/lock-marketplace.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/connector.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/gen-catalog.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/skill-scan.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-
     {
       "from": "gui/server/runtime-adapters/acp.mjs",
       "to": "scripts/runtimes.mjs",
@@ -310,14 +95,248 @@
     },
     {
       "from": "gui/server/runtime-adapters/index.mjs",
-      "to": "scripts/runtimes.mjs",
+      "to": "scripts/flat-yaml.mjs",
       "reason": "R4 (measured, not in the original ~13 estimate).",
       "issue": "AIO-597"
     },
     {
       "from": "gui/server/runtime-adapters/index.mjs",
-      "to": "scripts/flat-yaml.mjs",
+      "to": "scripts/runtimes.mjs",
       "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/connector.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/gen-catalog.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/lock-marketplace.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/lock-skill-library.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate): skill-library route locking shares the CLI's lock helper.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/skill-scan.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/tasks.mjs",
+      "to": "scripts/tasks-table.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares task-table parsing with the CLI.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/tasks.mjs",
+      "to": "scripts/workspace-parse.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares frontmatter parsing with the CLI.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/instinct-observe.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly; no barrel exists to route through yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/local-bugbot-gate.mjs",
+      "to": "scripts/review-bugbot/trusted-env.mjs",
+      "reason": "R2: resolveCanonicalBranchHead is not re-exported from the scripts/review-bugbot.mjs barrel; hook reaches past it for that one helper.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/metrics.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-nudge.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/aios.mjs",
+      "to": "scripts/cli/dispatch.mjs",
+      "reason": "R1: scripts/cli/ has no top-level barrel (scripts/cli.mjs) yet — aios.mjs is the de facto sole dispatch entry into it.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/cli-common.mjs",
+      "to": "scripts/ui/output-context.mjs",
+      "reason": "R1: scripts/ui/ has no top-level barrel (scripts/ui.mjs) yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/decisions.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/decisions.mjs",
+      "to": "scripts/analyze/sources.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel (scripts/analyze.mjs) yet — sibling scripts reach in directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/delivery-status.mjs",
+      "to": "scripts/delivery/github.mjs",
+      "reason": "R1: scripts/delivery/ has no top-level barrel — the command entry is named delivery-status.mjs, not delivery.mjs, so its own subdirectory reads as a foreign cmd. Landed in #466 after #464 measured this list; the rename is tracked separately.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/delivery-status.mjs",
+      "to": "scripts/delivery/local-state.mjs",
+      "reason": "R1: scripts/delivery/ has no top-level barrel — the command entry is named delivery-status.mjs, not delivery.mjs, so its own subdirectory reads as a foreign cmd. Landed in #466 after #464 measured this list; the rename is tracked separately.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/delivery-status.mjs",
+      "to": "scripts/delivery/reconcile.mjs",
+      "reason": "R1: scripts/delivery/ has no top-level barrel — the command entry is named delivery-status.mjs, not delivery.mjs, so its own subdirectory reads as a foreign cmd. Landed in #466 after #464 measured this list; the rename is tracked separately.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/delivery-status.mjs",
+      "to": "scripts/delivery/render.mjs",
+      "reason": "R1: scripts/delivery/ has no top-level barrel — the command entry is named delivery-status.mjs, not delivery.mjs, so its own subdirectory reads as a foreign cmd. Landed in #466 after #464 measured this list; the rename is tracked separately.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/instincts.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week-cmd.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week-cmd.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/rails.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/rails.mjs",
+      "to": "scripts/analyze/sources.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse, re-exported as a typed contract.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/flat-yaml.mjs",
+      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/tasks-table.mjs",
+      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/workspace-parse.mjs",
+      "reason": "R3: parsers.ts is the deliberate single cross-boundary import point (its own header comment) re-exporting the shared zero-dep .mjs parsers as typed contracts for the rest of src/operator-loop, pending the @aios-alpha/operator-loop extraction.",
       "issue": "AIO-597"
     }
   ]
