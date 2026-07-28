@@ -386,3 +386,52 @@ test("shareable action evidence refs are stripped from the result (no ref reache
   assert.ok(!ser.includes("evidence"), "shareable actions carry no evidence refs");
   assert.ok(!ser.includes("5-personal/secret.md"), "no smuggled admin path in actions");
 });
+
+// ── commit-mirror fold in the owner brief (A7) ────────────────────────────────
+// The brain's `commits` project mirrors one pulled file per commit. In a real workspace that put
+// 289 "Commit <sha> — <repo>" bullets into a 725-line brief, burying every decision. They fold to
+// a counted line, the same way time is an aggregate — folded, never silently dropped.
+const commitSig = (sha) => ({
+  kind: "inbox",
+  source: "inbox",
+  tier: "team",
+  occurredAt: "2026-06-29T00:00:00.000Z",
+  ref: { path: `1-inbox/from-brain/commits__commits__acme__${sha}.md`, tier: "team" },
+  summary: `Commit ${sha} — acme`,
+  payload: { from_brain: true, origin_project: "commits" },
+});
+
+test("owner brief folds mirrored commit signals to a count, keeping real claims", async () => {
+  const manifest = {
+    ...FULL_MANIFEST,
+    signals: [...FULL_MANIFEST.signals, commitSig("aaaaaaaaaa"), commitSig("bbbbbbbbbb")],
+  };
+  const r = await runCloseout({ fullManifest: manifest, shareableAudiences: [] });
+  assert.ok(!r.briefMarkdown.includes("Commit aaaaaaaaaa"), "no per-commit bullet in the brief");
+  assert.ok(!r.briefMarkdown.includes("commits__commits__acme"), "no commit-mirror evidence path");
+  assert.match(r.briefMarkdown, /2 mirrored commit signal\(s\) folded out of this picture\./);
+  // The fold must not touch anything else the week contained.
+  assert.ok(r.briefMarkdown.includes(ADMIN_SENTINEL), "real admin claim survives the fold");
+  assert.ok(r.briefMarkdown.includes(TEAM_SENTINEL), "real team claim survives the fold");
+});
+
+test("a brief with no commit mirror carries no fold line", async () => {
+  const r = await runCloseout({ fullManifest: FULL_MANIFEST, shareableAudiences: [] });
+  assert.ok(!/mirrored commit signal/.test(r.briefMarkdown), "no fold line when nothing folded");
+});
+
+test("commit-mirror fold matches on origin_project, not the flattened filename", async () => {
+  // Same `commits__…` filename shape, but pulled from a DIFFERENT brain project: a real note that
+  // happens to be about commits must stay a claim. Filename-matching would wrongly swallow it.
+  const decoy = {
+    ...commitSig("cccccccccc"),
+    summary: "Commit conventions we agreed on",
+    payload: { from_brain: true, origin_project: "handbook" },
+  };
+  const r = await runCloseout({
+    fullManifest: { ...FULL_MANIFEST, signals: [...FULL_MANIFEST.signals, decoy] },
+    shareableAudiences: [],
+  });
+  assert.ok(r.briefMarkdown.includes("Commit conventions we agreed on"), "decoy kept as a claim");
+  assert.ok(!/mirrored commit signal/.test(r.briefMarkdown), "nothing folded");
+});

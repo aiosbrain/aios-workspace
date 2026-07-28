@@ -1,18 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { useConnection } from "../../state/cockpit";
-import { Skeleton } from "../ui/skeleton";
-import { toast } from "../ui/sonner";
-import { MarkdownBlock } from "../ui/MarkdownBlock";
 import { cn } from "../../lib/cn";
+import { ExitCodeWarning, LoadingRows, LOOP_BTN } from "./chrome";
 import { TodayView } from "./TodayView";
-import type {
-  LoopCadence,
-  LoopMetrics,
-  MetricResult,
-  RunManifest,
-  WeeklyCloseoutResponse,
-} from "../../types/protocol";
+import { WeeklyView } from "./WeeklyView";
+import type { LoopCadence, LoopMetrics, MetricResult, RunManifest } from "../../types/protocol";
 
 /**
  * Operator Loop panel (AIO-318). One action surface plus three audit surfaces over the loop CLI:
@@ -28,12 +20,7 @@ import type {
  */
 
 const WRAP = "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
-const BTN =
-  "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
-const BTN_PRIMARY = cn(
-  BTN,
-  "border-transparent bg-primary font-semibold text-primary-foreground enabled:hover:bg-[var(--accent-hover)]"
-);
+const BTN = LOOP_BTN;
 /**
  * Today is the operator surface; the rest are audit surfaces over the same pipeline.
  *
@@ -78,25 +65,6 @@ function ErrorState({ message, onRetry }: { message: string; onRetry?: () => voi
           Retry
         </button>
       )}
-    </div>
-  );
-}
-
-function LoadingRows() {
-  return (
-    <div className="flex flex-col gap-2">
-      <Skeleton className="h-6 w-3/4 rounded-md" />
-      <Skeleton className="h-6 w-2/3 rounded-md" />
-      <Skeleton className="h-6 w-1/2 rounded-md" />
-    </div>
-  );
-}
-
-function ExitCodeWarning({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--aios-destructive)_45%,var(--aios-border-visible))] px-3 py-2 text-xs text-destructive">
-      <AlertTriangle size={14} className="shrink-0" />
-      <span>{text}</span>
     </div>
   );
 }
@@ -175,76 +143,6 @@ function CollectView() {
               ))}
             </ul>
           )}
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ── Weekly closeout (C5) ── */
-
-function WeeklyView() {
-  const { api } = useConnection();
-  const [data, setData] = useState<WeeklyCloseoutResponse | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async () => {
-    setBusy(true);
-    try {
-      const res = await api.post<WeeklyCloseoutResponse>("/api/loop/weekly", {});
-      setData(res);
-      if (res.cliExitCode === 1) {
-        toast.warning("Closeout drafted, but an audience is not shippable");
-      } else {
-        toast.success("Weekly closeout drafted");
-      }
-    } catch (e) {
-      toast.error(`Closeout failed: ${(e as Error).message}`, { duration: 10_000 });
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-xs text-muted-foreground">
-          Runs the offline drafter locally — no network egress.
-        </span>
-        <button className={BTN_PRIMARY} onClick={run} disabled={busy}>
-          {busy ? "Running…" : "Run closeout"}
-        </button>
-      </div>
-
-      {!data ? (
-        busy ? (
-          <LoadingRows />
-        ) : (
-          <div className="m-auto max-w-[440px] py-8 text-center text-muted-foreground">
-            Run a weekly closeout to draft the owner brief and per-audience digests.
-          </div>
-        )
-      ) : (
-        <>
-          {data.cliExitCode === 1 && (
-            <ExitCodeWarning text="At least one audience digest is not shippable — review before sharing." />
-          )}
-          <div className="flex flex-wrap gap-2 font-mono text-[11px] text-muted-foreground">
-            <span>run {data.runStamp}</span>
-            {data.audiences.map((a) => (
-              <span
-                key={a.audience}
-                className={cn(
-                  "rounded-sm border border-border-visible px-1.5 py-px",
-                  a.shippable ? "text-foreground" : "text-destructive"
-                )}
-              >
-                {a.audience}: {a.status}
-              </span>
-            ))}
-          </div>
-          <div className="assistant-prose rounded-xl border border-border-visible bg-card px-3.5 py-2.5">
-            <MarkdownBlock>{data.briefMarkdown}</MarkdownBlock>
-          </div>
         </>
       )}
     </div>
