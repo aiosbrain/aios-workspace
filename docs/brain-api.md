@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.13** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.13**
+**Version: 1.14** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.14**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -164,6 +164,25 @@ writeback/registration pulls), so a newer client still works against an older br
   (a pre-1.13 brain ignores the parameter and answers `mode: "writeback"`) and tolerates `400`/`404`.
   Sync-origin rows additionally carry `raw_status` (the echo guard) and the mode is paged via
   `next_cursor`. Tier scoping is unchanged.*
+- *2026-07-28 — **v1.14**: added a **by-key task lookup** —
+  `GET /api/v1/tasks?mode=table&keys=AIO-484,AIO-537` (also `?all=1&keys=…`, since `all=1` selects
+  table mode) — so a caller can **prove** a specific key's absence. The plain full-table read
+  (`?all=1`) is capped at 500 rows ordered `updated_at` ascending with no cursor, i.e. the *stalest*
+  prefix of the table: on production (677 keyed tasks) `AIO-484` sat at rank 628 and was permanently
+  invisible to that read, so a CI check that used `?all=1` to answer "does the cited ticket exist?"
+  reported a **real** ticket as invented. The by-key read is bounded **by the keys asked for**, not by
+  a page, so absence is proof; the response gains **`unknown_keys`** — the requested keys that matched
+  nothing the caller may see. `unknown_keys` is **`null`** (never a list) when the read could have
+  truncated at the 500-row cap: `null` means "could not determine", which a client MUST treat as no
+  answer, not as "none unknown". Tier isolation is load-bearing and preserved — `unknown_keys` is
+  computed from the tier-filtered rows, so a key the caller cannot see comes back as unknown,
+  byte-identical to "does not exist"; there is deliberately **no existence oracle**. The parameter is
+  additive: without `keys` the response is byte-identical to before, so old clients are unaffected.
+  Feature-detect on **`body.mode === "table"` plus the presence of an `unknown_keys` array** — not on
+  the absence of a `400`: a pre-1.14 brain ignores `keys` and returns the normal table feed with no
+  `unknown_keys`, and a pre-1.13 brain ignores `mode` entirely and answers the **writeback** feed
+  (`mode: "writeback"`), which read as a by-key answer is exactly how a real key gets reported as
+  invented.*
 
 ---
 
@@ -591,6 +610,64 @@ dashboard/Postgres-only). Specifically:
   independent assignee author for sync-origin rows today, so an assignee-only difference is an echo
   of the client's own last push and merging it would revert a local reassignment.
 - Every other column of a touched row is rewritten verbatim from the local cells.
+
+## `GET /api/v1/tasks?mode=table&keys=<k1,k2,…>` — by-key existence lookup (1.14)
+
+A **bounded, provable** existence check for specific task keys. The plain full-table read (`?all=1`)
+is capped at **500 rows ordered `updated_at` ascending with no cursor** — so it is the *stalest*
+prefix of the table, and any key past that bound is permanently invisible to it. On production (677
+keyed tasks) `AIO-484` sat at rank 628: a CI check using `?all=1` to answer "does the ticket this PR
+cites actually exist?" reported a **real** ticket as nonexistent. This mode answers the existence
+question directly — the query is bounded **by the keys asked for**, not by a page of the table, so
+**absence is proof**.
+
+`keys` refines **table mode only**: `?mode=table&keys=…`, or equivalently `?all=1&keys=…` (`all=1`
+selects table mode). Up to **200 keys** per request; duplicates are collapsed and blanks dropped
+(`keys=A,,A` asks about one key).
+
+The response is the ordinary table feed plus one field, **`unknown_keys`** — the requested keys that
+matched **nothing the caller may see**:
+
+```json
+{
+  "mode": "table",
+  "tasks": [
+    { "project": "northwind-aios",
+      "rows": [ { "row_key": "AIO-537", "title": "...", "assignee": "riley",
+                  "status": "ready", "sprint": "sprint-2", "due": null,
+                  "parent": null, "labels": [], "priority": "medium" } ] }
+  ],
+  "unknown_keys": ["AIO-484"],
+  "next_cursor": null
+}
+```
+
+- **`unknown_keys` is `null` — never a list — when the read could have truncated** (row count hit the
+  500-row cap). `null` means "could not determine"; a client MUST treat it as **no answer**, not as
+  "none unknown".
+- **Only present on by-key requests.** Without `keys` the response body is **byte-identical** to
+  before 1.14 (no `unknown_keys` field), so old clients are unaffected.
+- **Tier isolation is load-bearing.** `unknown_keys` is computed from the **tier-filtered** rows, so
+  an `external`-tier key asking about a `team`-audience task gets that key back in `unknown_keys` —
+  byte-identical to "does not exist". There is deliberately **no existence oracle**: the API never
+  reveals that a task the caller cannot see exists, so `unknown_keys` means "not visible to you",
+  **not** "no such task anywhere".
+
+**Errors (400).**
+
+- `keys` outside table mode → *"keys requires mode=table (or all=1)"*. `writeback` hides
+  `origin='sync'` rows and `sync-origin` hides `origin='ui'` rows, so answering from either would
+  report a real key as unknown — the confident wrong answer this feature exists to end.
+- `keys` present but empty → *"keys must name at least one row_key"*.
+- more than 200 keys → *"keys is limited to 200 per request"*.
+
+**Feature detection (normative).** Detect on **`body.mode === "table"` *and* the presence of an
+`unknown_keys` array** — **not** on the absence of a `400`. A pre-1.14 brain ignores the unknown
+`keys` parameter and returns the normal table feed with no `unknown_keys`; worse, a pre-1.13 brain
+ignores `mode` entirely and answers `200` with the **writeback** feed (echoing `mode: "writeback"`).
+Reading a writeback feed as a by-key answer is exactly how a real key gets reported as invented — the
+bug this feature fixed on the server's own CI consumer — so a client that cannot confirm **both**
+signals MUST treat the result as "couldn't verify", never as "invented".
 
 ## `GET /api/v1/pm-sync/health?limit=<N>` — projection observability (team-tier only)
 
