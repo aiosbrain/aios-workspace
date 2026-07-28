@@ -22,10 +22,11 @@ import { fileURLToPath } from "node:url";
 import {
   aggregateGateResults,
   evaluateLocalBugbotGate as evaluateProductionGate,
-  formatHookResult,
+  formatAdvisoryHookResult,
   hardenedChildEnv,
   listGateTargets,
   reviewChildArgs,
+  summarizeAdvisorySweep,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
   BUGBOT_BLOCKED_MARKER,
@@ -49,11 +50,7 @@ import {
   UNTRACKED_HASH_SIZE_CAP,
 } from "../scripts/review-bugbot.mjs";
 import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
-import {
-  enqueueContinuation,
-  hardenedGateEnv,
-  isDuplicateIdleResult,
-} from "../.opencode/plugins/aios-bugbot.mjs";
+import { AIOSBugbot, hardenedGateEnv } from "../.opencode/plugins/aios-bugbot.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "..");
@@ -1062,12 +1059,91 @@ test("gate rejects malformed success and any worktree change during review", () 
   }
 });
 
-test("runtime adapters return native blocked result shapes", () => {
-  const failure = { status: "blocked", output: "- Medium: bug" };
-  assert.match(formatHookResult("claude", failure).reason, /completion.*blocked/i);
-  assert.match(formatHookResult("cursor", failure).followup_message, /completion.*blocked/i);
-  assert.equal(formatHookResult("codex", failure).continue, false);
-  assert.equal(formatHookResult("opencode", failure).status, "blocked");
+const BLOCKING_SHAPE_KEYS = ["decision", "continue", "stopReason", "followup_message"];
+
+test("AIO-567: Stop adapters emit only advisory shapes — never a blocking shape", () => {
+  const summary = summarizeAdvisorySweep([
+    { status: "probe", fingerprint: "f1", worktree: "/wt/unreviewed" },
+    { status: "probe", fingerprint: "f2", knownBlocked: true, worktree: "/wt/blocked" },
+    { status: "error", reason: "canonical remote unreachable", worktree: "/wt/offline" },
+    { status: "skipped", reason: "no changes against Bugbot base", worktree: "/wt/idle" },
+  ]);
+  assert.deepEqual(summary.unreviewed, ["/wt/unreviewed"]);
+  assert.deepEqual(summary.knownBlocked, ["/wt/blocked"]);
+  assert.deepEqual(summary.attention, ["/wt/offline: canonical remote unreachable"]);
+  assert.match(summary.advisory, /Unreviewed changes in: \/wt\/unreviewed/);
+  assert.match(summary.advisory, /aios build --merge \/ aios ship/);
+  assert.match(summary.advisory, /Known Medium\+ Bugbot findings.*\/wt\/blocked/);
+  assert.match(summary.advisory, /WILL block/);
+  assert.match(summary.advisory, /non-blocking.*\/wt\/offline/);
+  assert.match(summary.fingerprint, /^[a-f0-9]{64}$/);
+
+  // Even a summary carrying a cached Medium+ verdict and a probe error must never produce a
+  // blocking key for ANY runtime — blocking verdicts live at merge time only.
+  for (const runtime of ["claude", "codex", "cursor", "opencode"]) {
+    const shape = formatAdvisoryHookResult(runtime, summary);
+    for (const key of BLOCKING_SHAPE_KEYS) {
+      assert.equal(key in shape, false, `${runtime} advisory shape must not carry ${key}`);
+    }
+  }
+  assert.match(formatAdvisoryHookResult("claude", summary).systemMessage, /local-bugbot advisory/);
+  assert.match(formatAdvisoryHookResult("codex", summary).systemMessage, /local-bugbot advisory/);
+  // Cursor's only in-band stop channel (followup_message) would re-engage the agent, so its
+  // advisory goes to stderr and stdout stays empty.
+  assert.deepEqual(formatAdvisoryHookResult("cursor", summary), {});
+  const opencode = formatAdvisoryHookResult("opencode", summary);
+  assert.equal(opencode.status, "advisory");
+  assert.equal(opencode.fingerprint, summary.fingerprint);
+  assert.match(opencode.advisory, /Unreviewed changes/);
+
+  const quiet = summarizeAdvisorySweep([
+    { status: "skipped", reason: "no changes against Bugbot base", worktree: "/wt" },
+  ]);
+  assert.equal(quiet.advisory, null);
+  assert.deepEqual(formatAdvisoryHookResult("claude", quiet), {});
+  assert.deepEqual(formatAdvisoryHookResult("codex", quiet), {});
+  assert.deepEqual(formatAdvisoryHookResult("cursor", quiet), {});
+  assert.equal(formatAdvisoryHookResult("opencode", quiet).advisory, null);
+  assert.throws(() => formatAdvisoryHookResult("vscode", quiet), /unsupported hook runtime/);
+});
+
+test("AIO-567: a cached blocked verdict surfaces as a knownBlocked probe, never a review", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "change\n");
+    let calls = 0;
+    const blockedReview = () => {
+      calls++;
+      return {
+        ok: false,
+        status: 1,
+        output: `${BUGBOT_BLOCKED_MARKER}\nBugbot found Medium+ issues\n- Medium: bug`,
+      };
+    };
+    assert.equal(evaluateLocalBugbotGate({ repo, runReview: blockedReview }).status, "blocked");
+    assert.equal(calls, 1);
+
+    const probe = evaluateLocalBugbotGate({ repo, runReview: blockedReview, probeOnly: true });
+    assert.equal(probe.status, "probe");
+    assert.equal(probe.knownBlocked, true);
+    assert.equal(calls, 1, "a probe must never spend a model call, even on a blocked cache");
+
+    // The advisory built from that probe still carries no blocking key for any runtime.
+    const summary = summarizeAdvisorySweep([{ ...probe, worktree: repo }]);
+    for (const runtime of ["claude", "codex", "cursor", "opencode"]) {
+      const shape = formatAdvisoryHookResult(runtime, summary);
+      for (const key of BLOCKING_SHAPE_KEYS) assert.equal(key in shape, false);
+    }
+    assert.match(summary.advisory, /Known Medium\+ Bugbot findings/);
+
+    // Changing the diff clears the knownBlocked flag on the next probe.
+    appendFileSync(path.join(repo, "tracked.txt"), "another change\n");
+    const fresh = evaluateLocalBugbotGate({ repo, runReview: blockedReview, probeOnly: true });
+    assert.equal(fresh.status, "probe");
+    assert.equal("knownBlocked" in fresh, false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("native launchers strip code-injection environment before Node starts", () => {
@@ -1148,82 +1224,84 @@ test("reviewer config roots come from the OS account, not hook environment", () 
   assert.equal(env.SHELL, "/bin/sh");
 });
 
-test("OpenCode duplicate-idle suppression requires a verified unchanged clear", () => {
-  const previous = {
-    completedAt: 1_000,
-    fingerprint: "old",
-    status: "clear",
-    verified: true,
-  };
-  assert.equal(
-    isDuplicateIdleResult(previous, { fingerprint: "old", status: "probe" }, 2_000),
-    true
-  );
-  assert.equal(
-    isDuplicateIdleResult(
-      { ...previous, verified: false },
-      { fingerprint: "old", status: "probe" },
-      2_000
-    ),
-    false,
-    "an unverified clear must never suppress the full gate"
-  );
-  assert.equal(
-    isDuplicateIdleResult(
-      { ...previous, status: "blocked" },
-      { fingerprint: "old", status: "probe" },
-      2_000
-    ),
-    false,
-    "a blocked continuation must retry even when the fingerprint is unchanged"
-  );
-  assert.equal(
-    isDuplicateIdleResult(
-      { ...previous, status: "error" },
-      { fingerprint: "old", status: "probe" },
-      2_000
-    ),
-    false,
-    "an infrastructure failure must retry even when the fingerprint is unchanged"
-  );
-  assert.equal(
-    isDuplicateIdleResult(previous, { fingerprint: "new", status: "probe" }, 2_000),
-    false,
-    "a changed worktree must rerun even inside the duplicate event window"
-  );
-  assert.equal(
-    isDuplicateIdleResult(previous, { fingerprint: "old", status: "probe" }, 4_000),
-    false
-  );
-});
-
-test("OpenCode continuation awaits asynchronous enqueue acknowledgement", async () => {
-  let request;
-  const accepted = await enqueueContinuation(
-    {
+test("AIO-567: OpenCode idle handler is advisory — plain gate call, one log, never a re-prompt", async () => {
+  const repo = fixture();
+  const argvLog = path.join(repo, "gate-argv.log");
+  try {
+    mkdirSync(path.join(repo, "hooks"));
+    writeFileSync(
+      path.join(repo, "hooks", "local-bugbot-gate.mjs"),
+      [
+        'import { appendFileSync } from "node:fs";',
+        `appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+        'console.log(JSON.stringify({ status: "advisory", advisory: "[local-bugbot advisory] Unreviewed changes in: /wt; they will gate at aios build --merge / aios ship", fingerprint: "fp-1" }));',
+        "",
+      ].join("\n")
+    );
+    const promptCalls = [];
+    const client = {
       session: {
         promptAsync: async (input) => {
-          request = input;
-          return { data: undefined };
+          promptCalls.push(input);
+          return {};
         },
       },
-    },
-    "session-1",
-    "fix Bugbot"
-  );
-  assert.deepEqual(accepted, { data: undefined });
-  assert.deepEqual(request, {
-    path: { id: "session-1" },
-    body: { parts: [{ type: "text", text: "fix Bugbot" }] },
-  });
-  await assert.rejects(
-    enqueueContinuation(
-      { session: { promptAsync: async () => ({ error: { message: "not delivered" } }) } },
-      "session-1",
-      "fix Bugbot"
-    ),
-    /not delivered/
-  );
+    };
+    const hooks = await AIOSBugbot({ directory: repo, client });
+    const logs = [];
+    const originalError = console.error;
+    console.error = (...args) => logs.push(args.join(" "));
+    try {
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+      // An unchanged changeset on the next idle logs nothing — one nudge per fingerprint.
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+      // Leaving idle resets the dedup, so the next idle re-nudges.
+      await hooks.event({
+        event: { type: "session.status", properties: { sessionID: "s1", status: "busy" } },
+      });
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(promptCalls.length, 0, "the idle handler must never re-prompt the session");
+    const advisories = logs.filter((line) => /Unreviewed changes/.test(line));
+    assert.equal(advisories.length, 2, "one advisory per fingerprint per idle stretch");
+    const invocations = readFileSync(argvLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(invocations.length, 3);
+    for (const argv of invocations) {
+      assert.deepEqual(
+        argv,
+        ["--runtime", "opencode"],
+        "the plugin must use the plain (advisory) invocation — never --json/--check-exit"
+      );
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-567: an OpenCode advisory probe failure is logged, never escalated", async () => {
+  const repo = fixture();
+  try {
+    mkdirSync(path.join(repo, "hooks"));
+    writeFileSync(path.join(repo, "hooks", "local-bugbot-gate.mjs"), "process.exit(7);\n");
+    const hooks = await AIOSBugbot({ directory: repo, client: { session: {} } });
+    const logs = [];
+    const originalError = console.error;
+    console.error = (...args) => logs.push(args.join(" "));
+    try {
+      // Must resolve (not reject): a failed probe is advisory noise, not a session block.
+      await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(
+      logs.some((line) => /advisory probe failed/.test(line)),
+      true
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("native command entry points emit only valid runtime JSON and ignore stdin cwd", () => {
@@ -1271,11 +1349,14 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   const hydration = readFileSync(path.join(REPO, "scripts", "link-worktree-env.sh"), "utf8");
   assert.match(openCode, /session\.status/);
   assert.match(openCode, /session\.idle/);
-  assert.match(openCode, /lastIdleCompletedAt/);
+  assert.match(openCode, /lastAdvisoryFingerprint/);
   assert.match(openCode, /local-bugbot-gate\.mjs/);
   assert.match(openCode, /timeout:\s*GATE_TIMEOUT_MS/);
   assert.match(openCode, /required gate script missing/);
   assert.match(openCode, /env:\s*hardenedGateEnv\(\)/);
+  // AIO-567: the idle handler is advisory-only — the session-continuation machinery must not
+  // creep back into the plugin.
+  assert.doesNotMatch(openCode, /promptAsync/);
   assert.match(hydration, /cp -Rn.*scaffold\/\.opencode/s);
 
   const build = readFileSync(path.join(REPO, "scripts", "build.mjs"), "utf8");
@@ -1335,6 +1416,115 @@ test("manual check-exit mode returns non-zero on an infrastructure failure", () 
     );
     assert.equal(child.status, 1);
     assert.equal(JSON.parse(child.stdout).status, "error");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-567: a plain Stop invocation exits 0 with a non-blocking shape even on a probe hard-error", () => {
+  const gate = path.join(REPO, "hooks", "local-bugbot-gate.mjs");
+  const unrelated = mkdtempSync(path.join(tmpdir(), "aios-bugbot-advisory-"));
+  try {
+    for (const runtime of ["claude", "codex", "cursor", "opencode"]) {
+      const child = spawnSync(process.execPath, [gate, "--runtime", runtime], {
+        cwd: unrelated,
+        encoding: "utf8",
+        input: "{}",
+        env: { ...process.env, AIOS_BUGBOT_DISABLE: "" },
+      });
+      assert.equal(child.status, 0, `${runtime}: the Stop path must never signal failure`);
+      const shape = JSON.parse(child.stdout);
+      for (const key of BLOCKING_SHAPE_KEYS) {
+        assert.equal(key in shape, false, `${runtime} must not emit ${key} at Stop`);
+      }
+      if (runtime === "claude" || runtime === "codex") {
+        assert.match(shape.systemMessage, /local-bugbot advisory/);
+        assert.match(shape.systemMessage, /non-blocking/);
+      }
+      if (runtime === "cursor") assert.deepEqual(shape, {});
+      if (runtime === "opencode") assert.equal(shape.status, "advisory");
+      assert.match(child.stderr, /local-bugbot advisory/);
+    }
+  } finally {
+    rmSync(unrelated, { recursive: true, force: true });
+  }
+});
+
+test("AIO-567: a real-repo probe error at Stop stays advisory — exit 0, no blocking keys", () => {
+  const repo = fixture();
+  try {
+    // Missing review CLI is a hard fail-closed error for the review sweep; at Stop it must
+    // degrade to a non-blocking advisory instead of freezing the session.
+    rmSync(path.join(repo, "scripts", "aios.mjs"));
+    appendFileSync(path.join(repo, "tracked.txt"), "unreviewed change\n");
+    const gate = path.join(REPO, "hooks", "local-bugbot-gate.mjs");
+    const child = spawnSync(process.execPath, [gate, "--runtime", "claude"], {
+      cwd: repo,
+      encoding: "utf8",
+      input: "{}",
+      env: { ...process.env, AIOS_BUGBOT_DISABLE: "" },
+    });
+    assert.equal(child.status, 0);
+    const shape = JSON.parse(child.stdout);
+    for (const key of BLOCKING_SHAPE_KEYS) assert.equal(key in shape, false);
+    assert.match(shape.systemMessage, /Advisory probe issues \(non-blocking\)/);
+    assert.match(shape.systemMessage, /scripts\/aios\.mjs/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-567: AIOS_BUGBOT_DISABLE=1 keeps the Stop advisory fully inert", () => {
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "unreviewed change\n");
+    // Canary: any spawned review would execute scripts/aios.mjs, which records itself.
+    writeFileSync(
+      path.join(repo, "scripts", "aios.mjs"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(
+        path.join(repo, "reviewer-spawned")
+      )}, "1");\n`
+    );
+    const gate = path.join(REPO, "hooks", "local-bugbot-gate.mjs");
+    for (const runtime of ["claude", "codex", "cursor", "opencode"]) {
+      const child = spawnSync(process.execPath, [gate, "--runtime", runtime], {
+        cwd: repo,
+        encoding: "utf8",
+        input: "{}",
+        env: { ...process.env, AIOS_BUGBOT_DISABLE: "1" },
+      });
+      assert.equal(child.status, 0);
+      const shape = JSON.parse(child.stdout);
+      for (const key of BLOCKING_SHAPE_KEYS) assert.equal(key in shape, false);
+      if (runtime === "opencode") {
+        assert.equal(shape.status, "advisory");
+        assert.equal(shape.advisory, null);
+      } else {
+        assert.deepEqual(shape, {});
+      }
+      assert.match(child.stderr, /AIOS_BUGBOT_DISABLE=1/);
+    }
+    assert.equal(existsSync(path.join(repo, "reviewer-spawned")), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("AIO-567: merge-time entry points still block on Medium+ evidence", async () => {
+  // The Stop hook change must not weaken the merge path: `aios build --merge` / `aios ship`
+  // reach runLocalPrePrReview / hasFindingsAtOrAbove, which stay fail-closed on Medium+.
+  assert.equal(hasFindingsAtOrAbove("- Medium: stale check", "medium"), true);
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    const review = await runLocalPrePrReview({
+      worktree: repo,
+      baseSha: git(repo, "rev-parse", "main"),
+      branch: "feat/gate",
+      timeoutMs: 120_000,
+      reviewPrompt: async () => `- Medium: regression\n\n${BUGBOT_CLEAR_TOKEN}`,
+    });
+    assert.equal(review.ok, false, "Medium+ evidence must still block the merge-time review");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -1470,7 +1660,7 @@ test("AIOS_BUGBOT_DISABLE=1 skips the local gate without running any review", ()
       env: { AIOS_BUGBOT_BASE: "HEAD", AIOS_BUGBOT_DISABLE: "1" },
       runReview: review,
     });
-    // `skipped` is non-blocking (formatHookResult maps it to a pass); the review never runs.
+    // `skipped` is non-blocking in every consumer; the review never runs.
     assert.equal(gated.status, "skipped");
     assert.match(gated.reason, /AIOS_BUGBOT_DISABLE/);
     assert.equal(calls, 0, "no external review may be dispatched while disabled");
@@ -1764,9 +1954,14 @@ test("a killed review surfaces the signal, elapsed time, and deadline cause", ()
     assert.match(killed.reason, /912s/);
     assert.match(killed.reason, /wall-clock budget exceeded/);
     assert.match(killed.reason, /not a clear/);
-    // Never a pass for any runtime adapter.
-    assert.equal(formatHookResult("claude", killed).decision, "block");
-    assert.equal(formatHookResult("codex", killed).continue, false);
+    // Review-mode callers see the raw error (which --check-exit turns into exit 1); the
+    // Stop path renders the same result as a non-blocking advisory note.
+    const advisoryShape = formatAdvisoryHookResult(
+      "claude",
+      summarizeAdvisorySweep([{ ...killed, worktree: repo }])
+    );
+    assert.equal("decision" in advisoryShape, false);
+    assert.match(advisoryShape.systemMessage, /non-blocking/);
 
     // A concurrent waiter reuses the terminal error instead of spawning a duplicate review.
     const waiter = evaluateLocalBugbotGate({
@@ -2436,13 +2631,13 @@ test("AIO-564: a block with neither output nor reason still names the worktree a
   assert.match(merged.output, /manual review/);
 });
 
-test("AIO-564: the hook message carries the finding text, not just worktree paths", () => {
+test("AIO-564: the review-mode result carries the finding text, not just worktree paths", () => {
   const merged = aggregateGateResults([
     { status: "blocked", cached: true, reason: "R-CACHED", worktree: "/wt/a" },
   ]);
-  const formatted = formatHookResult("claude", merged);
-  assert.equal(formatted.decision, "block");
-  assert.match(formatted.reason, /R-CACHED/);
+  // Consumed raw by --json/--check-exit callers (the Stop path never renders a block).
+  assert.equal(merged.status, "blocked");
+  assert.match(merged.output, /R-CACHED/);
 });
 
 test("AIO-564: an errored worktree keeps its reason in the aggregated output too", () => {

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /**
- * Runtime-neutral Stop/idle gate for the local Cursor Bugbot reviewer.
+ * Runtime-neutral Stop/idle hook for the local Cursor Bugbot reviewer.
  *
- * Claude, Codex, Cursor, and OpenCode adapters all call this file. The expensive
- * blocked verdicts are cached by the exact base-to-worktree fingerprint in worktree-local
- * git state. Clear verdicts are never trusted from disk. The child Cursor reviewer
- * runs outside the checkout so project Stop hooks cannot recursively launch the gate.
+ * Claude, Codex, Cursor, and OpenCode adapters all call this file with a PLAIN invocation,
+ * which is ADVISORY ONLY (AIO-567): a cheap probe over every registered worktree plus a
+ * non-blocking nudge — never a spawned review, never a blocking shape, always exit 0.
+ * The full review machinery (`evaluateLocalBugbotGate`) stays intact for merge-time callers
+ * (`aios build --merge` / `aios ship` via scripts/review-bugbot.mjs) and for manual/CI
+ * invocation (`--json` / `--check-exit`, exit 1 on blocked/error). Expensive blocked
+ * verdicts are cached by the exact base-to-worktree fingerprint in worktree-local git
+ * state. Clear verdicts are never trusted from disk. The child Cursor reviewer runs
+ * outside the checkout so project Stop hooks cannot recursively launch the gate.
  */
 
 import {
@@ -333,21 +338,6 @@ function defaultReview({ repo, baseSha, branch, env, model, timeoutMs }) {
   };
 }
 
-function blockedReason(result) {
-  const output = capOutput(result.output || result.reason);
-  const heading =
-    result.status === "error"
-      ? "Local Bugbot could not complete. Treat this as a failed required check."
-      : "Local Bugbot found Medium-or-higher findings. Completion and merge are blocked.";
-  return [
-    heading,
-    "Fix the findings, then let the Stop/idle hook rerun against the changed diff.",
-    output && `\nBugbot evidence:\n${output}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 export function evaluateLocalBugbotGate({
   repo,
   env = process.env,
@@ -359,7 +349,7 @@ export function evaluateLocalBugbotGate({
   // Explicit operator opt-out, for teams that have adopted the paid cloud Cursor Bugbot as the
   // enforcing gate instead. Strict on the literal "1" so a stray truthy value can't silently
   // disable a security gate, and always announced on stderr so a skipped review is never silent.
-  // `skipped` is non-blocking (formatHookResult maps it to a pass) — a distinct status would block.
+  // `skipped` is non-blocking in every consumer (advisory sweep, aggregation, --check-exit).
   if (String(env.AIOS_BUGBOT_DISABLE ?? "").trim() === "1" && !probeOnly) {
     process.stderr.write(
       "[local-bugbot] disabled via AIOS_BUGBOT_DISABLE=1 — relying on cloud Bugbot for this change\n"
@@ -446,7 +436,14 @@ export function evaluateLocalBugbotGate({
   const fingerprint = createHash("sha256")
     .update(`${GATE_POLICY_VERSION}\0${REQUIRED_BUGBOT_FAIL_ON}\0${model}\0${snapshot.fingerprint}`)
     .digest("hex");
-  if (probeOnly) return { status: "probe", fingerprint };
+  if (probeOnly) {
+    // AIO-567: the advisory Stop path reads the worktree-local cache so an already-recorded
+    // Medium+ verdict can be surfaced as a nudge ("the merge path WILL block"). A cheap JSON
+    // read only — a probe still never spawns a review, and only a blocked verdict counts
+    // (the short-lived error handoff is infrastructure state, not evidence about the diff).
+    const knownBlocked = cachedResult(file, fingerprint)?.status === "blocked";
+    return { status: "probe", fingerprint, ...(knownBlocked ? { knownBlocked: true } : {}) };
+  }
   // The child owns an absolute REVIEW_WALL_CLOCK_BUDGET_MS deadline and fails closed on its
   // own; this kill is only the backstop for a child that stops responding entirely.
   const reviewTimeoutMs = REVIEW_WALL_CLOCK_BUDGET_MS + REVIEW_PROCESS_GRACE_MS;
@@ -627,9 +624,8 @@ export function aggregateGateResults(results) {
   const tag = (result) => (result.worktree ? `[${result.worktree}]\n` : "");
   // A CACHED blocked verdict carries its explanation in `reason`, not `output` (see cachedResult),
   // so reading only `output` renders a worktree tag and nothing else — which is what the operator
-  // sees on every Stop after the first, the common case. Never emit a content-free entry: an empty
-  // block reads as a broken gate rather than a real finding, and the tag alone also defeats
-  // blockedReason's `output || reason` fallback by making `output` non-empty.
+  // sees on every rerun after the first, the common case. Never emit a content-free entry: an
+  // empty block reads as a broken gate rather than a real finding.
   const evidence = (result) =>
     `${tag(result)}${
       result.output ||
@@ -709,20 +705,78 @@ export function aggregateGateResults(results) {
   };
 }
 
-export function formatHookResult(runtime, result) {
+/**
+ * AIO-567: fold a per-worktree ADVISORY probe sweep into one non-blocking summary. The Stop
+ * path never reviews, so the only statuses here are `probe` (changes exist against the
+ * verified base — with `knownBlocked` when a cached Medium+ verdict is on record for this
+ * exact fingerprint), `skipped` (neutral), and `error` (a probe issue: offline canonical
+ * remote, suppressed paths, oversized diff). Every one of them is advisory content, never a
+ * verdict — the blocking verdicts live at merge time (`aios build --merge` / `aios ship`),
+ * in manual/CI `--check-exit` runs, and at the PR gates.
+ */
+export function summarizeAdvisorySweep(results) {
+  const named = (result) => result.worktree ?? "?";
+  const unreviewed = results
+    .filter((result) => result.status === "probe" && result.knownBlocked !== true)
+    .map(named);
+  const knownBlocked = results
+    .filter((result) => result.status === "probe" && result.knownBlocked === true)
+    .map(named);
+  const attention = results
+    .filter((result) => result.status !== "probe" && result.status !== "skipped")
+    .map((result) => `${named(result)}: ${result.reason ?? String(result.status)}`);
+  const lines = [];
+  if (unreviewed.length) {
+    lines.push(
+      `Unreviewed changes in: ${unreviewed.join(", ")}. Nothing is blocked at Stop; they will gate at merge time (aios build --merge / aios ship) and on the PR (cloud Bugbot, CodeRabbit, CI).`
+    );
+  }
+  if (knownBlocked.length) {
+    lines.push(
+      `Known Medium+ Bugbot findings are on record for: ${knownBlocked.join(", ")}. The merge path WILL block until they are fixed or the diff changes.`
+    );
+  }
+  if (attention.length) {
+    lines.push(`Advisory probe issues (non-blocking): ${attention.join("; ")}.`);
+  }
+  const probes = results.filter((result) => result.status === "probe");
+  return {
+    advisory: lines.length ? `[local-bugbot advisory] ${lines.join("\n")}` : null,
+    // Same dedup contract as the probe aggregate: one stable hash for "this exact sweep",
+    // so an idle-loop caller can log an unchanged advisory once instead of every idle.
+    fingerprint: probes.length
+      ? createHash("sha256")
+          .update(probes.map((result) => `${named(result)}\0${result.fingerprint}`).join("\n"))
+          .digest("hex")
+      : null,
+    unreviewed,
+    knownBlocked,
+    attention,
+  };
+}
+
+/**
+ * AIO-567: what a Stop/idle adapter is allowed to say. Advisory only — this formatter is
+ * structurally unable to emit a blocking shape (no `decision: "block"`, no `continue: false`,
+ * no `followup_message`), because six incidents in ten days traced to a synchronous,
+ * session-blocking, repo-wide Stop hook. Cursor is silent on stdout by design: its only
+ * stop-hook channel (`followup_message`) re-prompts the agent, which at Stop time is a loop,
+ * so its advisory goes to stderr in main() instead.
+ */
+export function formatAdvisoryHookResult(runtime, summary) {
   if (!VALID_RUNTIMES.has(runtime)) throw new Error(`unsupported hook runtime: ${runtime}`);
-  if (["clear", "skipped"].includes(result.status)) return {};
-  const reason = blockedReason(result);
-  if (runtime === "cursor") return { followup_message: reason };
-  if (runtime === "claude") return { decision: "block", reason };
-  if (runtime === "codex") {
+  if (runtime === "opencode") {
     return {
-      continue: false,
-      stopReason: "Required local Bugbot check did not pass.",
-      systemMessage: reason,
+      status: "advisory",
+      advisory: summary.advisory,
+      ...(summary.fingerprint ? { fingerprint: summary.fingerprint } : {}),
+      unreviewed: summary.unreviewed,
+      knownBlocked: summary.knownBlocked,
+      attention: summary.attention,
     };
   }
-  return { ...result, reason };
+  if (!summary.advisory || runtime === "cursor") return {};
+  return { systemMessage: summary.advisory };
 }
 
 function parseArgs(argv) {
@@ -751,12 +805,28 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!VALID_RUNTIMES.has(args.runtime)) {
     process.stderr.write(
-      "usage: local-bugbot-gate.mjs --runtime claude|codex|cursor|opencode [--json] [--check-exit]\n"
+      "usage: local-bugbot-gate.mjs --runtime claude|codex|cursor|opencode [--json] [--check-exit] [--probe]\n"
     );
     process.exitCode = 2;
     return;
   }
   readHookInput();
+  // AIO-567: a PLAIN invocation — what every Stop/idle adapter sends — is ADVISORY: a cheap
+  // probe sweep, never a spawned review, never a blocking shape, always exit 0. The full
+  // review sweep requires an explicit manual/CI flag (`--json` / `--check-exit`), so stale
+  // adapter wiring anywhere can only degrade to advisory, never to a session block. Blocking
+  // verdicts live at merge time (`aios build --merge` / `aios ship`) and at the PR gates.
+  const advisory = !args.probe && !args.json && !args.checkExit;
+  if (advisory && String(process.env.AIOS_BUGBOT_DISABLE ?? "").trim() === "1") {
+    // Same operator opt-out semantics as the review path: the hook is fully inert.
+    process.stderr.write(
+      "[local-bugbot] disabled via AIOS_BUGBOT_DISABLE=1 — skipping the advisory probe\n"
+    );
+    process.stdout.write(
+      `${JSON.stringify(formatAdvisoryHookResult(args.runtime, summarizeAdvisorySweep([])))}\n`
+    );
+    return;
+  }
   let result;
   try {
     // Hook payloads are agent-controlled input, so the target is never taken from them — nor from
@@ -765,7 +835,10 @@ function main() {
     // come from git's own worktree registry instead; see listGateTargets().
     const results = listGateTargets(process.cwd()).map((repo) => {
       try {
-        return { ...evaluateLocalBugbotGate({ repo, probeOnly: args.probe }), worktree: repo };
+        return {
+          ...evaluateLocalBugbotGate({ repo, probeOnly: args.probe || advisory }),
+          worktree: repo,
+        };
       } catch (error) {
         // One unreviewable worktree must not mask a finding in another, so this degrades to a
         // per-target error and still lets every other target report.
@@ -776,12 +849,29 @@ function main() {
         };
       }
     });
+    if (advisory) {
+      const summary = summarizeAdvisorySweep(results);
+      // stderr for every runtime (hook-log observability; Cursor's only in-band channel
+      // would re-prompt the agent, so stderr is its sole advisory surface).
+      if (summary.advisory) process.stderr.write(`${summary.advisory}\n`);
+      process.stdout.write(`${JSON.stringify(formatAdvisoryHookResult(args.runtime, summary))}\n`);
+      return;
+    }
     result = aggregateGateResults(results);
   } catch (error) {
-    result = { status: "error", reason: error instanceof Error ? error.message : String(error) };
+    const failure = {
+      status: "error",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+    if (advisory) {
+      const summary = summarizeAdvisorySweep([failure]);
+      if (summary.advisory) process.stderr.write(`${summary.advisory}\n`);
+      process.stdout.write(`${JSON.stringify(formatAdvisoryHookResult(args.runtime, summary))}\n`);
+      return;
+    }
+    result = failure;
   }
-  const output = args.probe || args.json ? result : formatHookResult(args.runtime, result);
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
   if (args.checkExit && ["blocked", "error"].includes(result.status)) process.exitCode = 1;
 }
 

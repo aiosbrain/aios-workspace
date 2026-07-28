@@ -10,6 +10,11 @@
  * there is exactly one definition of each. `relay-core.mjs` now re-exports `c`/`die`
  * from here, so its existing importers are unaffected.
  *
+ * AIO-545 (GRAIN W0-4) made `c` capability-aware: it is now a thin adapter over
+ * `./ui/output-context.mjs`, emitting SGR only when the bound stream can render it, and
+ * repairing nested styles. `scripts/rails.mjs` kept a fourth hand-rolled copy of `c` until
+ * that change; it imports this one now, so there is again exactly one palette.
+ *
  * Zero npm dependencies (Node built-ins only) so every `aios` command stays fast
  * and offline at import time.
  */
@@ -20,22 +25,107 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveOutputContext } from "./ui/output-context.mjs";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-/** ANSI colour helpers. The 6-key superset (includes `bold`, which the old
- *  relay-core copy lacked); the 5 shared keys are byte-identical to both prior copies. */
-export const c = {
-  red: (s) => `\x1b[0;31m${s}\x1b[0m`,
-  green: (s) => `\x1b[0;32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[1;33m${s}\x1b[0m`,
-  blue: (s) => `\x1b[0;34m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-};
+/**
+ * The 16-colour SGR palette. These exact bytes are the CLI's visual identity and are
+ * frozen: a terminal that renders AIOS today must render it identically after GRAIN W0-4.
+ * The 6-key superset includes `bold`, which the old relay-core copy lacked; the 5 shared
+ * keys are byte-identical to both prior copies and to the pre-W0-4 `c`.
+ *
+ * Key order is part of the contract (`test/cli-common-color-characterization.test.mjs`).
+ */
+const SGR = Object.freeze({
+  red: "\x1b[0;31m",
+  green: "\x1b[0;32m",
+  yellow: "\x1b[1;33m",
+  blue: "\x1b[0;34m",
+  dim: "\x1b[2m",
+  bold: "\x1b[1m",
+});
+
+const RESET = "\x1b[0m";
+
+/**
+ * Wrap `value` in `open`…reset, repairing nested styles.
+ *
+ * Every helper closes with a FULL reset (`\x1b[0m`) rather than a targeted off-code, which
+ * means a nested call used to terminate its parent:
+ *
+ *     c.dim(`a ${c.red("b")} c`)   →   "…a \x1b[0;31mb\x1b[0m c\x1b[0m"
+ *                                                          ^^^^^^^^ " c" rendered UNSTYLED
+ *
+ * With ~345 `c.dim()` call sites and nesting common in this CLI, that mis-rendered in
+ * production. The repair is to re-open the outer style immediately after each inner reset.
+ * The trailing reset is kept as well as re-opening (chalk drops it, but chalk's closes are
+ * targeted — dropping a full reset here would leave the inner colour switched on).
+ */
+function paint(open, value) {
+  const s = `${value}`;
+  const body = s.includes(RESET) ? s.split(RESET).join(RESET + open) : s;
+  return `${open}${body}${RESET}`;
+}
+
+/**
+ * Build a palette bound to one stream. Capabilities are resolved **per call**, not at
+ * import: `resolveOutputContext` memoises per `(stream, env)`, so this stays cheap while
+ * still reflecting an env change made after import (which is how tests, and `aios` commands
+ * that re-exec themselves, observe it).
+ *
+ * The stream is passed as a thunk so importing this leaf module never forces
+ * `process.stdout`/`process.stderr` into existence.
+ *
+ * @param {() => NodeJS.WriteStream} getStream
+ */
+export function createPalette(getStream) {
+  const palette = {};
+  for (const [name, open] of Object.entries(SGR)) {
+    palette[name] = (value) => {
+      const ctx = resolveOutputContext({ mode: "human", stream: getStream() });
+      return ctx.colorDepth === 0 ? `${value}` : paint(open, value);
+    };
+  }
+  return Object.freeze(palette);
+}
+
+/**
+ * The legacy colour helper, bound to **stdout**. Imported by 29 files and the choke point
+ * for roughly 1,053 `console.*` calls, so it is the single place capability-awareness had
+ * to land: it now emits nothing in a pipe, under `NO_COLOR`, or on `TERM=dumb`.
+ *
+ * It carries no output mode — `--json`/`--porcelain` commands must construct their own
+ * context (`resolveOutputContext({ mode, stream })`) rather than relying on `c`. In
+ * practice a machine consumer pipes stdout, which already resolves to colour depth 0.
+ */
+export const c = createPalette(() => process.stdout);
+
+/**
+ * The same palette bound to **stderr**, resolved independently.
+ *
+ * KNOWN GAP, stated precisely because the obvious reading of this export is wrong: `cErr`
+ * is used by `die()` and by nothing else. Roughly 93 `console.error(c.…)` call sites across
+ * 15 scripts still write stderr through the **stdout-bound** `c`, so under `aios … | tee`
+ * (piped stdout, TTY stderr) their diagnostics come out uncoloured even though stderr could
+ * render them.
+ *
+ * That is cosmetic, and it is deliberately NOT fixed here. Fifteen of those files —
+ * `ship.mjs`, `build.mjs`, `consolidate-findings.mjs`, `review-bugbot.mjs`, `promote.mjs`,
+ * `timeline.mjs` — are the marker emitters and captured-stream consumers governed by
+ * `docs/cli-output-contract.md`. A 93-site mechanical swap through them buys colour on one
+ * stream in one piping shape, and risks the most contract-sensitive output in the CLI.
+ * §2.5 of the GRAIN design says the same thing in general form: migrate **by command, not
+ * by primitive**, and no codemod. These sites move to a stderr-bound writer when their
+ * command is migrated in Wave 1.
+ *
+ * So: use `cErr` for new stderr output. Do not bulk-rewrite the existing sites onto it.
+ */
+export const cErr = createPalette(() => process.stderr);
 
 /** Print a red `error: <msg>` to stderr and exit non-zero. */
 export function die(msg) {
-  console.error(c.red(`error: ${msg}`));
+  console.error(cErr.red(`error: ${msg}`));
   process.exit(1);
 }
 
