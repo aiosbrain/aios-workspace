@@ -1,4 +1,4 @@
-import type { AskSeverity } from "./asks/store.js";
+import { isExpiredIdleAsk, type AskSeverity } from "./asks/store.js";
 import { artifactKey, diffSignals } from "./changes.js";
 import { isOpenStatus } from "./continuity.js";
 import type { BuildDailyOptions, DailyItem, DailyOrientation } from "./daily.js";
@@ -21,6 +21,7 @@ import {
   inWindow,
   isDueByToday,
   looksBlocked,
+  overdueDaysOf,
   needsReply,
   staleDaysOf,
   strOrNull,
@@ -75,7 +76,10 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
         });
       } else {
         owedE.push({
-          item: baseItem(sig, { due: strOrNull(payload.due) }),
+          item: baseItem(sig, {
+            due: strOrNull(payload.due),
+            overdueDays: overdueDaysOf(payload.due, todayDay) ?? undefined,
+          }),
           dueDay: dayOf(strOrNull(payload.due)) ?? END_OF_TIME,
         });
       }
@@ -88,7 +92,10 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
         blockedE.push({ item: baseItem(sig, { due: strOrNull(payload.due) }), stale: 0 });
       } else if (isDueByToday(payload.due, todayDay)) {
         owedE.push({
-          item: baseItem(sig, { due: strOrNull(payload.due) }),
+          item: baseItem(sig, {
+            due: strOrNull(payload.due),
+            overdueDays: overdueDaysOf(payload.due, todayDay) ?? undefined,
+          }),
           dueDay: dayOf(strOrNull(payload.due)) ?? END_OF_TIME,
         });
       } else if (isChanged) {
@@ -165,6 +172,9 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   if (audience === "owner") {
     for (const ask of opts.asks ?? []) {
       if (ask.status !== "open") continue;
+      // An expired idle ask no longer describes a live "agent is waiting" state. Suppress it
+      // here as well as in `drain` so the daily self-heals without requiring maintenance to run.
+      if (isExpiredIdleAsk(ask, now)) continue;
       const item = askItem(ask);
       if (ask.severity === "blocker") attentionE.push({ item, createdAt: ask.createdAt });
       else queuedE.push({ item, createdAt: ask.createdAt, severity: ask.severity });

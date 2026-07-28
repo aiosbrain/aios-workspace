@@ -51,6 +51,12 @@ export const RESOLVED_GC_DAYS = 7;
 export const OPEN_SOFT_CAP = 500;
 /** Open asks older than this (with a sessionId) are orphaned by `drain`. */
 export const OPEN_STALE_DAYS = 14;
+/**
+ * Open `hook:idle` asks older than this are orphaned by `drain` and suppressed from the daily.
+ * Idle asks assert a live "an agent is waiting for you" state, so they expire far sooner than
+ * the generic OPEN_STALE_DAYS sweep — see `isExpiredIdleAsk`.
+ */
+export const IDLE_STALE_HOURS = 12;
 
 const LOCK_STALE_MS = 30_000;
 // ~1s of bounded retries — generous enough to ride out CPU contention from many concurrent
@@ -61,6 +67,7 @@ const TITLE_MAX = 200;
 const BODY_MAX = 2000;
 const KIND_MAX = 40;
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 /** Safely exceeds the GUI's enforced 120-second SDK abort window. */
 export const REPLY_CLAIM_LEASE_MS = 5 * 60_000;
 // Any control char (C0 range + DEL) — collapsed to a space so a title is always one clean line.
@@ -644,8 +651,33 @@ export function resolveUnclaimed(root: string, id: string, evidenceAt: string): 
 // ── maintenance ────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Ids of OPEN asks that should be orphaned: a set `transcriptPath` whose file is now gone, or an
- * ask open longer than OPEN_STALE_DAYS that carries a sessionId (a session that never came back).
+ * True for an OPEN `hook:idle` ask that has outlived its meaning.
+ *
+ * An idle ask asserts "an agent is waiting for you RIGHT NOW". It is minted per session
+ * (`dedupeKey = sha256(sessionId|idle)`) and closed only when a new prompt arrives in THAT
+ * session (`resolveIdleForSession`). A session the owner never returns to therefore leaves a
+ * permanent `blocker` — and every subsequent idle session adds another, so the daily's
+ * ATTENTION list fills with identical "waiting for your input" rows that no action can clear.
+ * The generic OPEN_STALE_DAYS sweep is 14 days away, and the transcriptPath check never fires
+ * because the transcript file outlives the session.
+ *
+ * IDLE_STALE_HOURS is the honest lifetime of that claim: long enough to survive an overnight
+ * break (return in the morning → `resolveIdleForSession` closes it naturally), short enough
+ * that an abandoned session stops occupying attention. Expiring is lossless — if the agent is
+ * genuinely still waiting, the next idle notification mints a fresh ask.
+ */
+export function isExpiredIdleAsk(ask: Ask, now: Date = new Date()): boolean {
+  if (ask.status !== "open") return false;
+  if (ask.kind !== "idle" || ask.source !== "hook:idle") return false;
+  const createdMs = Date.parse(ask.createdAt);
+  if (!Number.isFinite(createdMs)) return false;
+  return now.getTime() - createdMs > IDLE_STALE_HOURS * HOUR_MS;
+}
+
+/**
+ * Ids of OPEN asks that should be orphaned: a set `transcriptPath` whose file is now gone, an
+ * expired idle ask (see `isExpiredIdleAsk`), or an ask open longer than OPEN_STALE_DAYS that
+ * carries a sessionId (a session that never came back).
  */
 export function detectOrphans(asks: readonly Ask[], now: Date = new Date()): string[] {
   const nowMs = now.getTime();
@@ -653,6 +685,10 @@ export function detectOrphans(asks: readonly Ask[], now: Date = new Date()): str
   for (const ask of asks) {
     if (ask.status !== "open") continue;
     if (ask.transcriptPath && !existsSync(ask.transcriptPath)) {
+      ids.push(ask.id);
+      continue;
+    }
+    if (isExpiredIdleAsk(ask, now)) {
       ids.push(ask.id);
       continue;
     }

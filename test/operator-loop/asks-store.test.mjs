@@ -32,6 +32,8 @@ import {
   detectOrphans,
   foldLines,
   hasOpenDuplicate,
+  IDLE_STALE_HOURS,
+  isExpiredIdleAsk,
   readAsks,
   releaseReply,
   resolveUnclaimed,
@@ -355,6 +357,98 @@ test("detectOrphans: missing transcript file OR open >14d with a sessionId", () 
     const open = readAsks(root).asks.filter((a) => a.status === "open");
     const ids = detectOrphans(open, now).sort();
     assert.deepEqual(ids.sort(), [missing.id, stale.id].sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("isExpiredIdleAsk: hook:idle expires after IDLE_STALE_HOURS; other kinds never do", () => {
+  const now = new Date("2026-07-28T12:00:00.000Z");
+  const at = (hoursAgo) => new Date(now.getTime() - hoursAgo * 3_600_000).toISOString();
+  const ask = (hoursAgo) => ({
+    status: "open",
+    kind: "idle",
+    source: "hook:idle",
+    createdAt: at(hoursAgo),
+  });
+  // Sanity: the constant is the contract this behaviour is named after.
+  assert.equal(IDLE_STALE_HOURS, 12);
+
+  assert.equal(isExpiredIdleAsk(ask(13), now), true, "13h-old idle ask is expired");
+  assert.equal(isExpiredIdleAsk(ask(11), now), false, "11h-old idle ask survives");
+  // An overnight break must NOT expire the ask — the owner returns and resolveIdleForSession
+  // closes it naturally. This is the boundary that keeps expiry lossless.
+  assert.equal(isExpiredIdleAsk(ask(12), now), false, "exactly 12h is not yet expired");
+
+  // Only hook-minted idle asks are ephemeral. A decision/stop ask stays until acted on.
+  assert.equal(
+    isExpiredIdleAsk({ ...ask(99), kind: "stop", source: "hook:stop" }, now),
+    false,
+    "a stop ask never expires on age alone"
+  );
+  assert.equal(
+    isExpiredIdleAsk({ ...ask(99), source: "cli" }, now),
+    false,
+    "a hand-filed idle ask is not hook-ephemeral"
+  );
+  assert.equal(
+    isExpiredIdleAsk({ ...ask(99), status: "resolved" }, now),
+    false,
+    "already-closed asks are not re-orphaned"
+  );
+  assert.equal(
+    isExpiredIdleAsk({ ...ask(99), createdAt: "not-a-date" }, now),
+    false,
+    "an unparseable createdAt never silently expires an ask"
+  );
+});
+
+test("detectOrphans: an abandoned idle session is swept in hours, not 14 days", () => {
+  const root = ws();
+  try {
+    const now = new Date("2026-07-28T12:00:00.000Z");
+    // The exact leak from the field: two sessions went idle yesterday and were never returned
+    // to, so both minted a permanent `blocker` that no daily action could clear.
+    const zombieA = appendCreate(root, {
+      kind: "idle",
+      severity: "blocker",
+      title: "Claude is waiting for your input",
+      source: "hook:idle",
+      sessionId: "s1",
+      createdAt: new Date(now.getTime() - 26 * 3_600_000).toISOString(),
+    });
+    const zombieB = appendCreate(root, {
+      kind: "idle",
+      severity: "blocker",
+      title: "Claude is waiting for your input",
+      source: "hook:idle",
+      sessionId: "s2",
+      createdAt: new Date(now.getTime() - 30 * 3_600_000).toISOString(),
+    });
+    // A genuinely live idle ask (1h) and a real decision ask must both survive the sweep.
+    appendCreate(root, {
+      kind: "idle",
+      severity: "blocker",
+      title: "Claude is waiting for your input",
+      source: "hook:idle",
+      sessionId: "s3",
+      createdAt: new Date(now.getTime() - 1 * 3_600_000).toISOString(),
+    });
+    appendCreate(root, {
+      kind: "decision",
+      severity: "blocker",
+      title: "Reconnect WhatsApp for live inbox ingestion",
+      source: "cli",
+      createdAt: new Date(now.getTime() - 40 * 24 * 3_600_000).toISOString(),
+    });
+
+    const open = readAsks(root).asks.filter((a) => a.status === "open");
+    const ids = detectOrphans(open, now);
+    assert.deepEqual(
+      ids.sort(),
+      [zombieA.id, zombieB.id].sort(),
+      "only the abandoned idle asks are orphaned"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

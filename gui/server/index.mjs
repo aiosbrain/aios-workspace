@@ -90,7 +90,9 @@ import { collectProviderActuals } from "./provider-costs.mjs";
 import {
   validateCadence,
   validateWindow,
+  validateAskId,
   runLoopCli,
+  runAsksCli,
   buildWeeklyCloseoutPayload,
   loopResponse,
 } from "./loop.mjs";
@@ -690,6 +692,44 @@ const server = http.createServer((req, res) => {
       );
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(json));
+    });
+    return;
+  }
+  // POST: resolve an ask from the Today console. Delegates to the SAME `aios asks resolve` the
+  // terminal uses, so the append-only store, its writer lock, and the audit trail are identical
+  // whichever surface acted. Local-only: closing an ask never touches the network.
+  if (url.pathname === "/api/asks/resolve" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on("end", () => {
+      let ids;
+      try {
+        const j = JSON.parse(body || "{}");
+        const raw = Array.isArray(j.ids) ? j.ids : [j.id];
+        if (!raw.length || raw.every((v) => v == null))
+          throw Object.assign(new Error("id is required"), { statusCode: 400 });
+        ids = raw.map(validateAskId);
+      } catch (e) {
+        res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+      runAsksCli(repo, ["resolve", ...ids, "--json"]).then((cli) => {
+        if (cli.exitCode !== 0) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          return res.end(
+            JSON.stringify({ ok: false, error: cli.stderr.trim() || "asks resolve failed" })
+          );
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, resolved: ids }));
+      });
     });
     return;
   }

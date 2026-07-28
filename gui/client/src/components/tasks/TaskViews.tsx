@@ -1,7 +1,29 @@
-import { Columns3, ExternalLink, LayoutGrid, List } from "lucide-react";
+import {
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  CircleDot,
+  Columns3,
+  ExternalLink,
+  LayoutGrid,
+  List,
+  Minus,
+  SignalHigh,
+  SignalLow,
+  SignalMedium,
+} from "lucide-react";
 import { cn } from "../../lib/cn";
 import { isSafeExternalUrl } from "../../lib/safe-url";
 import type { TaskEditRequest, TaskRow } from "../../types/protocol";
+import { AssigneeAvatar } from "./Avatar";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 
 export type TaskViewMode = "list" | "grid" | "board";
 
@@ -15,7 +37,7 @@ type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
 
 const FIELD =
-  "min-w-0 rounded-md border border-border-visible bg-background px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent-line)] focus:outline-none disabled:opacity-50";
+  "min-w-0 w-full rounded-md border border-border-visible bg-background px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent-line)] focus:outline-none disabled:opacity-50";
 
 const VIEW_OPTIONS: Array<{
   mode: TaskViewMode;
@@ -151,25 +173,179 @@ function priorityTone(priority?: string | null): string {
   return "text-muted-foreground";
 }
 
-function StatusSelect({ row, disabled, onSave }: TaskControlProps) {
-  const unknown =
-    !!row.status && !TASK_STATUSES.includes(row.status as (typeof TASK_STATUSES)[number]);
+/**
+ * Status and priority read as GLYPHS, not as form controls.
+ *
+ * The board previously rendered a full-width native `<select>` and a text `<input>` inside every
+ * card, so each card was mostly chrome and the title — the only thing you actually scan for —
+ * competed with three widgets for space. A coloured icon carries the same state in a fraction of
+ * the width and stays legible at card density; editing moves into a menu opened from the icon.
+ */
+const STATUS_ICON: Record<(typeof TASK_STATUSES)[number], typeof Circle> = {
+  backlog: CircleDashed,
+  ready: Circle,
+  in_progress: CircleDot,
+  blocked: CircleAlert,
+  done: CircleCheck,
+};
+
+const STATUS_ICON_TONE: Record<(typeof TASK_STATUSES)[number], string> = {
+  backlog: "text-muted-foreground",
+  ready: "text-cyan",
+  in_progress: "text-violet",
+  blocked: "text-destructive",
+  done: "text-lime",
+};
+
+const PRIORITY_ICON: Record<(typeof TASK_PRIORITIES)[number], typeof Circle> = {
+  none: Minus,
+  low: SignalLow,
+  medium: SignalMedium,
+  high: SignalHigh,
+  urgent: CircleAlert,
+};
+
+function knownStatus(status: string): (typeof TASK_STATUSES)[number] | null {
+  return TASK_STATUSES.includes(status as (typeof TASK_STATUSES)[number])
+    ? (status as (typeof TASK_STATUSES)[number])
+    : null;
+}
+
+function knownPriority(priority?: string | null): (typeof TASK_PRIORITIES)[number] | null {
+  return TASK_PRIORITIES.includes(priority as (typeof TASK_PRIORITIES)[number])
+    ? (priority as (typeof TASK_PRIORITIES)[number])
+    : null;
+}
+
+/**
+ * The avatar IS the assignee control: clicking it opens the free-text editor.
+ *
+ * Assignees are free text (a tasks.md cell), not accounts, so this stays an input rather than a
+ * member picker — but it no longer occupies a permanent 116px slot in every row and card.
+ */
+function AssigneeControl({
+  row,
+  disabled,
+  onSave,
+  size = "sm",
+}: TaskControlProps & { size?: "sm" | "md" }) {
   return (
-    <select
-      className={cn(FIELD, "max-w-[140px]", statusTone(row.status))}
-      value={row.status}
-      disabled={disabled}
-      aria-label={`Status for ${row.title}`}
-      onChange={(event) => onSave(row, { status: event.target.value })}
-    >
-      {unknown && <option value={row.status}>{row.status}</option>}
-      {!row.status && <option value="">Unspecified</option>}
-      {TASK_STATUSES.map((status) => (
-        <option key={status} value={status}>
-          {STATUS_LABELS[status]}
-        </option>
-      ))}
-    </select>
+    <Popover>
+      <PopoverTrigger
+        disabled={disabled}
+        className="cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-50"
+        aria-label={`Assignee for ${row.title}${row.assignee ? `: ${row.assignee}` : ""}`}
+      >
+        <AssigneeAvatar assignee={row.assignee} size={size} />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-56 p-2">
+        <label className="mb-1 block font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
+          Assignee
+        </label>
+        <input
+          key={`assignee:${row.assignee}`}
+          className={FIELD}
+          defaultValue={row.assignee}
+          placeholder="Unassigned"
+          aria-label={`Assignee for ${row.title}`}
+          disabled={disabled}
+          onBlur={(event) => {
+            if (event.target.value !== row.assignee) onSave(row, { assignee: event.target.value });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+          Separate multiple people with <code>+</code> or <code>,</code>.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function StatusIcon({ status, size = 14 }: { status: string; size?: number }) {
+  const known = knownStatus(normalizeStatusForBoard(status));
+  const Icon = known ? STATUS_ICON[known] : Circle;
+  return (
+    <Icon
+      size={size}
+      className={cn("shrink-0", known ? STATUS_ICON_TONE[known] : "text-muted-foreground")}
+      aria-hidden="true"
+    />
+  );
+}
+
+/** Icon-triggered status menu. Falls back to showing an unrecognised raw value verbatim. */
+function StatusMenu({ row, disabled, onSave }: TaskControlProps) {
+  const normalized = normalizeStatusForBoard(row.status);
+  const known = knownStatus(normalized);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        className={cn(
+          "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-50",
+          statusTone(normalized)
+        )}
+        aria-label={`Status for ${row.title}`}
+      >
+        <StatusIcon status={row.status} />
+        <span className="max-w-[92px] truncate">
+          {known ? STATUS_LABELS[known] : row.status || "Unspecified"}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {TASK_STATUSES.map((status) => {
+          const Icon = STATUS_ICON[status];
+          return (
+            <DropdownMenuItem key={status} onSelect={() => onSave(row, { status })}>
+              <Icon
+                size={14}
+                className={cn("shrink-0", STATUS_ICON_TONE[status])}
+                aria-hidden="true"
+              />
+              {STATUS_LABELS[status]}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Icon-only priority menu — the glyph IS the value, exactly as on a Linear card. */
+function PriorityMenu({ row, disabled, onSave }: TaskControlProps) {
+  const known = knownPriority(row.priority);
+  const Icon = known ? PRIORITY_ICON[known] : Minus;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        className={cn(
+          "inline-flex cursor-pointer items-center rounded-md p-1 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default disabled:opacity-50",
+          priorityTone(row.priority)
+        )}
+        aria-label={`Priority for ${row.title}${known ? `: ${known}` : ""}`}
+        title={known ? `Priority: ${known}` : "No priority"}
+      >
+        <Icon size={14} aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {TASK_PRIORITIES.map((priority) => {
+          const ItemIcon = PRIORITY_ICON[priority];
+          return (
+            <DropdownMenuItem
+              key={priority}
+              onSelect={() => onSave(row, { priority: priority === "none" ? "" : priority })}
+            >
+              <ItemIcon size={14} className="shrink-0" aria-hidden="true" />
+              {priority === "none" ? "No priority" : priority}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -177,72 +353,6 @@ interface TaskControlProps {
   row: TaskRow;
   disabled: boolean;
   onSave: SaveTask;
-}
-
-function AssigneeInput({ row, disabled, onSave }: TaskControlProps) {
-  return (
-    <input
-      key={`assignee:${row.assignee}`}
-      className={cn(FIELD, "w-[116px]")}
-      defaultValue={row.assignee}
-      placeholder="Unassigned"
-      aria-label={`Assignee for ${row.title}`}
-      disabled={disabled}
-      onBlur={(event) => {
-        if (event.target.value !== row.assignee) onSave(row, { assignee: event.target.value });
-      }}
-    />
-  );
-}
-
-function PrioritySelect({ row, disabled, onSave }: TaskControlProps) {
-  const known = TASK_PRIORITIES.includes(row.priority as (typeof TASK_PRIORITIES)[number]);
-  return (
-    <select
-      className={cn(FIELD, "w-[104px]", priorityTone(row.priority))}
-      value={known ? (row.priority ?? "") : ""}
-      disabled={disabled}
-      aria-label={`Priority for ${row.title}`}
-      onChange={(event) => onSave(row, { priority: event.target.value })}
-    >
-      <option value="">No priority</option>
-      {TASK_PRIORITIES.map((priority) => (
-        <option key={priority} value={priority}>
-          {priority}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function TaskIdentity({ row }: { row: TaskRow }) {
-  const safePmUrl = row.pm_url && isSafeExternalUrl(row.pm_url) ? row.pm_url : null;
-  return (
-    <div className="min-w-0 flex-1">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-[13px] font-medium text-foreground">{row.title}</span>
-        {safePmUrl && (
-          <a
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border-visible bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)] hover:text-foreground"
-            href={safePmUrl}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(event) => event.stopPropagation()}
-            aria-label={`Open ${row.title} in ${row.pm_provider || "project manager"}`}
-          >
-            {row.pm_external_id || row.pm_provider || "PM"}
-            <ExternalLink size={10} aria-hidden="true" />
-          </a>
-        )}
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-muted-foreground">
-        <span>{row.row_key}</span>
-        {row.due && <span>Due {row.due}</span>}
-        {row.sprint && <span>{row.sprint}</span>}
-        {row.parent && <span>Parent {row.parent}</span>}
-      </div>
-    </div>
-  );
 }
 
 function LabelChips({ labels }: { labels?: string[] }) {
@@ -261,60 +371,61 @@ function LabelChips({ labels }: { labels?: string[] }) {
   );
 }
 
+/**
+ * The list row, shaped like a Linear list line: a single dense row you scan vertically —
+ * priority · id · status · title · labels · due · assignee — rather than a six-column form
+ * grid. Labels and parent stay editable through the card/board surfaces; forcing a text input
+ * into every list line is what made the old grid read as a spreadsheet.
+ */
 export function TaskList({ rows, saving, onSave }: TaskViewProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-border-visible bg-card">
-      <div className="hidden grid-cols-[minmax(220px,1fr)_140px_116px_104px_minmax(130px,0.55fr)_120px] gap-2 border-b border-border-visible px-3 py-2 font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground lg:grid">
-        <span>Task</span>
-        <span>Status</span>
-        <span>Assignee</span>
-        <span>Priority</span>
-        <span>Labels</span>
-        <span>Parent</span>
-      </div>
       {rows.map((row) => {
         const disabled = saving !== null;
+        const safePmUrl = row.pm_url && isSafeExternalUrl(row.pm_url) ? row.pm_url : null;
         return (
           <div
             key={row.row_key}
             data-task-id={row.row_key}
             className={cn(
-              "grid gap-2 border-b border-border-visible/60 px-3 py-2.5 last:border-b-0 lg:grid-cols-[minmax(220px,1fr)_140px_116px_104px_minmax(130px,0.55fr)_120px] lg:items-center",
+              "flex items-center gap-2.5 border-b border-border-visible/60 px-3 py-2 last:border-b-0 transition-colors hover:bg-secondary/40",
               saving === row.row_key && "opacity-60"
             )}
           >
-            <TaskIdentity row={row} />
-            <StatusSelect row={row} disabled={disabled} onSave={onSave} />
-            <AssigneeInput row={row} disabled={disabled} onSave={onSave} />
-            <PrioritySelect row={row} disabled={disabled} onSave={onSave} />
-            <input
-              key={`labels:${(row.labels || []).join(",")}`}
-              className={FIELD}
-              defaultValue={(row.labels || []).join(", ")}
-              placeholder="Add labels"
-              aria-label={`Labels for ${row.title}`}
-              disabled={disabled}
-              onBlur={(event) => {
-                const labels = event.target.value
-                  .split(",")
-                  .map((label) => label.trim())
-                  .filter(Boolean);
-                if (labels.join(",") !== (row.labels || []).join(",")) onSave(row, { labels });
-              }}
-            />
-            <input
-              key={`parent:${row.parent || ""}`}
-              className={FIELD}
-              defaultValue={row.parent || ""}
-              placeholder="No parent"
-              aria-label={`Parent for ${row.title}`}
-              disabled={disabled}
-              onBlur={(event) => {
-                if (event.target.value !== (row.parent || "")) {
-                  onSave(row, { parent: event.target.value || null });
-                }
-              }}
-            />
+            <PriorityMenu row={row} disabled={disabled} onSave={onSave} />
+            {safePmUrl ? (
+              <a
+                className="inline-flex w-[76px] shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                href={safePmUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Open ${row.title} in ${row.pm_provider || "project manager"}`}
+              >
+                {row.pm_external_id || row.pm_provider || "PM"}
+                <ExternalLink size={9} aria-hidden="true" />
+              </a>
+            ) : (
+              <span className="w-[76px] shrink-0 truncate font-mono text-[10px] text-muted-foreground">
+                {row.row_key}
+              </span>
+            )}
+            <StatusIcon status={row.status} />
+            <span className="min-w-0 flex-1 truncate text-[13px] text-foreground" title={row.title}>
+              {row.title}
+            </span>
+            <div className="hidden shrink-0 md:block">
+              <LabelChips labels={row.labels} />
+            </div>
+            {row.due && (
+              <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+                {row.due}
+              </span>
+            )}
+            <div className="hidden shrink-0 lg:block">
+              <StatusMenu row={row} disabled={disabled} onSave={onSave} />
+            </div>
+            <AssigneeControl row={row} disabled={disabled} onSave={onSave} />
           </div>
         );
       })}
@@ -328,6 +439,17 @@ interface TaskViewProps {
   onSave: SaveTask;
 }
 
+/**
+ * The board/grid card, laid out the way a Linear issue card is:
+ *
+ *   AIO-446 ↗                                    (avatar)
+ *   Document and test all v1 surfaces
+ *   ◐ In progress  ▮▮  Due 2026-07-29  [label]
+ *
+ * The identifier and assignee anchor the top row, the title gets the full width and wraps to two
+ * lines instead of truncating mid-word, and state collapses into the glyph row at the bottom.
+ * Every field is still editable — the controls just stopped shouting over the content.
+ */
 function TaskCard({
   row,
   saving,
@@ -338,20 +460,50 @@ function TaskCard({
   onSave: SaveTask;
 }) {
   const disabled = saving !== null;
+  const safePmUrl = row.pm_url && isSafeExternalUrl(row.pm_url) ? row.pm_url : null;
   return (
     <article
       data-task-id={row.row_key}
       className={cn(
-        "flex min-w-0 flex-col gap-3 rounded-lg border border-border-visible bg-card p-3 shadow-card",
+        "group flex min-w-0 flex-col gap-2 rounded-lg border border-border-visible bg-card p-3 shadow-card transition-colors hover:border-[var(--accent-line)]",
         saving === row.row_key && "opacity-60"
       )}
     >
-      <TaskIdentity row={row} />
-      <LabelChips labels={row.labels} />
-      <div className="mt-auto flex flex-wrap items-center gap-2">
-        <StatusSelect row={row} disabled={disabled} onSave={onSave} />
-        <PrioritySelect row={row} disabled={disabled} onSave={onSave} />
-        <AssigneeInput row={row} disabled={disabled} onSave={onSave} />
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {safePmUrl ? (
+            <a
+              className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+              href={safePmUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Open ${row.title} in ${row.pm_provider || "project manager"}`}
+            >
+              {row.pm_external_id || row.pm_provider || "PM"}
+              <ExternalLink size={9} aria-hidden="true" />
+            </a>
+          ) : (
+            <span className="font-mono text-[10px] text-muted-foreground">{row.row_key}</span>
+          )}
+        </div>
+        <AssigneeControl row={row} disabled={disabled} onSave={onSave} />
+      </div>
+
+      <p className="m-0 line-clamp-2 text-[13px] font-medium leading-snug text-foreground">
+        {row.title}
+      </p>
+
+      <div className="mt-auto flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <StatusMenu row={row} disabled={disabled} onSave={onSave} />
+        <PriorityMenu row={row} disabled={disabled} onSave={onSave} />
+        {row.due && (
+          <span className="font-mono text-[10px] text-muted-foreground">Due {row.due}</span>
+        )}
+        {row.sprint && (
+          <span className="font-mono text-[10px] text-muted-foreground">{row.sprint}</span>
+        )}
+        <LabelChips labels={row.labels} />
       </div>
     </article>
   );

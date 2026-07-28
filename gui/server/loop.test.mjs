@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import {
   validateCadence,
   validateWindow,
+  validateAskId,
   buildWeeklyCloseoutPayload,
   loopResponse,
 } from "./loop.mjs";
@@ -43,6 +44,34 @@ test("validateWindow: absent → null, positive int → n, else 400", () => {
       () => validateWindow(bad),
       (e) => e.statusCode === 400,
       `expected 400 for window=${JSON.stringify(bad)}`
+    );
+  }
+});
+
+test("validateAskId: hex ids and prefixes pass, flag-shaped and stray values 400", () => {
+  // Both shapes the CLI itself accepts: the short prefix `asks list` prints, and a full UUID.
+  assert.equal(validateAskId("3fea973d"), "3fea973d");
+  assert.equal(
+    validateAskId("3fea973d-1c2b-4a5e-9f80-0b1c2d3e4f50"),
+    "3fea973d-1c2b-4a5e-9f80-0b1c2d3e4f50"
+  );
+  assert.equal(validateAskId("3FEA973D"), "3FEA973D", "case-insensitive hex");
+  for (const bad of [
+    "--json", // flag injection: the id is spliced straight into argv
+    "-3fea973d", // leading dash — the reason the pattern demands a leading hex char
+    "3fea973", // too short to be an id prefix
+    "3fea973d; rm -rf /",
+    "3fea973d ok",
+    "zzzzzzzz", // non-hex
+    "",
+    null,
+    undefined,
+    123,
+  ]) {
+    assert.throws(
+      () => validateAskId(bad),
+      (e) => e.statusCode === 400,
+      `expected 400 for id=${JSON.stringify(bad)}`
     );
   }
 });

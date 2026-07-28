@@ -697,6 +697,12 @@ export interface DailyItem {
   due?: string | null;
   stale?: number;
   changeType?: "added" | "modified";
+  /**
+   * Whole days past due. Absent when the item is due today or later — the owed bucket admits
+   * everything due on or before today, so this is what separates "due this afternoon" from
+   * "15 days late" for ranking and labelling.
+   */
+  overdueDays?: number;
 }
 export interface TagTotal {
   tag: string;

@@ -56,7 +56,7 @@ describe("task presentation modes", () => {
     }
   });
 
-  test("unknown statuses remain visible in an Other lane and can be changed by keyboard", () => {
+  test("unknown statuses remain visible in an Other lane, shown verbatim and still editable", () => {
     const lanes = groupTasksForBoard(rows);
     expect(lanes.find((lane) => lane.key === "other")?.rows.map((row) => row.row_key)).toEqual([
       "AIO-2",
@@ -65,8 +65,11 @@ describe("task presentation modes", () => {
 
     const html = renderToStaticMarkup(<TaskBoard rows={rows} saving={null} onSave={noop} />);
     expect(html).toContain("Other");
-    expect(html).toContain('value="waiting_external" selected=""');
-    expect(html).toContain('value="backlog"');
+    // The raw cell value is never rewritten to a canonical status — it renders as authored.
+    expect(html).toContain("waiting_external");
+    // Status stays reachable: the menu trigger is labelled even for an unrecognised value.
+    // (Menu ITEMS are portalled on open, so they are absent from static markup by design.)
+    expect(html).toContain("Status for Preserve an unknown state");
   });
 
   test("only emits project-manager links that are safe external URLs", () => {
