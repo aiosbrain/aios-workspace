@@ -169,13 +169,26 @@ Both passes block on Medium-or-higher findings unless you pass `--no-bugbot`. St
 npm run aios -- review-bugbot feat/my-branch
 ```
 
-For interactive product-repo work, `hooks/local-bugbot-gate.mjs` is the shared agent
-completion gate. Project adapters invoke it from Claude Code `Stop`, Codex `Stop`, Cursor
-`stop`, and OpenCode `session.idle`. It reviews committed, staged, and unstaged changes and
-fails closed on reviewer/infrastructure errors or any untracked file. Stage intended new files
-before review; this prevents forgotten local secrets from being sent to the external reviewer.
-Medium-or-higher findings block. Blocked evidence is cached in worktree-local git state for the
-exact diff fingerprint, but clear verdicts are never trusted from writable disk. The read-only
+For interactive product-repo work, `hooks/local-bugbot-gate.mjs` is the shared lifecycle
+hook. Project adapters invoke it from Claude Code `Stop`, Codex `Stop`, Cursor `stop`, and
+OpenCode `session.idle` — and that Stop/idle invocation is **advisory only** (AIO-567): it
+runs a cheap probe over every registered worktree (canonical-base check + diff fingerprint +
+cached-verdict read), emits a non-blocking nudge ("unreviewed changes will gate at
+`aios build --merge` / `aios ship` / PR checks"), never spawns the reviewer, never makes a
+model call, and always exits 0 — even on a probe error. Blocking verdicts live only where
+scope is one branch and one owner: the `aios build --merge` / `aios ship` pre-merge review
+and the PR-level gates (cloud Bugbot, CodeRabbit, CI), plus explicit manual/CI invocation
+with `--json` / `--check-exit`, which still runs the full review sweep and exits 1 on a
+blocked or error verdict.
+
+Everything below in this section describes that **full review machinery**
+(`evaluateLocalBugbotGate`), which is unchanged and reached from the merge-time paths and
+manual/CI invocation — not from a Stop hook. It reviews committed, staged, and unstaged
+changes and fails closed on reviewer/infrastructure errors or any untracked file. Stage
+intended new files before review; this prevents forgotten local secrets from being sent to
+the external reviewer. Medium-or-higher findings block. Blocked evidence is cached in
+worktree-local git state for the exact diff fingerprint (the advisory probe surfaces it as a
+"known Medium+ findings" nudge), but clear verdicts are never trusted from writable disk. The read-only
 Cursor reviewer runs from a neutral temporary directory, so it cannot load the checkout's Stop
 hook and recursively fire the same gate. This neutral-directory rule applies to every read-only
 review provider, and the lifecycle gate pins its reviewer model rather than accepting an agent-
@@ -207,13 +220,14 @@ doubled per-call budget. The hook writes a local progress heartbeat every 30 sec
 while preserving machine-readable JSON on stdout. The native adapters share an explicit 24-hour
 capacity. Abandoned locks carry an owner PID and are reclaimed as soon as that process is gone.
 
-OpenCode 1.18 does not expose a blocking `Stop`/`session.stopping` plugin hook. Its adapter
-runs the same required gate on `session.idle` and re-prompts an interactive session on failure
-through the asynchronous prompt endpoint, awaiting its enqueue acknowledgement so delivery errors propagate,
-but a headless OpenCode process can exit after the idle event. The aligned `aios build`/`aios
-ship` pre-merge review is therefore the hard enforcement boundary for OpenCode until upstream
-adds a blocking lifecycle hook. Claude, Codex, and Cursor block directly in their native Stop
-contracts. Their native commands enter through `hooks/run-local-bugbot-gate.sh`, which removes
+No runtime blocks at Stop/idle anymore. The OpenCode plugin runs the advisory probe on
+`session.idle` and logs the nudge once per unchanged changeset per session; it never
+re-prompts the session. Claude and Codex receive the advisory as a non-blocking
+`systemMessage` (never `decision: "block"` / `continue: false`); Cursor receives `{}` with
+the advisory on stderr, because its only in-band stop channel (`followup_message`) would
+re-engage the agent. The aligned `aios build`/`aios ship` pre-merge review is the hard
+enforcement boundary for every runtime. Native commands enter through
+`hooks/run-local-bugbot-gate.sh`, which removes
 Node, dynamic-loader, shell-startup, Git, and Bugbot override variables before Node starts. The
 OpenCode plugin applies the equivalent cleanup to the gate child environment. The shell launcher
 selects only an executable, working Node binary from fixed system/Homebrew locations, while the
@@ -231,7 +245,9 @@ against an actor that can rewrite the worktree or its hook configuration. The pi
 `aios build`/`aios ship` review is the normal pre-merge boundary; organizations requiring
 tamper-resistant enforcement must also make the same review a required external CI check.
 
-Manual diagnostic invocation (the OpenCode shape returns the raw structured result):
+Manual diagnostic invocation — `--json`/`--check-exit` selects the full review sweep and
+returns the raw structured result (`--check-exit` exits 1 on blocked/error); a plain
+`--runtime <rt>` invocation is the advisory probe and always exits 0:
 
 ```bash
 node hooks/local-bugbot-gate.mjs --runtime opencode --json --check-exit
