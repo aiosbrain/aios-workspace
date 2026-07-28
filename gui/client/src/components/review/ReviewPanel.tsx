@@ -4,6 +4,7 @@ import { useConnection } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { toast } from "../ui/sonner";
 import { cn } from "../../lib/cn";
+import { briefError } from "../../lib/briefError";
 import { LoaderCircle } from "lucide-react";
 import type { PushResponse, ReviewItem, ReviewResponse } from "../../types/protocol";
 
@@ -85,7 +86,7 @@ export function ReviewPanel() {
           );
           await load(false); // refresh status after a real push without replacing the sync spinner
         } else {
-          toast.error(`Team Brain sync failed${data.error ? `: ${data.error}` : ""}`, {
+          toast.error(`Team Brain sync failed${data.error ? `: ${briefError(data.error)}` : ""}`, {
             duration: 10_000,
           });
         }
@@ -93,7 +94,9 @@ export function ReviewPanel() {
     } catch (e) {
       setOutput(`error: ${(e as Error).message}`);
       if (!dryRun)
-        toast.error(`Team Brain sync failed: ${(e as Error).message}`, { duration: 10_000 });
+        toast.error(`Team Brain sync failed: ${briefError((e as Error).message)}`, {
+          duration: 10_000,
+        });
     }
     setOperation(null);
   };

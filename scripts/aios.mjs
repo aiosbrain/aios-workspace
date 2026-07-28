@@ -46,7 +46,15 @@ import {
   DECISION_REDACTION_VERSION,
   validateItemPayload,
 } from "./workspace-parse.mjs";
-import { loadState, saveState, contentShaForPush, buildPlan, HELD_GLYPH } from "./sync-plan.mjs";
+import {
+  loadState,
+  saveState,
+  contentShaForPush,
+  buildPlan,
+  describeEmptyPush,
+  renderDryRunPlan,
+  HELD_GLYPH,
+} from "./sync-plan.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -743,25 +751,16 @@ async function cmdPush(repo, cfg, patterns, args) {
 
   printLoopCriticalWarnings(repo, plan, cfg);
 
-  if (!plan.push.length) {
-    console.log(c.green("nothing to push — all eligible files are clean."));
-    if (plan.blocked.length)
-      console.log(c.dim(`(${plan.blocked.length} held — run 'aios status' for reasons)`));
+  const empty = describeEmptyPush(plan, paths);
+  if (empty?.fatal) die(empty.message);
+  if (empty) {
+    console.log(c.green(empty.message));
+    if (empty.note) console.log(c.dim(empty.note));
     return result;
   }
 
   if (dryRun) {
-    console.log(c.yellow(`DRY RUN — would push ${plan.push.length} item(s):`));
-    for (const item of plan.push) {
-      const rowInfo = item.rows ? ` rows=${item.rows.length}` : "";
-      console.log(
-        `  ${item.rel} [${item.kind}, ${item.tier}]${rowInfo} sha=${item.hash.slice(0, 12)}`
-      );
-    }
-    if (plan.blocked.length) {
-      console.log(c.blue(`${HELD_GLYPH} held (${plan.blocked.length}):`));
-      for (const b of plan.blocked) console.log(`  ${b.rel} — ${b.reason}`);
-    }
+    for (const line of renderDryRunPlan(plan, { c })) console.log(line);
     return result;
   }
 

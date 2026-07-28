@@ -20,7 +20,7 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { findCommand, renderUsage } from "./registry.mjs";
+import { findCommand, nearestCommand, renderUsage } from "./registry.mjs";
 
 const HELP_TOKENS = new Set(["-h", "--help", "help"]);
 
@@ -44,7 +44,14 @@ export async function dispatch({ argv, local, resolvers }) {
 
   const desc = findCommand(cmd);
   if (!desc) {
+    // The help still goes to stdout (it is the useful payload), but the DIAGNOSTIC goes to stderr
+    // and names what was actually wrong. Before, `aios bogus 2>err.log` captured nothing and the
+    // user got 176 lines of help with no line saying which word was unknown (audit S6-4).
+    const near = nearestCommand(cmd);
     console.log(renderUsage());
+    console.error(
+      `error: unknown command: ${cmd}` + (near ? ` — did you mean \`aios ${near}\`?` : "")
+    );
     process.exit(1);
   }
 
