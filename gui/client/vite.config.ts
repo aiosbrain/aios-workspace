@@ -3,6 +3,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const vendorUiPackage =
+  /\/node_modules\/(?:@aios-alpha\/ui|@radix-ui\/react-(?:dialog|dropdown-menu|popover|scroll-area|slot|tooltip))\//;
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
@@ -22,16 +25,8 @@ export default defineConfig({
         // on the app's module graph, so this is a latent trap that any new component import
         // can spring. Keeping the design system and its Radix substrate in ONE chunk makes
         // the cycle structurally impossible while still splitting vendor from app code.
-        manualChunks: {
-          "vendor-ui": [
-            "@aios-alpha/ui",
-            "@radix-ui/react-dialog",
-            "@radix-ui/react-dropdown-menu",
-            "@radix-ui/react-popover",
-            "@radix-ui/react-scroll-area",
-            "@radix-ui/react-slot",
-            "@radix-ui/react-tooltip",
-          ],
+        manualChunks(id) {
+          if (vendorUiPackage.test(id)) return "vendor-ui";
         },
       },
     },
