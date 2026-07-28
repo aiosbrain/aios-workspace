@@ -109,6 +109,30 @@ test("T13: the CLI writes every lane to GITHUB_OUTPUT", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("T15: the direct-run guard still fires when the path needs URL escaping", () => {
+  // `import.meta.url === `file://${process.argv[1]}`` compares an ENCODED url against an
+  // UNENCODED path, so a single space in the checkout path stops main() from running and no
+  // lane values are written at all. Node absolutizes argv[1], so this is the only way the
+  // guard actually breaks — and it breaks toward "skip everything".
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aios lanes ")); // space is the point
+  const script = path.join(dir, "ci-changed-lanes.mjs");
+  const out = path.join(dir, "gh-output");
+  const paths = path.join(dir, "changed.txt");
+  fs.copyFileSync(SCRIPT, script);
+  fs.writeFileSync(paths, "src-tauri/src/main.rs\n");
+  fs.writeFileSync(out, "");
+
+  execFileSync(process.execPath, [script, "--paths-from", paths], {
+    env: { ...process.env, GITHUB_OUTPUT: out },
+    stdio: "pipe",
+  });
+
+  const written = fs.readFileSync(out, "utf8");
+  assert.notEqual(written.trim(), "", "main() must run from a path containing a space");
+  assert.match(written, /^rust=true$/m);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("T14: a missing changed-path file makes the CLI emit every lane on", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aios-lanes-"));
   const out = path.join(dir, "gh-output");

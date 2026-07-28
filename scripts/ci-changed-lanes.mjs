@@ -29,6 +29,7 @@
  * decision (with the reason) to stdout so a run's log explains why a lane was skipped.
  */
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /** Lanes this module can switch off, and the job each one gates. */
 export const LANES = ["code", "rust", "client"];
@@ -115,6 +116,28 @@ function main(argv) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Whether this module was run directly (as opposed to imported by a test).
+ *
+ * NOT `import.meta.url === `file://${process.argv[1]}``. That form fails two independent
+ * ways, and both fail toward "main() never runs, no lane values are written, every filtered
+ * lane skips":
+ *   - it compares an ENCODED url against an UNENCODED path, so one space in the checkout
+ *     path breaks it;
+ *   - `import.meta.url` is symlink-resolved and `process.argv[1]` is not, so any checkout
+ *     reached through a symlink breaks it (macOS /var -> /private/var is the everyday case).
+ * Comparing realpaths on both sides is immune to both.
+ */
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
   main(process.argv.slice(2));
 }
