@@ -29,6 +29,7 @@ import { MANAGED_PATHS, SEED_IF_ABSENT } from "../scripts/toolkit-manifest.mjs";
 import {
   cmdWorktree,
   installPostCheckoutHook,
+  installWorktreeSafetyBackstops,
   postCheckoutHookPath,
 } from "../scripts/worktree.mjs";
 import {
@@ -39,6 +40,7 @@ import {
 
 const TOOLKIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SELF_HEAL = path.join(TOOLKIT, "hooks", "worktree-self-heal.mjs");
+const POSTINSTALL = path.join(TOOLKIT, "scripts", "postinstall-banner.mjs");
 const MARKER = path.join(".aios", ".worktree-hydrated");
 
 const git = (cwd, ...args) =>
@@ -58,7 +60,7 @@ test.after(() => {
  * A minimal stand-in for a primary AIOS checkout: the real hydrator + git hook, a
  * settings.json to copy down, and a node_modules dir to symlink.
  */
-function makePrimary({ withHydrator = true } = {}) {
+function makePrimary({ withHydrator = true, withLeakGate = true } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-"));
   tmpDirs.push(root);
   const repo = path.join(root, "primary");
@@ -71,6 +73,12 @@ function makePrimary({ withHydrator = true } = {}) {
     const dest = path.join(repo, "scripts", "link-worktree-env.sh");
     copyFileSync(path.join(TOOLKIT, "scripts", "link-worktree-env.sh"), dest);
     chmodSync(dest, 0o755);
+  }
+  if (withLeakGate) {
+    copyFileSync(
+      path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+      path.join(repo, "scripts", "leak-gate.sh")
+    );
   }
   writeFileSync(path.join(repo, ".claude", "settings.json"), JSON.stringify({ hooks: {} }) + "\n");
   writeFileSync(path.join(repo, "README.md"), "temp\n");
@@ -228,6 +236,109 @@ test("T7: installPostCheckoutHook reports installed → present, and skips with 
   const bare = path.join(root, "not-a-repo");
   mkdirSync(bare, { recursive: true });
   assert.equal(installPostCheckoutHook(bare, { quiet: true }), "skipped");
+});
+
+test("T7b: worktree install-hook installs the primary and pre-push safety backstops", async () => {
+  const { repo } = makePrimary();
+
+  await cmdWorktree(repo, {}, ["install-hook"]);
+
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
+    /pre-commit-primary-guard/
+  );
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
+    /pre-push-leak-gate/
+  );
+});
+
+test("T7c: worktree install-hook reports backstop installer failures without throwing", async () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-selfheal-not-git-"));
+  tmpDirs.push(repo);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await cmdWorktree(repo, {}, ["install-hook"]);
+  } finally {
+    console.log = original;
+  }
+
+  assert.match(lines.join("\n"), /primary-commit-guard install failed \(non-fatal\)/);
+  assert.match(lines.join("\n"), /leak-gate push hook install failed \(non-fatal\)/);
+});
+
+test("T7d: worktree init hydrates the shared safety backstops", async () => {
+  const { root, repo } = makePrimary();
+  const wt = path.join(root, "linked-init");
+  git(repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-b", "task-init", wt, "main");
+
+  await cmdWorktree(repo, {}, ["init", "--dir", wt]);
+
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
+    /pre-commit-primary-guard/
+  );
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
+    /pre-push-leak-gate/
+  );
+});
+
+test("postinstall hydrates backstops for a fresh product-repository clone", () => {
+  const { repo } = makePrimary();
+
+  execFileSync(process.execPath, [POSTINSTALL], {
+    cwd: repo,
+    env: { ...process.env, CI: "1" },
+    stdio: "pipe",
+  });
+
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "utf8"),
+    /pre-commit-primary-guard/
+  );
+  assert.match(
+    readFileSync(path.join(repo, ".git", "hooks", "pre-push"), "utf8"),
+    /pre-push-leak-gate/
+  );
+});
+
+test("onboard and update invoke product-only safety hydration", () => {
+  for (const rel of ["scripts/onboard-command.mjs", "scripts/update.mjs"]) {
+    const source = readFileSync(path.join(TOOLKIT, rel), "utf8");
+    assert.match(
+      source,
+      /installWorktreeSafetyBackstops\(repo,\s*\{\s*quiet:\s*true,\s*productOnly:\s*true\s*\}\)/,
+      rel
+    );
+  }
+});
+
+test("product-only lifecycle hydration leaves personal-workspace commit and push policy unchanged", () => {
+  const { repo } = makePrimary({ withLeakGate: false });
+
+  installWorktreeSafetyBackstops(repo, { quiet: true, productOnly: true });
+
+  assert.ok(existsSync(path.join(repo, ".git", "hooks", "post-checkout")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-commit")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-push")));
+});
+
+test("a personal workspace without the product leak scanner does not receive its pre-push hook", async () => {
+  const { repo } = makePrimary({ withLeakGate: false });
+
+  await cmdWorktree(repo, {}, ["install-hook"]);
+
+  assert.ok(existsSync(path.join(repo, ".git", "hooks", "pre-commit")));
+  assert.ok(!existsSync(path.join(repo, ".git", "hooks", "pre-push")));
 });
 
 // ── T8: postCheckoutHookPath resolves the SHARED common dir from a worktree ────

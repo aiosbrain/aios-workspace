@@ -40,6 +40,23 @@ const HOOK_SRC = path.join(
   "git",
   "post-checkout"
 );
+const PRIMARY_GUARD_INSTALLER = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "install-primary-commit-guard.sh"
+);
+const PUSH_GATE_INSTALLER = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "install-leak-gate-push-hook.sh"
+);
+/**
+ * Interpreter used to run the backstop installers. A bare `"bash"` is resolved through
+ * `$PATH`, so a writable directory earlier in `$PATH` could substitute the shell that
+ * installs our security guards — the one place in this file where that matters. Both
+ * installers are bash-3.2 compatible, so a fixed system path works on macOS and Linux
+ * alike; the bare name survives only as a last resort for layouts without either
+ * (e.g. NixOS), where the guard cannot be installed at all otherwise.
+ */
+const BASH = ["/bin/bash", "/usr/bin/bash"].find((candidate) => existsSync(candidate)) ?? "bash";
 
 /**
  * Where the post-checkout hook lives for `repo`. Resolved via `--git-common-dir`, not
@@ -100,6 +117,54 @@ export function installPostCheckoutHook(repo, { quiet = false } = {}) {
   }
 }
 
+function runBackstopInstaller(repo, installer, label, successMessage, { quiet = false } = {}) {
+  if (!existsSync(installer)) {
+    if (!quiet) console.log(c.dim(`  ${label} installer not found — skipping`));
+    return "skipped";
+  }
+  try {
+    execFileSync(BASH, [installer], { cwd: repo, stdio: "pipe" });
+    if (!quiet) console.log(c.dim(`  installed ${successMessage}`));
+    return "installed";
+  } catch (error) {
+    if (!quiet) {
+      console.log(c.dim(`  ${label} install failed (non-fatal): `) + (error.message || error));
+    }
+    return "failed";
+  }
+}
+
+/**
+ * Hydrate every machine-local worktree backstop. This is the shared contract used by
+ * worktree add/init, onboarding, and update so a fresh clone cannot receive only the
+ * post-checkout convenience hook while remaining publishable without commit/push guards.
+ */
+export function installWorktreeSafetyBackstops(repo, { quiet = false, productOnly = false } = {}) {
+  const gateAvailable = existsSync(path.join(repo, "scripts", "leak-gate.sh"));
+  return {
+    postCheckout: installPostCheckoutHook(repo, { quiet }),
+    primaryCommit:
+      !productOnly || gateAvailable
+        ? runBackstopInstaller(
+            repo,
+            PRIMARY_GUARD_INSTALLER,
+            "primary-commit-guard",
+            "primary-commit-guard → blocks all commits in the primary checkout",
+            { quiet }
+          )
+        : "skipped",
+    prePush: gateAvailable
+      ? runBackstopInstaller(
+          repo,
+          PUSH_GATE_INSTALLER,
+          "leak-gate push hook",
+          "pre-push leak gate → blocks publishing confidential material",
+          { quiet }
+        )
+      : "skipped",
+  };
+}
+
 export async function cmdWorktree(repo, cfg, args) {
   const sub = args[0];
   const rest = args.slice(1);
@@ -108,32 +173,7 @@ export async function cmdWorktree(repo, cfg, args) {
     "link-worktree-env.sh"
   );
   const hookDest = postCheckoutHookPath(repo);
-  const guardInstaller = path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "install-primary-commit-guard.sh"
-  );
-
-  // Install the primary-checkout commit guard (blocks ALL authored commits in the
-  // primary checkout, on any branch including main — forces worktree use). Local-only
-  // .git/hooks file, so re-installed here on every `worktree add`/`install-hook`.
-  function installGuard() {
-    if (!existsSync(guardInstaller)) {
-      console.log(c.dim("  primary-commit-guard installer not found — skipping"));
-      return false;
-    }
-    try {
-      execFileSync("bash", [guardInstaller], { cwd: repo, stdio: "pipe" });
-      console.log(
-        c.dim("  installed primary-commit-guard → blocks all commits in the primary checkout")
-      );
-      return true;
-    } catch (e) {
-      console.log(c.dim("  primary-commit-guard install failed (non-fatal): ") + (e.message || e));
-      return false;
-    }
-  }
-
-  const installHook = () => installPostCheckoutHook(repo) !== "skipped";
+  const installSafety = () => installWorktreeSafetyBackstops(repo);
 
   if (sub === "add") {
     const branch = rest[0];
@@ -145,8 +185,7 @@ export async function cmdWorktree(repo, cfg, args) {
     const containerDir = path.dirname(wtPath);
 
     // 0. Ensure the auto-hydration hook + primary-commit guard are installed in primary
-    installHook();
-    installGuard();
+    installSafety();
 
     // 0b. Ensure the container dir exists — `git worktree add` does not
     // reliably mkdir -p intermediate directories on every platform/git
@@ -186,6 +225,7 @@ export async function cmdWorktree(repo, cfg, args) {
     const dirIdx = rest.indexOf("--dir");
     const targetDir = dirIdx >= 0 ? rest[dirIdx + 1] : process.cwd();
     if (!existsSync(targetDir)) die(`directory not found: ${targetDir}`);
+    installSafety();
     if (existsSync(scriptPath)) {
       execFileSync("bash", [scriptPath], { cwd: targetDir, stdio: "inherit" });
     } else {
@@ -229,8 +269,7 @@ export async function cmdWorktree(repo, cfg, args) {
   const flags = new Set(rest);
 
   if (sub === "install-hook") {
-    installHook();
-    installGuard();
+    installSafety();
     return;
   }
 
