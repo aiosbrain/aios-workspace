@@ -275,17 +275,60 @@ function pathResolves(repo, p) {
 export function classifyPathContext(ref) {
   const heading = ref.section || "";
   const text = ref.lineText || "";
-  if (
-    /\b(reuse|integrat|builds?\s+on|extend|existing|modif|touch)/i.test(heading) ||
-    /\b(reuses?|extends?|builds?\s+on|based\s+on|integrat\w*|existing|modif\w*|already\s+in)\b/i.test(
-      text
-    )
-  ) {
+
+  // The LINE wins over the HEADING (AIO-573). This order used to be reversed, and the effect was
+  // that `## Interface / integration points` — which contains "integrat" — classified EVERY path
+  // under it as existing code. Naming a file the slice is about to create therefore became a hard
+  // blocker in the one section specs naturally name files in, and the shipped issue template told
+  // authors to write `new file: …` in exactly that section. An author following our own template
+  // was guaranteed a false blocker. The author's explicit statement about a specific path is
+  // better evidence than the section it happens to sit under.
+  // Markers are scoped to the NEAREST one preceding this specific path, not applied to the whole
+  // line. One bullet can legitimately mix both roles —
+  //   - new file: `scripts/ui/out.mjs` — integrates with `scripts/phantom.mjs`
+  // — and a whole-line rule would let the "new file" marker launder the phantom integration
+  // target down to an advisory. Each path is judged by the claim actually attached to it.
+  const at = ref.path ? text.indexOf(ref.path) : -1;
+  const scope = at >= 0 ? text.slice(0, at) : text;
+  const lastIndexOfMatch = (re, s) => {
+    let idx = -1;
+    for (const m of s.matchAll(re)) idx = m.index;
+    return idx;
+  };
+  const NEW_MARK = /\b(new\s+file|creates?|to\s+create|does\s+not\s+exist|not\s+present)\b/gi;
+  const OLD_MARK =
+    /\b(reuses?|extends?|builds?\s+on|based\s+on|integrat\w*|existing|modif\w*|already\s+in)\b/gi;
+  const newAt = lastIndexOfMatch(NEW_MARK, scope);
+  const oldAt = lastIndexOfMatch(OLD_MARK, scope);
+  if (newAt >= 0 || oldAt >= 0) return newAt > oldAt ? "new" : "existing";
+
+  // A marker may also be written as a predicate after the path (`foo.mjs` does not exist yet,
+  // `bar.mjs` extends the existing dispatcher). Only consult this suffix when no leading marker
+  // classified the path: on a mixed-role line, the next leading marker belongs to the next path.
+  if (at >= 0) {
+    const pathEnd = at + ref.path.length;
+    const afterPath = text.slice(pathEnd + (text[pathEnd] === "`" ? 1 : 0));
+    const nextPath = afterPath.indexOf("`");
+    const suffix = nextPath >= 0 ? afterPath.slice(0, nextPath) : afterPath;
+    const suffixNewAt = lastIndexOfMatch(NEW_MARK, suffix);
+    const suffixOldAt = lastIndexOfMatch(OLD_MARK, suffix);
+    if (suffixNewAt >= 0 || suffixOldAt >= 0) {
+      return suffixNewAt > suffixOldAt ? "new" : "existing";
+    }
+  }
+
+  // A spec may legitimately reference a real path in ANOTHER repository — a cross-repo contract
+  // change names files in its sibling. Those cannot resolve here, and blocking on them pushed
+  // authors to delete precise paths in favour of vague prose, degrading the spec to satisfy the
+  // check. External sections are advisory.
+  if (/\b(upstream|external|sibling|other\s+repo|another\s+repo)/i.test(heading)) return "new";
+
+  if (/\b(reuse|integrat|builds?\s+on|extend|existing|modif|touch)/i.test(heading)) {
     return "existing";
   }
   if (
     /\b(implement|task|step|new\s+file|create|scaffold)/i.test(heading) ||
-    /\b(new\s+file|creates?|adds?\b|writes?\b|scaffold|stub)\b/i.test(text)
+    /\b(adds?\b|writes?\b|scaffold|stub)\b/i.test(text)
   ) {
     return "new";
   }
@@ -727,20 +770,54 @@ export function parseAdversarial(text) {
     return synthetic(`adversarial evaluator returned an invalid verdict: ${obj.verdict}`);
   }
   const findings = Array.isArray(obj.findings)
-    ? obj.findings.map((f) => ({
-        ruleId: String(f?.ruleId ?? "SR?"),
-        severity: VALID_SEVERITY.has(f?.severity) ? f.severity : "major",
-        quote: String(f?.quote ?? ""),
-        why: String(f?.why ?? ""),
-        suggestion: String(f?.suggestion ?? ""),
-        layer: "adversarial",
-      }))
+    ? obj.findings.map((f) => {
+        const severity = String(f?.severity ?? "").toLowerCase();
+        return {
+          ruleId: String(f?.ruleId ?? "SR?"),
+          // An unrecognised or missing severity means the model did not classify this record —
+          // most often because it is a per-criterion PASS note rather than an objection.
+          // Defaulting those to `major` (as this did until AIO-573) manufactured near-blocking
+          // noise and tanked the advisory score: one observed run reported seven `major` findings
+          // whose `why` text was positive. `minor` cannot change the gate either way — only
+          // `blocker` gates — so this is purely a report-fidelity fix, not a weakening.
+          severity: VALID_SEVERITY.has(severity) ? severity : "minor",
+          quote: String(f?.quote ?? ""),
+          why: String(f?.why ?? ""),
+          suggestion: String(f?.suggestion ?? ""),
+          layer: "adversarial",
+        };
+      })
     : [];
   const score = Number.isFinite(Number(obj.score)) ? Number(obj.score) : 0;
   // Verdict is the gate — but a blocker finding forces NOT_READY even if the model said READY.
   const hasBlocker = findings.some((f) => f.severity === "blocker");
-  const verdict = hasBlocker ? "NOT_READY" : verdictRaw;
-  return { verdict, score, findings, parseError: false };
+  if (hasBlocker) return { verdict: "NOT_READY", score, findings, parseError: false };
+
+  // …and the converse (AIO-573): a NOT_READY that cites no blocker is an uncited refusal. The
+  // report cannot say what to fix, so the author's only move is to re-run and hope. This sample
+  // does not get to cast a blocking vote. Every genuine fail-closed path — a thrown evaluator,
+  // unparseable JSON, an invalid verdict — routes through `synthetic()` and carries a blocker, so
+  // none of them are affected.
+  if (verdictRaw === "NOT_READY") {
+    return {
+      verdict: "SPEC_READY",
+      score,
+      findings: [
+        ...findings,
+        {
+          ruleId: "SR15",
+          severity: "minor",
+          quote: "",
+          why: "adversarial sample returned NOT_READY without citing a blocking finding — an unjustified refusal, so it does not gate",
+          suggestion: "",
+          layer: "adversarial",
+        },
+      ],
+      parseError: false,
+      uncitedRefusal: true,
+    };
+  }
+  return { verdict: verdictRaw, score, findings, parseError: false };
 }
 
 /**
@@ -846,6 +923,43 @@ export function aggregateQuorum(samples) {
   const scores = samples.map((s) => (Number.isFinite(s.score) ? s.score : 0)).sort((a, b) => a - b);
   const mid = Math.floor(scores.length / 2);
   const score = scores.length % 2 ? scores[mid] : Math.round((scores[mid - 1] + scores[mid]) / 2);
+
+  // A refusal must name what it refused (AIO-573).
+  //
+  // The vote above and the blocker-recurrence test above it are independent, so the quorum could
+  // return NOT_READY while every blocker was demoted for non-recurrence — or while the samples
+  // raised no blocker at all. That verdict is unfalsifiable: the report cannot say what to fix,
+  // and the author's only move is to re-run and hope. Observed on 2026-07-28, where a candidate
+  // scored NOT_READY/30 with seven `major` findings whose `why` text was positive (they were
+  // pass records), and the BYTE-IDENTICAL file re-evaluated to SPEC_READY/100.
+  //
+  // So NOT_READY now requires at least one surviving gating blocker. This does NOT weaken any
+  // fail-closed path: an evaluator that throws, returns unparseable JSON, or returns an invalid
+  // verdict already synthesises a blocker-severity finding, and a blocker recurring in a majority
+  // of samples still gates exactly as before. The only path removed is the uncited refusal.
+  const gating = findings.filter((f) => f.severity === "blocker");
+  if (verdict === "NOT_READY" && gating.length === 0) {
+    findings.push({
+      ruleId: "SR15",
+      severity: "minor",
+      quote: "",
+      why:
+        `${notReadyVotes}/${k} adversarial samples voted NOT_READY but none cited a blocking ` +
+        `finding — an unjustified refusal, so it does not gate. Treated as SPEC_READY.`,
+      suggestion:
+        "If this recurs on the same candidate, read the sample findings: the evaluator is " +
+        "objecting to something it is failing to name.",
+      layer: "adversarial",
+    });
+    return {
+      verdict: "SPEC_READY",
+      score,
+      findings,
+      samples: k,
+      notReadyVotes,
+      uncitedRefusal: true,
+    };
+  }
 
   return { verdict, score, findings, samples: k, notReadyVotes };
 }

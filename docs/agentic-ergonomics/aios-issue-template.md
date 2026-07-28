@@ -22,7 +22,11 @@ type: issue-spec
 
 ## Interface / integration points
 
-<!-- SR3, SR9: Name real file paths and contracts this slice builds on or extends. -->
+<!-- SR3, SR9: Name real file paths and contracts this slice builds on or extends.
+     Paths here are checked against the repo tree, so cite EXISTING files exactly.
+     For a file this slice creates, say so on the line — "new file: x" or "create x" —
+     or list it under a "## New files to create" heading. Either is recognised.
+     For a path in a SIBLING repo, put it under a heading naming it upstream/external. -->
 
 - `path/to/existing/module.ts` — (role)
 - (TODO: or "new file: path/to/new-module.ts")
