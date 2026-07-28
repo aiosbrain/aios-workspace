@@ -43,11 +43,15 @@ test("unfilled template fails deterministic SR3 (placeholder integration path)",
   );
 });
 
-test("filled aios-issue fixture is deterministic-clean (--no-llm → exit 3)", () => {
+test("filled aios-issue fixture is deterministic-clean (default tier → exit 0)", () => {
+  // Since AIO-573 the adversarial layer is opt-in, so a fixture that declares no `eval_tier`
+  // runs the deterministic layer alone and a clean result is a COMPLETE answer: SPEC_READY / 0,
+  // not NOT_EVALUATED / 3. Exit 3 now means "the spec asked for the LLM layer and it did not run".
   const r = runSpec(["eval", FILLED, "--no-llm", "--json"]);
-  assert.equal(r.code, 3, r.stderr);
+  assert.equal(r.code, 0, r.stderr);
   const j = JSON.parse(r.stdout);
-  assert.equal(j.verdict, "NOT_EVALUATED");
+  assert.equal(j.verdict, "SPEC_READY");
+  assert.equal(j.tier, "deterministic");
   const blockers = (j.findings || []).filter((f) => f.severity === "blocker");
   assert.equal(blockers.length, 0, blockers.map((f) => f.detail).join("; "));
 });

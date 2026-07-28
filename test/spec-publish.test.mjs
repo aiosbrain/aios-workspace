@@ -25,6 +25,9 @@ function fixture({ verdict = "SPEC_READY", candidate = "# Ready\n", remote = "# 
       repoSha: REPO_SHA,
       repoDirty: false,
       publishable: true,
+      // A published spec becomes the build contract, so it must carry the adversarial review.
+      // Implied before AIO-573 (deterministic-only exited 3, never SPEC_READY); asserted since.
+      tier: "full",
     })
   );
   let description = remote;
@@ -102,6 +105,27 @@ test("NOT_READY artifact refuses before any remote read or write", async () => {
   try {
     await assert.rejects(() => publishSpec(fx.args), /not a successful SPEC_READY/);
     assert.equal(reads, 0);
+    assert.equal(fx.writes(), 0);
+  } finally {
+    rmSync(fx.root, { recursive: true, force: true });
+  }
+});
+
+test("a deterministic-only artifact cannot be published (AIO-573)", async () => {
+  // Publishing writes the spec into the Linear issue description, making it the build contract.
+  // Before the adversarial layer became opt-in, a deterministic-only run exited 3 and could never
+  // reach SPEC_READY, so this guarantee was structural. Now it has to be checked.
+  const fx = fixture();
+  const evaluation = JSON.parse(readFileSync(fx.args.evalArtifactPath, "utf8"));
+  writeFileSync(fx.args.evalArtifactPath, JSON.stringify({ ...evaluation, tier: "deterministic" }));
+  let reads = 0;
+  fx.args.linear.getIssue = async () => {
+    reads++;
+    return { description: "# Old\n" };
+  };
+  try {
+    await assert.rejects(() => publishSpec(fx.args), /deterministic-only/);
+    assert.equal(reads, 0, "must refuse before contacting Linear");
     assert.equal(fx.writes(), 0);
   } finally {
     rmSync(fx.root, { recursive: true, force: true });

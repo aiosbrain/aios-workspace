@@ -72,6 +72,15 @@ export async function publishSpec({
   }
   if (evaluation.verdict !== "SPEC_READY" || evaluation.exitCode !== 0)
     throw new SpecPublishError("evaluation artifact is not a successful SPEC_READY verdict");
+  // Publishing writes the spec into a Linear issue description — it becomes the build contract, so
+  // it must carry the adversarial second opinion. Before AIO-573 that was structural (a
+  // deterministic-only run exited 3 and could never be SPEC_READY); now that deterministic is the
+  // default and exits 0, the requirement has to be stated or this gate would silently weaken.
+  if (evaluation.tier !== "full")
+    throw new SpecPublishError(
+      "evaluation artifact is deterministic-only; re-run `aios spec eval --publishable --adversarial` " +
+        "so the published contract carries an adversarial review"
+    );
   if (evaluation.publishable !== true)
     throw new SpecPublishError(
       "evaluation artifact is not publishable; rerun spec eval with --publishable on a clean tree"
