@@ -94,7 +94,12 @@ export function reconcileRepo({
 }) {
   const notes = [];
   if (localError) notes.push(`local checkout unavailable: ${localError}`);
-  if (prsError) notes.push(`GitHub PR fetch failed: ${prsError}`);
+  if (prsError) {
+    notes.push(
+      `GitHub PR fetch failed: ${prsError} — orphan branch/worktree detection skipped ` +
+        "(it needs the complete PR set to mean anything)"
+    );
+  }
   if (worktreesError) notes.push(`git worktree list failed: ${worktreesError}`);
   if (branchesError) notes.push(`git branch listing failed: ${branchesError}`);
   if (dirtyError) notes.push(`git status failed: ${dirtyError}`);
@@ -114,14 +119,24 @@ export function reconcileRepo({
   // Orphan branches: local heads/worktrees that don't correspond to ANY PR (open OR closed) we
   // know about. Not necessarily a problem (a branch can predate its PR, or never have had one),
   // so this is informational only — never a target for deletion.
+  //
+  // "No matching PR" is only a claim we can make against a COMPLETE PR set. When the GitHub
+  // fetch failed, the empty set says nothing about the branches, and every non-main branch
+  // and worktree would be reported as an orphan — the report would look like a pile of
+  // abandoned work caused by a network blip. Report nothing instead; `notes` carries why.
+  const prSetKnown = !prsError;
   const prHeadNames = new Set(normalizedPrs.map((p) => p.headRefName));
-  const orphanLocalBranches = safeLocalBranches
-    .map((b) => b.name)
-    .filter((name) => name !== "main" && name !== "master" && !prHeadNames.has(name));
-  const orphanWorktrees = safeWorktrees
-    .filter((w) => w.branch && w.branch !== "main" && w.branch !== "master")
-    .filter((w) => !prHeadNames.has(w.branch))
-    .map((w) => ({ path: w.path, branch: w.branch }));
+  const orphanLocalBranches = prSetKnown
+    ? safeLocalBranches
+        .map((b) => b.name)
+        .filter((name) => name !== "main" && name !== "master" && !prHeadNames.has(name))
+    : [];
+  const orphanWorktrees = prSetKnown
+    ? safeWorktrees
+        .filter((w) => w.branch && w.branch !== "main" && w.branch !== "master")
+        .filter((w) => !prHeadNames.has(w.branch))
+        .map((w) => ({ path: w.path, branch: w.branch }))
+    : [];
 
   return {
     slug,

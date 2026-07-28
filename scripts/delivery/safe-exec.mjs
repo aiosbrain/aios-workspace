@@ -14,6 +14,44 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+
+/**
+ * Resolve a program to a fixed absolute path where one exists.
+ *
+ * A bare `"git"`/`"gh"` is resolved through $PATH, so a writable directory earlier in $PATH
+ * could substitute the very binaries this module exists to be the safe choke point for
+ * (Sonar javascript:S4036) — an allowlist that validates `git status` is worth little if
+ * `git` itself is attacker-chosen. The bare name remains as a last resort so the command
+ * still works on layouts not enumerated here (CI images, Linuxbrew, ~/.local/bin).
+ *
+ * `envVar` is the explicit stub seam used by the tests, which previously injected a fake by
+ * prepending to $PATH — something absolute resolution necessarily defeats. It is not a
+ * security weakening: setting an env var and setting $PATH are the same capability. It only
+ * makes the injection point named and greppable instead of ambient.
+ *
+ * Resolved per call, not once at module load, because the tests set the seam after this
+ * module has been imported.
+ */
+function resolveProgram(name, envVar, candidates) {
+  const override = process.env[envVar];
+  if (override) return override;
+  return candidates.find((candidate) => existsSync(candidate)) ?? name;
+}
+
+const gitBin = () =>
+  resolveProgram("git", "AIOS_DELIVERY_GIT_BIN", [
+    "/usr/bin/git",
+    "/opt/homebrew/bin/git",
+    "/usr/local/bin/git",
+  ]);
+
+const ghBin = () =>
+  resolveProgram("gh", "AIOS_DELIVERY_GH_BIN", [
+    "/opt/homebrew/bin/gh",
+    "/usr/local/bin/gh",
+    "/usr/bin/gh",
+  ]);
 
 // git subcommands this feature is allowed to run. Every one of these is read-only by nature;
 // `worktree` is additionally gated on its second token below because `git worktree` mixes a
@@ -41,7 +79,7 @@ export function safeGit(repoPath, argv) {
         "(only 'worktree list' is allowed — this feature never removes/prunes a worktree)"
     );
   }
-  return execFileSync("git", ["-C", repoPath, ...argv], {
+  return execFileSync(gitBin(), ["-C", repoPath, ...argv], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -78,5 +116,5 @@ export function safeGh(argv) {
       `aios delivery status: refusing non-read-only gh command: gh ${argv.join(" ")}`
     );
   }
-  return execFileSync("gh", argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync(ghBin(), argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }

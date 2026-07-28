@@ -187,6 +187,34 @@ test("orphan branches/worktrees: a local branch with no corresponding PR is list
   assert.ok(!report.orphanLocalBranches.includes("main"), "main must never be flagged as orphan");
 });
 
+test("a failed PR fetch reports NO orphans rather than flagging every branch", () => {
+  // Same inputs as the test above, except the PR fetch failed. Previously the empty PR set
+  // was treated as authoritative, so a network blip made every branch and worktree look
+  // abandoned — the most alarming possible report, produced by the least meaningful cause.
+  const report = reconcileRepo({
+    slug: "acme/repo",
+    localPath: "/tmp/repo",
+    prs: null,
+    prsError: "gh: could not connect to api.github.com",
+    worktrees: [{ path: "/tmp/repo-worktrees/orphan", branch: "chore/leftover" }],
+    branches: {
+      local: [
+        { name: "main", sha: "c".repeat(40) },
+        { name: "chore/leftover", sha: "d".repeat(40) },
+      ],
+      remote: [],
+    },
+    dirty: false,
+  });
+
+  assert.deepEqual(report.orphanLocalBranches, []);
+  assert.deepEqual(report.orphanWorktrees, []);
+  assert.ok(
+    report.notes.some((n) => n.includes("orphan branch/worktree detection skipped")),
+    "the report must say why orphan detection was withheld"
+  );
+});
+
 test("idempotent: calling reconcileRepo twice with the same inputs yields identical output", () => {
   const input = {
     slug: "acme/repo",

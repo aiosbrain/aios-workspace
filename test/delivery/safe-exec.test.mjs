@@ -121,8 +121,12 @@ test("safeGh executes an allowlisted read-only command and a GET-method api call
   chmodSync(path.join(bin, "gh"), 0o755);
 
   const originalPath = process.env.PATH;
+  // safe-exec resolves `gh` to an absolute system path (Sonar S4036), so a PATH-only
+  // fake no longer intercepts it — point the named stub seam at this fake too.
+  const originalGhBin = process.env.AIOS_DELIVERY_GH_BIN;
   const originalRecord = process.env.RECORD;
   process.env.PATH = `${bin}:${originalPath}`;
+  process.env.AIOS_DELIVERY_GH_BIN = path.join(bin, "gh");
   process.env.RECORD = record;
   try {
     const out = safeGh(["pr", "list", "--repo", "acme/repo", "--json", "number"]);
@@ -136,6 +140,8 @@ test("safeGh executes an allowlisted read-only command and a GET-method api call
     ]);
   } finally {
     process.env.PATH = originalPath;
+    if (originalGhBin === undefined) delete process.env.AIOS_DELIVERY_GH_BIN;
+    else process.env.AIOS_DELIVERY_GH_BIN = originalGhBin;
     if (originalRecord === undefined) delete process.env.RECORD;
     else process.env.RECORD = originalRecord;
     rmSync(bin, { recursive: true, force: true });
