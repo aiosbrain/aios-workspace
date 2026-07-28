@@ -33,6 +33,7 @@ import {
   resolveRequiredBugbotBase,
   REVIEW_WALL_CLOCK_BUDGET_MS,
 } from "../scripts/review-bugbot.mjs";
+import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
 
 const REVIEW_CHILD_TIMEOUT_SECONDS = 400;
 // Grace on top of the child's own absolute wall-clock budget. Raised from 20s: the parent
@@ -352,6 +353,7 @@ export function evaluateLocalBugbotGate({
   env = process.env,
   runReview = defaultReview,
   resolveBase = resolveRequiredBugbotBase,
+  resolveBranchHead = resolveCanonicalBranchHead,
   probeOnly = false,
 } = {}) {
   // Explicit operator opt-out, for teams that have adopted the paid cloud Cursor Bugbot as the
@@ -404,6 +406,26 @@ export function evaluateLocalBugbotGate({
       reason: `refusing to send untracked content to Bugbot; stage the files you intend to have reviewed, or gitignore them if they are machine-local (build output, runtime/session state): ${snapshot.withheldUntrackedFiles.join(", ")}`,
       fingerprint: snapshot.fingerprint,
     };
+  }
+  // Ownership handoff, per listGateTargets' own doctrine: once a branch is pushed, the
+  // PR-level gates (CI, cloud Bugbot, CodeRabbit) own it, and the local pre-PR gate owns
+  // exactly what has not reached them yet. Verified ONLY against the canonical remote —
+  // the same trust boundary as resolveRequiredBugbotBase — never a local ref, so the
+  // AIO-555 offline forgeries (`git update-ref refs/remotes/...`) cannot take this path;
+  // the only way onto it is an actual push, which by definition delivers the changeset to
+  // the stronger gates. Without this, a pushed in-flight branch with cached findings
+  // blocks every OTHER session's Stop hook repo-wide on work those sessions must not
+  // touch. `status --porcelain` is trustworthy here because skip-worktree/assume-unchanged
+  // suppression already failed closed above, and untracked files make it non-empty.
+  if (branch !== "HEAD" && git(["status", "--porcelain"], root) === "") {
+    const canonicalHead = resolveBranchHead(branch);
+    if (canonicalHead && canonicalHead === gitMaybe(["rev-parse", "HEAD"], root)) {
+      return {
+        status: "skipped",
+        reason: `branch ${branch} head is on the canonical remote with a clean worktree; PR-level gates own this changeset`,
+        fingerprint: snapshot.fingerprint,
+      };
+    }
   }
   if (snapshot.reviewTooLarge) {
     return {
@@ -545,6 +567,148 @@ export function evaluateLocalBugbotGate({
   }
 }
 
+/**
+ * Enumerate every worktree this gate is responsible for, from git state alone.
+ *
+ * Target selection must not come from the agent (see `main`): an agent that could name the
+ * directory to review could dodge review entirely by naming a clean one. But anchoring to the
+ * session's start directory is equally wrong — CLAUDE.md §5 requires all work to happen in a
+ * linked worktree, so the session directory is normally the PRIMARY checkout, which is the one
+ * tree the pre-commit guard forbids committing to. Pinned there, the gate reviews a tree that by
+ * construction holds no work, and never sees the change it is meant to gate.
+ *
+ * So: enumerate the repo's registered worktrees — git state, not agent input — and return every
+ * one holding work that has not yet reached the remote (uncommitted changes, or commits absent
+ * from its upstream). Once a branch is pushed, the PR-level gates (CI, cloud Bugbot, CodeRabbit)
+ * own it; a local pre-PR gate owns exactly what has not reached them yet.
+ *
+ * This is strictly stronger than pinning: the agent cannot choose the target, and cannot hide work
+ * by changing directory, because every in-play worktree is reviewed.
+ */
+export function listGateTargets(projectDir, gitFn = git) {
+  const listing = gitFn(["worktree", "list", "--porcelain", "-z"], projectDir);
+  // `-z` because `git worktree list --porcelain` does not quote paths, so a path containing a
+  // newline would otherwise mis-parse into a skipped worktree — a silent false clear.
+  const roots = listing
+    .split("\0")
+    .filter((field) => field.startsWith("worktree "))
+    .map((field) => field.slice("worktree ".length))
+    .filter(Boolean);
+
+  // Deliberately NO filtering beyond "the directory still exists". An earlier revision skipped
+  // worktrees that looked clean or already pushed, deriving that from `git status`, `@{upstream}`
+  // and the local `refs/remotes/origin/main` — all of which an agent can write offline, so
+  // `git update-ref refs/remotes/origin/main HEAD` (or `git update-index --skip-worktree`) emptied
+  // the target list and cleared the gate. Selection must never consult an agent-writable signal.
+  //
+  // Filtering is also unnecessary: evaluateLocalBugbotGate already resolves its base through
+  // resolveRequiredBugbotBase (canonical remote, not the writable local ref), already errors on
+  // skip-worktree/assume-unchanged paths, and already returns `skipped` on an empty diff BEFORE
+  // spawning a review. A clean, fully-merged worktree therefore costs local git work and no
+  // review, and every exclusion decision is made against a trusted base instead of a forgeable one.
+  return roots.filter((root) => existsSync(root));
+}
+
+/**
+ * Combine per-worktree verdicts fail-closed: any block blocks, then any error errors, and only an
+ * all-clear sweep clears. Findings stay attributed to the worktree they came from — conflating
+ * them is what made the pinned gate's output unactionable.
+ */
+export function aggregateGateResults(results) {
+  if (!results.length) {
+    // Not a positive clear: an empty target list means enumeration found nothing, which is
+    // indistinguishable from enumeration having failed. Announce it so a neutered gate and a
+    // genuinely empty repo do not produce byte-identical silence.
+    process.stderr.write(
+      "[local-bugbot] no reviewable worktree was found — nothing was reviewed\n"
+    );
+    return { status: "skipped", reason: "no reviewable worktree found", worktrees: [] };
+  }
+  const tag = (result) => (result.worktree ? `[${result.worktree}]\n` : "");
+  // A CACHED blocked verdict carries its explanation in `reason`, not `output` (see cachedResult),
+  // so reading only `output` renders a worktree tag and nothing else — which is what the operator
+  // sees on every Stop after the first, the common case. Never emit a content-free entry: an empty
+  // block reads as a broken gate rather than a real finding, and the tag alone also defeats
+  // blockedReason's `output || reason` fallback by making `output` non-empty.
+  const evidence = (result) =>
+    `${tag(result)}${
+      result.output ||
+      result.reason ||
+      "no evidence recorded for this worktree; run the manual review command there to refresh it"
+    }`;
+
+  const blocked = results.filter((result) => result.status === "blocked");
+  if (blocked.length) {
+    return {
+      status: "blocked",
+      cached: blocked.every((result) => result.cached === true),
+      fingerprint: blocked[0].fingerprint,
+      worktrees: blocked.map((result) => result.worktree),
+      output: blocked.map(evidence).join("\n\n"),
+    };
+  }
+
+  const errored = results.filter((result) => result.status === "error");
+  if (errored.length) {
+    return {
+      status: "error",
+      worktrees: errored.map((result) => result.worktree),
+      reason: errored
+        .map((result) => `${result.worktree ?? "?"}: ${result.reason ?? "unknown error"}`)
+        .join("; "),
+      output: errored.map(evidence).join("\n\n"),
+    };
+  }
+
+  // A probe never reviews; it reports the fingerprints callers dedup on
+  // (.opencode/plugins/aios-bugbot.mjs requires `fingerprint`, and silently re-reviews without it).
+  // A skipped sibling (empty diff, or a pushed head the PR gates own) is neutral in a probe
+  // sweep — without this, one clean worktree beside one probed worktree fell through to the
+  // unrecognised-verdict error below.
+  const probes = results.filter((result) => result.status === "probe");
+  const skippedCount = results.filter((result) => result.status === "skipped").length;
+  if (probes.length && probes.length + skippedCount === results.length) {
+    return {
+      status: "probe",
+      fingerprint: createHash("sha256")
+        .update(probes.map((result) => `${result.worktree}\0${result.fingerprint}`).join("\n"))
+        .digest("hex"),
+      fingerprints: probes.map((result) => ({
+        worktree: result.worktree,
+        fingerprint: result.fingerprint,
+      })),
+    };
+  }
+
+  if (results.every((result) => result.status === "skipped")) {
+    return { status: "skipped", reason: results[0].reason };
+  }
+
+  // Allowlist, not catch-all. Only an explicitly verified clear counts as clear; any status this
+  // function does not recognise is an error, so a future status added to evaluateLocalBugbotGate
+  // fails closed instead of silently passing the gate.
+  const unrecognised = results.filter(
+    (result) =>
+      !(result.status === "clear" && result.verified === true) && result.status !== "skipped"
+  );
+  if (unrecognised.length) {
+    return {
+      status: "error",
+      worktrees: unrecognised.map((result) => result.worktree),
+      reason: `unrecognised or unverified Bugbot verdict, refusing to treat as clear: ${unrecognised
+        .map((result) => `${result.worktree ?? "?"}=${result.status ?? "undefined"}`)
+        .join(", ")}`,
+    };
+  }
+
+  return {
+    status: "clear",
+    verified: true,
+    cached: false,
+    worktrees: results.map((result) => result.worktree),
+  };
+}
+
 export function formatHookResult(runtime, result) {
   if (!VALID_RUNTIMES.has(runtime)) throw new Error(`unsupported hook runtime: ${runtime}`);
   if (["clear", "skipped"].includes(result.status)) return {};
@@ -595,12 +759,24 @@ function main() {
   readHookInput();
   let result;
   try {
-    result = evaluateLocalBugbotGate({
-      // Hook payloads are agent-controlled input. Anchor the gate to the process
-      // working directory selected by the checked-in native adapter.
-      repo: process.cwd(),
-      probeOnly: args.probe,
+    // Hook payloads are agent-controlled input, so the target is never taken from them — nor from
+    // the process working directory, which the checked-in adapter pins to the session's start
+    // directory (normally the primary checkout, where CLAUDE.md §5 forbids doing work). Targets
+    // come from git's own worktree registry instead; see listGateTargets().
+    const results = listGateTargets(process.cwd()).map((repo) => {
+      try {
+        return { ...evaluateLocalBugbotGate({ repo, probeOnly: args.probe }), worktree: repo };
+      } catch (error) {
+        // One unreviewable worktree must not mask a finding in another, so this degrades to a
+        // per-target error and still lets every other target report.
+        return {
+          status: "error",
+          worktree: repo,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
     });
+    result = aggregateGateResults(results);
   } catch (error) {
     result = { status: "error", reason: error instanceof Error ? error.message : String(error) };
   }
