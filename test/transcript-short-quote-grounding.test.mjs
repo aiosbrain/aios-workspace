@@ -64,17 +64,23 @@ test("TD1 keeps a grounded short exact source quote", async () => {
   }
 });
 
-test("TD1 rejects a blank source quote at the parsing boundary", async () => {
+test("a blank source quote is dropped at the extract boundary instead of failing the whole run", async () => {
   const root = workspace();
   try {
-    // Given: the transcript contains meaningful text but the candidate evidence is blank.
+    // Given: the transcript contains meaningful text but the only candidate's evidence is blank.
     writeFileSync(path.join(root, TRANSCRIPT_REL), "Mina Okafor: Agreed.\n");
 
-    // When: the engine receives the blank source quote.
+    // When: the engine receives the blank source quote (previously: a hard PhaseExecutionError
+    // that killed extraction for the whole batch via Promise.all — see phases.ts extractCandidates).
     const result = await draftWithSourceQuote(root, "");
 
-    // Then: the untrusted candidate is rejected before a review can be staged as pending.
-    assert.equal(result.stage.status, "grading_error");
+    // Then: the candidate is dropped-and-continue rather than crashing the extract phase. Since it
+    // was the only candidate, the batch is legitimately empty and the existing "empty extraction
+    // must be certified transcript-wide" invariant (TD6) fails the rubric normally — not a
+    // grading_error. The drop is counted and surfaced on the result.
+    assert.equal(result.stage.status, "failed_rubric");
+    assert.equal(result.stage.decisions.length, 0);
+    assert.deepEqual(result.droppedExtraction, { decisions: 1, tasks: 0 });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

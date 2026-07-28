@@ -33,6 +33,7 @@ function transcriptPaths(args) {
 }
 
 function stagedPayload(root, result, stage, evidence) {
+  const droppedExtraction = result.droppedExtraction ?? { decisions: 0, tasks: 0 };
   return {
     command: "draft",
     outcome: "staged",
@@ -42,10 +43,15 @@ function stagedPayload(root, result, stage, evidence) {
     tasks: stage.tasks.length,
     facts: evidence.factsAttached,
     stakeholders: evidence.stakeholdersAttached,
+    droppedFacts: evidence.droppedFacts ?? 0,
+    droppedStakeholders: evidence.droppedStakeholders ?? 0,
+    droppedDecisions: droppedExtraction.decisions,
+    droppedTasks: droppedExtraction.tasks,
   };
 }
 
 function noChangesPayload(result, droppedEvidence) {
+  const droppedExtraction = result.droppedExtraction ?? { decisions: 0, tasks: 0 };
   return {
     command: "draft",
     outcome: "no_changes",
@@ -57,6 +63,8 @@ function noChangesPayload(result, droppedEvidence) {
     loops: result.loops?.length ?? 0,
     droppedFacts: droppedEvidence.facts,
     droppedStakeholders: droppedEvidence.stakeholders,
+    droppedDecisions: droppedExtraction.decisions,
+    droppedTasks: droppedExtraction.tasks,
   };
 }
 
@@ -128,10 +136,32 @@ async function gatherGroundedEvidence({ root, paths, fixture, args, deps, now })
   });
 }
 
-async function attachEvidence({ root, engine, stagePath, paths, fixture, args, deps, now }) {
+async function attachEvidence({
+  root,
+  engine,
+  stagePath,
+  stageStatus,
+  paths,
+  fixture,
+  args,
+  deps,
+  now,
+}) {
   const empty = { factsAttached: 0, stakeholdersAttached: 0 };
   const grounded = await gatherGroundedEvidence({ root, paths, fixture, args, deps, now });
   if (grounded.facts.length === 0 && grounded.stakeholders.length === 0) return empty;
+  // attachTranscriptEvidence only accepts a pending_review stage (engine guard, attach-evidence.ts).
+  // failed_rubric / grading_error stages are also "staged" outcomes but aren't eligible — report the
+  // grounded evidence as discarded instead of letting the engine's guard throw uncaught (the second
+  // half of the 2026-07-28 transcript-ingestion failure: even once the empty-sourceQuote candidate
+  // is dropped-and-continue, a real rubric failure on the survivors used to crash here).
+  if (stageStatus !== "pending_review") {
+    return {
+      ...empty,
+      droppedFacts: grounded.facts.length,
+      droppedStakeholders: grounded.stakeholders.length,
+    };
+  }
   const result = engine.attachTranscriptEvidence({
     root,
     stagePath,
@@ -175,10 +205,20 @@ export async function runDraftCommand(root, args, deps) {
       stakeholders: dropped.stakeholders.length,
     };
     const payload = noChangesPayload(result, droppedEvidence);
-    const droppedNote =
-      droppedEvidence.facts || droppedEvidence.stakeholders
-        ? ` (grounded evidence discarded: ${droppedEvidence.facts} facts + ${droppedEvidence.stakeholders} stakeholder mentions — no stage to attach to)`
-        : "";
+    const droppedParts = [];
+    if (droppedEvidence.facts || droppedEvidence.stakeholders) {
+      droppedParts.push(
+        `${droppedEvidence.facts} facts + ${droppedEvidence.stakeholders} stakeholder mentions — no stage to attach to`
+      );
+    }
+    if (payload.droppedDecisions || payload.droppedTasks) {
+      droppedParts.push(
+        `${payload.droppedDecisions} decision(s) + ${payload.droppedTasks} task(s) dropped for empty sourceQuote`
+      );
+    }
+    const droppedNote = droppedParts.length
+      ? ` (grounded evidence discarded: ${droppedParts.join("; ")})`
+      : "";
     return {
       code: 0,
       payload,
@@ -189,6 +229,7 @@ export async function runDraftCommand(root, args, deps) {
     root,
     engine,
     stagePath: result.stagePath,
+    stageStatus: result.stage.status,
     paths,
     fixture,
     args,
@@ -197,10 +238,22 @@ export async function runDraftCommand(root, args, deps) {
   });
   const stage = parseV2Stage(engine, readStageAfterEvidence(root, result, engine));
   const payload = stagedPayload(root, result, stage, evidence);
+  const droppedParts = [];
+  if (payload.droppedDecisions || payload.droppedTasks) {
+    droppedParts.push(
+      `${payload.droppedDecisions} decision(s) + ${payload.droppedTasks} task(s) dropped for empty sourceQuote`
+    );
+  }
+  if (payload.droppedFacts || payload.droppedStakeholders) {
+    droppedParts.push(
+      `${payload.droppedFacts} facts + ${payload.droppedStakeholders} stakeholder mentions discarded — stage is not pending_review`
+    );
+  }
+  const droppedNote = droppedParts.length ? ` (${droppedParts.join("; ")})` : "";
   return {
     code: statusExit(stage.status),
     payload,
-    text: `draft ${stage.status}: ${payload.decisions} decisions + ${payload.tasks} tasks + ${payload.facts} facts + ${payload.stakeholders} stakeholders — ${payload.stage}`,
+    text: `draft ${stage.status}: ${payload.decisions} decisions + ${payload.tasks} tasks + ${payload.facts} facts + ${payload.stakeholders} stakeholders — ${payload.stage}${droppedNote}`,
   };
 }
 

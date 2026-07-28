@@ -289,6 +289,63 @@ test("no_changes surfaces grounded evidence that was dropped instead of silently
   }
 });
 
+test("a failed_rubric stage reports discarded evidence instead of crashing on attach", async () => {
+  const repo = workspace();
+  try {
+    const out = [];
+    // Given: extraction succeeds and grounds real evidence, but the rubric fails (TD6) — the stage
+    // is persisted as failed_rubric, which is a "staged" outcome but is NOT eligible for
+    // attachTranscriptEvidence (engine guard: only pending_review stages accept evidence). Before
+    // this fix, attachEvidence called the engine unconditionally whenever outcome !== "no_changes"
+    // and crashed on the engine's guard exception for any non-pending staged result.
+    const code = await cmdTranscripts(
+      repo,
+      {},
+      ["draft", "--transcripts", TRANSCRIPT, "--rubric-budget", "0", "--json"],
+      {
+        runPhase: async ({ phase, input }) => {
+          if (phase === "extract") return extraction;
+          if (phase === "deduplicate") return { decisions: input.decisions, tasks: input.tasks };
+          if (phase === "verify") {
+            return {
+              verdict: "pass",
+              criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion),
+            };
+          }
+          return {
+            verdict: "fail",
+            certifiedNoChanges: false,
+            criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map((id) =>
+              id === "TD6"
+                ? { ...criterion(id), outcome: "fail", findings: ["synthetic TD6 failure"] }
+                : criterion(id)
+            ),
+          };
+        },
+        evidenceExtraction,
+        now: () => NOW,
+        stdout: (value) => out.push(String(value)),
+        stderr: () => {},
+      }
+    );
+
+    // Then: the CLI completes (does not throw) with the failed_rubric exit code, and reports the
+    // grounded evidence as discarded rather than silently attaching nothing with no explanation.
+    assert.equal(code, 2);
+    const payload = JSON.parse(out.join("\n"));
+    assert.equal(payload.status, "failed_rubric");
+    assert.equal(payload.facts, 0);
+    assert.equal(payload.stakeholders, 0);
+    assert.equal(payload.droppedFacts, 1);
+    assert.equal(payload.droppedStakeholders, 1);
+    const stage = JSON.parse(readFileSync(path.join(repo, payload.stage), "utf8"));
+    assert.equal(stage.facts.length, 0);
+    assert.equal(stage.stakeholderMentions.length, 0);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("approve routes evidence to tier files, records counts, and is idempotent for v2", async () => {
   const repo = workspace();
   try {

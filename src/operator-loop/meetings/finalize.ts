@@ -24,6 +24,7 @@ export function finalizeReview(options: FinalizeReviewOptions): DraftTranscriptR
       loops: options.evaluation.loops,
       gradeReport: options.evaluation.gradeReport,
       diagnostics: options.evaluation.diagnostics,
+      droppedExtraction: options.evaluation.droppedExtraction,
     };
   }
   const payload: ReviewedPayload = {
@@ -52,5 +53,10 @@ export function finalizeReview(options: FinalizeReviewOptions): DraftTranscriptR
     reviewDigest: computeReviewDigest(payload),
   };
   const stagePath = persistNewStage(options.root, stage);
-  return { outcome: "staged", stagePath, stage };
+  return {
+    outcome: "staged",
+    stagePath,
+    stage,
+    droppedExtraction: options.evaluation.droppedExtraction,
+  };
 }

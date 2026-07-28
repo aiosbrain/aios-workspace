@@ -3,7 +3,9 @@ import { readJsonFile } from "./transcripts-runtime.mjs";
 
 const PHASE_INSTRUCTIONS = {
   extract:
-    "Extract genuine decisions and explicit task commitments. Return {decisions, tasks} with grounded sourceQuote and transcript fields.",
+    "Extract genuine decisions and explicit task commitments. Return {decisions, tasks} with grounded sourceQuote and transcript fields. " +
+    "Every candidate must include a non-empty verbatim sourceQuote copied byte-for-byte from that transcript; never paraphrase, repair punctuation, or combine quotes. " +
+    "Do not infer anything the quote does not directly support. If you cannot find a clean verbatim quote for a candidate, omit that candidate entirely rather than returning it with an empty or invented sourceQuote.",
   deduplicate:
     "Remove substantive duplicates within the candidates and against the supplied live-log indexes. Return {decisions, tasks}.",
   verify:

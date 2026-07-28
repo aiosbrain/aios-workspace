@@ -3,6 +3,7 @@ import { PhaseExecutionError } from "./errors.js";
 import { TranscriptReviewError } from "./errors.js";
 import type {
   CandidateBatch,
+  DroppedExtractionCounts,
   GradeReport,
   PreparedTranscript,
   ReviewDiagnostic,
@@ -24,7 +25,10 @@ export type ReviewEvaluation = CandidateBatch & {
   readonly loops: readonly ReviewLoop[];
   readonly gradeReport: GradeReport;
   readonly diagnostics: readonly ReviewDiagnostic[];
+  readonly droppedExtraction: DroppedExtractionCounts;
 };
+
+const NO_DROPPED_EXTRACTION: DroppedExtractionCounts = { decisions: 0, tasks: 0 };
 
 export type EvaluateOptions = {
   readonly runPhase: TranscriptPhaseRunner;
@@ -120,9 +124,16 @@ export async function evaluateReview(options: EvaluateOptions): Promise<ReviewEv
   let loopsUsed = 0;
   const loops: ReviewLoop[] = [];
   let lastReport: GradeReport | null = null;
+  let droppedExtraction: DroppedExtractionCounts = NO_DROPPED_EXTRACTION;
   try {
     if (options.initialCandidates === undefined) {
-      candidates = await extractCandidates(options.runPhase, options.transcripts, options.liveLogs);
+      const extracted = await extractCandidates(
+        options.runPhase,
+        options.transcripts,
+        options.liveLogs
+      );
+      candidates = extracted.candidates;
+      droppedExtraction = extracted.dropped;
     }
     let completed = await completeGrade(options, candidates);
     candidates = completed.candidates;
@@ -151,6 +162,7 @@ export async function evaluateReview(options: EvaluateOptions): Promise<ReviewEv
       loops,
       gradeReport: lastReport,
       diagnostics: [],
+      droppedExtraction,
     };
   } catch (error) {
     if (!(error instanceof PhaseExecutionError)) throw error;
@@ -162,6 +174,7 @@ export async function evaluateReview(options: EvaluateOptions): Promise<ReviewEv
       loops,
       gradeReport,
       diagnostics: [{ phase: error.phase, message: error.message }],
+      droppedExtraction,
     };
   }
 }
