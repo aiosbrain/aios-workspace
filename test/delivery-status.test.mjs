@@ -112,7 +112,11 @@ async function withFakeGh(fixturesBySlug, fn) {
   chmodSync(path.join(bin, "gh"), 0o755);
   const originalPath = process.env.PATH;
   const originalRecord = process.env.RECORD;
+  const originalGhBin = process.env.AIOS_DELIVERY_GH_BIN;
   process.env.PATH = `${bin}:${originalPath}`;
+  // safe-exec resolves `gh` to an absolute system path (Sonar S4036), so a PATH-only fake
+  // no longer intercepts it — point the named stub seam at this fake too.
+  process.env.AIOS_DELIVERY_GH_BIN = path.join(bin, "gh");
   process.env.RECORD = record;
   try {
     return await fn(() =>
@@ -124,6 +128,8 @@ async function withFakeGh(fixturesBySlug, fn) {
     );
   } finally {
     process.env.PATH = originalPath;
+    if (originalGhBin === undefined) delete process.env.AIOS_DELIVERY_GH_BIN;
+    else process.env.AIOS_DELIVERY_GH_BIN = originalGhBin;
     if (originalRecord === undefined) delete process.env.RECORD;
     else process.env.RECORD = originalRecord;
     rmSync(bin, { recursive: true, force: true });
@@ -226,7 +232,9 @@ test("cmdDelivery: a gh fetch failure is reported, not thrown, and the process e
     );
     chmodSync(path.join(bin, "gh"), 0o755);
     const originalPath = process.env.PATH;
+    const originalGhBin = process.env.AIOS_DELIVERY_GH_BIN;
     process.env.PATH = `${bin}:${originalPath}`;
+    process.env.AIOS_DELIVERY_GH_BIN = path.join(bin, "gh");
     try {
       const { result: code, output } = captureConsole(() =>
         cmdDelivery(workspaceRepo, {}, ["status", "--repo", "aiosbrain/aios-workspace"])
@@ -235,6 +243,8 @@ test("cmdDelivery: a gh fetch failure is reported, not thrown, and the process e
       assert.match(output, /GitHub PR fetch failed/);
     } finally {
       process.env.PATH = originalPath;
+      if (originalGhBin === undefined) delete process.env.AIOS_DELIVERY_GH_BIN;
+      else process.env.AIOS_DELIVERY_GH_BIN = originalGhBin;
       rmSync(bin, { recursive: true, force: true });
     }
   } finally {
