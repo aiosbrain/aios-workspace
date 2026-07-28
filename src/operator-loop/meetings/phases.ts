@@ -1,9 +1,10 @@
 import type { LiveLogs, TranscriptPhaseRequest, TranscriptPhaseRunner } from "./contracts.js";
-import { parsePhaseCandidateBatch } from "./candidate-schema.js";
+import { parseLenientPhaseCandidateBatch, parsePhaseCandidateBatch } from "./candidate-schema.js";
 import { diagnosticMessage, PhaseExecutionError } from "./errors.js";
 import { isNearVerbatim } from "./markdown.js";
 import type {
   CandidateBatch,
+  DroppedExtractionCounts,
   GradeReport,
   PreparedTranscript,
   VerificationReport,
@@ -41,23 +42,44 @@ function parseOutput<T>(
   }
 }
 
+export type ExtractCandidatesResult = {
+  readonly candidates: CandidateBatch;
+  readonly dropped: DroppedExtractionCounts;
+};
+
 export async function extractCandidates(
   runPhase: TranscriptPhaseRunner,
   transcripts: readonly PreparedTranscript[],
   liveLogs: LiveLogs
-): Promise<CandidateBatch> {
+): Promise<ExtractCandidatesResult> {
   const outputs = await Promise.all(
     transcripts.map(async (transcript) => {
       const output = await invoke(runPhase, {
         phase: "extract",
         input: { transcript, liveLogs },
       });
-      return parseOutput("extract", output, parsePhaseCandidateBatch);
+      // Lenient: a candidate with an empty/blank sourceQuote is dropped-and-continue rather than
+      // failing the whole batch (Promise.all would otherwise let one bad candidate from one
+      // transcript kill extraction for every transcript in the run). Every other malformed field
+      // still throws — schema strictness for kept candidates is unchanged.
+      return parseOutput("extract", output, parseLenientPhaseCandidateBatch);
     })
   );
   return {
-    decisions: outputs.flatMap((batch) => batch.decisions),
-    tasks: outputs.flatMap((batch) => batch.tasks),
+    candidates: {
+      decisions: outputs.flatMap(({ batch }) => batch.decisions),
+      tasks: outputs.flatMap(({ batch }) => batch.tasks),
+    },
+    dropped: {
+      decisions: outputs.reduce(
+        (total, { dropped }) => total + dropped.filter((item) => item.kind === "decision").length,
+        0
+      ),
+      tasks: outputs.reduce(
+        (total, { dropped }) => total + dropped.filter((item) => item.kind === "task").length,
+        0
+      ),
+    },
   };
 }
 

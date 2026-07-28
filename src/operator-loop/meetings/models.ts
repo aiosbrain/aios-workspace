@@ -39,6 +39,28 @@ export type CandidateBatch = {
   readonly tasks: readonly TaskCandidate[];
 };
 
+// A decision/task candidate whose sourceQuote was missing or blank — dropped during extract
+// rather than failing the whole phase (see candidate-schema.ts: parseLenientPhaseCandidateBatch).
+export type DroppedCandidate = {
+  readonly kind: "decision" | "task";
+  readonly index: number;
+  readonly reason: "source_quote_empty";
+};
+
+export type LenientCandidateBatch = {
+  readonly batch: CandidateBatch;
+  readonly dropped: readonly DroppedCandidate[];
+};
+
+// Aggregate counts of dropped extract-phase candidates, surfaced on the draftTranscriptReview
+// result (both outcomes) so the CLI can report them — analogous to droppedFacts/droppedStakeholders
+// in scripts/transcripts-draft.mjs. Not persisted into the stage: this is a report of what the
+// current run's extraction discarded, not part of the reviewable stage's own record.
+export type DroppedExtractionCounts = {
+  readonly decisions: number;
+  readonly tasks: number;
+};
+
 // 1.12 evidence kinds. Grounded (deterministic verbatim source-quote verification), NOT rubric-graded:
 // they ride alongside decisions/tasks in the same stage and are applied under the same apply/push
 // lock, but they never enter the TD1–TD6 rubric loop and are excluded from the reviewDigest.
@@ -170,6 +192,7 @@ export type DraftTranscriptReviewResult =
       readonly outcome: "staged";
       readonly stagePath: string;
       readonly stage: ReviewableStage;
+      readonly droppedExtraction: DroppedExtractionCounts;
     }
   | {
       readonly outcome: "no_changes";
@@ -178,6 +201,7 @@ export type DraftTranscriptReviewResult =
       readonly loops: readonly ReviewLoop[];
       readonly gradeReport: GradeReport;
       readonly diagnostics: readonly ReviewDiagnostic[];
+      readonly droppedExtraction: DroppedExtractionCounts;
     };
 
 export type TranscriptReviewCounts = {

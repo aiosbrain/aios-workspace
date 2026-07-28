@@ -1,7 +1,21 @@
 import { createHash } from "node:crypto";
 import { TranscriptReviewError } from "./errors.js";
-import type { CandidateBatch, DecisionCandidate, TaskCandidate } from "./models.js";
-import { arrayValue, integer, literal, optionalString, record, stringValue } from "./parse.js";
+import type {
+  CandidateBatch,
+  DecisionCandidate,
+  DroppedCandidate,
+  LenientCandidateBatch,
+  TaskCandidate,
+} from "./models.js";
+import {
+  arrayValue,
+  integer,
+  literal,
+  optionalString,
+  record,
+  stringValue,
+  type UnknownRecord,
+} from "./parse.js";
 
 const TASK_SCHEDULE_DEFAULTS = {
   status: "Todo",
@@ -86,9 +100,8 @@ function scheduleValue(value: unknown, fallback: string): unknown {
     : value;
 }
 
-export function parsePhaseCandidateBatch(value: unknown): CandidateBatch {
-  const batch = record(value, "candidate batch");
-  const normalizedTasks = arrayValue(batch["tasks"], "tasks").map((value, index) => {
+function normalizedPhaseTasks(batch: UnknownRecord): readonly unknown[] {
+  return arrayValue(batch["tasks"], "tasks").map((value, index) => {
     const item = record(value, `tasks[${index}]`);
     return {
       ...item,
@@ -98,5 +111,65 @@ export function parsePhaseCandidateBatch(value: unknown): CandidateBatch {
       linear: scheduleValue(item["linear"], TASK_SCHEDULE_DEFAULTS.linear),
     };
   });
-  return parseCandidateBatch({ ...batch, tasks: normalizedTasks });
+}
+
+export function parsePhaseCandidateBatch(value: unknown): CandidateBatch {
+  const batch = record(value, "candidate batch");
+  return parseCandidateBatch({ ...batch, tasks: normalizedPhaseTasks(batch) });
+}
+
+/**
+ * A candidate whose `sourceQuote` is a blank string fails grounding by construction — it can never
+ * pass TD1 (near-verbatim match against a transcript). Rather than hard-failing the whole extract
+ * phase over one bad candidate (the historical behavior — `Promise.all` in `extractCandidates`
+ * meant a single empty `sourceQuote` killed the entire batch), drop just that candidate and
+ * continue. This mirrors `groundedCandidate()` in `scripts/transcript-extraction.mjs` in the
+ * facts/stakeholders pipeline. Missing, non-string, or otherwise malformed fields still throw; the
+ * schema itself stays strict (`sourceQuote` is not made optional).
+ */
+function isBlankSourceQuoteError(error: unknown, label: string, value: unknown): boolean {
+  const sourceQuote =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as UnknownRecord)["sourceQuote"]
+      : undefined;
+  return (
+    typeof sourceQuote === "string" &&
+    sourceQuote.trim().length === 0 &&
+    error instanceof TranscriptReviewError &&
+    error.kind === "invalid_input" &&
+    error.message === `${label} must be a non-empty string`
+  );
+}
+
+export function parseLenientPhaseCandidateBatch(value: unknown): LenientCandidateBatch {
+  const batch = record(value, "candidate batch");
+  const dropped: DroppedCandidate[] = [];
+
+  const decisions: DecisionCandidate[] = [];
+  arrayValue(batch["decisions"], "decisions").forEach((raw, index) => {
+    try {
+      decisions.push(decisionCandidate(raw, index, false));
+    } catch (error) {
+      if (isBlankSourceQuoteError(error, `decisions[${index}].sourceQuote`, raw)) {
+        dropped.push({ kind: "decision", index, reason: "source_quote_empty" });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  const tasks: TaskCandidate[] = [];
+  normalizedPhaseTasks(batch).forEach((raw, index) => {
+    try {
+      tasks.push(taskCandidate(raw, index, false));
+    } catch (error) {
+      if (isBlankSourceQuoteError(error, `tasks[${index}].sourceQuote`, raw)) {
+        dropped.push({ kind: "task", index, reason: "source_quote_empty" });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  return { batch: { decisions, tasks }, dropped };
 }

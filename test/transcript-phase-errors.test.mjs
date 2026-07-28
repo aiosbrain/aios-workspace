@@ -230,3 +230,55 @@ test("persisted V2 stages reject non-canonical scheduling and TD5 metadata", asy
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("extract drops only the empty-sourceQuote candidate, keeping its siblings staged", async () => {
+  const meetings = await loadMeetings();
+  const root = workspace();
+  try {
+    // Given: one decision candidate in the extracted batch has a blank sourceQuote.
+    const ungrounded = { ...decisions[2], id: "decision-empty-quote", sourceQuote: "" };
+    const runPhase = async ({ phase, input }) => {
+      if (phase === "extract") return { decisions: [...decisions, ungrounded], tasks };
+      if (phase === "deduplicate") return { decisions: input.decisions, tasks: input.tasks };
+      if (phase === "verify") return verificationReport();
+      return gradeReport();
+    };
+
+    // When: the batch is extracted.
+    const result = await meetings.draftTranscriptReview(options(root, runPhase));
+
+    // Then: the run completes normally — the good candidates are staged, only the bad one is
+    // dropped, and the drop is counted rather than silently discarded.
+    assertReviewShape(result.stage, "pending_review");
+    assert.equal(result.stage.decisions.length, decisions.length);
+    assert.deepEqual(
+      result.stage.decisions.map(({ id }) => id),
+      decisions.map(({ id }) => id)
+    );
+    assert.deepEqual(result.droppedExtraction, { decisions: 1, tasks: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("extract rejects a non-string sourceQuote instead of treating it as blank", async () => {
+  const meetings = await loadMeetings();
+  const root = workspace();
+  try {
+    const malformed = { ...decisions[2], id: "decision-numeric-quote", sourceQuote: 42 };
+    const runPhase = async ({ phase, input }) => {
+      if (phase === "extract") return { decisions: [...decisions, malformed], tasks };
+      if (phase === "deduplicate") return { decisions: input.decisions, tasks: input.tasks };
+      if (phase === "verify") return verificationReport();
+      return gradeReport();
+    };
+
+    const result = await meetings.draftTranscriptReview(options(root, runPhase));
+
+    assertReviewShape(result.stage, "grading_error");
+    assert.match(JSON.stringify(result.stage.diagnostics), /decisions\[3\]\.sourceQuote/);
+    assert.deepEqual(result.droppedExtraction, { decisions: 0, tasks: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
