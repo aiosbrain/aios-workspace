@@ -112,6 +112,10 @@ export async function cmdWorktree(repo, cfg, args) {
     path.dirname(fileURLToPath(import.meta.url)),
     "install-primary-commit-guard.sh"
   );
+  const pushGateInstaller = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "install-leak-gate-push-hook.sh"
+  );
 
   // Install the primary-checkout commit guard (blocks ALL authored commits in the
   // primary checkout, on any branch including main — forces worktree use). Local-only
@@ -133,6 +137,26 @@ export async function cmdWorktree(repo, cfg, args) {
     }
   }
 
+  // Install the pre-push leak gate. This repo is PUBLIC: a push publishes immediately, so a
+  // merge-time CI check is too late to prevent disclosure — it can only report one that already
+  // happened. Same local-only .git/hooks story as the commit guard, so re-installed here too.
+  function installPushGate() {
+    if (!existsSync(pushGateInstaller)) {
+      console.log(c.dim("  leak-gate push hook installer not found — skipping"));
+      return false;
+    }
+    try {
+      execFileSync("bash", [pushGateInstaller], { cwd: repo, stdio: "pipe" });
+      console.log(
+        c.dim("  installed pre-push leak gate → blocks publishing confidential material")
+      );
+      return true;
+    } catch (e) {
+      console.log(c.dim("  leak-gate push hook install failed (non-fatal): ") + (e.message || e));
+      return false;
+    }
+  }
+
   const installHook = () => installPostCheckoutHook(repo) !== "skipped";
 
   if (sub === "add") {
@@ -147,6 +171,7 @@ export async function cmdWorktree(repo, cfg, args) {
     // 0. Ensure the auto-hydration hook + primary-commit guard are installed in primary
     installHook();
     installGuard();
+    installPushGate();
 
     // 0b. Ensure the container dir exists — `git worktree add` does not
     // reliably mkdir -p intermediate directories on every platform/git
@@ -231,6 +256,7 @@ export async function cmdWorktree(repo, cfg, args) {
   if (sub === "install-hook") {
     installHook();
     installGuard();
+    installPushGate();
     return;
   }
 

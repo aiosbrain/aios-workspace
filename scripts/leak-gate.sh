@@ -50,18 +50,29 @@ umask 077
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # ── load the confidential term set (never hardcoded in this public repo) ─────
+# The term set is OPTIONAL and, for an external contributor, unobtainable by design: shipping
+# it would enumerate the protected identifiers. Its absence therefore must NOT disable the gate.
+#
+# It used to. A missing term set printed "SKIPPED" and exited 0, so on every machine without
+# ~/.config/aios-nda/ the gate was decorative — while CONTRIBUTING.md instructed contributors to
+# run it and expect a clean result. A contributor pushed a client prospect brief to a branch of
+# this PUBLIC repo and saw green. The skip message even claimed "local write-time + pre-commit
+# hooks still enforce", which is false: those hooks read this same missing file.
+#
+# So the gate now has TWO layers, and the always-on one is the baseline:
+#   • BASELINE  — name-free shape rules, below, shipped in this repo, ALWAYS enforced.
+#   • TERM SET  — the private identifier list, when available, layered on top.
+# No term set now degrades to baseline-only and says so honestly, instead of to nothing.
 TERMS_FILE="${AIOS_LEAK_TERMS_FILE:-$HOME/.config/aios-nda/leak-gate-terms.sh}"
+TERMS_LOADED=0
 if [ -f "$TERMS_FILE" ]; then
   # shellcheck disable=SC1090
   . "$TERMS_FILE"
+  TERMS_LOADED=1
 elif [ -n "${AIOS_LEAK_TERMS_B64:-}" ]; then
   # shellcheck disable=SC1090
   . <(printf '%s' "$AIOS_LEAK_TERMS_B64" | base64 --decode)
-else
-  echo "leak-gate: no term set configured (set \$AIOS_LEAK_TERMS_FILE, install" \
-       "~/.config/aios-nda/leak-gate-terms.sh, or set \$AIOS_LEAK_TERMS_B64 in CI)."
-  echo "leak-gate: SKIPPED — local write-time + pre-commit hooks still enforce."
-  exit 0
+  TERMS_LOADED=1
 fi
 
 # ── enumerate scan targets via GIT, never a filesystem walk (AIO-517) ───────
@@ -193,6 +204,83 @@ scan() { # $1 = extra grep flag(s) or "", $2 = pattern, $3 = human category labe
 
 }
 
+# ── BASELINE: name-free shape rules, always enforced ─────────────────────────
+#
+# These describe the SHAPE of private material rather than any identifier, so they need no
+# secret list, are safe to ship in a public repo, and — crucially — catch a client nobody has
+# registered yet. The gate's term list had the first client but never the two taken on since;
+# a name-only gate protects exactly the names someone remembered to add.
+#
+# Every rule below matches ZERO files on a clean tree. They are deliberately narrow: a gate
+# that cries wolf is a gate someone switches off. scaffold/, examples/ and test/ are exempt
+# because a spine directory is the literal subject matter there.
+BASELINE_PATHS='(^|/)docs/bd/|(^|/)clients/[^/]+/|(^|/)[0-6]-(context|inbox|work|log|shared|personal|business)/'
+BASELINE_PATH_EXEMPT='^(scaffold|examples|test)/'
+
+# Frontmatter declaring owner-only content has no business in the product repo. docs/ is exempt:
+# the inbox-governance docs legitimately carry `access: admin` as their subject matter.
+BASELINE_TIER_EXEMPT='^(scaffold|examples|test|docs)/'
+
+# $1 = path regex, $2 = exemption regex, $3 = human category label.
+# Matches on the PATH, so it catches a file whose contents are innocuous but whose location
+# betrays it — the prospect brief that leaked was identifiable from its filename alone.
+scan_paths() {
+  [ -s "$FILE_LIST" ] || return 0
+  : > "$MATCH_LIST"
+  local pattern="$1" exempt="$2" f rel
+  while IFS= read -r -d '' f; do
+    rel="${f#"$ROOT"/}"
+    printf '%s' "$rel" | grep -qE "$exempt" && continue
+    printf '%s' "$rel" | grep -qE "$pattern" && printf '%s\0' "$f" >> "$MATCH_LIST"
+  done < "$FILE_LIST"
+  [ -s "$MATCH_LIST" ] || return 0
+  fail=1
+  _count=0
+  _locs=""
+  while IFS= read -r -d '' f; do tally_match "$f"; done < "$MATCH_LIST"
+  local where="location withheld"
+  [ -n "$_locs" ] && where="under: $_locs"
+  printf '  %-52s %d file(s)  %s\n' "$3" "$_count" "$where"
+}
+
+# The baseline is about material that does not belong in THE PRODUCT REPO, so it only applies
+# when that is what we are scanning. The same gate is also called on workspace-shaped roots —
+# `aios promote` passes one deliverable copied out of a workspace, `aios timeline` a render dir —
+# where a `2-work/` or `clients/<name>/` path is entirely normal and firing there would be a
+# false positive on legitimate content. `scaffold/` + `scripts/leak-gate.sh` is the toolkit's
+# own signature: a stamped workspace has the latter but never the former.
+IS_PRODUCT_REPO=0
+if [ -d "$ROOT/scaffold" ] && [ -f "$ROOT/scripts/leak-gate.sh" ]; then
+  IS_PRODUCT_REPO=1
+fi
+
+if [ "$IS_PRODUCT_REPO" -eq 1 ]; then
+  scan_paths "$BASELINE_PATHS" "$BASELINE_PATH_EXEMPT" "workspace/client material in the product repo"
+fi
+
+# Owner-only frontmatter, checked on content but scoped away from the trees that teach it.
+# Product repo only, for the same reason as the path rules above: `access: admin` is the normal,
+# correct tag for most of a real workspace.
+if [ "$IS_PRODUCT_REPO" -eq 1 ] && [ -s "$FILE_LIST" ]; then
+  : > "$MATCH_LIST"
+  while IFS= read -r -d '' f; do
+    rel="${f#"$ROOT"/}"
+    printf '%s' "$rel" | grep -qE "$BASELINE_TIER_EXEMPT" && continue
+    case "$f" in *.md) ;; *) continue ;; esac
+    head -20 "$f" 2>/dev/null | grep -qE '^access:[[:space:]]*(admin|private)[[:space:]]*$' &&
+      printf '%s\0' "$f" >> "$MATCH_LIST"
+  done < "$FILE_LIST"
+  if [ -s "$MATCH_LIST" ]; then
+    fail=1
+    _count=0
+    _locs=""
+    while IFS= read -r -d '' f; do tally_match "$f"; done < "$MATCH_LIST"
+    _where="location withheld"
+    [ -n "$_locs" ] && _where="under: $_locs"
+    printf '  %-52s %d file(s)  %s\n' "owner-only (admin/private) frontmatter" "$_count" "$_where"
+  fi
+fi
+
 if [ -n "${STRONG:-}" ]; then
   scan -i "$STRONG" "client/person/firm identifier (substring)"
 fi
@@ -207,10 +295,29 @@ if [ "$fail" -eq 0 ]; then
   # $ROOT is deliberately NOT echoed: callers pass arbitrary paths (aios promote passes a
   # single deliverable, aios timeline a render dir) and a path can itself carry a protected
   # identifier. The literal "leak-gate: CLEAN" prefix is the asserted contract.
-  echo "leak-gate: CLEAN — no forbidden identifiers found."
+  #
+  # State the COVERAGE, never just the verdict. "CLEAN" with no qualifier is what let a
+  # contributor believe a no-op run had checked something.
+  if [ "$TERMS_LOADED" -eq 1 ]; then
+    echo "leak-gate: CLEAN — no forbidden identifiers found (baseline + term set)."
+  else
+    # The LAST non-blank line must stay a `leak-gate: <VERDICT>` marker: that shape is a pinned
+    # output contract (test/cli-output-contract.test.mjs), and scripts/timeline.mjs keys on
+    # SKIPPED to withhold an EXTERNAL render when the identifier sweep could not run. That
+    # fail-closed posture is still exactly right here — baseline passed, but no identifier was
+    # ever checked — so the marker stays SKIPPED and only the wording becomes honest. Advisories
+    # print BEFORE it so they cannot displace the marker.
+    echo "leak-gate: baseline rules passed; no private term set was loaded, so client/person" \
+         "identifiers were NOT checked."
+    echo "leak-gate: to check identifiers too, install ~/.config/aios-nda/leak-gate-terms.sh" \
+         "or set \$AIOS_LEAK_TERMS_FILE / \$AIOS_LEAK_TERMS_B64."
+    echo "leak-gate: SKIPPED — identifier sweep did not run (baseline only)."
+  fi
   exit 0
 else
   echo "  matched source content and untrusted paths are withheld on purpose."
+  [ "$TERMS_LOADED" -eq 1 ] ||
+    echo "  (baseline rules only — no private term set loaded.)"
   echo "leak-gate: FAILED — forbidden identifiers above must be removed."
   exit 1
 fi

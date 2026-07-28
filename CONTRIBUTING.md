@@ -7,14 +7,36 @@ shared [AIOS Team Brain](docs/brain-api.md).
 
 ## Ground rules
 
-1. **No client data, ever.** This repo contains only generic structure, harness
-   code, and *synthetic* example data. Before you push, `scripts/leak-gate.sh` must
-   pass — it blocks client/firm/person identifiers and business-data patterns. CI
-   runs it on every PR. If you need example data, invent it (see
-   `examples/sample-engagement/`).
-2. **Keep it generic.** Anything engagement-specific belongs in `args`, config, or
+1. **No client data, ever. This repository is PUBLIC.** A push publishes immediately —
+   before any review, and before CI runs. A failing check cannot unpublish, and deleting
+   a branch afterwards does not reliably remove the content. Treat every push as
+   permanent disclosure.
+
+   This repo contains only generic structure, harness code, and *synthetic* example data.
+   If you need example data, invent it (see `examples/sample-engagement/`).
+
+   `scripts/leak-gate.sh` runs on every push (pre-push hook) and in CI. It has two layers,
+   and **you only get one of them**:
+   - **Baseline** — always on, shipped in this repo. Catches workspace/client material by
+     shape: `docs/bd/`, any `clients/<name>/` path, a workspace spine (`0-context/` …
+     `6-business/`), or owner-only `access: admin|private` frontmatter.
+   - **Identifier list** — a private, untracked term list. Maintainers have it; you will
+     not, by design (shipping it would publish the very names it protects). When it is
+     absent the gate says so explicitly and checks the baseline only.
+
+   So **a clean gate run does not mean your change is free of client identifiers.** It
+   means nothing matched the rules that were actually loaded. You are still responsible
+   for what you write.
+
+2. **Team and client context does not belong in this repo.** This is the public OSS
+   product. Your own work goes in *your workspace* (`aios-workspace`, scaffolded and
+   private); anything shared with colleagues goes to the **Team Brain**
+   (`aios-team-brain`) via `aios push`, which enforces access tiers. If you find yourself
+   adding a strategy note, a prospect brief, or meeting context under `docs/`, it is in
+   the wrong repo.
+3. **Keep it generic.** Anything engagement-specific belongs in `args`, config, or
    the scaffolded repo — not in the framework. No names, no real numbers.
-3. **Read-only harnesses.** A workflow harness analyzes and returns data; the calling
+4. **Read-only harnesses.** A workflow harness analyzes and returns data; the calling
    session writes output. Harnesses never edit a canonical log.
 
 ## Adding a dynamic-workflow harness

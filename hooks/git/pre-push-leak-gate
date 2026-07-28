@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# pre-push-leak-gate — run the confidentiality leak gate before anything is published.
+#
+# WHY PRE-PUSH AND NOT JUST PRE-COMMIT/CI:
+# On a PUBLIC repository, content becomes world-readable the instant a branch is pushed —
+# not when a PR merges. The gate was wired into CI (a merge-time check), so a contributor
+# could push a branch carrying confidential material, have CI fail, and the content would
+# still be public: a failing check cannot unpublish. That is exactly how a client prospect
+# brief sat on a public branch of this repo from July until it was found.
+#
+# Push is the publication event, so push is where the gate belongs.
+#
+# Local hooks are never version-controlled, so this tracked source is copied into
+# .git/hooks/pre-push by scripts/install-leak-gate-push-hook.sh (run automatically by
+# `aios worktree add`). Worktrees share the primary's hooks dir, so one install covers all.
+#
+# Bypass (deliberately awkward, and it is on you):
+#   AIOS_ALLOW_UNGATED_PUSH=1 git push ...
+
+set -euo pipefail
+
+if [ "${AIOS_ALLOW_UNGATED_PUSH:-}" = "1" ]; then
+  echo "pre-push: leak gate BYPASSED via AIOS_ALLOW_UNGATED_PUSH=1." >&2
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$repo_root" ] || exit 0
+
+gate="$repo_root/scripts/leak-gate.sh"
+# A missing gate script must not silently allow the push: that is the failure mode this
+# whole change exists to remove. Refuse, and say why.
+if [ ! -f "$gate" ]; then
+  echo "pre-push: scripts/leak-gate.sh not found — refusing to push ungated." >&2
+  echo "pre-push: override with AIOS_ALLOW_UNGATED_PUSH=1 if this is genuinely intended." >&2
+  exit 1
+fi
+
+if bash "$gate" "$repo_root"; then
+  # Hand off to any pre-existing pre-push the installer preserved, so adding this gate never
+  # silently disables someone else's hook. Its exit status becomes ours.
+  chained="$(git rev-parse --git-common-dir)/hooks/pre-push.chained"
+  if [ -x "$chained" ]; then
+    exec "$chained" "$@"
+  fi
+  exit 0
+fi
+
+echo >&2
+echo "pre-push: BLOCKED — the leak gate found confidential material in the tree." >&2
+echo "pre-push: this repository is PUBLIC; pushing publishes immediately, and a later" >&2
+echo "pre-push: CI failure or branch deletion cannot fully undo that." >&2
+echo "pre-push: team/client context belongs in your workspace or the team brain, not here." >&2
+exit 1
