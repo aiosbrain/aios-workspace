@@ -1,0 +1,324 @@
+{
+  "$comment": "Machine-readable rules + allowlist for scripts/check-boundaries.mjs. The rules ARE the future repo seams (AIO-597, Wave 1 of the multi-repo split) — see ../CLAUDE.md and RESOLVER.md for the planned topology. `grandfathered` entries are ratchet-only-down: every entry is a REAL, MEASURED coupling in the current tree, not a projection. Adding a new grandfather entry always needs a reason; removing one (by fixing the coupling) never needs permission.",
+  "rules": [
+    {
+      "id": "R1",
+      "description": "scripts/<cmd>/* is importable only via its own top-level barrel scripts/<cmd>.mjs, or from another file inside the same scripts/<cmd>/ directory (same-dir siblings). Any other scripts/** file reaching directly into a different cmd's subdirectory bypasses the barrel and is a seam violation — the future @aios-alpha/toolkit-common split will physically separate these directories from whatever doesn't go through the barrel.",
+      "from": "scripts/**",
+      "to": "scripts/*/**"
+    },
+    {
+      "id": "R2",
+      "description": "hooks/** may import a top-level scripts/*.mjs barrel, but must never reach directly into a scripts/<cmd>/ subdirectory. Hooks ship into every scaffolded workspace (scaffold/.claude via `aios update`) and must depend only on stable public entry points, not another cmd's internals.",
+      "from": "hooks/**",
+      "to": "scripts/*/**"
+    },
+    {
+      "id": "R3",
+      "description": "src/** (the future @aios-alpha/operator-loop package) must never import scripts/** (aios-workspace core / the future @aios-alpha/toolkit-common). The operator loop is a client of the toolkit, never the reverse — Engineering Constitution direction of dependency.",
+      "from": "src/**",
+      "to": "scripts/**"
+    },
+    {
+      "id": "R4",
+      "description": "gui/server must not deep-import scripts/** at all, at any depth. The future aios-workspace-gui repo's seam contract is 'CLI --json output + @aios-alpha/toolkit-common only' — no direct filesystem reach into aios-workspace core internals.",
+      "from": "gui/server/**",
+      "to": "scripts/**"
+    },
+    {
+      "id": "R5",
+      "description": "Nothing outside test/** may import test/**. Tests are a leaf: fixtures and helpers stay test-only, never a dependency of production code.",
+      "from": "**",
+      "to": "test/**"
+    }
+  ],
+  "grandfathered": [
+    {
+      "from": "scripts/aios.mjs",
+      "to": "scripts/cli/dispatch.mjs",
+      "reason": "R1: scripts/cli/ has no top-level barrel (scripts/cli.mjs) yet — aios.mjs is the de facto sole dispatch entry into it.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/cli-common.mjs",
+      "to": "scripts/ui/output-context.mjs",
+      "reason": "R1: scripts/ui/ has no top-level barrel (scripts/ui.mjs) yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/decisions.mjs",
+      "to": "scripts/analyze/sources.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel (scripts/analyze.mjs) yet — sibling scripts reach in directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/decisions.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/rails.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/rails.mjs",
+      "to": "scripts/analyze/sources.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/instincts.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week-cmd.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "scripts/maturity-week-cmd.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel yet.",
+      "issue": "AIO-597"
+    },
+
+    {
+      "from": "hooks/instinct-observe.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly; no barrel exists to route through yet.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-brief.mjs",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/metrics.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-capture.mjs",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/maturity-nudge.mjs",
+      "to": "scripts/analyze/parse-claude.mjs",
+      "reason": "R2: hook reaches into scripts/analyze/ directly.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "hooks/local-bugbot-gate.mjs",
+      "to": "scripts/review-bugbot/trusted-env.mjs",
+      "reason": "R2: resolveCanonicalBranchHead is not re-exported from the scripts/review-bugbot.mjs barrel; hook reaches past it for that one helper.",
+      "issue": "AIO-597"
+    },
+
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/workspace-parse.mjs",
+      "reason": "R3: parsers.ts is the deliberate single cross-boundary import point (its own header comment) re-exporting the shared zero-dep .mjs parsers as typed contracts for the rest of src/operator-loop, pending the @aios-alpha/operator-loop extraction.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/tasks-table.mjs",
+      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/flat-yaml.mjs",
+      "reason": "R3: see parsers.ts header — same single cross-boundary import point.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/maturity-store.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse, re-exported as a typed contract.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/maturity-fold.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "src/operator-loop/parsers.ts",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R3: see parsers.ts header — AM1/AEM engine (AIO-144) reuse.",
+      "issue": "AIO-597"
+    },
+
+    {
+      "from": "gui/server/config-routes.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; runtime catalog lookup used by the config routes.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/cost-config.mjs",
+      "to": "scripts/analyze/claude-plan.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares Claude plan pricing detection with the CLI cost report.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/index.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/index.mjs",
+      "to": "scripts/gen-catalog.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/index.mjs",
+      "to": "scripts/connector.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/index.mjs",
+      "to": "scripts/brain-config.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/maturity.mjs",
+      "to": "scripts/analyze/guidance.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares AEM guidance copy with the CLI maturity brief.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/maturity.mjs",
+      "to": "scripts/analyze/aem.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares AEM scoring with the CLI maturity brief.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/tasks.mjs",
+      "to": "scripts/tasks-table.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares task-table parsing with the CLI.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/tasks.mjs",
+      "to": "scripts/workspace-parse.mjs",
+      "reason": "R4: known coupling, dies in the GUI decoupling; shares frontmatter parsing with the CLI.",
+      "issue": "AIO-597"
+    },
+
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/lock-skill-library.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate): skill-library route locking shares the CLI's lock helper.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/lock-marketplace.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/connector.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/gen-catalog.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/skill-library.mjs",
+      "to": "scripts/skill-scan.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+
+    {
+      "from": "gui/server/runtime-adapters/acp.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate): runtime-adapters share the runtime catalog with the CLI.",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/runtime-adapters/claude-code.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/runtime-adapters/index.mjs",
+      "to": "scripts/runtimes.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    },
+    {
+      "from": "gui/server/runtime-adapters/index.mjs",
+      "to": "scripts/flat-yaml.mjs",
+      "reason": "R4 (measured, not in the original ~13 estimate).",
+      "issue": "AIO-597"
+    }
+  ]
+}
