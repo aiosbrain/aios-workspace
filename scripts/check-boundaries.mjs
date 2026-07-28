@@ -38,6 +38,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gitFiles } from "./git-files.mjs";
 
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -83,6 +84,32 @@ function walkFiles(dir, out) {
     else if (SOURCE_EXT_RE.test(entry) && !DECLARATION_EXT_RE.test(entry)) out.push(full);
   }
   return out;
+}
+
+/**
+ * Source files to scan, enumerated via git (AIO-517) rather than by walking the tree.
+ * SKIP_DIR_NAMES is a hand-maintained list that has to track .gitignore to stay correct, and
+ * it does not: `src-tauri/target` (1.6 GB / 35k files) has no entry, so the walk descends
+ * into it. Git already knows exactly which content can reach a commit, so every ignored tree
+ * is structurally invisible instead of being excluded by name.
+ *
+ * SKIP_DIR_NAMES is still applied on top, so a *tracked* build directory is treated exactly
+ * as before — this narrows what is scanned, never widens it.
+ *
+ * Falls back to the walk when ROOT is not a git work tree, which is how the synthetic
+ * fixture trees in test/check-boundaries.test.mjs are scanned.
+ */
+function enumerateSourceFiles(root) {
+  const rels = gitFiles(root);
+  if (!rels) return walkFiles(root, []);
+  return rels
+    .filter(
+      (rel) =>
+        SOURCE_EXT_RE.test(rel) &&
+        !DECLARATION_EXT_RE.test(rel) &&
+        !rel.split("/").some((segment) => SKIP_DIR_NAMES.has(segment))
+    )
+    .map((rel) => path.join(root, rel));
 }
 
 // Mirrors scripts/check-domain-isolation.mjs's parsing approach, extended to also recognize
@@ -200,7 +227,7 @@ function run() {
   const grandfatherSet = new Set(grandfathered.map((g) => buildGrandfatherKey(g.from, g.to)));
   const ruleById = new Map(rules.map((r) => [r.id, r]));
 
-  const files = walkFiles(ROOT, []);
+  const files = enumerateSourceFiles(ROOT);
   const violations = [];
   const usedGrandfather = new Set();
 
