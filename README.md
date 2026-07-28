@@ -39,7 +39,8 @@ aios-workspace/
 │       │             transcript-decisions, weekly-synthesis, aios-sync)
 │       ├── rubrics/  checkable criteria for rubric-gated self-correction
 │       └── memory/   instincts + incidents (cross-session learning)
-├── validation/      OGR validators (structure · frontmatter · secrets · aios config · rubrics)
+├── validation/      OGR01–OGR15 validators (workspace hygiene · scaffold + runtime
+│                    contracts · advisory scorecards); validate-all.sh runs them all
 ├── hooks/           Claude Code guards (secrets · access · frontmatter · sync nudge)
 │                    shipped into every scaffolded workspace + registered in
 │                    .claude/settings.json, so the PreToolUse guard fires there too

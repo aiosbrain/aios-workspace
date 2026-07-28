@@ -62,18 +62,49 @@ The template (`scaffold/.claude/`) ships:
 
 ## 3. Validators (OGR)
 
-Pure-shell, dependency-free checks you can point at any workspace, also wired into
-CI:
+Fifteen numbered checks — `OGR01`–`OGR15`, five Bash and ten Node ESM — that you can
+run individually against any path or as one gate, also wired into CI.
+`validation/validate-all.sh <path>` runs all fifteen and exits non-zero with a count of
+the ones that failed. Two narrower modes exist for hot paths: `--critical` runs **OGR03
+only** (the secret scan), `--quick` runs **OGR01 only** (folder structure).
+
+### Workspace hygiene — point these at a workspace
 
 | Validator | Checks |
 |-----------|--------|
-| `check-structure.sh` | The numbered spine, required files, personal-folder shape |
-| `check-frontmatter.sh` | YAML frontmatter present + required fields by directory |
-| `check-secrets.sh` | API keys, tokens, private keys, `.env` files (**critical** — hard fail) |
+| **OGR01** `check-structure.sh` | The numbered spine (accepting the legacy numbered names too), required top-level files (`README.md`, `workspace.yaml`, `contacts.yaml`), and the personal-folder shape. Log files and OKF index files are recommended — missing ones warn, not fail |
+| **OGR02** `check-frontmatter.sh` | Markdown files open with a closed YAML frontmatter block carrying the fields their directory requires: `status` everywhere, `owner` in `2-work/`, `access` in `4-shared/` |
+| **OGR03** `check-secrets.sh` | API keys, tokens, private keys, `.env` files (**critical** — any match is a hard fail) |
+| **OGR04** `check-aios-config.sh` | `aios.yaml`, the Team Brain sync config: no `admin` in `sync_tiers`, `api_key_env` holding a variable *name* rather than a value, no YAML nesting beyond the restricted subset. A repo with no `aios.yaml` is standalone and passes |
+| **OGR05** `check-rubrics.sh` | Every `.claude/rubrics/*.md` has `kind: rubric`, an integer `budget`, and at least one criterion row with unique IDs; every rule in `.claude/memory/instincts.md` links at least one incident file that exists. Repos without `rubrics/` or `memory/` pass |
+| **OGR14** `check-file-governance.mjs` | The anti-sprawl ratchet — the commit/CI-time backstop behind the write-time `file-governance-guard` hook, importing the *same* classification rules so the two layers can't drift. Every top-level entry must be a spine dir, a toolkit dir, or a known root file, and content files must carry a frontmatter block with a status/access field. Findings are warnings: it reports sprawl, it never fails the run |
 
-`validate-all.sh` runs all three, with `--critical` and `--quick` modes.
+### Scaffold + runtime contracts — these validate the toolkit itself
 
-Every validator enumerates its targets **via git** — `git ls-files` (tracked) plus
+Several of these stamp a throwaway workspace with `scaffold-project.sh` and assert
+against the result, so a template regression is caught before anyone clones it.
+
+| Validator | Checks |
+|-----------|--------|
+| **OGR06** `check-skill-export.mjs` | The BYOA skill-export round-trip: every skill exports cleanly for each runtime (`claude-code`, `hermes`, `openclaw`, `codex`, `opencode`, `claude-api`) and `SKILL.md` stays the single source of truth — valid frontmatter, exactly one H1, `.workflow.js` preserved on claude-code identity, and multi-agent harnesses flagged **degraded** on runtimes that can't run them |
+| **OGR07** `check-runtime-adapters.mjs` | The BYOA runtime registry (`scripts/runtimes.mjs`), the flat-YAML config reader, and the GUI adapter registry's resolution rules — deliberately without requiring any external runtime CLI to be installed |
+| **OGR08** `check-scaffold-guard.mjs` | A scaffolded workspace ships a *working* guard: `hooks/team-ops-guard.sh` present and executable, its secret patterns alongside it, and a `.claude/settings.json` registering the hook for Edit/Write/MultiEdit — then feeds the shipped hook a secret over stdin and requires it to block (exit 2) |
+| **OGR09** `check-skill-library.mjs` | The cockpit skill library is safe to ship: vendored official skills are Apache-2.0, none of the four proprietary document skills is vendored, no symlinks in the official tree, the committed `index.json` matches what's on disk, community ids stay disjoint from official, and marketplace entries carry a pinned `{repo, commit, path_in_repo}` plus per-file sha256 hashes |
+| **OGR11** `check-scaffold-git-workflow.mjs` | A generated workspace carries the personal-workstation git contract in `.claude/CLAUDE.md`, `AGENTS.md`, and `.claude/rules/git-workflow.md` — so new owners and their agents don't treat an IC workspace as a toolkit PR staging area |
+| **OGR12** `check-opencode-scaffold.mjs` | A generated workspace is OpenCode-native as well as Claude-native: `opencode.json` (`default_agent`, governance instructions, plugin), the four `.opencode/agents/`, at least six `.opencode/command/` files, the instincts plugin source, and the runtime-agnostic framing in `0-context/index.md` + `AGENTS.md` |
+| **OGR15** `check-delivery-skill-suite.mjs` | `.claude/skill-suite.json` validates against its JSON Schema, and every skill in it has trigger-corpus coverage that actually routes: ≥5 positive, ≥5 negative, ≥3 overlap, ≥2 pressure cases plus an explicit one, with mutation skills required *never* to auto-select. Skips cleanly where the manifest isn't installed |
+
+### Advisory scorecards — information, not a gate
+
+Both always exit 0. A brand-new repo should not fail `validate-all` for scoring low.
+
+| Validator | Reports |
+|-----------|---------|
+| **OGR10** `check-agent-readiness.mjs` | How ready a repo is for agents to work in it verifiably, scored against `agent-readiness.rubric.json` — level, composite %, per-pillar rollup, and the ranked gaps to the next level. `--json` is what `aios assess-codebase` consumes |
+| **OGR13** `check-modularity.mjs` | Deterministic architecture metrics from the codebase-memory knowledge graph (dead code, fan-out hotspots, high complexity, mutual recursion) diffed against a committed baseline. Advisory today; flipping `mode: "ratchet"` in `modularity.config.json` makes a regression beyond the configured limits exit 1 |
+
+The content-scanning validators — the secret scan and the frontmatter check — enumerate
+their targets **via git** — `git ls-files` (tracked) plus
 `git ls-files -o --exclude-standard` (untracked but not ignored) — never a filesystem
 walk with an exclude list. That union is exactly the content that can reach a commit, and
 it makes gitignored build trees structurally invisible: a 1.6 GB `src-tauri/target` used

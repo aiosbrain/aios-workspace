@@ -38,7 +38,7 @@ the same spine, three skins.
 |------|------|
 | `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/` including **git-workflow**, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`) + `scaffold/AGENTS.md.tmpl`. Editing the product's behavior usually means editing here. |
 | `scripts/` | `scaffold-project.sh` (stamp a workspace), `aios.mjs` (Team Brain sync CLI: `push`/`pull`/`status`), `leak-gate.sh`, GUI/runtime/catalog helpers. |
-| `validation/` | OGR validators (`validate-all.sh`: structure · frontmatter · secrets · aios config · rubrics). Must pass. |
+| `validation/` | The OGR validators, `OGR01`–`OGR15` (`validate-all.sh` runs all fifteen; `--critical` = OGR03 secrets only, `--quick` = OGR01 structure only). Workspace hygiene (OGR01–05, 14), scaffold + runtime contracts (OGR06–09, 11, 12, 15), advisory scorecards (OGR10, 13 — always exit 0). Must pass. Full table: `docs/feature-set.md` §3. |
 | `hooks/` | Claude Code PreToolUse guards (secrets, access-tier, frontmatter, sync nudge) shipped into every scaffolded workspace. |
 | `gui/` + `src-tauri/` | Local GUI (Claude Agent SDK) + Tauri desktop shell. |
 | `examples/` | A fully synthetic sample workspace used to demo + test the harnesses. Use it; never put real data here. |
