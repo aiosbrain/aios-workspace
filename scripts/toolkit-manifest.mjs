@@ -98,6 +98,21 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
+  // Cursor cross-repo toolkit guard (IC workspaces): block agent writes/commits to the
+  // toolkit PRIMARY checkout while dogfooding from a personal workstation.
+  { dest: ".cursor/hooks.json", src: "scaffold/.cursor/hooks.json", kind: "file" },
+  {
+    dest: ".cursor/hooks/guard-toolkit-primary.sh",
+    src: "scaffold/.cursor/hooks/guard-toolkit-primary.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: ".cursor/hooks/toolkit-primary-tripwire.sh",
+    src: "scaffold/.cursor/hooks/toolkit-primary-tripwire.sh",
+    kind: "file",
+    exec: true,
+  },
   { dest: "validation/secret-patterns.txt", src: "validation/secret-patterns.txt", kind: "file" },
 ];
 

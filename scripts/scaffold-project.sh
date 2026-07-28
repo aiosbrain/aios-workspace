@@ -656,6 +656,18 @@ for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs sessio
 done
 [ -f "$SCAFFOLD/.claude/settings.json" ] && cp "$SCAFFOLD/.claude/settings.json" "$OUTPUT/.claude/settings.json"
 
+# Cursor cross-repo toolkit guard (dogfood workstations): deterministic enforcement
+# at the tool boundary so agents opened on this IC repo cannot mutate the toolkit
+# PRIMARY checkout. See scaffold/.cursor/hooks.json.
+if [ -f "$SCAFFOLD/.cursor/hooks.json" ]; then
+  mkdir -p "$OUTPUT/.cursor/hooks"
+  cp "$SCAFFOLD/.cursor/hooks.json" "$OUTPUT/.cursor/hooks.json"
+  if [ -d "$SCAFFOLD/.cursor/hooks" ]; then
+    cp "$SCAFFOLD/.cursor/hooks/"*.sh "$OUTPUT/.cursor/hooks/" 2>/dev/null || true
+    chmod +x "$OUTPUT/.cursor/hooks/"*.sh 2>/dev/null || true
+  fi
+fi
+
 # Slack per-channel tier map (AIO-354/AIO-369) — stamp the same starter config that
 # `aios update` seeds into older workspaces, so fresh and upgraded workspaces cannot drift.
 # JSON can't carry real comments, so the guidance lives in `_comment`/`_docs` keys

@@ -35,10 +35,16 @@ case "$EVENT" in
       }' 2>/dev/null) || exit 3
     ;;
   pre_edit)
+    # Move/Rename destinations (destination/new_path/target_path/to/…) are
+    # mapped into paths[] alongside the source — a move INTO a guarded repo is
+    # a write into it and must reach the path policies.
     NORMALIZED=$(printf '%s' "$INPUT" | jq -c --arg cwd "$CWD_DEFAULT" '
       (.tool_input // {}) as $ti |
       ($ti.file_path // $ti.filePath // $ti.path // $ti.target_file //
         .file_path // .filePath // "") as $p |
+      ([$ti.destination, $ti.dest, $ti.new_path, $ti.newPath, $ti.target_path,
+        $ti.targetPath, $ti.to, $ti.rename_to]
+       | map(select(type == "string" and length > 0)) | unique) as $dsts |
       ([
         $ti.content, $ti.new_string, $ti.newString,
         $ti.edits[]?.new_string, $ti.edits[]?.newString,
@@ -49,7 +55,8 @@ case "$EVENT" in
         protocol_version:"1.0", event:"pre_edit", runtime:{name:"cursor"},
         cwd:(.cwd // $cwd), session_id:(.conversation_id // ""),
         tool_name:(.tool_name // "Write"), tool_id:(.tool_use_id // ""),
-        paths:(if $p == "" then [] else [{path:$p, action:"update"}] end),
+        paths:(((if $p == "" then [] else [$p] end) + $dsts) | unique
+               | map({path:., action:"update"})),
         added_content:(if ($p == "" or $c == "") then [] else [{path:$p, content:$c}] end)
       }' 2>/dev/null) || exit 3
     ;;

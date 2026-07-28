@@ -18,10 +18,11 @@
 #                  (strict: any branch; default-ok: non-default branch only). The
 #                  command's TARGET repo is resolved from `git -C <dir>` / a leading
 #                  `cd <dir> &&`, not the session cwd.
-#   pre_edit     — block edits when HEAD is a non-default branch (you branched into
-#                  the primary). Editing on the default branch is allowed (config /
-#                  rare hotfix); basenames in HARNESS_PRIMARY_EXEMPT are always
-#                  allowed. Each edited path is classified by its own repo.
+#   pre_edit     — block edits in the primary checkout. default-ok: only when HEAD is
+#                  a non-default branch (you branched into the primary). strict: every
+#                  primary edit (including on the default branch). Basenames in
+#                  HARNESS_PRIMARY_EXEMPT are always allowed. Each edited path is
+#                  classified by its own repo.
 #
 # The default branch is HARNESS_DEFAULT_BRANCH if set, else auto-detected from
 # origin/HEAD, else init.defaultBranch, else the main|master allowlist. Detached
@@ -29,6 +30,7 @@
 #
 # Overrides: HARNESS_ALLOW_PRIMARY_CHECKOUT=1 disables the guard entirely.
 #            HARNESS_PRIMARY_COMMIT_POLICY=strict blocks every primary commit.
+#            HARNESS_PRIMARY_EDIT_POLICY=strict blocks every primary edit (incl. main).
 #            HARNESS_PRIMARY_EXEMPT (default `aios.yaml`) space-separated basenames.
 set -u
 
@@ -146,6 +148,62 @@ if [ "$MODE" = "command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
+
+  # Under strict edit policy, shell file mutations are held to the same rule as
+  # pre_edit Write/Edit: no writes into a PRIMARY checkout (>, >>, cp, mv, rm,
+  # sed -i, tee, curl -o, …). Each candidate token is classified by its own repo
+  # (per-token probe), and relative candidates resolve against the command's
+  # target dir. Known limits: interpreter one-liners (node -e / python -c) and
+  # command substitution are not evaluated — the tracked pre-commit primary
+  # guard remains the commit-time backstop.
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
+    _muts='rm|tee|truncate|ln|touch|mkdir|chmod|chown|dd|install|curl|wget'
+    # Archive extraction writes files too: tar/bsdtar in extract mode (-x/--extract,
+    # incl. old-style `tar xf`), and unzip/ditto (which always write). Creation
+    # (`tar -cf`) only reads and is deliberately NOT matched.
+    _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
+    _cands=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
+    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re"; then
+      _cands="$_cands
+$(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
+    elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
+      # Strip redirections BEFORE picking the last token as the destination —
+      # otherwise `cp src <primary>/dst >/tmp/log` hides the real destination
+      # behind the redirect target. (Redirect targets themselves are already
+      # collected above from the unstripped command.)
+      _nored=$(printf '%s' "$CMD" | sed -E 's/[0-9]*>&[0-9]+//g; s/[0-9]*(>>?|<)[[:space:]]*[^&<>[:space:];|]+//g')
+      _cands="$_cands
+$(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0 !~ /^-/' | tail -1)"
+    fi
+    for _tok in $(printf '%s\n' "$_cands" | sed "s/^['\"]//; s/['\"]\$//" | awk 'NF && !seen[$0]++'); do
+      case "$_tok" in
+        -*=/*) _tok=${_tok#*=} ;;
+        -*/*)  _tok="/${_tok#*/}" ;;  # attached path arg: -o/abs, -d/abs, -C/abs
+        -*)    continue ;;
+        *=/*)  _tok=${_tok#*=} ;;
+      esac
+      case "$_tok" in
+        "~") _tok=$HOME ;;
+        "~/"*) _tok=$HOME/${_tok#\~/} ;;
+      esac
+      case "$_tok" in
+        /*) : ;;
+        *) _tok="$TDIR/$_tok" ;;
+      esac
+      # Probe the deepest EXISTING ancestor — `mkdir -p <primary>/new/deep/…`
+      # must not slip through just because the parent doesn't exist yet.
+      _tpd=$_tok
+      while [ ! -d "$_tpd" ] && [ "$_tpd" != "/" ] && [ -n "$_tpd" ]; do _tpd=$(dirname "$_tpd"); done
+      [ -d "$_tpd" ] || continue
+      set -- $(probe "$_tpd"); [ "${1:-none}" = "primary" ] || continue
+      _tb=$(basename "$_tok"); _tsk=0
+      for e in $EXEMPT_BASENAMES; do [ "$_tb" = "$e" ] && _tsk=1; done
+      [ "$_tsk" = 1 ] && continue
+      block "shell write to '$_tok' in the primary checkout (strict edit policy)" \
+        "The primary checkout is read-only for agents — shell redirects/copies are held to the same rule as Write/Edit."
+    done
+  fi
+
   set -- $(probe "$TDIR"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || exit 0
 
@@ -177,7 +235,9 @@ if [ "$MODE" = "command" ]; then
 fi
 
 # MODE = edit — classify EACH edited path by its own repo (not just the first).
-FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '.paths[]? | .path, (.from // empty)' | awk 'NF && !seen[$0]++') || exit 3
+# Move/rename destinations (.to / .destination) are held to the same rule as
+# sources — a move INTO a primary checkout is a write into it.
+FILE_PATHS=$(printf '%s' "$EVENT" | jq -r '.paths[]? | .path, (.from // empty), (.to // empty), (.destination // empty)' | awk 'NF && !seen[$0]++') || exit 3
 [ -n "$FILE_PATHS" ] || exit 0
 
 while IFS= read -r p || [ -n "$p" ]; do
@@ -186,16 +246,26 @@ while IFS= read -r p || [ -n "$p" ]; do
     /*) pdir=$(dirname "$p") ;;
     *)  pdir="$CWD/$(dirname "$p")" ;;
   esac
+  # Walk up to the deepest EXISTING ancestor so a multi-level new path inside
+  # a primary checkout is still classified by that repo, not the session cwd.
+  while [ ! -d "$pdir" ] && [ "$pdir" != "/" ] && [ -n "$pdir" ]; do pdir=$(dirname "$pdir"); done
   [ -d "$pdir" ] || pdir="$CWD"
   set -- $(probe "$pdir"); KIND=${1:-none}; BRANCH=${2:-}
   [ "$KIND" = "primary" ] || continue
-  is_default_branch "$BRANCH" "$pdir" && continue
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" != "strict" ]; then
+    is_default_branch "$BRANCH" "$pdir" && continue
+  fi
   base=$(basename "$p")
   _exempt=0
   for e in $EXEMPT_BASENAMES; do [ "$base" = "$e" ] && _exempt=1; done
   [ "$_exempt" = "1" ] && continue
-  block "editing '$p' on non-default branch '$BRANCH' in the primary checkout" \
-    "You are on a feature branch checked out in the primary checkout — feature work belongs in a linked worktree."
+  if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
+    block "editing '$p' in the primary checkout (branch '$BRANCH', strict edit policy)" \
+      "The primary checkout is read-only for agents — feature work belongs in a linked worktree."
+  else
+    block "editing '$p' on non-default branch '$BRANCH' in the primary checkout" \
+      "You are on a feature branch checked out in the primary checkout — feature work belongs in a linked worktree."
+  fi
 done <<EOF
 $FILE_PATHS
 EOF

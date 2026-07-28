@@ -1,0 +1,28 @@
+{
+  "$comment": "IC workspace (dogfood): block cross-repo edits/commits to the toolkit PRIMARY checkout. This workspace stays writable on master; only the linked toolkit checkout is guarded.",
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_command",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|StrReplace|Delete|Remove|Move|Rename",
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/guard-toolkit-primary.sh\" pre_edit",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "stop": [
+      {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.cursor/hooks/toolkit-primary-tripwire.sh\"",
+        "timeout": 30,
+        "loop_limit": 3
+      }
+    ]
+  }
+}
