@@ -447,7 +447,10 @@ test("canonical evidence paths without an explicit kind are blocked before netwo
     );
     const result = await runAios(["push", "--repo", dir, "3-log/facts-team.md"], REPO);
     assert.equal(result.code, 0);
-    assert.match(result.stdout, /1 blocked/);
+    // AIO-568 renamed this presentation class "blocked" -> "held" (GRAIN §1.4). The wording is
+    // the only thing that moved; the load-bearing assertion is the next line — nothing reached
+    // the brain. Exit code and the exclusion itself are unchanged.
+    assert.match(result.stdout, /1 held/);
     assert.equal(stub.pushedItems.length, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -464,7 +467,10 @@ test("private evidence paths cannot be relabeled as syncable tiers", async () =>
     writeFileSync(privatePath, relabeled);
     const result = await runAios(["push", "--repo", dir, "3-log/facts-private.md"], REPO);
     assert.equal(result.code, 0);
-    assert.match(result.stdout, /1 blocked/);
+    // AIO-568 renamed this presentation class "blocked" -> "held" (GRAIN §1.4). The wording is
+    // the only thing that moved; the load-bearing assertion is the next line — nothing reached
+    // the brain. Exit code and the exclusion itself are unchanged.
+    assert.match(result.stdout, /1 held/);
     assert.equal(stub.pushedItems.length, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });

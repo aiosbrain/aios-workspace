@@ -100,3 +100,105 @@ test("a team-tier file IS eligible (the gate is non-vacuous)", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── AIO-568: the `held` presentation class ────────────────────────────────────────────────────
+//
+// GRAIN §1.4. Every exclusion above is the safety boundary refusing on the owner's behalf, not a
+// failure — so it renders as `held`, not red `blocked`. These tests pin the two halves that
+// matter: the producer tags the class, and the MACHINE surfaces do not move.
+
+test("AIO-568 — every blocked item carries class 'held' from the producer", async () => {
+  const { buildPlan, HELD } = await import("../scripts/sync-plan.mjs");
+  const dir = makeWorkspace();
+  try {
+    writeFileSync(
+      path.join(dir, "2-work", "leaky.md"),
+      fm({ status: "draft", owner: "alex", access: "team" }, "leaky") + "\nsk-live-SECRETVALUE\n"
+    );
+    const cfg = {
+      sync_tiers: ["team"],
+      sync_include: ["2-work"],
+      sync_exclude: [],
+      project: "t",
+      brain_url: "",
+    };
+    const { plan } = buildPlan(dir, cfg, [/sk-live-[A-Z]+/]);
+
+    assert.ok(plan.blocked.length >= 4, "fixture must exercise several blocked branches");
+    for (const b of plan.blocked) {
+      assert.equal(b.class, HELD, `${b.rel} must be tagged '${HELD}', got ${b.class}`);
+      assert.ok(b.reason, "the reason string is preserved alongside the class");
+    }
+    // the secret branch specifically — the 5th producer site
+    const leaky = plan.blocked.find((b) => b.rel === "2-work/leaky.md");
+    assert.equal(leaky?.class, HELD);
+    assert.match(leaky?.reason ?? "", /secret pattern matched/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AIO-568 — `--json` is unchanged: no `class` key, `items.blocked` keeps its name", () => {
+  // --json is a documented machine surface. Adding a field is a versioned contract change and is
+  // deliberately NOT part of this slice; a consumer must see byte-equivalent structure.
+  const dir = makeWorkspace();
+  try {
+    const items = planFor(dir);
+    assert.ok(Array.isArray(items.blocked), "items.blocked must keep its name and shape");
+    assert.ok(items.blocked.length > 0, "fixture must produce blocked items");
+    for (const b of items.blocked) {
+      assert.deepEqual(
+        Object.keys(b).sort(),
+        ["reason", "rel"],
+        "--json blocked entries carry exactly {rel, reason} — no `class` leaked out"
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AIO-568 — `--porcelain` keeps the `blocked=` key verbatim", () => {
+  const dir = makeWorkspace();
+  try {
+    const out = execFileSync("node", [AIOS, "status", "--porcelain", "--repo", dir], {
+      cwd: REPO,
+      encoding: "utf8",
+    });
+    const line = out.trim().split("\n").filter(Boolean).pop();
+    assert.match(
+      line,
+      /^new=\d+ modified=\d+ blocked=\d+ clean=\d+$/,
+      `porcelain shape must not change; got: ${line}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AIO-568 — human `aios status` says held, not blocked", () => {
+  const dir = makeWorkspace();
+  try {
+    const out = execFileSync("node", [AIOS, "status", "--repo", dir], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+    assert.match(out, /▮ held \(\d+\)/, "the held section is rendered with its glyph");
+    assert.ok(
+      !/\bblocked\b/i.test(out),
+      `human output must not call a refusal "blocked"; got:\n${out}`
+    );
+    // colour is redundant, never load-bearing: NO_COLOR output still carries glyph + word.
+    assert.ok(!out.includes("\x1b"), "NO_COLOR run emits no escape codes");
+    // the reason is still named, so the fix stays as discoverable as before
+    assert.match(out, /admin.*never syncs/i);
+
+    // The footer must be scoped to the HELD items. The fixture also has a pushable `new` row,
+    // so an unscoped claim like "nothing above left this machine" would be false (Bugbot, AIO-568).
+    assert.match(out, /\d+ held file\(s\) stayed on this machine/);
+    assert.ok(/new \(\d+\)/.test(out), "fixture must have pushable rows for that to bite");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
