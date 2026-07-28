@@ -41,7 +41,7 @@ function scaffold(output) {
 
 function tmpOut(prefix) {
   const output = mkdtempSync(path.join(tmpdir(), prefix));
-  rmSync(output, { recursive: true, force: true });
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   return output;
 }
 
@@ -55,7 +55,7 @@ test("scaffold stamps .aios/comms-config.json by default, valid JSON", () => {
     assert.doesNotThrow(() => JSON.parse(raw), "stamped comms-config.json must be valid JSON");
     assert.equal(raw, readFileSync(STARTER_CONFIG, "utf8"), "scaffold uses the updater's seed");
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -97,7 +97,7 @@ test("stamped comms-config.json parses to a clean no-op config (nothing auto-dis
       assert.equal(r.reason, "no-destination-channel");
     });
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -108,6 +108,6 @@ test("stamped .claude/CLAUDE.md mentions .aios/comms-config.json where tool conn
     const claudeMd = readFileSync(path.join(output, ".claude", "CLAUDE.md"), "utf8");
     assert.match(claudeMd, /\.aios\/comms-config\.json/);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

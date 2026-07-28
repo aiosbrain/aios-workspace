@@ -40,7 +40,7 @@ function scaffold(context, output) {
 
 function tmpOut(prefix) {
   const output = mkdtempSync(path.join(tmpdir(), prefix));
-  rmSync(output, { recursive: true, force: true }); // scaffold refuses a non-empty existing dir
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // scaffold refuses a non-empty existing dir
   return output;
 }
 
@@ -66,7 +66,7 @@ test("business-owner: 6-business/ sibling root with all 7 subdirs + README each"
       assert.match(content, /access: private/, `${d}/README.md should default to access: private`);
     }
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -78,7 +78,7 @@ test("business-owner: 6-business is NOT in the stamped aios.yaml sync_include", 
     const includeBlock = yaml.slice(yaml.indexOf("sync_include:"), yaml.indexOf("sync_exclude:"));
     assert.doesNotMatch(includeBlock, /6-business/, "sync_include must never list 6-business");
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -92,7 +92,7 @@ test("business-owner: access-control.md rule ships and documents the 6-business 
     assert.match(rule, /6-business/);
     assert.match(rule, /sync_include/);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -113,7 +113,7 @@ test("business-owner: stamped docs frame all three contexts as first-class choic
       assert.doesNotMatch(doc, /\{\{SIXBUSINESS_LINE\}\}/);
     }
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -134,7 +134,7 @@ test("consultant/employee scaffolds are unaffected: no 6-business/, no leftover 
         assert.doesNotMatch(doc, /\{\{SIXBUSINESS_LINE\}\}/);
       }
     } finally {
-      rmSync(output, { recursive: true, force: true });
+      rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   }
 });

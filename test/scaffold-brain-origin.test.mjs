@@ -12,7 +12,7 @@ const SCAFFOLD = path.join(ROOT, "scripts", "scaffold-project.sh");
 
 function tempOutput(prefix) {
   const output = mkdtempSync(path.join(tmpdir(), prefix));
-  rmSync(output, { recursive: true, force: true });
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   return output;
 }
 
@@ -43,7 +43,7 @@ test("non-interactive scaffold refuses an unconfirmed remote origin before mutat
     assert.match(result.stdout + result.stderr, /requires human confirmation/i);
     assert.throws(() => readFileSync(path.join(output, "aios.yaml"), "utf8"));
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -56,7 +56,7 @@ test("loopback scaffold normalizes a copied Team page to its origin", () => {
     const yaml = readFileSync(path.join(output, "aios.yaml"), "utf8");
     assert.match(yaml, /^brain_url: "http:\/\/localhost:3000"$/m);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -76,6 +76,6 @@ test("persistBrainOrigin writes only a canonical confirmed origin", () => {
       /not a recognized Brain page/
     );
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

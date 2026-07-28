@@ -46,7 +46,7 @@ function nextActionFor(repo) {
 
 test("a real (non-interactive) scaffold run prints exactly one Next: line, not a 7-item wall", () => {
   const output = mkdtempSync(path.join(tmpdir(), "next-action-scaffold-"));
-  rmSync(output, { recursive: true, force: true });
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   try {
     const stdout = scaffold(output);
     const nextLines = stdout.split("\n").filter((l) => l.trim().startsWith("Next:"));
@@ -58,7 +58,7 @@ test("a real (non-interactive) scaffold run prints exactly one Next: line, not a
     // The old wall had 6 bulleted "•" items — none should remain.
     assert.equal(stdout.includes("•"), false);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -67,7 +67,7 @@ test("nextAction: standalone Personal workspace -> local status preview", () => 
   try {
     assert.match(nextActionFor(repo), /aios status/);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -77,7 +77,7 @@ test("nextAction: brain key set, nothing pushed yet -> aios status preview", () 
     vaultSet(repo, "AIOS_API_KEY", "aios_test_fakevalue");
     assert.match(nextActionFor(repo), /aios status/);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -92,6 +92,6 @@ test("nextAction: something already shared -> one grounded query", () => {
     );
     assert.match(nextActionFor(repo), /aios query/);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

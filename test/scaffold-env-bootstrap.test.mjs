@@ -39,19 +39,19 @@ function scaffold(output) {
 
 test("a real scaffold run creates .env (not just .env.example)", () => {
   const output = mkdtempSync(path.join(tmpdir(), "scaffold-env-"));
-  rmSync(output, { recursive: true, force: true }); // scaffold refuses a non-empty existing dir
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // scaffold refuses a non-empty existing dir
   try {
     scaffold(output);
     assert.equal(existsSync(path.join(output, ".env")), true);
     assert.equal(existsSync(path.join(output, ".env.example")), true);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
 test("dotenvx run does not crash with MISSING_ENV_FILE against the scaffolded .env", () => {
   const output = mkdtempSync(path.join(tmpdir(), "scaffold-env-"));
-  rmSync(output, { recursive: true, force: true });
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   try {
     scaffold(output);
     const envPath = path.join(output, ".env");
@@ -60,6 +60,6 @@ test("dotenvx run does not crash with MISSING_ENV_FILE against the scaffolded .e
       execFileSync("dotenvx", ["run", "-f", envPath, "--", "true"], { stdio: "pipe" });
     });
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

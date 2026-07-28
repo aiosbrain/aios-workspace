@@ -79,7 +79,7 @@ function scaffold(context, output) {
 
 function tmpOut(prefix) {
   const output = mkdtempSync(path.join(tmpdir(), prefix));
-  rmSync(output, { recursive: true, force: true }); // scaffold refuses a non-empty existing dir
+  rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // scaffold refuses a non-empty existing dir
   return output;
 }
 
@@ -175,7 +175,7 @@ for (const context of ["consultant", "employee", "business-owner"]) {
         }
       }
     } finally {
-      rmSync(output, { recursive: true, force: true });
+      rmSync(output, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 }
