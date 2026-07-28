@@ -10,6 +10,11 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+      prod-dependencies:
+        dependency-type: "production"
     ignore:
       # eslint 10 blocked upstream: eslint-plugin-react (latest 7.37.5) peer-caps at
       # eslint ^9.7 and our flat config uses react.configs.flat.recommended. Revisit
@@ -18,18 +23,10 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@eslint/js"
         update-types: ["version-update:semver-major"]
-
-  - package-ecosystem: "npm"
-    directory: "/gui/client"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-    commit-message:
-      prefix: "chore(deps)"
-    ignore:
+      # Carried over from the removed "/gui/client" updater, which was the only place
+      # this constraint lived. gui/client is an npm workspace, so the root updater now
+      # proposes its bumps too — and without this the grouped dev-dependencies PR can
+      # drag @vitejs/plugin-react past the repo's vite ^6 constraint.
       # @vitejs/plugin-react 6 requires vite ^8, but gui/client is on vite ^6.
       # Landing it means a vite 6→8 migration — out of scope for weekly bumps.
       # Revisit alongside a deliberate vite 8 upgrade. (AIO-321)
@@ -46,3 +43,7 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns:
+          - "*"
