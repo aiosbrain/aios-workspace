@@ -1,4 +1,5 @@
 import { useRuntime, useSession } from "../../state/cockpit";
+import { ModelOptions } from "./ModelOptions";
 
 /**
  * Model selector. Shown only when the runtime supports switching and offers a model
@@ -20,11 +21,7 @@ export function ModelPicker() {
         disabled={busy}
         onChange={(e) => changeModel(e.target.value)}
       >
-        {capabilities.models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
+        <ModelOptions models={capabilities.models} selected={model} />
       </select>
     </label>
   );

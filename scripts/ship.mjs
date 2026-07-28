@@ -16,20 +16,8 @@
  * without touching the network, git, gh, claude, or cursor.
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  appendFileSync,
-  statSync,
-  unlinkSync,
-  existsSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { execFileSync } from "node:child_process";
-import { createInterface } from "node:readline";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   c,
   callClaudeAgent,
@@ -40,15 +28,11 @@ import {
   NO_TOOLS_ARGS,
   PLAN_DISALLOWED_ARGS,
 } from "./relay-core.mjs";
-import { EXIT as BUILD_EXIT, runBuild, slugify } from "./build.mjs";
+import { runBuild, slugify } from "./build.mjs";
 import { cmdPr, detectRepo } from "./pr.mjs";
-import {
-  cmdConsolidateFindings,
-  parseCheckResults,
-  defaultOutPath,
-} from "./consolidate-findings.mjs";
+import { cmdConsolidateFindings, defaultOutPath } from "./consolidate-findings.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import { modelFamily, parseModelRef } from "./model-providers.mjs";
+import { modelFamily } from "./model-providers.mjs";
 import { callPromptModel, callAgentModel, reviewCallForModel } from "./model-call.mjs";
 import { createLinearClient, resolveLinearApiKey, extractRepoFileRefs } from "./linear-client.mjs";
 import {
@@ -57,9 +41,7 @@ import {
   resolveRubricPath,
   loadRecentDecisions,
   formatFindings,
-  extractSections,
   specEvalHints,
-  SPEC_GATE_POLICIES,
   DEFAULT_SPEC_GATE,
 } from "./spec-eval.mjs";
 import {
@@ -67,994 +49,123 @@ import {
   resolveRequiredBugbotBase,
   runLocalPrePrReview,
 } from "./review-bugbot.mjs";
-import { loadConstitutionDigest, constitutionPromptLines } from "./constitution.mjs";
+import { loadConstitutionDigest } from "./constitution.mjs";
 import { runSimplify } from "./simplify.mjs";
 import { loadSkillContext, parseDeclaredSkills } from "./skill-context.mjs";
 
-// ── SHIP_EXIT — stable, documented exit-code table (docs/agent-build.md) ─────────────────────
-export const SHIP_EXIT = {
-  OK: 0, // plan→merge→cleanup completed
-  USAGE: 1, // bad args / prereqs / unresolved issue id
-  RECON_FAILED: 10, // issue fetch or recon model step failed
-  SPEC_NOT_READY: 15, // spec-readiness gate failed (deterministic or adversarial blocker)
-  PLAN_UNAPPROVED: 20, // plan loop spent its round budget without PLAN_READY
-  PLAN_REJECTED: 21, // operator rejected the plan at the plan gate
-  PLAN_GATE_BLOCKED: 22, // plan gate active in a non-TTY context without --auto (never hang)
-  BUILD_FAILED: 30, // runBuild returned a non-recoverable code (NO_DIFF/FATAL/TIMEOUT/GATE)
-  BUILD_NONCONVERGENCE: 31, // runBuild spent its rounds (worktree preserved)
-  PR_FAILED: 40, // cmdPr push/create failed
-  REVIEW_NONCONVERGENCE: 50, // fix loop hit --max-fix-rounds still BLOCKED (no partial merge)
-  MERGE_BLOCKED: 60, // merge gate: CI red/pending/unavailable or unresolved Critical/High
-  SAFETY_BLOCKED: 61, // path-gated safety review withheld approval
-  MERGE_GATE_BLOCKED: 62, // merge gate active in a non-TTY context without --auto-merge
-  MERGE_REJECTED: 63, // operator rejected at the merge gate
-  CLEANUP_FAILED: 70, // post-merge ff-only failed / primary checkout dirty (never reset/clobber)
-};
+import {
+  parseShipArgs,
+  validateShipArgs,
+  buildShipDryRunReport,
+  builderSkillCheckpoint,
+  builderSkillCheckpointMatches,
+} from "./ship/args.mjs";
+import {
+  SHIP_EXIT,
+  SAFETY_APPROVED_TOKEN,
+  SAFETY_PATHS,
+  CODERABBIT_READY_LABEL,
+  resolveGates,
+  mapBuildExit,
+  detectSafetyToken,
+  touchesSafetySurface,
+  localBugbotEvidenceMatches,
+  readChecks,
+} from "./ship/gates.mjs";
+import {
+  parseDeferredScope,
+  normalizeTitle,
+  buildReconPrompt,
+  buildSpecTextFromIssue,
+  specSafetyFlag,
+  buildLightPlanFromSpec,
+  formatSpecEvalAudit,
+  RECON_FILE_CAP,
+  buildOmittedRefsNote,
+  buildPlanPrompt,
+  buildPlanReviewPrompt,
+  buildGptReviewPrompt,
+  buildSafetyPrompt,
+} from "./ship/prompts.mjs";
+import {
+  SHIP_VERIFY_CMD,
+  DEFAULT_PLAN_TIMEOUT_MS,
+  failedArtifact,
+  SHIP_STATE_VERSION,
+  defaultReadState,
+  defaultWriteState,
+  defaultWriteGate,
+  defaultRemoveGate,
+  expandHomePath,
+  findPlanFilePath,
+  defaultGitLsFiles,
+  defaultGitExec,
+  defaultGhExec,
+  defaultMakeAnthropic,
+  defaultCallOpus,
+  defaultWriteAudit,
+  defaultConfirm,
+  defaultWaitForBots,
+  resolveWorktreePathFromList,
+  runCleanup,
+  makeBuildOpts,
+  lastNonBlankLine,
+  cursorCliModelArg,
+} from "./ship/runtime.mjs";
 
-export const SAFETY_APPROVED_TOKEN = "SAFETY_APPROVED";
+// Re-export the extracted surfaces so existing `import { X } from "./ship.mjs"` call sites (tests,
+// scripts/cli/*, roadmap-run.mjs) keep working unchanged — ship.mjs stays the stable public entry
+// point; scripts/ship/{args,gates,prompts,runtime}.mjs are the internal seams this pulls apart
+// (AIO-560, wave 5 of docs/v1-operator-loop/domains/safety-unit-extraction.md). Only the symbols
+// that were public before the move are re-exported here — the newly-`export`ed default-dep helpers
+// (e.g. defaultWriteGate, makeBuildOpts) cross the new module boundary but were never part of
+// ship.mjs's own public surface, so they stay import-only.
+export {
+  parseShipArgs,
+  validateShipArgs,
+  buildShipDryRunReport,
+  builderSkillCheckpoint,
+  builderSkillCheckpointMatches,
+  SHIP_EXIT,
+  SAFETY_APPROVED_TOKEN,
+  SAFETY_PATHS,
+  CODERABBIT_READY_LABEL,
+  resolveGates,
+  mapBuildExit,
+  detectSafetyToken,
+  touchesSafetySurface,
+  localBugbotEvidenceMatches,
+  readChecks,
+  parseDeferredScope,
+  normalizeTitle,
+  buildReconPrompt,
+  buildSpecTextFromIssue,
+  specSafetyFlag,
+  buildLightPlanFromSpec,
+  formatSpecEvalAudit,
+  RECON_FILE_CAP,
+  buildOmittedRefsNote,
+  buildPlanPrompt,
+  buildPlanReviewPrompt,
+  buildGptReviewPrompt,
+  buildSafetyPrompt,
+  SHIP_VERIFY_CMD,
+  DEFAULT_PLAN_TIMEOUT_MS,
+  failedArtifact,
+  SHIP_STATE_VERSION,
+  defaultReadState,
+  defaultWriteState,
+  expandHomePath,
+  findPlanFilePath,
+  resolveWorktreePathFromList,
+  runCleanup,
+};
 
 // The agent tool-access tiers (NO_TOOLS / PLAN_DISALLOWED) now live in relay-core.mjs so ship and
 // roadmap-run share one source of truth; re-exported here for back-compat (tests import NO_TOOLS
 // from ship.mjs). recon + safety_review run at the NO_TOOLS tier; the plan cli runner at the
 // PLAN_DISALLOWED (read-only, no exfil/mutate) tier — see the boundary doc in relay-core.mjs.
 export { NO_TOOLS, NO_TOOLS_ARGS };
-
-// Diff surfaces where an approval requires an explicit safety review over the diff. A changed
-// path matches if it equals a listed file or starts with a listed directory prefix.
-export const SAFETY_PATHS = [
-  "hooks/",
-  "validation/",
-  "scripts/leak-gate.sh",
-  "scaffold/.claude/",
-  "docs/brain-api.md",
-  "scripts/brain-client.mjs",
-  "scripts/brain-config.mjs",
-  "scripts/workspace-parse.mjs",
-];
-
-const DEFAULT_REVIEWERS = ["gpt-5.5"];
-// Local Bugbot is mandatory and outside reviewer selection. `bugbot` remains accepted only as
-// a deprecated no-op alias so existing commands keep working while `coderabbit` and `gpt-5.5`
-// select the optional remote/model reviewers.
-const KNOWN_REVIEWERS = new Set(["bugbot", "coderabbit", "gpt-5.5"]);
-export const CODERABBIT_READY_LABEL = "ready-for-review";
-const DEFAULT_MAX_FIX_ROUNDS = 3;
-const ISSUE_RE = /^AIO-\d+$/;
-
-// The repo verify chain runBuild runs in the worktree before each review round and pre-merge.
-// Wired into every build/fix round so `aios ship` can never merge code that hasn't passed it.
-export const SHIP_VERIFY_CMD =
-  "npm run build:loop && npm test && npm run lint && npm run format:check";
-
-// Default plan-stage timeout. An Opus-xhigh planner with tool access empirically needs
-// 15-40 minutes (every AIO-156 epic plan round exceeded 10); the original 600s default
-// killed the first real-world run mid-work (AIO-194). Override per-run with
-// `plan_timeout_s` in .aios/loop-models.yaml.
-export const DEFAULT_PLAN_TIMEOUT_MS = 1800 * 1000;
-
-// A stage runner that dies (timeout or nonzero exit) must fail LOUDLY into the audit
-// trail — an aborted run whose directory just stops is indistinguishable from one that
-// never ran (AIO-194: the first real `aios ship` died at the plan stage leaving nothing).
-export function failedArtifact(stage, error, startedAt) {
-  const elapsed = startedAt ? `${Math.round((Date.now() - startedAt) / 1000)}s elapsed` : "";
-  return [
-    `# ${stage} FAILED`,
-    "",
-    `- error: ${error?.message ?? error}`,
-    ...(elapsed ? [`- ${elapsed}`] : []),
-    `- at: ${new Date().toISOString()}`,
-    "",
-    "The run aborted at this stage. See the SHIP_EXIT table in scripts/ship.mjs for the",
-    "exit code, and .aios/loop-models.yaml (`<step>_timeout_s`) to raise a step timeout.",
-  ].join("\n");
-}
-
-// ── checkpoint state + async gates (AIO-239) ────────────────────────────────────────────────
-// Ship persists per-stage progress to `.aios/loop/<issue>/state.json` so an aborted or
-// gate-blocked run is RESUMABLE (`--resume`): completed stages are skipped, the run re-enters at
-// the first incomplete one. A blocked gate writes `GATE-<name>.pending.md` with the material to
-// judge and exits with the gate code; `--resume --approve-plan` / `--approve-merge` satisfy it.
-
-export const SHIP_STATE_VERSION = 1;
-
-export function defaultReadState(repo, issue) {
-  try {
-    const raw = readFileSync(path.join(repo, ".aios", "loop", issue, "state.json"), "utf8");
-    const st = JSON.parse(raw);
-    return st && st.v === SHIP_STATE_VERSION ? st : null;
-  } catch {
-    return null;
-  }
-}
-
-export function defaultWriteState(repo, issue, state) {
-  try {
-    const dir = path.join(repo, ".aios", "loop", issue);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      path.join(dir, "state.json"),
-      JSON.stringify(
-        { ...state, v: SHIP_STATE_VERSION, updatedAt: new Date().toISOString() },
-        null,
-        2
-      ) + "\n"
-    );
-  } catch {
-    /* best-effort — state loss degrades to a fresh run, never a crash */
-  }
-}
-
-function defaultWriteGate(repo, issue, name, text) {
-  try {
-    const dir = path.join(repo, ".aios", "loop", issue);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, `GATE-${name}.pending.md`), text); // overwrite, not append
-  } catch {
-    /* best-effort */
-  }
-}
-
-function defaultRemoveGate(repo, issue, name) {
-  try {
-    unlinkSync(path.join(repo, ".aios", "loop", issue, `GATE-${name}.pending.md`));
-  } catch {
-    /* absent is fine */
-  }
-}
-
-/** Expand a leading `~/` against the home directory. `path.join` (NOT `path.resolve`) keeps the
- *  home prefix even though the slice leaves a leading slash — pinned by a unit test because a
- *  review claimed otherwise (AIO-239 r1: declined-with-evidence). */
-export function expandHomePath(p, home = homedir()) {
-  return p.startsWith("~/") || p === "~" ? path.join(home, p.slice(1)) : p;
-}
-
-/** Find a `~/.claude/plans/<name>.md` (or absolute) path in planner stdout — the CLI plan runner
- *  writes the FULL plan there and only summarizes on stdout. Capturing the full text into the
- *  pipeline kills a pointer-chasing indirection for the builder and reviewers (AIO-239 R5b). */
-export function findPlanFilePath(text) {
-  const m = (text ?? "").match(/(?:~|\/[^\s"'`)\]]*)\/\.claude\/plans\/[^\s"'`)\]]+\.md/);
-  return m ? m[0] : null;
-}
-
-// ── pure helpers (exported for tests) ───────────────────────────────────────────────────────
-
-export function parseShipArgs(args) {
-  const flag = (name) => {
-    const i = args.indexOf(name);
-    return i >= 0 ? args[i + 1] : null;
-  };
-  const hasFlag = (name) => args.includes(name);
-
-  const valueFlags = [
-    "--reviewers",
-    "--max-fix-rounds",
-    "--plan-runner",
-    "--loop",
-    "--spec-gate",
-    "--builder-skill",
-  ];
-  const positional = args.filter(
-    (a, i) => !a.startsWith("--") && !valueFlags.includes(args[i - 1])
-  );
-  const issue = positional[0] ?? null;
-
-  const reviewersRaw = flag("--reviewers");
-  const reviewers = reviewersRaw
-    ? reviewersRaw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [...DEFAULT_REVIEWERS];
-
-  const maxFixRaw = parseInt(flag("--max-fix-rounds") ?? String(DEFAULT_MAX_FIX_ROUNDS), 10);
-  const maxFixRounds =
-    Number.isFinite(maxFixRaw) && maxFixRaw > 0 ? maxFixRaw : DEFAULT_MAX_FIX_ROUNDS;
-
-  const planRunner = flag("--plan-runner") ?? "cli";
-  const loop = flag("--loop") ?? "full";
-  // spec_gate enforcement policy: null here means "not overridden on the CLI" → spec frontmatter or
-  // the config default decides. --skip-spec-gate remains a back-compat alias for `off`.
-  const specGate = flag("--spec-gate");
-  const builderSkills = args
-    .flatMap((arg, index) => (arg === "--builder-skill" ? [args[index + 1]] : []))
-    .filter(Boolean);
-
-  return {
-    help: hasFlag("--help") || hasFlag("-h"),
-    issue,
-    auto: hasFlag("--auto"),
-    autoMerge: hasFlag("--auto-merge"),
-    reviewers,
-    deprecatedBugbotReviewer: reviewers.includes("bugbot"),
-    maxFixRounds,
-    planRunner,
-    loop,
-    specGate,
-    builderSkills,
-    dryRun: hasFlag("--dry-run"),
-    noSimplify: hasFlag("--no-simplify"),
-    resume: hasFlag("--resume"),
-    approvePlan: hasFlag("--approve-plan"),
-    approveMerge: hasFlag("--approve-merge"),
-    skipSpecGate: hasFlag("--skip-spec-gate"),
-  };
-}
-
-export function builderSkillCheckpoint(context) {
-  return {
-    source: context.source,
-    bytes: context.bytes,
-    skills: context.audit,
-  };
-}
-
-export function builderSkillCheckpointMatches(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-// Validate parsed args, returning an error string (→ USAGE) or null.
-export function validateShipArgs(opts) {
-  if (!opts.issue) return "an issue id is required: aios ship AIO-<n>";
-  if (!ISSUE_RE.test(opts.issue))
-    return `invalid issue id '${opts.issue}' — expected AIO-<number>.`;
-  // Two plan-stage runners (§3.4): `cli` (default) drives the planner via callClaudeAgent, which
-  // strips ANTHROPIC_API_KEY and uses Claude Code login auth. `sdk` drives Opus through the
-  // Anthropic SDK (relay.mjs's callOpus) and REQUIRES a funded ANTHROPIC_API_KEY — documented
-  // caveat, and why cli is the default (the operator/Hermes dotenvx key has no API credits).
-  if (opts.planRunner !== "cli" && opts.planRunner !== "sdk")
-    return `unsupported --plan-runner '${opts.planRunner}' — expected 'cli' or 'sdk'.`;
-  // Loop shapes (AIO-398): `full` (default — plan loop + reviews) or `light` (plan/plan_review
-  // skipped for SPEC_READY specs; deterministic spec gate at entry; profile-pinned models).
-  if (opts.loop !== "full" && opts.loop !== "light")
-    return `unsupported --loop '${opts.loop}' — expected 'full' or 'light'.`;
-  // spec_gate is the enforcement policy: block (stop on NOT_READY) | advisory (warn + proceed) |
-  // off (don't run the gate). --skip-spec-gate is a back-compat alias for `off`.
-  if (opts.specGate != null && !SPEC_GATE_POLICIES.has(opts.specGate))
-    return `unsupported --spec-gate '${opts.specGate}' — expected ${[...SPEC_GATE_POLICIES].join(", ")}.`;
-  // The spec gate IS the light loop's entry contract ("you did spec right, now build faster").
-  // `off`/`--skip-spec-gate` would leave it with no evidence at all → rejected. `advisory` still
-  // RUNS and records the eval (it just doesn't block), so it satisfies the contract → allowed.
-  const gateIsOff = opts.skipSpecGate || opts.specGate === "off";
-  if (opts.loop === "light" && gateIsOff)
-    return "the spec gate cannot be turned off under --loop light — it is the light loop's entry contract. Use --spec-gate advisory to run-and-warn without blocking.";
-  // An explicitly-emptied reviewer list (e.g. `--reviewers ","` or `--reviewers " "`) would
-  // silently disable every optional reviewer — reject it. Local Bugbot still remains mandatory. (A bare
-  // `--reviewers ""` still falls back to the defaults in parseShipArgs; this catches the case
-  // where a non-empty raw value normalizes to zero names.)
-  if (!opts.reviewers.length)
-    return `no reviewers resolved — --reviewers must name at least one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
-  const unknown = opts.reviewers.filter((r) => !KNOWN_REVIEWERS.has(r));
-  if (unknown.length)
-    return `unknown reviewer(s) ${unknown.join(", ")} — expected one of ${[...KNOWN_REVIEWERS].join(", ")}.`;
-  return null;
-}
-
-// Gate decision per phase: 'skip' (auto flag), 'approved' (--approve-* after inspecting a
-// pending gate), 'prompt' (interactive TTY), or 'blocked' (non-TTY: run UP TO the gate, persist
-// a GATE-<name>.pending.md + state, and exit with the gate code — resumable, never hanging).
-export function resolveGates({ auto, autoMerge, approvePlan, approveMerge, isTty }) {
-  const decide = (autoFlag, approveFlag) =>
-    autoFlag ? "skip" : approveFlag ? "approved" : isTty ? "prompt" : "blocked";
-  return { plan: decide(auto, approvePlan), merge: decide(autoMerge, approveMerge) };
-}
-
-// build.mjs EXIT → ship codes. Pure; exported.
-export function mapBuildExit(buildCode) {
-  if (buildCode === BUILD_EXIT.OK) return SHIP_EXIT.OK;
-  if (buildCode === BUILD_EXIT.NONCONVERGENCE) return SHIP_EXIT.BUILD_NONCONVERGENCE;
-  // NO_DIFF / FATAL / TIMEOUT / GATE_FAILED → non-recoverable build failure.
-  return SHIP_EXIT.BUILD_FAILED;
-}
-
-// The safety reviewer approves by placing SAFETY_APPROVED alone on the final non-blank line.
-export function detectSafetyToken(text) {
-  const lastLine =
-    (text ?? "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .at(-1) ?? "";
-  return lastLine === SAFETY_APPROVED_TOKEN;
-}
-
-// True iff any changed path equals a listed file or starts with a listed directory prefix.
-export function touchesSafetySurface(paths, safetyPaths = SAFETY_PATHS) {
-  const list = paths ?? [];
-  return list.some((p) => safetyPaths.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s)));
-}
-
-export function localBugbotEvidenceMatches(
-  state,
-  { head, baseSha, artifactExists = existsSync } = {}
-) {
-  return Boolean(
-    head &&
-    baseSha &&
-    state?.localBugbotHead === head &&
-    state?.localBugbotBaseSha === baseSha &&
-    state?.localBugbotReviewPath &&
-    artifactExists(state.localBugbotReviewPath)
-  );
-}
-
-// Parse the plan's `## Deferred (out of scope)` section into a list of normalized titles.
-// Tolerates `## Deferred` without the parenthetical; strips checkbox markers; stops at the next
-// heading or EOF; drops a lone `none`/empty. Pure; exported.
-export function parseDeferredScope(planText, { maxLen = 200 } = {}) {
-  const lines = String(planText ?? "").split("\n");
-  let inSection = false;
-  const titles = [];
-  for (const line of lines) {
-    if (/^#{1,6}\s/.test(line)) {
-      if (inSection) break; // next heading ends the section
-      if (/^#{1,6}\s+deferred\b/i.test(line)) {
-        inSection = true;
-      }
-      continue;
-    }
-    if (!inSection) continue;
-    const m = line.match(/^\s*[-*]\s+(.*)$/);
-    if (!m) continue;
-    let item = m[1].replace(/^\[[ xX]\]\s*/, "").trim();
-    if (!item) continue;
-    if (/^none\.?$/i.test(item)) continue;
-    if (item.length > maxLen) item = item.slice(0, maxLen).trimEnd();
-    titles.push(item);
-  }
-  return titles;
-}
-
-// A normalized title for dedup (lowercase, collapsed whitespace, trimmed trailing punctuation).
-export function normalizeTitle(t) {
-  return String(t ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[.\s]+$/, "")
-    .trim();
-}
-
-// ── readChecks — survives a non-zero `gh pr checks` exit ─────────────────────────────────────
-// `gh pr checks` exits non-zero when checks are pending (8) or failing (1). ghExec must capture
-// stdout even on non-zero exit and NEVER throw for this call. Returns a fail-closed verdict:
-//   { ok, red, pending, unavailable, raw }. Empty/unparseable stdout → unavailable (→ MERGE_BLOCKED).
-export function readChecks(pr, { ghExec, slug } = {}) {
-  const argv = [
-    "pr",
-    "checks",
-    String(pr),
-    ...(slug ? ["--repo", slug] : []),
-    "--json",
-    "name,state,bucket",
-  ];
-  let res;
-  try {
-    res = ghExec(argv);
-  } catch (e) {
-    // A ghExec that throws despite the contract is treated as unavailable (fail closed).
-    return {
-      ok: false,
-      unavailable: true,
-      red: false,
-      pending: false,
-      raw: String(e?.message ?? ""),
-    };
-  }
-  const stdout = res?.stdout ?? "";
-  const parsed = parseCheckResults(stdout);
-  if (!parsed.parsed) {
-    // No usable check data (auth/network/no checks yet/malformed) → fail closed.
-    return { ok: false, unavailable: true, red: false, pending: false, raw: stdout };
-  }
-  // An empty check set with no red/pending signal (e.g. `gh pr checks --json` returns `[]`)
-  // means CI has reported NO checks — it is NOT proof of green. Treat it as unavailable so the
-  // merge gate fails closed rather than waving a PR through on the absence of any CI data.
-  if (parsed.checks.length === 0 && !parsed.ciRed && !parsed.ciPending) {
-    return { ok: false, unavailable: true, red: false, pending: false, raw: stdout };
-  }
-  const ok = !parsed.ciRed && !parsed.ciPending;
-  return { ok, unavailable: false, red: parsed.ciRed, pending: parsed.ciPending, raw: stdout };
-}
-
-// ── dry-run report ───────────────────────────────────────────────────────────────────────────
-export function buildShipDryRunReport({
-  issue,
-  issueTitle,
-  resolvedModels,
-  gates,
-  reviewers,
-  planRunner,
-  loop = "full",
-  maxFixRounds,
-}) {
-  const stepLine = (name) => {
-    const cfg = resolvedModels?.[name];
-    if (!cfg) return `  ${name.padEnd(14)} (no model config)`;
-    const bits = [cfg.model];
-    if (cfg.effort) bits.push(`effort=${cfg.effort}`);
-    if (cfg.timeoutMs) bits.push(`timeout=${cfg.timeoutMs / 1000}s`);
-    return `  ${name.padEnd(14)} ${bits.join(" · ")}`;
-  };
-  const isLightLoop = loop === "light";
-  const lines = [
-    "",
-    c.blue(`aios ship — dry-run for ${issue}${issueTitle ? `: ${issueTitle}` : ""}`),
-    "",
-    isLightLoop
-      ? "Stages (spec eval → spec-derived build → PR → review → fix → merge → cleanup):"
-      : "Stages (spec eval → plan → build → PR → review → fix → merge → cleanup):",
-    ...(isLightLoop
-      ? [
-          "  1. spec eval     mandatory spec-readiness gate on the Linear issue body (EE5)",
-          "  2. plan          derive build contract from Interfaces / Implementation / Acceptance",
-          "  3. build         runBuild on an isolated worktree",
-          "  4. PR            cmdPr push + open PR",
-          "  5. review        mandatory Local Bugbot + optional CodeRabbit + GPT + consolidate",
-          "  6. fix loop      re-build until CLEAR or --max-fix-rounds",
-          "  6b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
-          "  7. merge gate    CI + consolidator + safety review only when `safety: true`",
-          "  8. cleanup       ff-only main → worktree remove → branch delete",
-        ]
-      : [
-          "  1. recon         Linear + git-tracked files → context pack",
-          "  2. spec eval     spec-readiness gate on the Linear issue body (EE5)",
-          "  3. plan          plan loop → operator plan gate",
-          "  4. follow-up     file `## Deferred` items as Linear children",
-          "  5. build         runBuild on an isolated worktree",
-          "  6. PR            cmdPr push + open PR",
-          "  7. review        mandatory Local Bugbot + optional CodeRabbit + GPT + consolidate",
-          "  8. fix loop      re-build until CLEAR or --max-fix-rounds",
-          "  8b. simplify     post-review cleanup pass (cheap model, verify-gated, advisory)",
-          "  9. merge gate    CI + consolidator + path-gated safety review + operator",
-          " 10. cleanup       ff-only main → worktree remove → branch delete",
-        ]),
-    "",
-    "Per-step models:",
-    ...(isLightLoop ? [] : [stepLine("recon")]),
-    stepLine("spec_eval"),
-    ...(isLightLoop ? [] : [stepLine("plan"), stepLine("plan_review")]),
-    stepLine("build"),
-    stepLine("code_review"),
-    stepLine("simplify"),
-    stepLine("consolidate"),
-    stepLine("orchestrate"),
-    stepLine("safety_review"),
-    stepLine("digest"),
-    "",
-    `Loop:         ${loop}`,
-    `Plan runner:  ${planRunner}`,
-    `Reviewers:    ${(reviewers ?? []).join(", ")} (Local Bugbot is always mandatory)`,
-    `Max fix rounds: ${maxFixRounds}`,
-    `Gates:        plan=${isLightLoop ? "skipped (spec-derived)" : gates.plan}  merge=${gates.merge}`,
-    "",
-    "SHIP_EXIT codes:",
-    ...Object.entries(SHIP_EXIT).map(([k, v]) => `  ${String(v).padStart(3)}  ${k}`),
-    "",
-  ];
-  return lines.join("\n");
-}
-
-// ── prompt builders ──────────────────────────────────────────────────────────────────────────
-
-const DEFERRED_CONTRACT = [
-  "",
-  "End your plan with this exact section (empty is allowed — use a single `- none` bullet):",
-  "",
-  "## Deferred (out of scope)",
-  "- <one deferred follow-up per bullet, or `- none`>",
-].join("\n");
-
-export function buildReconPrompt(issue, { allowedFiles }) {
-  return [
-    `You are preparing a recon context pack for Linear issue ${issue.identifier}: ${issue.title}`,
-    "",
-    "## Issue description",
-    "",
-    issue.description || "(no description)",
-    "",
-    "## Referenced repo files (git-tracked only)",
-    "",
-    allowedFiles.length ? allowedFiles.map((f) => `- ${f}`).join("\n") : "(none)",
-    "",
-    "Read the referenced files (read-only) and summarize the concrete implementation context a",
-    "planner needs: the surfaces involved, the invariants to preserve, and the acceptance criteria.",
-    "Do NOT write files. Output the context pack as markdown.",
-  ].join("\n");
-}
-
-/** Compose the spec-readiness input from a Linear issue: title + description + comments. */
-export function buildSpecTextFromIssue(issue) {
-  const parts = [
-    `# ${issue.identifier}: ${issue.title}`,
-    "",
-    issue.description || "(no description)",
-  ];
-  const comments = (issue.comments ?? []).filter((cm) => String(cm.body ?? "").trim());
-  if (comments.length) {
-    parts.push("", "## Issue comments", "");
-    for (const cm of comments) {
-      const who = cm.author?.name ?? cm.user?.name ?? "comment";
-      parts.push(`### ${who}`, "", String(cm.body).trim(), "");
-    }
-  }
-  return parts.join("\n");
-}
-
-// ── light loop helpers (AIO-398) ─────────────────────────────────────────────────────────────
-
-/** Does a spec's leading YAML frontmatter carry `safety: true`? Parsed from the RAW spec body
- *  (the Linear issue description / spec file), whose frontmatter — when present — must open the
- *  text. A `---` used later as a markdown horizontal rule never matches. */
-export function specSafetyFlag(text) {
-  const m = String(text ?? "").match(/^\s*---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!m) return false;
-  return /^safety:\s*true\s*$/im.test(m[1]);
-}
-
-/** The spec sections that stand in for the plan in the light loop. */
-const LIGHT_PLAN_SECTION_RE = /\b(interfaces?|implementation|acceptance)\b/i;
-
-/** Compose the light loop's plan from a SPEC_READY spec: its Interfaces / Implementation /
- *  Acceptance sections are fed into the build prompt where the plan output normally goes
- *  (the spec IS the plan — the plan/plan_review stages are skipped by design). When none of
- *  the three sections is present the full spec text is included but prefixed with a prominent
- *  warning so the builder knows the contract is incomplete. Ends with an empty `## Deferred`
- *  section so follow-up capture (parseDeferredScope) stays a no-op. */
-export function buildLightPlanFromSpec(specText, { issue } = {}) {
-  const picked = extractSections(specText).filter(
-    (s) => s.heading && LIGHT_PLAN_SECTION_RE.test(s.heading)
-  );
-  const parts = [
-    `# Implementation plan${issue ? ` for ${issue}` : ""} (light loop — derived from the SPEC_READY spec)`,
-    "",
-    "This spec already passed `aios spec eval`; the plan/plan_review stages were skipped by",
-    "design (`--loop light`). Treat the sections below as the approved plan, and the Acceptance",
-    "section as the verification contract.",
-    "",
-  ];
-  if (picked.length) {
-    for (const s of picked) parts.push(`## ${s.heading}`, "", s.body.trim(), "");
-  } else {
-    parts.push(
-      "",
-      "**WARNING: Build contract incomplete.** No Interfaces / Implementation / Acceptance",
-      "headings found in the SPEC_READY spec. The full spec text is included below as a",
-      "fallback, but the plan may contain sections the light loop normally excludes.",
-      "",
-      "---",
-      "",
-      String(specText ?? "").trim(),
-      "",
-      "---"
-    );
-  }
-  parts.push("## Deferred (out of scope)", "- none");
-  return parts.join("\n");
-}
-
-/** Audit artifact for a spec-eval round (verdict + score + findings). */
-export function formatSpecEvalAudit(res) {
-  const lines = [
-    "# Spec readiness evaluation",
-    "",
-    `- verdict: ${res.verdict}`,
-    `- exit: ${res.exitCode}`,
-    ...(res.score != null ? [`- score: ${res.score}`] : []),
-    "",
-    "## Findings",
-    "",
-    formatFindings(res.findings),
-  ];
-  return lines.join("\n");
-}
-
-// Per-file body cap for recon: file blobs are sliced to this many chars before injection so a
-// single large file cannot dominate the recon prompt. Truncation is now marked, never silent.
-export const RECON_FILE_CAP = 8000;
-
-// Recon transparency: `extractRepoFileRefs` drops referenced files once its maxFiles/maxBytes caps
-// are hit (reason "cap-exceeded"). Those drops land in the recon-skipped.md audit but NOT in the
-// prompt, so the model plans as if nothing was omitted. This note surfaces the cap-exceeded drops
-// to the model. Other skip reasons (not-tracked/denied/absolute/parent-traversal) are deliberate
-// security filters, not truncation, so they stay out of the plan-context note. Pure; exported.
-export function buildOmittedRefsNote(skipped) {
-  const dropped = (skipped ?? []).filter((s) => s.reason === "cap-exceeded");
-  if (!dropped.length) return "";
-  return [
-    "",
-    "## Omitted references (NOT read — recon file caps exceeded)",
-    "",
-    `${dropped.length} referenced repo file(s) were dropped before reading because the recon caps`,
-    "(max file count / total bytes) were hit. Treat the context as INCOMPLETE for these paths and",
-    "call out where the plan depends on a file that was not read:",
-    ...dropped.map((s) => `- \`${s.raw}\``),
-  ].join("\n");
-}
-
-export function buildPlanPrompt(issue, contextPack, prevReview, constitution, builderContext) {
-  const parts = [
-    `You are a senior software architect. Produce a clear, numbered implementation plan for`,
-    `Linear issue ${issue.identifier}: ${issue.title}`,
-    "",
-    "## Task",
-    "",
-    issue.description || "(no description)",
-    "",
-    ...(builderContext?.skills?.length
-      ? ["## Selected builder skills", "", builderContext.prompt, ""]
-      : []),
-    "## Recon context pack",
-    "",
-    contextPack || "(none)",
-    "",
-    "The context pack above was built from the live repo minutes ago — treat it as trusted",
-    "ground truth. Do NOT re-explore surfaces it already covers; verify beyond it only where",
-    "the plan hinges on a detail it does not settle. Budget your time for writing the plan.",
-    ...constitutionPromptLines(constitution),
-    DEFERRED_CONTRACT,
-  ];
-  if (prevReview) {
-    parts.push(
-      "",
-      "## Reviewer feedback on your previous plan (address every Blocker/Major)",
-      "",
-      prevReview
-    );
-  }
-  return parts.join("\n");
-}
-
-export function buildPlanReviewPrompt(
-  plan,
-  round,
-  maxRounds,
-  prevReview = null,
-  builderSkillAudit = []
-) {
-  const isLast = round >= maxRounds;
-  const roundNote = isLast
-    ? `**Final round (${round}/${maxRounds}). Approve unless there is a Blocker.**`
-    : `Round ${round} of ${maxRounds}.`;
-  return [
-    "/review-plan",
-    "",
-    `> ${roundNote}`,
-    "",
-    "## Plan to review",
-    "",
-    plan,
-    "",
-    ...(builderSkillAudit.length
-      ? [
-          "## Selected builder skill constraints",
-          "",
-          ...builderSkillAudit.map(
-            (entry) => `- ${entry.id} sha256=${entry.sha256} bytes=${entry.bytes}`
-          ),
-          "",
-          "Verify plan conformance to the applicable hard constraints above.",
-          "",
-        ]
-      : []),
-    // Regression guard (AIO-239 R5a): a revision round can silently revert a fix the previous
-    // review already demanded and got — the reviewer must re-verify prior acceptances, not just
-    // hunt new issues. (Observed live: round 3 reverted two accepted round-1 fixes.)
-    ...(prevReview
-      ? [
-          "## Previously required changes (from the prior review round)",
-          "",
-          prevReview,
-          "",
-          "**Regression check: verify EVERY previously required change above is still honored in",
-          "this revision. A silently reverted prior fix is a Blocker.**",
-          "",
-        ]
-      : []),
-    "---",
-    "Review the plan. List any Blockers or approach-level Majors. Minor issues do not block.",
-    `When the plan is ready to implement, place this token alone on the very last line:`,
-    PLAN_READY_TOKEN,
-  ].join("\n");
-}
-
-export function buildGptReviewPrompt(plan, prDiff, pr, constitution) {
-  return [
-    "/ai-code-review",
-    "",
-    `You are reviewing PR #${pr} against the approved plan below. Emit findings as`,
-    "`- \\`severity\\` \\`file\\`: …` lines (Critical/High/Medium/Low).",
-    "",
-    "## Approved plan",
-    "",
-    plan,
-    "",
-    "## PR diff",
-    "",
-    prDiff || "(no diff)",
-    ...constitutionPromptLines(constitution),
-    ...(constitution
-      ? ["", "A diff that violates the constitution above is a finding (severity by impact)."]
-      : []),
-  ].join("\n");
-}
-
-export function buildSafetyPrompt(diff, changedPaths) {
-  return [
-    "You are a safety reviewer for the AIOS workspace toolkit. The diff below touches a",
-    "safety-critical surface (tier model, sync contract, secrets/leak gate, hooks, validators,",
-    "or scaffold governance). Confirm EVERY tier/sync/secrets/hook invariant is preserved.",
-    "",
-    "## Changed safety-surface paths",
-    "",
-    changedPaths.map((p) => `- ${p}`).join("\n"),
-    "",
-    "## Diff",
-    "",
-    diff || "(no diff)",
-    "",
-    "---",
-    `If (and ONLY if) every invariant is preserved, emit ${SAFETY_APPROVED_TOKEN} alone on the`,
-    "very last line. Otherwise list what is unsafe and do NOT emit the token.",
-  ].join("\n");
-}
-
-// ── default dep impls (real side effects) ────────────────────────────────────────────────────
-
-function defaultGitLsFiles(repo) {
-  try {
-    const out = execFileSync("git", ["ls-files"], {
-      cwd: repo,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return new Set(
-      out
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-// gitExec: returns stdout (trimmed); throws on non-zero exit. Used for status/merge/worktree.
-function defaultGitExec(argv, cwd) {
-  return execFileSync("git", argv, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
-}
-
-// ghExec: returns { code, stdout, stderr } and NEVER throws on non-zero (mirrors readChecks'
-// contract — a red/pending `gh pr checks` is data, not a crash).
-function defaultGhExec(argv) {
-  try {
-    const stdout = execFileSync("gh", argv, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { code: 0, stdout, stderr: "" };
-  } catch (e) {
-    return {
-      code: e.status ?? 1,
-      stdout: e.stdout?.toString() ?? "",
-      stderr: e.stderr?.toString() ?? "",
-    };
-  }
-}
-
-// SDK plan-runner deps (--plan-runner sdk). Lazily imported so the default `cli` path never pays
-// for (or requires) the Anthropic SDK — only an actual sdk run constructs the client. `callOpus`
-// is the same Opus↔SDK planner `aios relay` uses; `makeAnthropic` needs a funded ANTHROPIC_API_KEY.
-async function defaultMakeAnthropic() {
-  const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  return new Anthropic();
-}
-async function defaultCallOpus(anthropic, messages, planCfg) {
-  const { callOpus } = await import("./relay.mjs");
-  return callOpus(anthropic, messages, planCfg);
-}
-
-function defaultWriteAudit(repo, issue, name, text) {
-  try {
-    const dir = path.join(repo, ".aios", "loop", issue);
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(path.join(dir, name), `${text}\n`);
-  } catch {
-    /* best-effort — audit never blocks a run */
-  }
-}
-
-function defaultConfirm(promptText) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(`${promptText} [y/N] `, (ans) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(ans.trim()));
-    });
-  });
-}
-
-// wait-for-bots exit codes are the interface (see runShip's Bugbot gate): 0 = Bugbot posted,
-// 2 = timeout. A real SPAWN failure (script missing, ENOENT, killed by signal) has NO numeric
-// exit status — it must NOT be reported as `2` (which runShip treats as a benign timeout and
-// proceeds). Return `1` (gate could not run) so the caller fails closed and blocks merge.
-// fileURLToPath (not new URL(...).pathname) is used so the path is correct on every platform and
-// with spaces/encoded chars in the repo path.
-function defaultWaitForBots(argv) {
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "wait-for-bots.mjs");
-  try {
-    execFileSync(process.execPath, [script, ...argv], { stdio: "inherit" });
-    return 0;
-  } catch (e) {
-    // Only a genuine non-zero child exit carries a numeric `status`. Anything else is a spawn
-    // failure → surface as `1` (could-not-run), never as the `2` timeout code.
-    return typeof e.status === "number" ? e.status : 1;
-  }
-}
-
-// Parse `git worktree list --porcelain` for the path of the worktree checked out on `branch`.
-// The porcelain format is stanza-per-worktree: a `worktree <path>` line followed by (among
-// others) a `branch refs/heads/<branch>` line, stanzas separated by blank lines. Returns the
-// matching path, or null when no worktree holds that branch. Pure; exported for the test.
-export function resolveWorktreePathFromList(porcelain, branch) {
-  const target = `refs/heads/${branch}`;
-  let currentPath = null;
-  for (const line of String(porcelain ?? "").split("\n")) {
-    if (line.startsWith("worktree ")) currentPath = line.slice("worktree ".length).trim();
-    else if (line.startsWith("branch ")) {
-      if (line.slice("branch ".length).trim() === target) return currentPath;
-    }
-  }
-  return null;
-}
-
-// ── cleanup (exported for the ordering test) ──────────────────────────────────────────────────
-// Correct ordering: git refuses to delete a branch checked out in a worktree, so worktree remove
-// → prune → branch delete, THEN the primary ff-only.
-// Cleanup is BEST-EFFORT since AIO-239: the merge already happened, so nothing here may fail the
-// run. Worktree/branch removal always proceeds; the ff-only of the primary checkout is attempted
-// only when it cannot clobber operator state (someone else's working files must never turn a
-// successful ship into CLEANUP_FAILED — the operator can ff later). Always returns SHIP_EXIT.OK
-// with `reason` describing what was done and `ffSkipped`/`ffDone` for callers/tests.
-// AIO-186 grafts (kept under the best-effort stance):
-//   F3 — remove the worktree at the path git ACTUALLY registered for the branch (a resumed build
-//        may sit at a non-default path; runBuild returns only an exit code), falling back to the
-//        caller-passed path.
-//   F1 — land the ff-only on `main` itself (checkout main first): the operator may have started
-//        `aios ship` from another branch, and ff-ing a non-main HEAD advances the wrong branch.
-//        A failed checkout records ffSkipped — never CLEANUP_FAILED, never a clobber.
-export function runCleanup(deps, { repo, branch, worktreePath }) {
-  const { gitExec } = deps;
-  const notes = [];
-
-  // F3: resolve the ACTUAL worktree registered for this branch; fall back to the passed path
-  // when git reports none (already-pruned → the remove below is a harmless no-op).
-  let removePath = worktreePath;
-  try {
-    const listed = resolveWorktreePathFromList(
-      gitExec(["worktree", "list", "--porcelain"], repo),
-      branch
-    );
-    if (listed) removePath = listed;
-  } catch {
-    /* best-effort — fall back to the passed worktreePath */
-  }
-
-  // Remove the worktree BEFORE deleting the branch (git blocks deleting a checked-out branch).
-  try {
-    gitExec(["worktree", "remove", "--force", removePath], repo);
-  } catch {
-    notes.push("worktree remove skipped");
-  }
-  try {
-    gitExec(["worktree", "prune"], repo);
-  } catch {
-    /* best-effort */
-  }
-  try {
-    gitExec(["branch", "-D", branch], repo);
-  } catch {
-    notes.push("local branch delete skipped (remote deleted at merge)");
-  }
-
-  // ff-only the primary checkout — convenience, not a requirement.
-  let ffDone = false;
-  let ffSkipped = null;
-  let status = "";
-  try {
-    status = gitExec(["status", "--porcelain"], repo) ?? "";
-  } catch (e) {
-    ffSkipped = `could not read primary status (${e.message})`;
-  }
-  if (ffSkipped == null && status.trim()) {
-    // Dirty primary: git's own checkout safety would refuse an ff that touches modified files,
-    // but we skip proactively — never risk another agent's / the operator's in-flight work.
-    ffSkipped =
-      "primary checkout has local changes — run `git merge --ff-only origin/main` when ready";
-  }
-  if (ffSkipped == null) {
-    // F1: land the ff on `main` itself — the operator may have started from another branch.
-    try {
-      gitExec(["checkout", "main"], repo);
-    } catch (e) {
-      ffSkipped = `could not checkout main (${e.message}) — run the ff from main when ready`;
-    }
-  }
-  if (ffSkipped == null) {
-    try {
-      gitExec(["fetch", "origin", "main"], repo);
-      gitExec(["merge", "--ff-only", "origin/main"], repo);
-      ffDone = true;
-    } catch (e) {
-      ffSkipped = `ff-only not possible (${e.message}) — resolve manually`;
-    }
-  }
-  if (ffSkipped) notes.push(`ff skipped: ${ffSkipped}`);
-
-  return {
-    code: SHIP_EXIT.OK,
-    ffDone,
-    ffSkipped,
-    reason: notes.length ? notes.join("; ") : "cleaned up (worktree, branch, ff)",
-  };
-}
-
-// ── build opts ─────────────────────────────────────────────────────────────────────────────
-function makeBuildOpts({
-  branch,
-  issue,
-  logFile,
-  findingsFile,
-  verify = SHIP_VERIFY_CMD,
-  constitution = null,
-  profile = null,
-  builderContext = null,
-}) {
-  return {
-    planSource: null,
-    constitution,
-    profile,
-    builderContext,
-    builderSkills: builderContext?.skills?.map((skill) => skill.id) ?? [],
-    branch,
-    isTask: false,
-    rounds: 4,
-    buildTimeout: 1800 * 1000,
-    cursorTimeout: 300 * 1000,
-    cursorTimeoutSet: false,
-    model: null,
-    skill: "/ai-code-review",
-    worktreePath: null,
-    base: "origin/main",
-    verify,
-    findingsFile: findingsFile ?? null,
-    logFile: logFile ?? null,
-    merge: false,
-    pr: false,
-    issue,
-    bugbot: false,
-    noBugbot: true,
-    noGate: false,
-    keepWorktree: true,
-    dryRun: false,
-    chained: true,
-  };
-}
-
-const lastNonBlankLine = (text) =>
-  (text ?? "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .at(-1) ?? "";
-
-function cursorCliModelArg(model) {
-  const ref = parseModelRef(model);
-  return ref.provider === "cursor" && ref.modelId ? ref.modelId : model;
-}
 
 // ── orchestration ─────────────────────────────────────────────────────────────────────────────
 

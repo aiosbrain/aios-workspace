@@ -20,9 +20,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  aggregateGateResults,
   evaluateLocalBugbotGate as evaluateProductionGate,
   formatHookResult,
   hardenedChildEnv,
+  listGateTargets,
   reviewChildArgs,
 } from "../hooks/local-bugbot-gate.mjs";
 import {
@@ -46,6 +48,7 @@ import {
   trustedReviewerEnv,
   UNTRACKED_HASH_SIZE_CAP,
 } from "../scripts/review-bugbot.mjs";
+import { resolveCanonicalBranchHead } from "../scripts/review-bugbot/trusted-env.mjs";
 import {
   enqueueContinuation,
   hardenedGateEnv,
@@ -62,6 +65,8 @@ function evaluateLocalBugbotGate(options = {}) {
     resolveBase:
       options.resolveBase ??
       ((repo) => ({ ok: true, baseSha: git(repo, "merge-base", "HEAD", "origin/main") })),
+    // Fixtures have no canonical remote; never let a test reach the network ls-remote.
+    resolveBranchHead: options.resolveBranchHead ?? (() => null),
   });
 }
 
@@ -745,6 +750,134 @@ test("gate never trusts a disk clear cache but caches exact blocked verdict meta
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("a pushed clean worktree is owned by the PR gates and skips local review", () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "pushed change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "pushed change");
+    const head = git(repo, "rev-parse", "HEAD");
+    let calls = 0;
+    const review = () => {
+      calls++;
+      return { ok: false, status: 1, output: "reviewer ran" };
+    };
+
+    const unpushed = evaluateLocalBugbotGate({ repo, env: {}, runReview: review });
+    assert.notEqual(unpushed.status, "skipped", "an unpushed head must still be reviewed");
+    assert.equal(calls, 1);
+
+    evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => "f".repeat(40),
+    });
+    assert.equal(calls, 2, "a canonical head behind local HEAD must still be reviewed");
+
+    const skipped = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => head,
+    });
+    assert.equal(skipped.status, "skipped");
+    assert.match(skipped.reason, /canonical remote/);
+    assert.equal(calls, 2, "a pushed clean worktree must not spend a model call");
+
+    appendFileSync(path.join(repo, "tracked.txt"), "uncommitted\n");
+    const dirty = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: review,
+      resolveBranchHead: () => head,
+    });
+    assert.notEqual(dirty.status, "skipped", "worktree edits beyond the pushed head are reviewed");
+    assert.equal(calls, 3);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a stale blocked cache stops blocking once the branch head reaches the canonical remote", () => {
+  const repo = fixture();
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "in-flight change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "in-flight change");
+    const head = git(repo, "rev-parse", "HEAD");
+    let calls = 0;
+    const blockedReview = () => {
+      calls++;
+      return {
+        ok: false,
+        status: 1,
+        output: `${BUGBOT_BLOCKED_MARKER}\nBugbot found Medium+ issues\n- Medium: bug`,
+      };
+    };
+    assert.equal(
+      evaluateLocalBugbotGate({ repo, env: {}, runReview: blockedReview }).status,
+      "blocked"
+    );
+    assert.equal(evaluateLocalBugbotGate({ repo, env: {}, runReview: blockedReview }).cached, true);
+    assert.equal(calls, 1);
+
+    const afterPush = evaluateLocalBugbotGate({
+      repo,
+      env: {},
+      runReview: blockedReview,
+      resolveBranchHead: () => head,
+    });
+    assert.equal(
+      afterPush.status,
+      "skipped",
+      "PR gates own a pushed changeset, cached verdict or not"
+    );
+    assert.equal(calls, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("canonical branch head resolution reads only the canonical remote", () => {
+  const repo = fixture();
+  const bare = mkdtempSync(path.join(tmpdir(), "aios-canonical-"));
+  try {
+    writeFileSync(path.join(repo, "tracked.txt"), "pushed change\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "pushed change");
+    git(bare, "init", "-q", "--bare");
+    git(repo, "push", "-q", bare, "feat/gate");
+    const head = git(repo, "rev-parse", "HEAD");
+    assert.equal(resolveCanonicalBranchHead("feat/gate", { canonicalUrl: bare }), head);
+    assert.equal(resolveCanonicalBranchHead("missing", { canonicalUrl: bare }), null);
+    assert.equal(resolveCanonicalBranchHead("HEAD", { canonicalUrl: bare }), null);
+    assert.equal(resolveCanonicalBranchHead("", { canonicalUrl: bare }), null);
+    assert.equal(
+      resolveCanonicalBranchHead("feat/gate", { canonicalUrl: path.join(bare, "missing") }),
+      null,
+      "an unreachable canonical remote must read as not-pushed, never as pushed"
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test("a skipped sibling stays neutral in a probe sweep", () => {
+  const combined = aggregateGateResults([
+    { status: "probe", fingerprint: "aa11", worktree: "/wt/active" },
+    {
+      status: "skipped",
+      reason: "branch feat/x head is on the canonical remote",
+      worktree: "/wt/pushed",
+    },
+  ]);
+  assert.equal(combined.status, "probe");
+  assert.equal(combined.fingerprints.length, 1);
+  assert.equal(combined.fingerprints[0].worktree, "/wt/active");
 });
 
 test("gate waits through transient lock contention instead of returning a spurious error", () => {
@@ -2135,4 +2268,188 @@ test("an oversized per-attempt timeout is clamped, never crash-shaped", async ()
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+/**
+ * AIO-555 — target selection and fail-closed aggregation.
+ *
+ * The gate used to review whichever directory the session started in, which under the mandated
+ * worktree workflow (CLAUDE.md §5) is the primary checkout — the one tree that by construction
+ * holds no work. Targets now come from git's worktree registry.
+ *
+ * Selection deliberately does NO filtering: an earlier revision skipped worktrees that looked
+ * clean or pushed, which an agent could forge with one `git update-ref` or `git update-index
+ * --skip-worktree`. evaluateLocalBugbotGate already excludes empty diffs against a base resolved
+ * from the canonical remote, so exclusion happens against a signal the agent cannot write.
+ */
+
+const PRIMARY_ROOT = REPO;
+const DIRTY_ROOT = path.join(REPO, "scripts");
+const PUSHED_ROOT = path.join(REPO, "test");
+
+function nulListing(roots) {
+  return roots.map((root) => `worktree ${root}\0HEAD abc\0`).join("");
+}
+
+test("AIO-555: every existing registered worktree is a target, unfiltered", () => {
+  const roots = [PRIMARY_ROOT, DIRTY_ROOT, PUSHED_ROOT];
+  const selected = listGateTargets(PRIMARY_ROOT, () => nulListing(roots));
+  assert.deepEqual(selected, roots);
+});
+
+test("AIO-555: a forged origin/main or skip-worktree cannot drop a target", () => {
+  // Selection consults no ref, no upstream, and no `git status`, so the writes that emptied the
+  // target list in the first revision have nothing to act on: only `worktree list` is read.
+  const roots = [PRIMARY_ROOT, DIRTY_ROOT];
+  const gitFn = (args) => {
+    assert.deepEqual(args, ["worktree", "list", "--porcelain", "-z"]);
+    return nulListing(roots);
+  };
+  assert.deepEqual(listGateTargets(PRIMARY_ROOT, gitFn), roots);
+});
+
+test("AIO-555: a stale worktree registration is skipped, not fatal", () => {
+  const missing = path.join(tmpdir(), "aios-bugbot-does-not-exist-555");
+  rmSync(missing, { recursive: true, force: true });
+  const selected = listGateTargets(PRIMARY_ROOT, () => nulListing([missing, DIRTY_ROOT]));
+  assert.deepEqual(selected, [DIRTY_ROOT]);
+});
+
+test("AIO-555: a worktree path containing a newline survives NUL parsing", () => {
+  // `git worktree list --porcelain` does not quote paths; without -z this path would split into
+  // two bogus entries and the real worktree would be silently skipped.
+  const weird = path.join(REPO, "scripts");
+  const listing = `worktree ${weird}\0HEAD abc\0worktree ${PUSHED_ROOT}\0`;
+  assert.deepEqual(
+    listGateTargets(PRIMARY_ROOT, () => listing),
+    [weird, PUSHED_ROOT]
+  );
+});
+
+test("AIO-555: aggregation is fail-closed — one block outweighs a clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    {
+      status: "blocked",
+      cached: false,
+      fingerprint: "f1",
+      output: "High: boom",
+      worktree: "/wt/b",
+    },
+  ]);
+  assert.equal(merged.status, "blocked");
+  assert.deepEqual(merged.worktrees, ["/wt/b"]);
+  assert.match(merged.output, /\/wt\/b/);
+  assert.match(merged.output, /High: boom/);
+});
+
+test("AIO-555: an error outweighs a clear but not a block", () => {
+  assert.equal(
+    aggregateGateResults([
+      { status: "clear", verified: true, worktree: "/wt/a" },
+      { status: "error", reason: "review died", worktree: "/wt/b" },
+    ]).status,
+    "error"
+  );
+  assert.equal(
+    aggregateGateResults([
+      { status: "error", reason: "review died", worktree: "/wt/a" },
+      { status: "blocked", cached: false, output: "High", worktree: "/wt/b" },
+    ]).status,
+    "blocked"
+  );
+});
+
+test("AIO-555: an unrecognised status is an error, never a clear", () => {
+  const merged = aggregateGateResults([{ status: "weird", worktree: "/wt/a" }]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.reason, /refusing to treat as clear/);
+});
+
+test("AIO-555: a clear that is not verified is an error, never a clear", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    { status: "clear", verified: false, worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.reason, /\/wt\/b/);
+});
+
+test("AIO-555: an all-verified-clear sweep clears", () => {
+  const merged = aggregateGateResults([
+    { status: "clear", verified: true, worktree: "/wt/a" },
+    { status: "skipped", reason: "no changes against Bugbot base", worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "clear");
+  assert.equal(merged.verified, true);
+});
+
+test("AIO-555: no target reviewed is skipped, not a positive clear", () => {
+  const empty = aggregateGateResults([]);
+  assert.notEqual(empty.status, "clear");
+  assert.equal(empty.status, "skipped");
+});
+
+test("AIO-555: a probe aggregates to a probe and keeps a fingerprint for dedup", () => {
+  const merged = aggregateGateResults([
+    { status: "probe", fingerprint: "aaa", worktree: "/wt/a" },
+    { status: "probe", fingerprint: "bbb", worktree: "/wt/b" },
+  ]);
+  assert.equal(merged.status, "probe");
+  assert.match(merged.fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(merged.fingerprints.length, 2);
+});
+
+/**
+ * AIO-564 — a cached blocked verdict must keep its evidence.
+ *
+ * Regression from AIO-555: the aggregate read only `output`, but cachedResult puts the explanation
+ * in `reason`. Every Stop after the first on an unchanged diff therefore rendered a worktree path
+ * and nothing else, which reads as a broken gate rather than a real finding.
+ */
+
+test("AIO-564: a cached block renders its reason, not an empty entry", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, fingerprint: "f", reason: "R-CACHED", worktree: "/wt/a" },
+  ]);
+  assert.equal(merged.status, "blocked");
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /R-CACHED/);
+  // The exact live failure: evidence that is nothing but a bracketed worktree path.
+  assert.notEqual(merged.output.replace(/\[[^\]]*\]/g, "").trim(), "");
+});
+
+test("AIO-564: a mixed cached + fresh sweep renders both bodies, each attributed", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, reason: "R-CACHED", worktree: "/wt/a" },
+    { status: "blocked", cached: false, output: "High: fresh finding", worktree: "/wt/b" },
+  ]);
+  for (const fragment of ["/wt/a", "R-CACHED", "/wt/b", "High: fresh finding"]) {
+    assert.match(merged.output, new RegExp(fragment.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")));
+  }
+  assert.equal(merged.cached, false, "a sweep containing a fresh block is not wholly cached");
+});
+
+test("AIO-564: a block with neither output nor reason still names the worktree and a next step", () => {
+  const merged = aggregateGateResults([{ status: "blocked", worktree: "/wt/a" }]);
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /manual review/);
+});
+
+test("AIO-564: the hook message carries the finding text, not just worktree paths", () => {
+  const merged = aggregateGateResults([
+    { status: "blocked", cached: true, reason: "R-CACHED", worktree: "/wt/a" },
+  ]);
+  const formatted = formatHookResult("claude", merged);
+  assert.equal(formatted.decision, "block");
+  assert.match(formatted.reason, /R-CACHED/);
+});
+
+test("AIO-564: an errored worktree keeps its reason in the aggregated output too", () => {
+  const merged = aggregateGateResults([
+    { status: "error", reason: "review died", worktree: "/wt/a" },
+  ]);
+  assert.equal(merged.status, "error");
+  assert.match(merged.output, /\/wt\/a/);
+  assert.match(merged.output, /review died/);
 });

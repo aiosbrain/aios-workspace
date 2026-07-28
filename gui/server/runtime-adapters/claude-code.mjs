@@ -11,7 +11,11 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { MEMORY_FILES } from "../memory-files.mjs";
-import { allowedApprovalModeIds, fullAccessEnabled } from "../../../scripts/runtimes.mjs";
+import {
+  allowedApprovalModeIds,
+  fullAccessEnabled,
+  modelCatalog,
+} from "../../../scripts/runtimes.mjs";
 
 // Whether "Full access" (bypassPermissions) is enabled. Gated OFF by default: the mode
 // is only advertised when this env flag is set (see runtimes.claudeApprovalModes), and
@@ -86,17 +90,19 @@ export function loadMemory(repo) {
   ].join("\n");
 }
 
-// Models the cockpit picker offers. The claude-code adapter resolves an empty /
-// unknown `agent_model` to the default here — so global `agent_model: ""` keeps
+// Models the cockpit picker offers for THIS runtime. The claude-code adapter resolves
+// an empty / unknown `agent_model` to the default — so global `agent_model: ""` keeps
 // meaning "runtime default" for every other runtime (see docs/byoa.md), while the
 // GUI gets a fast, cheap default instead of Claude Code's heavy fallback.
-// id + display label co-located so the picker and the allow-list never drift.
-export const MODEL_OPTIONS = [
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { id: "claude-opus-4-8", label: "Opus 4.8" },
-];
+//
+// AIO-536: the list itself now lives in the shared registry
+// (scripts/runtimes.mjs → RUNTIME_MODEL_CATALOGS["claude-code"]) alongside every other
+// runtime's catalog; these re-exports keep the existing import sites and values EXACTLY
+// as they were (same ids, same order, same default).
+const CLAUDE_CATALOG = modelCatalog("claude-code");
+export const MODEL_OPTIONS = CLAUDE_CATALOG.models;
 export const ALLOWED_MODELS = new Set(MODEL_OPTIONS.map((m) => m.id));
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_MODEL = CLAUDE_CATALOG.defaultModel;
 
 function resolveModel(model) {
   return ALLOWED_MODELS.has(model) ? model : DEFAULT_MODEL;

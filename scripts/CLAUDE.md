@@ -36,8 +36,8 @@ needs vendoring). No shared build step — each script is a standalone entry poi
 
 ## File-size discipline
 
-`check-file-size.mjs` enforces line caps from `scripts/size-caps.json` (currently only
-`scripts/aios.mjs` → 2848 lines, explicitly grandfathered per AIO-320/AIO-315 — extraction
-PRs ratchet the cap down). `ship.mjs` is comparably large (2209 lines) but is not yet in
-`size-caps.json`, so it isn't enforced — don't assume it's covered by the same gate.
+`check-file-size.mjs` enforces line caps from `scripts/size-caps.json`: `scripts/aios.mjs`
+(explicitly grandfathered per AIO-320/AIO-315) and, since AIO-560, `scripts/ship.mjs`
+(1756 lines, after the CLI-args/gates/prompts/runtime split into `scripts/ship/*.mjs`).
+Extraction PRs ratchet both caps down — per AIO-315 the numbers only ever go down.
 Prefer extracting to a new script over growing either file further.
