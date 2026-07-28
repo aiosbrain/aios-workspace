@@ -169,9 +169,36 @@ test("active .codex/hooks.json wires guard-worktree.sh AND keeps the Bugbot Stop
   const preToolUse = JSON.stringify(hooks.hooks.PreToolUse);
   assert.match(preToolUse, /run-strict-guard\.sh/);
   assert.match(preToolUse, /guard-worktree\.sh/);
-  assert.match(preToolUse, /"matcher":\s*"Edit\|Write"/);
+  assert.match(preToolUse, /"matcher":\s*"apply_patch\|Edit\|Write"/);
   assert.match(preToolUse, /"matcher":\s*"Bash"/);
 
   const stop = JSON.stringify(hooks.hooks.Stop);
   assert.match(stop, /run-local-bugbot-gate\.sh/);
 });
+
+// An `Edit|Write` matcher does not fire on Codex's actual file-edit tool, which is
+// `apply_patch` — the fixtures (.harness/evals/fixtures/native/codex/apply-patch.json),
+// normalize.sh's `tool_name` default, and the runtime-conformance table all name it. A
+// guard wired only to Edit/Write is inert on the exact path AIO-578 exists to close, so
+// every Codex edit matcher is pinned here, in the active config AND in the adapter
+// template that ships to every workspace.
+for (const [label, rel] of [
+  ["active", ".codex/hooks.json"],
+  ["template", ".harness/adapters/codex/hooks.json"],
+]) {
+  test(`${label} Codex config matches apply_patch on every pre-edit hook`, () => {
+    const hooks = JSON.parse(readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+    const editMatchers = Object.values(hooks.hooks)
+      .flat()
+      .map((entry) => entry.matcher)
+      .filter((m) => typeof m === "string" && /Edit|Write/.test(m));
+
+    assert.ok(editMatchers.length > 0, `${rel} declares no edit matcher at all`);
+    for (const matcher of editMatchers) {
+      assert.ok(
+        matcher.split("|").includes("apply_patch"),
+        `${rel}: matcher ${JSON.stringify(matcher)} never fires on Codex's apply_patch tool`
+      );
+    }
+  });
+}
