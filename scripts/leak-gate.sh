@@ -325,6 +325,21 @@ if [ "$IS_PRODUCT_REPO" -eq 1 ]; then
   scan_paths "$BASELINE_PATHS" "$BASELINE_PATH_EXEMPT" "workspace/client material in the product repo"
 fi
 
+# Emit the region of a file in which an `access:` key is meaningful. A file that opens with a
+# `---` fence has its entire frontmatter block emitted, however long; anything else falls back to
+# a bounded window. Never emits the body, so a document merely discussing `access: admin` in prose
+# is not mistaken for a tier-marked file.
+frontmatter_scope() {
+  awk '
+    NR == 1 && $0 !~ /^---[[:space:]]*$/ { fenced = 0; print; next }
+    NR == 1 { fenced = 1; next }
+    fenced && $0 ~ /^(---|\.\.\.)[[:space:]]*$/ { exit }
+    fenced { print; next }
+    NR <= 20 { print; next }
+    { exit }
+  ' "$1"
+}
+
 # Owner-only frontmatter, checked on content but scoped away from the trees that teach it.
 # Product repo only, for the same reason as the path rules above: `access: admin` is the normal,
 # correct tag for most of a real workspace.
@@ -334,7 +349,10 @@ if [ "$IS_PRODUCT_REPO" -eq 1 ] && [ -s "$FILE_LIST" ]; then
     rel="${f#"$ROOT"/}"
     printf '%s' "$rel" | grep -qE "$BASELINE_TIER_EXEMPT" && continue
     case "$f" in *.md) ;; *) continue ;; esac
-    head -20 "$f" 2>/dev/null |
+    # Read the WHOLE frontmatter block when the file opens one: a fixed line window let a long
+    # header push `access:` out of view and evade the owner-tier rule. Files with no frontmatter
+    # delimiters keep the original bounded window, so this only ever widens coverage.
+    frontmatter_scope "$f" 2>/dev/null |
       grep -qiE "^access:[[:space:]]*['\"]?[[:space:]]*(admin|private)[[:space:]]*['\"]?[[:space:]]*(#.*)?$" &&
       printf '%s\0' "$f" >> "$MATCH_LIST"
   done < "$FILE_LIST"

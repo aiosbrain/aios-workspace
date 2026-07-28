@@ -181,6 +181,32 @@ test("owner-only frontmatter with an inline comment is caught", () => {
   }
 });
 
+test("owner-only frontmatter is caught however long the frontmatter block is", () => {
+  // A fixed line window let a long header push `access:` out of view. Frontmatter is a fenced
+  // block with no length limit, so the scan follows the fence, not a line count.
+  const filler = Array.from({ length: 40 }, (_, i) => `field_${i}: value\n`).join("");
+  const root = repoWith({
+    "notes/private-thing.md": `---\n${filler}access: admin\n---\n\nowner only\n`,
+  });
+  try {
+    assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("prose merely discussing an access key is not mistaken for a tier-marked file", () => {
+  // The widened scan must not start flagging documentation. Frontmatter ends at its fence.
+  const root = repoWith({
+    "notes/guide.md": "---\ntitle: How tiers work\n---\n\nWrite `access: admin` to mark a file.\n",
+  });
+  try {
+    assert.equal(runGateWithoutTerms(root).code, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("quoted, case-insensitive owner-only frontmatter is caught", () => {
   const root = repoWith({
     "notes/private-thing.md": '---\naccess: " ADMIN "\n---\n\nowner only\n',

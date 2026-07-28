@@ -410,6 +410,52 @@ test("push rejects a commit that a replacement ref hides from the gate", () => {
   assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
 });
 
+test("push rejects a confidential commit message even when every tree is clean", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-msg-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-msg-remote-"));
+  roots.push(repo, remote);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  mkdirSync(path.join(repo, "scaffold"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  writeFileSync(path.join(repo, "scaffold", ".keep"), "");
+  writeFileSync(path.join(repo, "README.md"), "safe\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  // The tree is entirely clean; the confidential material lives only in the message, which is
+  // published on push exactly like the tree is.
+  execFileSync("git", [
+    "-C",
+    repo,
+    "commit",
+    "-q",
+    "-m",
+    "---\naccess: admin\n---\n\nowner-only notes in the commit message\n",
+  ]);
+  install(repo);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "main"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    },
+  });
+  assert.notEqual(push.status, 0, "a commit message is a published object and must be scanned");
+  const remoteHead = spawnSync("git", ["--git-dir", remote, "rev-parse", "main"], {
+    encoding: "utf8",
+  });
+  assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
+});
+
 test("preserved hooks keep the interpreter flags declared in their shebang", () => {
   const { repo, hooksDir } = makeRepo();
   // `-e` must abort the hook at the failing command. Losing it lets a security check that

@@ -126,10 +126,32 @@ scan_detached_object() {
   scan_target "$target" 1
 }
 
+# A commit's message and identity headers are published objects exactly like its tree, so the
+# tree scan alone leaves them ungated. Scan the raw commit object: that covers the message plus
+# author/committer names and addresses. Keyed separately from the tree so neither dedupes the
+# other. The `.md` materialization name keeps the content rules (including owner-tier
+# frontmatter) in force, matching how detached blobs are handled.
+scan_commit_metadata() {
+  local commit="$1" target="$snapshot_root/commit-message.md"
+  grep -qxF "message:$commit" "$seen_objects" 2>/dev/null && return 0
+  printf 'message:%s\n' "$commit" >> "$seen_objects"
+  if ! git cat-file commit "$commit" > "$target"; then
+    echo "pre-push: could not read a commit object for leak scanning." >&2
+    return 2
+  fi
+  scan_target "$target" 1
+}
+
 scan_commit_list() {
   local commits="$1" commit status
   while IFS= read -r commit; do
     [ -n "$commit" ] || continue
+    if scan_commit_metadata "$commit"; then
+      :
+    else
+      status=$?
+      return "$status"
+    fi
     if scan_treeish "$commit"; then
       continue
     else
