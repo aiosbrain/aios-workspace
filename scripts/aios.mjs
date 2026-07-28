@@ -46,7 +46,7 @@ import {
   DECISION_REDACTION_VERSION,
   validateItemPayload,
 } from "./workspace-parse.mjs";
-import { loadState, saveState, contentShaForPush, buildPlan } from "./sync-plan.mjs";
+import { loadState, saveState, contentShaForPush, buildPlan, HELD_GLYPH } from "./sync-plan.mjs";
 import { EXPORT_RUNTIMES } from "./runtimes.mjs";
 import { setTaskStatus, loopCriticalBlocks, printLoopCriticalWarnings } from "./task-tier.mjs";
 import { loadRubric, scoreRepo } from "../validation/agent-readiness-lib.mjs";
@@ -349,7 +349,7 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
     (i) => `${i.rel} ${c.dim(`[${i.kind}, ${i.tier}]`)}`
   );
   section(
-    c.red(`blocked (${plan.blocked.length}):`),
+    c.blue(`${HELD_GLYPH} held (${plan.blocked.length}):`),
     plan.blocked,
     (i) => `${i.rel} — ${i.reason}`
   );
@@ -359,8 +359,8 @@ async function cmdStatus(repo, cfg, patterns, args = []) {
     console.log("");
     console.log(
       c.dim(
-        "blocked files never leave this machine. To sync one: add `access: team` " +
-          "(or `external`) frontmatter — promotion is deliberate."
+        `the ${plan.blocked.length} held file(s) stayed on this machine. To sync one: ` +
+          "add `access: team` (or `external`) frontmatter — promotion is deliberate."
       )
     );
   }
@@ -611,7 +611,7 @@ async function cmdReview(repo, cfg, patterns, _args) {
   if (!pushable.length) {
     console.log(c.green("nothing to review — all eligible files are clean."));
     if (plan.blocked.length) {
-      console.log(c.red(`\nblocked (${plan.blocked.length}):`));
+      console.log(c.blue(`\n${HELD_GLYPH} held (${plan.blocked.length}):`));
       for (const b of plan.blocked) console.log(`  ${b.rel} — ${b.reason}`);
     }
     return;
@@ -634,7 +634,7 @@ async function cmdReview(repo, cfg, patterns, _args) {
     });
     if (plan.blocked.length) {
       console.log("");
-      console.log(c.red(`  blocked (${plan.blocked.length}) — cannot be selected:`));
+      console.log(c.blue(`  ${HELD_GLYPH} held (${plan.blocked.length}) — not selectable:`));
       for (const b of plan.blocked) console.log(c.dim(`    ${b.rel} — ${b.reason}`));
     }
     console.log(c.dim(`\n  clean (already synced): ${plan.clean.length}`));
@@ -746,7 +746,7 @@ async function cmdPush(repo, cfg, patterns, args) {
   if (!plan.push.length) {
     console.log(c.green("nothing to push — all eligible files are clean."));
     if (plan.blocked.length)
-      console.log(c.dim(`(${plan.blocked.length} blocked — run 'aios status' for reasons)`));
+      console.log(c.dim(`(${plan.blocked.length} held — run 'aios status' for reasons)`));
     return result;
   }
 
@@ -759,7 +759,7 @@ async function cmdPush(repo, cfg, patterns, args) {
       );
     }
     if (plan.blocked.length) {
-      console.log(c.red(`blocked (${plan.blocked.length}):`));
+      console.log(c.blue(`${HELD_GLYPH} held (${plan.blocked.length}):`));
       for (const b of plan.blocked) console.log(`  ${b.rel} — ${b.reason}`);
     }
     return result;
@@ -813,7 +813,7 @@ async function cmdPush(repo, cfg, patterns, args) {
   console.log(`\n${c.green(`pushed ${pushed}/${plan.push.length} item(s).`)}`);
   if (result.failed.size) process.exitCode = 1; // propagate partial failure to shell/GUI callers
   if (plan.blocked.length)
-    console.log(c.dim(`${plan.blocked.length} blocked — run 'aios status' for reasons.`));
+    console.log(c.dim(`${plan.blocked.length} held — run 'aios status' for reasons.`));
   if (plan.push.some((item) => item.kind === "task" && result.pushed.has(item.rel)))
     await import("./pm.mjs").then(({ printProjectionHealth }) =>
       printProjectionHealth(cfg, { optional: true })
