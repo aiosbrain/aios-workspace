@@ -697,6 +697,25 @@ export interface DailyItem {
   due?: string | null;
   stale?: number;
   changeType?: "added" | "modified";
+  /**
+   * Whole days past due. Absent when the item is due today or later — the owed bucket admits
+   * everything due on or before today, so this is what separates "due this afternoon" from
+   * "15 days late" for ranking and labelling.
+   */
+  overdueDays?: number;
+}
+/** One ask record, as `aios asks show <id> --json` emits it (GET /api/asks/show). */
+export interface AskDetail {
+  id: string;
+  kind: string;
+  severity: "blocker" | "decision" | "fyi";
+  title: string;
+  body: string | null;
+  source: string;
+  tier: LoopTier;
+  createdAt: string;
+  status: string;
+  resolvedAt: string | null;
 }
 export interface TagTotal {
   tag: string;

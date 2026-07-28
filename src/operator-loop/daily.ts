@@ -28,6 +28,8 @@ export interface DailyItem {
   due?: string | null;
   stale?: number;
   changeType?: ChangeType;
+  /** Whole days past due, when the item is genuinely late. Absent when due today or later. */
+  overdueDays?: number;
 }
 
 export interface DailyOrientation {

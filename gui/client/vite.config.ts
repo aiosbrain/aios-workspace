@@ -12,8 +12,19 @@ export default defineConfig({
         // Split rarely-changing vendor code from app code so a change to one
         // component doesn't invalidate the whole bundle, and to shrink the single
         // >500kB chunk Vite was warning about.
+        // @aios-alpha/ui is BUILT ON Radix and re-exports parts of it, so the two are
+        // mutually entangled at the module level: splitting them into sibling chunks lets
+        // Rollup emit `vendor-ui -> vendor-radix -> vendor-ui`. A circular chunk pair has
+        // no valid load order, so the browser can execute one before React is initialised
+        // and the app dies at import time with
+        // `Cannot read properties of undefined (reading 'forwardRef')` — a blank page, no
+        // error boundary, nothing rendered. Which import happens to trip the cycle depends
+        // on the app's module graph, so this is a latent trap that any new component import
+        // can spring. Keeping the design system and its Radix substrate in ONE chunk makes
+        // the cycle structurally impossible while still splitting vendor from app code.
         manualChunks: {
-          "vendor-radix": [
+          "vendor-ui": [
+            "@aios-alpha/ui",
             "@radix-ui/react-dialog",
             "@radix-ui/react-dropdown-menu",
             "@radix-ui/react-popover",
@@ -21,9 +32,6 @@ export default defineConfig({
             "@radix-ui/react-slot",
             "@radix-ui/react-tooltip",
           ],
-          // @aios-alpha/design is CSS-only (imported via subpath, not a JS entry) —
-          // only @aios-alpha/ui has an actual JS module for Rollup to resolve here.
-          "vendor-ui": ["@aios-alpha/ui"],
         },
       },
     },

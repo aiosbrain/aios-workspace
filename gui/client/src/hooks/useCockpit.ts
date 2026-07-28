@@ -516,7 +516,11 @@ export function useCockpit() {
       const text = (typeof override === "string" ? override : input).trim();
       if (!text) return;
       const openSocket = wsRef.current?.readyState === WebSocket.OPEN ? wsRef.current : null;
-      if (!openSocket && currentSession !== null) return;
+      // Consult the REF, not the `currentSession` state captured in this closure. `newChat()`
+      // nulls the ref synchronously but the state only lands on the next render, so a caller
+      // that starts a fresh chat and sends in the same tick would otherwise hit this guard with
+      // the OLD session id and return silently — no message, no error, nothing rendered.
+      if (!openSocket && currentSessionRef.current !== null) return;
       append({ kind: "user", text });
       setInput("");
       setBusy(true);
@@ -548,6 +552,23 @@ export function useCockpit() {
       }
     },
     [append, connect, currentSession, input, model, approvalMode]
+  );
+
+  /**
+   * Start a FRESH chat and send `text` as its first turn.
+   *
+   * Used by hand-off surfaces (the Operator Loop's "Ask"), which must never splice a question
+   * into whatever conversation happens to be open: the old session carries unrelated context,
+   * and if it was a replayed transcript its socket is closed, so the turn would be dropped.
+   * `newChat()` tears the socket down and nulls the session ref synchronously, so the send that
+   * follows opens a clean connection.
+   */
+  const askInNewChat = useCallback(
+    async (text: string) => {
+      newChat();
+      await sendMessage(text);
+    },
+    [newChat, sendMessage]
   );
 
   const respondPermission = useCallback((id: number, allow: boolean) => {
@@ -670,6 +691,7 @@ export function useCockpit() {
     newChat,
     openChat,
     sendMessage,
+    askInNewChat,
     respondPermission,
     respondPermissionOption,
     expirePermission,

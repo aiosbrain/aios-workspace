@@ -26,6 +26,33 @@ export const EDITABLE_FIELDS = new Set(["status", "assignee", "priority", "label
  * state, not a 500 (this is the die-free analog of aios.mjs `tasksFile`).
  * @returns {{ abs: string, rel: string } | null}
  */
+/**
+ * The task files a workspace may hold, as workspace-relative paths.
+ *
+ * A workspace can carry BOTH `3-log/tasks.md` and `3-log/tasks-team.md` (the tier split), and
+ * the Operator Loop collects rows from every one of them. `resolveTasksFile` deliberately
+ * returns only the highest-priority file for the Tasks panel's single-table view, so an edit
+ * addressed at a row living in a DIFFERENT file fails with "no task row with id 'T19'" — the
+ * row is real, it is just in the file that wasn't chosen.
+ */
+export const TASK_FILE_RELS = ["3-log/tasks-team.md", "3-log/tasks.md", "03-status/tasks.md"];
+
+/**
+ * Resolve an explicit workspace-relative task file for a targeted edit.
+ *
+ * Only paths on the known allowlist resolve — the value arrives from the browser (as a signal's
+ * evidence ref), so it is never joined into the filesystem unchecked. Returns null when the
+ * path is unknown or the file is absent, and the caller answers 404 rather than writing.
+ * @param {string} repo absolute workspace path
+ * @param {unknown} rel workspace-relative candidate (e.g. "3-log/tasks.md")
+ * @returns {{ abs: string, rel: string } | null}
+ */
+export function resolveTaskFileByRel(repo, rel) {
+  if (typeof rel !== "string" || !TASK_FILE_RELS.includes(rel)) return null;
+  const abs = path.join(repo, rel);
+  return existsSync(abs) ? { abs, rel } : null;
+}
+
 export function resolveTasksFile(repo) {
   const team = path.join(repo, "3-log", "tasks-team.md");
   if (existsSync(team)) return { abs: team, rel: "3-log/tasks-team.md" };

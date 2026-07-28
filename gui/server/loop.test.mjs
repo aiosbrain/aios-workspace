@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -9,12 +9,14 @@ import { spawn } from "node:child_process";
 import {
   validateCadence,
   validateWindow,
+  validateAskId,
   buildWeeklyCloseoutPayload,
   loopResponse,
 } from "./loop.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(HERE, "index.mjs");
+const AIOS_CLI = path.join(HERE, "..", "..", "scripts", "aios.mjs");
 
 /* ───────────────────────── pure helpers ───────────────────────── */
 
@@ -43,6 +45,34 @@ test("validateWindow: absent → null, positive int → n, else 400", () => {
       () => validateWindow(bad),
       (e) => e.statusCode === 400,
       `expected 400 for window=${JSON.stringify(bad)}`
+    );
+  }
+});
+
+test("validateAskId: hex ids and prefixes pass, flag-shaped and stray values 400", () => {
+  // Both shapes the CLI itself accepts: the short prefix `asks list` prints, and a full UUID.
+  assert.equal(validateAskId("3fea973d"), "3fea973d");
+  assert.equal(
+    validateAskId("3fea973d-1c2b-4a5e-9f80-0b1c2d3e4f50"),
+    "3fea973d-1c2b-4a5e-9f80-0b1c2d3e4f50"
+  );
+  assert.equal(validateAskId("3FEA973D"), "3FEA973D", "case-insensitive hex");
+  for (const bad of [
+    "--json", // flag injection: the id is spliced straight into argv
+    "-3fea973d", // leading dash — the reason the pattern demands a leading hex char
+    "3fea973", // too short to be an id prefix
+    "3fea973d; rm -rf /",
+    "3fea973d ok",
+    "zzzzzzzz", // non-hex
+    "",
+    null,
+    undefined,
+    123,
+  ]) {
+    assert.throws(
+      () => validateAskId(bad),
+      (e) => e.statusCode === 400,
+      `expected 400 for id=${JSON.stringify(bad)}`
     );
   }
 });
@@ -221,7 +251,7 @@ async function withServer(t, fn) {
   t.after(() => child.kill("SIGKILL"));
   const base = `http://127.0.0.1:${port}`;
   assert.ok(await waitForServer(base, token), "server did not start in time");
-  await fn({ base, token });
+  await fn({ base, token, repo });
 }
 
 test("GET /api/loop/daily: 401 without token, 200 with token", async (t) => {
@@ -270,5 +300,156 @@ test("POST /api/loop/weekly → 200 with a reshaped brief read off disk", async 
     assert.equal(body.cadence, "weekly");
     assert.ok(typeof body.briefMarkdown === "string" && body.briefMarkdown.length > 0);
     assert.ok(Array.isArray(body.audiences));
+  });
+});
+
+/* ── asks routes (the Today console's write path) ── */
+
+test("POST /api/asks/resolve: token-gated, validates ids, and closes a real ask", async (t) => {
+  await withServer(t, async ({ base, token, repo }) => {
+    assert.equal((await fetch(`${base}/api/asks/resolve`, { method: "POST" })).status, 401);
+
+    const post = (body) =>
+      fetch(`${base}/api/asks/resolve?token=${token}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // The id is spliced into argv, so a flag-shaped or malformed value must fail closed.
+    for (const bad of [{ id: "--json" }, { id: "-3fea973d" }, { id: "nope" }, { ids: [] }, {}]) {
+      const r = await post(bad);
+      assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
+      assert.equal((await r.json()).ok, false);
+    }
+
+    // Round-trip a genuine ask through the same CLI the terminal uses.
+    const add = spawn(
+      process.execPath,
+      [
+        AIOS_CLI,
+        "asks",
+        "add",
+        "--kind",
+        "test",
+        "--severity",
+        "blocker",
+        "--title",
+        "route probe",
+        "--json",
+        "--repo",
+        repo,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] }
+    );
+    let out = "";
+    add.stdout.on("data", (d) => (out += d));
+    await new Promise((r) => add.on("close", r));
+    const id = JSON.parse(out).id;
+    assert.ok(id, "fixture ask should have an id");
+
+    const ok = await post({ ids: [id] });
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.resolved, [id]);
+
+    // It is genuinely closed in the store, not just reported as closed.
+    const listed = await fetch(`${base}/api/loop/daily?token=${token}`);
+    const daily = await listed.json();
+    assert.ok(
+      !daily.attention.some((i) => i.ref.row === id),
+      "a resolved ask must leave the daily attention list"
+    );
+  });
+});
+
+test("GET /api/asks/show: token-gated, rejects bad ids, returns the ask body", async (t) => {
+  await withServer(t, async ({ base, token, repo }) => {
+    assert.equal((await fetch(`${base}/api/asks/show?id=3fea973d`)).status, 401);
+    assert.equal((await fetch(`${base}/api/asks/show?id=--json&token=${token}`)).status, 400);
+    assert.equal((await fetch(`${base}/api/asks/show?token=${token}`)).status, 400);
+
+    const add = spawn(
+      process.execPath,
+      [
+        AIOS_CLI,
+        "asks",
+        "add",
+        "--kind",
+        "decision",
+        "--severity",
+        "blocker",
+        "--title",
+        "Reconnect WhatsApp",
+        "--body",
+        "Pair the device again so ingestion resumes.",
+        "--json",
+        "--repo",
+        repo,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] }
+    );
+    let out = "";
+    add.stdout.on("data", (d) => (out += d));
+    await new Promise((r) => add.on("close", r));
+    const id = JSON.parse(out).id;
+
+    const ok = await fetch(`${base}/api/asks/show?id=${id}&token=${token}`);
+    assert.equal(ok.status, 200);
+    const ask = await ok.json();
+    // This is the whole point of the route: the operator sees what the ask ASKS FOR,
+    // not just an .ndjson evidence path.
+    assert.equal(ask.title, "Reconnect WhatsApp");
+    assert.equal(ask.body, "Pair the device again so ingestion resumes.");
+    assert.equal(ask.severity, "blocker");
+
+    // A well-formed id that does not exist is a 404, never a 200 with an empty shell.
+    const missing = await fetch(`${base}/api/asks/show?id=deadbeef&token=${token}`);
+    assert.equal(missing.status, 404);
+  });
+});
+
+test("POST /api/tasks/edit: an explicit path patches THAT file; junk paths 404", async (t) => {
+  await withServer(t, async ({ base, token, repo }) => {
+    // A tier-split workspace: the row lives in tasks.md while tasks-team.md is what
+    // resolveTasksFile would pick. Without an explicit path this edit cannot land.
+    const table = (row) =>
+      `---\nstatus: living\nowner: alex\naccess: team\n---\n\n# Tasks\n\n| ID | Task | Assignee | Status | Sprint | Due |\n|----|------|----------|--------|--------|-----|\n| ${row} |\n`;
+    mkdirSync(path.join(repo, "3-log"), { recursive: true });
+    writeFileSync(
+      path.join(repo, "3-log", "tasks-team.md"),
+      table("TT1 | Team row | John | todo | s | ")
+    );
+    writeFileSync(
+      path.join(repo, "3-log", "tasks.md"),
+      table("T19 | Fix the bug | John | todo | s | ")
+    );
+
+    const post = (body) =>
+      fetch(`${base}/api/tasks/edit?token=${token}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // Without a path the row is looked for in tasks-team.md and is (correctly) not found.
+    assert.equal((await post({ row_key: "T19", patch: { status: "done" } })).status, 404);
+
+    const ok = await post({ row_key: "T19", path: "3-log/tasks.md", patch: { status: "done" } });
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.rel, "3-log/tasks.md");
+    assert.match(
+      readFileSync(path.join(repo, "3-log", "tasks.md"), "utf8"),
+      /\| T19 \| Fix the bug \| John \| done \|/
+    );
+
+    // The path arrives from the browser: traversal and unknown files must never resolve.
+    for (const bad of ["../../etc/passwd", "3-log/../../../etc/passwd", "3-log/secrets.md"]) {
+      const r = await post({ row_key: "T19", path: bad, patch: { status: "done" } });
+      assert.equal(r.status, 404, `expected 404 for ${bad}`);
+    }
   });
 });

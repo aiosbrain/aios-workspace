@@ -1,43 +1,56 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import { useConnection } from "../../state/cockpit";
-import { Skeleton } from "../ui/skeleton";
-import { toast } from "../ui/sonner";
-import { MarkdownBlock } from "../ui/MarkdownBlock";
 import { cn } from "../../lib/cn";
-import type {
-  DailyItem,
-  DailyOrientation,
-  LoopCadence,
-  LoopMetrics,
-  MetricResult,
-  RunManifest,
-  WeeklyCloseoutResponse,
-} from "../../types/protocol";
+import { ExitCodeWarning, LoadingRows, LOOP_BTN } from "./chrome";
+import { TodayView } from "./TodayView";
+import { WeeklyView } from "./WeeklyView";
+import type { LoopCadence, LoopMetrics, MetricResult, RunManifest } from "../../types/protocol";
 
 /**
- * Operator Loop panel (AIO-318). Four read/run surfaces over the loop CLI:
- *   • Daily     — C4 orientation: asks / owed / calendar / replies / changes (GET /api/loop/daily)
- *   • Collect   — C1 run manifest for a cadence (GET /api/loop/collect)
+ * Operator Loop panel (AIO-318). One action surface plus three audit surfaces over the loop CLI:
+ *   • Today     — the ranked action queue (see TodayView): C4 orientation folded into one list
+ *                 where each row can be resolved, completed, or handed to the agent
+ *   • Signals   — C1 run manifest for a cadence (GET /api/loop/collect)
  *   • Weekly    — C5 closeout: run the offline drafter, render the owner brief (POST /api/loop/weekly)
  *   • Telemetry — C8 dogfood metrics (GET /api/loop/telemetry)
- * Writeback (C6) and remote/LLM drafting stay CLI-only. All calls are buffered request/response.
+ *
+ * Writes are limited to the two the operator needs to clear a row — `POST /api/asks/resolve` and
+ * the existing `POST /api/tasks/edit`, both wrapping the same CLI the terminal uses. Writeback
+ * (C6) and remote/LLM drafting remain CLI-only consent actions. All calls are request/response.
  */
 
 const WRAP = "flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-4";
-const BTN =
-  "rounded-[8px] border border-border-visible bg-secondary px-3.5 py-1.5 text-[13px] text-foreground cursor-pointer disabled:cursor-default disabled:opacity-40";
-const BTN_PRIMARY = cn(
-  BTN,
-  "border-transparent bg-primary font-semibold text-primary-foreground enabled:hover:bg-[var(--accent-hover)]"
-);
-const TABS: { key: LoopTab; label: string }[] = [
-  { key: "daily", label: "Daily" },
-  { key: "collect", label: "Collect" },
-  { key: "weekly", label: "Weekly closeout" },
-  { key: "telemetry", label: "Telemetry" },
+const BTN = LOOP_BTN;
+/**
+ * Today is the operator surface; the rest are audit surfaces over the same pipeline.
+ *
+ * "Daily" and "Collect" were peer tabs showing the same signals at two pipeline stages (C4
+ * classified vs C1 raw), which read as two competing to-do lists. Grouping makes the hierarchy
+ * explicit: you WORK in Today, you INSPECT in the audit group. `hint` is rendered inline in each
+ * audit view so a tab never has to be explained by someone who already knows the pipeline.
+ */
+const TABS: { key: LoopTab; label: string; group: "act" | "audit"; hint?: string }[] = [
+  { key: "today", label: "Today", group: "act" },
+  {
+    key: "collect",
+    label: "Signals",
+    group: "audit",
+    hint: "C1 — every signal collected for the window, before any classification. The raw input Today is built from.",
+  },
+  {
+    key: "weekly",
+    label: "Weekly closeout",
+    group: "audit",
+    hint: "C5 — drafts the owner brief and per-audience digests from this week's signals. Runs offline; no network egress.",
+  },
+  {
+    key: "telemetry",
+    label: "Telemetry",
+    group: "audit",
+    hint: "C8 — is the loop itself healthy? Each metric is a habit target, not a performance score.",
+  },
 ];
-type LoopTab = "daily" | "collect" | "weekly" | "telemetry";
+type LoopTab = "today" | "collect" | "weekly" | "telemetry";
 
 function TierBadge({ tier }: { tier: string }) {
   return <span className="ml-auto font-mono text-[11px] text-muted-foreground">[{tier}]</span>;
@@ -52,160 +65,6 @@ function ErrorState({ message, onRetry }: { message: string; onRetry?: () => voi
           Retry
         </button>
       )}
-    </div>
-  );
-}
-
-function LoadingRows() {
-  return (
-    <div className="flex flex-col gap-2">
-      <Skeleton className="h-6 w-3/4 rounded-md" />
-      <Skeleton className="h-6 w-2/3 rounded-md" />
-      <Skeleton className="h-6 w-1/2 rounded-md" />
-    </div>
-  );
-}
-
-function ExitCodeWarning({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--aios-destructive)_45%,var(--aios-border-visible))] px-3 py-2 text-xs text-destructive">
-      <AlertTriangle size={14} className="shrink-0" />
-      <span>{text}</span>
-    </div>
-  );
-}
-
-/* ── Daily (C4) ── */
-
-function DailyItemRow({ item }: { item: DailyItem }) {
-  const annot =
-    item.stale != null
-      ? `${item.stale}d stale`
-      : item.due
-        ? `due ${item.due}`
-        : item.changeType
-          ? item.changeType
-          : null;
-  return (
-    <li className="flex items-center gap-2.5 rounded-[8px] px-2 py-1.5 hover:bg-secondary">
-      <span className="font-mono text-[11px] uppercase text-muted-foreground">{item.kind}</span>
-      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{item.summary}</span>
-      {annot && <span className="font-mono text-[11px] text-muted-foreground">{annot}</span>}
-      <TierBadge tier={item.tier} />
-    </li>
-  );
-}
-
-function DailySection({
-  title,
-  items,
-  total = items.length,
-  expandHint,
-}: {
-  title: string;
-  items: DailyItem[];
-  total?: number;
-  expandHint?: string;
-}) {
-  if (!items.length) return null;
-  return (
-    <div className="flex flex-col gap-0.5">
-      <div className="px-2 pt-1 pb-0.5 font-mono text-[11px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
-        {title} ({total})
-      </div>
-      <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-        {items.map((it, i) => (
-          <DailyItemRow key={`${it.ref.path}:${it.ref.row ?? i}`} item={it} />
-        ))}
-      </ul>
-      {total > items.length && expandHint && (
-        <div className="px-2 font-mono text-[11px] text-muted-foreground">
-          +{total - items.length} more — {expandHint}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DailyView() {
-  const { api } = useConnection();
-  const [data, setData] = useState<DailyOrientation | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    setData(null);
-    try {
-      setData(await api.get<DailyOrientation>("/api/loop/daily"));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [api]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  if (error) return <ErrorState message={error} onRetry={load} />;
-  if (!data) return <LoadingRows />;
-
-  const empty =
-    !data.attention.length &&
-    !data.queuedAsks.length &&
-    !data.blocked.length &&
-    !data.owedToday.length &&
-    !data.calendar.length &&
-    !data.commsNeedingReply.length &&
-    !data.changed.length;
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
-        <span>
-          {data.member} · {data.window.from.slice(0, 10)} → {data.window.to.slice(0, 10)}
-        </span>
-        <button className={BTN} onClick={load}>
-          Refresh
-        </button>
-      </div>
-      {empty ? (
-        <div className="m-auto max-w-[440px] py-8 text-center text-muted-foreground">
-          Nothing needs attention, reply, or follow-through today.
-        </div>
-      ) : (
-        <>
-          <DailySection title="Attention" items={data.attention} total={data.counts.attention} />
-          <DailySection
-            title="Queued asks · manage with `aios asks`"
-            items={data.queuedAsks}
-            total={data.counts.queuedAsks}
-          />
-          <DailySection title="Blocked" items={data.blocked} total={data.counts.blocked} />
-          <DailySection title="Owed today" items={data.owedToday} total={data.counts.owedToday} />
-          <DailySection
-            title="Today's calendar"
-            items={data.calendar}
-            total={data.counts.calendar}
-          />
-          <DailySection
-            title="Comms needing reply"
-            items={data.commsNeedingReply}
-            total={data.counts.commsNeedingReply}
-          />
-          <DailySection
-            title="Changed"
-            items={data.changed}
-            total={data.counts.changed}
-            expandHint="run `aios loop manifest --explain --daily` to inspect"
-          />
-        </>
-      )}
-      <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-        counts — attention {data.counts.attention} · asks {data.counts.queuedAsks} · blocked{" "}
-        {data.counts.blocked} · owed {data.counts.owedToday} · calendar {data.counts.calendar} ·
-        replies {data.counts.commsNeedingReply} · changed {data.counts.changed} · withheld{" "}
-        {data.counts.withheld} · excluded {data.counts.excluded}
-      </div>
     </div>
   );
 }
@@ -290,76 +149,6 @@ function CollectView() {
   );
 }
 
-/* ── Weekly closeout (C5) ── */
-
-function WeeklyView() {
-  const { api } = useConnection();
-  const [data, setData] = useState<WeeklyCloseoutResponse | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async () => {
-    setBusy(true);
-    try {
-      const res = await api.post<WeeklyCloseoutResponse>("/api/loop/weekly", {});
-      setData(res);
-      if (res.cliExitCode === 1) {
-        toast.warning("Closeout drafted, but an audience is not shippable");
-      } else {
-        toast.success("Weekly closeout drafted");
-      }
-    } catch (e) {
-      toast.error(`Closeout failed: ${(e as Error).message}`, { duration: 10_000 });
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-xs text-muted-foreground">
-          Runs the offline drafter locally — no network egress.
-        </span>
-        <button className={BTN_PRIMARY} onClick={run} disabled={busy}>
-          {busy ? "Running…" : "Run closeout"}
-        </button>
-      </div>
-
-      {!data ? (
-        busy ? (
-          <LoadingRows />
-        ) : (
-          <div className="m-auto max-w-[440px] py-8 text-center text-muted-foreground">
-            Run a weekly closeout to draft the owner brief and per-audience digests.
-          </div>
-        )
-      ) : (
-        <>
-          {data.cliExitCode === 1 && (
-            <ExitCodeWarning text="At least one audience digest is not shippable — review before sharing." />
-          )}
-          <div className="flex flex-wrap gap-2 font-mono text-[11px] text-muted-foreground">
-            <span>run {data.runStamp}</span>
-            {data.audiences.map((a) => (
-              <span
-                key={a.audience}
-                className={cn(
-                  "rounded-sm border border-border-visible px-1.5 py-px",
-                  a.shippable ? "text-foreground" : "text-destructive"
-                )}
-              >
-                {a.audience}: {a.status}
-              </span>
-            ))}
-          </div>
-          <div className="assistant-prose rounded-xl border border-border-visible bg-card px-3.5 py-2.5">
-            <MarkdownBlock>{data.briefMarkdown}</MarkdownBlock>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ── Telemetry (C8) ── */
 
 function MetricRow({ metric }: { metric: MetricResult }) {
@@ -438,25 +227,49 @@ function TelemetryView() {
 
 /* ── Panel shell ── */
 
+/** The one-line "what am I looking at" note above each audit view. */
+function TabHint({ tab }: { tab: LoopTab }) {
+  const hint = TABS.find((t) => t.key === tab)?.hint;
+  if (!hint) return null;
+  return (
+    <p className="-mt-1 max-w-[64ch] text-[12px] leading-relaxed text-muted-foreground">{hint}</p>
+  );
+}
+
 export function LoopPanel() {
-  const [tab, setTab] = useState<LoopTab>("daily");
+  const [tab, setTab] = useState<LoopTab>("today");
+  const act = TABS.filter((t) => t.group === "act");
+  const audit = TABS.filter((t) => t.group === "audit");
+  const tabButton = (t: (typeof TABS)[number]) => (
+    <button
+      key={t.key}
+      className={cn(
+        "rounded-[8px] px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
+        tab === t.key && "bg-[var(--accent-soft)] text-foreground"
+      )}
+      aria-current={tab === t.key ? "page" : undefined}
+      onClick={() => setTab(t.key)}
+    >
+      {t.label}
+    </button>
+  );
+
   return (
     <div className={WRAP}>
-      <div className="flex items-center gap-1 border-b border-border-visible pb-2">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            className={cn(
-              "rounded-[8px] px-3 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground",
-              tab === t.key && "bg-[var(--accent-soft)] text-foreground"
-            )}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-1 border-b border-border-visible pb-2">
+        {act.map(tabButton)}
+        <span
+          className="mx-2 h-4 w-px shrink-0 bg-border-visible"
+          role="separator"
+          aria-orientation="vertical"
+        />
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-[var(--aios-tracking-wide)] text-muted-foreground">
+          Audit
+        </span>
+        {audit.map(tabButton)}
       </div>
-      {tab === "daily" && <DailyView />}
+      <TabHint tab={tab} />
+      {tab === "today" && <TodayView />}
       {tab === "collect" && <CollectView />}
       {tab === "weekly" && <WeeklyView />}
       {tab === "telemetry" && <TelemetryView />}

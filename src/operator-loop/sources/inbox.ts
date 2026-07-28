@@ -51,7 +51,16 @@ export const inboxSource: Source = (ctx): SourceResult => {
       occurredAt: statSync(abs).mtime.toISOString(),
       ref: { path: rel, tier },
       summary: firstLine.replace(/^#+\s*/, "").slice(0, 200),
-      payload: { from_brain: rel.includes("from-brain/") },
+      // `origin_project` is written by `aios pull` and names the brain project a file came
+      // from. It rides along so downstream consumers can tell a hand-written inbox note from a
+      // machine-generated mirror feed (the commits project) without parsing the flattened
+      // filename — see the commit-mirror fold in closeout.ts.
+      payload: {
+        from_brain: rel.includes("from-brain/"),
+        ...(typeof frontmatter?.origin_project === "string"
+          ? { origin_project: frontmatter.origin_project }
+          : {}),
+      },
     });
   }
   return out;

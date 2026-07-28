@@ -87,6 +87,44 @@ export function runLoopCli(repo, args) {
 }
 
 /**
+ * Validate an ask id before it is spliced into argv.
+ *
+ * `aios asks resolve <id>` accepts a full UUID or a short hex prefix (what `asks list` prints).
+ * The id reaches us from the browser, so it is untrusted: the pattern is anchored, hex-and-dash
+ * only, and REQUIRES a leading hex char so no value can ever present as a flag token. This is the
+ * same fail-closed posture as validateCadence/validateWindow — it never coerces, it throws 400.
+ * @param {unknown} raw
+ * @returns {string}
+ */
+export function validateAskId(raw) {
+  if (typeof raw === "string" && /^[0-9a-f][0-9a-f-]{7,35}$/i.test(raw)) return raw;
+  const e = new Error("invalid ask id");
+  e.statusCode = 400;
+  throw e;
+}
+
+/**
+ * Run an `aios asks <sub>` subcommand. Sibling of runLoopCli — the asks queue is a peer CLI
+ * surface, not a `loop` subcommand, so it cannot reuse that runner's hardcoded verb.
+ * Callers MUST pass validated tokens only (see validateAskId).
+ * @param {string} repo absolute workspace path
+ * @param {string[]} args argv after `asks`
+ */
+export function runAsksCli(repo, args) {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [AIOS_CLI, "asks", ...args, "--repo", repo],
+      { cwd: repo, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const exitCode = err && typeof err.code === "number" ? err.code : 0;
+        resolve({ exitCode, stdout: stdout ?? "", stderr: stderr ?? "", err: err ?? null });
+      }
+    );
+  });
+}
+
+/**
  * Reshape `aios loop weekly --json` into the GUI contract. The CLI payload is deliberately
  * audience-safe: `{ runStamp, cadence, briefPath, audiences[] }` with the owner brief written to
  * `.aios/loop/closeouts/<stamp>/brief.md` and actions to `next-week-actions.json` — never inline.

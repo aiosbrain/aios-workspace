@@ -66,7 +66,25 @@ export function baseItem(sig: Signal, extra: Partial<DailyItem>): DailyItem {
   if (extra.due !== undefined) item.due = extra.due;
   if (extra.stale !== undefined) item.stale = extra.stale;
   if (extra.changeType !== undefined) item.changeType = extra.changeType;
+  if (extra.overdueDays !== undefined) item.overdueDays = extra.overdueDays;
   return item;
+}
+
+/**
+ * Whole days a due date is PAST `todayDay`, or null when it is due today or later.
+ *
+ * The owed bucket admits everything due on or before today (`isDueByToday`), so a task 15 days
+ * late and a task due this afternoon land in the same list under the same "Owed today" heading.
+ * This is the signal that separates them — consumers rank and label by it rather than the bucket
+ * forking, which would break the C4 JSON contract the CLI and closeout both read.
+ */
+export function overdueDaysOf(due: unknown, todayDay: string): number | null {
+  const dueDay = dayOf(typeof due === "string" ? due : null);
+  if (dueDay == null || dueDay >= todayDay) return null;
+  const dueMs = Date.parse(`${dueDay}T00:00:00Z`);
+  const todayMs = Date.parse(`${todayDay}T00:00:00Z`);
+  if (!Number.isFinite(dueMs) || !Number.isFinite(todayMs)) return null;
+  return Math.round((todayMs - dueMs) / 86_400_000);
 }
 
 export function inWindow(occurredAt: string, fromIso: string, toIso: string): boolean {

@@ -320,9 +320,14 @@ export async function runCloseout(opts: {
   const ownerProjectionFull = projectManifest(fullManifest, "owner"); // owner = all signals, excluded stripped
   // Same partition as the shareables: time is rendered as an aggregate, never a claim (AIO-139).
   const ownerRan = timeTotals(ownerProjectionFull.signals);
+  // The brain's commit mirror is a machine feed, not a claim about the week. One pulled file per
+  // commit meant a real workspace put 289 "Commit <sha> — <repo>" bullets into a 725-line brief —
+  // 40% of it — burying every decision and deliverable. Fold it to a count, the same way time is
+  // an aggregate rather than a claim. Counted, never silently dropped.
+  const commitMirror = ownerProjectionFull.signals.filter(isCommitMirror);
   const ownerProjection: RunManifest = {
     ...ownerProjectionFull,
-    signals: ownerProjectionFull.signals.filter((s) => s.kind !== "time"),
+    signals: ownerProjectionFull.signals.filter((s) => s.kind !== "time" && !isCommitMirror(s)),
   };
   const ownerDraft = stubDraftShareable(ownerProjection, "owner");
   const { result: ownerResult } = await runVerificationWithLedger({
@@ -344,7 +349,8 @@ export async function runCloseout(opts: {
     ownerDraft.ledger,
     ownerNextWeekActions,
     ownerResult.status,
-    ownerRan
+    ownerRan,
+    commitMirror.length
   );
 
   return {
@@ -355,13 +361,25 @@ export async function runCloseout(opts: {
   };
 }
 
+/**
+ * A signal mirrored from the brain's `commits` project — one pulled file per commit.
+ *
+ * Matched on `origin_project` (written into the pulled file's frontmatter by `aios pull` and
+ * carried through by the inbox source), NOT on the flattened filename: the `commits__commits__…`
+ * shape is an artifact of path flattening and would silently stop matching if that ever changed.
+ */
+function isCommitMirror(s: Signal): boolean {
+  return s.kind === "inbox" && s.payload?.origin_project === "commits";
+}
+
 /** Render the private operator brief (owner-only; contains admin content). Deterministic. */
 function renderBrief(
   fullManifest: RunManifest,
   ledger: EvidenceLedger,
   actions: NextWeekAction[],
   status: VerifierStatus,
-  ran: TagTotal[]
+  ran: TagTotal[],
+  commitMirrorFolded = 0
 ): string {
   const byTier = new Map<Tier, number>();
   for (const s of fullManifest.signals ?? []) byTier.set(s.tier, (byTier.get(s.tier) ?? 0) + 1);
@@ -384,6 +402,10 @@ function renderBrief(
     "",
     "## The honest picture",
     claimLines.length ? claimLines.join("\n") : "_No signals this week._",
+    // Folded, not dropped — the brief must never quietly under-report what the week contained.
+    ...(commitMirrorFolded > 0
+      ? ["", `_${commitMirrorFolded} mirrored commit signal(s) folded out of this picture._`]
+      : []),
     "",
     renderRuntimeByTag(ran),
     "## Next week",

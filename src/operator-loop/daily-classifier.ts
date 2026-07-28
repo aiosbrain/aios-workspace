@@ -1,4 +1,4 @@
-import type { AskSeverity } from "./asks/store.js";
+import { isExpiredIdleAsk, type AskSeverity } from "./asks/store.js";
 import { artifactKey, diffSignals } from "./changes.js";
 import { isOpenStatus } from "./continuity.js";
 import type { BuildDailyOptions, DailyItem, DailyOrientation } from "./daily.js";
@@ -21,6 +21,7 @@ import {
   inWindow,
   isDueByToday,
   looksBlocked,
+  overdueDaysOf,
   needsReply,
   staleDaysOf,
   strOrNull,
@@ -39,6 +40,8 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   const generatedAt = opts.manifest.generatedAt;
   const now = new Date(generatedAt);
   const todayDay = dayOf(generatedAt) ?? generatedAt.slice(0, 10);
+  // Midnight of the run's LOCAL day — the agenda boundary for calendar events (see below).
+  const startOfLocalDayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const win = opts.manifest.window;
   const hasPrior =
     opts.prior != null &&
@@ -75,7 +78,10 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
         });
       } else {
         owedE.push({
-          item: baseItem(sig, { due: strOrNull(payload.due) }),
+          item: baseItem(sig, {
+            due: strOrNull(payload.due),
+            overdueDays: overdueDaysOf(payload.due, todayDay) ?? undefined,
+          }),
           dueDay: dayOf(strOrNull(payload.due)) ?? END_OF_TIME,
         });
       }
@@ -88,7 +94,10 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
         blockedE.push({ item: baseItem(sig, { due: strOrNull(payload.due) }), stale: 0 });
       } else if (isDueByToday(payload.due, todayDay)) {
         owedE.push({
-          item: baseItem(sig, { due: strOrNull(payload.due) }),
+          item: baseItem(sig, {
+            due: strOrNull(payload.due),
+            overdueDays: overdueDaysOf(payload.due, todayDay) ?? undefined,
+          }),
           dueDay: dayOf(strOrNull(payload.due)) ?? END_OF_TIME,
         });
       } else if (isChanged) {
@@ -121,7 +130,17 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
     }
     if (sig.kind !== "comms") continue;
     if (sig.source === "calendar") {
-      if (inWindow(sig.occurredAt, win.from, win.to)) {
+      // TODAY's events only — not everything in the collection window.
+      //
+      // The daily window spans the last ~24h so CHANGES since the last run are caught. That is
+      // right for diffing, but wrong for an agenda: a meeting that happened yesterday afternoon
+      // is inside the window and was being listed under "Today's calendar", which is false.
+      //
+      // The boundary is the start of the LOCAL day, not a UTC date-prefix comparison. Calendar
+      // instants are stored in UTC while "today" is a human, local-time notion, so an evening
+      // meeting east of UTC carries tomorrow's UTC date and a UTC-prefix match would drop it
+      // from the very day it belongs to (the crossover the window test pins).
+      if (Date.parse(sig.occurredAt) >= startOfLocalDayMs) {
         calendarE.push({ item: baseItem(sig, {}), occurredAt: sig.occurredAt });
       }
       continue;
@@ -165,6 +184,9 @@ export function buildDailyOrientation(opts: BuildDailyOptions): {
   if (audience === "owner") {
     for (const ask of opts.asks ?? []) {
       if (ask.status !== "open") continue;
+      // An expired idle ask no longer describes a live "agent is waiting" state. Suppress it
+      // here as well as in `drain` so the daily self-heals without requiring maintenance to run.
+      if (isExpiredIdleAsk(ask, now)) continue;
       const item = askItem(ask);
       if (ask.severity === "blocker") attentionE.push({ item, createdAt: ask.createdAt });
       else queuedE.push({ item, createdAt: ask.createdAt, severity: ask.severity });

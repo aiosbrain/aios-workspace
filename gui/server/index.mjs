@@ -90,12 +90,16 @@ import { collectProviderActuals } from "./provider-costs.mjs";
 import {
   validateCadence,
   validateWindow,
+  validateAskId,
   runLoopCli,
+  runAsksCli,
   buildWeeklyCloseoutPayload,
   loopResponse,
 } from "./loop.mjs";
+import { parseAskIds, resolveAsksResponse, askDetailResponse } from "./asks.mjs";
 import {
   resolveTasksFile,
+  resolveTaskFileByRel,
   readTasks,
   derivePushState,
   applyTaskEdit,
@@ -693,6 +697,57 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // GET: full detail for ONE ask, so the Today console can show what an item actually asks for
+  // (title + body + severity + age) inline, instead of making the operator open the raw
+  // .aios/loop/asks/asks.ndjson evidence path or spend an LLM turn asking what a row means.
+  if (url.pathname === "/api/asks/show" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let id;
+    try {
+      id = validateAskId(url.searchParams.get("id"));
+    } catch (e) {
+      res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    runAsksCli(repo, ["show", id, "--json"]).then((cli) => {
+      const { status, json } = askDetailResponse(cli);
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(json));
+    });
+    return;
+  }
+  // POST: resolve an ask from the Today console. Delegates to the SAME `aios asks resolve` the
+  // terminal uses, so the append-only store, its writer lock, and the audit trail are identical
+  // whichever surface acted. Local-only: closing an ask never touches the network.
+  if (url.pathname === "/api/asks/resolve" && req.method === "POST") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on("end", () => {
+      let ids;
+      try {
+        ids = parseAskIds(body);
+      } catch (e) {
+        res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+      runAsksCli(repo, ["resolve", ...ids, "--json"]).then((cli) => {
+        const { status, json } = resolveAsksResponse(cli, ids);
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(json));
+      });
+    });
+    return;
+  }
   // ── tasks panel (token-gated) ──
   // GET: parsed rows + FILE-LEVEL tier + a local push-state badge (new|modified|blocked|clean)
   // sourced from `aios status --json`. A missing task file is a graceful empty, not a 500.
@@ -742,11 +797,16 @@ const server = http.createServer((req, res) => {
     });
     req.on("end", () => {
       let rowKey = "",
-        patch = {};
+        patch = {},
+        rel = null;
       try {
         const j = JSON.parse(body || "{}");
         rowKey = typeof j.row_key === "string" ? j.row_key : "";
         patch = j.patch && typeof j.patch === "object" ? j.patch : {};
+        // Optional: the file the row actually lives in. The Tasks panel omits it (it renders one
+        // resolved file); the Operator Loop sends it, because a workspace with the tier split
+        // holds rows in BOTH tasks.md and tasks-team.md and the row must be patched where it is.
+        rel = typeof j.path === "string" ? j.path : null;
       } catch {
         /* bad body */
       }
@@ -754,10 +814,17 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: "row_key is required" }));
       }
-      const file = resolveTasksFile(repo);
+      const file = rel ? resolveTaskFileByRel(repo, rel) : resolveTasksFile(repo);
       if (!file) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ ok: false, error: "no tasks.md in this workspace" }));
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: rel
+              ? `not a task file in this workspace: ${rel}`
+              : "no tasks.md in this workspace",
+          })
+        );
       }
       try {
         const content = readFileSync(file.abs, "utf8");
