@@ -191,7 +191,14 @@ test("carryover staleness uses calendar days, not elapsed milliseconds", () => {
   assert.equal(orientation.blocked[0].stale, 8);
 });
 
-test("calendar uses manifest-window instants, including a UTC date-prefix crossover", () => {
+test("calendar is bounded by the LOCAL day, not a UTC date-prefix match", () => {
+  // Two properties at once, and they pull in opposite directions:
+  //   • an event earlier today LOCAL belongs on the agenda even when its UTC date string differs
+  //     from the run's (the original crossover guard — a naive `dayOf(x) === todayDay` fails it);
+  //   • an event from last night LOCAL does NOT, even though the ~24h collection window admits it
+  //     (the field bug: yesterday's meetings listed under "Today's calendar").
+  // Boundaries are derived from the run instant the same way the classifier derives them, so the
+  // test asserts the rule rather than a hardcoded offset — it holds in every timezone.
   const comms = (id, occurredAt) => ({
     ...sig(
       "comms",
@@ -203,21 +210,27 @@ test("calendar uses manifest-window instants, including a UTC date-prefix crosso
     ),
     source: "calendar",
   });
-  const manifest = mani(
-    [comms("local-today", "2026-07-12T23:00:00.000Z"), comms("old", "2026-07-12T10:00:00.000Z")],
-    {
-      generatedAt: "2026-07-13T12:00:00.000Z",
-      from: "2026-07-12T12:00:00.000Z",
-      to: "2026-07-13T12:00:00.000Z",
-    }
-  );
+  const generatedAt = "2026-07-13T12:00:00.000Z";
+  const now = new Date(generatedAt);
+  const startOfLocalDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const iso = (ms) => new Date(ms).toISOString();
+  const earlyToday = iso(startOfLocalDay + 3_600_000); // 01:00 local, today
+  const lastNight = iso(startOfLocalDay - 3_600_000); // 23:00 local, yesterday
+
+  const manifest = mani([comms("early-today", earlyToday), comms("last-night", lastNight)], {
+    generatedAt,
+    // Both events sit INSIDE the window, so the window cannot be what separates them.
+    from: iso(Date.parse(generatedAt) - 36 * 3_600_000),
+    to: generatedAt,
+  });
+
   const { orientation } = buildDailyOrientation({ manifest, prior: null });
   assert.deepEqual(
     orientation.calendar.map((item) => item.ref.row),
-    ["local-today"]
+    ["early-today"]
   );
   assert.equal(orientation.counts.calendar, 1);
-  assert.ok(!orientation.blocked.some((item) => item.ref.row === "old"));
+  assert.ok(!orientation.blocked.some((item) => item.ref.row === "last-night"));
 });
 
 test("calendar is TODAY's agenda — a meeting from a previous day never appears", () => {
@@ -240,11 +253,14 @@ test("calendar is TODAY's agenda — a meeting from a previous day never appears
   // 30h back is a strictly earlier LOCAL day in every timezone (max UTC offset is ±14h, and a
   // local day is 24h long), so this assertion is TZ-independent — no TZ pinning required.
   const yesterday = new Date(genMs - 30 * 3_600_000).toISOString();
-  const manifest = mani([comms("yesterday-meeting", yesterday), comms("now-meeting", generatedAt)], {
-    generatedAt,
-    from: new Date(genMs - 36 * 3_600_000).toISOString(),
-    to: generatedAt,
-  });
+  const manifest = mani(
+    [comms("yesterday-meeting", yesterday), comms("now-meeting", generatedAt)],
+    {
+      generatedAt,
+      from: new Date(genMs - 36 * 3_600_000).toISOString(),
+      to: generatedAt,
+    }
+  );
 
   const { orientation } = buildDailyOrientation({ manifest, prior: null });
   assert.deepEqual(
