@@ -165,9 +165,10 @@ norm_git() {
 shell_redirection_targets() {
   awk '
     function space(c) { return c == " " || c == "\t" }
-    function remember_heredoc(line, start,    i, c, quote, delim) {
+    function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
       i = start
-      if (substr(line, i, 1) == "-") i++
+      strip_tabs = substr(line, i, 1) == "-"
+      if (strip_tabs) i++
       while (space(substr(line, i, 1))) i++
       quote = substr(line, i, 1)
       if (quote == "\047" || quote == "\"") i++
@@ -180,7 +181,10 @@ shell_redirection_targets() {
         delim = delim c
         i++
       }
-      if (delim != "") heredoc[++count] = delim
+      if (delim != "") {
+        heredoc[++count] = delim
+        heredoc_strips_tabs[count] = strip_tabs
+      }
       return i
     }
     function emit_target(line, start,    i, c, quote, escaped, target) {
@@ -213,7 +217,9 @@ shell_redirection_targets() {
     }
     {
       if (current > 0 && current <= count) {
-        if ($0 == heredoc[current]) current++
+        closing_line = $0
+        if (heredoc_strips_tabs[current]) sub(/^\t+/, "", closing_line)
+        if (closing_line == heredoc[current]) current++
         next
       }
       quote = ""

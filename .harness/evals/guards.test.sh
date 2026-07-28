@@ -149,6 +149,8 @@ ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x
 ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
 ts "strict allows greater-than text in a heredoc from a worktree" 0 \
   "$(wpc "$WT/wt" $'git commit -F - <<\'MSG\'\n531 lines > ../a.txt\nMSG')"
+ts "strict closes tab-stripping heredoc before a real redirect" 2 \
+  "$(wpc "$WT/wt" $'cat <<-MSG\n\tbody > harmless\n\tMSG\necho x > '"$WT"$'/primary-file')"
 ts "strict allows greater-than operators in a single-quoted node program" 0 \
   "$(wpc "$WT/wt" "node -e 'const pick = (x) => x > ../a.txt'")"
 ts "strict allows greater-than text and a backtick path in a double-quoted PR body" 0 \
