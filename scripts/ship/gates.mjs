@@ -201,14 +201,45 @@ export function readSpecFrontmatter(hintsFn, body) {
   try {
     return hintsFn(body);
   } catch (e) {
-    return { ...hintsFn(""), invalid: e.message };
+    // Literal defaults, not a second `hintsFn("")` call: ship injects this dependency, so a stub
+    // that throws unconditionally would make the error handler throw from inside itself.
+    return { tier: "deterministic", planTraceable: false, specGate: undefined, invalid: e.message };
   }
 }
 
-/** Malformed evaluator frontmatter in the issue body — refuse, don't guess. */
+/**
+ * Malformed evaluator frontmatter in the issue body — refuse, don't guess.
+ *
+ * Records the aborted stage before returning: `SHIP_EXIT.USAGE` is a `halt` in roadmap-run, so
+ * one typo'd key in one issue body stops an unattended run, and the record stream is the only
+ * place that says why (this returns upstream of the `writeAudit`, so `.aios/loop/<issue>/` is
+ * empty).
+ */
 export function badSpecFrontmatter(records, c, message) {
   console.error(c.red(`error: invalid evaluator frontmatter in the issue body — ${message}`));
+  records?.stages?.push({ stage: "spec-eval", error: `invalid frontmatter: ${message}` });
   return { code: SHIP_EXIT.USAGE, records };
+}
+
+/**
+ * The evaluator tier `aios ship` will actually run, given the spec's declaration.
+ *
+ * Since AIO-573 the adversarial layer is opt-in and ship honours `eval_tier`. Two contexts
+ * ESCALATE back to `full` regardless of what the issue declares, because in each the adversarial
+ * pass is not a redundant second opinion but the only model review in the run:
+ *
+ *   - `--loop light` has NO planner and no plan gate (the SPEC_READY spec *is* the approved build
+ *     contract, which is why `--spec-gate off` is already refused there). Left deterministic-only,
+ *     a light-loop ship would go from Linear issue to merged code with no model having reviewed
+ *     the spec or a plan.
+ *   - `safety: true` is the declaration that already forces the safety merge review and mandatory
+ *     CodeRabbit. Safety work is precisely what the rubric names as worth the second opinion, so
+ *     the spec gate should not be the one place that quietly settles for less.
+ *
+ * A spec may always opt INTO `full`; it may not opt out of these two.
+ */
+export function specEvalTier(declaredTier, { lightLoop = false, safety = false } = {}) {
+  return lightLoop || safety ? "full" : declaredTier;
 }
 
 /**
@@ -220,8 +251,13 @@ export function badSpecFrontmatter(records, c, message) {
  * invisible, so a spec that declared `eval_tier: full` would be re-run deterministic-only and
  * never re-run the adversarial layer that blocked ship in the first place. Re-emitting the raw
  * frontmatter block ahead of the heading keeps the artifact self-describing and re-runnable.
+ *
+ * The block must contain at least one `key:` line to count. A body that merely OPENS with a
+ * horizontal rule (`---\n\nsome prose\n\n---`) is not frontmatter, and copying that prose to the
+ * head of the audit artifact would corrupt it. Whitespace/CRLF tolerance matches `specEvalHints`.
  */
 export function auditSpecText(rawBody, specText) {
-  const block = /^---\s*\n[\s\S]*?\n---(?:\s*\n|$)/.exec(String(rawBody ?? ""))?.[0];
+  const m = /^\s*---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(String(rawBody ?? ""));
+  const block = m && /^[A-Za-z_][\w-]*:/m.test(m[1]) ? m[0] : undefined;
   return block ? `${block}\n${specText}` : specText;
 }

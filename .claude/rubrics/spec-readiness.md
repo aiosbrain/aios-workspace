@@ -36,7 +36,7 @@ code. See `docs/agentic-ergonomics/spec-readiness.md` for the command, exit code
 | 0 | `SPEC_READY` — no must-fails |
 | 1 | deterministic must-fail (structural blocker) |
 | 2 | adversarial blocker (LLM refutation) |
-| 3 | `NOT_EVALUATED` — deterministic clean, LLM layer not run (`--no-llm`) |
+| 3 | `NOT_EVALUATED` — the LLM layer was asked for (`--adversarial` / `eval_tier: full`) and did not run |
 | 4 | usage / IO error (missing file, unreadable/malformed rubric) |
 
 **The adversarial layer is OPT-IN (AIO-573).** `eval_tier: deterministic` is the default: the

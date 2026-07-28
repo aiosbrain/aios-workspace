@@ -52,14 +52,25 @@ Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issu
   mandatory deterministic check is then the complete evaluation: a clean result is `SPEC_READY`
   (exit 0) and never makes a model call, while a must-fail still blocks (exit 1). Opt into the
   LLM layer with `eval_tier: full` in frontmatter, or `--adversarial` / `--tier full` per run.
-  `aios ship` HONOURS the spec's declared tier rather than forcing the layer on.
+  `aios ship` HONOURS the spec's declared tier rather than forcing the layer on — except in the two
+  cases below, where the adversarial pass is the only model review in the run and is escalated back
+  to `full` regardless of the declaration (a spec can always opt *into* `full`, never out of these):
+  - **`--loop light`**, which has no planner and no plan gate — the SPEC_READY spec *is* the
+    approved build contract, which is why `--spec-gate off` is already refused there. Deterministic
+    only, it would take a Linear issue to merged code with nothing model-reviewed.
+  - **`safety: true`**, the declaration that already forces the safety merge review and mandatory
+    CodeRabbit. Safety work is exactly what the second opinion is for.
+- **`aios spec publish` requires a `full`-tier artifact.** Publishing writes the spec into a Linear
+  issue description, making it the build contract. Before AIO-573 an adversarial pass was implied
+  (deterministic-only exited 3 and could never be `SPEC_READY`); that requirement is now explicit,
+  so publish takes `--publishable --adversarial`.
 - **Enforcement is separate from evaluation.** `eval_tier` chooses *which layers run*; `spec_gate`
   chooses *whether a `NOT_READY` verdict blocks a build*. `aios ship` reads it (flag `--spec-gate
   <block|advisory|off>` > spec frontmatter `spec_gate:` > config default `block`):
   - `block` (default) — a `NOT_READY` verdict stops the ship at the gate.
   - `advisory` — run the eval, print + record the findings, then **proceed to build anyway** (warn,
     don't block). Allowed under `--loop light` because it still runs and records the gate.
-  - `off` — don't run the adversarial gate at all (the named form of `--skip-spec-gate`; **not**
+  - `off` — don't run the readiness gate at all (the named form of `--skip-spec-gate`; **not**
     allowed under `--loop light`, whose entry contract is a real gate result).
   `aios spec eval` itself is unaffected by `spec_gate` — it always reports the true verdict/exit
   code; only the *ship* enforcement changes.
@@ -77,7 +88,9 @@ Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issu
   file/verdict/exit/score table. Every file still runs the deterministic layer.
 - Set `eval_provenance: adversarial-reviewed` (or `parent_plan_reviewed: true`) only when the
   parent plan received adversarial review. In `spec fix`, that runs the LLM once before revisions,
-  deterministic checks on each revision, and one final LLM confirmation.
+  deterministic checks on each revision, and one final LLM confirmation — so a provenance-aware
+  spec keeps those bookends on the deterministic default. An explicit `--tier deterministic` still
+  wins and makes no model call.
 - **author** fans one independent Opus author call per Markdown issue slice (default pool 6,
   bounded to 8). Each call receives the shared plan, rubric, and only its assigned slice. After
   fan-out it runs deterministic per-spec gates plus title/path collision checks; semantic drift is
@@ -97,7 +110,7 @@ Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issu
 | 0 | `SPEC_READY` — no must-fails |
 | 1 | deterministic must-fail (structural blocker) |
 | 2 | adversarial blocker (LLM refutation) |
-| 3 | `NOT_EVALUATED` — deterministic clean, LLM layer not run (`--no-llm`) |
+| 3 | `NOT_EVALUATED` — the LLM layer was asked for (`--adversarial` / `eval_tier: full`) and did not run |
 | 4 | usage / IO error (missing file, unreadable/malformed rubric, missing provider API key without `--no-llm`) |
 
 A deterministic must-fail (1) takes precedence over an adversarial blocker (2): if the structure is

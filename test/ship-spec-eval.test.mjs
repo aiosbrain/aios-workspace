@@ -17,6 +17,7 @@ import {
   auditSpecText,
   readSpecFrontmatter,
   badSpecFrontmatter,
+  specEvalTier,
 } from "../scripts/ship/gates.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { stubSpecRubric } from "./ship-test-helpers.mjs";
@@ -448,12 +449,16 @@ console.log("AIO-573 — eval tier + spec_gate are read from the raw issue body"
 
   // Bugbot round 4: runFixLoop never passed the declared tier, so `aios spec fix` on the default
   // path reported NOT_EVALUATED while `aios spec eval` called the same file SPEC_READY.
+  // useLlm is deliberately NOT passed — the tier alone must derive it, exactly as evaluateSpec
+  // does. Passing it explicitly made this assertion vacuous and hid the two defaults disagreeing.
+  // reviseFn IS injected: the reviser is an LLM on ANY tier (it is not gated by useLlm), and this
+  // spec evaluates NOT_READY, so the default would make a real network call from the test suite.
   const fixed = await runFixLoop({
     specText: "## What / why\nx\n\n## Acceptance criteria\n- `npm test` exits 0\n",
     repo: REPO_ROOT,
     rubric: { criteria: [], budget: 1 },
     tier: "deterministic",
-    useLlm: false,
+    reviseFn: async ({ specText }) => specText,
   });
   check(
     "the fix loop agrees with `aios spec eval` on a clean deterministic run",
@@ -503,6 +508,86 @@ console.log("AIO-573 — eval tier + spec_gate are read from the raw issue body"
   check(
     "`advisory` is still allowed from frontmatter — it RUNS and records, it just doesn't block",
     specEvalHints("---\nspec_gate: advisory\n---\n").specGate === "advisory"
+  );
+
+  // ── the parsers must agree that a frontmatter block EXISTS ────────────────────────────────
+  // specSafetyFlag has always tolerated leading whitespace/CRLF; specEvalHints did not. While the
+  // tier default was `full` that disagreement failed SAFE (a missed parse still ran the LLM
+  // layer). Since the default is `deterministic` the same miss fails OPEN — it silently drops the
+  // `eval_tier: full` the author wrote. Keep the two regexes in step.
+  for (const [label, body] of [
+    ["leading newline", "\n---\neval_tier: full\nsafety: true\n---\n\n## What\nx\n"],
+    ["leading spaces", "  ---\neval_tier: full\nsafety: true\n---\n\n## What\nx\n"],
+    ["CRLF", "---\r\neval_tier: full\r\nsafety: true\r\n---\r\n\r\n## What\r\nx\r\n"],
+  ]) {
+    check(
+      `specEvalHints and specSafetyFlag agree a block exists (${label})`,
+      specEvalHints(body).tier === "full" && specSafetyFlag(body) === true
+    );
+    check(
+      `a bad eval_tier still REFUSES rather than silently defaulting (${label})`,
+      (() => {
+        try {
+          specEvalHints(body.replace("eval_tier: full", "eval_tier: nonsense"));
+          return false;
+        } catch {
+          return true;
+        }
+      })()
+    );
+  }
+
+  // ── tier escalation: a spec may opt INTO full, never out of these two ─────────────────────
+  check(
+    "declared deterministic is honoured on a normal full-loop, non-safety ship",
+    specEvalTier("deterministic", {}) === "deterministic"
+  );
+  check(
+    "--loop light escalates to full — it has no planner, so this is the only model review",
+    specEvalTier("deterministic", { lightLoop: true }) === "full"
+  );
+  check(
+    "safety: true escalates to full",
+    specEvalTier("deterministic", { safety: true }) === "full"
+  );
+
+  // ── auditSpecText must not mistake a leading horizontal rule for frontmatter ──────────────
+  check(
+    "auditSpecText re-emits a real frontmatter block",
+    auditSpecText("---\neval_tier: full\n---\n\n## What\n", "# A: t\n\nbody").startsWith(
+      "---\neval_tier: full\n---\n"
+    )
+  );
+  check(
+    "auditSpecText ignores a leading horizontal rule with no key: line",
+    auditSpecText("---\n\nSome intro prose.\n\n---\n\n## What\n", "# A: t") === "# A: t"
+  );
+
+  // ── a malformed-frontmatter refusal must leave an audit trail ─────────────────────────────
+  // SHIP_EXIT.USAGE is a `halt` in roadmap-run, and this returns before writeAudit, so the
+  // record stream is the only place that says why an unattended run stopped.
+  check(
+    "badSpecFrontmatter records the aborted stage",
+    (() => {
+      const recs = { issue: "AIO-1", loop: "full", stages: [] };
+      const r = badSpecFrontmatter(recs, { red: (x) => x }, "invalid eval_tier 'nonsense'");
+      return (
+        r.code === SHIP_EXIT.USAGE &&
+        recs.stages.length === 1 &&
+        recs.stages[0].stage === "spec-eval" &&
+        /nonsense/.test(recs.stages[0].error)
+      );
+    })()
+  );
+
+  check(
+    "readSpecFrontmatter survives an injected hints dep that always throws",
+    (() => {
+      const fm = readSpecFrontmatter(() => {
+        throw new Error("boom");
+      }, "anything");
+      return fm.tier === "deterministic" && fm.invalid === "boom";
+    })()
   );
 }
 

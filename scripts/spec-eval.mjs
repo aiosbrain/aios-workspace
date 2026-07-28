@@ -10,7 +10,7 @@
  *
  * The VERDICT is the only gate; the 0–100 score is advisory/reporting and never derives an
  * exit code. Exit codes: 0 SPEC_READY · 1 deterministic must-fail · 2 adversarial blocker ·
- * 3 NOT_EVALUATED (clean deterministic, LLM not run) · 4 usage/IO.
+ * 3 NOT_EVALUATED (the LLM layer was ASKED for and did not run) · 4 usage/IO.
  *
  * Test seams (documented, PATH-fake analog for an SDK-backed CLI):
  *   AIOS_SPEC_EVAL_STUB — raw evaluator text (or a file path to it); bypasses the SDK call.
@@ -982,8 +982,9 @@ export async function runAdversarialQuorum(args) {
 
 /**
  * Evaluate a spec through both layers. Returns { verdict, exitCode, score, deterministic,
- * adversarial, findings }. Exit-code precedence: a deterministic must-fail (1) dominates an
- * adversarial blocker (2); a clean deterministic pass with no LLM run is NOT_EVALUATED (3).
+ * adversarial, findings, tier }. Exit-code precedence: a deterministic must-fail (1) dominates an
+ * adversarial blocker (2). A clean deterministic pass is NOT_EVALUATED (3) only when the LLM layer
+ * was asked for and suppressed; on a DECLARED deterministic tier it is a complete SPEC_READY (0).
  */
 export async function evaluateSpec({
   specText,
@@ -1129,6 +1130,11 @@ export async function evaluateSpec({
     verdict,
     exitCode,
     score,
+    // The tier this run actually evaluated at, so downstream consumers can tell a deterministic
+    // pass from an adversarially-reviewed one. `spec publish` gates on it: before AIO-573 a
+    // publishable artifact implied an LLM pass (deterministic-only exited 3, never SPEC_READY),
+    // and that guarantee has to be asserted explicitly now that it is no longer structural.
+    tier: useLlm ? "full" : "deterministic",
     deterministic,
     adversarial,
     findings,
@@ -1144,7 +1150,15 @@ export async function evaluateSpec({
 /** Read the small, flat frontmatter surface used by the evaluator.  This intentionally accepts
  * only scalar keys: the spec itself remains Markdown, while evaluator policy stays auditable. */
 export function specEvalHints(specText) {
-  const block = /^---\s*\n([\s\S]*?)\n---(?:\s*\n|$)/.exec(specText)?.[1] ?? "";
+  // Tolerant of leading whitespace/BOM and CRLF, and deliberately IDENTICAL to `specSafetyFlag`
+  // (ship/prompts.mjs) — the two read the same frontmatter block off the same issue bodies, and
+  // when they disagreed about whether a block existed at all, `safety: true` was seen while
+  // `eval_tier: full` was silently discarded. That mattered little while the tier default was
+  // `full` (a missed parse still ran the adversarial layer, so it failed SAFE); since AIO-573
+  // flipped the default to `deterministic`, the same missed parse fails OPEN — it drops the very
+  // opt-in the author wrote, and skips the `invalid eval_tier` throw below, so a typo'd key in
+  // such a body would be silently ignored rather than refused. Keep these two regexes in step.
+  const block = /^\s*---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(String(specText ?? ""))?.[1] ?? "";
   const values = {};
   for (const line of block.split("\n")) {
     const match = /^([A-Za-z_][\w-]*):\s*(.*?)\s*$/.exec(line);
@@ -1310,7 +1324,9 @@ export async function runFixLoop({
   // what a clean deterministic run means. Without it the loop reported NOT_EVALUATED on the
   // default (deterministic) path while the CLI called the same revised file SPEC_READY.
   tier = undefined,
-  useLlm = true,
+  // Same tier-derived default as evaluateSpec — the two must not disagree about what an
+  // undeclared tier means, which is the whole point of threading `tier` through here.
+  useLlm = tier === undefined ? true : tier === "full",
   evalCfg = null,
   fixCfg = null,
   evalFn,
@@ -1550,14 +1566,14 @@ const HELP = [
   "  aios spec author <plan> --slices <dir> [--out <dir>] [--concurrency N] [--model <id>] [--effort <level>] [--json]",
   "  aios spec publish AIO-<n> <candidate> --eval-artifact <json> --expected-remote-sha <sha256> [--dry-run]",
   "",
-  "eval:  score a spec against the rubric (deterministic + adversarial LLM layers).",
+  "eval:  score a spec against the rubric (deterministic by default; --adversarial adds the LLM layer).",
   "       --publishable also requires a clean repository and emits a publishable artifact.",
   "fix:   iterate the spec through the bounded fix loop until it is ready (budget from rubric).",
   "       default writes <name>.improved.md; --write overwrites in place; --out <path> is explicit.",
   "",
   "exit codes:",
   "  0 SPEC_READY · 1 deterministic must-fail · 2 adversarial blocker ·",
-  "  3 NOT_EVALUATED (--no-llm, deterministic clean) · 4 usage/IO",
+  "  3 NOT_EVALUATED (asked for the LLM layer, e.g. --adversarial, and it did not run) · 4 usage/IO",
 ].join("\n");
 
 function specArgv(rest) {
@@ -1808,8 +1824,10 @@ export async function cmdSpec(repo, args) {
     // `eval_provenance: adversarial-reviewed` is itself an opt-in: the documented behaviour is an
     // LLM pass before revisions, deterministic per-revision, then a final LLM confirmation. Those
     // bookends only run when useLlm is set, so a provenance-aware spec keeps them on the new
-    // deterministic default rather than silently losing the contract it declared.
-    useLlm: !noLlm && (!deterministicTier || hints.planTraceable),
+    // deterministic default rather than silently losing the contract it declared. It may only
+    // rescue a tier that DEFAULTED to deterministic — an explicit `--tier deterministic` outranks
+    // frontmatter here as everywhere else, and must not be talked out of making no model call.
+    useLlm: !noLlm && (!deterministicTier || (!flag("--tier") && hints.planTraceable)),
     evalCfg: models.spec_eval,
     fixCfg: models.spec_fix,
     decisions,
