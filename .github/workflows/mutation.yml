@@ -48,7 +48,7 @@ jobs:
       # disabled in configFor. restore/save are split (instead of one
       # actions/cache post step) so the save runs with `if: always()` — a
       # failed campaign must not throw away its incremental JSON.
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         if: matrix.group == 'client-auth-permissions'
         with:
           # Cache ONLY the Stryker incremental state. run-mutation.mjs writes it
@@ -76,7 +76,7 @@ jobs:
       #     in-process fast and turns the leg green.
       - run: node scripts/run-mutation.mjs --nightly --group ${{ matrix.group }}
         timeout-minutes: 45
-      - uses: actions/cache/save@v5
+      - uses: actions/cache/save@v6
         if: always() && matrix.group == 'client-auth-permissions'
         with:
           path: |
