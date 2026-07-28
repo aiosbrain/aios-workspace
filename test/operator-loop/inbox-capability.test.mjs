@@ -317,6 +317,7 @@ test("journalled events carry the exact surface/decision payloads, and journalli
     const { displayProjection } = issueHandle(root, sampleRequest());
     brokerDecision(displayProjection, "approve", { appendInboxEvent: journal.append });
     const [surface, decision] = journal.events;
+    assert.equal(journal.events.length, 2);
     assert.equal(surface.kind, "user-intent");
     assert.equal(surface.handle, displayProjection.handle);
     assert.deepEqual(surface.data, {
@@ -325,6 +326,11 @@ test("journalled events carry the exact surface/decision payloads, and journalli
       digest: displayProjection.digest,
     });
     assert.equal(decision.kind, "pdp-decision");
+    assert.equal(decision.handle, displayProjection.handle);
+    assert.deepEqual(decision.data, {
+      decision: "approve",
+      digest: displayProjection.digest,
+    });
 
     // Fallback lane: the journalled surface names its lane, content-free.
     const fallbackJournal = createInMemoryJournal();

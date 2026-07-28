@@ -16,8 +16,10 @@ jobs:
     # Backstop only — the real budget is the STEP-level timeout on the campaign
     # below. A job-level timeout cancels the run and skips the always() cache
     # save + artifact upload (observed on the pre-matrix nightlies, which read
-    # "cancelled"); a step timeout fails the leg but still runs them.
-    timeout-minutes: 55
+    # "cancelled"); a step timeout fails the leg but still runs them. Keep this
+    # comfortably above 45m step budget + checkout/npm ci/cache/artifact
+    # overhead so the backstop can never fire before the step timeout does.
+    timeout-minutes: 75
     strategy:
       # One slow or red group must not stop the others from reporting — the
       # single-job layout starved groups 2–6 for weeks (AIO-539).

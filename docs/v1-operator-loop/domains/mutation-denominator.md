@@ -333,6 +333,6 @@ asserted.
    per-group artifact name, step-level 45m timeout, expected-red comment).
 4. Raise the `.github/workflows/ci.yml` changed-code lane timeout to 45m.
 5. Dispatch the nightly manually from the PR branch (`gh workflow run mutation.yml --ref <branch>`)
-   as the calibration run: verify the four completing legs and their durations, check the inbox
-   score against the 90 floor (widen `nightlyTests` per Reuse if it dips), confirm both red legs
-   fail in isolation, and record all six outcomes in the PR body.
+   as the calibration run: verify the five completing legs and their durations, check the inbox
+   score against the 90 floor (widen `nightlyTests` per Reuse if it dips), confirm the expected-red
+   `bugbot-security` leg fails in isolation, and record all six outcomes in the PR body.
