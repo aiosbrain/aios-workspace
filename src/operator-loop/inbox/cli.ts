@@ -427,7 +427,8 @@ export function renderInboxText(
     for (const it of protectedItems) lines.push(renderRow(it, now, c, row));
   }
   lines.push(c.dim(PARTITION_SEPARATOR));
-  if (!rest.length) lines.push(c.dim("  (nothing else — the ranked queue below the line is empty)"));
+  if (!rest.length)
+    lines.push(c.dim("  (nothing else — the ranked queue below the line is empty)"));
   for (const it of rest) lines.push(renderRow(it, now, c, row));
   return lines.join("\n");
 }

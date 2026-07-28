@@ -214,8 +214,7 @@ test("registry-configured protected sender is promoted into the partition (real 
     assert.ok(sepAt > -1, "separator rendered");
     // Thread rows render the object's native id, not the composite lookup key (audit S3-1).
     assert.ok(
-      out.indexOf(vip.observation.native_id) > -1 &&
-        out.indexOf(vip.observation.native_id) < sepAt,
+      out.indexOf(vip.observation.native_id) > -1 && out.indexOf(vip.observation.native_id) < sepAt,
       "registry-protected sender renders above the separator"
     );
   } finally {

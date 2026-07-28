@@ -46,7 +46,9 @@ export function ConnectorRow({
           </span>
         </div>
         <p className="mt-0.5 flex items-baseline gap-1.5 text-xs leading-snug text-muted-foreground">
-          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide">{transport}</span>
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide">
+            {transport}
+          </span>
           <span className="min-w-0 flex-1 truncate">{connector.summary}</span>
         </p>
       </div>

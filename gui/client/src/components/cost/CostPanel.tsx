@@ -178,8 +178,7 @@ export function CostPanel() {
   const noData = new Set(unknown.map((p) => p.provider));
   const missingEntirely = data.config_status.unknown.filter((p) => noData.has(p));
   const partial = data.config_status.unknown.filter((p) => !noData.has(p));
-  const labelOf = (id: string) =>
-    data.by_provider.find((p) => p.provider === id)?.label ?? id;
+  const labelOf = (id: string) => data.by_provider.find((p) => p.provider === id)?.label ?? id;
 
   return (
     <div className={PANEL}>
@@ -210,11 +209,9 @@ export function CostPanel() {
           {missingEntirely.length > 0 && (
             <span>
               No actual-spend source for{" "}
-              <span className="text-foreground">
-                {missingEntirely.map(labelOf).join(", ")}
-              </span>{" "}
-              — usage was detected, but no owner-entered amount, billing data, or subscription
-              exists. Enter the real figure in Settings; nothing is estimated in the meantime.
+              <span className="text-foreground">{missingEntirely.map(labelOf).join(", ")}</span> —
+              usage was detected, but no owner-entered amount, billing data, or subscription exists.
+              Enter the real figure in Settings; nothing is estimated in the meantime.
             </span>
           )}
           {partial.length > 0 && (
