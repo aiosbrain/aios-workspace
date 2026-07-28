@@ -38,7 +38,7 @@ the same spine, three skins.
 |------|------|
 | `scaffold/` | The workspace **template** that gets stamped into a person's repo: the numbered spine + `scaffold/.claude/` (`rules/` including **git-workflow**, `skills/`, `rubrics/`, `memory/`, `settings.json`, `CLAUDE.md.tmpl`) + `scaffold/AGENTS.md.tmpl`. Editing the product's behavior usually means editing here. |
 | `scripts/` | `scaffold-project.sh` (stamp a workspace), `aios.mjs` (Team Brain sync CLI: `push`/`pull`/`status`), `leak-gate.sh`, GUI/runtime/catalog helpers. |
-| `validation/` | OGR validators (`validate-all.sh`: structure · frontmatter · secrets · aios config · rubrics). Must pass. |
+| `validation/` | The OGR validators, `OGR01`–`OGR15` (`validate-all.sh` runs all fifteen; `--critical` = OGR03 secrets only, `--quick` = OGR01 structure only). Workspace hygiene (OGR01–05, 14), scaffold + runtime contracts (OGR06–09, 11, 12, 15), advisory scorecards (OGR10, 13 — always exit 0). Must pass. Full table: `docs/feature-set.md` §3. |
 | `hooks/` | Claude Code PreToolUse guards (secrets, access-tier, frontmatter, sync nudge) shipped into every scaffolded workspace. |
 | `gui/` + `src-tauri/` | Local GUI (Claude Agent SDK) + Tauri desktop shell. |
 | `examples/` | A fully synthetic sample workspace used to demo + test the harnesses. Use it; never put real data here. |
@@ -77,7 +77,7 @@ invariants): `../docs/tier-vocabulary.md` — the scaffold's self-contained copy
 
 ## 4. The pinned sync contract — do not drift ⚠️
 
-**`docs/brain-api.md` is the single pinned contract (document revision **1.13**, member-facing API **1.13**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and
+**`docs/brain-api.md` is the single pinned contract (document revision **1.14**, member-facing API **1.14**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and
 the Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change
 in that file first** — bump the version and make the matching change in `aios-team-brain`. A silent
 drift breaks `aios push`/`aios pull` for everyone. Forward-compat rule: clients MUST ignore item kinds

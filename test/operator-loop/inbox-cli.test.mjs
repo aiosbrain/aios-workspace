@@ -151,11 +151,14 @@ test("protected partition renders above the separator; the rest below it", () =>
     const out = run(dir, "inbox", []).stdout;
     const sepAt = out.indexOf(PARTITION_SEPARATOR);
     assert.ok(sepAt > -1, "separator is rendered");
-    assert.ok(
-      out.indexOf(blocker) > -1 && out.indexOf(blocker) < sepAt,
-      "protected id above separator"
-    );
-    assert.ok(out.indexOf(fyi) > sepAt, "non-protected id below separator");
+    // Rows identify themselves by TITLE plus the 8-char ask prefix `aios asks` prints, not by the
+    // full uuid — the partition invariant is about which side of the line an item lands on, not
+    // about which handle the renderer uses (audit S3-1).
+    assert.ok(out.indexOf("protected one") > -1, "protected row shows its title");
+    assert.ok(out.indexOf("protected one") < sepAt, "protected row above separator");
+    assert.ok(out.indexOf(blocker.slice(0, 8)) < sepAt, "protected ref above separator");
+    assert.ok(out.indexOf("unprotected one") > sepAt, "non-protected row below separator");
+    assert.ok(out.indexOf(fyi.slice(0, 8)) > sepAt, "non-protected ref below separator");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -209,8 +212,9 @@ test("registry-configured protected sender is promoted into the partition (real 
     const out = run(dir, "inbox", []).stdout;
     const sepAt = out.indexOf(PARTITION_SEPARATOR);
     assert.ok(sepAt > -1, "separator rendered");
+    // Thread rows render the object's native id, not the composite lookup key (audit S3-1).
     assert.ok(
-      out.indexOf(vip.id) > -1 && out.indexOf(vip.id) < sepAt,
+      out.indexOf(vip.observation.native_id) > -1 && out.indexOf(vip.observation.native_id) < sepAt,
       "registry-protected sender renders above the separator"
     );
   } finally {

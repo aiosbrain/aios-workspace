@@ -404,19 +404,22 @@ export const COMMANDS = [
     usage: U["roadmap-run"],
   },
 
-  // ── hidden (no help text; reachable but undocumented, exactly as before) ────
-  {
-    name: "whoami",
-    resolution: "workspace",
-    adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
-    usage: U.whoami,
-  },
+  // The Unified Inbox is a headline V1 surface; it was unreachable from `aios --help` until the
+  // UX audit found that nothing in the CLI's own help mentioned it (S3-8).
   {
     name: "inbox",
     resolution: "offline",
     loader: () => import("../inbox.mjs"),
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.inbox,
+  },
+
+  // ── hidden (no help text; reachable but undocumented, exactly as before) ────
+  {
+    name: "whoami",
+    resolution: "workspace",
+    adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
+    usage: U.whoami,
   },
 ];
 
@@ -431,6 +434,42 @@ for (const d of COMMANDS) {
 /** @returns {CommandDescriptor|undefined} */
 export function findCommand(name) {
   return BY_NAME.get(name);
+}
+
+/** Every dispatchable verb (names + aliases), for did-you-mean. */
+export function commandNames() {
+  return [...BY_NAME.keys()];
+}
+
+/** Levenshtein distance — small inputs only (command names), so the naive DP is fine. */
+function editDistance(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let prev = Array.from({ length: cols }, (_, j) => j);
+  for (let i = 1; i < rows; i++) {
+    const cur = [i];
+    for (let j = 1; j < cols; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[cols - 1];
+}
+
+/**
+ * The registered verb closest to `input`, or null when nothing is close enough.
+ *
+ * Mirrors the threshold `aios inbox` / `aios asks` already use for their subcommands — the audit
+ * (S6-4) found the capability existed one level down but not at top level, so `aios statu` (a
+ * one-character typo) answered with 176 lines of help and no hint.
+ */
+export function nearestCommand(input) {
+  if (!input) return null;
+  const ranked = commandNames()
+    .map((name) => ({ name, distance: editDistance(input, name) }))
+    .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name));
+  const best = ranked[0];
+  return best && best.distance <= Math.max(2, Math.floor(input.length / 3)) ? best.name : null;
 }
 
 /** The full `aios help` text, derived from the descriptors. No other source exists. */

@@ -238,3 +238,94 @@ test("evaluator sampling is pinned (temperature 0) for reproducibility", () => {
   assert.equal(EVAL_SAMPLING.temperature, 0);
   assert.equal(EVAL_SAMPLING.top_p, 1);
 });
+
+// ── AIO-573: a refusal must name what it refused ─────────────────────────────────────────────
+//
+// Regression cover for the observed defect: a candidate evaluated to NOT_READY/30 with seven
+// `major` findings whose `why` text was POSITIVE (per-criterion pass records), and the
+// byte-identical file re-evaluated to SPEC_READY/100. The verdict vote and the blocker-recurrence
+// test were independent, so the quorum could refuse while citing nothing.
+
+const passRecord = (ruleId) => ({
+  ruleId,
+  severity: "major",
+  why: `The contract for ${ruleId} is declared before implementation steps.`,
+});
+
+test("AIO-573 — a NOT_READY sample citing no blocker does not gate", () => {
+  const p = parseAdversarial(
+    JSON.stringify({ verdict: "NOT_READY", score: 30, findings: [passRecord("SR9")] })
+  );
+  assert.equal(p.verdict, "SPEC_READY", "an uncited refusal must not block");
+  assert.equal(p.uncitedRefusal, true);
+  assert.ok(
+    p.findings.some((f) => /unjustified refusal/i.test(f.why)),
+    "the dissent is kept in the report, just not gating"
+  );
+});
+
+test("AIO-573 — a cited blocker still fails closed, unchanged", () => {
+  const p = parseAdversarial(
+    JSON.stringify({
+      verdict: "NOT_READY",
+      score: 20,
+      findings: [{ ruleId: "SR8", severity: "blocker", why: "reaches into a sibling domain" }],
+    })
+  );
+  assert.equal(p.verdict, "NOT_READY");
+  assert.ok(!p.uncitedRefusal);
+});
+
+test("AIO-573 — an unrecognised severity parses to minor, not major", () => {
+  // Unlabeled records are usually pass notes; `major` overstated them and tanked the score.
+  const p = parseAdversarial(
+    JSON.stringify({ verdict: "SPEC_READY", score: 90, findings: [{ ruleId: "SR2", why: "ok" }] })
+  );
+  assert.equal(p.findings[0].severity, "minor");
+});
+
+test("AIO-573 — recognised severity casing is normalized before gating", () => {
+  const p = parseAdversarial(
+    JSON.stringify({
+      verdict: "NOT_READY",
+      score: 20,
+      findings: [{ ruleId: "SR8", severity: "Blocker", why: "missing external contract" }],
+    })
+  );
+  assert.equal(p.verdict, "NOT_READY");
+  assert.equal(p.findings[0].severity, "blocker");
+});
+
+test("AIO-573 — quorum: majority NOT_READY with no surviving blocker resolves to ready", () => {
+  // The distinct case parseAdversarial cannot catch: two samples each cite a DIFFERENT blocker,
+  // so both are demoted for non-recurrence and the verdict would cite nothing.
+  const agg = aggregateQuorum([
+    {
+      verdict: "NOT_READY",
+      score: 30,
+      findings: [{ ruleId: "SR8", severity: "blocker", why: "a" }],
+    },
+    {
+      verdict: "NOT_READY",
+      score: 35,
+      findings: [{ ruleId: "SR9", severity: "blocker", why: "b" }],
+    },
+    ready(90),
+  ]);
+  assert.equal(agg.verdict, "SPEC_READY", "no blocker recurred, so nothing gates");
+  assert.equal(agg.uncitedRefusal, true);
+  assert.ok(agg.findings.every((f) => f.severity !== "blocker"));
+});
+
+test("AIO-573 — quorum: a recurring blocker is untouched by the new rule", () => {
+  const agg = aggregateQuorum([blocker("SR8", "x"), blocker("SR8", "xy longer"), ready(80)]);
+  assert.equal(agg.verdict, "NOT_READY");
+  assert.ok(!agg.uncitedRefusal);
+});
+
+test("AIO-573 — junk output still fails closed (synthetic blockers are cited)", () => {
+  for (const junk of ["not json", "", "{ broken", '{"verdict":"MAYBE"}']) {
+    const p = parseAdversarial(junk);
+    assert.equal(p.verdict, "NOT_READY", `${JSON.stringify(junk)} must stay blocked`);
+  }
+});

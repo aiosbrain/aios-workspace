@@ -59,6 +59,11 @@ const VERIFIED_CLEAR_OUTPUT = `${BUGBOT_CLEAR_MARKER}\n${BUGBOT_CLEAR_TOKEN}`;
 function evaluateLocalBugbotGate(options = {}) {
   return evaluateProductionGate({
     ...options,
+    // A developer's ambient shell (e.g. AIOS_BUGBOT_DISABLE=1 exported for local convenience
+    // by aios/.envrc) must never leak into a test that didn't ask to exercise it — otherwise
+    // this gate silently short-circuits to "skipped" outside CI. Tests that DO want to
+    // exercise AIOS_BUGBOT_DISABLE pass their own explicit `env`, which wins over this default.
+    env: options.env ?? { ...process.env, AIOS_BUGBOT_DISABLE: "" },
     resolveBase:
       options.resolveBase ??
       ((repo) => ({ ok: true, baseSha: git(repo, "merge-base", "HEAD", "origin/main") })),
@@ -91,6 +96,33 @@ function fixture() {
   git(repo, "checkout", "-qb", "feat/gate");
   return repo;
 }
+
+test("the local evaluateLocalBugbotGate wrapper is immune to an ambient AIOS_BUGBOT_DISABLE=1", () => {
+  // Regression guard for the wrapper's default env (see the comment on it above): without
+  // that default, a maintainer's own shell — aios/.envrc exports AIOS_BUGBOT_DISABLE=1 for
+  // local dev convenience — would leak into every test that omits `env` and silently turn
+  // this whole file's coverage into a no-op (`status: "skipped"` instead of real review logic).
+  const previous = process.env.AIOS_BUGBOT_DISABLE;
+  process.env.AIOS_BUGBOT_DISABLE = "1";
+  const repo = fixture();
+  try {
+    appendFileSync(path.join(repo, "tracked.txt"), "changed\n");
+    const result = evaluateLocalBugbotGate({
+      repo,
+      runReview: () => ({ ok: true, status: 0, output: VERIFIED_CLEAR_OUTPUT }),
+    });
+    assert.notEqual(
+      result.status,
+      "skipped",
+      "an ambient AIOS_BUGBOT_DISABLE=1 in the host shell must not leak into a test that didn't ask for it"
+    );
+    assert.equal(result.status, "clear");
+  } finally {
+    if (previous === undefined) delete process.env.AIOS_BUGBOT_DISABLE;
+    else process.env.AIOS_BUGBOT_DISABLE = previous;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test("Medium+ matcher is strict while Low remains advisory", async () => {
   assert.equal(hasFindingsAtOrAbove("- Medium: stale status", "medium"), true);
@@ -1314,7 +1346,11 @@ test("native command entry points emit only valid runtime JSON and ignore stdin 
         cwd: unrelated,
         encoding: "utf8",
         input: JSON.stringify({ cwd: REPO }),
-        env: process.env,
+        // --probe is immune to AIOS_BUGBOT_DISABLE today (both the gate's and main()'s disable
+        // checks skip while probing) but sanitize anyway for consistency with the other spawn
+        // sites in this file, so this test doesn't start depending on ambient config if that
+        // guard is ever relaxed.
+        env: { ...process.env, AIOS_BUGBOT_DISABLE: "" },
       });
       const output = JSON.parse(child);
       assert.equal(output.status, "error");
@@ -1411,7 +1447,9 @@ test("manual check-exit mode returns non-zero on an infrastructure failure", () 
       {
         cwd: repo,
         encoding: "utf8",
-        env: process.env,
+        // A developer's ambient AIOS_BUGBOT_DISABLE=1 must not turn this infrastructure
+        // failure into a silent "skipped" — see the in-process wrapper's identical guard above.
+        env: { ...process.env, AIOS_BUGBOT_DISABLE: "" },
       }
     );
     assert.equal(child.status, 1);

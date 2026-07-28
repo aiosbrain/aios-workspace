@@ -106,6 +106,10 @@ export function MaturityPanel() {
               · {plan.window.since} → {plan.window.until}
             </>
           )}
+          {/* Scope, said out loud. This reads your local agent session logs across EVERY project,
+              not this workspace — so a freshly scaffolded repo shows a full 30-day trend and
+              viewers reasonably assume it is the workspace's (audit S5-8). */}
+          <span className="ml-2 text-muted-foreground/70">· your workstation, all projects</span>
         </span>
         <span className="flex items-center gap-3">
           <Freshness meta={plan} busy={busy} />

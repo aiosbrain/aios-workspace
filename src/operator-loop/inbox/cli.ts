@@ -318,14 +318,68 @@ function ageLabel(ts: string, now: Date): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-function renderRow(it: InboxItem, now: Date, c: RenderColors): string {
+/** Max rendered width of a row's title before it is ellipsised. */
+export const TITLE_MAX = 68;
+
+function clip(s: string, max = TITLE_MAX): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/**
+ * A short, stable handle for a row. Agent rows use the 8-char ask prefix `aios asks` prints, so the
+ * same item is recognisably the same across both commands. Thread rows use the object's native id,
+ * NOT the composite key — `["gog:primary","primary","personal","email","19fa…"]` is a lookup key,
+ * not something a human reads.
+ */
+export function inboxRowRef(it: InboxItem): string {
+  if (it.ask) return it.ask.id.slice(0, 8);
+  const native = it.observation?.native_id;
+  if (native) return native.length > 12 ? `${native.slice(0, 12)}…` : native;
+  return clip(it.id, 20);
+}
+
+/**
+ * What the row is ABOUT, in the user's words rather than the ranker's.
+ *
+ * Every row already carries displayable content — `ask.title` on agent rows, the sender and snippet
+ * on thread rows — and the first cut of this renderer showed neither, so a queue of 137 items read
+ * as 137 opaque uuids (audit S3-1). `why` is the ranker's *explain* string: correct as an
+ * explanation, wrong as the only description, and it labels every source "DM" because email
+ * threads, calendar events and agent asks all land in its fallthrough branch (S3-2). It moves
+ * behind `--why`.
+ */
+export function inboxRowTitle(it: InboxItem): string {
+  if (it.ask?.title) return clip(it.ask.title);
+  if (it.health) return clip(`${it.health.adapter}: ${it.health.state} — ${it.health.detail}`);
+  const o = it.observation;
+  if (o) {
+    const from = o.participants.find((p) => p.role === "from") ?? o.participants[0];
+    const who = from?.display?.trim() || from?.id?.trim() || null;
+    const snippet = o.snippet?.trim() || null;
+    if (who && snippet) return clip(`${who} — ${snippet}`);
+    if (who) return clip(who);
+    if (snippet) return clip(snippet);
+    return clip(`${o.object_kind} ${o.native_id}`);
+  }
+  return "(no title)";
+}
+
+function renderRow(
+  it: InboxItem,
+  now: Date,
+  c: RenderColors,
+  opts: { why?: boolean } = {}
+): string {
   const mark = it.protected ? "●" : " ";
   const label = it.source ?? it.origin;
-  return (
-    `  ${mark} ${it.id}  ` +
-    `${c.dim(`[${it.bucket}]`)} ${label}  ` +
-    `${c.dim(ageLabel(it.ts, now))}  ${c.dim(it.why)}`
-  );
+  // Pad the RENDERED token, not the raw value — `[needs-you]` and `[done]` differ by five
+  // characters, which is enough to make every column downstream ragged.
+  const head =
+    `  ${mark} ${c.dim(inboxRowRef(it).padEnd(13))} ` +
+    `${c.dim(`[${it.bucket}]`.padEnd(12))} ${c.dim(label.padEnd(14))} ` +
+    `${c.dim(ageLabel(it.ts, now).padStart(4))}  ${inboxRowTitle(it)}`;
+  return opts.why ? `${head}\n${c.dim(`        why: ${it.why}`)}` : head;
 }
 
 function staleHeader(s: Staleness, now: Date, c: RenderColors): string | null {
@@ -343,10 +397,11 @@ function staleHeader(s: Staleness, now: Date, c: RenderColors): string | null {
  */
 export function renderInboxText(
   view: InboxView,
-  opts: { raw?: boolean; now?: Date; colors?: RenderColors } = {}
+  opts: { raw?: boolean; why?: boolean; now?: Date; colors?: RenderColors } = {}
 ): string {
   const c = opts.colors ?? NO_COLOR;
   const now = opts.now ?? new Date();
+  const row = { why: opts.why };
   const lines: string[] = [];
 
   if (opts.raw) {
@@ -355,7 +410,7 @@ export function renderInboxText(
     const sh = staleHeader(view.staleness, now, c);
     if (sh) lines.push(sh);
     if (!ordered.length) lines.push(c.dim("  (empty)"));
-    for (const it of ordered) lines.push(renderRow(it, now, c));
+    for (const it of ordered) lines.push(renderRow(it, now, c, row));
     return lines.join("\n");
   }
 
@@ -368,11 +423,12 @@ export function renderInboxText(
   if (sh) lines.push(sh);
 
   if (protectedItems.length) {
-    lines.push(c.dim("  protected"));
-    for (const it of protectedItems) lines.push(renderRow(it, now, c));
+    lines.push(c.dim("  protected — kept above the line, never buried by ranking"));
+    for (const it of protectedItems) lines.push(renderRow(it, now, c, row));
   }
   lines.push(c.dim(PARTITION_SEPARATOR));
-  if (!rest.length) lines.push(c.dim("  (nothing below the line)"));
-  for (const it of rest) lines.push(renderRow(it, now, c));
+  if (!rest.length)
+    lines.push(c.dim("  (nothing else — the ranked queue below the line is empty)"));
+  for (const it of rest) lines.push(renderRow(it, now, c, row));
   return lines.join("\n");
 }

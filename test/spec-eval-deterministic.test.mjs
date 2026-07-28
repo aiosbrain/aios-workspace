@@ -207,3 +207,108 @@ test("assessScopeBound — counts tasks, distinct surfaces, and increment statem
   assert.deepEqual(bare.surfaces, []);
   assert.equal(bare.incrementStated, false);
 });
+
+// ── AIO-573: path classification must not manufacture blockers ────────────────────────────────
+
+test("AIO-573 — an explicit new-file marker beats the section heading", () => {
+  // The heading contains "integrat", which used to classify EVERY path under it as existing
+  // code — so naming a file the slice creates, in the one section specs name files in, was a
+  // hard blocker. Four of the five GRAIN Wave 1 specs hit this.
+  const heading = "Interface / integration points";
+  for (const lineText of [
+    "- new file: `scripts/ui/out.mjs` — the writer.",
+    "- create `scripts/ui/out.mjs` — the writer.",
+    "- `scripts/ui/out.mjs` — the writer facade; does not exist yet.",
+  ]) {
+    assert.equal(
+      classifyPathContext({ section: heading, lineText }),
+      "new",
+      `an explicit marker must win over the heading: ${lineText}`
+    );
+  }
+});
+
+test("AIO-573 — an explicit marker after the referenced path applies to that path", () => {
+  const section = "Interface / integration points";
+  assert.equal(
+    classifyPathContext({
+      section,
+      lineText: "- `scripts/ui/out.mjs` — the writer facade; does not exist yet.",
+      path: "scripts/ui/out.mjs",
+    }),
+    "new"
+  );
+  assert.equal(
+    classifyPathContext({
+      section: "Tasks",
+      lineText: "- `scripts/aios.mjs` — extends the existing dispatcher.",
+      path: "scripts/aios.mjs",
+    }),
+    "existing"
+  );
+});
+
+test("AIO-573 — the shipped template's own new-file line does not classify as existing", () => {
+  // docs/agentic-ergonomics/aios-issue-template.md tells authors to write exactly this, in
+  // exactly this section. Following our own template must not produce a blocker.
+  assert.equal(
+    classifyPathContext({
+      section: "Interface / integration points",
+      lineText: '- (TODO: or "new file: path/to/new-module.ts")',
+    }),
+    "new"
+  );
+});
+
+test("AIO-573 — a sibling-repo section is advisory, not a blocker", () => {
+  for (const section of [
+    "Upstream work to create (sibling `aios-design` repo, separate PR)",
+    "External dependencies",
+    "Changes in the other repo",
+  ]) {
+    assert.notEqual(
+      classifyPathContext({ section, lineText: "- `build/build.mjs` — the token pipeline." }),
+      "existing",
+      `cross-repo paths must not hard-block: ${section}`
+    );
+  }
+});
+
+test("AIO-573 — a genuine existing-code claim still classifies as existing", () => {
+  // The fail-closed direction is preserved: claiming a path already exists, when it does not,
+  // remains a blocker.
+  assert.equal(
+    classifyPathContext({
+      section: "Interface / integration points",
+      lineText: "- `scripts/aios.mjs` — extends the existing dispatcher.",
+    }),
+    "existing"
+  );
+  assert.equal(
+    classifyPathContext({ section: "Reuse", lineText: "- `scripts/build.mjs`" }),
+    "existing"
+  );
+});
+
+test("AIO-573 — a new-file marker does not launder a phantom on the SAME line", () => {
+  // Bugbot finding on the first cut of this fix: a whole-line rule let one bullet that mixes both
+  // roles downgrade the integration target to an advisory. Markers are scoped per path.
+  const lineText = "- new file: `scripts/ui/out.mjs` — integrates with `scripts/phantom.mjs`";
+  const section = "Interface / integration points";
+  assert.equal(
+    classifyPathContext({ section, lineText, path: "scripts/ui/out.mjs" }),
+    "new",
+    "the created file is still new"
+  );
+  assert.equal(
+    classifyPathContext({ section, lineText, path: "scripts/phantom.mjs" }),
+    "existing",
+    "the integration target it claims must still hard-block if it does not resolve"
+  );
+});
+
+test("AIO-573 — the reverse order is scoped correctly too", () => {
+  const lineText = "- extends `scripts/aios.mjs`; new file: `scripts/ui/roles.mjs`";
+  assert.equal(classifyPathContext({ lineText, path: "scripts/aios.mjs" }), "existing");
+  assert.equal(classifyPathContext({ lineText, path: "scripts/ui/roles.mjs" }), "new");
+});

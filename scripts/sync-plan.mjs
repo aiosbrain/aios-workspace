@@ -108,6 +108,33 @@ export function contentShaForPush(item) {
   );
 }
 
+/**
+ * Presentation class for an excluded item (GRAIN §1.4, AIO-568).
+ *
+ * Every exclusion this module produces is the same thing: the safety boundary refused on the
+ * owner's behalf. Nothing failed. Rendering that in red as "blocked" is a category error — it
+ * teaches operators to read a working guardrail as a defect.
+ *
+ * The class is emitted HERE, by the producer, rather than inferred by a renderer parsing
+ * `reason` strings. Adding a genuine failure class later (an unreadable file, say) is then a
+ * change in this file with no renderer edit.
+ *
+ * Deliberately NOT part of `--json` / `--porcelain`: those are documented machine surfaces and
+ * extending them is a versioned contract change. This field never crosses a process boundary —
+ * `cmdStatus`/`cmdPush` read it off the in-process plan object.
+ */
+export const HELD = "held";
+
+/**
+ * The `held` gutter glyph — U+25AE BLACK VERTICAL RECTANGLE. Lives beside the class it renders
+ * so the two cannot drift.
+ *
+ * Rendered blue by callers because the 16-colour palette has no violet; the true per-background
+ * violet arrives with the semantic roles in AIO-572. Colour is never load-bearing — this glyph
+ * and the word "held" both survive a non-colour stream, so a piped or NO_COLOR run loses nothing.
+ */
+export const HELD_GLYPH = "\u25AE";
+
 export function buildPlan(repo, cfg, patterns, onlyPaths = null) {
   const state = loadState(repo);
   const plan = { push: [], blocked: [], clean: [] };
@@ -126,6 +153,7 @@ export function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     if (!validEvidenceDeclaration(rel, frontmatter?.kind, frontmatter?.access)) {
       plan.blocked.push({
         rel,
+        class: HELD,
         reason: "evidence files require their explicit kind at a canonical approved path",
       });
       continue;
@@ -133,20 +161,20 @@ export function buildPlan(repo, cfg, patterns, onlyPaths = null) {
 
     const tier = normalizeTier(frontmatter?.access || "");
     if (!frontmatter || !frontmatter.access) {
-      plan.blocked.push({ rel, reason: "no `access:` frontmatter (default-deny)" });
+      plan.blocked.push({ rel, class: HELD, reason: "no `access:` frontmatter (default-deny)" });
       continue;
     }
     if (tier === "admin") {
-      plan.blocked.push({ rel, reason: "`access: admin` never syncs" });
+      plan.blocked.push({ rel, class: HELD, reason: "`access: admin` never syncs" });
       continue;
     }
     if (!cfg.sync_tiers.includes(tier)) {
-      plan.blocked.push({ rel, reason: `tier '${tier}' not in sync_tiers` });
+      plan.blocked.push({ rel, class: HELD, reason: `tier '${tier}' not in sync_tiers` });
       continue;
     }
     const secret = findSecret(raw, patterns);
     if (secret) {
-      plan.blocked.push({ rel, reason: `secret pattern matched: ${secret}` });
+      plan.blocked.push({ rel, class: HELD, reason: `secret pattern matched: ${secret}` });
       continue;
     }
 
@@ -186,4 +214,56 @@ export function buildPlan(repo, cfg, patterns, onlyPaths = null) {
     });
   }
   return { plan, state };
+}
+
+/**
+ * Why a push plan has nothing to send — or `null` when there IS something to push.
+ *
+ * Explicit paths that resolve to NOTHING used to fall through to "all eligible files are clean",
+ * so `aios push 2-work/reprot.md` (one character off) reported the file as already synced (audit
+ * S4-7). A path that matched nothing is a caller error, not a clean state: `fatal` says so.
+ *
+ * @param {{push: unknown[], blocked: {rel: string}[], clean: unknown[]}} plan
+ * @param {string[]} paths  the explicit path arguments, empty for a whole-workspace push
+ * @returns {{message: string, note?: string, fatal?: true}|null}
+ */
+export function describeEmptyPush(plan, paths = []) {
+  if (plan.push.length) return null;
+  if (paths.length && !plan.blocked.length && !plan.clean.length) {
+    return {
+      fatal: true,
+      message:
+        `no file in this workspace matches: ${paths.join(", ")}\n` +
+        "  paths are relative to the workspace root — run 'aios status' to see what is eligible.",
+    };
+  }
+  return {
+    message: "nothing to push — all eligible files are clean.",
+    note: plan.blocked.length
+      ? `(${plan.blocked.length} held — run 'aios status' for reasons)`
+      : undefined,
+  };
+}
+
+/**
+ * The `--dry-run` transcript: exactly what would leave, with the tier and content sha per item,
+ * then what is being held back and why. Pure — returns lines, prints nothing.
+ *
+ * @param {{push: object[], blocked: {rel: string, reason: string}[]}} plan
+ * @param {{c: {yellow: Function, blue: Function}}} deps
+ * @returns {string[]}
+ */
+export function renderDryRunPlan(plan, { c }) {
+  const lines = [c.yellow(`DRY RUN — would push ${plan.push.length} item(s):`)];
+  for (const item of plan.push) {
+    const rowInfo = item.rows ? ` rows=${item.rows.length}` : "";
+    lines.push(
+      `  ${item.rel} [${item.kind}, ${item.tier}]${rowInfo} sha=${item.hash.slice(0, 12)}`
+    );
+  }
+  if (plan.blocked.length) {
+    lines.push(c.blue(`${HELD_GLYPH} held (${plan.blocked.length}):`));
+    for (const b of plan.blocked) lines.push(`  ${b.rel} — ${b.reason}`);
+  }
+  return lines;
 }

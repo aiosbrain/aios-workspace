@@ -351,7 +351,7 @@ export async function cmdInbox(repo, cfg, args) {
       );
       return;
     }
-    console.log(loop.renderInboxText(view, { raw, colors: c }));
+    console.log(loop.renderInboxText(view, { raw, why: allFlags.has("--why"), colors: c }));
     return;
   }
 
@@ -808,7 +808,7 @@ export async function cmdInbox(repo, cfg, args) {
     (suggestion
       ? `unknown inbox subcommand: ${sub} — did you mean \`aios inbox ${suggestion}\`?\n`
       : "") +
-      "usage: aios inbox [list] [--raw] [--json]\n" +
+      "usage: aios inbox [list] [--raw] [--why] [--json]\n" +
       "       aios inbox --overdue [--window <minutes>] [--json]\n" +
       "       aios inbox rebuild [--db <path>] [--json]\n" +
       "       aios inbox compact [--boundary-seq <n>] [--json]\n" +
