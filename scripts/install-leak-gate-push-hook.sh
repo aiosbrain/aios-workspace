@@ -93,7 +93,21 @@ trap 'rm -f "$updates"' EXIT
 cat > "$updates"
 for hook in "$hooks_dir"/pre-push.chained-hook.*; do
   [[ -x "$hook" ]] || continue
-  "$hook" "$@" < "$updates"
+  first_line=""
+  IFS= read -r first_line < "$hook" || true
+  runner=""
+  case "$first_line" in
+    *bash*) runner="bash" ;;
+    *zsh*) runner="zsh" ;;
+    *"/sh"* | *" env sh"*) runner="sh" ;;
+  esac
+  if [[ -n "$runner" ]]; then
+    # Source shell hooks in a child interpreter whose $0 is the canonical hook path. This
+    # preserves both dirname($0) helper lookup and basename($0) dispatch semantics.
+    "$runner" -c 'hook=$1; shift; . "$hook"' "$hooks_dir/pre-push" "$hook" "$@" < "$updates"
+  else
+    "$hook" "$@" < "$updates"
+  fi
   status=$?
   [[ "$status" -eq 0 ]] || exit "$status"
 done

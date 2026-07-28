@@ -98,7 +98,7 @@ scan_treeish() {
 }
 
 scan_detached_object() {
-  local object="$1" object_type="$2" target="$snapshot_root/detached-object"
+  local object="$1" object_type="$2" target="$snapshot_root/detached-object.md"
   grep -qxF "$object" "$seen_objects" 2>/dev/null && return 0
   printf '%s\n' "$object" >> "$seen_objects"
   if ! git cat-file "$object_type" "$object" > "$target"; then
@@ -178,7 +178,7 @@ while read -r local_ref local_sha _remote_ref remote_sha; do
       if [ "$remote_tips_available" -eq 1 ]; then
         while read -r remote_tip _remote_ref_name; do
           if git cat-file -e "$remote_tip^{commit}" 2>/dev/null; then
-            exclude_args+=(--not "$(git rev-parse "$remote_tip^{commit}")")
+            exclude_args+=("^$(git rev-parse "$remote_tip^{commit}")")
           fi
         done < "$remote_tips"
       fi

@@ -157,6 +157,35 @@ test("push rejects a lightweight tag that publishes a protected blob", () => {
   assert.match(push.stderr, /confidential material/i);
 });
 
+test("push rejects owner-only frontmatter in a detached blob without private terms", () => {
+  const { repo } = makeRepo();
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-tier-blob-remote-"));
+  roots.push(remote);
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  const blob = execFileSync("git", ["-C", repo, "hash-object", "-w", "--stdin"], {
+    input: "---\naccess: admin\n---\n",
+    encoding: "utf8",
+  }).trim();
+  execFileSync("git", ["-C", repo, "update-ref", "refs/tags/admin-blob", blob]);
+  install(repo);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "refs/tags/admin-blob"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+      CHAIN_MARKER: path.join(repo, "chain-ran"),
+    },
+  });
+  assert.notEqual(push.status, 0);
+  assert.match(push.stderr, /confidential material/i);
+});
+
 test("new-ref scanning ignores stale local remote-tracking refs", () => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-stale-"));
   const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-stale-remote-"));
@@ -209,6 +238,61 @@ test("preserved hooks still resolve helper programs beside their original hook p
   install(repo);
   const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
   assert.equal(result.status, 23, result.stderr);
+});
+
+test("preserved shell hooks still observe the canonical pre-push basename", () => {
+  const { repo, hooksDir } = makeRepo();
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    '#!/usr/bin/env bash\n[ "$(basename "$0")" != "pre-push" ] || exit 23\n'
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  assert.equal(spawnSync(path.join(hooksDir, "pre-push")).status, 23);
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 23, result.stderr);
+});
+
+test("new-ref exclusions do not rescan unrelated remote branch history", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-multitip-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-multitip-remote-"));
+  roots.push(repo, remote);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  mkdirSync(path.join(repo, "scaffold"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  writeFileSync(path.join(repo, "scaffold", ".keep"), "");
+  writeFileSync(path.join(repo, "README.md"), "safe\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "safe main"]);
+  execFileSync("git", ["-C", repo, "push", "-q", "origin", "main"]);
+
+  execFileSync("git", ["-C", repo, "switch", "-q", "-c", "private-history"]);
+  mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
+  writeFileSync(path.join(repo, "docs", "bd", "old.md"), "already remote\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "remote private history"]);
+  execFileSync("git", ["-C", repo, "push", "-q", "origin", "private-history"]);
+  execFileSync("git", ["-C", repo, "switch", "-q", "main"]);
+  execFileSync("git", ["-C", repo, "switch", "-q", "-c", "safe-new"]);
+  writeFileSync(path.join(repo, "safe.txt"), "new safe work\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "safe new ref"]);
+  install(repo);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "safe-new"], {
+    encoding: "utf8",
+    env: { ...process.env, AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file" },
+  });
+  assert.equal(push.status, 0, push.stderr);
 });
 
 test("reinstall preserves both an existing chain and a newer replacement hook", () => {
