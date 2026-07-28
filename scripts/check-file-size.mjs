@@ -50,6 +50,14 @@ function matchesAny(rel, regexes) {
   return regexes.some((re) => re.test(rel));
 }
 
+/**
+ * Deterministic code-unit ordering. Explicitly NOT `localeCompare`: this gate's output
+ * (and the grandfathered list generated from it) has to be byte-identical on a
+ * contributor's machine and on the CI runner, and locale collation is neither stable
+ * across ICU versions nor independent of the environment's locale.
+ */
+const comparePaths = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
 /** Repo-relative paths (POSIX, sorted) matched by `include` and not by `exclude`. */
 function enumerateTargets(config) {
   const files = gitFiles(ROOT);
@@ -61,7 +69,9 @@ function enumerateTargets(config) {
   }
   const includeRe = config.include.map(globToRegex);
   const excludeRe = config.exclude.map(globToRegex);
-  return files.filter((rel) => matchesAny(rel, includeRe) && !matchesAny(rel, excludeRe)).sort();
+  return files
+    .filter((rel) => matchesAny(rel, includeRe) && !matchesAny(rel, excludeRe))
+    .sort(comparePaths);
 }
 
 const config = loadConfig();
@@ -81,7 +91,7 @@ for (const rel of targets) {
     continue; // listed by git but unreadable right now (e.g. a broken symlink) — not this gate's job
   }
   measurements[rel] = lines;
-  const isGrandfathered = Object.prototype.hasOwnProperty.call(grandfathered, rel);
+  const isGrandfathered = Object.hasOwn(grandfathered, rel);
   const cap = isGrandfathered ? grandfathered[rel] : defaultCap;
   if (lines > cap) {
     over.push({ rel, lines, cap, isGrandfathered });
