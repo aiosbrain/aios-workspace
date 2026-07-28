@@ -126,6 +126,26 @@ target_dir() {
   esac
 }
 
+# shell_dir <command> <fallback> -> cwd in which shell redirects and file
+# mutation operands resolve. Unlike target_dir, `git -C` does not affect the
+# shell process cwd; only a leading cd/pushd does.
+shell_dir() {
+  _cmd=$1
+  _fb=$2
+  _t=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
+  [ -n "$_t" ] || {
+    printf '%s' "$_fb"
+    return
+  }
+  _t=$(printf '%s' "$_t" | sed "s/^['\"]//; s/['\"]\$//")
+  case "$_t" in
+    /*) printf '%s' "$_t" ;;
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
+    *) printf '%s' "$_fb/$_t" ;;
+  esac
+}
+
 # norm_git <command> -> command with the run of git GLOBAL options (right after
 # `git`, before the subcommand) stripped, so subcommand patterns match regardless of
 # leading globals: `git -C x commit`, `git -c k='v v' commit`, `git --no-pager commit`,
@@ -139,6 +159,94 @@ norm_git() {
   return
 }
 
+# shell_redirection_targets <command> -> one output-redirection target per line.
+# Operators inside quotes and every line of a heredoc body are data, not shell
+# syntax. The scanner intentionally does not execute or expand command text.
+shell_redirection_targets() {
+  awk '
+    function space(c) { return c == " " || c == "\t" }
+    function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
+      i = start
+      strip_tabs = substr(line, i, 1) == "-"
+      if (strip_tabs) i++
+      while (space(substr(line, i, 1))) i++
+      quote = substr(line, i, 1)
+      if (quote == "\047" || quote == "\"") i++
+      else quote = ""
+      delim = ""
+      while (i <= length(line)) {
+        c = substr(line, i, 1)
+        if ((quote != "" && c == quote) ||
+            (quote == "" && (space(c) || c ~ /[;|&<>]/))) break
+        delim = delim c
+        i++
+      }
+      if (delim != "") {
+        heredoc[++count] = delim
+        heredoc_strips_tabs[count] = strip_tabs
+      }
+      return i
+    }
+    function emit_target(line, start,    i, c, quote, escaped, target) {
+      i = start
+      while (space(substr(line, i, 1))) i++
+      target = ""
+      quote = ""
+      escaped = 0
+      while (i <= length(line)) {
+        c = substr(line, i, 1)
+        if (escaped) {
+          target = target c
+          escaped = 0
+        } else if (c == "\\") {
+          escaped = 1
+        } else if (quote != "") {
+          if (c == quote) quote = ""
+          else target = target c
+        } else if (c == "\047" || c == "\"") {
+          quote = c
+        } else if (space(c) || c ~ /[;|&<>]/) {
+          break
+        } else {
+          target = target c
+        }
+        i++
+      }
+      if (target != "") print target
+      return i
+    }
+    {
+      if (current > 0 && current <= count) {
+        closing_line = $0
+        if (heredoc_strips_tabs[current]) sub(/^\t+/, "", closing_line)
+        if (closing_line == heredoc[current]) current++
+        next
+      }
+      quote = ""
+      escaped = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        nextc = substr($0, i + 1, 1)
+        if (escaped) {
+          escaped = 0
+        } else if (c == "\\") {
+          escaped = 1
+        } else if (quote != "") {
+          if (c == quote) quote = ""
+        } else if (c == "\047" || c == "\"") {
+          quote = c
+        } else if (c == "<" && nextc == "<") {
+          i = remember_heredoc($0, i + 2)
+        } else if (c == ">") {
+          if (nextc == ">") i++
+          if (substr($0, i + 1, 1) != "&") i = emit_target($0, i + 1)
+        }
+      }
+      if (current == 0 && count > 0) current = 1
+    }
+  '
+}
+
 CWD=$(printf '%s' "$EVENT" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD=$(pwd)
 
@@ -148,12 +256,15 @@ if [ "$MODE" = "command" ]; then
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
+  SDIR=$(shell_dir "$CMD" "$CWD")
+  [ -d "$SDIR" ] || SDIR="$CWD"
 
   # Under strict edit policy, shell file mutations are held to the same rule as
   # pre_edit Write/Edit: no writes into a PRIMARY checkout (>, >>, cp, mv, rm,
   # sed -i, tee, curl -o, …). Each candidate token is classified by its own repo
-  # (per-token probe), and relative candidates resolve against the command's
-  # target dir. Known limits: interpreter one-liners (node -e / python -c) and
+  # (per-token probe), and relative candidates resolve against the shell cwd
+  # (not an unrelated git -C target). Known limits: interpreter one-liners
+  # (node -e / python -c) and
   # command substitution are not evaluated — the tracked pre-commit primary
   # guard remains the commit-time backstop.
   if [ "${HARNESS_PRIMARY_EDIT_POLICY:-default-ok}" = "strict" ]; then
@@ -162,7 +273,7 @@ if [ "$MODE" = "command" ]; then
     # incl. old-style `tar xf`), and unzip/ditto (which always write). Creation
     # (`tar -cf`) only reads and is deliberately NOT matched.
     _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
-    _cands=$(printf '%s' "$CMD" | grep -oE '(^|[^>&])>>?[[:space:]]*[^&[:space:];|]+' | sed 's/^[^>]*>>*[[:space:]]*//')
+    _cands=$(printf '%s' "$CMD" | shell_redirection_targets)
     if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re"; then
       _cands="$_cands
 $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
@@ -188,7 +299,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
       esac
       case "$_tok" in
         /*) : ;;
-        *) _tok="$TDIR/$_tok" ;;
+        *) _tok="$SDIR/$_tok" ;;
       esac
       # Probe the deepest EXISTING ancestor — `mkdir -p <primary>/new/deep/…`
       # must not slip through just because the parent doesn't exist yet.

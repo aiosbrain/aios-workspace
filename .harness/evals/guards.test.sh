@@ -147,6 +147,20 @@ ts "strict allows cp outside primary w/ redirect" 0 "$(wpc "$WT/wt" 'cp /tmp/a /
 ts "strict blocks mkdir -p new deep primary path" 2 "$(wpc "$WT/wt" "mkdir -p $WT/new1/new2")"
 ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x > $WT/new1/new2/f.txt")"
 ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
+ts "strict allows greater-than text in a heredoc from a worktree" 0 \
+  "$(wpc "$WT/wt" $'git commit -F - <<\'MSG\'\n531 lines > ../a.txt\nMSG')"
+ts "strict closes tab-stripping heredoc before a real redirect" 2 \
+  "$(wpc "$WT/wt" $'cat <<-MSG\n\tbody > harmless\n\tMSG\necho x > '"$WT"$'/primary-file')"
+ts "strict allows greater-than operators in a single-quoted node program" 0 \
+  "$(wpc "$WT/wt" "node -e 'const pick = (x) => x > ../a.txt'")"
+ts "strict allows greater-than text and a backtick path in a double-quoted PR body" 0 \
+  "$(wpc "$WT/wt" "gh pr create --body \"Use \`../a.txt\` when score > ../a.txt\"")"
+ts "strict resolves a redirect against cwd, not an unrelated git -C target" 0 \
+  "$(wpc "$WT/wt" "git -C $WT status && echo x > local.txt")"
+ts "strict resolves a redirect against a leading cd target" 2 \
+  "$(wpc "$WT/wt" "cd $WT && echo x > primary-file")"
+ts "strict still blocks a genuine redirect into the primary" 2 \
+  "$(wpc "$WT/wt" "echo x > $WT/primary-file")"
 # pre_edit: multi-level new path in the primary must not fall back to session cwd
 ts "strict blocks edit at new deep primary path" 2 "$(wpe "$WT/wt" "$WT/newdir/sub/new.txt")"
 # archive extraction into the primary is a shell write (tar -C / old-style xf / unzip -d)
