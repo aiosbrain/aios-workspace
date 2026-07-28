@@ -107,6 +107,16 @@ Recorded here because they are real today, not hypothetical.
    of these flags, several with local branches — which is why the output mode must be passed
    in explicitly by the command, never inferred globally from `process.argv`.
 
+4. **Colour is capability-gated, but `c` is not yet mode-aware.** Since AIO-545 (GRAIN W0-4)
+   `scripts/cli-common.mjs`'s `c` resolves `scripts/ui/output-context.mjs` per stream, so it
+   emits nothing into a pipe, a file, `NO_COLOR`, or `TERM=dumb`. That covers the ordinary
+   machine-consumption path, where stdout is always a pipe. It does **not** make `--json`
+   safe on a TTY: `c` carries no output mode, so a `--json` command run in a terminal that
+   styles part of its stdout still emits SGR there — exactly as it did before W0-4. A
+   command that wants a guarantee constructs its own context
+   (`resolveOutputContext({ mode, stream })`) rather than relying on `c`; the general fix is
+   the writer facade, which takes `mode` at the command boundary.
+
 ---
 
 ## Not markers (recorded to stop future false positives)
