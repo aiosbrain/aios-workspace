@@ -59,6 +59,11 @@ const VERIFIED_CLEAR_OUTPUT = `${BUGBOT_CLEAR_MARKER}\n${BUGBOT_CLEAR_TOKEN}`;
 function evaluateLocalBugbotGate(options = {}) {
   return evaluateProductionGate({
     ...options,
+    // A developer's ambient shell (e.g. AIOS_BUGBOT_DISABLE=1 exported for local convenience
+    // by aios/.envrc) must never leak into a test that didn't ask to exercise it — otherwise
+    // this gate silently short-circuits to "skipped" outside CI. Tests that DO want to
+    // exercise AIOS_BUGBOT_DISABLE pass their own explicit `env`, which wins over this default.
+    env: options.env ?? { ...process.env, AIOS_BUGBOT_DISABLE: "" },
     resolveBase:
       options.resolveBase ??
       ((repo) => ({ ok: true, baseSha: git(repo, "merge-base", "HEAD", "origin/main") })),
@@ -1411,7 +1416,9 @@ test("manual check-exit mode returns non-zero on an infrastructure failure", () 
       {
         cwd: repo,
         encoding: "utf8",
-        env: process.env,
+        // A developer's ambient AIOS_BUGBOT_DISABLE=1 must not turn this infrastructure
+        // failure into a silent "skipped" — see the in-process wrapper's identical guard above.
+        env: { ...process.env, AIOS_BUGBOT_DISABLE: "" },
       }
     );
     assert.equal(child.status, 1);
