@@ -278,4 +278,10 @@ export const USAGE_LINES = {
     "  aios inbox --overdue [--window <min>] unacknowledged asks past the escalation window",
     "  aios inbox status [--json]            coordinator/adapter health for this host",
   ],
+  delivery: [
+    "  aios delivery status [--json]         read-only PR/worktree/branch reconciliation across",
+    "    [--repo owner/repo]...               aios-workspace + aios-team-brain (offline-safe reads",
+    "    [--state o|c|m|all] [--limit N]       only); flags merged PRs with a surviving branch/worktree",
+    "    [--local owner/repo=path]...          and stale head-SHA mismatches. Never merges/deletes.",
+  ],
 };
