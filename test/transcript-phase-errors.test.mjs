@@ -235,9 +235,7 @@ test("extract drops only the empty-sourceQuote candidate, keeping its siblings s
   const meetings = await loadMeetings();
   const root = workspace();
   try {
-    // Given: one decision candidate in the extracted batch has a blank sourceQuote (the shape
-    // that used to throw a TranscriptReviewError inside Promise.all and fail every candidate
-    // in the batch — real-world trigger: 2026-07-28 transcript ingestion, AIO transcripts draft).
+    // Given: one decision candidate in the extracted batch has a blank sourceQuote.
     const ungrounded = { ...decisions[2], id: "decision-empty-quote", sourceQuote: "" };
     const runPhase = async ({ phase, input }) => {
       if (phase === "extract") return { decisions: [...decisions, ungrounded], tasks };
@@ -258,6 +256,28 @@ test("extract drops only the empty-sourceQuote candidate, keeping its siblings s
       decisions.map(({ id }) => id)
     );
     assert.deepEqual(result.droppedExtraction, { decisions: 1, tasks: 0 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("extract rejects a non-string sourceQuote instead of treating it as blank", async () => {
+  const meetings = await loadMeetings();
+  const root = workspace();
+  try {
+    const malformed = { ...decisions[2], id: "decision-numeric-quote", sourceQuote: 42 };
+    const runPhase = async ({ phase, input }) => {
+      if (phase === "extract") return { decisions: [...decisions, malformed], tasks };
+      if (phase === "deduplicate") return { decisions: input.decisions, tasks: input.tasks };
+      if (phase === "verify") return verificationReport();
+      return gradeReport();
+    };
+
+    const result = await meetings.draftTranscriptReview(options(root, runPhase));
+
+    assertReviewShape(result.stage, "grading_error");
+    assert.match(JSON.stringify(result.stage.diagnostics), /decisions\[3\]\.sourceQuote/);
+    assert.deepEqual(result.droppedExtraction, { decisions: 0, tasks: 0 });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -119,17 +119,22 @@ export function parsePhaseCandidateBatch(value: unknown): CandidateBatch {
 }
 
 /**
- * A candidate whose `sourceQuote` field is missing/blank fails grounding by construction — it can
- * never pass TD1 (near-verbatim match against a transcript). Rather than hard-failing the whole
- * extract phase over one bad candidate (the historical behavior — `Promise.all` in
- * `extractCandidates` meant a single empty `sourceQuote` killed the entire batch), drop just that
- * candidate and continue. This mirrors `groundedCandidate()` in `scripts/transcript-extraction.mjs`
- * (the facts/stakeholders pipeline, AIO-494 "extraction contract v1.12"), ported here for
- * decisions/tasks. Any other malformed field still throws — only the empty-sourceQuote case is
- * forgiven; the schema itself stays strict (`sourceQuote` is not made optional).
+ * A candidate whose `sourceQuote` is a blank string fails grounding by construction — it can never
+ * pass TD1 (near-verbatim match against a transcript). Rather than hard-failing the whole extract
+ * phase over one bad candidate (the historical behavior — `Promise.all` in `extractCandidates`
+ * meant a single empty `sourceQuote` killed the entire batch), drop just that candidate and
+ * continue. This mirrors `groundedCandidate()` in `scripts/transcript-extraction.mjs` in the
+ * facts/stakeholders pipeline. Missing, non-string, or otherwise malformed fields still throw; the
+ * schema itself stays strict (`sourceQuote` is not made optional).
  */
-function isBlankSourceQuoteError(error: unknown, label: string): boolean {
+function isBlankSourceQuoteError(error: unknown, label: string, value: unknown): boolean {
+  const sourceQuote =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as UnknownRecord)["sourceQuote"]
+      : undefined;
   return (
+    typeof sourceQuote === "string" &&
+    sourceQuote.trim().length === 0 &&
     error instanceof TranscriptReviewError &&
     error.kind === "invalid_input" &&
     error.message === `${label} must be a non-empty string`
@@ -145,7 +150,7 @@ export function parseLenientPhaseCandidateBatch(value: unknown): LenientCandidat
     try {
       decisions.push(decisionCandidate(raw, index, false));
     } catch (error) {
-      if (isBlankSourceQuoteError(error, `decisions[${index}].sourceQuote`)) {
+      if (isBlankSourceQuoteError(error, `decisions[${index}].sourceQuote`, raw)) {
         dropped.push({ kind: "decision", index, reason: "source_quote_empty" });
         return;
       }
@@ -158,7 +163,7 @@ export function parseLenientPhaseCandidateBatch(value: unknown): LenientCandidat
     try {
       tasks.push(taskCandidate(raw, index, false));
     } catch (error) {
-      if (isBlankSourceQuoteError(error, `tasks[${index}].sourceQuote`)) {
+      if (isBlankSourceQuoteError(error, `tasks[${index}].sourceQuote`, raw)) {
         dropped.push({ kind: "task", index, reason: "source_quote_empty" });
         return;
       }

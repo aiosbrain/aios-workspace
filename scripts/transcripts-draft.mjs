@@ -152,9 +152,7 @@ async function attachEvidence({
   if (grounded.facts.length === 0 && grounded.stakeholders.length === 0) return empty;
   // attachTranscriptEvidence only accepts a pending_review stage (engine guard, attach-evidence.ts).
   // failed_rubric / grading_error stages are also "staged" outcomes but aren't eligible — report the
-  // grounded evidence as discarded instead of letting the engine's guard throw uncaught (the second
-  // half of the 2026-07-28 transcript-ingestion failure: even once the empty-sourceQuote candidate
-  // is dropped-and-continue, a real rubric failure on the survivors used to crash here).
+  // grounded evidence as discarded instead of letting the engine's guard throw uncaught.
   if (stageStatus !== "pending_review") {
     return {
       ...empty,
@@ -216,9 +214,7 @@ export async function runDraftCommand(root, args, deps) {
         `${payload.droppedDecisions} decision(s) + ${payload.droppedTasks} task(s) dropped for empty sourceQuote`
       );
     }
-    const droppedNote = droppedParts.length
-      ? ` (grounded evidence discarded: ${droppedParts.join("; ")})`
-      : "";
+    const droppedNote = droppedParts.length ? ` (${droppedParts.join("; ")})` : "";
     return {
       code: 0,
       payload,

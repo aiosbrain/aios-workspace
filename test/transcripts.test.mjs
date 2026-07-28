@@ -289,6 +289,40 @@ test("no_changes surfaces grounded evidence that was dropped instead of silently
   }
 });
 
+test("no_changes distinguishes extraction drops from discarded grounded evidence", async () => {
+  const repo = workspace();
+  try {
+    const out = [];
+    const blankQuote = { ...extraction.decisions[0], sourceQuote: "" };
+    const code = await cmdTranscripts(repo, {}, ["draft", "--transcripts", TRANSCRIPT], {
+      runPhase: async ({ phase, input }) => {
+        if (phase === "extract") return { decisions: [blankQuote], tasks: [] };
+        if (phase === "deduplicate") {
+          return { decisions: input.decisions, tasks: input.tasks };
+        }
+        if (phase === "verify") {
+          return { verdict: "pass", criteria: ["TD1", "TD2", "TD3", "TD4", "TD5"].map(criterion) };
+        }
+        return {
+          verdict: "pass",
+          certifiedNoChanges: true,
+          criteria: ["TD1", "TD2", "TD3", "TD4", "TD5", "TD6"].map(criterion),
+        };
+      },
+      now: () => NOW,
+      stdout: (value) => out.push(String(value)),
+      stderr: () => {},
+    });
+
+    assert.equal(code, 0);
+    const text = out.join("\n");
+    assert.match(text, /1 decision\(s\) \+ 0 task\(s\) dropped for empty sourceQuote/);
+    assert.doesNotMatch(text, /grounded evidence discarded/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("a failed_rubric stage reports discarded evidence instead of crashing on attach", async () => {
   const repo = workspace();
   try {
