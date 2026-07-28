@@ -382,9 +382,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     # Advisory and never merge-blocking, but it can hold a runner for the full 45
-    # minutes below — which is what starves other PRs' lanes. Skip it when the diff
-    # cannot contain a mutant.
-    if: needs.changes.outputs.code != 'false'
+    # minutes below — which is what starves other PRs' lanes. mutation.yml already
+    # runs a full nightly mutation campaign on cron, so this PR-time lane now runs
+    # only on push to main (AIO-630), and is skipped when the diff cannot contain
+    # a mutant.
+    if: github.event_name == 'push' && needs.changes.outputs.code != 'false'
     continue-on-error: true
     # 45 covers mid-size files; it still cannot finish a scripts/aios.mjs PR
     # (~90 min measured, AIO-540 shrinks it) or umbrella-suite groups on big
