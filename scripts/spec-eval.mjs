@@ -302,6 +302,21 @@ export function classifyPathContext(ref) {
   const oldAt = lastIndexOfMatch(OLD_MARK, scope);
   if (newAt >= 0 || oldAt >= 0) return newAt > oldAt ? "new" : "existing";
 
+  // A marker may also be written as a predicate after the path (`foo.mjs` does not exist yet,
+  // `bar.mjs` extends the existing dispatcher). Only consult this suffix when no leading marker
+  // classified the path: on a mixed-role line, the next leading marker belongs to the next path.
+  if (at >= 0) {
+    const pathEnd = at + ref.path.length;
+    const afterPath = text.slice(pathEnd + (text[pathEnd] === "`" ? 1 : 0));
+    const nextPath = afterPath.indexOf("`");
+    const suffix = nextPath >= 0 ? afterPath.slice(0, nextPath) : afterPath;
+    const suffixNewAt = lastIndexOfMatch(NEW_MARK, suffix);
+    const suffixOldAt = lastIndexOfMatch(OLD_MARK, suffix);
+    if (suffixNewAt >= 0 || suffixOldAt >= 0) {
+      return suffixNewAt > suffixOldAt ? "new" : "existing";
+    }
+  }
+
   // A spec may legitimately reference a real path in ANOTHER repository — a cross-repo contract
   // change names files in its sibling. Those cannot resolve here, and blocking on them pushed
   // authors to delete precise paths in favour of vague prose, degrading the spec to satisfy the
@@ -755,20 +770,23 @@ export function parseAdversarial(text) {
     return synthetic(`adversarial evaluator returned an invalid verdict: ${obj.verdict}`);
   }
   const findings = Array.isArray(obj.findings)
-    ? obj.findings.map((f) => ({
-        ruleId: String(f?.ruleId ?? "SR?"),
-        // An unrecognised or missing severity means the model did not classify this record — most
-        // often because it is a per-criterion PASS note rather than an objection. Defaulting those
-        // to `major` (as this did until AIO-573) manufactured near-blocking noise and tanked the
-        // advisory score: one observed run reported seven `major` findings whose `why` text was
-        // positive. `minor` cannot change the gate either way — only `blocker` gates — so this is
-        // purely a report-fidelity fix, not a weakening.
-        severity: VALID_SEVERITY.has(f?.severity) ? f.severity : "minor",
-        quote: String(f?.quote ?? ""),
-        why: String(f?.why ?? ""),
-        suggestion: String(f?.suggestion ?? ""),
-        layer: "adversarial",
-      }))
+    ? obj.findings.map((f) => {
+        const severity = String(f?.severity ?? "").toLowerCase();
+        return {
+          ruleId: String(f?.ruleId ?? "SR?"),
+          // An unrecognised or missing severity means the model did not classify this record —
+          // most often because it is a per-criterion PASS note rather than an objection.
+          // Defaulting those to `major` (as this did until AIO-573) manufactured near-blocking
+          // noise and tanked the advisory score: one observed run reported seven `major` findings
+          // whose `why` text was positive. `minor` cannot change the gate either way — only
+          // `blocker` gates — so this is purely a report-fidelity fix, not a weakening.
+          severity: VALID_SEVERITY.has(severity) ? severity : "minor",
+          quote: String(f?.quote ?? ""),
+          why: String(f?.why ?? ""),
+          suggestion: String(f?.suggestion ?? ""),
+          layer: "adversarial",
+        };
+      })
     : [];
   const score = Number.isFinite(Number(obj.score)) ? Number(obj.score) : 0;
   // Verdict is the gate — but a blocker finding forces NOT_READY even if the model said READY.

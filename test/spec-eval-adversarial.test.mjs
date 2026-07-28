@@ -284,6 +284,18 @@ test("AIO-573 — an unrecognised severity parses to minor, not major", () => {
   assert.equal(p.findings[0].severity, "minor");
 });
 
+test("AIO-573 — recognised severity casing is normalized before gating", () => {
+  const p = parseAdversarial(
+    JSON.stringify({
+      verdict: "NOT_READY",
+      score: 20,
+      findings: [{ ruleId: "SR8", severity: "Blocker", why: "missing external contract" }],
+    })
+  );
+  assert.equal(p.verdict, "NOT_READY");
+  assert.equal(p.findings[0].severity, "blocker");
+});
+
 test("AIO-573 — quorum: majority NOT_READY with no surviving blocker resolves to ready", () => {
   // The distinct case parseAdversarial cannot catch: two samples each cite a DIFFERENT blocker,
   // so both are demoted for non-recurrence and the verdict would cite nothing.

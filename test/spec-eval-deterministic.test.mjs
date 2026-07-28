@@ -228,6 +228,26 @@ test("AIO-573 — an explicit new-file marker beats the section heading", () => 
   }
 });
 
+test("AIO-573 — an explicit marker after the referenced path applies to that path", () => {
+  const section = "Interface / integration points";
+  assert.equal(
+    classifyPathContext({
+      section,
+      lineText: "- `scripts/ui/out.mjs` — the writer facade; does not exist yet.",
+      path: "scripts/ui/out.mjs",
+    }),
+    "new"
+  );
+  assert.equal(
+    classifyPathContext({
+      section: "Tasks",
+      lineText: "- `scripts/aios.mjs` — extends the existing dispatcher.",
+      path: "scripts/aios.mjs",
+    }),
+    "existing"
+  );
+});
+
 test("AIO-573 — the shipped template's own new-file line does not classify as existing", () => {
   // docs/agentic-ergonomics/aios-issue-template.md tells authors to write exactly this, in
   // exactly this section. Following our own template must not produce a blocker.
