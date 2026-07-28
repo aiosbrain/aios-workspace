@@ -6,6 +6,7 @@ __pycache__/
 .aios/
 .claude/worktrees/
 .env
+.envrc
 .env.local
 gui/.sessions/
 gui/client/dist/
