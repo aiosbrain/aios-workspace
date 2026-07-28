@@ -13,6 +13,14 @@
  * unmutated, before the campaign; the per-mutant kill command runs only tests.
  * Group `match`/`nightly` stay in tracked source terms (so existence checks in
  * test/mutation-config.test.mjs work); `toMutateTarget` maps them to dist.
+ *
+ * Nightly scope contract (AIO-539, docs/v1-operator-loop/domains/mutation-denominator.md):
+ * each group's `nightly` is its declared SAFETY UNIT, `nightlyExcludes` records
+ * every regex-matched file deliberately left out (the completeness test forces a
+ * new file in a critical directory to be classified), and `nightlyTests` — when
+ * present — is the nightly kill command (the unit's own tests). The changed-code
+ * lane always uses the umbrella `tests`. With coverageAnalysis "off", per-mutant
+ * cost is the WHOLE kill command, so nightly feasibility depends on both fields.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -30,6 +38,9 @@ export const MUTATION_GROUPS = [
       "scripts/sync-plan.mjs",
       "scripts/brain-client.mjs",
     ],
+    // All three files ARE the safety unit (sync-plan.mjs extracted by AIO-540);
+    // nothing is deliberately dropped.
+    nightlyExcludes: [],
     tests: [
       "test/file-governance-guard.test.mjs",
       "test/sync-plan.test.mjs",
@@ -40,19 +51,33 @@ export const MUTATION_GROUPS = [
   {
     name: "bugbot-security",
     match: /^(hooks\/local-bugbot-gate|scripts\/review-bugbot)\.mjs$/,
-    nightly: ["hooks/local-bugbot-gate.mjs", "scripts/review-bugbot.mjs"],
+    nightly: ["hooks/local-bugbot-gate.mjs"],
+    nightlyExcludes: [
+      // CLI wrapper around the gate; the hook itself is the safety unit.
+      "scripts/review-bugbot.mjs",
+    ],
+    // No nightlyTests: the unit's own test spawns the real hook per case
+    // (~15s/mutant), so this leg stays deliberately red until AIO-554 makes
+    // the oracle in-process fast. Do not silence the red by widening timeouts.
     tests: ["test/local-bugbot-gate.test.mjs", "test/review-bugbot.test.mjs"],
   },
   {
     name: "update-safety",
     match: /^scripts\/(?:update|toolkit-(?:merge|pull|manifest|meta))\.mjs$/,
-    nightly: [
+    // The declared safety unit: decideMerge — "a local edit is never silently
+    // overwritten". The siblings below are orchestration around it.
+    nightly: ["scripts/toolkit-merge.mjs"],
+    nightlyExcludes: [
+      // Update orchestration; exercised end-to-end, unit is decideMerge.
       "scripts/update.mjs",
-      "scripts/toolkit-merge.mjs",
+      // Fetch/transport layer around the merge decision.
       "scripts/toolkit-pull.mjs",
+      // Bucket classification; guarded by the manifest-parity test instead.
       "scripts/toolkit-manifest.mjs",
+      // Version stamping only.
       "scripts/toolkit-meta.mjs",
     ],
+    nightlyTests: ["test/toolkit-merge.test.mjs"],
     tests: [
       "test/toolkit-update.test.mjs",
       "test/toolkit-merge.test.mjs",
@@ -66,7 +91,42 @@ export const MUTATION_GROUPS = [
   {
     name: "inbox-authorization",
     match: /^(?:scripts\/inbox\.mjs|src\/operator-loop\/inbox\/.+\.ts)$/,
-    nightly: ["scripts/inbox.mjs", "src/operator-loop/inbox/**/*.ts"],
+    // The declared safety unit: the capability broker (the authorization
+    // boundary). Narrowing onto it activates the calibrated 90% break floor.
+    nightly: ["src/operator-loop/inbox/capability.ts"],
+    nightlyExcludes: [
+      // CLI surface over the broker; not the authorization decision itself.
+      "scripts/inbox.mjs",
+      // Inbox infrastructure around the broker (~9,700 lines). Mutating it
+      // nightly costs hours per night for a score about files this group's
+      // claim is not about; any widening back in is a separate, measured
+      // decision recorded here (AIO-539).
+      "src/operator-loop/inbox/audit.ts",
+      "src/operator-loop/inbox/cli.ts",
+      "src/operator-loop/inbox/credential-broker.ts",
+      "src/operator-loop/inbox/device-identity.ts",
+      "src/operator-loop/inbox/host-health.ts",
+      "src/operator-loop/inbox/host-supervisor.ts",
+      "src/operator-loop/inbox/journal.ts",
+      "src/operator-loop/inbox/m365-verify.ts",
+      "src/operator-loop/inbox/notify-telegram.ts",
+      "src/operator-loop/inbox/observations.ts",
+      "src/operator-loop/inbox/outbox-credential.ts",
+      "src/operator-loop/inbox/outbox.ts",
+      "src/operator-loop/inbox/ranker-adapter.ts",
+      "src/operator-loop/inbox/ranker.ts",
+      "src/operator-loop/inbox/read-model.ts",
+      "src/operator-loop/inbox/recovery.ts",
+      "src/operator-loop/inbox/reply-policy.ts",
+      "src/operator-loop/inbox/retention.ts",
+      "src/operator-loop/inbox/seeding.ts",
+      "src/operator-loop/inbox/state-machines.ts",
+    ],
+    // The unit's own oracle (0.2s) instead of the 73-file operator-loop suite
+    // (42s): with coverageAnalysis "off" every mutant reruns the whole command,
+    // so the umbrella suite would cost hours per night. Floor re-measured on
+    // the calibration dispatch before it is trusted (mutation-denominator.md).
+    nightlyTests: ["test/operator-loop/inbox-capability.test.mjs"],
     tests: ["test/operator-loop/*.test.mjs"],
     // This floor is calibrated for the exact compiled target only. Do not
     // project a single-file score onto the much larger mutation group.
@@ -86,6 +146,7 @@ export const MUTATION_GROUPS = [
       "gui/server/runtime-adapters/guard.mjs",
       "gui/server/runtime-adapters/index.mjs",
     ],
+    nightlyExcludes: [],
     tests: [
       "gui/server/runtime-adapters/*.test.mjs",
       "gui/server/approval-mode-governance.test.mjs",
@@ -102,6 +163,7 @@ export const MUTATION_GROUPS = [
       "gui/client/src/components/chat/**/*.{ts,tsx}",
       "gui/client/src/components/integrations/**/*.{ts,tsx}",
     ],
+    nightlyExcludes: [],
   },
 ];
 
@@ -152,14 +214,19 @@ export function changedFiles(base, gitCommand = git) {
   return [...new Set([...changed, ...untracked])];
 }
 
-function nodeCommand(group) {
+function nodeCommand(group, nightly) {
   // No build step here: compiled-output groups build dist once (unmutated)
   // before the campaign, so the per-mutant command is pure test execution and
   // a compile-breaking mutant cannot be scored as "killed" by the compiler.
   // `chmod +x` only repairs execute bits Stryker's sandbox copy drops; it
   // always succeeds on tracked files and cannot kill a mutant.
   const chmod = group.executableBits ? `chmod +x ${group.executableBits.join(" ")} && ` : "";
-  return `${chmod}node --test --test-concurrency=2 ${group.tests.join(" ")}`;
+  // Nightly campaigns kill with the unit's own tests (per-mutant cost is the
+  // whole command); the changed-code lane keeps the widest available oracle.
+  // `?.length` guards the empty-array footgun: `[]` is truthy, and node --test
+  // with no file args would run full default test discovery per mutant.
+  const tests = nightly && group.nightlyTests?.length ? group.nightlyTests : group.tests;
+  return `${chmod}node --test --test-concurrency=2 ${tests.join(" ")}`;
 }
 
 export function configFor(group, mutate, nightly) {
@@ -175,7 +242,13 @@ export function configFor(group, mutate, nightly) {
     reporters: ["clear-text", "progress", "json"],
     jsonReporter: { fileName: `reports/mutation/${group.name}.json` },
     thresholds: { high: 80, low: 60, break: breakThreshold },
-    incremental: nightly,
+    // Incremental is UNSOUND with the command runner: it reports no per-test
+    // information, so Stryker cannot see test changes and reuses stale
+    // verdicts — measured on the AIO-539 calibration, where a strengthened
+    // oracle kept "losing" to cached Survived results. Narrowed scopes made
+    // full nightly re-runs cheap, so only the Vitest (perTest) client group
+    // keeps incremental state.
+    incremental: nightly && Boolean(group.client),
     incrementalFile: `.stryker-tmp/${group.name}.json`,
   };
   if (group.client) {
@@ -190,7 +263,7 @@ export function configFor(group, mutate, nightly) {
     ...common,
     testRunner: "command",
     coverageAnalysis: "off",
-    commandRunner: { command: nodeCommand(group) },
+    commandRunner: { command: nodeCommand(group, nightly) },
   };
 }
 

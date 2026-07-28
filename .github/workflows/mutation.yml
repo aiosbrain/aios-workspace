@@ -11,9 +11,29 @@ concurrency:
 
 jobs:
   critical-subsystems:
-    name: Critical mutation campaign
+    name: Mutation campaign (${{ matrix.group }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Backstop only — the real budget is the STEP-level timeout on the campaign
+    # below. A job-level timeout cancels the run and skips the always() cache
+    # save + artifact upload (observed on the pre-matrix nightlies, which read
+    # "cancelled"); a step timeout fails the leg but still runs them. Keep this
+    # comfortably above 45m step budget + checkout/npm ci/cache/artifact
+    # overhead so the backstop can never fire before the step timeout does.
+    timeout-minutes: 75
+    strategy:
+      # One slow or red group must not stop the others from reporting — the
+      # single-job layout starved groups 2–6 for weeks (AIO-539).
+      fail-fast: false
+      matrix:
+        # Keep in lockstep with MUTATION_GROUPS in scripts/run-mutation.mjs —
+        # test/mutation-config.test.mjs asserts this list matches exactly.
+        group:
+          - access-governance
+          - bugbot-security
+          - update-safety
+          - inbox-authorization
+          - runtime-capabilities
+          - client-auth-permissions
     steps:
       - uses: actions/checkout@v7
         with:
@@ -22,10 +42,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # restore/save are split (instead of one actions/cache post step) so the
-      # save runs with `if: always()` — a failed campaign group must not throw
-      # away the incremental JSON of the groups that completed before it.
+      # Incremental state exists ONLY for the Vitest client leg: the command
+      # runner reports no per-test info, so incremental mode there reuses stale
+      # verdicts when tests change (measured on the AIO-539 calibration) and is
+      # disabled in configFor. restore/save are split (instead of one
+      # actions/cache post step) so the save runs with `if: always()` — a
+      # failed campaign must not throw away its incremental JSON.
       - uses: actions/cache/restore@v5
+        if: matrix.group == 'client-auth-permissions'
         with:
           # Cache ONLY the Stryker incremental state. run-mutation.mjs writes it
           # to .stryker-tmp/<group>.json (incrementalFile); the generated
@@ -37,22 +61,32 @@ jobs:
           path: |
             .stryker-tmp/*.json
             !.stryker-tmp/*.conf.json
-          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          # The group sits BEFORE the sha: with a plain suffix after the sha,
+          # the restore-keys prefix would match every leg's entries and could
+          # cross-restore another group's incremental state.
+          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}
           restore-keys: |
-            stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-
+            stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-
       - run: npm ci
-      - run: npm run test:mutation:nightly
+      # Expected-red leg (a red leg means "this group is genuinely not
+      # measured tonight" — do not widen the timeout or drop files to silence
+      # it; see docs/v1-operator-loop/domains/mutation-denominator.md):
+      #   bugbot-security — its oracle spawns the real hook per case
+      #     (~15s/mutant, hours per campaign); AIO-554 makes the test
+      #     in-process fast and turns the leg green.
+      - run: node scripts/run-mutation.mjs --nightly --group ${{ matrix.group }}
+        timeout-minutes: 45
       - uses: actions/cache/save@v5
-        if: always()
+        if: always() && matrix.group == 'client-auth-permissions'
         with:
           path: |
             .stryker-tmp/*.json
             !.stryker-tmp/*.conf.json
-          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          key: stryker-incremental-${{ runner.os }}-${{ github.ref_name }}-${{ matrix.group }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutation-report
+          name: mutation-report-${{ matrix.group }}
           path: reports/mutation/
           if-no-files-found: ignore
           retention-days: 14

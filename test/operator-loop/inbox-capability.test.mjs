@@ -306,6 +306,54 @@ test("KILL fallback: notifyDeepLink is content-free and demoable standalone", ()
   assert.equal(existsSync(path.join(tmpdir(), CAPABILITY_STORE_REL)), false);
 });
 
+test("journalled events carry the exact surface/decision payloads, and journalling stays optional", () => {
+  // This file alone enforces the nightly mutation floor on capability.js
+  // (AIO-539): Stryker proved the event `data` payloads and the optional
+  // appendInboxEvent guard were previously unasserted (4 surviving mutants).
+  // The read-model's legal edges depend on these exact payloads.
+  const root = ws();
+  try {
+    const journal = createInMemoryJournal();
+    const { displayProjection } = issueHandle(root, sampleRequest());
+    brokerDecision(displayProjection, "approve", { appendInboxEvent: journal.append });
+    const [surface, decision] = journal.events;
+    assert.equal(journal.events.length, 2);
+    assert.equal(surface.kind, "user-intent");
+    assert.equal(surface.handle, displayProjection.handle);
+    assert.deepEqual(surface.data, {
+      intent: "surface",
+      operation: displayProjection.operation,
+      digest: displayProjection.digest,
+    });
+    assert.equal(decision.kind, "pdp-decision");
+    assert.equal(decision.handle, displayProjection.handle);
+    assert.deepEqual(decision.data, {
+      decision: "approve",
+      digest: displayProjection.digest,
+    });
+
+    // Fallback lane: the journalled surface names its lane, content-free.
+    const fallbackJournal = createInMemoryJournal();
+    notifyDeepLink(
+      { handle: "h-9", deepLink: "aios://runtime/prompt/h-9" },
+      { appendInboxEvent: fallbackJournal.append }
+    );
+    assert.equal(fallbackJournal.events.length, 1);
+    assert.equal(fallbackJournal.events[0].kind, "user-intent");
+    assert.equal(fallbackJournal.events[0].handle, "h-9");
+    assert.deepEqual(fallbackJournal.events[0].data, {
+      intent: "surface",
+      lane: "notify-deep-link",
+    });
+
+    // Journalling is optional at this seam: no appendInboxEvent must not throw.
+    const bare = notifyDeepLink({ handle: "h-10", deepLink: "aios://runtime/prompt/h-10" }, {});
+    assert.equal(bare.lane, "notify-deep-link");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // AIO-427 — capability events wired to the durable I-02 journal.
 //
