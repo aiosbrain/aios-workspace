@@ -39,9 +39,19 @@ code. See `docs/agentic-ergonomics/spec-readiness.md` for the command, exit code
 | 3 | `NOT_EVALUATED` — deterministic clean, LLM layer not run (`--no-llm`) |
 | 4 | usage / IO error (missing file, unreadable/malformed rubric) |
 
-`eval_tier: deterministic` is an explicit mechanical-spec exemption from the adversarial layer:
-the deterministic checks remain mandatory and a clean result exits 0. The default `full` tier
-runs both layers; `--no-llm` remains an incomplete (`NOT_EVALUATED`) full-tier check.
+**The adversarial layer is OPT-IN (AIO-573).** `eval_tier: deterministic` is the default: the
+deterministic checks are mandatory, they still BLOCK on a must-fail (exit 1), and a clean result
+is the complete evaluation (`SPEC_READY`, exit 0, no model call). Ask for the second opinion with
+`eval_tier: full` in frontmatter, or `--adversarial` / `--tier full` per run — worth it for
+safety work, cross-repo contracts, and anything where a stochastic reviewer's cost is justified.
+
+`--no-llm` then means "I asked for `full` but suppress the call", and only that combination
+yields the incomplete `NOT_EVALUATED` (exit 3).
+
+The default moved because the adversarial layer costs ~2-3 min per spec and is a stochastic
+judge, making it the slowest and least predictable part of authoring. The deterministic layer is
+fast, offline, reproducible, and catches the omissions that actually strand a cold-start builder.
+The gate did not get weaker — it got predictable.
 
 ## Criteria
 

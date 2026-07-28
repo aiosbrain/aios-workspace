@@ -1,5 +1,9 @@
 ---
-eval_tier: full
+# eval_tier: deterministic (default) runs the fast offline checks, which still BLOCK.
+# Set `full` to ALSO get the adversarial LLM review — worth it for safety, cross-repo
+# contracts, or anything you want a second opinion on. `aios spec eval --adversarial` does
+# the same thing per-run without editing the spec.
+eval_tier: deterministic
 spec_gate: block
 safety: false
 type: issue-spec

@@ -48,9 +48,11 @@ Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issu
   `.claude/rubrics/spec-readiness.md` → the canonical rubric shipped in the toolkit. The last
   fallback lets the gate run in a **non-workspace repo** (the Team Brain, any bare repo) that doesn't
   vendor a rubric, instead of failing with exit 4.
-- A spec may declare `eval_tier: deterministic` in frontmatter (or receive `--tier deterministic`).
-  Its mandatory deterministic check is the complete evaluation, so a clean result is `SPEC_READY`
-  (exit 0) and never makes a model call. The default tier is `full`.
+- **The default tier is `deterministic`, and the adversarial layer is opt-in (AIO-573).** The
+  mandatory deterministic check is then the complete evaluation: a clean result is `SPEC_READY`
+  (exit 0) and never makes a model call, while a must-fail still blocks (exit 1). Opt into the
+  LLM layer with `eval_tier: full` in frontmatter, or `--adversarial` / `--tier full` per run.
+  `aios ship` HONOURS the spec's declared tier rather than forcing the layer on.
 - **Enforcement is separate from evaluation.** `eval_tier` chooses *which layers run*; `spec_gate`
   chooses *whether a `NOT_READY` verdict blocks a build*. `aios ship` reads it (flag `--spec-gate
   <block|advisory|off>` > spec frontmatter `spec_gate:` > config default `block`):
@@ -61,6 +63,16 @@ Author Linear issues and local specs from [`aios-issue-template.md`](./aios-issu
     allowed under `--loop light`, whose entry contract is a real gate result).
   `aios spec eval` itself is unaffected by `spec_gate` — it always reports the true verdict/exit
   code; only the *ship* enforcement changes.
+- **Frontmatter may SOFTEN the gate, never disable it.** A `spec_gate:` in a *Linear issue body*
+  is honoured (AIO-573 — before that it was silently inert), but issue bodies are editable by
+  anyone with Linear write access and no repo-side change is reviewed, so two values are refused
+  there and a warning is printed:
+  - `spec_gate: off` from an issue body is **always ignored** — disabling the gate stays a
+    deliberate act at the CLI (`--spec-gate off` / `--skip-spec-gate`).
+  - `spec_gate: advisory` is ignored under `--auto` (unattended `roadmap-run`), where no human
+    reads the warning it would degrade to. It is honoured on an interactive run.
+  Both restrictions apply only to frontmatter; a CLI flag always wins outright. Malformed
+  evaluator frontmatter refuses the run (usage exit) rather than guessing a default.
 - A directory or glob is evaluated concurrently (default 6, bounded to 8) and prints one
   file/verdict/exit/score table. Every file still runs the deterministic layer.
 - Set `eval_provenance: adversarial-reviewed` (or `parent_plan_reviewed: true`) only when the

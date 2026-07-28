@@ -34,8 +34,17 @@ function runSpec(args, env = {}) {
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
-test("eval --no-llm on a clean spec → exit 3 (NOT_EVALUATED)", () => {
-  assert.equal(runSpec(["eval", STRONG, "--no-llm"]).code, 3);
+test("eval --adversarial --no-llm on a clean spec → exit 3 (NOT_EVALUATED)", () => {
+  // Since AIO-573 the adversarial layer is opt-in, so NOT_EVALUATED means exactly "you ASKED
+  // for the LLM layer and it did not run". Asking (--adversarial) and suppressing (--no-llm) is
+  // the only way to get there; a caller who never asked gets a complete deterministic answer.
+  assert.equal(runSpec(["eval", STRONG, "--adversarial", "--no-llm"]).code, 3);
+});
+
+test("AIO-573 — the default is deterministic: clean spec, no key, exit 0", () => {
+  const r = runSpec(["eval", STRONG, "--json"], { DEEPSEEK_API_KEY: "", ANTHROPIC_API_KEY: "" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).tier, "deterministic", "no opt-in ⇒ deterministic tier");
 });
 
 test("deterministic eval tier is SPEC_READY without a model key", () => {
@@ -168,7 +177,8 @@ test("author rejects an invalid per-invocation effort", () => {
 test("eval without stub or key → exit 4 (DEEPSEEK_API_KEY required)", () => {
   const env = { ...process.env, DEEPSEEK_API_KEY: "" };
   delete env.AIOS_SPEC_EVAL_STUB;
-  const r = runSpec(["eval", STRONG], env);
+  // --adversarial opts into the LLM layer, which is what needs the key.
+  const r = runSpec(["eval", STRONG, "--adversarial"], env);
   assert.equal(r.code, 4);
   assert.match(r.stderr, /DEEPSEEK_API_KEY/);
 });
@@ -191,7 +201,9 @@ test("fix --no-llm needs no API key (deterministic verify only)", () => {
 
 test("eval with a SPEC_READY stub on a clean spec → exit 0", () => {
   const env = { AIOS_SPEC_EVAL_STUB: '{"verdict":"SPEC_READY","score":92,"findings":[]}' };
-  assert.equal(runSpec(["eval", STRONG], env).code, 0);
+  // --adversarial is required for this to exercise the stub at all; without it the deterministic
+  // layer would return 0 on its own and the assertion would be vacuous.
+  assert.equal(runSpec(["eval", STRONG, "--adversarial"], env).code, 0);
 });
 
 test("eval with an adversarial-blocker stub on a clean spec → exit 2", () => {
@@ -199,11 +211,32 @@ test("eval with an adversarial-blocker stub on a clean spec → exit 2", () => {
     AIOS_SPEC_EVAL_STUB:
       '{"verdict":"NOT_READY","score":30,"findings":[{"ruleId":"SR15","severity":"blocker","why":"x"}]}',
   };
-  assert.equal(runSpec(["eval", STRONG], env).code, 2);
+  assert.equal(runSpec(["eval", STRONG, "--adversarial"], env).code, 2);
 });
 
 test("eval with junk from the evaluator → exit 2 (synthetic blocker, fail closed)", () => {
-  assert.equal(runSpec(["eval", STRONG], { AIOS_SPEC_EVAL_STUB: "totally not json" }).code, 2);
+  const env = { AIOS_SPEC_EVAL_STUB: "totally not json" };
+  assert.equal(runSpec(["eval", STRONG, "--adversarial"], env).code, 2);
+});
+
+test("AIO-573 — `eval_tier: full` frontmatter opts in without a flag", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "spec-optin-"));
+  try {
+    const target = path.join(d, "full.md");
+    writeFileSync(target, `---\neval_tier: full\n---\n\n${readFileSync(STRONG, "utf8")}`);
+    const env = {
+      AIOS_SPEC_EVAL_STUB:
+        '{"verdict":"NOT_READY","score":30,"findings":[{"ruleId":"SR15","severity":"blocker","why":"x"}]}',
+    };
+    assert.equal(runSpec(["eval", target], env).code, 2, "the spec asked for the LLM layer");
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("AIO-573 — a deterministic blocker still blocks with the layer opted out", () => {
+  // The gate did not get weaker: the deterministic layer runs by default and still exits 1.
+  assert.equal(runSpec(["eval", DEMO], { DEEPSEEK_API_KEY: "" }).code, 1);
 });
 
 test("missing spec file → exit 4", () => {
@@ -257,4 +290,34 @@ test("fix --json carries exitCode and the output path", () => {
   assert.equal(j.exitCode, 0);
   assert.equal(j.outputPath, path.join(d, "s.improved.md"));
   rmSync(d, { recursive: true, force: true });
+});
+
+test("AIO-573 — `fix` demands a key on the default tier (the reviser is an LLM either way)", () => {
+  // eval_tier selects the EVALUATOR layer; the REVISER is a model regardless, and runFixLoop
+  // calls it on any NOT_READY. Gating the upfront key check on the tier let a default-tier fix
+  // skip exit 4 and die later inside the model call with a much worse error.
+  const env = { ...process.env, DEEPSEEK_API_KEY: "", ANTHROPIC_API_KEY: "" };
+  delete env.AIOS_SPEC_EVAL_STUB;
+  delete env.AIOS_SPEC_FIX_STUB;
+  const tmp = mkdtempSync(path.join(tmpdir(), "spec-fix-key-"));
+  try {
+    const copy = path.join(tmp, "weak.md");
+    copyFileSync(DEMO, copy);
+    const r = runSpec(["fix", copy], env);
+    assert.equal(r.code, 4, `expected the upfront key check, got: ${r.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("AIO-573 — `fix --no-llm` still needs no key", () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), "spec-fix-nokey-"));
+  try {
+    const copy = path.join(tmp, "strong.md");
+    copyFileSync(STRONG, copy);
+    const r = runSpec(["fix", copy, "--no-llm"], { ANTHROPIC_API_KEY: "", DEEPSEEK_API_KEY: "" });
+    assert.notEqual(r.code, 4, `--no-llm must not demand a key: ${r.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

@@ -135,3 +135,93 @@ export function readChecks(pr, { ghExec, slug } = {}) {
   const ok = !parsed.ciRed && !parsed.ciPending;
   return { ok, unavailable: false, red: parsed.ciRed, pending: parsed.ciPending, raw: stdout };
 }
+
+/**
+ * Which issue-body `spec_gate` value ship will actually honour.
+ *
+ * AIO-573 made issue-body frontmatter effective for the FIRST time (it had been masked by the
+ * heading `buildSpecTextFromIssue` prepends). That is the documented precedence — but it also
+ * means anyone with Linear write access can now change how the readiness gate behaves with no
+ * git-reviewed change. So frontmatter may SOFTEN the gate, never disable it, and never soften it
+ * where no human will read the warning:
+ *
+ *   - `off` is never honoured from an issue body. It skips `evaluateSpec` outright. Turning the
+ *     gate fully off stays a deliberate act at the CLI (`--spec-gate off` / `--skip-spec-gate`).
+ *   - `advisory` is honoured interactively — it still RUNS and records the eval, and a human sees
+ *     the warning — but NOT under `--auto`, where `roadmap-run` ships unattended and nobody does.
+ *   - Any CLI flag outranks frontmatter entirely, so this returns `undefined` and lets the
+ *     documented precedence chain apply. (Checking the CLI first is what stops a `spec_gate: off`
+ *     issue body from rejecting a run where the operator explicitly passed `--skip-spec-gate`.)
+ *
+ * Returns the value to feed the precedence chain, or `undefined` to fall through to it.
+ */
+export function usableFrontmatterGate(fmGate, opts = {}, c = { yellow: (x) => x }) {
+  if (!fmGate || opts.specGate || opts.skipSpecGate) return undefined;
+  if (fmGate === "off") {
+    console.error(
+      c.yellow(
+        "warn: ignoring `spec_gate: off` from the issue body — it would disable the readiness " +
+          "gate with no repo-side change to review. Pass --skip-spec-gate to mean it."
+      )
+    );
+    return undefined;
+  }
+  if (fmGate === "advisory" && opts.auto) {
+    console.error(
+      c.yellow(
+        "warn: ignoring `spec_gate: advisory` from the issue body under --auto — an advisory " +
+          "warning nobody reads is not a gate. Pass --spec-gate advisory to mean it."
+      )
+    );
+    return undefined;
+  }
+  return fmGate;
+}
+
+/**
+ * Read the evaluator frontmatter (`spec_gate`, `eval_tier`) from a Linear issue.
+ *
+ * `body` MUST be the RAW issue description, never `buildSpecTextFromIssue(issue)` — that
+ * prepends a `# <id>: <title>` heading which pushes the frontmatter off the start of the string,
+ * so `^---` never matches and every key silently reverts to its default. That trap is pinned for
+ * `safety:` in test/ship-spec-eval.test.mjs; it was missed for these two keys until AIO-573, so
+ * `spec_gate:` declared in an issue body had never actually reached ship.
+ *
+ * A malformed value REFUSES rather than guesses. `specEvalHints` is all-or-nothing, so one typo'd
+ * key discards every other key — an issue with `eval_tier: full` plus a bad `spec_gate` would
+ * silently lose the adversarial layer its author explicitly asked for. Guessing a default there
+ * is worse than stopping: `aios spec eval` already exits 4 on the same input, so refusing keeps
+ * ship consistent with the CLI instead of quietly diverging from it.
+ *
+ * The defaults are still returned alongside `invalid` so a caller that chooses to continue lands
+ * on the parser's own documented values, never on `{}` — an undefined `tier` would make
+ * `evaluateSpec` default `useLlm` to true and re-opt a broken spec INTO the opt-in layer.
+ */
+export function readSpecFrontmatter(hintsFn, body) {
+  try {
+    return hintsFn(body);
+  } catch (e) {
+    return { ...hintsFn(""), invalid: e.message };
+  }
+}
+
+/** Malformed evaluator frontmatter in the issue body — refuse, don't guess. */
+export function badSpecFrontmatter(records, c, message) {
+  console.error(c.red(`error: invalid evaluator frontmatter in the issue body — ${message}`));
+  return { code: SHIP_EXIT.USAGE, records };
+}
+
+/**
+ * The audit copy of a spec, written to `.aios/loop/<issue>/spec.md`.
+ *
+ * `buildSpecTextFromIssue` prepends a `# <id>: <title>` heading, which pushes any evaluator
+ * frontmatter off the start of the string. That is fine for reading, but the documented recovery
+ * path is `aios spec fix .aios/loop/<issue>/spec.md` — and on that artifact the frontmatter is
+ * invisible, so a spec that declared `eval_tier: full` would be re-run deterministic-only and
+ * never re-run the adversarial layer that blocked ship in the first place. Re-emitting the raw
+ * frontmatter block ahead of the heading keeps the artifact self-describing and re-runnable.
+ */
+export function auditSpecText(rawBody, specText) {
+  const block = /^---\s*\n[\s\S]*?\n---(?:\s*\n|$)/.exec(String(rawBody ?? ""))?.[0];
+  return block ? `${block}\n${specText}` : specText;
+}

@@ -71,6 +71,10 @@ import {
   touchesSafetySurface,
   localBugbotEvidenceMatches,
   readChecks,
+  usableFrontmatterGate,
+  auditSpecText,
+  readSpecFrontmatter,
+  badSpecFrontmatter,
 } from "./ship/gates.mjs";
 import {
   parseDeferredScope,
@@ -422,16 +426,12 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // Fail closed before the plan loop: an unready Linear issue body must not spend Opus plan rounds —
   // UNLESS the enforcement policy is `advisory` (run + warn + proceed) or `off` (don't run).
   // Precedence: --spec-gate flag (or --skip-spec-gate → off) > spec frontmatter > config default.
-  let frontmatterGate;
-  try {
-    frontmatterGate = specEvalHintsDep(specText).specGate;
-  } catch {
-    frontmatterGate = undefined; // a bad frontmatter value surfaces in evaluateSpec below, not here
-  }
+  const fm = readSpecFrontmatter(specEvalHintsDep, issue.description); // RAW body — see helper
+  if (fm.invalid) return badSpecFrontmatter(records, c, fm.invalid);
   const specGatePolicy =
     opts.specGate ??
     (opts.skipSpecGate ? "off" : undefined) ??
-    frontmatterGate ??
+    usableFrontmatterGate(fm.specGate, opts, c) ??
     models.spec_eval?.spec_gate ??
     DEFAULT_SPEC_GATE;
 
@@ -443,7 +443,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
     record("spec-eval", { resumed: true });
     progress("spec eval: resumed from checkpoint (SPEC_READY)");
   } else {
-    writeAudit(issueId, "spec.md", specText);
+    writeAudit(issueId, "spec.md", auditSpecText(issue.description, specText));
     const specStartedAt = Date.now();
     let rubric;
     try {
@@ -462,7 +462,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
         skillDeclarationText: issue.description || "",
         repo,
         rubric,
-        useLlm: true,
+        tier: fm.tier, // adversarial layer is opt-in (AIO-573); ship honours the declaration
         evalCfg: models.spec_eval,
         decisions,
         requireCleanRepo: true,

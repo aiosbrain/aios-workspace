@@ -28,7 +28,13 @@ import {
 import { callPromptModel } from "./model-call.mjs";
 import { runBuild, parseBuildArgs } from "./build.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings } from "./spec-eval.mjs";
+import {
+  evaluateSpec,
+  loadRubric,
+  loadRecentDecisions,
+  formatFindings,
+  specEvalHints,
+} from "./spec-eval.mjs";
 
 const DEFAULT_SKILL = "/review-plan";
 
@@ -242,7 +248,9 @@ export async function cmdRelay(repo, args) {
       specText,
       repo,
       rubric,
-      useLlm: true,
+      // Honour the spec's declared tier, like `aios spec eval` and `aios ship` — the adversarial
+      // layer is opt-in (AIO-573) and this gate must not be the one place that ignores that.
+      tier: specEvalHints(specText).tier,
       anthropic,
       evalCfg: models.spec_eval,
       decisions,

@@ -11,6 +11,13 @@ import {
   specSafetyFlag,
 } from "../scripts/ship.mjs";
 import { resolveLoopModels } from "../scripts/loop-models.mjs";
+import { specEvalHints, evaluateSpec, runFixLoop } from "../scripts/spec-eval.mjs";
+import {
+  usableFrontmatterGate,
+  auditSpecText,
+  readSpecFrontmatter,
+  badSpecFrontmatter,
+} from "../scripts/ship/gates.mjs";
 import { EXIT as BUILD_EXIT } from "../scripts/build.mjs";
 import { stubSpecRubric } from "./ship-test-helpers.mjs";
 import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
@@ -371,6 +378,132 @@ console.log("light loop skips recon + planner and resolves the pinned profile");
   const plan = readFileSync(path.join(deps.repo, ".aios", "loop", "AIO-262", "plan.md"), "utf8");
   check("writes a spec-derived plan artifact", /light loop/.test(plan));
   rmSync(deps.repo, { recursive: true, force: true });
+}
+
+// ── AIO-573: ship honours the spec's declared eval tier, read from the RAW issue body ─────────
+console.log("AIO-573 — eval tier + spec_gate are read from the raw issue body");
+{
+  // buildSpecTextFromIssue prepends `# <id>: <title>`, which pushes frontmatter off the start of
+  // the string so `^---` never matches. That is the H5 trap already recorded above for `safety:`.
+  // It was missed for `eval_tier`/`spec_gate`, so a `spec_gate:` declared in a Linear issue body
+  // silently never reached ship. Pinned in both directions here.
+  const body = "---\neval_tier: full\nspec_gate: advisory\n---\n\n## What\nx\n";
+  const issue = { identifier: "AIO-1", title: "t", description: body, comments: [], children: [] };
+
+  check(
+    "the built spec text MASKS the frontmatter (this is why the raw body must be used)",
+    specEvalHints(buildSpecTextFromIssue(issue)).tier === "deterministic" &&
+      specEvalHints(buildSpecTextFromIssue(issue)).specGate === undefined
+  );
+  check(
+    "the raw issue body exposes both keys",
+    specEvalHints(body).tier === "full" && specEvalHints(body).specGate === "advisory"
+  );
+  check(
+    "default (no frontmatter) is the deterministic tier — the layer is opt-in",
+    specEvalHints("## What\nx\n").tier === "deterministic"
+  );
+
+  // Bugbot HIGH on the first cut: ship gates on `verdict !== "SPEC_READY"`, but a deterministic-
+  // only run returns NOT_EVALUATED/3. The CLI normalised that and ship did not, so EVERY
+  // default-tier spec the CLI called ready would have been rejected by ship. evaluateSpec now
+  // owns the normalisation via `tier`, so both callers agree by construction.
+  const det = await evaluateSpec({
+    specText: "## What / why\nx\n\n## Acceptance criteria\n- `npm test` exits 0\n",
+    repo: REPO_ROOT,
+    rubric: { criteria: [], budget: 2 },
+    tier: "deterministic",
+  });
+  check(
+    "a clean deterministic run is SPEC_READY/0, not NOT_EVALUATED/3",
+    det.verdict !== "NOT_EVALUATED" && det.exitCode !== 3
+  );
+  check(
+    "tier alone drives useLlm — deterministic makes no model call",
+    det.adversarial === undefined || det.adversarial === null
+  );
+
+  // Bugbot MEDIUM: `spec_gate: off` in the issue body only became reachable once ship started
+  // reading the raw body, and validateShipArgs only blocks the CLI spellings.
+  // Bugbot MEDIUM (round 2): `{}` on a parse error left tier undefined, which flips useLlm back
+  // to true — a malformed spec would have silently re-opted INTO the adversarial layer.
+  // Bugbot MEDIUM (round 3): specEvalHints is all-or-nothing, so a typo in ONE key discarded
+  // every other key — `eval_tier: full` next to a bad `spec_gate` silently lost the adversarial
+  // layer its author asked for. Refuse instead of guessing; `aios spec eval` exits 4 on the same
+  // input, so this keeps ship consistent with the CLI.
+  const bad = readSpecFrontmatter(specEvalHints, "---\neval_tier: full\nspec_gate: bogus\n---\n");
+  check("malformed frontmatter is reported, not swallowed", typeof bad.invalid === "string");
+  check(
+    "…and ship refuses rather than running with a guessed tier",
+    badSpecFrontmatter({ r: 1 }, { red: (x) => x }, bad.invalid).code === SHIP_EXIT.USAGE
+  );
+  check(
+    "the returned defaults are still the parser's own, never `{}` (undefined tier ⇒ opt-IN)",
+    bad.tier === "deterministic"
+  );
+  check(
+    "valid frontmatter is still read through the helper",
+    readSpecFrontmatter(specEvalHints, "---\neval_tier: full\n---\n").tier === "full"
+  );
+
+  // Bugbot round 4: runFixLoop never passed the declared tier, so `aios spec fix` on the default
+  // path reported NOT_EVALUATED while `aios spec eval` called the same file SPEC_READY.
+  const fixed = await runFixLoop({
+    specText: "## What / why\nx\n\n## Acceptance criteria\n- `npm test` exits 0\n",
+    repo: REPO_ROOT,
+    rubric: { criteria: [], budget: 1 },
+    tier: "deterministic",
+    useLlm: false,
+  });
+  check(
+    "the fix loop agrees with `aios spec eval` on a clean deterministic run",
+    fixed.afterVerdict !== "NOT_EVALUATED"
+  );
+
+  // Bugbot round 7: the audit copy is the documented recovery path
+  // (`aios spec fix .aios/loop/<issue>/spec.md`), but buildSpecTextFromIssue hides the
+  // frontmatter, so a spec declaring `eval_tier: full` would be re-run deterministic-only.
+  const rawBody = "---\neval_tier: full\n---\n\n## What\nx\n";
+  const audit = auditSpecText(rawBody, buildSpecTextFromIssue({ ...issue, description: rawBody }));
+  check(
+    "the audit spec.md stays re-runnable — its frontmatter survives",
+    specEvalHints(audit).tier === "full"
+  );
+  check(
+    "a spec with no frontmatter is passed through untouched",
+    auditSpecText("## What\nx\n", "BODY") === "BODY"
+  );
+
+  // Bugbot round 5: the first cut of this guard ran BEFORE CLI precedence, so an issue body
+  // saying `off` rejected the run even when the operator passed the very flag the error message
+  // recommended. CLI always wins; frontmatter may soften, never disable, and never soften where
+  // no human reads the warning.
+  const quiet = { yellow: () => "" };
+  check(
+    "frontmatter `off` is not honoured (falls through to the config default)",
+    usableFrontmatterGate("off", {}, quiet) === undefined
+  );
+  check(
+    "an explicit --skip-spec-gate still wins over a frontmatter `off`",
+    usableFrontmatterGate("off", { skipSpecGate: true }, quiet) === undefined
+  );
+  check(
+    "an explicit --spec-gate outranks frontmatter entirely",
+    usableFrontmatterGate("advisory", { specGate: "block" }, quiet) === undefined
+  );
+  check(
+    "frontmatter `advisory` IS honoured interactively",
+    usableFrontmatterGate("advisory", {}, quiet) === "advisory"
+  );
+  check(
+    "frontmatter `advisory` is NOT honoured under --auto (nobody reads the warning)",
+    usableFrontmatterGate("advisory", { auto: true }, quiet) === undefined
+  );
+
+  check(
+    "`advisory` is still allowed from frontmatter — it RUNS and records, it just doesn't block",
+    specEvalHints("---\nspec_gate: advisory\n---\n").specGate === "advisory"
+  );
 }
 
 if (failed) {
