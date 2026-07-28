@@ -5,13 +5,27 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.8**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.14**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-28
+
+Onboarding V2 and the first complete Operator Loop release train. This release
+standardizes inspect-first setup across Personal, Join, and Create paths; makes
+toolkit updates previewable and approval-gated; and advances the additive Brain
+API contract through **v1.14**.
+
 ### Added
 
+- **Onboarding V2** — `aios onboard --inspect --json` discovers an existing
+  toolkit/workspace before mutation, then guides exactly one Personal, Join, or
+  Create path. Join validates the approved Brain origin and API key through
+  `GET /api/v1/me`; Create remains guide-only; onboarding never pushes content.
+- **Operator Loop and Unified Inbox** — action-oriented daily/weekly workflows,
+  governed connector ingestion, durable attention state, task writeback, and
+  the CLI-first inbox surface.
 - **`aios stakeholders (--owns | --who | --meeting)`** — query the team
   Company-Graph over the new team-tier `GET /api/v1/company-graph` endpoint
   (brain-api **v1.5**, additive): who owns a workflow domain, one person's
@@ -22,12 +36,20 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ### Changed
 
+- **Safe toolkit updates** — `aios update --preview` reports its safety check and
+  proposed mutations before explicit approval, while managed governance files
+  retain three-way merge and conflict-preserving behavior.
 - **PR review evidence cleanup** — `aios ship` now treats Local Bugbot as the mandatory canonical
   review, persisted against the exact branch head and verified base SHA. CodeRabbit is
   `ready-for-review` label-gated, optional for Standard PRs, mandatory for safety-sensitive PRs,
   and must provide substantive current-head text. `--reviewers` selects `coderabbit` and/or the
   default `gpt-5.5`; the old `bugbot` name is a deprecated no-op alias. Safety-sensitive changes
   reject `--auto-merge`.
+
+### Fixed
+
+- Hardened secrets, access-tier, worktree, local-review, transcript-grounding,
+  connector, and update boundaries so failures remain explicit and recoverable.
 
 ## [0.7.0] — 2026-07-04
 
