@@ -10,8 +10,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,30 @@ function runGateWithoutTerms(root) {
   } catch (e) {
     return { code: e.status ?? 1, stdout: `${e.stdout ?? ""}${e.stderr ?? ""}` };
   }
+}
+
+function runGateWithEncodedTerms(root, terms) {
+  const env = {
+    ...process.env,
+    AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+    AIOS_LEAK_TERMS_B64: Buffer.from(terms).toString("base64"),
+  };
+  try {
+    const stdout = execFileSync("bash", [GATE, root], { encoding: "utf8", env, stdio: "pipe" });
+    return { code: 0, stdout };
+  } catch (e) {
+    return { code: e.status ?? 1, stdout: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+}
+
+function runGateWithMalformedEncodedTerms(root) {
+  const env = {
+    ...process.env,
+    AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+    AIOS_LEAK_TERMS_B64: "%%%not-base64%%%",
+  };
+  const result = spawnSync("bash", [GATE, root], { encoding: "utf8", env });
+  return { code: result.status, stdout: `${result.stdout}${result.stderr}` };
 }
 
 /**
@@ -114,6 +138,17 @@ test("a personal workspace spine committed into the product repo is caught", () 
   }
 });
 
+test("a symlink at a confidential product path is caught without following its target", () => {
+  const root = repoWith({ "safe-target.md": "safe\n" });
+  try {
+    mkdirSync(path.join(root, "docs", "bd"), { recursive: true });
+    symlinkSync("../../safe-target.md", path.join(root, "docs", "bd", "prospect.md"));
+    assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("owner-only frontmatter outside the teaching trees is caught", () => {
   const root = repoWith({ "notes/private-thing.md": "---\naccess: admin\n---\n\nowner only\n" });
   try {
@@ -129,6 +164,40 @@ test("owner-only frontmatter with an inline comment is caught", () => {
   });
   try {
     assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("quoted, case-insensitive owner-only frontmatter is caught", () => {
+  const root = repoWith({
+    "notes/private-thing.md": '---\naccess: "ADMIN"\n---\n\nowner only\n',
+  });
+  try {
+    assert.equal(runGateWithoutTerms(root).code, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an empty term payload never claims that a term-set sweep ran", () => {
+  const root = repoWith({ "src/index.ts": "export const x = 1;\n" });
+  try {
+    const { code, stdout } = runGateWithEncodedTerms(root, "# no usable patterns\n");
+    assert.equal(code, 0);
+    assert.doesNotMatch(stdout, /baseline \+ term set/);
+    assert.match(stdout, /SKIPPED — identifier sweep did not run/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a malformed encoded term payload fails closed", () => {
+  const root = repoWith({ "src/index.ts": "export const x = 1;\n" });
+  try {
+    const { code, stdout } = runGateWithMalformedEncodedTerms(root);
+    assert.equal(code, 2);
+    assert.match(stdout, /could not be decoded safely/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

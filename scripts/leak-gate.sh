@@ -65,13 +65,29 @@ ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 # No term set now degrades to baseline-only and says so honestly, instead of to nothing.
 TERMS_FILE="${AIOS_LEAK_TERMS_FILE:-$HOME/.config/aios-nda/leak-gate-terms.sh}"
 TERMS_LOADED=0
+unset STRONG WORDS PATTERNS
 if [ -f "$TERMS_FILE" ]; then
   # shellcheck disable=SC1090
-  . "$TERMS_FILE"
-  TERMS_LOADED=1
+  if ! . "$TERMS_FILE"; then
+    echo "leak-gate: ERROR — configured term set could not be loaded safely." >&2
+    exit 2
+  fi
 elif [ -n "${AIOS_LEAK_TERMS_B64:-}" ]; then
+  TERMS_TEMP=$(mktemp "${TMPDIR:-/tmp}/aios-leak-terms.XXXXXX")
+  if ! printf '%s' "$AIOS_LEAK_TERMS_B64" | base64 --decode > "$TERMS_TEMP"; then
+    rm -f "$TERMS_TEMP"
+    echo "leak-gate: ERROR — encoded term set could not be decoded safely." >&2
+    exit 2
+  fi
   # shellcheck disable=SC1090
-  . <(printf '%s' "$AIOS_LEAK_TERMS_B64" | base64 --decode)
+  if ! . "$TERMS_TEMP"; then
+    rm -f "$TERMS_TEMP"
+    echo "leak-gate: ERROR — encoded term set could not be loaded safely." >&2
+    exit 2
+  fi
+  rm -f "$TERMS_TEMP"
+fi
+if [ -n "${STRONG:-}${WORDS:-}${PATTERNS:-}" ]; then
   TERMS_LOADED=1
 fi
 
@@ -94,8 +110,19 @@ fi
 # (docs/strategy/ was deleted from the repo entirely (PR #336) — nothing strategy-related is
 #  excluded; the full docs tree is scanned like everything else.)
 FILE_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-gate.XXXXXX")
+PATH_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-paths.XXXXXX")
 MATCH_LIST=$(mktemp "${TMPDIR:-/tmp}/aios-leak-match.XXXXXX")
-trap 'rm -f "$FILE_LIST" "$MATCH_LIST"' EXIT
+trap 'rm -f "$FILE_LIST" "$PATH_LIST" "$MATCH_LIST"' EXIT
+
+# Path-shape rules must still see symlinks: a public tree path can disclose client/workspace
+# structure even when its entry is a symlink whose content scanner correctly refuses to follow.
+emit_if_path_scannable() {
+  case "/$1" in
+    */.git/* | */node_modules/* | */.venv/* | */__pycache__/* | */store/*) return 0 ;;
+    */skill-library/* | */skill-scan-fixtures/* | */target/* | */evidence/*) return 0 ;;
+  esac
+  printf '%s\0' "$ROOT/$1"
+}
 
 # $1 = path relative to $ROOT. Emits the path to scan, NUL-terminated, when in scope.
 emit_if_scannable() {
@@ -117,12 +144,29 @@ if [ -d "$ROOT" ] && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files -z -o --exclude-standard
   } | while IFS= read -r -d '' rel; do
+    emit_if_path_scannable "$rel"
+  done > "$PATH_LIST"; then
+    echo "leak-gate: ERROR — path enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
+  if ! {
+    git -C "$ROOT" ls-files -z
+    git -C "$ROOT" ls-files -z -o --exclude-standard
+  } | while IFS= read -r -d '' rel; do
     emit_if_scannable "$rel"
   done > "$FILE_LIST"; then
     echo "leak-gate: ERROR — scan target enumeration failed; refusing to report clean." >&2
     exit 2
   fi
 elif [ -d "$ROOT" ]; then
+  if ! find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" \
+    \( -type f -o -type l \) -print0 2>/dev/null |
+    while IFS= read -r -d '' abs; do
+      emit_if_path_scannable "${abs#"$ROOT"/}"
+    done > "$PATH_LIST"; then
+    echo "leak-gate: ERROR — path enumeration failed; refusing to report clean." >&2
+    exit 2
+  fi
   if ! find "$ROOT" -not -path "*/.git/*" -not -path "*/node_modules/*" -type f -print0 2>/dev/null |
     while IFS= read -r -d '' abs; do
       emit_if_scannable "${abs#"$ROOT"/}"
@@ -132,6 +176,7 @@ elif [ -d "$ROOT" ]; then
   fi
 else
   # A single file (aios promote scans one copied deliverable).
+  printf '%s\0' "$ROOT" > "$PATH_LIST"
   printf '%s\0' "$ROOT" > "$FILE_LIST"
 fi
 
@@ -225,14 +270,14 @@ BASELINE_TIER_EXEMPT='^(scaffold|examples|test|docs)/'
 # Matches on the PATH, so it catches a file whose contents are innocuous but whose location
 # betrays it — the prospect brief that leaked was identifiable from its filename alone.
 scan_paths() {
-  [ -s "$FILE_LIST" ] || return 0
+  [ -s "$PATH_LIST" ] || return 0
   : > "$MATCH_LIST"
   local pattern="$1" exempt="$2" f rel
   while IFS= read -r -d '' f; do
     rel="${f#"$ROOT"/}"
     printf '%s' "$rel" | grep -qE "$exempt" && continue
     printf '%s' "$rel" | grep -qE "$pattern" && printf '%s\0' "$f" >> "$MATCH_LIST"
-  done < "$FILE_LIST"
+  done < "$PATH_LIST"
   [ -s "$MATCH_LIST" ] || return 0
   fail=1
   _count=0
@@ -250,7 +295,8 @@ scan_paths() {
 # false positive on legitimate content. `scaffold/` + `scripts/leak-gate.sh` is the toolkit's
 # own signature: a stamped workspace has the latter but never the former.
 IS_PRODUCT_REPO=0
-if [ -d "$ROOT/scaffold" ] && [ -f "$ROOT/scripts/leak-gate.sh" ]; then
+if [ "${AIOS_LEAK_GATE_PRODUCT_REPO:-}" = "1" ] ||
+  { [ -d "$ROOT/scaffold" ] && [ -f "$ROOT/scripts/leak-gate.sh" ]; }; then
   IS_PRODUCT_REPO=1
 fi
 
@@ -268,7 +314,7 @@ if [ "$IS_PRODUCT_REPO" -eq 1 ] && [ -s "$FILE_LIST" ]; then
     printf '%s' "$rel" | grep -qE "$BASELINE_TIER_EXEMPT" && continue
     case "$f" in *.md) ;; *) continue ;; esac
     head -20 "$f" 2>/dev/null |
-      grep -qE '^access:[[:space:]]*(admin|private)[[:space:]]*(#.*)?$' &&
+      grep -qiE "^access:[[:space:]]*['\"]?(admin|private)['\"]?[[:space:]]*(#.*)?$" &&
       printf '%s\0' "$f" >> "$MATCH_LIST"
   done < "$FILE_LIST"
   if [ -s "$MATCH_LIST" ]; then

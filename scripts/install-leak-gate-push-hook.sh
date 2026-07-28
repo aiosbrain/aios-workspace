@@ -44,18 +44,53 @@ fi
 mkdir -p "$hooks_dir"
 dest="$hooks_dir/pre-push"
 chained="$hooks_dir/pre-push.chained"
+chain_dir="$hooks_dir/pre-push.chained.d"
 marker="pre-push-leak-gate"
+dispatcher_marker="aios-pre-push-chain-dispatcher"
 
-# Preserve a foreign pre-push hook as the chained hook (first time only — never clobber an
-# already-saved chain).
+# Keep every foreign hook. A single `.chained` slot loses the newest hook when another tool
+# replaces `pre-push` after AIOS was installed, so the slot is a dispatcher over a private hook
+# directory. Reinstalls deduplicate byte-identical hooks and never overwrite an earlier guard.
+preserve_foreign_hook() {
+  local source="$1" candidate saved
+  [[ -f "$source" ]] || return 0
+  mkdir -p "$chain_dir"
+  for candidate in "$chain_dir"/*; do
+    [[ -f "$candidate" ]] || continue
+    if cmp -s "$source" "$candidate"; then
+      return 0
+    fi
+  done
+  saved=$(mktemp "$chain_dir/hook.XXXXXX")
+  cp "$source" "$saved"
+  chmod +x "$saved"
+  echo "install-leak-gate-push-hook: preserved existing pre-push guard in $chain_dir"
+}
+
+if [[ -f "$chained" ]] && ! grep -q "$dispatcher_marker" "$chained" 2>/dev/null; then
+  preserve_foreign_hook "$chained"
+fi
 if [[ -f "$dest" ]] && ! grep -q "$marker" "$dest" 2>/dev/null; then
-  if [[ -f "$chained" ]]; then
-    echo "install-leak-gate-push-hook: existing pre-push found but $chained already present — leaving chain untouched." >&2
-  else
-    cp "$dest" "$chained"
-    chmod +x "$chained"
-    echo "install-leak-gate-push-hook: preserved existing pre-push → $chained"
-  fi
+  preserve_foreign_hook "$dest"
+fi
+
+if [[ -d "$chain_dir" ]]; then
+  cat > "$chained" <<'DISPATCHER'
+#!/usr/bin/env bash
+# aios-pre-push-chain-dispatcher — preserve every pre-existing pre-push guard.
+set -u
+chain_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pre-push.chained.d"
+updates=$(mktemp "${TMPDIR:-/tmp}/aios-pre-push-chain.XXXXXX")
+trap 'rm -f "$updates"' EXIT
+cat > "$updates"
+for hook in "$chain_dir"/*; do
+  [[ -x "$hook" ]] || continue
+  "$hook" "$@" < "$updates"
+  status=$?
+  [[ "$status" -eq 0 ]] || exit "$status"
+done
+DISPATCHER
+  chmod +x "$chained"
 fi
 
 cp "$hook_src" "$dest"

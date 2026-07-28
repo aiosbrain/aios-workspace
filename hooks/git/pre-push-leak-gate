@@ -13,7 +13,8 @@
 #
 # Local hooks are never version-controlled, so this tracked source is copied into
 # .git/hooks/pre-push by scripts/install-leak-gate-push-hook.sh (run automatically by
-# `aios worktree add`). Worktrees share the primary's hooks dir, so one install covers all.
+# `npm install` and `aios worktree add/init`). Worktrees share the primary's hooks dir, so one
+# install covers all.
 #
 # Bypass (deliberately awkward, and it is on you):
 #   AIOS_ALLOW_UNGATED_PUSH=1 git push ...
@@ -22,6 +23,13 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$repo_root" ] || exit 0
+
+updates_file=$(mktemp "${TMPDIR:-/tmp}/aios-pre-push-updates.XXXXXX")
+snapshot_root=$(mktemp -d "${TMPDIR:-/tmp}/aios-pre-push-snapshots.XXXXXX")
+seen_commits="$snapshot_root/seen-commits"
+gate_output="$snapshot_root/gate-output"
+trap 'rm -f "$updates_file"; rm -rf "$snapshot_root"' EXIT
+cat > "$updates_file"
 
 run_chained() {
   local hooks_path hooks_dir common_dir chained
@@ -40,8 +48,9 @@ run_chained() {
   fi
   chained="$hooks_dir/pre-push.chained"
   if [ -x "$chained" ]; then
-    exec "$chained" "$@"
+    "$chained" "$@" < "$updates_file"
   fi
+  return 0
 }
 
 if [ "${AIOS_ALLOW_UNGATED_PUSH:-}" = "1" ]; then
@@ -59,14 +68,87 @@ if [ ! -f "$gate" ]; then
   exit 1
 fi
 
+scan_target() {
+  local target="$1" force_product="${2:-0}" status
+  if AIOS_LEAK_GATE_PRODUCT_REPO="$force_product" bash "$gate" "$target" \
+    > "$gate_output" 2>&1; then
+    return 0
+  else
+    status=$?
+  fi
+  cat "$gate_output" >&2
+  return "$status"
+}
+
+scan_commit() {
+  local commit="$1" snapshot="$snapshot_root/tree"
+  grep -qxF "$commit" "$seen_commits" 2>/dev/null && return 0
+  printf '%s\n' "$commit" >> "$seen_commits"
+  rm -rf "$snapshot"
+  mkdir -p "$snapshot"
+  if ! git archive --format=tar "$commit" | tar -xf - -C "$snapshot"; then
+    echo "pre-push: could not materialize a commit snapshot for leak scanning." >&2
+    return 2
+  fi
+  # The snapshot may itself delete the scanner or scaffold signature. It is still a commit from
+  # this product repository, so keep the name-free product rules active while judging it.
+  scan_target "$snapshot" 1
+}
+
 gate_status=0
-if bash "$gate" "$repo_root"; then
-  # Hand off to any pre-existing pre-push the installer preserved, so adding this gate never
-  # silently disables someone else's hook. Its exit status becomes ours.
+updates_seen=0
+zero_sha=0000000000000000000000000000000000000000
+while read -r local_ref local_sha _remote_ref remote_sha; do
+  [ -n "${local_ref:-}" ] || continue
+  updates_seen=1
+  [ "$local_sha" = "$zero_sha" ] && continue
+
+  if [ "$remote_sha" != "$zero_sha" ]; then
+    commit_range="$remote_sha..$local_sha"
+    if ! commits=$(git rev-list "$commit_range"); then
+      gate_status=2
+      break
+    fi
+  elif [ -n "${1:-}" ] && git for-each-ref --format='%(refname)' "refs/remotes/$1/" |
+    grep -q .; then
+    if ! commits=$(git rev-list "$local_sha" --not --remotes="$1"); then
+      gate_status=2
+      break
+    fi
+  else
+    if ! commits=$(git rev-list "$local_sha"); then
+      gate_status=2
+      break
+    fi
+  fi
+
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    if scan_commit "$commit"; then
+      continue
+    else
+      gate_status=$?
+      break
+    fi
+  done <<< "$commits"
+  [ "$gate_status" -eq 0 ] || break
+done < "$updates_file"
+
+# A direct/manual hook invocation has no ref-update stream. Keep it useful by scanning the
+# current checkout, but a real push is judged from every commit Git says will be published.
+if [ "$updates_seen" -eq 0 ]; then
+  if scan_target "$repo_root"; then
+    :
+  else
+    gate_status=$?
+  fi
+fi
+
+if [ "$gate_status" -eq 0 ]; then
+  # Hand off the exact ref-update stream to every pre-existing pre-push hook the installer
+  # preserved. Any chained failure remains our failure.
   run_chained "$@"
   exit 0
-else
-  gate_status=$?
 fi
 
 echo >&2

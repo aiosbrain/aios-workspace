@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -33,17 +34,11 @@ function makeRepo({ hooksPath = null, gateExit = 0 } = {}) {
   const scriptsDir = path.join(repo, "scripts");
   mkdirSync(hooksDir, { recursive: true });
   mkdirSync(scriptsDir, { recursive: true });
-  writeFileSync(
-    path.join(scriptsDir, "leak-gate.sh"),
-    `#!/usr/bin/env bash\nexit ${gateExit}\n`
-  );
+  writeFileSync(path.join(scriptsDir, "leak-gate.sh"), `#!/usr/bin/env bash\nexit ${gateExit}\n`);
   chmodSync(path.join(scriptsDir, "leak-gate.sh"), 0o755);
 
   const foreignHook = path.join(hooksDir, "pre-push");
-  writeFileSync(
-    foreignHook,
-    "#!/usr/bin/env bash\nprintf 'chained\\n' >> \"$CHAIN_MARKER\"\n"
-  );
+  writeFileSync(foreignHook, "#!/usr/bin/env bash\nprintf 'chained\\n' >> \"$CHAIN_MARKER\"\n");
   chmodSync(foreignHook, 0o755);
   return { repo, hooksDir };
 }
@@ -70,6 +65,81 @@ function runHook(repo, hooksDir, env = {}) {
     })(),
   };
 }
+
+test("push rejects a confidential commit even when a later commit deletes the file", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-history-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-remote-"));
+  roots.push(repo, remote);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  mkdirSync(path.join(repo, "scaffold"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  writeFileSync(path.join(repo, "scaffold", ".keep"), "");
+  writeFileSync(path.join(repo, "README.md"), "safe\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "safe base"]);
+  install(repo);
+
+  rmSync(path.join(repo, "scripts", "leak-gate.sh"));
+  mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
+  writeFileSync(path.join(repo, "docs", "bd", "prospect.md"), "confidential prospect\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", [
+    "-C",
+    repo,
+    "commit",
+    "-q",
+    "-m",
+    "add private brief without scanner signature",
+  ]);
+  rmSync(path.join(repo, "docs"), { recursive: true, force: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "delete private brief"]);
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "main"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    },
+  });
+  assert.notEqual(push.status, 0, "the history-containing push must be blocked");
+  assert.match(push.stderr, /confidential material/i);
+  const remoteHead = spawnSync("git", ["--git-dir", remote, "rev-parse", "main"], {
+    encoding: "utf8",
+  });
+  assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
+});
+
+test("reinstall preserves both an existing chain and a newer replacement hook", () => {
+  const { repo, hooksDir } = makeRepo();
+  install(repo);
+
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    "#!/usr/bin/env bash\nprintf 'replacement\\n' >> \"$CHAIN_MARKER\"\n"
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+  install(repo);
+
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.marker, /chained/);
+  assert.match(result.marker, /replacement/);
+});
 
 test("a custom core.hooksPath still runs the pre-existing chained hook", () => {
   const { repo, hooksDir } = makeRepo({ hooksPath: ".githooks" });
