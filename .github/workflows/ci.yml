@@ -11,6 +11,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Path filtering is applied at JOB level (`if:`), never at workflow level
+  # (`on.pull_request.paths`). A skipped JOB still reports a check run; a workflow
+  # that never triggers leaves the three protected contexts pending forever and no PR
+  # can merge again. Do not move these filters up to the `on:` block.
+  #
+  # The three protected contexts (`leak-gate + secrets + harness checks`,
+  # `lint + format`, `unit tests (npm test)`) are never filtered — see
+  # scripts/ci-changed-lanes.mjs for why each exclusion is deliberate.
+  #
+  # Every filter below is written `!= 'false'`, NOT `== 'true'`. If the detect step ever
+  # fails to write an output — a crash, a rename, a guard that stops firing — `== 'true'`
+  # would silently skip the lane, and `test-gate` counts skips as passing, so the whole
+  # matrix would evaporate while the PR stayed green. `!= 'false'` means only an explicit
+  # `false` skips anything; absent, empty, or malformed all RUN the lane. The lane values
+  # must earn a skip, not inherit one.
+  changes:
+    name: Detect changed lanes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      rust: ${{ steps.detect.outputs.rust }}
+      client: ${{ steps.detect.outputs.client }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: List the PR's changed paths
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        # Any failure here must leave changed-paths.txt ABSENT, not partial: the
+        # classifier turns every lane on when it cannot read a list. A push to main
+        # skips this step entirely and therefore runs the full matrix.
+        run: |
+          gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' \
+            > changed-paths.txt || rm -f changed-paths.txt
+      - id: detect
+        run: node scripts/ci-changed-lanes.mjs --paths-from changed-paths.txt
+
   docs-drift:
     name: Docs drift guard
     runs-on: ubuntu-latest
@@ -166,6 +208,8 @@ jobs:
   client-tests:
     name: GUI client tests + build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.client != 'false'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -288,6 +332,10 @@ jobs:
   rust-tests:
     name: Rust tests
     runs-on: ubuntu-latest
+    needs: changes
+    # The costliest lane in the file: an apt toolchain install plus a Cargo build,
+    # for a PR that usually cannot touch either.
+    if: needs.changes.outputs.rust != 'false'
     steps:
       - uses: actions/checkout@v7
       - name: Install Tauri Linux dependencies
@@ -318,6 +366,8 @@ jobs:
   install-smoke:
     name: Clean production install
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code != 'false'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -330,6 +380,11 @@ jobs:
   mutation:
     name: Changed-code mutation (calibration)
     runs-on: ubuntu-latest
+    needs: changes
+    # Advisory and never merge-blocking, but it can hold a runner for the full 45
+    # minutes below — which is what starves other PRs' lanes. Skip it when the diff
+    # cannot contain a mutant.
+    if: needs.changes.outputs.code != 'false'
     continue-on-error: true
     # 45 covers mid-size files; it still cannot finish a scripts/aios.mjs PR
     # (~90 min measured, AIO-540 shrinks it) or umbrella-suite groups on big
@@ -362,6 +417,7 @@ jobs:
     # keep in sync (a lane missed there used to be silently non-blocking under
     # `if: always()`).
     needs:
+      - changes
       - docs-drift
       - context-health
       - constitution
@@ -369,6 +425,7 @@ jobs:
       - lint
       - node-tests
       - client-tests
+      - coverage-shard
       - coverage
       - rust-tests
       - install-smoke
@@ -376,12 +433,22 @@ jobs:
       - name: Require every mandatory lane
         env:
           RESULTS: ${{ toJSON(needs) }}
+        # `skipped` counts as passing because path filtering is what produces it —
+        # but only for lanes listed here, and two entries above exist purely to keep
+        # that from becoming a hole:
+        #   - `changes`: if lane detection FAILS, every filtered lane is skipped. Without
+        #     `changes` in this list the gate would see nothing but skips and pass
+        #     vacuously.
+        #   - `coverage-shard`: `coverage` is skipped when its shards fail, which used to
+        #     surface here as a non-success. Now that skips pass, the shards must be
+        #     judged directly.
+        # `length > 0` stays: an empty needs object must never satisfy the gate.
         run: |
-          if ! jq -e 'length > 0 and all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null; then
+          if ! jq -e 'length > 0 and all(.[]; .result == "success" or .result == "skipped")' <<< "$RESULTS" > /dev/null; then
             echo "one or more mandatory lanes did not succeed:"
             jq . <<< "$RESULTS"
-            jq -r 'to_entries[] | select(.value.result != "success")
+            jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped")
               | "::error::mandatory lane \(.key) result: \(.value.result)"' <<< "$RESULTS"
             exit 1
           fi
-          jq -r 'to_entries[] | "ok: \(.key)"' <<< "$RESULTS"
+          jq -r 'to_entries[] | "\(if .value.result == "skipped" then "skipped (not affected by this diff)" else "ok" end): \(.key)"' <<< "$RESULTS"
