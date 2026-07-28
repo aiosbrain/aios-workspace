@@ -59,40 +59,8 @@ fi
 HARNESS="$TOOLKIT/.harness"
 EXEMPT_BASENAMES=${HARNESS_PRIMARY_EXEMPT:-aios.yaml}
 
-if [ ! -f "$HARNESS/adapters/cursor/normalize.sh" ] || [ ! -f "$HARNESS/hooks/guard-worktree.sh" ] || [ ! -f "$HARNESS/hooks/guard-destructive.sh" ]; then
-  echo "BLOCKED by guard-toolkit-primary: toolkit harness missing at $HARNESS" >&2
-  echo "Fix: clone aios-workspace or set AIOS_TOOLKIT_DIR to a checkout with .harness/." >&2
-  exit 2
-fi
-
-case "$MODE" in
-  pre_command|pre_edit) ;;
-  *) echo "guard-toolkit-primary: unsupported mode '$MODE'" >&2; exit 3 ;;
-esac
-
-INPUT=$(cat 2>/dev/null || true)
-NORMALIZED=$(printf '%s' "$INPUT" | "$HARNESS/adapters/cursor/normalize.sh" "$MODE") || exit 2
-
-# probe <dir> -> "primary <branch>" | "worktree <branch>" | "none"
-probe() {
-  _d=$1
-  _gd=$(git -C "$_d" rev-parse --absolute-git-dir 2>/dev/null) || { echo none; return; }
-  _gd=$(cd "$_gd" 2>/dev/null && pwd -P) || { echo none; return; }
-  _cd=$(git -C "$_d" rev-parse --git-common-dir 2>/dev/null) || { echo none; return; }
-  case "$_cd" in
-    /*) _cd=$(cd "$_cd" 2>/dev/null && pwd -P) ;;
-    *)  _cd=$(cd "$_d" 2>/dev/null && cd "$_cd" 2>/dev/null && pwd -P) ;;
-  esac
-  [ -n "$_cd" ] || { echo none; return; }
-  _br=$(git -C "$_d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
-  if [ "$_gd" = "$_cd" ]; then echo "primary $_br"; else echo "worktree $_br"; fi
-}
-
 # canon <path> -> physical path, resolving symlinks in the deepest existing
 # ancestor (the leaf may not exist yet, e.g. a redirect creating a new file).
-# TOOLKIT is already physical (pwd -P in resolve_toolkit_root), so comparing
-# canonical-to-canonical is what makes the prefix test meaningful: a symlink
-# pointing into the primary must not read as "outside the toolkit".
 canon() {
   _cp=$1
   if [ -d "$_cp" ]; then
@@ -112,6 +80,75 @@ path_under_toolkit() {
     "$TOOLKIT") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+case "$MODE" in
+  pre_command|pre_edit) ;;
+  *) echo "guard-toolkit-primary: unsupported mode '$MODE'" >&2; exit 3 ;;
+esac
+
+INPUT=$(cat 2>/dev/null || true)
+
+# Fast path: if the pending event cannot possibly target the toolkit primary tree,
+# do not require the harness (IC-local edits must never be blocked by a missing
+# sibling checkout's .harness/).
+touches_toolkit_primary() {
+  _cwd=$1
+  _raw=$2
+  case "$_raw" in
+    /*) _p=$_raw ;;
+    *)  _p="$_cwd/$_raw" ;;
+  esac
+  path_under_toolkit "$(canon "$_p")"
+}
+
+if [ "$MODE" = "pre_edit" ]; then
+  _cwd=${WS}
+  _any=0
+  FILE_PATHS=$(printf '%s' "$INPUT" | jq -r '
+    (.tool_input // {}) as $ti |
+    [$ti.file_path, $ti.filePath, $ti.path, $ti.target_file, .file_path, .filePath] |
+    map(select(type == "string" and length > 0)) | unique | .[]' 2>/dev/null) || FILE_PATHS=""
+  if [ -n "$FILE_PATHS" ]; then
+    while IFS= read -r _p || [ -n "$_p" ]; do
+      [ -n "$_p" ] || continue
+      if touches_toolkit_primary "$_cwd" "$_p"; then _any=1; break; fi
+    done <<EOF
+$FILE_PATHS
+EOF
+  fi
+  [ "$_any" = "1" ] || exit 0
+elif [ "$MODE" = "pre_command" ]; then
+  _cmd=$(printf '%s' "$INPUT" | jq -r '.command // .tool_input.command // empty' 2>/dev/null) || _cmd=""
+  [ -n "$_cmd" ] || exit 0
+  _scan=$(printf '%s' "$_cmd" | sed "s|\${AIOS_TOOLKIT_DIR}|$TOOLKIT|g; s|\$AIOS_TOOLKIT_DIR|$TOOLKIT|g")
+  case "$_scan" in
+    *"$TOOLKIT"*) ;;
+    *) exit 0 ;;
+  esac
+fi
+
+if [ ! -f "$HARNESS/adapters/cursor/normalize.sh" ] || [ ! -f "$HARNESS/hooks/guard-worktree.sh" ] || [ ! -f "$HARNESS/hooks/guard-destructive.sh" ]; then
+  echo "BLOCKED by guard-toolkit-primary: toolkit harness missing at $HARNESS" >&2
+  echo "Fix: clone aios-workspace or set AIOS_TOOLKIT_DIR to a checkout with .harness/." >&2
+  exit 2
+fi
+
+NORMALIZED=$(printf '%s' "$INPUT" | "$HARNESS/adapters/cursor/normalize.sh" "$MODE") || exit 2
+
+# probe <dir> -> "primary <branch>" | "worktree <branch>" | "none"
+probe() {
+  _d=$1
+  _gd=$(git -C "$_d" rev-parse --absolute-git-dir 2>/dev/null) || { echo none; return; }
+  _gd=$(cd "$_gd" 2>/dev/null && pwd -P) || { echo none; return; }
+  _cd=$(git -C "$_d" rev-parse --git-common-dir 2>/dev/null) || { echo none; return; }
+  case "$_cd" in
+    /*) _cd=$(cd "$_cd" 2>/dev/null && pwd -P) ;;
+    *)  _cd=$(cd "$_d" 2>/dev/null && cd "$_cd" 2>/dev/null && pwd -P) ;;
+  esac
+  [ -n "$_cd" ] || { echo none; return; }
+  _br=$(git -C "$_d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  if [ "$_gd" = "$_cd" ]; then echo "primary $_br"; else echo "worktree $_br"; fi
 }
 
 block() {
@@ -240,16 +277,13 @@ while IFS= read -r p || [ -n "$p" ]; do
     /*) _abs="$p" ;;
     *)  _abs="$CWD/$p" ;;
   esac
-  _abs=$(cd "$(dirname "$_abs")" 2>/dev/null && pwd -P)/$(basename "$_abs") 2>/dev/null || _abs="$p"
+  _abs=$(canon "$_abs")
   path_under_toolkit "$_abs" || continue
-  pdir=$(dirname "$_abs")
-  set -- $(probe "$pdir"); KIND=${1:-none}; BRANCH=${2:-}
-  [ "$KIND" = "primary" ] || continue
   base=$(basename "$_abs")
   for e in $EXEMPT_BASENAMES; do
     [ "$base" = "$e" ] && continue 2
   done
-  block "editing toolkit primary checkout (branch '$BRANCH')" \
+  block "editing toolkit primary checkout" \
     "Attempted path: $_abs"
 done <<EOF
 $FILE_PATHS

@@ -48,13 +48,13 @@
     ],
     "stop": [
       {
+        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
+        "timeout": 86400
+      },
+      {
         "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/.harness/adapters/cursor/stop-gate.sh\"",
         "timeout": 600,
         "loop_limit": 5
-      },
-      {
-        "command": "/bin/sh \"${CURSOR_PROJECT_DIR}/hooks/run-local-bugbot-gate.sh\" cursor \"${CURSOR_PROJECT_DIR}\"",
-        "timeout": 86400
       }
     ]
   }
