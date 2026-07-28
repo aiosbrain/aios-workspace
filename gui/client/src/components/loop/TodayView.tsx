@@ -4,7 +4,7 @@ import { useConnection, useSession } from "../../state/cockpit";
 import { Skeleton } from "../ui/skeleton";
 import { toast } from "../ui/sonner";
 import { cn } from "../../lib/cn";
-import type { DailyOrientation } from "../../types/protocol";
+import type { AskDetail, DailyOrientation } from "../../types/protocol";
 import {
   askPromptFor,
   buildTodayQueue,
@@ -60,6 +60,84 @@ function rowAnnotation(row: TodayRow): string | null {
   if (row.staleDays) return `${row.staleDays}d stale`;
   if (row.due) return `due ${row.due}`;
   return null;
+}
+
+/** Relative age, so "when was this raised" reads without date arithmetic. */
+function ageOf(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return iso;
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days >= 1) return `${days}d ago`;
+  const hours = Math.floor((Date.now() - then) / 3_600_000);
+  return hours >= 1 ? `${hours}h ago` : "just now";
+}
+
+/**
+ * The expanded row: what this item actually is, in words.
+ *
+ * The row header truncates to stay scannable, and the old detail strip only printed the
+ * evidence PATH — `.aios/loop/asks/asks.ndjson#3e38db57…`, which tells the operator nothing
+ * without opening a file or spending an agent turn. For an ask we fetch the record and render
+ * the body it was raised with; for everything else we at least show the full untruncated
+ * summary. The evidence ref stays, demoted to a footer, because it is still the audit trail.
+ */
+function RowDetail({ row }: { row: TodayRow }) {
+  const { api } = useConnection();
+  const [ask, setAsk] = useState<AskDetail | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const askId = row.askIds[0];
+
+  useEffect(() => {
+    if (!askId) return;
+    let live = true;
+    setState("loading");
+    api
+      .get<AskDetail>(`/api/asks/show?id=${encodeURIComponent(askId)}`)
+      .then((d) => {
+        if (!live) return;
+        setAsk(d);
+        setState("idle");
+      })
+      .catch(() => live && setState("error"));
+    return () => {
+      live = false;
+    };
+  }, [api, askId]);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border-visible px-3 py-2.5">
+      {/* Untruncated title — the header clips long ones to stay scannable. */}
+      <p className="m-0 text-[13px] leading-snug text-foreground">{row.title}</p>
+
+      {state === "loading" && (
+        <p className="m-0 text-[12px] text-muted-foreground">loading detail…</p>
+      )}
+      {state === "error" && (
+        <p className="m-0 text-[12px] text-muted-foreground">
+          couldn&apos;t load the full ask — the evidence ref below still points at it
+        </p>
+      )}
+      {ask?.body && (
+        <p className="m-0 whitespace-pre-wrap text-[12px] leading-relaxed text-muted-foreground">
+          {ask.body}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-muted-foreground">
+        <span>{ask?.kind ?? row.kind}</span>
+        {ask?.severity && <span>{ask.severity}</span>}
+        {ask?.createdAt && <span>raised {ageOf(ask.createdAt)}</span>}
+        {ask?.source && <span>via {ask.source}</span>}
+        {row.due && <span>due {row.due}</span>}
+        <span>[{row.tier}]</span>
+        {row.count > 1 && <span>{row.count} identical items folded here</span>}
+        <span className="opacity-60">
+          {row.path}
+          {row.row ? `#${row.row}` : ""}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function TodayRowView({
@@ -143,24 +221,14 @@ function TodayRowView({
           </button>
         </div>
       </div>
-      {open && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border-visible px-3 py-2 font-mono text-[11px] text-muted-foreground">
-          <span>kind {row.kind}</span>
-          <span>
-            evidence {row.path}
-            {row.row ? `#${row.row}` : ""}
-          </span>
-          <span>[{row.tier}]</span>
-          {row.count > 1 && <span>{row.count} identical items folded into this row</span>}
-        </div>
-      )}
+      {open && <RowDetail row={row} />}
     </li>
   );
 }
 
 export function TodayView() {
   const { api } = useConnection();
-  const { setView, sendMessage } = useSession();
+  const { askInNewChat } = useSession();
   const [data, setData] = useState<DailyOrientation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -214,6 +282,9 @@ export function TodayView() {
       try {
         await api.post("/api/tasks/edit", {
           row_key: row.taskRowKey,
+          // The workspace may hold BOTH tasks.md and tasks-team.md; patch the file this row
+          // actually came from, not whichever one the Tasks panel happens to resolve.
+          path: row.path,
           patch: { status: "done" },
         });
         toast.success("Marked done in tasks.md");
@@ -227,12 +298,13 @@ export function TodayView() {
     [api, load]
   );
 
+  // Always a FRESH chat: splicing the question into whatever conversation is open drags in
+  // unrelated context, and a replayed transcript's socket is closed so the turn is dropped.
   const askAgent = useCallback(
     (row: TodayRow) => {
-      setView("chat");
-      void sendMessage(askPromptFor(row));
+      void askInNewChat(askPromptFor(row));
     },
-    [setView, sendMessage]
+    [askInNewChat]
   );
 
   if (error && !data) {

@@ -98,6 +98,7 @@ import {
 } from "./loop.mjs";
 import {
   resolveTasksFile,
+  resolveTaskFileByRel,
   readTasks,
   derivePushState,
   applyTaskEdit,
@@ -695,6 +696,36 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // GET: full detail for ONE ask, so the Today console can show what an item actually asks for
+  // (title + body + severity + age) inline, instead of making the operator open the raw
+  // .aios/loop/asks/asks.ndjson evidence path or spend an LLM turn asking what a row means.
+  if (url.pathname === "/api/asks/show" && req.method === "GET") {
+    if (url.searchParams.get("token") !== TOKEN) {
+      res.writeHead(401);
+      return res.end("unauthorized");
+    }
+    let id;
+    try {
+      id = validateAskId(url.searchParams.get("id"));
+    } catch (e) {
+      res.writeHead(e.statusCode ?? 400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+    runAsksCli(repo, ["show", id, "--json"]).then((cli) => {
+      if (cli.exitCode !== 0) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: cli.stderr.trim() || "ask not found" }));
+      }
+      try {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(JSON.parse(cli.stdout)));
+      } catch {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "could not parse ask detail" }));
+      }
+    });
+    return;
+  }
   // POST: resolve an ask from the Today console. Delegates to the SAME `aios asks resolve` the
   // terminal uses, so the append-only store, its writer lock, and the audit trail are identical
   // whichever surface acted. Local-only: closing an ask never touches the network.
@@ -782,11 +813,16 @@ const server = http.createServer((req, res) => {
     });
     req.on("end", () => {
       let rowKey = "",
-        patch = {};
+        patch = {},
+        rel = null;
       try {
         const j = JSON.parse(body || "{}");
         rowKey = typeof j.row_key === "string" ? j.row_key : "";
         patch = j.patch && typeof j.patch === "object" ? j.patch : {};
+        // Optional: the file the row actually lives in. The Tasks panel omits it (it renders one
+        // resolved file); the Operator Loop sends it, because a workspace with the tier split
+        // holds rows in BOTH tasks.md and tasks-team.md and the row must be patched where it is.
+        rel = typeof j.path === "string" ? j.path : null;
       } catch {
         /* bad body */
       }
@@ -794,10 +830,17 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: "row_key is required" }));
       }
-      const file = resolveTasksFile(repo);
+      const file = rel ? resolveTaskFileByRel(repo, rel) : resolveTasksFile(repo);
       if (!file) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ ok: false, error: "no tasks.md in this workspace" }));
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: rel
+              ? `not a task file in this workspace: ${rel}`
+              : "no tasks.md in this workspace",
+          })
+        );
       }
       try {
         const content = readFileSync(file.abs, "utf8");

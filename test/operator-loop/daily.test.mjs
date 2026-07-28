@@ -220,6 +220,41 @@ test("calendar uses manifest-window instants, including a UTC date-prefix crosso
   assert.ok(!orientation.blocked.some((item) => item.ref.row === "old"));
 });
 
+test("calendar is TODAY's agenda — a meeting from a previous day never appears", () => {
+  // Field report: the daily listed "Meeting: Alchemy constellation session" from YESTERDAY under
+  // today's calendar. The collection window spans ~24h so changes are caught, which meant every
+  // one of yesterday afternoon's meetings qualified as agenda.
+  const comms = (id, occurredAt) => ({
+    ...sig(
+      "comms",
+      "admin",
+      { path: ".aios/loop/comms/calendar/admin/_.ndjson", row: id, tier: "admin" },
+      `Meeting: ${id}`,
+      { direction: null },
+      occurredAt
+    ),
+    source: "calendar",
+  });
+  const generatedAt = "2026-07-13T12:00:00.000Z";
+  const genMs = Date.parse(generatedAt);
+  // 30h back is a strictly earlier LOCAL day in every timezone (max UTC offset is ±14h, and a
+  // local day is 24h long), so this assertion is TZ-independent — no TZ pinning required.
+  const yesterday = new Date(genMs - 30 * 3_600_000).toISOString();
+  const manifest = mani([comms("yesterday-meeting", yesterday), comms("now-meeting", generatedAt)], {
+    generatedAt,
+    from: new Date(genMs - 36 * 3_600_000).toISOString(),
+    to: generatedAt,
+  });
+
+  const { orientation } = buildDailyOrientation({ manifest, prior: null });
+  assert.deepEqual(
+    orientation.calendar.map((item) => item.ref.row),
+    ["now-meeting"],
+    "a meeting from a previous local day is not today's agenda"
+  );
+  assert.equal(orientation.counts.calendar, 1);
+});
+
 test("email/Slack needing reply are actionable; waiting-on-other remains blocked; chatter drops", () => {
   const comms = (id, source, summary, payload, occurredAt = GEN) => ({
     ...sig(

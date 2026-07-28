@@ -704,6 +704,19 @@ export interface DailyItem {
    */
   overdueDays?: number;
 }
+/** One ask record, as `aios asks show <id> --json` emits it (GET /api/asks/show). */
+export interface AskDetail {
+  id: string;
+  kind: string;
+  severity: "blocker" | "decision" | "fyi";
+  title: string;
+  body: string | null;
+  source: string;
+  tier: LoopTier;
+  createdAt: string;
+  status: string;
+  resolvedAt: string | null;
+}
 export interface TagTotal {
   tag: string;
   durationMin: number;

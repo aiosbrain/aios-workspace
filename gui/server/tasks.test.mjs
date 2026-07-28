@@ -10,6 +10,8 @@ import {
   applyTaskEdit,
   TaskEditError,
   EDITABLE_FIELDS,
+  resolveTaskFileByRel,
+  TASK_FILE_RELS,
 } from "./tasks.mjs";
 
 const TASKS = `---
@@ -171,5 +173,56 @@ test("admin-tier tasks.md: edit still saves locally, badge is blocked (brain nev
     file.rel
   );
   assert.equal(badge.state, "blocked");
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("resolveTaskFileByRel targets the file a row actually lives in, not the resolved default", () => {
+  // A tier-split workspace holds BOTH files. The Operator Loop collects rows from both, but
+  // resolveTasksFile always wins with tasks-team.md — so an edit aimed at a tasks.md row
+  // ("no task row with id 'T19'") failed even though the row was real.
+  const repo = mkdtempSync(path.join(tmpdir(), "tasks-split-"));
+  mkdirSync(path.join(repo, "3-log"), { recursive: true });
+  writeFileSync(path.join(repo, "3-log", "tasks-team.md"), TASKS);
+  writeFileSync(
+    path.join(repo, "3-log", "tasks.md"),
+    TASKS.replace(
+      "| T-02 | Findings report | Riley | in_progress |",
+      "| T19 | Fix the bug | John | todo |"
+    )
+  );
+
+  assert.equal(resolveTasksFile(repo).rel, "3-log/tasks-team.md", "default still prefers team");
+  assert.equal(resolveTaskFileByRel(repo, "3-log/tasks.md").rel, "3-log/tasks.md");
+
+  // The targeted file is the one that actually holds T19.
+  const file = resolveTaskFileByRel(repo, "3-log/tasks.md");
+  const { row } = applyTaskEdit(readFileSync(file.abs, "utf8"), "T19", { status: "done" });
+  assert.equal(row.status, "done");
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("resolveTaskFileByRel is an allowlist — traversal and unknown paths never resolve", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "tasks-allow-"));
+  mkdirSync(path.join(repo, "3-log"), { recursive: true });
+  writeFileSync(path.join(repo, "3-log", "tasks.md"), TASKS);
+
+  // The value arrives from the browser as a signal's evidence ref, so it is untrusted.
+  for (const bad of [
+    "../../etc/passwd",
+    "3-log/../../../etc/passwd",
+    "/etc/passwd",
+    "3-log/secrets.md",
+    "",
+    null,
+    undefined,
+    42,
+  ]) {
+    assert.equal(resolveTaskFileByRel(repo, bad), null, `expected null for ${JSON.stringify(bad)}`);
+  }
+  // An allowlisted path that simply is not present resolves to null, not a write to nowhere.
+  assert.equal(resolveTaskFileByRel(repo, "03-status/tasks.md"), null);
+  assert.ok(TASK_FILE_RELS.includes("3-log/tasks.md"));
+
   rmSync(repo, { recursive: true, force: true });
 });
