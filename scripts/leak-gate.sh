@@ -47,6 +47,11 @@ set -euo pipefail
 set +x
 umask 077
 
+# Scan-integrity clamp, not a workflow preference: refs/replace/* must never change what this
+# gate reads. Set here too because the gate is also invoked standalone (CI, build, promote,
+# timeline), where it never inherits the pre-push hook's environment.
+export GIT_NO_REPLACE_OBJECTS=1
+
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # ── load the confidential term set (never hardcoded in this public repo) ─────

@@ -344,3 +344,84 @@ test("a scanner error is reported as an incomplete scan, not a confirmed leak", 
   assert.doesNotMatch(result.stderr, /found confidential material/i);
   assert.equal(result.marker, "", "the foreign hook must not run after an incomplete scan");
 });
+
+test("push rejects a commit that a replacement ref hides from the gate", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-replace-"));
+  const remote = mkdtempSync(path.join(os.tmpdir(), "aios-pre-push-replace-remote-"));
+  roots.push(repo, remote);
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["init", "-q", "--bare", remote]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "t"]);
+  execFileSync("git", ["-C", repo, "remote", "add", "origin", remote]);
+  mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  mkdirSync(path.join(repo, "scaffold"), { recursive: true });
+  copyFileSync(
+    path.join(TOOLKIT, "scripts", "leak-gate.sh"),
+    path.join(repo, "scripts", "leak-gate.sh")
+  );
+  writeFileSync(path.join(repo, "scaffold", ".keep"), "");
+  writeFileSync(path.join(repo, "README.md"), "safe\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "safe base"]);
+  const safe = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  install(repo);
+
+  mkdirSync(path.join(repo, "docs", "bd"), { recursive: true });
+  writeFileSync(path.join(repo, "docs", "bd", "prospect.md"), "confidential prospect\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "add private brief"]);
+  const protectedCommit = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+
+  // A clean stand-in carrying the SAFE tree, grafted over the protected commit. Git reads the
+  // replacement; git push still transmits the original objects.
+  const standIn = execFileSync(
+    "git",
+    ["-C", repo, "commit-tree", `${safe}^{tree}`, "-p", safe, "-m", "clean"],
+    { encoding: "utf8" }
+  ).trim();
+  execFileSync("git", ["-C", repo, "replace", protectedCommit, standIn]);
+
+  // Guard against a vacuous pass: if the replacement did not take, this test proves nothing.
+  assert.notEqual(
+    execFileSync("git", ["-C", repo, "replace", "-l"], { encoding: "utf8" }).trim(),
+    "",
+    "fixture is vacuous: no replacement ref was created"
+  );
+
+  const push = spawnSync("git", ["-C", repo, "push", "origin", "main"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AIOS_LEAK_TERMS_FILE: "/nonexistent-terms-file",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+    },
+  });
+  assert.notEqual(push.status, 0, "a replacement ref must not hide a protected commit");
+  assert.match(push.stderr, /confidential material/i);
+  const remoteHead = spawnSync("git", ["--git-dir", remote, "rev-parse", "main"], {
+    encoding: "utf8",
+  });
+  assert.notEqual(remoteHead.status, 0, "the blocked push must not create the remote ref");
+});
+
+// Characterization, not RED: pins the decision to scrub the gate's replace-blind override at
+// the boundary where foreign code runs, so preserved hooks see the environment git would give.
+test("preserved hooks do not inherit the gate's replace-blind override", () => {
+  const { repo, hooksDir } = makeRepo();
+  writeFileSync(
+    path.join(hooksDir, "pre-push"),
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "${GIT_NO_REPLACE_OBJECTS-unset}" >> "$CHAIN_MARKER"\n'
+  );
+  chmodSync(path.join(hooksDir, "pre-push"), 0o755);
+
+  install(repo);
+  const result = runHook(repo, hooksDir, { AIOS_ALLOW_UNGATED_PUSH: "1" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.marker, "unset\n");
+});

@@ -21,6 +21,15 @@
 
 set -euo pipefail
 
+# Git replacement refs (refs/replace/*) rewrite what every object read returns, so a graft can
+# show this gate a clean tree while `git push` transmits the ORIGINAL objects — a verdict about
+# content that is not the content being published. Clamp every read below to the true objects.
+# Exported rather than passed per call so reads added later inherit it by construction, and so
+# it reaches the `bash "$gate"` child too. Scrubbed again in run_chained: foreign hooks must see
+# the environment Git would have handed them.
+aios_inherited_no_replace="${GIT_NO_REPLACE_OBJECTS+set}"
+export GIT_NO_REPLACE_OBJECTS=1
+
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$repo_root" ] || exit 0
 
@@ -33,6 +42,15 @@ cat > "$updates_file"
 
 run_chained() {
   local hooks_path hooks_dir common_dir chained
+  local -a chain_env
+  # Our replace-blind clamp is a scan-integrity measure, not a workflow preference. Preserved
+  # hooks run other people's code, so hand them the environment they would have had without
+  # AIOS installed — unless the operator set the variable themselves.
+  if [ -n "$aios_inherited_no_replace" ]; then
+    chain_env=(env)
+  else
+    chain_env=(env -u GIT_NO_REPLACE_OBJECTS)
+  fi
   hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
   if [ -n "$hooks_path" ]; then
     case "$hooks_path" in
@@ -48,7 +66,7 @@ run_chained() {
   fi
   chained="$hooks_dir/pre-push.chained"
   if [ -x "$chained" ]; then
-    "$chained" "$@" < "$updates_file"
+    "${chain_env[@]}" "$chained" "$@" < "$updates_file"
   fi
   return 0
 }
