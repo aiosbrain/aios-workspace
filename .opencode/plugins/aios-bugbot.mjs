@@ -1,9 +1,14 @@
 /**
- * OpenCode adapter for the shared AIOS local Bugbot gate.
+ * OpenCode adapter for the shared AIOS local Bugbot gate — ADVISORY ONLY (AIO-567).
  *
  * This tracked adapter lives in the product repo's otherwise machine-local
  * `.opencode/` directory. Claude, Codex, and Cursor use native project Stop-hook
  * configs; OpenCode's available lifecycle point is `session.status = idle`.
+ *
+ * On idle it runs the shared gate's plain (advisory) invocation — a cheap probe, never a
+ * spawned review — and logs the advisory once per changeset. It NEVER re-prompts the
+ * session and never blocks: blocking verdicts live at merge time (`aios build --merge` /
+ * `aios ship`) and at the PR gates (cloud Bugbot, CodeRabbit, CI).
  */
 
 import { execFile } from "node:child_process";
@@ -13,9 +18,12 @@ import path from "node:path";
 
 const execFileAsync = promisify(execFile);
 const activeSessions = new Set();
-const lastIdleCompletedAt = new Map();
-const DUPLICATE_IDLE_WINDOW_MS = 2_000;
-const GATE_TIMEOUT_MS = 86_400_000;
+// One advisory per unchanged changeset per session — an unchanged nudge on every idle is
+// noise, and noise is how advisories get ignored.
+const lastAdvisoryFingerprint = new Map();
+// The advisory probe is local git work plus one canonical ls-remote; this cap only guards
+// against a wedged child, not a 15-minute review (the Stop path never runs one).
+const GATE_TIMEOUT_MS = 600_000;
 
 export function hardenedGateEnv(source = process.env) {
   const env = { ...source };
@@ -48,32 +56,6 @@ export function hardenedGateEnv(source = process.env) {
   return env;
 }
 
-export function isDuplicateIdleResult(previous, result, now = Date.now()) {
-  return Boolean(
-    (previous?.status === "skipped" ||
-      (previous?.status === "clear" && previous?.verified === true)) &&
-    previous?.fingerprint &&
-    result?.fingerprint &&
-    previous.fingerprint === result.fingerprint &&
-    now - previous.completedAt < DUPLICATE_IDLE_WINDOW_MS
-  );
-}
-
-export async function enqueueContinuation(client, sessionID, reason) {
-  if (typeof client?.session?.promptAsync !== "function") {
-    throw new Error("OpenCode client does not expose session.promptAsync");
-  }
-  const response = await client.session.promptAsync({
-    path: { id: sessionID },
-    body: { parts: [{ type: "text", text: reason }] },
-  });
-  if (response?.error) {
-    const detail = response.error.message || response.error.data || response.error;
-    throw new Error(`OpenCode rejected the Bugbot continuation: ${String(detail)}`);
-  }
-  return response;
-}
-
 function isToolkitRepo(directory) {
   try {
     const pkg = JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8"));
@@ -83,81 +65,51 @@ function isToolkitRepo(directory) {
   }
 }
 
-async function runGate(directory, { probe = false } = {}) {
+async function runAdvisoryGate(directory) {
   const gate = path.join(directory, "hooks", "local-bugbot-gate.mjs");
-  if (!existsSync(gate)) return { status: "error", reason: "required gate script missing" };
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    [gate, "--runtime", "opencode", "--json", ...(probe ? ["--probe"] : [])],
-    {
-      cwd: directory,
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: GATE_TIMEOUT_MS,
-      killSignal: "SIGTERM",
-      env: hardenedGateEnv(),
-    }
-  );
+  if (!existsSync(gate)) {
+    return {
+      status: "advisory",
+      advisory:
+        "[local-bugbot advisory] required gate script missing (hooks/local-bugbot-gate.mjs)",
+    };
+  }
+  // Plain invocation = the gate's advisory mode. Never pass --json/--check-exit here:
+  // those flags select the full (blocking-capable) review sweep for manual/CI use.
+  const { stdout } = await execFileAsync(process.execPath, [gate, "--runtime", "opencode"], {
+    cwd: directory,
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: GATE_TIMEOUT_MS,
+    killSignal: "SIGTERM",
+    env: hardenedGateEnv(),
+  });
   return JSON.parse(stdout);
 }
 
-export const AIOSBugbot = async ({ directory, client }) => {
+export const AIOSBugbot = async ({ directory }) => {
   if (!isToolkitRepo(directory)) return {};
 
-  const claimIdle = (sessionID) => {
+  const handleIdle = async (sessionID) => {
     if (!sessionID || activeSessions.has(sessionID)) return;
     // This claim is synchronous: both OpenCode event APIs share it before either can await.
     activeSessions.add(sessionID);
-    return true;
-  };
-
-  const handleIdle = async (sessionID) => {
-    if (!claimIdle(sessionID)) return;
-
-    let result;
     try {
-      const previous = lastIdleCompletedAt.get(sessionID);
-      if (previous && Date.now() - previous.completedAt < DUPLICATE_IDLE_WINDOW_MS) {
-        const probe = await runGate(directory, { probe: true });
-        if (isDuplicateIdleResult(previous, probe)) return;
+      const result = await runAdvisoryGate(directory);
+      if (!result?.advisory) return;
+      if (result.fingerprint && lastAdvisoryFingerprint.get(sessionID) === result.fingerprint) {
+        return;
       }
-      result = await runGate(directory);
+      if (result.fingerprint) lastAdvisoryFingerprint.set(sessionID, result.fingerprint);
+      console.error(`[aios-bugbot] ${result.advisory}`);
     } catch (error) {
-      result = {
-        status: "error",
-        reason: error instanceof Error ? error.message : String(error),
-      };
+      // Advisory only: a failed probe is logged, never escalated into a block or a
+      // session continuation (that synchronous, session-freezing behavior is the six
+      // incidents AIO-567 removed).
+      console.error(
+        `[aios-bugbot] advisory probe failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       activeSessions.delete(sessionID);
-    }
-
-    const completedAt = Date.now();
-    lastIdleCompletedAt.set(sessionID, {
-      completedAt,
-      fingerprint: result.fingerprint,
-      status: result.status,
-      verified: result.verified === true,
-    });
-
-    if (["clear", "skipped"].includes(result.status)) return;
-
-    const reason =
-      result.reason ||
-      [
-        "Required local Bugbot review failed. Fix it before completing or merging.",
-        result.output && `\nBugbot evidence:\n${result.output}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-    console.error(`[aios-bugbot] ${reason}`);
-
-    // OpenCode's async endpoint acknowledges the enqueue without waiting for the
-    // next agent turn. Await that acknowledgement so delivery errors propagate out
-    // of the idle hook instead of becoming an unobserved completed session.
-    try {
-      await enqueueContinuation(client, sessionID, reason);
-    } catch (error) {
-      console.error(`[aios-bugbot] continuation failed: ${error.message}`);
-      throw error;
     }
   };
 
@@ -167,7 +119,7 @@ export const AIOSBugbot = async ({ directory, client }) => {
       await handleIdle(sessionID);
       return;
     }
-    lastIdleCompletedAt.delete(sessionID);
+    lastAdvisoryFingerprint.delete(sessionID);
   };
 
   return {

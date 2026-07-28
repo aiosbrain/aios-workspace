@@ -106,11 +106,15 @@ they don't recognize.
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never
   weaken the gate to make a commit pass.
-- **Local Bugbot is a completion gate.** `hooks/local-bugbot-gate.mjs` runs from the native
-  Claude, Codex, Cursor, and OpenCode lifecycle adapters. A changed diff must pass local code
-  and security review before completion or merge; Medium-or-higher findings block. Never disable
-  or bypass the hook when it reports a finding or infrastructure failure. OpenCode's upstream
-  lifecycle API is post-idle only, so `aios build`/`aios ship` remains its hard pre-merge gate.
+- **Local Bugbot blocks at merge time; the Stop hook is advisory.** `hooks/local-bugbot-gate.mjs`
+  still runs from the native Claude, Codex, Cursor, and OpenCode lifecycle adapters, but at
+  Stop/idle it only performs a cheap probe and emits a non-blocking advisory ("unreviewed changes
+  will gate at ship/merge") — it never spawns a review and never blocks a session (AIO-567).
+  Blocking verdicts live where scope is one branch/one owner: `aios build --merge` / `aios ship`
+  run the required local code + security review and fail on Medium-or-higher findings, and the PR
+  gates (cloud Bugbot, CodeRabbit, CI) own pushed heads. Manual/CI verification:
+  `node hooks/local-bugbot-gate.mjs --runtime <rt> --json --check-exit` (exit 1 on blocked/error).
+  Never disable or bypass the merge-time gate when it reports a finding or infrastructure failure.
 - **CodeRabbit is current-head and label-gated.** Standard PRs use it only when selected; safety
   PRs require it and the `ready-for-review` label. After any fix push, request a fresh review with
   `@coderabbitai review`. A successful check run without substantive review text is not evidence.
