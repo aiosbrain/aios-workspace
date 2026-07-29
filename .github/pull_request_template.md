@@ -24,11 +24,11 @@ AIOS-Work: <!-- e.g. AIO-72 -->
 - [ ] Secrets validator passes: `validation/check-secrets.sh .`
 - [ ] Leak gate passes: `scripts/leak-gate.sh`
 - [ ] No secrets or admin-tier content in diff
-- [ ] Exact-head Local Bugbot code + security review is clear
+- [ ] At least one substantive current-head cloud Bugbot or CodeRabbit review has no unresolved findings (Local Bugbot is optional)
 - [ ] If safety-sensitive or explicitly selected: `ready-for-review` is applied and current-head CodeRabbit evidence exists
 - [ ] Safety-sensitive PRs use the operator merge gate (never `--auto-merge`)
 
 ## Review summary
 
-<!-- Summarize Local Bugbot, GPT-5.5, and CodeRabbit when required. After a fix push,
-     CodeRabbit must be refreshed with `@coderabbitai review`. -->
+<!-- Summarize current-head cloud Bugbot or CodeRabbit evidence, plus optional Local Bugbot /
+     GPT-5.5 evidence when available. After a fix push, refresh the cloud review. -->
