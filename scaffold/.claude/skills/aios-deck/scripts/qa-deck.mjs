@@ -192,8 +192,34 @@ function checkTokens(sources, baseCssPath, strict) {
   for (const t of baseOnly) finding('a', 'warn', `required token ${t} is only defined by deck-base.css — the theme should own it`);
   for (const t of missingOptional) finding('a', 'warn', `optional theme token ${t} is not defined`);
 
-  const status = missing.length ? 'fail' : (baseOnly.length + missingOptional.length) ? (strict ? 'fail' : 'warn') : 'pass';
-  setCheck('a', status, `${contract.required.length} required / ${contract.optional.length} optional tokens (${contract.source}); ${missing.length} missing`);
+  /* Shape checks. Presence is not enough for tokens whose VALUE has a required
+     form — a wrong shape is defined, so the missing-token check passes, and the
+     component silently renders nothing. --photo-scrim-rgb is the documented
+     worst offender: it is consumed as `rgba(var(--photo-scrim-rgb), 0.88)`, so
+     it must be a bare comma-separated triplet. Write `#060608` there and every
+     photo slide in the deck loses its scrim with no error anywhere. */
+  const shapeBad = [];
+  for (const s of sources) {
+    for (const d of s.decls) {
+      if (!isRootSelector(d.selector)) continue;
+      const v = d.value.trim().replace(/!important\s*$/i, '').trim();
+      if (d.prop === '--photo-scrim-rgb' && !/^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}$/.test(v)) {
+        shapeBad.push({ prop: d.prop, v, label: s.label,
+          why: 'must be a bare RGB triplet like `6, 6, 8` — it is consumed inside rgba(), so a hex or a colour name silently breaks every photo slide' });
+      }
+      if ((d.prop === '--weight-display' || d.prop === '--weight-heading') && !/^(?:[1-9]00|normal|bold)$/.test(v)) {
+        shapeBad.push({ prop: d.prop, v, label: s.label, why: 'must be a CSS font-weight (100-900, normal, bold)' });
+      }
+      if (d.prop === '--accent-bar-height' && !/^\d+(?:\.\d+)?(?:px|rem|em|vh|vw)$/.test(v)) {
+        shapeBad.push({ prop: d.prop, v, label: s.label, why: 'must be a CSS length with a unit' });
+      }
+    }
+  }
+  for (const b of shapeBad) finding('a', 'fail', `theme token ${b.prop} has the wrong shape (\`${b.v}\`) — ${b.why}`, { file: b.label });
+
+  const status = (missing.length || shapeBad.length) ? 'fail'
+    : (baseOnly.length + missingOptional.length) ? (strict ? 'fail' : 'warn') : 'pass';
+  setCheck('a', status, `${contract.required.length} required / ${contract.optional.length} optional tokens (${contract.source}); ${missing.length} missing, ${shapeBad.length} malformed`);
 }
 
 /* --------------------------------------- (b) hardcoded colour outside :root */
