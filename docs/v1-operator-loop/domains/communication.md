@@ -1,4 +1,4 @@
-# Domain spec — Communication (Slack, email, calendar, gog-cli)
+# Domain spec — Communication activity (Slack, email, calendar, Linear)
 
 Governed by [`ENGINEERING-CONSTITUTION.md`](../../ENGINEERING-CONSTITUTION.md). Feeds the [Operator Loop](../README.md).
 
@@ -24,6 +24,15 @@ The loop needs to know what the operator communicated and what's waiting on some
   `slack:<conversation-id>:<message-ts>`. Slack does not expose unread markers on every returned
   conversation type; missing state is skipped rather than guessed. The manual script remains
   available, while recording owner daily runs invoke it automatically.
+- **Linear query connector (KEEP) + activity adapter**:
+  `.claude/descriptors/skills/linear-direct/linear-query.mjs` remains the sole Linear API/auth
+  implementation. `linear-activity-pull.mjs` invokes that existing query, then appends the viewer's
+  open assigned issues as channel-less admin records. The query paginates to a bounded safety cap;
+  records use stable `linear:<issue-id>` identity, one observation revision per day, and explicit
+  tombstones when an issue is completed or unassigned. The comms source folds those revisions
+  last-write-wins, so only current assignments render. This is a visibility overlay only: canonical
+  task updates remain in the Linear/PM connector surfaces rather than being written back from
+  comms activity.
 
 ### Enriched adapter-observation record (AIO-387)
 
@@ -46,7 +55,7 @@ one keyed item set; see `test/operator-loop/inbox-observations-dualread.test.mjs
 
 ### Automatic recording-daily preamble (AIO-366)
 
-Before C1 collection, a recording owner daily runs Granola, GOG, and Slack concurrently through
+Before C1 collection, a recording owner daily runs Granola, GOG, Slack, and Linear concurrently through
 `src/operator-loop/connectors.ts`. Each subprocess has its own deadline and fail-open result, so
 render always proceeds from whatever is on disk. Connector output is isolated from stdout.
 `--manifest`, `--as`, `--no-record`, bare `--json`, and `--no-connectors` do not pull.
@@ -93,11 +102,12 @@ residual is the labelled live-verification step in
 **post-Jul-29** and out of scope here.
 
 ## Signal contract (emitted to C1)
-`{ kind: "comms", source: "slack|email|calendar", tier, occurredAt, ref: <message/event id>, payload: { channel, direction, summary, waitingOn?, dueAt? } }`
+`{ kind: "comms", source: "slack|email|calendar|linear", tier, occurredAt, ref: <message/event id>, payload: { channel, direction, summary, waitingOn?, dueAt? } }`
 
 ## Acceptance
-- Daily loop renders calendar agenda and inbound email/Slack needing-reply records as distinct
-  typed sections; comms waiting on another person remain blockers and directionless chatter drops.
+- Daily loop renders calendar agenda, inbound email/Slack needing-reply records, and assigned
+  Linear activity as typed items; comms waiting on another person remain blockers and
+  directionless chatter drops.
 - Notification layer fires a tier-safe Slack message on a configured loop event, with the triggering evidence referenced.
 - Zero admin/private content reaches any outbound channel (verifier-enforced).
 
@@ -114,6 +124,10 @@ Clean TS under `src/operator-loop/`:
   per-tier / per-channel synthetic path (`.aios/loop/comms/<source>/<tier>/<channel>.ndjson`) with
   the message id as `row` — so a raw id reused across channels/sources never collapses to the same
   `path + row + tier`, and records are deduped on that key.
+  Slack adapters put the display label in `channel` and the stable Slack conversation ID in
+  `channelId`. Authorization resolves the ID first, then supports an explicitly configured label
+  for backward compatibility. This keeps new configuration on stable IDs without invalidating
+  personal create-only configs during `aios update`.
 - **Outbound** — `comms/detectors.ts` derives typed `NotificationEvent`s (decision Type 2/3, scope
   change, task assignment, deliverable status, stale inbox) from C1 signals; `comms/sender.ts`
   `dispatchOnEvent` gates before any format/send. Order: (0) **trigger gate** — when `sender.on`

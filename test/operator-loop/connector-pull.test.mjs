@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 
 import { dailyConnectorCommands, pullDailyConnectors } from "../../dist/operator-loop/index.js";
@@ -12,6 +13,8 @@ import {
   collectSlackUnread,
   resolveSlackToken,
 } from "../../scaffold/.claude/descriptors/skills/slack-personal/slack-activity-pull.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function adapters() {
   const root = mkdtempSync(path.join(tmpdir(), "aio-366-connectors-"));
@@ -34,17 +37,26 @@ function fakeChild() {
   return child;
 }
 
-test("daily connector definitions retain all three manual adapters and today's Granola bound", () => {
+test("daily connector definitions retain all four manual adapters and today's Granola bound", () => {
   const root = adapters();
   const commands = dailyConnectorCommands(root, new Date("2026-07-13T23:59:59Z"));
   assert.deepEqual(
     commands.map((command) => command.name),
-    ["granola", "gog", "slack"]
+    ["granola", "gog", "slack", "linear"]
   );
   assert.match(commands[0].file, /granola-direct\/granola-pull\.mjs$/);
   assert.deepEqual(commands[0].args.slice(-2), ["--since", "2026-07-13"]);
   assert.match(commands[1].file, /gog-activity\/gog-activity-pull\.mjs$/);
   assert.match(commands[2].file, /slack-personal\/slack-activity-pull\.mjs$/);
+  assert.match(commands[3].file, /linear-direct\/linear-activity-pull\.mjs$/);
+});
+
+test("the automatic Linear activity adapter ships in the scaffold", () => {
+  const linear = dailyConnectorCommands(path.join(ROOT, "scaffold")).find(
+    (command) => command.name === "linear"
+  );
+  assert.ok(linear);
+  assert.equal(existsSync(linear.file), true);
 });
 
 test("connector phase starts all adapters concurrently and settles each failure/timeout independently", async () => {
@@ -53,7 +65,13 @@ test("connector phase starts all adapters concurrently and settles each failure/
   const credentialMarker = ["fixture", "credential", "marker"].join("-");
   const spawn = (_command, args, options) => {
     const file = args[0];
-    const name = file.includes("granola-") ? "granola" : file.includes("gog-") ? "gog" : "slack";
+    const name = file.includes("granola-")
+      ? "granola"
+      : file.includes("gog-")
+        ? "gog"
+        : file.includes("slack-")
+          ? "slack"
+          : "linear";
     started.push(name);
     assert.equal(options.stdio, "ignore", "child output cannot contaminate the daily surface");
     assert.equal(options.env.AIOS_API_KEY, credentialMarker, "credentials ride in env, never argv");
@@ -61,6 +79,7 @@ test("connector phase starts all adapters concurrently and settles each failure/
     const child = fakeChild();
     if (name === "granola") queueMicrotask(() => child.emit("close", 7, null));
     if (name === "slack") setTimeout(() => child.emit("close", 0, null), 5);
+    if (name === "linear") queueMicrotask(() => child.emit("close", 0, null));
     // GOG deliberately never closes. Its own 20ms timer must release the phase.
     return child;
   };
@@ -68,10 +87,14 @@ test("connector phase starts all adapters concurrently and settles each failure/
   const pending = pullDailyConnectors({
     root,
     credentials: { apiKey: credentialMarker },
-    timeouts: { granola: 100, gog: 20, slack: 100 },
+    timeouts: { granola: 100, gog: 20, slack: 100, linear: 100 },
     spawn,
   });
-  assert.deepEqual(started, ["granola", "gog", "slack"], "all start before any result is awaited");
+  assert.deepEqual(
+    started,
+    ["granola", "gog", "slack", "linear"],
+    "all start before any result is awaited"
+  );
 
   const result = await pending;
   assert.deepEqual(
@@ -80,6 +103,7 @@ test("connector phase starts all adapters concurrently and settles each failure/
       { name: "granola", status: "failed" },
       { name: "gog", status: "timed_out" },
       { name: "slack", status: "ok" },
+      { name: "linear", status: "ok" },
     ]
   );
   assert.ok(
@@ -101,7 +125,7 @@ test("missing connector adapters are explicit skips and never reject the phase",
   assert.equal(spawned, 0);
   assert.deepEqual(
     result.connectors.map((connector) => connector.status),
-    ["skipped", "skipped", "skipped"]
+    ["skipped", "skipped", "skipped", "skipped"]
   );
 });
 
@@ -157,6 +181,7 @@ test("Slack unread scan emits only newer inbound user messages from authoritativ
     occurredAt: "1970-01-01T00:01:41.000Z",
     ref: "slack:C-ACTION:101.000001",
     channel: "#client-ops",
+    channelId: "C-ACTION",
     direction: "inbound",
     summary: "Slack needing reply in #client-ops: Need this by 4pm please",
     waitingOn: "me",

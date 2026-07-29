@@ -95,6 +95,7 @@ const CONNECTOR_PATHS = {
   granola: ["granola-direct", "granola-pull.mjs"],
   gog: ["gog-activity", "gog-activity-pull.mjs"],
   slack: ["slack-personal", "slack-activity-pull.mjs"],
+  linear: ["linear-direct", "linear-activity-pull.mjs"],
 };
 
 function seedConnectorStubs(dir, bodies = {}) {
@@ -462,14 +463,14 @@ test("AIO-366: recording owner daily completes all connector pulls before C1 col
   const result = run(dir, ["--record", "--json"]);
   assert.equal(result.code, 0, result.stderr);
   const orientation = JSON.parse(result.stdout);
-  assert.equal(invocationCount(dir), 3, "Granola, GOG, and Slack adapters all ran");
+  assert.equal(invocationCount(dir), 4, "Granola, GOG, Slack, and Linear adapters all ran");
   const refs = orientation.commsNeedingReply
     .filter((item) => item.kind === "comms")
     .map((item) => item.ref.row)
     .sort();
   assert.deepEqual(
     refs,
-    ["stub:gog", "stub:granola", "stub:slack"],
+    ["stub:gog", "stub:granola", "stub:linear", "stub:slack"],
     "activity written by every connector was present when runDaily collected"
   );
 });
@@ -486,6 +487,7 @@ appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(na
     granola: `${markerScript("granola")}process.exit(9);\n`,
     gog: `${markerScript("gog")}setInterval(() => {}, 1000);\n`,
     slack: markerScript("slack"),
+    linear: markerScript("linear"),
   });
   const result = run(dir, ["--record", "--json"], { AIOS_LOOP_CONNECTOR_TIMEOUT_MS: "300" });
   assert.equal(result.code, 0, result.stderr);
@@ -493,15 +495,11 @@ appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(na
   assert.ok(Array.isArray(orientation.changed));
   assert.ok(Array.isArray(orientation.blocked));
   assert.ok(Array.isArray(orientation.owedToday));
-  assert.equal(
-    invocationCount(dir),
-    3,
-    "a failed/slow adapter never prevents the others from running"
-  );
+  assert.equal(invocationCount(dir), 4, "connector failures stay isolated");
 });
 
 test("AIO-366: inspection/projection/opt-out paths never invoke connectors", () => {
-  const dir = liveConnectorWorkspace({ granola: "", gog: "", slack: "" });
+  const dir = liveConnectorWorkspace({ granola: "", gog: "", slack: "", linear: "" });
   const manifestPath = path.join(dir, "manifest.json");
   writeFileSync(manifestPath, JSON.stringify({ ...MANIFEST, signals: [], excluded: [] }));
   const noPullCases = [
@@ -535,5 +533,5 @@ appendFileSync(path.join(root, "connector-invocations.log"), ${JSON.stringify(na
   const recording = run(dir, ["--record", "--json"]);
   assert.equal(recording.code, 0, recording.stderr);
   JSON.parse(recording.stdout);
-  assert.equal(invocationCount(dir), 3);
+  assert.equal(invocationCount(dir), 4);
 });

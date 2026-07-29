@@ -79,15 +79,16 @@ export function normalizeSlackMessage(message, conversation, selfUserId, tier = 
   const text = oneLine(message.text);
   const channelId = typeof conversation?.id === "string" ? conversation.id : null;
   if (!occurredAt || !text || !channelId) return null;
-  const channel = channelLabel(conversation);
+  const label = channelLabel(conversation);
   return {
     source: "slack",
     tier,
     occurredAt,
     ref: `slack:${channelId}:${message.ts}`,
-    channel,
+    channel: label,
+    channelId,
     direction: "inbound",
-    summary: `Slack needing reply in ${channel}: ${text}`,
+    summary: `Slack needing reply in ${label}: ${text}`,
     waitingOn: "me",
   };
 }

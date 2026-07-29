@@ -1,5 +1,5 @@
 {
-  "_comment": "Slack per-channel tier map for the Operator Loop comms seam. Nothing auto-dispatches until you fill in real channel names under \"channels\" below — an unlisted channel is unresolvable (default-deny). Worked example: docs/v1-operator-loop/domains/comms-config.example.json.",
+  "_comment": "Slack per-channel tier map for the Operator Loop comms seam. Nothing auto-dispatches until you fill in stable Slack conversation IDs under \"channels\" below — an unlisted channel is unresolvable (default-deny). Existing name-keyed entries remain supported for compatibility. Worked example: docs/v1-operator-loop/domains/comms-config.example.json.",
   "_docs": "docs/v1-operator-loop/domains/comms-config.example.json",
   "lookbackHours": 168,
   "sender": {

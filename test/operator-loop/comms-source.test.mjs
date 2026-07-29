@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { collect, runDaily, verifyLedger } from "../../dist/operator-loop/index.js";
@@ -178,6 +178,31 @@ test("comms source (H2): with NO channel map, a channel-backed record self-repor
   assert.equal(m.excluded.filter((e) => /unlisted channel "#eng"/.test(e.reason)).length, 1);
 });
 
+test("Slack authorization prefers stable IDs and preserves configured label compatibility", () => {
+  const record = {
+    source: "slack",
+    tier: "admin",
+    occurredAt: "2026-07-01T12:00:00Z",
+    ref: "slack:C-ACTION:101",
+    channel: "#client-ops",
+    channelId: "C-ACTION",
+    summary: "Needs reply",
+  };
+
+  const idRoot = workspace();
+  writeCommsConfig(idRoot, { channels: { "C-ACTION": "admin" } });
+  writeActivity(idRoot, [record]);
+  const byId = collect({ root: idRoot, cadence: "weekly", now: NOW });
+  assert.equal(byId.signals[0]?.payload.channel, "#client-ops");
+  assert.equal(byId.signals[0]?.ref.path, ".aios/loop/comms/slack/admin/C-ACTION.ndjson");
+
+  const labelRoot = workspace();
+  writeCommsConfig(labelRoot, { channels: { "#client-ops": "admin" } });
+  writeActivity(labelRoot, [record]);
+  const byLabel = collect({ root: labelRoot, cadence: "weekly", now: NOW });
+  assert.equal(byLabel.signals[0]?.payload.channel, "#client-ops");
+});
+
 test("comms source (M1): emitted refs are collision-proof and resolve by exact path+row+tier under verifyLedger", async () => {
   const root = workspace();
   // Two channels on the same tier, both listed. Two records reuse the SAME raw id on different
@@ -268,4 +293,77 @@ test("daily loop: an external-tier comms blocker is hidden from a team audience 
   const team = runDaily({ root, now: NOW, record: false, audience: "team" });
   assert.equal(team.commsNeedingReply.filter((i) => i.kind === "comms").length, 0);
   assert.equal(team.counts.withheld, 1);
+});
+
+test("Linear activity remains source-identified and appears in the owner's blocked queue", () => {
+  const root = workspace();
+  writeActivity(root, [
+    {
+      source: "linear",
+      tier: "admin",
+      occurredAt: "2026-07-01T20:00:00Z",
+      ref: "linear:issue-631:2026-07-01T20:00:00Z",
+      direction: "inbound",
+      summary: "Linear AIO-631 · Backlog: Confirm policy",
+      waitingOn: "me",
+    },
+  ]);
+
+  const manifest = collect({ root, cadence: "daily", now: NOW });
+  const signal = manifest.signals.find((candidate) => candidate.ref.row.startsWith("linear:"));
+  assert.equal(signal?.source, "linear");
+
+  const orientation = runDaily({ root, now: NOW, record: false });
+  assert.equal(
+    orientation.blocked.some((item) => item.ref.row.startsWith("linear:")),
+    true
+  );
+});
+
+test("Linear projection folds revisions and tombstones to current assigned state", () => {
+  const root = workspace();
+  const base = {
+    source: "linear",
+    tier: "admin",
+    ref: "linear:issue-631",
+    active: true,
+    waitingOn: "me",
+  };
+  writeActivity(root, [
+    {
+      ...base,
+      occurredAt: "2026-07-01T18:00:00Z",
+      revision: "rev-1",
+      summary: "Linear AIO-631 · Backlog: Confirm policy",
+    },
+    {
+      ...base,
+      occurredAt: "2026-07-01T19:00:00Z",
+      revision: "rev-2",
+      summary: "Linear AIO-631 · In Progress: Confirm policy",
+    },
+  ]);
+
+  const current = runDaily({ root, now: NOW, record: false });
+  const blockers = current.blocked.filter((item) => item.ref.row === "linear:issue-631");
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0].summary, /In Progress/);
+
+  appendFileSync(
+    path.join(root, "1-inbox", "comms", "activity.jsonl"),
+    `${JSON.stringify({
+      source: "linear",
+      tier: "admin",
+      occurredAt: "2026-07-01T20:00:00Z",
+      ref: "linear:issue-631",
+      revision: "absent@2026-07-01",
+      active: false,
+      summary: "Linear AIO-631 · In Progress: Confirm policy",
+    })}\n`
+  );
+  const retracted = runDaily({ root, now: NOW, record: false });
+  assert.equal(
+    retracted.blocked.some((item) => item.ref.row === "linear:issue-631"),
+    false
+  );
 });
