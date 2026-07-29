@@ -1,11 +1,10 @@
 {
   "lookbackHours": 168,
   "activityPath": "1-inbox/comms/activity.jsonl",
-  "sender": { "channel": "#loop-events", "on": ["decision", "scope-change", "task-assignment"] },
-  "slack": { "defaultChannel": "#team-general" },
+  "sender": { "channel": "C0123456789", "on": ["decision", "scope-change", "task-assignment"] },
+  "slack": { "defaultChannel": "C0123456789" },
   "channels": {
-    "#loop-events": "team",
-    "#team-general": "team",
-    "#client-updates": "external"
+    "C0123456789": "team",
+    "C0987654321": "external"
   }
 }

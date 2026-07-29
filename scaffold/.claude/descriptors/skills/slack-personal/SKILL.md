@@ -70,9 +70,9 @@ slack react  --target <D|C> --ts <ts> --emoji white_check_mark
 
 A recording owner `aios loop daily` also runs the dependency-free unread adapter before collect.
 It scans conversation objects that expose an authoritative `last_read` marker and appends inbound
-unread messages to `1-inbox/comms/activity.jsonl` as admin-tier records. Its `channel` field is the
-stable Slack conversation ID used by `.aios/comms-config.json`; the readable channel/DM label stays
-in the summary. The adapter remains
+unread messages to `1-inbox/comms/activity.jsonl` as admin-tier records. Its `channelId` field is
+the stable Slack conversation ID preferred by `.aios/comms-config.json`; `channel` retains the
+readable label, and existing explicitly configured label keys remain compatible. The adapter remains
 manually invokable:
 
 ```bash

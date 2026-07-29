@@ -8,28 +8,33 @@ import { normalizeLinearIssues } from "../scaffold/.claude/descriptors/skills/li
 import * as linearActivity from "../scaffold/.claude/descriptors/skills/linear-direct/linear-activity-pull.mjs";
 
 test("normalizes viewer-assigned open Linear issues into admin activity revisions", () => {
-  const records = normalizeLinearIssues({
-    viewer: {
-      assignedIssues: {
-        nodes: [
-          {
-            id: "issue-631",
-            identifier: "AIO-631",
-            title: "Confirm Q3 travel expense policy with finance",
-            updatedAt: "2026-07-29T09:15:00.000Z",
-            state: { name: "Backlog" },
-          },
-        ],
+  const records = normalizeLinearIssues(
+    {
+      viewer: {
+        assignedIssues: {
+          nodes: [
+            {
+              id: "issue-631",
+              identifier: "AIO-631",
+              title: "Confirm Q3 travel expense policy with finance",
+              updatedAt: "2026-07-27T09:15:00.000Z",
+              state: { name: "Backlog" },
+            },
+          ],
+        },
       },
     },
-  });
+    { observedAt: "2026-07-29T09:15:00.000Z" }
+  );
 
   assert.deepEqual(records, [
     {
       source: "linear",
       tier: "admin",
       occurredAt: "2026-07-29T09:15:00.000Z",
-      ref: "linear:issue-631:2026-07-29T09:15:00.000Z",
+      ref: "linear:issue-631",
+      revision: "2026-07-27T09:15:00.000Z@2026-07-29",
+      active: true,
       summary: "Linear AIO-631 · Backlog: Confirm Q3 travel expense policy with finance",
       waitingOn: "me",
     },
@@ -44,14 +49,16 @@ test("provides an idempotent activity writer for Linear revisions", () => {
     source: "linear",
     tier: "admin",
     occurredAt: "2026-07-29T09:15:00.000Z",
-    ref: "linear:issue-631:2026-07-29T09:15:00.000Z",
+    ref: "linear:issue-631",
+    revision: "2026-07-29T09:00:00.000Z@2026-07-29",
+    active: true,
     summary: "Linear AIO-631 · Backlog: Confirm policy",
     waitingOn: "me",
   };
   const revised = {
     ...first,
     occurredAt: "2026-07-29T10:15:00.000Z",
-    ref: "linear:issue-631:2026-07-29T10:15:00.000Z",
+    revision: "2026-07-29T10:00:00.000Z@2026-07-29",
     summary: "Linear AIO-631 · In Progress: Confirm policy",
   };
 
@@ -98,6 +105,48 @@ test("pulls through the existing Linear query connector before writing activity"
   assert.equal(result.records.length, 1);
   assert.equal(result.written, 1);
   assert.match(readFileSync(activityPath, "utf8"), /"source":"linear"/);
+});
+
+test("emits a tombstone when a previously assigned issue is no longer returned", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-tombstone-"));
+  const activityPath = path.join(repo, "1-inbox", "comms", "activity.jsonl");
+  const pages = [
+    {
+      viewer: {
+        assignedIssues: {
+          nodes: [
+            {
+              id: "issue-631",
+              identifier: "AIO-631",
+              title: "Confirm policy",
+              updatedAt: "2026-07-27T09:00:00.000Z",
+              state: { name: "Backlog" },
+            },
+          ],
+        },
+      },
+    },
+    { viewer: { assignedIssues: { nodes: [] } } },
+  ];
+  const query = () => pages.shift();
+
+  await linearActivity.pullLinearActivity({
+    repo,
+    activityPath,
+    now: new Date("2026-07-29T09:00:00.000Z"),
+    query,
+  });
+  const result = await linearActivity.pullLinearActivity({
+    repo,
+    activityPath,
+    now: new Date("2026-07-29T10:00:00.000Z"),
+    query,
+  });
+
+  assert.equal(result.written, 1);
+  assert.equal(result.records[0].ref, "linear:issue-631");
+  assert.equal(result.records[0].active, false);
+  assert.equal(result.records[0].waitingOn, undefined);
 });
 
 test("exposes the manual Linear activity command used by the daily orchestrator", () => {

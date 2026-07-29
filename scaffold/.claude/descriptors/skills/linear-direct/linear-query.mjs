@@ -2,62 +2,80 @@
 /**
  * linear-query.mjs — run a Linear GraphQL query with your personal API key.
  *
- * Our own Linear connector (Linear's official MCP is OAuth-only). Calls the public
- * GraphQL API directly. Endpoint/auth verified against https://linear.app/developers
- * on 2026-06-14:  POST https://api.linear.app/graphql  ·  Authorization: <api-key>
- * (personal keys are sent raw, not as a Bearer token).
- *
- * The key is resolved locally (env → dotenvx → .env); never printed, never leaves
- * this machine.
- *
- *   node .claude/skills/linear-direct/linear-query.mjs [--query '<graphql>'] [--repo PATH]
- *   (default query: your assigned, open issues)
+ * The default query paginates every open issue assigned to the authenticated viewer. An explicit
+ * --query remains a single generic GraphQL request. Credentials resolve locally and are never
+ * printed or passed in argv.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  queryAssignedOpenIssues,
+  requestLinear,
+} from "./linear-query-client.mjs";
 
-const API = "https://api.linear.app/graphql";
-const argv = process.argv.slice(2);
-const flag = (n, d = null) => { const i = argv.indexOf(n); return i !== -1 ? argv[i + 1] : d; };
-const repo = path.resolve(flag("--repo", process.cwd()));
+function flag(argv, name, fallback = null) {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1] : fallback;
+}
 
-const DEFAULT_QUERY = `{
-  viewer {
-    name
-    assignedIssues(first: 25, filter: { state: { type: { neq: "completed" } } }) {
-      nodes { id identifier title updatedAt state { name } priorityLabel url }
-    }
-  }
-}`;
-const query = flag("--query", DEFAULT_QUERY);
-
-function resolveKey() {
-  if (process.env.LINEAR_API_KEY) return process.env.LINEAR_API_KEY;
+export function resolveLinearKey({
+  repo,
+  env = process.env,
+  execFile = execFileSync,
+} = {}) {
+  if (env.LINEAR_API_KEY) return env.LINEAR_API_KEY;
   const envPath = path.join(repo, ".env");
   if (existsSync(envPath)) {
     try {
-      const out = execFileSync("dotenvx", ["get", "LINEAR_API_KEY", "-f", envPath], { cwd: repo, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+      const out = execFile("dotenvx", ["get", "LINEAR_API_KEY", "-f", envPath], {
+        cwd: repo,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
       if (out) return out;
-    } catch { /* fall through */ }
+    } catch {
+      // Fall through to plain dotenv parsing for unencrypted local files.
+    }
     for (const line of readFileSync(envPath, "utf8").split("\n")) {
-      const m = line.match(/^\s*LINEAR_API_KEY\s*=\s*(.+)\s*$/);
-      if (m) return m[1].replace(/^["']|["']$/g, "");
+      const match = line.match(/^\s*LINEAR_API_KEY\s*=\s*(.+)\s*$/);
+      if (match) return match[1].replace(/^["']|["']$/g, "");
     }
   }
-  console.error("linear-query: no LINEAR_API_KEY found (env or .env). Connect Linear first.");
-  process.exit(1);
+  throw new Error("no LINEAR_API_KEY found (env or .env). Connect Linear first");
 }
 
-const res = await fetch(API, {
-  method: "POST",
-  headers: { Authorization: resolveKey(), "Content-Type": "application/json" },
-  body: JSON.stringify({ query }),
-});
-const json = await res.json().catch(() => null);
-if (!res.ok || (json && json.errors)) {
-  console.error(`linear-query: request failed${json && json.errors ? " — " + json.errors.map((e) => e.message).join("; ") : ` (HTTP ${res.status})`}`);
-  process.exit(1);
+export async function queryAssignedOpenIssuesForRepo(
+  repo,
+  { env = process.env, fetchImpl = fetch } = {}
+) {
+  return queryAssignedOpenIssues({
+    apiKey: resolveLinearKey({ repo, env }),
+    fetchImpl,
+  });
 }
-console.log(JSON.stringify(json.data, null, 2));
+
+export async function main(
+  argv = process.argv.slice(2),
+  { env = process.env, fetchImpl = fetch } = {}
+) {
+  const repo = path.resolve(flag(argv, "--repo", process.cwd()));
+  const query = flag(argv, "--query");
+  const apiKey = resolveLinearKey({ repo, env });
+  const data = query
+    ? await requestLinear({ query, apiKey, fetchImpl })
+    : await queryAssignedOpenIssues({ apiKey, fetchImpl });
+  console.log(JSON.stringify(data, null, 2));
+  return data;
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isMain) {
+  main().catch((error) => {
+    console.error(`linear-query: ${error instanceof Error ? error.message : "request failed"}`);
+    process.exitCode = 1;
+  });
+}

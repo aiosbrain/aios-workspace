@@ -44,7 +44,8 @@ node .claude/descriptors/skills/linear-direct/linear-activity-pull.mjs --repo "$
 ```
 
 These records surface work in the daily brief; they do not replace Linear as task authority or
-claim GUI writeback.
+claim GUI writeback. The connector paginates assigned work and projects current state with stable
+issue identities and tombstones, so completed or unassigned work does not remain in the brief.
 
 ## Connect / troubleshoot
 

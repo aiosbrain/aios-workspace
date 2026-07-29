@@ -27,9 +27,12 @@ The loop needs to know what the operator communicated and what's waiting on some
 - **Linear query connector (KEEP) + activity adapter**:
   `.claude/descriptors/skills/linear-direct/linear-query.mjs` remains the sole Linear API/auth
   implementation. `linear-activity-pull.mjs` invokes that existing query, then appends the viewer's
-  open assigned issues as channel-less admin records. Each revision is idempotent by
-  `linear:<issue-id>:<updatedAt>`. This is a visibility overlay only: canonical task updates remain
-  in the Linear/PM connector surfaces rather than being written back from comms activity.
+  open assigned issues as channel-less admin records. The query paginates to a bounded safety cap;
+  records use stable `linear:<issue-id>` identity, one observation revision per day, and explicit
+  tombstones when an issue is completed or unassigned. The comms source folds those revisions
+  last-write-wins, so only current assignments render. This is a visibility overlay only: canonical
+  task updates remain in the Linear/PM connector surfaces rather than being written back from
+  comms activity.
 
 ### Enriched adapter-observation record (AIO-387)
 
@@ -121,8 +124,10 @@ Clean TS under `src/operator-loop/`:
   per-tier / per-channel synthetic path (`.aios/loop/comms/<source>/<tier>/<channel>.ndjson`) with
   the message id as `row` — so a raw id reused across channels/sources never collapses to the same
   `path + row + tier`, and records are deduped on that key.
-  Slack adapters put the stable Slack conversation ID in `channel`; display labels remain in the
-  summary. This keeps the authorization key aligned with `.aios/comms-config.json`.
+  Slack adapters put the display label in `channel` and the stable Slack conversation ID in
+  `channelId`. Authorization resolves the ID first, then supports an explicitly configured label
+  for backward compatibility. This keeps new configuration on stable IDs without invalidating
+  personal create-only configs during `aios update`.
 - **Outbound** — `comms/detectors.ts` derives typed `NotificationEvent`s (decision Type 2/3, scope
   change, task assignment, deliverable status, stale inbox) from C1 signals; `comms/sender.ts`
   `dispatchOnEvent` gates before any format/send. Order: (0) **trigger gate** — when `sender.on`

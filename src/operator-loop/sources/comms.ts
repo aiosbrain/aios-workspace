@@ -31,10 +31,12 @@ interface CommsActivityRecord {
   occurredAt?: unknown;
   ref?: unknown; // message / event id
   channel?: unknown;
+  channelId?: unknown; // stable provider identifier; channel remains the display label
   direction?: unknown; // "inbound" | "outbound"
   summary?: unknown;
   waitingOn?: unknown;
   dueAt?: unknown;
+  active?: unknown; // current-state connectors emit false tombstones
 }
 
 const KNOWN_SOURCES: ReadonlySet<string> = new Set(["slack", "email", "calendar", "linear"]);
@@ -62,8 +64,21 @@ export const commsSource: Source = (ctx): SourceResult => {
   const seen = new Set<string>();
 
   const raw = readFileSync(abs, "utf8");
+  const rawLines = raw.split("\n");
+  const latestLinearLine = new Map<string, number>();
+  for (const [index, rawLine] of rawLines.entries()) {
+    if (!rawLine.trim()) continue;
+    try {
+      const record = JSON.parse(rawLine) as CommsActivityRecord;
+      const ref = str(record.ref);
+      if (record.source === "linear" && ref) latestLinearLine.set(ref, index + 1);
+    } catch {
+      // The emitting pass below reports malformed lines once with their exact location.
+    }
+  }
+
   let line = 0;
-  for (const rawLine of raw.split("\n")) {
+  for (const rawLine of rawLines) {
     line += 1;
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
@@ -79,7 +94,10 @@ export const commsSource: Source = (ctx): SourceResult => {
     const id = str(rec.ref) ?? `L${line}`;
     const src = str(rec.source);
     const source = src && KNOWN_SOURCES.has(src) ? src : "comms";
+    if (source === "linear" && latestLinearLine.get(id) !== line) continue;
+    if (source === "linear" && rec.active === false) continue;
     const channel = str(rec.channel);
+    const channelId = str(rec.channelId);
     const refKey = `${rel}#${id}`;
 
     // Tier resolution (default-deny). For CHANNEL-BACKED records the channel→tier map is
@@ -87,8 +105,15 @@ export const commsSource: Source = (ctx): SourceResult => {
     // record whose self-reported tier disagrees with its channel's tier is rejected — a record
     // on an admin/private (or unlisted) channel can never emit as `team`. Only channel-LESS
     // records fall back to the record's own default-deny tier resolution.
-    const tier = resolveRecordTier(config, channel, rec, out, refKey);
-    if (!tier) continue;
+    const access = resolveRecordTier(
+      config,
+      [channelId, channel].filter((value): value is string => Boolean(value)),
+      rec,
+      out,
+      refKey
+    );
+    if (!access) continue;
+    const { tier, channelKey } = access;
 
     const summary = str(rec.summary);
     if (!summary) {
@@ -109,7 +134,7 @@ export const commsSource: Source = (ctx): SourceResult => {
     // Collision-proof EvidenceRef: a per-source/per-tier/per-channel synthetic path scopes the
     // row id so two records sharing a raw id on different channels/sources (or a spoofed tier)
     // never collapse to the same `path + row + tier`. Resolves by exact key under `verifyLedger`.
-    const refPath = commsRefPath(source, tier, channel);
+    const refPath = commsRefPath(source, tier, channelKey);
     const dedupeKey = `${refPath} ${id}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -153,30 +178,34 @@ function commsRefPath(source: string, tier: Tier, channel: string | undefined): 
  */
 function resolveRecordTier(
   config: CommsConfig,
-  channel: string | undefined,
+  channelKeys: readonly string[],
   rec: CommsActivityRecord,
   out: SourceResult,
   refKey: string
-): Tier | null {
+): { tier: Tier; channelKey?: string } | null {
   const selfTier = resolveTier((rec.tier ?? rec.access ?? null) as string | string[] | null);
 
-  if (channel) {
-    const channelTier = resolveChannelTier(config, channel);
-    if (!channelTier) {
+  if (channelKeys.length) {
+    const configured = channelKeys
+      .map((channelKey) => ({ channelKey, tier: resolveChannelTier(config, channelKey) }))
+      .find((candidate): candidate is { channelKey: string; tier: Tier } =>
+        Boolean(candidate.tier)
+      );
+    if (!configured) {
       out.excluded.push({
         ref: refKey,
-        reason: `comms record on unlisted channel "${channel}" (default-deny)`,
+        reason: `comms record on unlisted channel "${channelKeys[0]}" (default-deny)`,
       });
       return null;
     }
-    if (selfTier && selfTier !== channelTier) {
+    if (selfTier && selfTier !== configured.tier) {
       out.excluded.push({
         ref: refKey,
-        reason: `comms record tier "${selfTier}" disagrees with channel "${channel}" tier "${channelTier}" (default-deny)`,
+        reason: `comms record tier "${selfTier}" disagrees with channel "${configured.channelKey}" tier "${configured.tier}" (default-deny)`,
       });
       return null;
     }
-    return channelTier;
+    return { tier: configured.tier, channelKey: configured.channelKey };
   }
 
   if (!selfTier) {
@@ -186,5 +215,5 @@ function resolveRecordTier(
     });
     return null;
   }
-  return selfTier;
+  return { tier: selfTier };
 }

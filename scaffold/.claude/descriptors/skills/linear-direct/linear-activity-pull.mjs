@@ -7,9 +7,9 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { queryAssignedOpenIssuesForRepo } from "./linear-query.mjs";
 
 const DEFAULT_TIER = "admin";
 const TIERS = new Set(["admin", "team", "external"]);
@@ -21,27 +21,36 @@ function oneLine(value, max = 300) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-export function normalizeLinearIssues(data, tier = DEFAULT_TIER) {
+export function normalizeLinearIssues(
+  data,
+  { tier = DEFAULT_TIER, observedAt = new Date().toISOString() } = {}
+) {
   const issues = data?.viewer?.assignedIssues?.nodes;
   if (!Array.isArray(issues)) return [];
+  const observation = new Date(observedAt);
+  if (Number.isNaN(observation.valueOf())) throw new Error("invalid observation time");
+  const occurredAt = observation.toISOString();
+  const observationDay = occurredAt.slice(0, 10);
 
   return issues.flatMap((issue) => {
     const id = oneLine(issue?.id, 100);
     const identifier = oneLine(issue?.identifier, 40);
     const title = oneLine(issue?.title);
     const state = oneLine(issue?.state?.name, 80);
-    const occurredAt =
+    const updatedAt =
       typeof issue?.updatedAt === "string" && Number.isFinite(Date.parse(issue.updatedAt))
         ? new Date(issue.updatedAt).toISOString()
         : null;
-    if (!id || !identifier || !title || !state || !occurredAt) return [];
+    if (!id || !identifier || !title || !state || !updatedAt) return [];
 
     return [
       {
         source: "linear",
         tier,
         occurredAt,
-        ref: `linear:${id}:${occurredAt}`,
+        ref: `linear:${id}`,
+        revision: `${updatedAt}@${observationDay}`,
+        active: true,
         summary: `Linear ${identifier} · ${state}: ${title}`,
         waitingOn: "me",
       },
@@ -50,13 +59,15 @@ export function normalizeLinearIssues(data, tier = DEFAULT_TIER) {
 }
 
 export function appendLinearActivity(activityPath, records, { dryRun = false } = {}) {
-  const refs = new Set();
+  const revisions = new Set();
   if (existsSync(activityPath)) {
     for (const line of readFileSync(activityPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const record = JSON.parse(line);
-        if (typeof record?.ref === "string") refs.add(record.ref);
+        if (typeof record?.ref === "string" && typeof record?.revision === "string") {
+          revisions.add(`${record.ref}\0${record.revision}`);
+        }
       } catch {
         // Other connectors own their malformed records; tolerate them and append safely.
       }
@@ -66,11 +77,15 @@ export function appendLinearActivity(activityPath, records, { dryRun = false } =
   const fresh = [];
   let skipped = 0;
   for (const record of records) {
-    if (!record || typeof record.ref !== "string" || refs.has(record.ref)) {
+    const key =
+      record && typeof record.ref === "string" && typeof record.revision === "string"
+        ? `${record.ref}\0${record.revision}`
+        : null;
+    if (!key || revisions.has(key)) {
       skipped++;
       continue;
     }
-    refs.add(record.ref);
+    revisions.add(key);
     fresh.push(record);
   }
   if (!dryRun && fresh.length) {
@@ -80,14 +95,44 @@ export function appendLinearActivity(activityPath, records, { dryRun = false } =
   return { written: fresh.length, skipped };
 }
 
-export function runLinearQuery(repo) {
-  const queryScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "linear-query.mjs");
-  const stdout = execFileSync(process.execPath, [queryScript, "--repo", repo], {
-    cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
+export function loadLatestLinearRecords(activityPath) {
+  const latest = new Map();
+  if (!existsSync(activityPath)) return latest;
+  for (const line of readFileSync(activityPath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (record?.source === "linear" && typeof record.ref === "string") {
+        latest.set(record.ref, record);
+      }
+    } catch {
+      // The comms source owns malformed-line reporting.
+    }
+  }
+  return latest;
+}
+
+function tombstonesForMissing(activityPath, current, observedAt, tier) {
+  const currentRefs = new Set(current.map((record) => record.ref));
+  const observationDay = observedAt.slice(0, 10);
+  return [...loadLatestLinearRecords(activityPath).values()].flatMap((record) => {
+    if (record.active !== true || currentRefs.has(record.ref)) return [];
+    return [
+      {
+        source: "linear",
+        tier: typeof record.tier === "string" ? record.tier : tier,
+        occurredAt: observedAt,
+        ref: record.ref,
+        revision: `absent@${observationDay}`,
+        active: false,
+        summary: record.summary,
+      },
+    ];
   });
-  return JSON.parse(stdout);
+}
+
+export function runLinearQuery(repo) {
+  return queryAssignedOpenIssuesForRepo(repo);
 }
 
 export async function pullLinearActivity({
@@ -96,6 +141,7 @@ export async function pullLinearActivity({
   tier = DEFAULT_TIER,
   dryRun = false,
   query = runLinearQuery,
+  now = new Date(),
 }) {
   const root = path.resolve(repo);
   const inbox = existsSync(path.join(root, "1-inbox")) ? "1-inbox" : "01-intake";
@@ -103,7 +149,9 @@ export async function pullLinearActivity({
     ? path.resolve(activityPath)
     : path.join(root, inbox, "comms", "activity.jsonl");
   const data = await query(root);
-  const records = normalizeLinearIssues(data, tier);
+  const observedAt = now.toISOString();
+  const current = normalizeLinearIssues(data, { tier, observedAt });
+  const records = [...current, ...tombstonesForMissing(target, current, observedAt, tier)];
   const append = appendLinearActivity(target, records, { dryRun });
   return { records, ...append, activityPath: target };
 }
