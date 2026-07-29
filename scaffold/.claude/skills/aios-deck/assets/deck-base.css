@@ -54,6 +54,7 @@
    --amber               required   Caution accent.
    --red                 required   Negative/warning accent (note--warn).
    --lime                required   Live/active accent. Ration it: one filled lime action per screen.
+   --accent-fg           required   Text ON a filled --lime surface (the CTA pill). Near-black in EVERY theme — lime is bright in all of them, so this is mode-independent like --photo-fg. Never set it to --bg.
    --gradient-prism      required   The signature gradient. Accent bar, list markers, step numerals ONLY — never text, never card backgrounds.
    --kicker-color        required   Eyebrow label colour. Needs 4.5:1 on --bg.
    --photo-fg            required   Text over a photo. Always white regardless of theme mode.
@@ -488,9 +489,14 @@ ul.check-list li::before { content: '\2713'; color: var(--lime); font-family: va
   max-width: 74ch; line-height: 1.35; text-align: left;
 }
 
+/* The one filled action per deck. Text colour is --accent-fg, NOT --bg: lime is
+   a bright colour in every theme, so on a light theme `--bg` put white on citron
+   at roughly 1.7:1 and the label was effectively unreadable. This is the same
+   mode-independent logic as --photo-fg (always white, because its backdrop is
+   always dark) — here the backdrop is always bright, so the text is always dark. */
 .cta-btn {
   display: inline-block; font-family: var(--font-mono); font-size: 0.85rem; font-weight: 600;
-  color: var(--bg); background: var(--lime); padding: 0.7em 1.4em;
+  color: var(--accent-fg); background: var(--lime); padding: 0.7em 1.4em;
   border-radius: var(--deck-radius-full); margin-top: 1.4em; letter-spacing: 0.01em;
 }
 .mission-line { font-size: 0.88rem; color: var(--fg-2); max-width: 52ch; margin: 1.4em auto 0; line-height: 1.55; }

@@ -46,6 +46,9 @@
   --amber:         #f59e0b;
   --red:           #dc2626;
   --lime:          #a3e635;
+  /* Text ON filled lime (the CTA pill). Mode-independent near-black: citron is
+     bright, so --bg (white here) gave ~1.7:1 and the CTA label was unreadable. */
+  --accent-fg:     #0f0f11;
 
   /* Composite. Violet → blue → teal, rationed to the accent bar, the list
      markers and the step numerals. Never text, never a card background. */

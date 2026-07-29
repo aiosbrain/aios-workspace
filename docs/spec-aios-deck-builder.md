@@ -37,7 +37,7 @@ New files, all under `scaffold/.claude/skills/aios-deck/`:
 | `scripts/deck-pdf.mjs` | Node ESM | `node deck-pdf.mjs <deck.html> [--out <file>]` → headless-Chrome print-to-PDF. Exit 0/2. |
 | `examples/` | directory | Two or three complete, fully synthetic reference decks. These are the quality bar an authoring agent reads before writing anything. |
 
-The token contract is 31 required tokens plus 2 optional. Most of them alias directly onto the `@aios-alpha/design` npm
+The token contract is 32 required tokens plus 2 optional. Most of them alias directly onto the `@aios-alpha/design` npm
 package; 13 have no package source and carry documented derivation rules in
 `reference/brand-schema.md`. One of them, `--photo-scrim-rgb`, is an RGB *triplet* consumed as
 `rgba(var(--photo-scrim-rgb), 0.88)` — a hex value there silently breaks every photo slide.

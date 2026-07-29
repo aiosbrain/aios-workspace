@@ -63,10 +63,4 @@ and two gradient "photos" (cover and close, the latter via
 |---|---|---|---|
 | 1 | 2026-07-29 | First build: 10 slides, `aios-dark`, all imagery as inline SVG data URIs. | `qa-deck.mjs` PASS (0 fail). Overflow verified at 1280x720 and 1440x810 with a real browser. |
 | 2 | 2026-07-29 | Fixed two data-URI encoding bugs found by looking at the render: the rules-editor SVG carried `<`/`>` inside text nodes (broke XML, image failed to load), and the CSS-embedded gradient photos were terminated by their own `'` (cover and close lost their background entirely). Brightened both photos so colour actually reads through the scrim. Removed em dashes from body copy. | `qa-deck.mjs` PASS (0 fail), overflow re-verified at both viewports. |
-
-## Known issue (not fixable from this folder)
-
-`.cta-btn` sets `color: var(--bg)` on a `var(--lime)` pill. On a **light**
-theme that is white on citron, which is unreadable — see the close slide of
-`../proposal-light/`. On `aios-dark` it is correct (near-black on lime). The fix
-belongs in `assets/deck-base.css` or the light themes, not in a deck.
+| 3 | 2026-07-29 | Upstream fix landed: `.cta-btn` now takes `--accent-fg` (a new required token, near-black in every theme) instead of `--bg`, so the CTA label is legible on a light theme. Refreshed the vendored `deck-base.css` + `theme.css`. | `qa-deck.mjs --strict` PASS (0 fail), overflow re-verified at both viewports. |

@@ -45,6 +45,10 @@
   --amber:         #f59e0b;
   --red:           #ef4444;
   --lime:          #84cc16;
+  /* Text ON filled lime (the CTA pill). Near-black in every theme — lime is
+     bright in all of them — so this is mode-independent, like --photo-fg.
+     Never set it to --bg. */
+  --accent-fg:     #0a0a0a;
 
   /* Composite. Rationed to the accent bar, list markers and step numerals —
      never applied to text, never to a card background. */

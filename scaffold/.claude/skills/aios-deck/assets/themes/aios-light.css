@@ -66,6 +66,10 @@
                                  pill carries dark text on top of it) but never
                                  as a text colour in this theme — see
                                  --kicker-color below. */
+  /* Text ON filled lime. The package's own accent-fg. Mode-independent: lime is
+     bright in every theme, so this is always near-black. Never set it to --bg —
+     on this theme --bg is near-white, which put white on citron at ~1.7:1. */
+  --accent-fg:     #0a0a0a;
 
   /* Composite.
      DERIVED: the dark theme's #8b5cf6 / #10b981 / #84cc16 are too light to

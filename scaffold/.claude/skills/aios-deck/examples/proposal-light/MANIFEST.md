@@ -77,11 +77,4 @@ Total folder weight is under 90 KB.
 |---|---|---|---|
 | 1 | 2026-07-29 | First build: 13 slides, `prism-light`, text-only cover, all imagery as inline SVG data URIs. | `qa-deck.mjs` PASS (0 fail). Overflow verified at 1280x720 and 1440x810 with a real browser. |
 | 2 | 2026-07-29 | Cover and close slides were rendering as blank white — the CSS `url('data:…')` string was being terminated by the SVG's own single quotes, so `background-image` was dropped and white `--photo-fg` text landed on a white slide. Percent-encoded `'` as `%27` for CSS-embedded URIs. Also: brightened both photos, redrew the logo mark (the first one read as a warning triangle), swapped the schedule bars from `.svg-box` to a `.svg-accent` opacity ramp for legibility on white, put week labels on the `.step-list` so its gutter aligns, removed em dashes. | `qa-deck.mjs` PASS (0 fail), overflow re-verified at both viewports. |
-
-## Known issue (not fixable from this folder)
-
-On slide 13 the `.cta-btn` renders **white on citron** and is effectively
-unreadable. `deck-base.css` sets `.cta-btn { color: var(--bg) }`, and on a light
-theme `--bg` is white while `--lime` is `#a3e635` — roughly 1.7:1. It is correct
-on `aios-dark` (near-black on lime). The fix belongs in `assets/deck-base.css`
-or in the light theme files; a deck must not patch it with an inline colour.
+| 3 | 2026-07-29 | Upstream fix landed: `.cta-btn` now takes `--accent-fg` (a new required token, near-black in every theme) instead of `--bg`, so the CTA label is legible on a light theme. Refreshed the vendored `deck-base.css` + `theme.css`. | `qa-deck.mjs --strict` PASS (0 fail), overflow re-verified at both viewports. |

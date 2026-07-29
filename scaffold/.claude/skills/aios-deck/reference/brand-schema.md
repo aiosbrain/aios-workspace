@@ -64,7 +64,7 @@ Missing a field? Ask. Don't invent a brand colour.
 
 ## 2. Named-role → token mapping
 
-The deck token contract is **31 required tokens plus 2 optional**
+The deck token contract is **32 required tokens plus 2 optional**
 (`--accent-bar-height`, `--deck-logo-height`). The authoritative list is the
 `/* @token-contract:begin */ … :end */` block at the top of
 `assets/deck-base.css` — `qa-deck.mjs` parses that block, so it is what actually
@@ -107,6 +107,7 @@ guess.
 | `--blue` | A secondary accent **distinct from the primary hue**. Used for "recommended option" ribbons and one quote variant. If the brand has no second accent, derive it by rotating the primary hue toward blue. Do **not** just reuse `--violet` — the recommended-option ribbon loses its meaning if it's the same colour as everything else. |
 | `--page-backdrop` | The colour *behind* the slides — visible in the scroll gutter and around a scaled-down deck. Dark theme: darker than `--bg` (pure black works). Light theme: a desaturated grey. **Never equal to `--bg`**, or the slide edges vanish and the deck reads as one endless page. |
 | `--kicker-color` | The eyebrow label. This is the one deliberate accent-on-body-text moment in the system. Dark theme: the accent (lime). Light theme: the strong primary. **≥4.5:1 on `--bg`.** |
+| `--accent-fg` | Text sitting ON a filled `--lime` surface (the CTA pill). **Near-black in EVERY theme, light or dark** — lime is a bright colour in all of them, so this is mode-independent exactly like `--photo-fg`. Do **not** set it to `--bg`: on a light theme that puts white on citron at roughly 1.7:1 and the one call to action in the deck becomes unreadable. Where a package ships an `accent-fg`, use it. |
 | `--photo-fg` | **Always `#ffffff`**, regardless of base theme mode. |
 | `--photo-fg-soft` | **Always white at 85%** (`rgba(255,255,255,0.85)`), regardless of base theme mode. Both photo-text tokens are mode-independent because the scrim behind them is always dark. |
 | `--photo-scrim-rgb` | ⚠️ **AN RGB TRIPLET, NOT A COLOUR.** Consumed as `rgba(var(--photo-scrim-rgb), 0.88)`, so the value must be bare comma-separated numbers: `6, 6, 8`. Writing `#060608` here **silently breaks every photo slide** — no error, the overlay just doesn't paint. This is the single most error-prone token in the contract; check it first when a photo slide looks wrong. Value: a near-black tinted very slightly toward the brand's primary hue. |
