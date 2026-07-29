@@ -101,6 +101,52 @@ test("admin-tier signals are RETAINED in the manifest (not dropped like sync)", 
   assert.equal(task.tier, "admin"); // tasks.md is access: admin — kept for the private brief
 });
 
+test("current spine prefers tasks-team.md and preserves its file tier", () => {
+  const { dir, names } = seed("current");
+  write(
+    dir,
+    `${names.log}/tasks-team.md`,
+    "---\naccess: team\n---\n\n| ID | Task | Assignee | Status | Sprint | Due |\n|---|---|---|---|---|---|\n| TEAM-1 | Fresh split task | alex | open | W1 | 2026-03-31 |\n",
+    NOW
+  );
+
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  const tasks = m.signals.filter((signal) => signal.kind === "task");
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].summary, "Fresh split task");
+  assert.equal(tasks[0].tier, "team");
+  assert.equal(tasks[0].ref.path, "3-log/tasks-team.md");
+});
+
+test("current spine falls back to legacy tasks.md when tasks-team.md is absent", () => {
+  const { dir } = seed("current");
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  const task = m.signals.find((signal) => signal.kind === "task");
+  assert.ok(task);
+  assert.equal(task.ref.path, "3-log/tasks.md");
+});
+
+test("preferred tasks-team.md remains default-deny instead of falling through to tasks.md", () => {
+  const { dir, names } = seed("current");
+  write(
+    dir,
+    `${names.log}/tasks-team.md`,
+    "| ID | Task | Assignee | Status | Sprint | Due |\n|---|---|---|---|---|---|\n| TEAM-1 | Untiered split task | alex | open | W1 | 2026-03-31 |\n",
+    NOW
+  );
+
+  const m = collect({ root: dir, cadence: "weekly", now: NOW });
+  assert.equal(
+    m.signals.some((signal) => signal.kind === "task"),
+    false
+  );
+  assert.ok(
+    m.excluded.some(
+      (entry) => entry.ref === "3-log/tasks-team.md#TEAM-1" && /default-deny/.test(entry.reason)
+    )
+  );
+});
+
 test("daily window is tighter AND excludes hours/inbox kinds (one collector, two configs)", () => {
   const { dir } = seed("current");
   const weekly = collect({ root: dir, cadence: "weekly", now: NOW });
@@ -120,6 +166,9 @@ test("LEGACY spine (00/01/02/03) is resolved and collected", () => {
   const dec = m.signals.find((s) => s.kind === "decision");
   assert.ok(dec, "decision collected from legacy spine");
   assert.ok(dec.ref.path.startsWith("03-status/"), `legacy path, got ${dec.ref.path}`);
+  const task = m.signals.find((s) => s.kind === "task");
+  assert.ok(task, "task collected from legacy task home");
+  assert.equal(task.ref.path, "03-status/tasks.md");
 });
 
 test("missing/unresolvable tier is excluded (default-deny) and logged", () => {
