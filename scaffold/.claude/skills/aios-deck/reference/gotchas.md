@@ -150,6 +150,29 @@ default-black text that you may not hit until you're presenting.
 **Do:** run `node scripts/qa-deck.mjs <deck>` before every handover. Linting the
 token contract is precisely why that script exists.
 
+## 12b. A token can be *defined* and still silently wrong
+
+**Don't:** assume that because `qa-deck.mjs` reports the token contract complete,
+the theme is correct. Completeness and correctness are different checks.
+
+**Do:** remember that three tokens have a required VALUE SHAPE, not just a
+required presence:
+
+- `--photo-scrim-rgb` is consumed as `rgba(var(--photo-scrim-rgb), 0.88)`, so it
+  must be a **bare comma-separated triplet** (`6, 6, 8`). Writing `#060608` — the
+  intuitive thing, since every other colour token is a hex — produces
+  `rgba(#060608, 0.88)`, which is invalid, which the browser drops, which means
+  every photo slide loses its scrim and its white headline lands on a bright
+  photograph. No console error. This is the single most error-prone token in the
+  contract.
+- `--weight-display` / `--weight-heading` must be a real CSS font-weight.
+- `--accent-bar-height` must be a length with a unit.
+
+`qa-deck.mjs` check (a) now validates all three shapes as well as presence. If
+a photo slide looks wrong, check this token before anything else.
+
+---
+
 ## 13. Handover decks are `file://` folders — they cannot resolve `node_modules`
 
 **Don't:** `@import` a stylesheet from an npm package, use a bare-specifier

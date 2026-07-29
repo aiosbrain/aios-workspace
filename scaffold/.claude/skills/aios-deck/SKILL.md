@@ -118,7 +118,7 @@ Six checks, all of which were previously hand-done every revision round:
 
 | | Check | Why |
 |---|---|---|
-| a | Theme-token contract completeness | An omitted token fails **silently** — the base ships no fallback colours, so you get invisible text and no error. |
+| a | Theme-token contract — completeness **and shape** | An omitted token fails **silently** (the base ships no fallback colours, so you get invisible text and no error). So does a *malformed* one: `--photo-scrim-rgb` is consumed inside `rgba()` and must be a bare triplet, so a hex there kills every photo slide while still counting as "defined". |
 | b | Hardcoded hex/rgb outside `:root` | The thing that breaks a theme swap. |
 | c | Per-slide overflow at 1280x720 **and** 1440x810 | Both source decks hand-checked this every round. A slide that fits at 1440 can overflow at 1280. |
 | d | Progress counter vs real slide count | Both source decks shipped a hardcoded wrong count. |
