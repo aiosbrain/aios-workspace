@@ -656,6 +656,13 @@ to fit, it is two slides. `qa-deck.mjs` check (c) will tell you at 1280x720 and
 `.two-col` (`--center`, `--divided`, `--wide-left`, `--wide-right`) ·
 `ul.check-list` · `ul.clean` · `ul.tight` · `.wide`
 
+### Aliases — recognised, but do not reach for them
+
+`deck-base.css` also answers to `.aios-logo`, `.path-card`, `.value-card` and
+`table.cost`. They exist so markup lifted from an older deck keeps rendering, and
+they are deliberately left out of the index above. Use the canonical names in
+anything new: `.deck-logo`, `.option-card`, `.principle-card`, `table.deck-table`.
+
 ## Unvalidated components
 
 A component earns a place in `deck-base.css` once a **second** deck needs it.
