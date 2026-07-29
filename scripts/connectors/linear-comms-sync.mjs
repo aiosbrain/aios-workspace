@@ -15,7 +15,15 @@
  * Record shape (channel-LESS by design — a Linear issue has no comms channel, so tier
  * resolution falls back to the record's own `tier` field under the source's default-deny
  * rule; `--tier` therefore always writes an explicit tier):
- *   { source: "linear", tier, occurredAt, ref, summary, dueAt? }
+ *   { source: "linear", tier, occurredAt, ref, summary, dueAt?, waitingOn? }
+ *
+ * `waitingOn` is set to `"you"` for issues in a non-terminal state (state.type not
+ * completed/cancelled) — an open Linear ticket IS something waiting on the operator, and
+ * the shared daily-orientation logic (`buildDailyOrientation` in `daily-classifier.ts`)
+ * only routes a non-email/slack comms signal into "Blocked" when `waitingOn` (or
+ * blocked-sounding summary text) is present; without it, a plain `linear` signal is
+ * collected correctly but never lands in a rendered CLI/GUI section. Completed/cancelled
+ * issues omit it — they're not waiting on anyone.
  *
  * Idempotent: existing `ref`s in the target file are read first and re-seen issues are
  * skipped, so re-running never duplicates a line.
@@ -37,6 +45,10 @@ export const TIERS = new Set(["admin", "team", "external"]);
 
 /** Linear's numeric priority scale (0 = none). Mirrors the aios-linear skill CLI. */
 export const PRIORITY_LEVELS = { urgent: 1, high: 2, medium: 3, low: 4 };
+
+/** Linear workflow state types that mean the issue is still open — i.e. still waiting on
+ *  someone. `completed` and `cancelled` are the only terminal types Linear defines. */
+export const OPEN_STATE_TYPES = new Set(["triage", "backlog", "unstarted", "started"]);
 
 // ── pure mapping ─────────────────────────────────────────────────────────────
 
@@ -85,6 +97,7 @@ export function mapIssueToRecord(issue, { tier = DEFAULT_TIER } = {}) {
   // Channel is deliberately omitted (issues are channel-less) — see the header note.
   const dueAt = toIso(issue.dueDate);
   if (dueAt) record.dueAt = dueAt;
+  if (OPEN_STATE_TYPES.has(issue?.state?.type)) record.waitingOn = "you";
   return record;
 }
 
@@ -175,7 +188,7 @@ export function parseArgs(argv) {
 
 const ISSUES_QUERY = `query($f: IssueFilter) {
   issues(first: 250, filter: $f) {
-    nodes { id identifier title url createdAt updatedAt dueDate priority state { name } }
+    nodes { id identifier title url createdAt updatedAt dueDate priority state { name type } }
   }
 }`;
 

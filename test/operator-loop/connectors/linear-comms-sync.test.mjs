@@ -24,7 +24,7 @@ const ISSUE_A = {
   updatedAt: "2026-07-01T12:00:00.000Z",
   dueDate: "2026-07-10",
   priority: 2,
-  state: { name: "In Progress" },
+  state: { name: "In Progress", type: "started" },
 };
 
 const ISSUE_B = {
@@ -35,7 +35,18 @@ const ISSUE_B = {
   updatedAt: "2026-07-02T08:30:00.000Z",
   dueDate: null,
   priority: 3,
-  state: { name: "Todo" },
+  state: { name: "Todo", type: "unstarted" },
+};
+
+const ISSUE_C = {
+  id: "9d1f0a1e-0000-4000-8000-000000000003",
+  identifier: "AIO-125",
+  title: "Already shipped",
+  createdAt: "2026-07-01T09:00:00.000Z",
+  updatedAt: "2026-07-03T08:30:00.000Z",
+  dueDate: null,
+  priority: 0,
+  state: { name: "Done", type: "completed" },
 };
 
 function outFile() {
@@ -54,10 +65,22 @@ test("mapIssueToRecord: emits the CommsActivityRecord contract the comms source 
     ref: "AIO-123",
     summary: "AIO-123: Fix the thing (In Progress)",
     dueAt: "2026-07-10T00:00:00.000Z",
+    waitingOn: "you",
   });
   // Channel-less by design: tier must therefore resolve from the record's own tier.
   assert.equal("channel" in rec, false);
   assert.equal("direction" in rec, false);
+});
+
+test("mapIssueToRecord: waitingOn is set for open states, omitted for terminal ones", () => {
+  assert.equal(mapIssueToRecord(ISSUE_A).waitingOn, "you"); // started
+  assert.equal(mapIssueToRecord(ISSUE_B).waitingOn, "you"); // unstarted
+  assert.equal("waitingOn" in mapIssueToRecord(ISSUE_C), false); // completed
+  assert.equal(
+    "waitingOn" in mapIssueToRecord({ ...ISSUE_A, state: { name: "Canceled", type: "cancelled" } }),
+    false
+  );
+  assert.equal("waitingOn" in mapIssueToRecord({ ...ISSUE_A, state: undefined }), false);
 });
 
 test("mapIssueToRecord: --tier is honoured and validated (default-deny on a bad tier)", () => {
@@ -192,4 +215,7 @@ test("comms source: a linear record emits source 'linear', not the generic 'comm
   assert.equal(s.payload.channel, null);
   assert.equal(s.payload.summary, "AIO-123: Fix the thing (In Progress)");
   assert.equal(s.payload.dueAt, "2026-07-10T00:00:00.000Z");
+  // waitingOn:"you" is what routes an open Linear issue into buildDailyOrientation's
+  // "Blocked" bucket (daily-classifier.ts) rather than being collected-but-unrendered.
+  assert.equal(s.payload.waitingOn, "you");
 });
