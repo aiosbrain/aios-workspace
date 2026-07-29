@@ -1,0 +1,80 @@
+/* ============================================================================
+   Theme: AIOS Dark — the product identity
+   Mode: dark
+   For: deck-base.css v1.0.0 (satisfies the full 30-token contract)
+
+   Derived from @aios-alpha/design v0.3.0
+     tokens/color.dark.json  sha256 d9dedb53d4b912795768330ca6df2346d795cd1ee3bae01732189fd755fa9e21
+     dist/tokens.css         sha256 6e3f39de69d7ca13e639490020d426c7e1b951aa45089caa2ac85f793254c238
+   Recorded: 2026-07-29
+
+   Tokens are INLINED rather than @import-ed from the package on purpose:
+   a deck is handed over as a file:// folder and cannot resolve node_modules
+   (reference/gotchas.md #13). The pinned version + hashes above are what keep
+   this copy honest — re-derive and bump them when the package moves.
+
+   Role card (human-readable): aios-dark.md
+   ============================================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Surfaces */
+  --bg:            #0b0b0b;
+  --surface:       #131313;
+  --elevated:      #191919;
+  --page-backdrop: #000000;
+
+  /* Text */
+  --fg:   #ffffff;
+  --fg-2: #b8b8b8;
+  --fg-3: #8a8a8a;
+
+  /* Borders */
+  --border:         rgba(255, 255, 255, 0.08);
+  --border-visible: rgba(255, 255, 255, 0.14);
+  --border-strong:  rgba(255, 255, 255, 0.24);
+
+  /* Brand hues */
+  --violet:        #8b5cf6;
+  --violet-strong: #a78bfa;   /* derived: a LIGHTER step on dark — the darker
+                                 #7c3aed fails contrast on #131313 at small sizes */
+  --blue:          #3b82f6;
+  --cyan:          #2dd4bf;
+  --cyan-strong:   #5eead4;   /* derived: lighter step, same reason as --violet-strong */
+  --emerald:       #10b981;
+  --amber:         #f59e0b;
+  --red:           #ef4444;
+  --lime:          #84cc16;
+
+  /* Composite. Rationed to the accent bar, list markers and step numerals —
+     never applied to text, never to a card background. */
+  --gradient-prism: linear-gradient(135deg, #8b5cf6 0%, #10b981 50%, #84cc16 100%);
+  --kicker-color:   #84cc16;
+
+  /* Photo slides. Text over a photo is always white; the scrim is always dark,
+     regardless of the base theme's mode. --photo-scrim-rgb is a BARE TRIPLET
+     (it is consumed as rgba(var(--photo-scrim-rgb), 0.88)) — a hex value here
+     silently breaks every photo slide. */
+  --photo-fg:        #ffffff;
+  --photo-fg-soft:   rgba(255, 255, 255, 0.85);
+  --photo-scrim-rgb: 6, 6, 8;
+
+  /* Shadow — large soft black drop plus a 1px light hairline so a screenshot
+     card's edge separates from a near-black slide. */
+  --shot-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.03);
+
+  /* Fonts */
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-body:    'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-kicker:  var(--font-mono);   /* mono eyebrow = technical register */
+
+  /* Weights — Instrument Serif has NO true bold axis. Asking for 700 triggers a
+     synthesized faux-bold that looks broken; lean on size and italic instead. */
+  --weight-display: 400;
+  --weight-heading: 400;
+
+  /* Optional */
+  --accent-bar-height: 3px;   /* hairline signature on dark */
+  --deck-logo-height:  26px;
+}

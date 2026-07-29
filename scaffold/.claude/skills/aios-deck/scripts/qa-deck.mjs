@@ -279,7 +279,12 @@ function checkColours(sources, html, htmlLines, deckPath, strict) {
 function staticStructure(html) {
   const slides = [...html.matchAll(/<section\b[^>]*\bclass\s*=\s*(?:"[^"]*\bslide\b[^"]*"|'[^']*\bslide\b[^']*')[^>]*>/gi)].length;
   const pm = /<([a-z]+)\b[^>]*(?:\bid\s*=\s*"progress"|\bclass\s*=\s*"[^"]*\bprogress\b[^"]*")[^>]*>([\s\S]*?)<\/\1>/i.exec(html);
-  const imgs = [...html.matchAll(/<img\b[^>]*>/gi)].map((m) => ({
+  /* `[^>]*` is wrong for <img>: an inline data:image/svg+xml URI contains `>`
+     characters, so a naive scan ends the tag early and reports a missing alt on
+     an image that has one — a false FAIL on a correct deck whenever `src` is
+     written before `alt`. Consume quoted attribute values as units instead. */
+  const IMG_RE = /<img\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi;
+  const imgs = [...html.matchAll(IMG_RE)].map((m) => ({
     outerHTML: m[0], hasAlt: /\balt\s*=/i.test(m[0]), alt: attr(m[0], 'alt') ?? '',
     role: attr(m[0], 'role'), ariaHidden: attr(m[0], 'aria-hidden'), src: attr(m[0], 'src'),
   }));

@@ -234,6 +234,33 @@ Related: put the `.shot` or `.media-frame` **first** in a column and the
 `.col-label` / heading **after** it, and use the same order in every column of
 the row. Mixed order is the other way the headings stop lining up.
 
+## 17. Inline `data:image/svg+xml` URIs have three encoding traps
+
+All three were hit building the reference decks in `examples/`, and all three
+fail **silently** — no console error, just missing artwork.
+
+**Don't:** paste an SVG into a `data:` URI as-is.
+
+**Do:** apply all three rules.
+
+1. **Percent-encode `#` as `%23`.** A raw `#` starts a URL fragment and
+   truncates the rest of the SVG. Every hex colour inside the SVG is affected.
+2. **Write `alt` before `src` on every `<img>`.** A data URI contains `>`
+   characters, so any regex-based tag scan — including `qa-deck.mjs` check (e)
+   on its no-browser path — stops at the first one and reports a missing `alt`
+   on an image that has one.
+3. **Inside a CSS `url('…')`, percent-encode the SVG's own `'` as `%27`.**
+   Otherwise the SVG's first attribute quote terminates the CSS string, the
+   whole `background-image` declaration is dropped, and the slide loses its
+   photo *and* its scrim — which on a photo slide means white text on a white
+   background.
+
+Note this is a technique for `examples/` specifically, where a public repo
+should not carry binary assets. A real deck should use real screenshots —
+PNG, region-targeted, per gotcha #6.
+
+---
+
 ---
 
 ## Adding a gotcha
