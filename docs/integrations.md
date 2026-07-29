@@ -110,6 +110,84 @@ Create a Slack app, add bot scopes (`channels:history`, `channels:read`,
 `chat:write`), install to your workspace, and copy the bot token into
 `SLACK_BOT_TOKEN`; set `SLACK_TEAM_ID` to your workspace id.
 
+This is the **bot** path: messages post as an app, not as you. For acting as
+yourself, use `slack-personal` below. The two use different credentials and are not
+interchangeable — never put a bot token (`xoxb-`) into the personal connector.
+
+### Slack (personal) — acting as you, with a user token
+
+`slack-personal` talks straight to the Slack Web API with a **user token**
+(`xoxp-…`), so messages post as you and replies land in your own DMs. Preferred
+route is `aios connect slack-personal`, which runs the browser OAuth flow and stores
+the token in the Team Brain — never on your machine. Everything below is for
+people standing up their **own** Slack app, either because they run their own brain
+or because they are adding a capability the shared app does not yet request.
+
+#### Creating the app
+
+1. api.slack.com/apps → **Create New App** → *From scratch*, pick your workspace.
+2. **OAuth & Permissions** → **User Token Scopes** (the section headed *"Scopes that
+   access user data and act on behalf of users that authorize them"*). Do **not** add
+   these under Bot Token Scopes — a bot token cannot act as you, and the connector
+   rejects one.
+3. Add the scopes in the table below, then **Install to Workspace** and authorize.
+4. Copy the **User OAuth Token** (`xoxp-…`). Either paste it when `aios connect
+   slack-personal` offers the manual fallback, or export `SLACK_USER_TOKEN`.
+
+#### Scopes
+
+Every scope here is one the shipped tooling actually calls. The right-hand column
+names the API method that needs it, so the list stays auditable instead of being
+copied around and slowly growing.
+
+| Scope | Needed for | Slack method |
+|---|---|---|
+| `chat:write` | `slack send`, `slack dm` | `chat.postMessage` |
+| `im:write` | opening a DM before the first message | `conversations.open` |
+| `im:read`, `channels:read`, `groups:read`, `mpim:read` | `slack channels` | `conversations.list` |
+| `im:history`, `channels:history`, `groups:history`, `mpim:history` | `slack read`, the daily unread scan | `conversations.history`, `conversations.replies` |
+| `users:read` | resolving a teammate's name or id | `users.list`, `users.info` |
+| `users:read.email` | `slack resolve <email>` | `users.lookupByEmail` |
+| `reactions:write` | `slack react` | `reactions.add` |
+| `files:write` | uploading a file or deck to a DM or channel | `files.getUploadURLExternal`, `files.completeUploadExternal` |
+
+The four `*:read` and four `*:history` scopes come in matched sets on purpose: read
+lists the conversation, history reads inside it. Drop `groups:*` and you silently
+lose private channels; drop `mpim:*` and you lose group DMs. The failure mode is a
+conversation that simply never appears, not an error.
+
+If `files:write` is added after the app was installed, you must **reinstall the
+app** and reconnect — adding a scope does not retroactively widen an issued token.
+
+#### Scopes you do not need
+
+Slack's scope picker makes it tempting to tick everything. These get requested often
+and buy nothing for this tooling: `emoji:read`, `pins:read`, `pins:write`,
+`search:read`, `team:read`, `usergroups:read`, `reactions:read` (writing a reaction
+does not require reading them), and `files:read` (only needed if you later read
+files *out* of Slack rather than uploading).
+
+Skip `stars:read` and `stars:write` outright. Slack has effectively retired that
+feature: *"Stars can still be listed via `stars.list` but they can no longer be
+viewed or interacted with by end-users. We recommend retiring any app functionality
+that relies on `stars` APIs."* ([stars.list](https://docs.slack.dev/reference/methods/stars.list))
+
+Every extra scope is consent surface a teammate has to grant and an auditor has to
+justify. Add one when a method needs it, not in advance.
+
+#### Verifying
+
+```bash
+slack whoami            # expect your own user id + workspace, not a bot
+slack channels          # public + private + DMs; if private channels are missing, groups:* is absent
+```
+
+If Slack reports `missing_scope`, compare the app's User Token Scopes with the
+table above, add the missing scope, reinstall the app, and reconnect. If you are
+on the shared one-click flow, the scope set lives in
+`scaffold/.claude/descriptors/slack-personal.json` **and** in the brain's Slack
+app config; both must list a scope before the OAuth flow will request it.
+
 ### Jira + Confluence (example-only MCP — manual setup)
 **Not an auto-wired connector.** Jira was removed from the `aios connect` set in the
 V1.0 supply-chain hardening: the `atlassian` server it relied on runs the **unofficial,
