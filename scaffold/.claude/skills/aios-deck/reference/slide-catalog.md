@@ -398,7 +398,7 @@ Use for: "we'll drive this live from here."
   <div class="kicker"><span class="live-dot"></span>Live demo</div>
   <h1 class="slide-title">What we'll show you</h1>
   <div class="demo-frame">
-    <img class="deck-logo deck-logo--sm" src="assets/glyph.svg" alt="">
+    <img class="deck-logo deck-logo--sm" src="assets/glyph.svg" alt="" aria-hidden="true">
     <div class="demo-label">Live demo</div>
     <div class="demo-note">What you'll click through and why it matters.</div>
     <div class="thumb-row">
