@@ -45,7 +45,7 @@
     "token_create_url": "https://api.slack.com/apps",
     "scopes_url": "https://docs.slack.dev/reference/scopes",
     "instructions": "One click: authorize AIOS in your browser and your Slack user token is stored securely in the team brain (never on this machine). Manual fallback: paste an existing Slack user token (xoxp-…) and it is sent straight to the brain. Add these under User Token Scopes, not Bot Token Scopes. The daily unread scan needs the matched conversations read/history scopes above; files:write is needed to upload a file or deck to a DM or channel. Adding a scope does not widen an already-issued token — reinstall the app and reconnect. Full walkthrough: docs/integrations.md.",
-    "verified_against_docs": "2026-07-13"
+    "verified_against_docs": "2026-07-29"
   },
   "skill": {
     "skill_name": "slack-personal",

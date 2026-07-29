@@ -156,11 +156,8 @@ lists the conversation, history reads inside it. Drop `groups:*` and you silentl
 lose private channels; drop `mpim:*` and you lose group DMs. The failure mode is a
 conversation that simply never appears, not an error.
 
-`files:write` was added on 2026-07-29 after a real failure: sharing a deck with a
-teammate returned `missing_scope` (`needed: files:write:user`), and the fallback was
-uploading to Drive and pasting a link into Slack by hand. If your token predates
-that, you must **reinstall the app** — adding a scope does not retroactively widen an
-issued token.
+If `files:write` is added after the app was installed, you must **reinstall the
+app** and reconnect — adding a scope does not retroactively widen an issued token.
 
 #### Scopes you do not need
 

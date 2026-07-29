@@ -42,6 +42,7 @@ check(
 );
 check("oauth auth_header is AIOS_API_KEY", sp?.oauth?.auth_header === "AIOS_API_KEY");
 check("token fallback POSTs to the brain", sp?.fallback?.store_url?.includes("/me/slack-token"));
+check("files:write is requested for uploads", sp?.scopes?.includes("files:write"));
 check(
   "skill payload exists on disk (installable)",
   existsSync(path.join(SCAFFOLD, ".claude", "descriptors", "skills", "slack-personal", "SKILL.md"))
