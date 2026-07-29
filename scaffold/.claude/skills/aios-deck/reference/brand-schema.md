@@ -64,9 +64,13 @@ Missing a field? Ask. Don't invent a brand colour.
 
 ## 2. Named-role → token mapping
 
-The deck token contract is **30 tokens**. They split into two groups.
+The deck token contract is **31 required tokens plus 2 optional**
+(`--accent-bar-height`, `--deck-logo-height`). The authoritative list is the
+`/* @token-contract:begin */ … :end */` block at the top of
+`assets/deck-base.css` — `qa-deck.mjs` parses that block, so it is what actually
+gates. The required set splits into two groups.
 
-### Group A — 17 tokens that alias 1:1 onto `@aios-alpha/design` (v0.3.0)
+### Group A — the tokens that alias 1:1 onto `@aios-alpha/design` (v0.3.0)
 
 If the brand is AIOS, or you're deriving from a package-backed design system,
 these are a direct copy. No judgement calls.
@@ -98,8 +102,8 @@ guess.
 
 | Token | Derivation rule |
 |---|---|
-| `--violet-strong` | One step darker / more saturated than `--violet`. Used for list markers and emphasis text. AIOS dark: `#8b5cf6 → #7c3aed`. A light theme: `#7c3aed → #6d28d9`. **Must hold ≥4.5:1 against `--surface`** — it renders as small text. |
-| `--cyan-strong` | Same relationship to `--cyan` (one step darker/more saturated). Used for the `.note--info` left border. |
+| `--violet-strong` | One step of the primary hue **in the direction that increases contrast against `--surface`** — which means the step goes the OPPOSITE way in each mode. Light theme: darker (`#7c3aed → #6d28d9`). Dark theme: **lighter** (`#8b5cf6 → #a78bfa`) — going darker on a near-black surface is the intuitive move and it is wrong, because this token carries small text (list markers, `.person-card .p-role`, `td.total`). **Must hold ≥4.5:1 against `--surface`**; check it, don't assume. |
+| `--cyan-strong` | Same relationship to `--cyan`, and the same mode inversion: darker on light, lighter on dark. Used for the `.note--info` left border. Note the package's own light-mode `cyan` is already the dark step, so on a light theme derived from the package you usually assign the package value to `--cyan-strong` and pick a lighter teal for `--cyan` (see `themes/aios-light.css`). |
 | `--blue` | A secondary accent **distinct from the primary hue**. Used for "recommended option" ribbons and one quote variant. If the brand has no second accent, derive it by rotating the primary hue toward blue. Do **not** just reuse `--violet` — the recommended-option ribbon loses its meaning if it's the same colour as everything else. |
 | `--page-backdrop` | The colour *behind* the slides — visible in the scroll gutter and around a scaled-down deck. Dark theme: darker than `--bg` (pure black works). Light theme: a desaturated grey. **Never equal to `--bg`**, or the slide edges vanish and the deck reads as one endless page. |
 | `--kicker-color` | The eyebrow label. This is the one deliberate accent-on-body-text moment in the system. Dark theme: the accent (lime). Light theme: the strong primary. **≥4.5:1 on `--bg`.** |
@@ -111,6 +115,7 @@ guess.
 | `--weight-display` | **Typeface-dependent, and a real trap.** A display serif with no true bold axis (e.g. Instrument Serif) must use `400` and lean on size and italic for emphasis — setting `700` triggers a synthesized faux-bold that looks broken. A grotesque with real weights (e.g. Bricolage Grotesque) uses `800`. **Check the font's actual available axes before choosing.** |
 | `--weight-heading` | Same rule. No-bold-axis serif: `400`. Real-weight grotesque: `700`. |
 | `--accent-bar-height` | The gradient rule across the top of every slide. `3px` on dark (a hairline signature), `5px` on light (needs more presence to register). Genuinely optional — falls back to `4px` if omitted. |
+| `--deck-logo-height` | The intrinsic height of the cover logo, from the intake form's LOGO block. Optional — falls back to `26px`. Set it from the asset you were actually given rather than scaling a small raster up; a stretched logo is the most common cover defect. Record in the theme's role card which background variant the asset is for: a light theme needs the dark logo, and vice versa. |
 
 ---
 
