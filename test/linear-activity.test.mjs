@@ -149,6 +149,49 @@ test("emits a tombstone when a previously assigned issue is no longer returned",
   assert.equal(result.records[0].waitingOn, undefined);
 });
 
+test("reactivates a same-day issue after an absence tombstone", async () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-reactivate-"));
+  const activityPath = path.join(repo, "1-inbox", "comms", "activity.jsonl");
+  const issue = {
+    id: "issue-631",
+    identifier: "AIO-631",
+    title: "Confirm policy",
+    updatedAt: "2026-07-27T09:00:00.000Z",
+    state: { name: "Backlog" },
+  };
+  const pages = [
+    { viewer: { assignedIssues: { nodes: [issue] } } },
+    { viewer: { assignedIssues: { nodes: [] } } },
+    { viewer: { assignedIssues: { nodes: [issue] } } },
+  ];
+  const query = () => pages.shift();
+
+  await linearActivity.pullLinearActivity({
+    repo,
+    activityPath,
+    now: new Date("2026-07-29T09:00:00.000Z"),
+    query,
+  });
+  await linearActivity.pullLinearActivity({
+    repo,
+    activityPath,
+    now: new Date("2026-07-29T10:00:00.000Z"),
+    query,
+  });
+  const result = await linearActivity.pullLinearActivity({
+    repo,
+    activityPath,
+    now: new Date("2026-07-29T11:00:00.000Z"),
+    query,
+  });
+
+  assert.equal(result.written, 1);
+  assert.equal(
+    linearActivity.loadLatestLinearRecords(activityPath).get("linear:issue-631").active,
+    true
+  );
+});
+
 test("exposes the manual Linear activity command used by the daily orchestrator", () => {
   assert.equal(typeof linearActivity.main, "function");
 });

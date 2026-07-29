@@ -59,14 +59,14 @@ export function normalizeLinearIssues(
 }
 
 export function appendLinearActivity(activityPath, records, { dryRun = false } = {}) {
-  const revisions = new Set();
+  const latestRevision = new Map();
   if (existsSync(activityPath)) {
     for (const line of readFileSync(activityPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const record = JSON.parse(line);
         if (typeof record?.ref === "string" && typeof record?.revision === "string") {
-          revisions.add(`${record.ref}\0${record.revision}`);
+          latestRevision.set(record.ref, record.revision);
         }
       } catch {
         // Other connectors own their malformed records; tolerate them and append safely.
@@ -77,15 +77,13 @@ export function appendLinearActivity(activityPath, records, { dryRun = false } =
   const fresh = [];
   let skipped = 0;
   for (const record of records) {
-    const key =
-      record && typeof record.ref === "string" && typeof record.revision === "string"
-        ? `${record.ref}\0${record.revision}`
-        : null;
-    if (!key || revisions.has(key)) {
+    const ref = record && typeof record.ref === "string" ? record.ref : null;
+    const revision = record && typeof record.revision === "string" ? record.revision : null;
+    if (!ref || !revision || latestRevision.get(ref) === revision) {
       skipped++;
       continue;
     }
-    revisions.add(key);
+    latestRevision.set(ref, revision);
     fresh.push(record);
   }
   if (!dryRun && fresh.length) {
