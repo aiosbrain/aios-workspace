@@ -1,6 +1,6 @@
 // AIO-366 — bounded, fail-open connector preamble for a recording owner daily run.
 //
-// This is loop-core (the composition point), not a workflow domain: it invokes the three shipped
+// This is loop-core (the composition point), not a workflow domain: it invokes the shipped
 // connector adapters concurrently, waits until each has exited or hit ITS OWN deadline, and returns
 // non-secret status values. Connector stdout/stderr is never inherited, so `loop daily --json`
 // remains a clean machine surface and a failing connector cannot leak response/credential text.
@@ -9,7 +9,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-export type DailyConnectorName = "granola" | "gog" | "slack";
+export type DailyConnectorName = "granola" | "gog" | "slack" | "linear";
 export type DailyConnectorStatus = "ok" | "failed" | "timed_out" | "skipped";
 
 export interface DailyConnectorResult {
@@ -28,6 +28,7 @@ export interface DailyConnectorTimeouts {
   granola: number;
   gog: number;
   slack: number;
+  linear: number;
 }
 
 export interface DailyConnectorCredentials {
@@ -62,6 +63,7 @@ export const DEFAULT_DAILY_CONNECTOR_TIMEOUTS: Readonly<DailyConnectorTimeouts> 
   granola: 30_000,
   gog: 20_000,
   slack: 20_000,
+  linear: 20_000,
 });
 
 const CONNECTOR_TIMEOUT_OVERRIDE_ENV = "AIOS_LOOP_CONNECTOR_TIMEOUT_MS";
@@ -72,12 +74,13 @@ function positiveMs(value: string | undefined): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-/** The three shipped manual adapters, expressed as the automatic daily command set. */
+/** The shipped manual adapters, expressed as the automatic daily command set. */
 export function dailyConnectorCommands(root: string, now = new Date()): ConnectorCommand[] {
   const skillRoot = path.join(root, ".claude", "descriptors", "skills");
   const granola = path.join(skillRoot, "granola-direct", "granola-pull.mjs");
   const gog = path.join(skillRoot, "gog-activity", "gog-activity-pull.mjs");
   const slack = path.join(skillRoot, "slack-personal", "slack-activity-pull.mjs");
+  const linear = path.join(skillRoot, "linear-direct", "linear-activity-pull.mjs");
   return [
     {
       name: "granola",
@@ -96,6 +99,12 @@ export function dailyConnectorCommands(root: string, now = new Date()): Connecto
       file: slack,
       command: process.execPath,
       args: [slack, "--repo", root],
+    },
+    {
+      name: "linear",
+      file: linear,
+      command: process.execPath,
+      args: [linear, "--repo", root],
     },
   ];
 }
@@ -197,6 +206,7 @@ export async function pullDailyConnectors(
     granola: opts.timeouts?.granola ?? override ?? DEFAULT_DAILY_CONNECTOR_TIMEOUTS.granola,
     gog: opts.timeouts?.gog ?? override ?? DEFAULT_DAILY_CONNECTOR_TIMEOUTS.gog,
     slack: opts.timeouts?.slack ?? override ?? DEFAULT_DAILY_CONNECTOR_TIMEOUTS.slack,
+    linear: opts.timeouts?.linear ?? override ?? DEFAULT_DAILY_CONNECTOR_TIMEOUTS.linear,
   };
   const run = opts.spawn ?? ((command, args, options) => spawn(command, args, options));
   const env = childEnv(baseEnv, opts.credentials);

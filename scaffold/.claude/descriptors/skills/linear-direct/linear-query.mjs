@@ -27,7 +27,7 @@ const DEFAULT_QUERY = `{
   viewer {
     name
     assignedIssues(first: 25, filter: { state: { type: { neq: "completed" } } }) {
-      nodes { identifier title state { name } priorityLabel url }
+      nodes { id identifier title updatedAt state { name } priorityLabel url }
     }
   }
 }`;

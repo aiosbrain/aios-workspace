@@ -25,7 +25,7 @@ import type { Source, SourceResult } from "./types.js";
 
 /** One normalized activity record a connector writes (one JSON object per line). */
 interface CommsActivityRecord {
-  source?: unknown; // "slack" | "email" | "calendar"
+  source?: unknown; // "slack" | "email" | "calendar" | "linear"
   tier?: unknown;
   access?: unknown; // synonym for tier (frontmatter-style)
   occurredAt?: unknown;
@@ -37,7 +37,7 @@ interface CommsActivityRecord {
   dueAt?: unknown;
 }
 
-const KNOWN_SOURCES: ReadonlySet<string> = new Set(["slack", "email", "calendar"]);
+const KNOWN_SOURCES: ReadonlySet<string> = new Set(["slack", "email", "calendar", "linear"]);
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;

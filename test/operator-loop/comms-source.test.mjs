@@ -269,3 +269,28 @@ test("daily loop: an external-tier comms blocker is hidden from a team audience 
   assert.equal(team.commsNeedingReply.filter((i) => i.kind === "comms").length, 0);
   assert.equal(team.counts.withheld, 1);
 });
+
+test("Linear activity remains source-identified and appears in the owner's blocked queue", () => {
+  const root = workspace();
+  writeActivity(root, [
+    {
+      source: "linear",
+      tier: "admin",
+      occurredAt: "2026-07-01T20:00:00Z",
+      ref: "linear:issue-631:2026-07-01T20:00:00Z",
+      direction: "inbound",
+      summary: "Linear AIO-631 · Backlog: Confirm policy",
+      waitingOn: "me",
+    },
+  ]);
+
+  const manifest = collect({ root, cadence: "daily", now: NOW });
+  const signal = manifest.signals.find((candidate) => candidate.ref.row.startsWith("linear:"));
+  assert.equal(signal?.source, "linear");
+
+  const orientation = runDaily({ root, now: NOW, record: false });
+  assert.equal(
+    orientation.blocked.some((item) => item.ref.row.startsWith("linear:")),
+    true
+  );
+});

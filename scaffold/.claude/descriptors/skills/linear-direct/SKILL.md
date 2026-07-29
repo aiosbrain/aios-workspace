@@ -35,6 +35,17 @@ The script prints the GraphQL `data` as JSON. For mutations, pass the mutation i
 `--query` (e.g. `issueCreate(...)`). Build queries from the Linear GraphQL schema
 (https://linear.app/developers/graphql).
 
+A recording owner `aios loop daily` invokes the same query connector through the thin activity
+adapter before collection. It writes open issues assigned to the authenticated viewer into
+`1-inbox/comms/activity.jsonl` as owner-private visibility signals:
+
+```bash
+node .claude/descriptors/skills/linear-direct/linear-activity-pull.mjs --repo "$PWD"
+```
+
+These records surface work in the daily brief; they do not replace Linear as task authority or
+claim GUI writeback.
+
 ## Connect / troubleshoot
 
 If `LINEAR_API_KEY` is missing, connect Linear first (Integrations hub, or
