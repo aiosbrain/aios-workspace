@@ -182,10 +182,11 @@ slack whoami            # expect your own user id + workspace, not a bot
 slack channels          # public + private + DMs; if private channels are missing, groups:* is absent
 ```
 
-A `missing_scope` error names the exact scope in `needed` — add it, reinstall the
-app, and reconnect. If you are on the shared one-click flow, the scope set lives in
-`scaffold/.claude/descriptors/slack-personal.json` **and** in the brain's Slack app
-config; both must list a scope before the OAuth flow will request it.
+If Slack reports `missing_scope`, compare the app's User Token Scopes with the
+table above, add the missing scope, reinstall the app, and reconnect. If you are
+on the shared one-click flow, the scope set lives in
+`scaffold/.claude/descriptors/slack-personal.json` **and** in the brain's Slack
+app config; both must list a scope before the OAuth flow will request it.
 
 ### Jira + Confluence (example-only MCP — manual setup)
 **Not an auto-wired connector.** Jira was removed from the `aios connect` set in the
