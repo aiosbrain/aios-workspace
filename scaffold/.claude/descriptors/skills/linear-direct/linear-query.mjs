@@ -21,12 +21,30 @@ function flag(argv, name, fallback = null) {
   return index >= 0 ? argv[index + 1] : fallback;
 }
 
+function usableLinearKey(value) {
+  let key = String(value ?? "").trim();
+  if (
+    key.length >= 2 &&
+    ((key.startsWith('"') && key.endsWith('"')) ||
+      (key.startsWith("'") && key.endsWith("'")))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  if (key.startsWith("encrypted:")) {
+    throw new Error(
+      "LINEAR_API_KEY is dotenvx-encrypted and could not be decrypted; run under dotenvx or provide a valid .env.keys"
+    );
+  }
+  return key;
+}
+
 export function resolveLinearKey({
   repo,
   env = process.env,
   execFile = execFileSync,
 } = {}) {
-  if (env.LINEAR_API_KEY) return env.LINEAR_API_KEY;
+  const ambient = usableLinearKey(env.LINEAR_API_KEY);
+  if (ambient) return ambient;
   const envPath = path.join(repo, ".env");
   if (existsSync(envPath)) {
     try {
@@ -36,13 +54,14 @@ export function resolveLinearKey({
       })
         .toString()
         .trim();
-      if (out) return out;
+      const decrypted = usableLinearKey(out);
+      if (decrypted) return decrypted;
     } catch {
       // Fall through to plain dotenv parsing for unencrypted local files.
     }
     for (const line of readFileSync(envPath, "utf8").split("\n")) {
       const match = line.match(/^\s*LINEAR_API_KEY\s*=\s*(.+)\s*$/);
-      if (match) return match[1].replace(/^["']|["']$/g, "");
+      if (match) return usableLinearKey(match[1]);
     }
   }
   throw new Error("no LINEAR_API_KEY found (env or .env). Connect Linear first");

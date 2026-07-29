@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { queryAssignedOpenIssues } from "../scaffold/.claude/descriptors/skills/linear-direct/linear-query-client.mjs";
+import { resolveLinearKey } from "../scaffold/.claude/descriptors/skills/linear-direct/linear-query.mjs";
 
 test("paginates every open issue assigned to the authenticated Linear viewer", async () => {
   const calls = [];
@@ -71,4 +75,40 @@ test("the assigned-open query excludes every resolved Linear state type", async 
   await queryAssignedOpenIssues({ apiKey: "fixture-key", fetchImpl });
 
   assert.match(request.query, /nin:\s*\["completed",\s*"canceled"\]/);
+});
+
+test("Linear key fallback never returns dotenvx ciphertext as a credential", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-key-"));
+  writeFileSync(
+    path.join(repo, ".env"),
+    "DOTENV_PUBLIC_KEY=fixture\nLINEAR_API_KEY=encrypted:BNeverARealKey==\n"
+  );
+
+  assert.throws(
+    () =>
+      resolveLinearKey({
+        repo,
+        env: {},
+        execFile: () => {
+          throw new Error("dotenvx unavailable");
+        },
+      }),
+    /LINEAR_API_KEY is dotenvx-encrypted/
+  );
+});
+
+test("Linear key plaintext fallback trims whitespace before unquoting", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-key-"));
+  writeFileSync(path.join(repo, ".env"), 'LINEAR_API_KEY="fixture-key"   \n');
+
+  assert.equal(
+    resolveLinearKey({
+      repo,
+      env: {},
+      execFile: () => {
+        throw new Error("dotenvx unavailable");
+      },
+    }),
+    "fixture-key"
+  );
 });
