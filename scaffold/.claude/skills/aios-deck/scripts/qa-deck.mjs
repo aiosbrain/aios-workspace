@@ -202,8 +202,16 @@ const HEX_RE = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})
 const FN_RE = /\b(?:rgba?|hsla?)\(\s*[^)]*\)/gi;
 const NEUTRAL_RGBA = /\brgba\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*[,/]/i;
 
+/* `rgba(var(--photo-scrim-rgb), 0.88)` is the OPPOSITE of a hardcoded colour —
+   it is the documented way to consume the one token in the contract that is an
+   RGB triplet rather than a colour. Any rgb()/hsl() whose arguments are a
+   var() reference is therefore tokenized, not literal. Stripping these before
+   the literal scan keeps every photo slide in the system from failing check (b). */
+const FN_TOKENIZED_RE = /\b(?:rgba?|hsla?)\(\s*var\(\s*--[a-z0-9-]+\s*\)[^)]*\)/gi;
+
 function colourLiterals(value) {
-  const hits = [...value.matchAll(HEX_RE), ...value.matchAll(FN_RE)].map((m) => m[0]);
+  const scanned = value.replace(FN_TOKENIZED_RE, '');
+  const hits = [...scanned.matchAll(HEX_RE), ...scanned.matchAll(FN_RE)].map((m) => m[0]);
   return [...new Set(hits)];
 }
 function checkColours(sources, html, htmlLines, deckPath, strict) {
@@ -296,7 +304,11 @@ function checkAssets(deckPath, html, sources, strict) {
     add(path.resolve(dir, u.split(/[?#]/)[0]));
   }
   for (const s of sources) {
-    for (const m of s.text.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi)) {
+    // Strip CSS comments first: deck-base.css documents usage in comments
+    // (e.g. `style="--photo-bg-image:url('assets/hero.jpg')"`), and counting
+    // those as referenced assets reports a missing file for every example.
+    const scanned = s.text.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of scanned.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi)) {
       const u = m[2].trim();
       if (isExternal(u)) continue;
       add(path.resolve(s.kind === 'link' ? path.dirname(s.file) : dir, u.split(/[?#]/)[0]));
@@ -322,8 +334,20 @@ function checkAssets(deckPath, html, sources, strict) {
 
 /* ------------------------------------------------------------ browser layer */
 
+/* Resolution bases, in order. `AIOS_DECK_BROWSER_DIR` is the documented escape
+   hatch: this skill deliberately adds no npm dependency, so on a machine where
+   playwright/puppeteer lives in some OTHER project you point at it rather than
+   installing a browser here. Note NODE_PATH does NOT work for this — ESM
+   ignores it — which is why the lookup uses createRequire against each base. */
 async function loadBrowser(deckPath) {
-  const bases = [null, process.cwd(), path.dirname(path.resolve(deckPath)), path.resolve(process.execPath, '../../lib/node_modules')];
+  const bases = [
+    null,
+    process.env.AIOS_DECK_BROWSER_DIR || null,
+    process.env.AIOS_DECK_BROWSER_DIR ? path.join(process.env.AIOS_DECK_BROWSER_DIR, 'node_modules') : null,
+    process.cwd(),
+    path.dirname(path.resolve(deckPath)),
+    path.resolve(process.execPath, '../../lib/node_modules'),
+  ].filter((b, i) => i === 0 || b);
   for (const name of ['playwright', 'playwright-core', 'puppeteer']) {
     for (const base of bases) {
       try {

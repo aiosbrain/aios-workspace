@@ -515,8 +515,13 @@ table.cost th, table.cost td {
   border: var(--deck-hairline) solid var(--border-visible);
   padding: 0.42em 0.6em; text-align: left; vertical-align: top;
 }
+/* Header band. A fully inverted header (fg background, bg text) reads well on a
+   light theme and shouts on a dark one — this mix reads as a band in both modes
+   without either extreme, which is the point of a mode-agnostic base. */
 table.deck-table th, table.cost th {
-  background: var(--fg); color: var(--bg);
+  background: color-mix(in srgb, var(--fg) 12%, var(--surface));
+  color: var(--fg);
+  border-bottom-color: var(--border-strong);
   font-family: var(--font-mono); font-size: 0.64rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.03em;
 }
