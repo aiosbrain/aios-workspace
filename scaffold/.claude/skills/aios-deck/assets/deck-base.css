@@ -759,6 +759,13 @@ table.deck-table tbody tr:nth-child(even) td { background: color-mix(in srgb, va
    below are unconditional so one print block covers both orientations.
    -------------------------------------------------------------------------- */
 @media print {
+  /* Page geometry has to come from CSS, not the exporter. Chrome's
+     `--print-to-pdf` CLI has no orientation flag (orientation is a CDP-only
+     parameter), so without this rule a deck exports onto portrait A4 and every
+     16:9 slide sits in a band with half the page blank. Declaring a 16:9 page
+     box here makes the export correct from ANY print path — the CLI, Cmd-P, or
+     Playwright's page.pdf() — instead of only the one the script happens to use. */
+  @page { size: 1280px 720px; margin: 0; }
   html, body { overflow: visible; height: auto; background: var(--bg); }
   #deck, #deck.deck--horizontal {
     overflow: visible; height: auto; width: auto;
