@@ -73,6 +73,31 @@ test("provides an idempotent activity writer for Linear revisions", () => {
   assert.equal(readFileSync(activityPath, "utf8").trim().split("\n").length, 2);
 });
 
+test("records a safer tier for an otherwise unchanged Linear revision", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "aios-linear-tier-change-"));
+  const activityPath = path.join(dir, "comms", "activity.jsonl");
+  const team = {
+    source: "linear",
+    tier: "team",
+    occurredAt: "2026-07-29T09:15:00.000Z",
+    ref: "linear:issue-631",
+    revision: "2026-07-29T09:00:00.000Z@2026-07-29",
+    active: true,
+    summary: "Linear AIO-631 · Backlog: Confirm policy",
+    waitingOn: "me",
+  };
+  const admin = { ...team, tier: "admin", occurredAt: "2026-07-29T10:15:00.000Z" };
+
+  linearActivity.appendLinearActivity(activityPath, [team]);
+  const result = linearActivity.appendLinearActivity(activityPath, [admin]);
+
+  assert.equal(result.written, 1);
+  assert.equal(
+    linearActivity.loadLatestLinearRecords(activityPath).get("linear:issue-631").tier,
+    "admin"
+  );
+});
+
 test("pulls through the existing Linear query connector before writing activity", async () => {
   assert.equal(typeof linearActivity.pullLinearActivity, "function");
   const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-pull-"));

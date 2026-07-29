@@ -58,16 +58,22 @@ export function normalizeLinearIssues(
   });
 }
 
+function linearStateKey(record) {
+  if (typeof record?.ref !== "string" || typeof record?.revision !== "string") return null;
+  const active = record.active === true ? "1" : record.active === false ? "0" : "";
+  const tier = typeof record.tier === "string" ? record.tier : "";
+  return `${record.revision}\0${active}\0${tier}`;
+}
+
 export function appendLinearActivity(activityPath, records, { dryRun = false } = {}) {
-  const latestRevision = new Map();
+  const latestState = new Map();
   if (existsSync(activityPath)) {
     for (const line of readFileSync(activityPath, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
         const record = JSON.parse(line);
-        if (typeof record?.ref === "string" && typeof record?.revision === "string") {
-          latestRevision.set(record.ref, record.revision);
-        }
+        const stateKey = linearStateKey(record);
+        if (stateKey) latestState.set(record.ref, stateKey);
       } catch {
         // Other connectors own their malformed records; tolerate them and append safely.
       }
@@ -77,13 +83,12 @@ export function appendLinearActivity(activityPath, records, { dryRun = false } =
   const fresh = [];
   let skipped = 0;
   for (const record of records) {
-    const ref = record && typeof record.ref === "string" ? record.ref : null;
-    const revision = record && typeof record.revision === "string" ? record.revision : null;
-    if (!ref || !revision || latestRevision.get(ref) === revision) {
+    const stateKey = linearStateKey(record);
+    if (!stateKey || latestState.get(record.ref) === stateKey) {
       skipped++;
       continue;
     }
-    latestRevision.set(ref, revision);
+    latestState.set(record.ref, stateKey);
     fresh.push(record);
   }
   if (!dryRun && fresh.length) {
