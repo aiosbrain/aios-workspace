@@ -51,22 +51,34 @@ function dataSvg(svg) {
 /* Neutral greys on purpose: these live in their own SVG document and cannot see
    the deck's theme tokens, so they must not pretend to be brand colour. */
 
-const uiShot = (w, h, label) => dataSvg(`
+const uiShot = (w, h, label) => {
+  const r = Math.round;
+  const bar = r(h * 0.11);                       /* window chrome */
+  const side = r(w * 0.22);                      /* left rail */
+  const mx = r(w * 0.26), mw = r(w * 0.68);      /* main column */
+  const pad = r(h * 0.06);
+  const rowH = r(h * 0.26);                      /* bottom card row */
+  const rowY = h - pad - rowH;
+  const chartY = bar + pad + r(h * 0.09);
+  const chartH = rowY - chartY - r(h * 0.05);
+  return dataSvg(`
 <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   <rect width="${w}" height="${h}" fill="#f2f3f5"/>
-  <rect x="0" y="0" width="${w}" height="34" fill="#e2e4e8"/>
-  <circle cx="20" cy="17" r="5" fill="#c7cad0"/><circle cx="38" cy="17" r="5" fill="#c7cad0"/>
-  <circle cx="56" cy="17" r="5" fill="#c7cad0"/>
-  <rect x="0" y="34" width="${Math.round(w * 0.22)}" height="${h - 34}" fill="#e8eaee"/>
-  <rect x="16" y="56" width="${Math.round(w * 0.14)}" height="9" rx="4" fill="#cdd1d8"/>
-  <rect x="16" y="80" width="${Math.round(w * 0.16)}" height="9" rx="4" fill="#cdd1d8"/>
-  <rect x="16" y="104" width="${Math.round(w * 0.12)}" height="9" rx="4" fill="#cdd1d8"/>
-  <rect x="${Math.round(w * 0.26)}" y="58" width="${Math.round(w * 0.46)}" height="14" rx="6" fill="#c9ccd3"/>
-  <rect x="${Math.round(w * 0.26)}" y="92" width="${Math.round(w * 0.66)}" height="${Math.round(h * 0.34)}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
-  <rect x="${Math.round(w * 0.26)}" y="${Math.round(h * 0.34) + 108}" width="${Math.round(w * 0.3)}" height="${Math.round(h * 0.28)}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
-  <rect x="${Math.round(w * 0.6)}" y="${Math.round(h * 0.34) + 108}" width="${Math.round(w * 0.32)}" height="${Math.round(h * 0.28)}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
-  <text x="${w - 14}" y="${h - 14}" text-anchor="end" font-family="monospace" font-size="13" fill="#9aa0a8">${label}</text>
+  <rect x="0" y="${bar}" width="${side}" height="${h - bar}" fill="#e8eaee"/>
+  <rect x="0" y="0" width="${w}" height="${bar}" fill="#e2e4e8"/>
+  <circle cx="${r(bar * 0.6)}" cy="${r(bar / 2)}" r="${r(bar * 0.17)}" fill="#c7cad0"/>
+  <circle cx="${r(bar * 1.2)}" cy="${r(bar / 2)}" r="${r(bar * 0.17)}" fill="#c7cad0"/>
+  <circle cx="${r(bar * 1.8)}" cy="${r(bar / 2)}" r="${r(bar * 0.17)}" fill="#c7cad0"/>
+  <text x="${w - 12}" y="${r(bar * 0.68)}" text-anchor="end" font-family="monospace" font-size="${Math.max(9, r(h * 0.045))}" fill="#9aa0a8">${label}</text>
+  <rect x="${r(w * 0.04)}" y="${bar + pad}" width="${r(w * 0.14)}" height="8" rx="4" fill="#cdd1d8"/>
+  <rect x="${r(w * 0.04)}" y="${bar + pad + 22}" width="${r(w * 0.16)}" height="8" rx="4" fill="#cdd1d8"/>
+  <rect x="${r(w * 0.04)}" y="${bar + pad + 44}" width="${r(w * 0.12)}" height="8" rx="4" fill="#cdd1d8"/>
+  <rect x="${mx}" y="${bar + pad}" width="${r(mw * 0.62)}" height="12" rx="6" fill="#c9ccd3"/>
+  <rect x="${mx}" y="${chartY}" width="${mw}" height="${chartH}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
+  <rect x="${mx}" y="${rowY}" width="${r(mw * 0.46)}" height="${rowH}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
+  <rect x="${mx + r(mw * 0.52)}" y="${rowY}" width="${r(mw * 0.48)}" height="${rowH}" rx="8" fill="#ffffff" stroke="#dcdfe4"/>
 </svg>`);
+};
 
 const photoBg = dataSvg(`
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
@@ -475,9 +487,12 @@ ${person(IMG.pE, 'E. Lawson', 'Research', 'One line.')}
 
   terminal: {
     desc: 'A terminal panel — a command-line product without a screenshot.',
-    html: () => `    <section class="slide center-slide">
+    /* NOT a .center-slide: .center-slide sets text-align:center, which centres
+       every terminal line and instantly reads as fake. Keep this one left-aligned. */
+    html: () => `    <section class="slide">
       <div class="kicker">The interface</div>
       <h1 class="slide-title slide-title--sm">It runs where the work already is</h1>
+      <h2 class="slide-sub">One line saying what the command does.</h2>
       <div class="term">
         <div class="term__bar">
           <span class="term__dot"></span><span class="term__dot"></span><span class="term__dot"></span>
@@ -489,7 +504,7 @@ ${person(IMG.pE, 'E. Lawson', 'Research', 'One line.')}
           <div class="term__line"><span class="term__prompt">$</span><span class="term__caret"></span></div>
         </div>
       </div>
-      <div class="shot-cap">Caption naming the command.</div>
+      <div class="footnote">Caption naming the command.</div>
     </section>`,
   },
 
@@ -616,9 +631,11 @@ this goes anywhere, and put the file in \`assets/\`.
 
 ## QA
 
+Run the gate after every revision round and record the verdict in the table above.
+
 \`\`\`
-node <skill>/scripts/qa-deck.mjs deck.html
-node <skill>/scripts/deck-pdf.mjs deck.html
+node ${path.join(HERE, 'qa-deck.mjs')} deck.html
+node ${path.join(HERE, 'deck-pdf.mjs')} deck.html
 \`\`\`
 `;
 }

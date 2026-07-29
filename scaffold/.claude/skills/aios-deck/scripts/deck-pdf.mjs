@@ -169,29 +169,73 @@ function findChrome(flagPath) {
   return null;
 }
 
+const CHROME_TIMEOUT_MS = 90000;
+
 function viaChrome(chrome, url, out, o) {
+  const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deck-pdf-'));
+  const args = [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--disable-component-update',
+    '--disable-extensions',
+    '--disable-sync',
+    '--no-pdf-header-footer',
+    `--user-data-dir=${userDir}`,
+    `--print-to-pdf=${out}`,
+    '--virtual-time-budget=8000',
+  ];
+  /* Chrome's --print-to-pdf has no page-size flag; the deck's @media print block
+     does the work. --landscape is honoured, --format is not (driver path only). */
+  if (o.landscape) args.push('--landscape');
+  args.push(url);
+
   return new Promise((resolve, reject) => {
-    const args = [
-      '--headless=new',
-      '--disable-gpu',
-      '--no-sandbox',
-      '--no-first-run',
-      '--no-pdf-header-footer',
-      `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'deck-pdf-'))}`,
-      `--print-to-pdf=${out}`,
-      '--virtual-time-budget=8000',
-      url,
-    ];
-    /* Chrome's --print-to-pdf has no page-size flag; the deck's @media print block
-       does the work. --landscape is honoured, --format is not (driver path only). */
-    if (o.landscape) args.splice(args.length - 1, 0, '--landscape');
-    const child = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    /* detached so we can kill the whole process group: on macOS, Chrome spawns an
+       updater helper that keeps the parent alive long AFTER the PDF is written, so
+       waiting on process exit hangs forever. The finished file is the real signal. */
+    const child = spawn(chrome, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
     let stderr = '';
+    let done = false;
+    let lastSize = -1;
+    let stable = 0;
+
+    const stop = () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group already gone */ }
+      try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      fs.rmSync(userDir, { recursive: true, force: true });
+    };
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearInterval(poll);
+      clearTimeout(hard);
+      stop();
+      err ? reject(err) : resolve();
+    };
+
+    /* The PDF is complete once its size stops changing. */
+    const poll = setInterval(() => {
+      let size = -1;
+      try { size = fs.statSync(out).size; } catch { /* not written yet */ }
+      if (size <= 0) return;
+      if (size === lastSize) { if (++stable >= 3) finish(null); }
+      else { stable = 0; lastSize = size; }
+    }, 350);
+
+    const hard = setTimeout(
+      () => finish(new Error(`timed out after ${CHROME_TIMEOUT_MS / 1000}s waiting for ${out}`)),
+      CHROME_TIMEOUT_MS,
+    );
+
     child.stderr.on('data', (d) => { stderr += d.toString(); });
-    child.on('error', reject);
+    child.on('error', finish);
     child.on('close', (code) => {
-      if (code === 0 || fs.existsSync(out)) resolve();
-      else reject(new Error(`chrome exited ${code}${stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : ''}`));
+      if (fs.existsSync(out)) finish(null);
+      else finish(new Error(`chrome exited ${code}${stderr ? `: ${stderr.trim().split('\n').slice(-3).join(' | ')}` : ''}`));
     });
   });
 }

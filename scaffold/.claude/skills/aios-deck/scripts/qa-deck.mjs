@@ -412,7 +412,7 @@ async function openBrowser(deckPath) {
 
 /* The functions below are serialized and executed INSIDE the page, so they legitimately
    reference browser globals that do not exist in Node. */
-/* global document, getComputedStyle, requestAnimationFrame */
+/* global document, getComputedStyle, requestAnimationFrame, sessionStorage */
 
 /** Runs in-page: structural facts, so the browser path and the static path agree. */
 const PAGE_STRUCTURE = () => {
@@ -477,14 +477,42 @@ const PAGE_OVERFLOW = (arg) => {
  * key-driven walk quietly measures the same slide twice and misses real overflow.
  * scrollIntoView({behavior:'instant'}) is deterministic. Keep it.
  */
+/* Scroll, settle, then VERIFY the slide actually landed at the origin — and retry
+   if it did not. A deck's own nav script restores the last-viewed slide from
+   sessionStorage on load, and sessionStorage survives page.goto within one
+   browser context. So after the first pass the deck scrolls itself away right
+   after we position it, and we measure (and screenshot) a half-scrolled frame
+   with two slides visible. Waiting longer does not fix a race; checking the
+   result does. */
 async function gotoSlide(page, i) {
-  await page.evaluate((idx) => {
-    const el = document.querySelectorAll('#deck .slide, .slide')[idx];
-    if (el) el.scrollIntoView({ behavior: 'instant', block: 'start', inline: 'start' });
-  }, i);
-  await page.evaluate(() => new Promise((res) => {
+  const settle = () => page.evaluate(() => new Promise((res) => {
     setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(res)), 250);
   }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const landed = await page.evaluate((idx) => {
+      const el = document.querySelectorAll('#deck .slide, .slide')[idx];
+      if (!el) return true;
+      el.scrollIntoView({ behavior: 'instant', block: 'start', inline: 'start' });
+      return null;
+    }, i);
+    if (landed === true) return;
+    await settle();
+    const off = await page.evaluate((idx) => {
+      const el = document.querySelectorAll('#deck .slide, .slide')[idx];
+      if (!el) return 0;
+      const r = el.getBoundingClientRect();
+      return Math.abs(r.top) + Math.abs(r.left);
+    }, i);
+    if (off <= 2) return;
+  }
+  process.stderr.write(`qa-deck: slide ${i + 1} would not settle at the viewport origin after 3 attempts — ` +
+    `measurements for it may be unreliable (does the deck have a script that moves the scroll position?)\n`);
+}
+
+/* Clear the deck's own per-deck sessionStorage so a fresh pass always starts at
+   slide 1 (matches what a recipient sees opening the file for the first time). */
+async function resetDeckState(page) {
+  await page.evaluate(() => { try { sessionStorage.clear(); } catch { /* private mode */ } });
 }
 
 async function runBrowserChecks(bp, deckPath, outDir, wantShots) {
@@ -492,12 +520,14 @@ async function runBrowserChecks(bp, deckPath, outDir, wantShots) {
   const { page } = bp;
   await bp.setViewport(SHOT_VIEWPORT.w, SHOT_VIEWPORT.h);
   await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+  await resetDeckState(page);
   const structure = await page.evaluate(PAGE_STRUCTURE);
 
   let fails = 0;
   for (const vp of VIEWPORTS) {
     await bp.setViewport(vp.w, vp.h);
     await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+    await resetDeckState(page);
     for (let i = 0; i < structure.slideCount; i++) {
       await gotoSlide(page, i);
       const o = await page.evaluate(PAGE_OVERFLOW, { i, tol: TOL });
@@ -519,6 +549,7 @@ async function runBrowserChecks(bp, deckPath, outDir, wantShots) {
     fs.mkdirSync(shotDir, { recursive: true });
     await bp.setViewport(SHOT_VIEWPORT.w, SHOT_VIEWPORT.h);
     await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+    await resetDeckState(page);
     for (let i = 0; i < structure.slideCount; i++) {
       await gotoSlide(page, i);
       const p = path.join(shotDir, `slide-${String(i + 1).padStart(2, '0')}.png`);

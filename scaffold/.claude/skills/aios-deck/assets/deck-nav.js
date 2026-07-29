@@ -55,6 +55,16 @@
   var PRINT_MODE = String(window.location.search).indexOf('print') !== -1 ||
     String(window.location.hash).indexOf('print') !== -1;
 
+  /* Read the remembered slide ONCE, up front. Anything below that calls render()
+     writes to the same key, so reading it later reads back today's 0. */
+  var SAVED = (function () {
+    try {
+      var raw = window.sessionStorage.getItem(STORE_KEY);
+      var n = raw === null ? NaN : parseInt(raw, 10);
+      return isNaN(n) ? -1 : n;
+    } catch (err) { return -1; }
+  }());
+
   function reducedMotion() {
     return !!(window.matchMedia &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -123,17 +133,11 @@
 
   /* --------------------------------------------------------------- restore */
   function restore() {
-    if (!PRINT_MODE) {
-      var saved = null;
-      try { saved = window.sessionStorage.getItem(STORE_KEY); } catch (err) { saved = null; }
-      var n = saved === null ? NaN : parseInt(saved, 10);
-      if (!isNaN(n) && n > 0 && n < slides.length) {
-        go(n, true);          /* instant — a smooth restore reads as a glitch */
-        render();
-        return;
-      }
+    if (!PRINT_MODE && SAVED > 0 && SAVED < slides.length) {
+      go(SAVED, true);        /* instant — a smooth restore reads as a glitch */
+    } else {
+      go(0, true);
     }
-    go(0, true);
     render();
   }
 

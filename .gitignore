@@ -49,3 +49,8 @@ docs/pre-ship/.spec-fix-log.txt
 # customized file; resolve by hand (diff against the .harness-incoming sibling),
 # never commit under this suffix.
 *.harness-incoming
+
+# aios-deck: qa-deck.mjs output (per-slide PNGs + qa-report.json) is a local
+# review artifact, regenerated on every run. Never commit it.
+**/qa-report.json
+**/qa/slides/
