@@ -99,7 +99,7 @@ test("Linear key fallback never returns dotenvx ciphertext as a credential", () 
 
 test("Linear key plaintext fallback trims whitespace before unquoting", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-key-"));
-  writeFileSync(path.join(repo, ".env"), 'LINEAR_API_KEY="fixture-key"   \n');
+  writeFileSync(path.join(repo, ".env"), 'LINEAR_API_KEY="fixture-key"   # local key\n');
 
   assert.equal(
     resolveLinearKey({
@@ -110,5 +110,42 @@ test("Linear key plaintext fallback trims whitespace before unquoting", () => {
       },
     }),
     "fixture-key"
+  );
+});
+
+test("Linear key fallback rejects quoted ciphertext before an inline comment", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-key-"));
+  writeFileSync(
+    path.join(repo, ".env"),
+    'LINEAR_API_KEY="encrypted:BNeverARealKey==" # local key\n'
+  );
+
+  assert.throws(
+    () =>
+      resolveLinearKey({
+        repo,
+        env: {},
+        execFile: () => {
+          throw new Error("dotenvx unavailable");
+        },
+      }),
+    /LINEAR_API_KEY is dotenvx-encrypted/
+  );
+});
+
+test("Linear key fallback treats a quoted-empty value as missing", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "aios-linear-key-"));
+  writeFileSync(path.join(repo, ".env"), 'LINEAR_API_KEY="" # not connected\n');
+
+  assert.throws(
+    () =>
+      resolveLinearKey({
+        repo,
+        env: {},
+        execFile: () => {
+          throw new Error("dotenvx unavailable");
+        },
+      }),
+    /no LINEAR_API_KEY found/
   );
 });

@@ -38,6 +38,22 @@ function usableLinearKey(value) {
   return key;
 }
 
+function parseDotenvValue(raw) {
+  const value = String(raw ?? "").trimStart();
+  const quote = value[0];
+  if (quote === '"' || quote === "'") {
+    const closing = value.indexOf(quote, 1);
+    if (closing < 0) throw new Error("LINEAR_API_KEY has an invalid quoted value in .env");
+    const suffix = value.slice(closing + 1).trim();
+    if (suffix && !suffix.startsWith("#")) {
+      throw new Error("LINEAR_API_KEY has an invalid value after its closing quote in .env");
+    }
+    return value.slice(1, closing);
+  }
+  const comment = value.indexOf("#");
+  return (comment >= 0 ? value.slice(0, comment) : value).trim();
+}
+
 export function resolveLinearKey({
   repo,
   env = process.env,
@@ -60,8 +76,10 @@ export function resolveLinearKey({
       // Fall through to plain dotenv parsing for unencrypted local files.
     }
     for (const line of readFileSync(envPath, "utf8").split("\n")) {
-      const match = line.match(/^\s*LINEAR_API_KEY\s*=\s*(.+)\s*$/);
-      if (match) return usableLinearKey(match[1]);
+      const match = line.match(/^\s*LINEAR_API_KEY\s*=\s*(.*)$/);
+      if (!match) continue;
+      const key = usableLinearKey(parseDotenvValue(match[1]));
+      if (key) return key;
     }
   }
   throw new Error("no LINEAR_API_KEY found (env or .env). Connect Linear first");
