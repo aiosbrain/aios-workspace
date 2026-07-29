@@ -6,7 +6,7 @@ const ASSIGNED_OPEN_QUERY = `query AssignedOpen($first: Int!, $after: String) {
     assignedIssues(
       first: $first
       after: $after
-      filter: { state: { type: { neq: "completed" } } }
+      filter: { state: { type: { nin: ["completed", "canceled"] } } }
     ) {
       nodes {
         id

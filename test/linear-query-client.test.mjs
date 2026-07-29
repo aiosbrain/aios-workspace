@@ -47,3 +47,28 @@ test("paginates every open issue assigned to the authenticated Linear viewer", a
   assert.equal(calls.length, 2);
   assert.equal(calls[1].variables.after, "cursor-2");
 });
+
+test("the assigned-open query excludes every resolved Linear state type", async () => {
+  let request;
+  const fetchImpl = async (_url, init) => {
+    request = JSON.parse(init.body);
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          viewer: {
+            name: "John",
+            assignedIssues: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      }),
+    };
+  };
+
+  await queryAssignedOpenIssues({ apiKey: "fixture-key", fetchImpl });
+
+  assert.match(request.query, /nin:\s*\["completed",\s*"canceled"\]/);
+});
