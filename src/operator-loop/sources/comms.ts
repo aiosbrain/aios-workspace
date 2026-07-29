@@ -37,7 +37,7 @@ interface CommsActivityRecord {
   dueAt?: unknown;
 }
 
-const KNOWN_SOURCES: ReadonlySet<string> = new Set(["slack", "email", "calendar"]);
+const KNOWN_SOURCES: ReadonlySet<string> = new Set(["slack", "email", "calendar", "linear"]);
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
