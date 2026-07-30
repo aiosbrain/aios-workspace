@@ -67,6 +67,22 @@ test("the statusLine command falls back safely for malformed input", () => {
   assert.equal(result.stdout, "Claude");
 });
 
+test("the statusLine command ignores non-string workspace paths", () => {
+  const result = spawnSync(process.execPath, [hook], {
+    encoding: "utf8",
+    input: JSON.stringify({
+      model: { display_name: "Sonnet" },
+      workspace: {
+        project_dir: {},
+        current_dir: "/tmp/fallback-workspace",
+      },
+    }),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "Sonnet | fallback-workspace");
+});
+
 test("toolkit updates install the statusLine hook as an executable managed file", () => {
   const entry = MANAGED_PATHS.find(
     (candidate) => candidate.dest === "hooks/statusline-command.mjs"

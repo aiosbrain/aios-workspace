@@ -15,7 +15,10 @@ process.stdin.on("end", () => {
     return;
   }
   const model = payload?.model?.display_name || "Unknown";
-  const workspace = payload?.workspace?.project_dir || payload?.workspace?.current_dir || "";
+  const workspace =
+    [payload?.workspace?.project_dir, payload?.workspace?.current_dir].find(
+      (value) => typeof value === "string" && value
+    ) || "";
   const workspaceRoot = workspace
     ? workspace
         .replace(/[\\/]+$/, "")
