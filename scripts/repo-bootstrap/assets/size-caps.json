@@ -1,0 +1,16 @@
+{
+  "_comment": "Seeded by `aios repo-bootstrap` (AIO-602): default-deny file-size gate, fresh (EMPTY) grandfather list. Every file matched by `include` (minus `exclude`) must be <= defaultCap lines (wc -l semantics) — enforced by scripts/check-file-size.mjs. A file may only enter `grandfathered` when the gate is first turned on over pre-existing debt; each value is a ratchet CEILING that only ever moves DOWN (`--ratchet` lowers it automatically) and never up. New files are never grandfathered.",
+  "defaultCap": 500,
+  "include": [
+    "**/*.mjs",
+    "**/*.cjs",
+    "**/*.mts",
+    "**/*.js",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.sh",
+    "**/*.py"
+  ],
+  "exclude": ["node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"],
+  "grandfathered": {}
+}

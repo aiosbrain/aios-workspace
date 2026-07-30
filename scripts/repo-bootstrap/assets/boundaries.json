@@ -1,0 +1,36 @@
+{
+  "$comment": "Seeded by `aios repo-bootstrap` (AIO-602): starter seam rules for scripts/check-boundaries.mjs, EMPTY grandfather list. The rule IDs are fixed in the gate script; edit descriptions/grandfathers here as this repo defines its own seams. Grandfather entries are ratchet-only-down: every entry must be a REAL, measured coupling with a reason, never a projection.",
+  "rules": [
+    {
+      "id": "R1",
+      "description": "scripts/<cmd>/* is importable only via its own top-level barrel scripts/<cmd>.mjs, or from another file inside the same scripts/<cmd>/ directory (same-dir siblings). Anything else must go through the barrel.",
+      "from": "scripts/**",
+      "to": "scripts/*/**"
+    },
+    {
+      "id": "R2",
+      "description": "hooks/** may import a top-level scripts/*.mjs barrel, but must never reach directly into a scripts/<cmd>/ subdirectory — hooks depend only on stable public entry points.",
+      "from": "hooks/**",
+      "to": "scripts/*/**"
+    },
+    {
+      "id": "R3",
+      "description": "src/** must never import scripts/** — library/product code is a client of the tooling layer, never the reverse.",
+      "from": "src/**",
+      "to": "scripts/**"
+    },
+    {
+      "id": "R4",
+      "description": "gui/server must not deep-import scripts/** at all, at any depth — cross-surface access goes through CLI --json output or a published package contract.",
+      "from": "gui/server/**",
+      "to": "scripts/**"
+    },
+    {
+      "id": "R5",
+      "description": "Nothing outside test/** may import test/**. Tests are a leaf: fixtures and helpers stay test-only, never a dependency of production code.",
+      "from": "**",
+      "to": "test/**"
+    }
+  ],
+  "grandfathered": []
+}

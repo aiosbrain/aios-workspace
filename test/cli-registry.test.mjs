@@ -76,16 +76,18 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
-  // AIO-579 + AIO-605 — added after the pre-refactor snapshot, same offline read-only convention.
+  // Post-snapshot additions, same conventions: AIO-579 delivery + AIO-605 codebase-health
+  // (offline read-only), AIO-602 repo-bootstrap (offline, cwd fallback, target is positional).
   delivery: "offline",
   "codebase-health": "offline",
+  "repo-bootstrap": "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
 };
 
 // Commands that owned their own `--repo` flag before the refactor and must keep it (plus
-// `delivery`, added later for the same reason — a GitHub owner/repo slug, not the workspace path).
+// `delivery`, added later: its `--repo` is a GitHub slug filter, not the workspace path).
 const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
 function run(args, opts = {}) {
@@ -169,10 +171,8 @@ test("registry: every loader resolves to a real module", async () => {
 });
 
 test("registry: every adapt hands its module the EXACT argument signature (table-driven)", async () => {
-  // The parity claim of this PR lives or dies here. Asserting only "something was called"
-  // would let a reorder like cmdPush(repo, cfg, REST, PATTERNS) — argv handed to the secret
-  // scanner on the tier-carrying sync path — pass every other test in this file. So: distinct
-  // sentinels on the ctx, and an exact expected signature for ALL 46 commands.
+  // The parity claim lives or dies here: a reorder like cmdPush(repo, cfg, REST, PATTERNS)
+  // would pass every other test. So: distinct ctx sentinels, exact signature per command.
   const R = "@repo";
   const C = "@cfg";
   const P = "@patterns";
@@ -313,6 +313,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     asks: ["mod", "cmdAsks", R, C, A],
     inbox: ["mod", "cmdInbox", R, C, A],
     delivery: ["mod", "cmdDelivery", R, C, A],
+    "repo-bootstrap": ["mod", "cmdRepoBootstrap", A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],
     mode: ["mod", "cmdMode", R, C, A],

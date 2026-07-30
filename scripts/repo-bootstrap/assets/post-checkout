@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# aios-bootstrap post-checkout — auto-hydrate a freshly created git worktree.
+#
+# Stamped by `aios repo-bootstrap` (tracked source: .harness/hooks/git/post-checkout;
+# installed into .git/hooks/post-checkout by the bootstrap). Fires on every checkout
+# but only hydrates when the previous HEAD is all-zeros (a fresh worktree) and the
+# hydration marker is absent. Self-contained: it runs only THIS repo's own
+# scripts/link-worktree-env.sh — a bootstrapped repo needs no adjacent core checkout.
+#
+# Passes silently when not applicable — never blocks a checkout.
+
+set -euo pipefail
+
+prev_head="$1"
+checkout_flag="$3"
+
+# Only act on branch checkouts (flag=1) with a zero previous HEAD (new worktree).
+if [[ "$checkout_flag" != "1" ]]; then exit 0; fi
+if [[ "$prev_head" != "0000000000000000000000000000000000000000" ]]; then exit 0; fi
+
+common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -z "$common_dir" ]]; then exit 0; fi
+
+main_worktree="$(cd "$(dirname "$common_dir")" 2>/dev/null && pwd || true)"
+here="$(pwd)"
+
+# Not a linked worktree? Skip.
+if [[ "$main_worktree" == "$here" ]]; then exit 0; fi
+
+# Already hydrated? Skip. The marker is written last by link-worktree-env.sh.
+if [[ -f "$here/.aios/.worktree-hydrated" ]]; then exit 0; fi
+
+# The hydrator lives in this repo (worktree copy first, else the primary's copy —
+# covers a worktree cut from a ref that predates the bootstrap).
+script=""
+for dir in "$here" "$main_worktree"; do
+  if [[ -f "$dir/scripts/link-worktree-env.sh" ]]; then
+    script="$dir/scripts/link-worktree-env.sh"
+    break
+  fi
+done
+
+if [[ -z "$script" ]]; then
+  echo "[aios-bootstrap] scripts/link-worktree-env.sh not found — skipping auto-hydration"
+  exit 0
+fi
+
+echo "[aios-bootstrap] new worktree detected — hydrating from $main_worktree ..."
+bash "$script" || echo "[aios-bootstrap] hydration failed — run scripts/link-worktree-env.sh manually"
+exit 0
