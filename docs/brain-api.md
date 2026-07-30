@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.14** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.14**
+**Version: 1.15** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.15**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -183,6 +183,22 @@ writeback/registration pulls), so a newer client still works against an older br
   `unknown_keys`, and a pre-1.13 brain ignores `mode` entirely and answers the **writeback** feed
   (`mode: "writeback"`), which read as a by-key answer is exactly how a real key gets reported as
   invented.*
+- *2026-07-30 — **v1.15**: added an optional **`codebase_health`** object under `metrics` on
+  `POST /api/v1/codebases` — a scalar-only workspace-governance health snapshot
+  (`schema_version`, `rubric_version`, `head_sha`, `score_pct`, `status`, a per-dimension
+  `{passed,total}` count map, `failed_invariant_ids` short ids, `measured_at`). Same
+  provenance-only pattern as `ce_band` (v1.3) and `context_health` (1.11): a payload without it
+  remains valid unchanged, and when present the brain persists it verbatim and never recomputes
+  it. **Senders MUST send the full raw-metrics block alongside it — never a sparse health-only
+  payload** — because the metrics upsert REPLACES the row on `(codebase_id, head_sha)` (the
+  2026-06-19 rule); a health-only push would zero existing analytics and is rejected `422` like
+  any other sparse push. Scalars only — no file paths, no source text, no contributor identity
+  ever cross the boundary. The machine-readable payload contract is
+  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json),
+  with canonical parity fixtures in
+  [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json).
+  This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
+  ingestion sidecar.*
 
 ---
 
@@ -1540,7 +1556,17 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
     "readiness_level": "L3",
     "readiness_pct": 61.11,
     "readiness_pillars": { "testing": { "passed": 2, "total": 2 }, "docs": { "passed": 2, "total": 3 } },
-    "readiness_rubric_version": "1.0.0"
+    "readiness_rubric_version": "1.0.0",
+    "codebase_health": {
+      "schema_version": "1.0",
+      "rubric_version": "1.0.0",
+      "head_sha": "abc123def456abc123def456abc123def456abc1",
+      "score_pct": 87.5,
+      "status": "warn",
+      "dimensions": { "structure": { "passed": 4, "total": 4 }, "governance": { "passed": 3, "total": 4 } },
+      "failed_invariant_ids": ["OGR04.tier-coverage"],
+      "measured_at": "2026-07-30T09:00:00Z"
+    }
   }
 }
 ```
@@ -1554,6 +1580,27 @@ isolation is enforced in app code, with no DB backstop). Rate limit: 60/min per 
   the canonical rubric (`agentic-engineering-maturity/rubric/agent-readiness.json`); the brain
   persists them verbatim and does not recompute them. The brain's own heuristic `agentic_score`
   is computed separately from the raw scaffolding/coverage inputs.
+- **`codebase_health`** (document revision 1.15, **optional**) is a scalar-only snapshot of the
+  repository's workspace-governance health check, scored scanner-side. Fields (all required when
+  the object is present): `schema_version` (string — the health-object shape version),
+  `rubric_version` (string — the rubric the score was computed against), `head_sha` (string,
+  7–40 hex — the commit the check ran at), `score_pct` (number `0`–`100`), `status`
+  (`"pass" | "warn" | "fail"`), `dimensions` (a map of short dimension id →
+  `{ "passed": int, "total": int }` counts), `failed_invariant_ids` (array of short invariant
+  ids), and `measured_at` (ISO-8601 UTC timestamp). The machine-readable contract is
+  [`contract/codebase-payload-1.15.schema.json`](./contract/codebase-payload-1.15.schema.json)
+  (fixtures: [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json)).
+  Three normative rules:
+  - **Additive:** a payload without `codebase_health` remains valid exactly as before 1.15
+    (older scanners are unaffected; an older brain ignores the unknown key).
+  - **Never sparse:** a sender that includes `codebase_health` **MUST still send the full
+    raw-metrics block** in the same push. A health-only payload is a sparse push and is rejected
+    `422` (the 2026-06-19 rule) — the metrics upsert REPLACES the row on
+    `(codebase_id, head_sha)`, so a health-only push would zero existing analytics.
+  - **Provenance-only:** the brain persists `codebase_health` verbatim and never recomputes it
+    (same posture as the `readiness_*` fields, `ce_band`, and `context_health`). Scalars only —
+    **no file paths, no source text, no contributor identity** ever cross the boundary
+    (`failed_invariant_ids` are short rubric ids, not paths or findings text).
 - Optional `contributions[]` and `issues[]` arrays carry per-author/day rollups and GitHub issues.
 
 **Response:** `201 { "status": "ok", "codebase_id": "uuid", "metrics_id": "uuid", ... }`
