@@ -85,7 +85,7 @@ rubric is what makes the output trustworthy.
 
 The block below is machine-read by `scripts/constitution.mjs` and injected into every
 `aios ship`/`aios build` plan, build, review, and simplify prompt. Keep it a faithful
-distillation of §1–6 (≤40 lines); when a principle above changes, update the digest in
+distillation of §1–6 and §8 (≤40 lines); when a principle changes, update the digest in
 the same commit.
 
 <!-- agent-digest:start -->
@@ -109,7 +109,32 @@ the same commit.
 - Simplification bar: prefer deleting code to adding it; no new dependency without a
   stated reason; no abstraction before the second concrete use (YAGNI); cleanup passes
   must be behavior-preserving and stay inside the changed hunks.
+- Every invariant lands with its wired enforcer in the same PR — no aspirational rules.
 <!-- agent-digest:end -->
+
+## 8. Invariant registry
+
+Every enforced invariant is listed here with the tool that enforces it and where that
+tool actually runs. **An invariant lands with its wired enforcer in the same PR** — a
+rule with no enforcer row is aspirational and does not belong in this table. The table
+is machine-parsed by `scripts/invariant-registry.mjs` and checked by
+`test/invariant-registry.test.mjs`: for every row not marked *pending*, the enforcer
+file must exist and be reachable from `test:prepare` or a CI workflow. Rows marked
+*pending* name the issue/PR that wires them; remove the pending marker when it merges.
+
+| Invariant | Enforcer | Runs in |
+|---|---|---|
+| file-size gate — default-deny caps on every source file | `scripts/check-file-size.mjs` | `test:prepare` (`check:size`) + CI `constitution` job |
+| boundary gate — module dependency boundaries (`scripts/boundaries.json`) | `scripts/check-boundaries.mjs` | test suite (`test/check-boundaries.test.mjs`); named `check:boundaries` gate in `test:prepare` + CI — pending PR #486 (AIO-597) |
+| domain isolation — domains are siblings, no cross-domain value imports | `scripts/check-domain-isolation.mjs` | `test:prepare` (`check:domains`) + CI `constitution` job |
+| leak gate — no confidential terms leave the machine | `scripts/leak-gate.sh` (installed as `hooks/git/pre-push-leak-gate`) | pre-push git hook + CI `guard` job |
+| coverage floors — changed-line + baseline coverage floors | `scripts/check-coverage.mjs` | CI coverage shards (`test:coverage`) |
+| mutation floors — mutation-score floors on changed code | `scripts/run-mutation.mjs` | CI `mutation` job (`test:mutation`) + nightly `mutation.yml` |
+| context-health — context-engineering health floors | `scripts/check-context.mjs` (wraps `scripts/context-health.mjs`) | `check:context` in CI `context-health` job |
+| toolkit-manifest parity — manifest buckets ↔ scaffold destinations in lockstep | `test/toolkit-manifest-parity.test.mjs` | test suite (`test:node` + CI test shards) |
+| contract-schema parity — vendored brain JSON Schema ↔ client validator agree | `test/item-payload-schema-parity.test.mjs` | test suite (`test:node` + CI test shards) |
+| brain-api revision label — CLAUDE.md pinned-contract label matches `docs/brain-api.md` | `checkVersionLabels()` in `scripts/context-health.mjs` (via `scripts/check-context.mjs`) | `check:context` in CI `context-health` job |
+| codebase-health — repo-level health rubric | `validation/codebase-health.rubric.json` | pending AIO-605 (not yet built) |
 
 ---
 
