@@ -101,7 +101,11 @@ they don't recognize.
   landing feature work on `main`, stranding it on a feature branch, and producing duplicate
   PRs. Override only for a genuine primary hotfix or a deliberate non-ff merge on `main`:
   `AIOS_ALLOW_PRIMARY_COMMIT=1 git commit ...`. It chains any pre-existing pre-commit hook
-  (e.g. the NDA leak gate) — never bypass it with `--no-verify`.
+  (e.g. the NDA leak gate) — never bypass it with `--no-verify`. In a `core.hooksPath` repo
+  whose destination hook carries the line-anchored `# aios-tracked-hook` marker (a tracked
+  policy hook, e.g. aios-team-brain's `.githooks/`), the installers leave the tracked file
+  untouched and install machine-locally into `$(git rev-parse --git-common-dir)/hooks/` —
+  the chain target the tracked hook execs (AIO-638).
 - **Validators + hooks are the contract, not vibes.** Run `validation/validate-all.sh <workspace>`
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never

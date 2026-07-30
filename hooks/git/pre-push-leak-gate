@@ -41,7 +41,7 @@ trap 'rm -f "$updates_file"; rm -rf "$snapshot_root"' EXIT
 cat > "$updates_file"
 
 run_chained() {
-  local hooks_path hooks_dir common_dir chained
+  local hooks_dir chained
   local -a chain_env
   # Our replace-blind clamp is a scan-integrity measure, not a workflow preference. Preserved
   # hooks run other people's code, so hand them the environment they would have had without
@@ -51,19 +51,11 @@ run_chained() {
   else
     chain_env=(env -u GIT_NO_REPLACE_OBJECTS)
   fi
-  hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
-  if [ -n "$hooks_path" ]; then
-    case "$hooks_path" in
-      /*) hooks_dir="$hooks_path" ;;
-      *) hooks_dir="$repo_root/$hooks_path" ;;
-    esac
-  else
-    common_dir="$(git rev-parse --git-common-dir)"
-    case "$common_dir" in
-      /*) hooks_dir="$common_dir/hooks" ;;
-      *) hooks_dir="$repo_root/$common_dir/hooks" ;;
-    esac
-  fi
+  # Resolve the chained hook BESIDE this file (the installer writes `pre-push.chained`
+  # next to the gate). Re-deriving the hooks dir from core.hooksPath breaks when the gate
+  # is installed machine-locally in the common dir of a hooksPath repo (AIO-638): the
+  # chain would resolve to a dead `<hooksPath>/pre-push.chained`.
+  hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
   chained="$hooks_dir/pre-push.chained"
   if [ -x "$chained" ]; then
     "${chain_env[@]}" "$chained" "$@" < "$updates_file"
