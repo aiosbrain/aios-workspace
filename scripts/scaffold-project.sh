@@ -650,7 +650,7 @@ cp "$REPO_ROOT/validation/secret-patterns.txt" "$OUTPUT/validation/secret-patter
 # file-governance-guard.mjs (AIO-352) is the anti-sprawl write-time ratchet — layer 1.
 # worktree-self-heal.mjs (AIO-482) is the SessionStart adapter that re-hydrates a worktree
 # created by a tool that never called `aios worktree add` (Conductor et al).
-for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs; do
+for hook in asks-capture.mjs asks-claim-recovery.cjs decision-capture.mjs session-pulse.mjs aios-sync-nudge.sh file-governance-guard.mjs worktree-self-heal.mjs statusline-command.mjs; do
   cp "$REPO_ROOT/hooks/$hook" "$OUTPUT/hooks/$hook"
   chmod +x "$OUTPUT/hooks/$hook"
 done
