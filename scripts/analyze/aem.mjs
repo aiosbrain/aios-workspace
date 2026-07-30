@@ -355,6 +355,35 @@ export function contextHealthCard(ch) {
   };
 }
 
+// ── Codebase health card (NOT an AEM axis) ──────────────────────────────────
+// A compact read on the CODE's structural health (size/seam ratchet debt, test
+// rigor, lint/type debt, docs drift, invariant compliance — see
+// scripts/codebase-health.mjs, AIO-605). Deliberately NOT an AEM axis and NEVER
+// folded into scoreAxes/spineLevel/placement — it never touches AXIS_LABELS,
+// session signals, or the pinned baseline placement. Input is the raw
+// computeCodebaseHealth() result (or null if the module was unavailable /
+// threw); null in, null out.
+
+/**
+ * @param {?{score_pct:?number, status:string, failed_invariant_ids:string[],
+ *   axes:Record<string,{band:?number}>, summary:string}} cbh
+ * @returns {?{label:"Codebase health", metrics:{score_pct:?number, status:string,
+ *   failed_invariants:number, axes_scored:number}, reading:string}}
+ */
+export function codebaseHealthCard(cbh) {
+  if (!cbh) return null;
+  return {
+    label: "Codebase health",
+    metrics: {
+      score_pct: cbh.score_pct,
+      status: cbh.status,
+      failed_invariants: (cbh.failed_invariant_ids || []).length,
+      axes_scored: Object.values(cbh.axes || {}).filter((a) => a.band !== null).length,
+    },
+    reading: cbh.summary,
+  };
+}
+
 /** Full AEM placement for a signals object. */
 export function placement(signals) {
   const axes = scoreAxes(signals);

@@ -97,6 +97,34 @@ export function contextHealthTip(score) {
   return "";
 }
 
+// Codebase Health — SHADOW coaching entry (AIO-605). Keyed by the scorer's
+// status band. NOT an AEM axis; used by the analyze report's shadow card only.
+export const CODEBASE_HEALTH_GUIDE = {
+  gloss: "is the code itself structurally healthy?",
+  meaning:
+    "A composed reading over the repo's own deterministic gates — size/seam ratchet debt, test rigor, lint/type debt, docs drift, and invariant compliance — not a judgment of any one session.",
+  why: "Structural debt compounds quietly: oversized modules, grandfathered couplings, and drifting docs make every future agent task slower and riskier, even while individual PRs stay green.",
+  steps: [
+    "Run `aios codebase-health` for the full per-axis check list and the next band moves.",
+    "Shrink ratchet debt first — extracting a grandfathered file or coupling lowers the ceiling permanently.",
+    "Keep the invariant gates green; a failing enumerated gate caps the whole reading.",
+  ],
+};
+
+/**
+ * One practical Codebase Health nudge, keyed off the scorer's status
+ * (healthy | degraded | critical). Returns "" for a healthy reading.
+ */
+export function codebaseHealthTip(status) {
+  if (status === "critical") {
+    return "Structural health is critical — run `aios codebase-health` and fix the failing invariant gates before anything else.";
+  }
+  if (status === "degraded") {
+    return "Structural debt is accumulating — `aios codebase-health` shows the next band moves (ratchet debt is the usual lever).";
+  }
+  return "";
+}
+
 /**
  * One practical Cognitive Ergonomics nudge, keyed off the attention reading
  * (AIO-190 Phase A — SHADOW, not a maturity verdict). Prefix-matched against

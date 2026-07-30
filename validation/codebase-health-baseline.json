@@ -1,0 +1,137 @@
+{
+  "_comment": "Committed codebase-health baseline (AIO-605). Regenerate deliberately with `node scripts/check-codebase-health.mjs --write-baseline` after a structural change lands — never by hand. Compared ADVISORY-only by the CI step (always exit 0 in v0.9.0).",
+  "generated_at": "2026-07-30",
+  "rubric_version": "1.0.0",
+  "score_pct": 83,
+  "status": "healthy",
+  "axes": {
+    "modularity": {
+      "band": 2,
+      "passed": 1,
+      "total": 4
+    },
+    "boundaries": {
+      "band": 2,
+      "passed": 2,
+      "total": 3
+    },
+    "test_rigor": {
+      "band": null,
+      "passed": 0,
+      "total": 0
+    },
+    "lint_type": {
+      "band": 4,
+      "passed": 3,
+      "total": 3
+    },
+    "docs_parity": {
+      "band": 4,
+      "passed": 1,
+      "total": 1
+    },
+    "invariants": {
+      "band": 4,
+      "passed": 1,
+      "total": 1
+    },
+    "contributor_friction": {
+      "band": 4,
+      "passed": 1,
+      "total": 2
+    }
+  },
+  "failed_invariant_ids": [],
+  "checks": [
+    {
+      "id": "file_size_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "size_grandfather_count",
+      "ok": false,
+      "value": 63
+    },
+    {
+      "id": "size_grandfather_max",
+      "ok": false,
+      "value": 2688
+    },
+    {
+      "id": "modularity_breaches",
+      "ok": false,
+      "value": 3
+    },
+    {
+      "id": "boundary_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "boundary_grandfather_count",
+      "ok": false,
+      "value": 51
+    },
+    {
+      "id": "domain_isolation_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "coverage_lines_pct",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "coverage_floor_headroom",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "mutation_score_pct",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "lint_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "eslint_warning_count",
+      "ok": true,
+      "value": 0
+    },
+    {
+      "id": "ts_build_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "docs_drift_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "invariant_registry_missing_enforcers",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "ci_wall_clock_minutes",
+      "ok": true,
+      "value": 2.9
+    },
+    {
+      "id": "ratchet_debt_total",
+      "ok": false,
+      "value": 114
+    },
+    {
+      "id": "invariant_gate_failures",
+      "ok": true,
+      "value": 0
+    }
+  ]
+}

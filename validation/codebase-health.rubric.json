@@ -1,0 +1,186 @@
+{
+  "id": "aios.codebase-health",
+  "version": "1.0.0",
+  "title": "Codebase Health Rubric",
+  "description": "Machine-readable rubric for the composed codebase-health scorer (AIO-605, spec docs/v1-operator-loop/domains/codebase-health.md). Codebase health = structural maintainability + invariant compliance of the code itself, scored by composing the repo's existing deterministic gates — never by a competing re-implementation. Seven axes, each banded 0–4; EVERY numeric threshold (band edges, ok cut-offs, status cut-points) lives in this file, never in scorer code — changing a band edge is a data PR. The `invariants` array enumerates, by check id, the deterministic gates that must pass; when the AIO-607 invariant registry lands, the axis input switches to the registry in a version bump of this rubric.",
+  "statusCutpoints": { "healthy": 75, "degraded": 50 },
+  "gateFailCap": 1,
+  "fallbackBands": { "allOk": 4, "anyFail": 1 },
+  "axes": [
+    {
+      "key": "modularity",
+      "title": "Modularity",
+      "weight": 1,
+      "bandMetric": "size_grandfather_count",
+      "direction": "lowerIsBetter",
+      "bandThresholds": [10, 40, 80, 150],
+      "gates": ["file_size_gate"]
+    },
+    {
+      "key": "boundaries",
+      "title": "Boundaries",
+      "weight": 1,
+      "bandMetric": "boundary_grandfather_count",
+      "direction": "lowerIsBetter",
+      "bandThresholds": [5, 25, 60, 120],
+      "gates": ["boundary_gate", "domain_isolation_gate"]
+    },
+    {
+      "key": "test_rigor",
+      "title": "Test rigor",
+      "weight": 1,
+      "bandMetric": "coverage_lines_pct",
+      "direction": "higherIsBetter",
+      "bandThresholds": [90, 80, 70, 50],
+      "gates": []
+    },
+    {
+      "key": "lint_type",
+      "title": "Lint & type debt",
+      "weight": 1,
+      "bandMetric": "eslint_warning_count",
+      "direction": "lowerIsBetter",
+      "bandThresholds": [0, 10, 50, 200],
+      "gates": ["lint_gate", "ts_build_gate"]
+    },
+    {
+      "key": "docs_parity",
+      "title": "Docs parity",
+      "weight": 1,
+      "bandMetric": null,
+      "direction": null,
+      "bandThresholds": null,
+      "gates": ["docs_drift_gate"]
+    },
+    {
+      "key": "invariants",
+      "title": "Invariant compliance",
+      "weight": 1,
+      "bandMetric": "invariant_gate_failures",
+      "direction": "lowerIsBetter",
+      "bandThresholds": [0, 1, 2, 4],
+      "gates": []
+    },
+    {
+      "key": "contributor_friction",
+      "title": "Contributor friction",
+      "weight": 1,
+      "bandMetric": "ci_wall_clock_minutes",
+      "direction": "lowerIsBetter",
+      "bandThresholds": [5, 12, 25, 45],
+      "gates": []
+    }
+  ],
+  "checks": {
+    "file_size_gate": {
+      "axis": "modularity",
+      "kind": "gate",
+      "title": "File-size gate (default-deny, scripts/check-file-size.mjs)"
+    },
+    "size_grandfather_count": {
+      "axis": "modularity",
+      "kind": "metric",
+      "okWhen": { "lte": 40 },
+      "title": "Grandfathered oversize files (scripts/size-caps.json ratchet)"
+    },
+    "size_grandfather_max": {
+      "axis": "modularity",
+      "kind": "metric",
+      "okWhen": { "lte": 2500 },
+      "title": "Largest grandfathered size ceiling (lines)"
+    },
+    "modularity_breaches": {
+      "axis": "modularity",
+      "kind": "metric",
+      "okWhen": { "lte": 0 },
+      "title": "OGR13 modularity ratchet breaches vs committed baseline"
+    },
+    "boundary_gate": {
+      "axis": "boundaries",
+      "kind": "gate",
+      "title": "Repo-seam import rules R1–R5 (scripts/check-boundaries.mjs)"
+    },
+    "boundary_grandfather_count": {
+      "axis": "boundaries",
+      "kind": "metric",
+      "okWhen": { "lte": 30 },
+      "title": "Grandfathered seam couplings (scripts/boundaries.json ratchet)"
+    },
+    "domain_isolation_gate": {
+      "axis": "boundaries",
+      "kind": "gate",
+      "title": "Peer-domain value-import guard (Constitution §4)"
+    },
+    "coverage_lines_pct": {
+      "axis": "test_rigor",
+      "kind": "metric",
+      "okWhen": { "gte": 70 },
+      "title": "Line coverage % (normalized coverage artifact)"
+    },
+    "coverage_floor_headroom": {
+      "axis": "test_rigor",
+      "kind": "metric",
+      "okWhen": { "gte": 0 },
+      "title": "Coverage headroom vs committed floor (percentage points)"
+    },
+    "mutation_score_pct": {
+      "axis": "test_rigor",
+      "kind": "metric",
+      "okWhen": { "gte": 60 },
+      "title": "Mutation score % across group reports (reports/mutation/)"
+    },
+    "lint_gate": {
+      "axis": "lint_type",
+      "kind": "gate",
+      "title": "ESLint errors = 0 (npm run lint surface)"
+    },
+    "eslint_warning_count": {
+      "axis": "lint_type",
+      "kind": "metric",
+      "okWhen": { "lte": 0 },
+      "title": "ESLint warning count"
+    },
+    "ts_build_gate": {
+      "axis": "lint_type",
+      "kind": "gate",
+      "title": "Strict TypeScript build (npm run build:loop)"
+    },
+    "docs_drift_gate": {
+      "axis": "docs_parity",
+      "kind": "gate",
+      "title": "Docs↔code drift blocks in sync (scripts/check-docs-drift.mjs)"
+    },
+    "invariant_gate_failures": {
+      "axis": "invariants",
+      "kind": "metric",
+      "okWhen": { "lte": 0 },
+      "title": "Failing gates among the rubric's invariants enumeration"
+    },
+    "invariant_registry_missing_enforcers": {
+      "axis": "invariants",
+      "kind": "metric",
+      "okWhen": { "lte": 0 },
+      "title": "§8 invariant-registry rows whose enforcer files are missing (AIO-607 parser)"
+    },
+    "ci_wall_clock_minutes": {
+      "axis": "contributor_friction",
+      "kind": "metric",
+      "okWhen": { "lte": 20 },
+      "title": "Median recent successful CI wall-clock (minutes, via gh)"
+    },
+    "ratchet_debt_total": {
+      "axis": "contributor_friction",
+      "kind": "metric",
+      "okWhen": { "lte": 100 },
+      "title": "Total inherited ratchet entries (size grandfathers + seam grandfathers)"
+    }
+  },
+  "invariants": [
+    "file_size_gate",
+    "boundary_gate",
+    "domain_isolation_gate",
+    "docs_drift_gate",
+    "lint_gate",
+    "ts_build_gate"
+  ]
+}
