@@ -1,13 +1,11 @@
 /**
- * registry.mjs — the declarative command table for `aios` (AIO-512 Phase 1): ONE descriptor
- * per subcommand, replacing the old USAGE string + 45-branch dispatch chain in aios.mjs.
- *
+ * registry.mjs — declarative command table for `aios` (AIO-512): ONE descriptor per
+ * subcommand, replacing the old USAGE string + 45-branch dispatch chain in aios.mjs.
  * Invariants (asserted by test/cli-registry.test.mjs): every name/alias appears exactly
- * once; `resolution` is the ONLY thing deciding repo-root + config resolution (silently
- * widening "workspace" → "offline" would run a command against an unconfigured directory,
- * so modes are parity-tested against the pre-refactor list); `loader` is ALWAYS lazy —
- * nothing here may statically import a command module (`aios status` must not parse
- * ship.mjs/build.mjs); `usage` is the exact `aios help` block this command owns ([] = hidden).
+ * once; `resolution` is the ONLY thing deciding repo-root + config resolution (modes are
+ * parity-tested — a silently widened mode would run against an unconfigured directory);
+ * `loader` is ALWAYS lazy (`aios status` must not parse ship.mjs/build.mjs); `usage` is
+ * the exact `aios help` block this command owns ([] = hidden).
  *
  * @typedef {Object} CommandDescriptor
  * @property {string}   name
@@ -24,8 +22,8 @@
 import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
 
 /**
- * The command table, in `aios help` order; hidden commands (usage: []) go last.
- * ctx = { repo, cfg, patterns, rest, local } — `local` = handlers still in aios.mjs + helpers.
+ * The command table, in `aios help` order; hidden commands (usage: []) go last. ctx =
+ * { repo, cfg, patterns, rest, local }; `local` = handlers still in aios.mjs + helpers.
  * @type {CommandDescriptor[]}
  */
 export const COMMANDS = [
@@ -126,8 +124,7 @@ export const COMMANDS = [
   {
     name: "timeline",
     resolution: "offline",
-    // `timeline` owns `--repo` — repeatable TARGET repo paths (workspace root comes from
-    // the cwd walk-up or `--workspace`); consuming it here would hide the override.
+    // Owns `--repo`: repeatable TARGET repo paths (workspace root = cwd walk-up/--workspace).
     ownsRepoFlag: true,
     loader: () => import("../timeline.mjs"),
     adapt: async (ctx, mod) => (await mod.cmdTimeline(ctx.repo, ctx.cfg, ctx.rest)) ?? 0,
@@ -136,15 +133,13 @@ export const COMMANDS = [
   },
   {
     name: "mcp",
-    // GUI-surface bridge: a long-lived stdio MCP server for agents that can't shell out to
-    // this CLI. Runs with NO workspace (env-first config); owns the process until disconnect.
+    // Stdio MCP server for agents that can't shell out; env-first, no workspace, owns the process.
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
       if (mcpCfg.missing.length) {
-        // Brain unconfigured: still start IF a workspace resolves here (offline resolver),
-        // exposing local aios_* tools; brain_* error clearly. Neither: nothing to do.
+        // Brain unconfigured: still start IF a workspace resolves (local aios_* tools only).
         const ws = ctx.local.findRepoRootOffline(process.cwd());
         if (!ws) {
           ctx.local.die(
@@ -283,9 +278,8 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.runContextHealthCli(ctx.repo, ctx.rest, ctx.local.c),
     usage: U["context-health"],
   },
-  // AIO-605 composed structural scorer — read-only; exit 0 on any successful scoring.
   {
-    name: "codebase-health",
+    name: "codebase-health", // AIO-605 composed structural scorer — read-only; exit 0 on scoring
     resolution: "offline",
     loader: () => import("../codebase-health.mjs"),
     adapt: (ctx, mod) => mod.runCodebaseHealthCli(ctx.repo, ctx.rest, ctx.local.c),
@@ -300,8 +294,7 @@ export const COMMANDS = [
   },
   {
     name: "update",
-    // update resolves a workspace OR the toolkit checkout — never a bare README dir; an
-    // explicit --repo is validated the SAME way (no re-vendoring into arbitrary dirs).
+    // Resolves a workspace OR the toolkit checkout — never a bare dir; --repo validated same way.
     resolution: "update-root",
     loader: () => import("../update.mjs"),
     // cmdUpdate returns a structured result (never exits, so callers can read .applyAllowed).
@@ -355,8 +348,7 @@ export const COMMANDS = [
   {
     name: "pr",
     resolution: "offline",
-    // `pr` owns its own `--repo` flag — a GitHub owner/repo slug, NOT the workspace path.
-    ownsRepoFlag: true,
+    ownsRepoFlag: true, // its `--repo` is a GitHub owner/repo slug, NOT the workspace path
     loader: () => import("../pr.mjs"),
     adapt: (ctx, mod) => mod.cmdPr(ctx.repo, ctx.rest),
     usage: U.pr,
@@ -364,8 +356,7 @@ export const COMMANDS = [
   {
     name: "consolidate-findings",
     resolution: "offline",
-    // Same GitHub-slug `--repo` as `pr` — dispatch must not consume it.
-    ownsRepoFlag: true,
+    ownsRepoFlag: true, // same GitHub-slug `--repo` as `pr` — dispatch must not consume it
     loader: () => import("../consolidate-findings.mjs"),
     adapt: (ctx, mod) => mod.cmdConsolidateFindings(ctx.repo, ctx.rest),
     exit: "exit-code",
@@ -395,17 +386,15 @@ export const COMMANDS = [
     exit: "exit-code",
     usage: U["roadmap-run"],
   },
-  // Headline V1 surface — was unreachable from `aios --help` until the UX audit (S3-8).
   {
-    name: "inbox",
+    name: "inbox", // headline V1 surface — unreachable from `aios --help` until UX audit S3-8
     resolution: "offline",
     loader: () => import("../inbox.mjs"),
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.inbox,
   },
-  // AIO-579 read-only cross-repo reconciliation; owns `--repo` (a GitHub slug filter).
   {
-    name: "delivery",
+    name: "delivery", // AIO-579 read-only reconciliation; owns `--repo` (a GitHub slug filter)
     resolution: "offline",
     ownsRepoFlag: true,
     loader: () => import("../delivery-status.mjs"),
@@ -413,10 +402,8 @@ export const COMMANDS = [
     exit: "exit-code",
     usage: U.delivery,
   },
-
-  // AIO-602 split stamp — SOURCE is the toolkit checkout this module runs from; TARGET is positional.
   {
-    name: "repo-bootstrap",
+    name: "repo-bootstrap", // AIO-602 split stamp — SOURCE is this toolkit checkout; TARGET positional
     resolution: "offline",
     cwdFallback: () => true,
     loader: () => import("../repo-bootstrap.mjs"),
@@ -432,13 +419,28 @@ export const COMMANDS = [
     adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
     usage: U.whoami,
   },
-  // AIO-600 GUI seam: gui/server shells `aios gen-catalog --repo <ws>`, never scripts/*.
+  // AIO-600 GUI seams: gui/server shells `aios gen-catalog|catalog|connector`, never scripts/*.
   {
     name: "gen-catalog",
     resolution: "offline",
     loader: () => import("../gen-catalog.mjs"),
     adapt: (ctx, mod) => mod.generate(ctx.repo),
     usage: [],
+  },
+  {
+    name: "catalog",
+    resolution: "offline",
+    loader: () => import("../gen-catalog.mjs"),
+    adapt: (ctx, mod) => mod.cmdCatalog(ctx.repo, ctx.rest),
+    usage: U.catalog,
+  },
+  {
+    name: "connector",
+    resolution: "offline",
+    loader: () => import("../connector-cli.mjs"),
+    adapt: (ctx, mod) => mod.cmdConnector(ctx.repo, ctx.rest),
+    exit: "exit-status",
+    usage: U.connector,
   },
 ];
 
@@ -476,11 +478,9 @@ function editDistance(a, b) {
 }
 
 /**
- * The registered verb closest to `input`, or null when nothing is close enough.
- *
- * Mirrors the threshold `aios inbox` / `aios asks` already use for their subcommands — the audit
- * (S6-4) found the capability existed one level down but not at top level, so `aios statu` (a
- * one-character typo) answered with 176 lines of help and no hint.
+ * The registered verb closest to `input`, or null when nothing is close enough. Same
+ * threshold `aios inbox`/`aios asks` use for their subcommands (audit S6-4: `aios statu`
+ * used to answer with 176 lines of help and no hint).
  */
 export function nearestCommand(input) {
   if (!input) return null;

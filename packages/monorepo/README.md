@@ -18,6 +18,7 @@ paths do not resolve — the exports map below is the whole public surface.
 | `@aios-alpha/monorepo/brain-client` | HTTP/SSE client for the Team Brain member API (`createBrainClient`, SSE block parsing). |
 | `@aios-alpha/monorepo/git-files` | Enumerate a repo's content via git (`git ls-files`), never a filesystem walk (AIO-517). |
 | `@aios-alpha/monorepo/constitution` | Load the repo's engineering-constitution digest for prompt injection. |
+| `@aios-alpha/monorepo/tasks-table` | Markdown task/decision-table parsing + merge writeback (`parseTaskRows`, `mergeTaskWriteback`, canonical statuses). Promoted from `./internal/` in AIO-600 C3: the GUI tasks panel must round-trip tables exactly the way `aios pull` does, so the shared implementation is public rather than copied. Ships `.d.mts` typings. |
 
 ## Private/unstable internal subpaths
 
@@ -30,7 +31,6 @@ they are deliberately excluded from the package's public-API contract test.
 |---------|---------------|
 | `@aios-alpha/monorepo/internal/flat-yaml` | Restricted flat-YAML reader used by `workspace-parse` and `brain-config`. |
 | `@aios-alpha/monorepo/internal/brain-origin` | Brain origin normalization/locking, used by `brain-client`. |
-| `@aios-alpha/monorepo/internal/tasks-table` | Task-table parsing/writeback, used by `workspace-parse`. |
 | `@aios-alpha/monorepo/internal/transcript-adapters` | Fact/stakeholder wire adapters, used by `workspace-parse`. |
 | `@aios-alpha/monorepo/internal/skill-scan` | Pure static safety scanner for an Agent Skill directory (`scanSkill`). Consumed by the workspace GUI's skill-library install flow and by the `scripts/skill-scan.mjs` CLI shim (AIO-600). |
 

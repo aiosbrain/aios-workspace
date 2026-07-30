@@ -234,6 +234,23 @@ export function refreshResolver(repo, skills) {
   return true;
 }
 
+// ── `aios catalog` command handler (AIO-600) ─────────────────────────────────
+// The machine-readable catalog surface. `--json` prints the parsed skills +
+// integrations (the same readers `generate` renders from) so out-of-repo consumers
+// — the GUI server first — read the catalog through the CLI seam instead of
+// deep-importing this module. Without `--json` it runs the generator, same as
+// invoking this script directly.
+export function catalogJson(repo) {
+  return { skills: readSkills(repo), integrations: readIntegrations(repo) };
+}
+export function cmdCatalog(repo, rest) {
+  if (rest.includes("--json")) {
+    console.log(JSON.stringify(catalogJson(repo)));
+    return;
+  }
+  generate(repo);
+}
+
 // ── CLI entry (only when run directly, not when imported) ──
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);

@@ -1,10 +1,8 @@
-// test/cli-registry.test.mjs — parity guard for the aios.mjs command registry (AIO-512 Phase 1).
-//
-// The registry replaced a 45-branch if/else-if chain plus a hand-maintained USAGE string. These
-// tests prove the replacement is behavior-identical: the command set, each command's
-// root-resolution mode, the help text, the help/unknown-command exit codes, the `--repo`
-// carve-out, and the exit-code contract of each `exit` mode. The last test is the one that
-// makes the refactor worth doing: `aios status` must not drag ship/build into its startup graph.
+// test/cli-registry.test.mjs — parity guard for the aios.mjs command registry (AIO-512
+// Phase 1; replaced a 45-branch dispatch chain + hand-maintained USAGE). These tests prove
+// behavior identity: command set, root-resolution modes, help text + exit codes, the
+// `--repo` carve-out, each `exit` mode's contract, and (the payoff) that `aios status`
+// must not drag ship/build into its startup graph.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -20,13 +18,11 @@ import { finish } from "../scripts/cli/dispatch.mjs";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(DIR, "..");
 const AIOS = path.join(REPO, "scripts", "aios.mjs");
-// NODE_OPTIONS is split on whitespace by Node, so a checkout path containing a space would
-// break every trace below — pass the probe as a file: URL, which percent-encodes them.
+// NODE_OPTIONS splits on whitespace — pass the probe as a file: URL (percent-encoded spaces).
 const PROBE = pathToFileURL(path.join(DIR, "helpers", "import-probe.mjs")).href;
 const USAGE_FIXTURE = path.join(DIR, "fixtures", "aios-usage.txt");
 
-// ── the pre-refactor truth, transcribed from the if/else-if chain + OFFLINE_CMDS set + the
-// `update`/`mcp` carve-outs at aios.mjs@737116f. NOT regenerated from the registry — independent side.
+// ── pre-refactor truth, transcribed from aios.mjs@737116f — NOT regenerated from the registry.
 const PRE_REFACTOR = {
   // workspace: findRepoRoot, aios.yaml REQUIRED
   status: "workspace",
@@ -76,11 +72,13 @@ const PRE_REFACTOR = {
   worktree: "offline",
   timeline: "offline",
   // Post-snapshot: AIO-579 delivery + AIO-605 codebase-health (read-only), AIO-602
-  // repo-bootstrap, AIO-600 gen-catalog (hidden GUI seam — gui/server shells it).
+  // repo-bootstrap, AIO-600 gen-catalog/catalog/connector (hidden GUI seams, shelled).
   delivery: "offline",
   "codebase-health": "offline",
   "repo-bootstrap": "offline",
   "gen-catalog": "offline",
+  catalog: "offline",
+  connector: "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
@@ -314,6 +312,8 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     delivery: ["mod", "cmdDelivery", R, C, A],
     "repo-bootstrap": ["mod", "cmdRepoBootstrap", A],
     "gen-catalog": ["mod", "generate", R],
+    catalog: ["mod", "cmdCatalog", R, A],
+    connector: ["mod", "cmdConnector", R, A],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],
     mode: ["mod", "cmdMode", R, C, A],

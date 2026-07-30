@@ -5,7 +5,7 @@
 // unchanged; aios.mjs re-imports these. Guarded by test/sync-plan.test.mjs.
 
 import { parseFlatYaml } from "../internal/flat-yaml.mjs";
-import { parseTableRows } from "../internal/tasks-table.mjs";
+import { parseTableRows } from "../tasks-table.mjs";
 import {
   parsedFactMarkdownToWire,
   parsedStakeholderMarkdownToWire,

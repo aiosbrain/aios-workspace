@@ -75,6 +75,20 @@ const PUBLIC_EXPORTS = {
     "resolveLinearApiKey",
   ],
   "brain-client": ["createBrainClient", "parseSseBlock", "splitSseBlocks"],
+  // Promoted from ./internal/tasks-table in AIO-600 C3: the GUI tasks panel needs the
+  // exact parse/writeback the CLI + brain-pull use (round-trip fidelity), and the C1
+  // contract bars the GUI from internal subpaths — so the surface freezes here.
+  "tasks-table": [
+    "CANONICAL_TASK_STATUSES",
+    "canonicalTaskStatus",
+    "dateCell",
+    "mergeTaskWriteback",
+    "parsePmCell",
+    "parseTableRows",
+    "parseTaskRows",
+    "planSyncOriginWriteback",
+    "syncOriginRowsFor",
+  ],
   "git-files": ["gitFiles"],
   constitution: [
     "CONSTITUTION_RELPATH",
@@ -91,8 +105,8 @@ const PUBLIC_EXPORTS = {
 const INTERNAL_SUBPATHS = [
   "internal/flat-yaml",
   "internal/brain-origin",
-  "internal/tasks-table",
   "internal/transcript-adapters",
+  "internal/skill-scan", // AIO-600 C2 — consumed by gui/server (documented-private)
   "internal/skill-scan", // AIO-600 C2 — consumed by gui/server (documented-private)
 ];
 
@@ -138,6 +152,7 @@ test("the root specifier and undeclared deep paths do not resolve", async () => 
     "@aios-alpha/monorepo/src/runtimes.mjs",
     "@aios-alpha/monorepo/src/internal/flat-yaml.mjs",
     "@aios-alpha/monorepo/internal",
+    "@aios-alpha/monorepo/internal/tasks-table", // promoted to ./tasks-table (AIO-600 C3)
     "@aios-alpha/monorepo/workspace-parse/core",
     "@aios-alpha/monorepo/package.json",
   ];
