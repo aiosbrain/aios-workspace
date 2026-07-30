@@ -5,16 +5,27 @@ Rehearsed end-to-end on 2026-07-30 against frozen SHA
 merged). Every step below was executed in throwaway directories; the numbers quoted are
 the rehearsal's measured results. Seam contract: `docs/gui-toolkit-contract.md`.
 
+> **Package rename note.** The shared package is being renamed
+> **`@aios-alpha/monorepo` → `@aiosbrain/foundation`** (directory
+> `packages/monorepo` → `packages/foundation`) in a parallel PR that merges before the
+> cut. This runbook names the package **`@aiosbrain/foundation`** throughout; the
+> rehearsal itself ran **pre-rename at `0ae23a7`**, where the same package was
+> `@aios-alpha/monorepo` in `packages/monorepo` — the mechanics are identical. **The
+> REAL cut freezes a post-rename SHA and re-runs the parity + tarball/publish steps of
+> this runbook against it.**
+
 ## 0. Inputs
 
 - **Frozen SHA** — pin it first: `git rev-parse origin/main` after a freeze announcement;
-  all steps reference that exact commit.
+  all steps reference that exact commit. The real cut's frozen SHA must be
+  **post-rename** (`@aiosbrain/foundation` / `packages/foundation` on main).
 - **Paths manifest** — `scripts/gui-cut-paths.txt` (this repo). Sanity-check every line:
   `grep -v '^#' scripts/gui-cut-paths.txt | while read -r p; do git log --oneline -1 <sha> -- "$p" | grep -q . || echo "MISSING: $p"; done`
-- **Package source** — the REHEARSAL installed `@aios-alpha/monorepo` from a tarball
-  (`npm pack` in `packages/monorepo` of a fresh clone at the frozen SHA). **The real cut
+- **Package source** — the REHEARSAL installed the shared package from a tarball
+  (`npm pack` in the package directory of a fresh clone at the frozen SHA; pre-rename
+  that was `packages/monorepo`, post-rename `packages/foundation`). **The real cut
   swaps the tarball for the published npm package** (G1 criterion): publish
-  `@aios-alpha/monorepo@0.1.0` first, then the gui repo depends on it normally and the
+  `@aiosbrain/foundation` first, then the gui repo depends on it normally and the
   `vendor/` tarball step disappears.
 
 ## 1. Mirror + filter
@@ -65,10 +76,11 @@ content.
    `test:server` (`node --test gui/server/`), `test:client` (workspace vitest),
    `build:client`, minimal `lint` (`node --check` until an eslint config is chosen).
 2. Apply the two **contract-prescribed** import rewrites (both files carry a comment
-   naming their post-cut specifier):
-   - `gui/server/index.mjs` → `@aios-alpha/monorepo/workspace-markers`
+   naming their post-cut specifier; use the post-rename package name):
+   - `gui/server/index.mjs` → `@aiosbrain/foundation/workspace-markers`
    - `gui/server/runtime-adapters/adapter-contract.test.mjs` →
-     `@aios-alpha/monorepo/{adapter-contract,runtimes}`
+     `@aiosbrain/foundation/{adapter-contract,runtimes}`
+   (rehearsed pre-rename as `@aios-alpha/monorepo/...` at `0ae23a7`)
 3. `node <frozen-core>/scripts/aios.mjs repo-bootstrap <gui-repo> --lint-script lint
    --test-script test` — run from a **frozen-SHA toolkit clone**, not the live primary.
    Stamps the primary-commit guard, worktree hydration, size/boundary/leak gates, CI
