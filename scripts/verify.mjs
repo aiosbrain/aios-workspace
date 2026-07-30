@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCouncil } from "./council.mjs";
 import { assertDiverse, resolveCouncilConfig } from "./council-models.mjs";
-import { normalizeSeverity, rankFindings, rankSeverity } from "./consolidate-findings.mjs";
+import { normalizeSeverity, rankFindings, rankSeverity } from "./severity.mjs";
 
 export const DEFAULT_LANES = 3;
 export const MAX_LANES = 8;

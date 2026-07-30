@@ -38,11 +38,8 @@ import { c } from "./relay-core.mjs";
 import { callPromptModel } from "./model-call.mjs";
 import { detectRepo } from "./pr.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import {
-  hasCriticalOrHighFindings,
-  hasFindingsAtOrAbove,
-  SEVERITY_RANK,
-} from "./review-bugbot.mjs";
+import { hasCriticalOrHighFindings, hasFindingsAtOrAbove } from "./review-bugbot.mjs";
+import { normalizeSeverity, rankFindings, rankSeverity } from "./severity.mjs";
 import { DIFF_CAP } from "./build.mjs";
 
 const ISSUE_RE = /^AIO-\d+$/;
@@ -122,33 +119,10 @@ export function stripFrontmatter(text) {
   return m ? s.slice(m[0].length).trimStart() : s;
 }
 
-export function rankSeverity(sev) {
-  return SEVERITY_RANK[sev] ?? 0;
-}
-
-export function normalizeSeverity(s) {
-  const t = String(s ?? "").toLowerCase();
-  if (t.startsWith("crit")) return "Critical";
-  if (t === "high") return "High";
-  if (t === "medium" || t === "med") return "Medium";
-  if (t === "low") return "Low";
-  return null;
-}
-
-// Stable, deterministic severity order shared by report-only review fan-outs.
-// Equal-severity findings retain their source order.
-export function rankFindings(findings) {
-  return findings
-    .map((finding, sourceIndex) => ({
-      ...finding,
-      severity: normalizeSeverity(finding?.severity) ?? "Low",
-      sourceIndex,
-    }))
-    .sort(
-      (a, b) => rankSeverity(b.severity) - rankSeverity(a.severity) || a.sourceIndex - b.sourceIndex
-    )
-    .map(({ sourceIndex: _sourceIndex, ...finding }) => finding);
-}
+// Severity ranking helpers now live in the core leaf scripts/severity.mjs (AIO-594) and are
+// imported above; re-exported here for back-compat with existing
+// `from "./consolidate-findings.mjs"` call sites.
+export { normalizeSeverity, rankFindings, rankSeverity };
 
 function maxSev(a, b) {
   if (!a) return b;
