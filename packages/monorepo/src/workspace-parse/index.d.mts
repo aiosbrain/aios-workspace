@@ -57,7 +57,7 @@ export interface DecisionRow {
   decided_by: string;
   impact: string;
   tier: number | null;
-  audience: string;
+  audience: string | null;
 }
 
 export function parseDecisionRows(body: string): DecisionRow[];
