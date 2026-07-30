@@ -20,19 +20,29 @@
  *   R4 — gui/server must not deep-import scripts/** at all, at any depth (future aios-workspace-gui
  *        seam contract: CLI --json output + @aios-alpha/toolkit-common only).
  *   R5 — nothing outside test/** may import test/** (tests are a leaf).
+ *   R6 — core files must not import from the devtools path set (scripts/ship.mjs, scripts/ship/**,
+ *        scripts/build.mjs, scripts/roadmap-run.mjs, scripts/spec-eval.mjs, scripts/spec-publish.mjs,
+ *        scripts/consolidate-findings.mjs) — those files move to the aios-devtools repo (AIO-594).
+ *        Devtools-internal imports are fine, and devtools files may import core (that is the
+ *        dependency direction of the cut: devtools → core, never the reverse).
  *
  * Design decisions (documented here because they are NOT spelled out in boundaries.json):
- *   - Test files are exempt as an import SOURCE for R1–R4: any path under a `test/` directory, or
- *     matching `*.test.{mjs,cjs,ts,tsx,js}` anywhere (co-located tests like gui/server/foo.test.mjs),
- *     is never scanned. Tests routinely reach into implementation internals to unit-test them
- *     directly — that is normal and is not the coupling this gate exists to catch. R5 is symmetric:
+ *   - Test files are exempt as an import SOURCE for R1–R4 and R6: any path under a `test/`
+ *     directory, or matching `*.test.{mjs,cjs,ts,tsx,js}` anywhere (co-located tests like
+ *     gui/server/foo.test.mjs), is never scanned. Tests routinely reach into implementation
+ *     internals to unit-test them directly — that is normal and is not the coupling this gate
+ *     exists to catch. For R6 specifically: which test files LEAVE with the devtools cut is
+ *     decided by the extraction paths manifest (the AIO-603-style repo-cut rehearsal), not by
+ *     this gate — a test importing ship.mjs is evidence it belongs in that manifest, not a seam
+ *     violation. R5 is symmetric:
  *     it only restricts imports of test/** from OUTSIDE test/, so test-internal helper imports
  *     (e.g. test/ship-*.test.mjs → test/ship-test-helpers.mjs) are unaffected.
  *   - The `grandfathered` list in boundaries.json is ratchet-only-down: every entry is a REAL,
  *     measured (from, to) coupling in the tree at the time this gate was built, not a projection.
  *     Fixing a coupling and deleting its entry needs no permission; adding a new one does.
  *
- * Static parsing: static `import … from`, bare `import "x"`, dynamic `await import("x")` /
+ * Static parsing: static `import … from`, bare `import "x"`, dynamic `import("x")` (with or
+ * without `await` — lazy loaders like `loader: () => import("../x.mjs")` count; AIO-594 review) /
  * `require("x")`. Reports file:line evidence; exits non-zero on any un-grandfathered violation.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -135,7 +145,7 @@ function parseStaticImports(content) {
 
 function parseDynamicImports(content) {
   const out = [];
-  const re = /(?:await\s+import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
+  const re = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
   let m;
   while ((m = re.exec(content)) !== null) {
     out.push({ mod: m[1], index: m.index, detail: `dynamic import("${m[1]}")` });
@@ -191,6 +201,11 @@ function matchRule(fromRel, toRel) {
   // R5 is symmetric to the others: it restricts test/** as a TARGET, from any non-test source.
   if (/^test\//.test(toRel)) return "R5";
 
+  // R6 — the devtools path set (AIO-594) as a TARGET, from any non-devtools source. Checked
+  // before R1-R4 because the repo seam is the stronger claim; devtools-internal imports
+  // (e.g. ship.mjs → build.mjs) fall through to the barrel rules below.
+  if (DEVTOOLS_PATH_RE.test(toRel) && !DEVTOOLS_PATH_RE.test(fromRel)) return "R6";
+
   if (fromRel.startsWith("scripts/")) {
     const deep = toRel.match(/^scripts\/([^/]+)\/.+$/);
     if (!deep) return null; // target is a top-level scripts/*.mjs barrel → always fine
@@ -217,6 +232,10 @@ function matchRule(fromRel, toRel) {
 
   return null;
 }
+
+// The devtools path set (AIO-594): the exact files moving to the aiosbrain/aios-devtools repo.
+const DEVTOOLS_PATH_RE =
+  /^scripts\/(ship\.mjs$|ship\/|build\.mjs$|roadmap-run\.mjs$|spec-eval\.mjs$|spec-publish\.mjs$|consolidate-findings\.mjs$)/;
 
 function buildGrandfatherKey(from, to) {
   return `${from} ${to}`;

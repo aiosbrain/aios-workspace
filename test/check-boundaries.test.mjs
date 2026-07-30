@@ -206,6 +206,67 @@ test("flags anything outside test/ importing test/** (R5)", () => {
   assert.match(r.out, /\[R5\]/);
 });
 
+test("flags a core file importing the devtools path set (R6)", () => {
+  const r = runIn({
+    extraFiles: {
+      "scripts/build.mjs": `export const b = 1;\n`,
+      "scripts/core-thing.mjs": `import { b } from "./build.mjs";\nexport const x = b;\n`,
+    },
+  });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /\[R6\]/);
+});
+
+test("devtools-internal and devtools→core imports are not R6", () => {
+  const r = runIn({
+    extraFiles: {
+      "scripts/plain.mjs": `export const plain = 1;\n`,
+      "scripts/build.mjs": `export const b = 1;\n`,
+      // devtools-internal (ship → build) and devtools → core (ship/runtime → plain) both allowed.
+      "scripts/ship.mjs": `import { b } from "./build.mjs";\nexport { runtime } from "./ship/runtime.mjs";\nexport const s = b;\n`,
+      "scripts/ship/runtime.mjs": `import { plain } from "../plain.mjs";\nexport const runtime = plain;\n`,
+    },
+  });
+  assert.equal(r.code, 0, r.out);
+});
+
+test("flags a bare lazy-loader dynamic import of the devtools path set (R6 regression)", () => {
+  // The CLI registry's loaders are `loader: () => import("../x.mjs")` — bare `import(`, no
+  // `await`. The parser must see these (AIO-594 D4 review: it originally only matched
+  // `await import(` / `require(`, leaving the five registry→devtools couplings invisible).
+  const files = {
+    "scripts/build.mjs": `export const b = 1;\n`,
+    "scripts/cli/registry.mjs": `export const cmds = [{ name: "build", loader: () => import("../build.mjs") }];\n`,
+  };
+  const flagged = runIn({ extraFiles: files });
+  assert.equal(flagged.code, 1);
+  assert.match(flagged.out, /\[R6\]/);
+  assert.match(flagged.out, /dynamic import/);
+
+  const grandfathered = runIn({
+    extraFiles: files,
+    grandfathered: [
+      {
+        from: "scripts/cli/registry.mjs",
+        to: "scripts/build.mjs",
+        reason: "lazy loader",
+        issue: "AIO-594",
+      },
+    ],
+  });
+  assert.equal(grandfathered.code, 0, grandfathered.out);
+});
+
+test("exempts a test source file from R6 (devtools test ownership is the cut manifest's call)", () => {
+  const r = runIn({
+    extraFiles: {
+      "scripts/ship.mjs": `export const s = 1;\n`,
+      "test/ship-thing.test.mjs": `import { s } from "../scripts/ship.mjs";\nexport const t = s;\n`,
+    },
+  });
+  assert.equal(r.code, 0, r.out);
+});
+
 test("exempts a *.test.mjs source file from R1-R4 (tests reach into internals)", () => {
   const r = runIn({
     extraFiles: {
