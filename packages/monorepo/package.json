@@ -1,0 +1,45 @@
+{
+  "name": "@aios-alpha/monorepo",
+  "version": "0.1.0",
+  "description": "Shared hub modules of the AIOS workspace toolkit (AIO-601, multi-repo split): agent-runtime registry, workspace content parsers, brain/linear clients, git-backed file enumeration, and the engineering-constitution digest loader. ESM subpath exports only — no root export.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiosbrain/aios-workspace.git",
+    "directory": "packages/monorepo"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    "./runtimes": "./src/runtimes.mjs",
+    "./workspace-parse": {
+      "types": "./src/workspace-parse/index.d.mts",
+      "default": "./src/workspace-parse/index.mjs"
+    },
+    "./brain-config": "./src/brain-config.mjs",
+    "./linear-client": "./src/linear-client.mjs",
+    "./brain-client": "./src/brain-client.mjs",
+    "./git-files": "./src/git-files.mjs",
+    "./constitution": "./src/constitution.mjs",
+    "./internal/flat-yaml": {
+      "types": "./src/internal/flat-yaml.d.mts",
+      "default": "./src/internal/flat-yaml.mjs"
+    },
+    "./internal/brain-origin": "./src/internal/brain-origin.mjs",
+    "./internal/tasks-table": {
+      "types": "./src/internal/tasks-table.d.mts",
+      "default": "./src/internal/tasks-table.mjs"
+    },
+    "./internal/transcript-adapters": "./src/internal/transcript-adapters.mjs"
+  }
+}

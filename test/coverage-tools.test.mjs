@@ -149,6 +149,7 @@ test("coverage diff pathspecs include source files at every directory depth", ()
     ":(glob)hooks/**/*.mjs",
     ":(glob)validation/**/*.mjs",
     ":(glob)gui/server/**/*.mjs",
+    ":(glob)packages/**/*.mjs",
     ":(glob)src/**/*.ts",
     ":(glob)gui/client/src/**/*.ts",
     ":(glob)gui/client/src/**/*.tsx",

@@ -14,6 +14,7 @@ const SOURCE_PATHSPECS = [
   ":(glob)hooks/**/*.mjs",
   ":(glob)validation/**/*.mjs",
   ":(glob)gui/server/**/*.mjs",
+  ":(glob)packages/**/*.mjs",
   ":(glob)src/**/*.ts",
   ":(glob)gui/client/src/**/*.ts",
   ":(glob)gui/client/src/**/*.tsx",

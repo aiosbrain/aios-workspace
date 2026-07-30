@@ -1,9 +1,3 @@
-// Ambient typings for the restricted flat-YAML reader, consumed by the TS
-// operator-loop collector under nodenext resolution.
-
-export function stripQuotes(s: string): string;
-
-export function parseFlatYaml(
-  text: string,
-  opts?: { strict?: boolean }
-): Record<string, string | string[]>;
+// Back-compat typings shim (AIO-601): declarations moved with the module into
+// @aios-alpha/monorepo. Keeps src/operator-loop imports of scripts/flat-yaml.mjs typed.
+export * from "@aios-alpha/monorepo/internal/flat-yaml";
