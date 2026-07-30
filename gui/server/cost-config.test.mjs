@@ -12,9 +12,24 @@ import {
   updateCostConfig,
   coerceUsd,
   configSubscriptionUsd,
+  PLAN_PRICES as GUI_PLAN_PRICES,
 } from "./cost-config.mjs";
 import { buildCostsPayload } from "./costs.mjs";
-import { detectClaudePlan, loadCostConfig } from "../../scripts/analyze/claude-plan.mjs";
+// Test-only EXPECTATIONS imports (exempt from the R4 boundary — production
+// cost-config.mjs no longer imports scripts/analyze, AIO-600): the CLI's plan
+// pricing is the source of truth the GUI copy must match.
+import {
+  detectClaudePlan,
+  loadCostConfig,
+  PLAN_PRICES as CLI_PLAN_PRICES,
+} from "../../scripts/analyze/claude-plan.mjs";
+
+test("SEAM PARITY: gui PLAN_PRICES copy matches the CLI's claude-plan.mjs exactly", () => {
+  // cost-config.mjs carries a gui-owned copy of the plan price table (needed
+  // synchronously on the settings/ledger read path, so the CLI-JSON seam does
+  // not fit — AIO-600). Any drift between the copy and the CLI fails here.
+  assert.deepEqual(GUI_PLAN_PRICES, CLI_PLAN_PRICES);
+});
 
 function tmpRepo(initial) {
   const repo = mkdtempSync(path.join(os.tmpdir(), "aios-cost-config-"));

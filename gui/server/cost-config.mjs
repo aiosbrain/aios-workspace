@@ -32,7 +32,22 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { PLAN_PRICES } from "../../scripts/analyze/claude-plan.mjs";
+
+/**
+ * GUI-owned copy of the CLI's Claude consumer-plan list pricing (AIO-600).
+ * Provenance: scripts/analyze/claude-plan.mjs `PLAN_PRICES` — kept verbatim.
+ * It's needed SYNCHRONOUSLY on the settings/ledger read path (a bare
+ * `claude.plan` key must resolve to its list price without spawning the CLI),
+ * so the analyze-JSON seam doesn't fit; instead a parity test in
+ * cost-config.test.mjs compares this copy against the CLI's export, so any
+ * price drift fails tests. Update BOTH together.
+ */
+export const PLAN_PRICES = {
+  free: 0,
+  pro: 20,
+  max_5x: 100,
+  max_20x: 200,
+};
 
 export const SUBSCRIPTION_PROVIDERS = ["claude", "cursor", "codex", "opencode", "zai"];
 export const METERED_PROVIDERS = [

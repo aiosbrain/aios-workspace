@@ -272,6 +272,15 @@ export function toJson(result, costData, contextHealth, codebaseHealth) {
       },
     })),
   };
+  // GUI seam (AIO-600): ship the rendered vocabulary + coaching alongside the
+  // scores, so JSON consumers (gui/server/maturity.mjs) get labels, glosses,
+  // axis coaching, and the CE tip from this surface instead of deep-importing
+  // aem.mjs / guidance.mjs. Purely additive — static copy, no raw events.
+  out.presentation = {
+    axis_labels: AXIS_LABELS,
+    axis_guide: AXIS_GUIDE,
+    ergonomics_tip: ergonomicsTip(out.attention?.reading ?? ""),
+  };
   // Context health SHADOW card (repo/workspace hygiene) — omitted entirely when
   // the check didn't run / threw (contextHealth is null), same pattern as `costs`.
   const chCard = contextHealthCard(contextHealth);
