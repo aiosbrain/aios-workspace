@@ -254,7 +254,7 @@ acknowledgment endpoint ships in V1.
 | Journal replay byte-equivalence (incl. post-asks-GC) + truncation at every byte boundary | `test/operator-loop/inbox-journal-replay.test.mjs` |
 | Legacy-record compat + multi-account collision fixtures (dual-read) | `test/operator-loop/inbox-observations-dualread.test.mjs` |
 | Reply-policy fixture matrix (reply-same-sender → content-free Telegram), `test/operator-loop/comms-sender.test.mjs` untouched | `test/operator-loop/inbox-reply-policy.test.mjs` |
-| Capability tamper / replay-before-and-after-restart / rotation / crash-after-consume / crash-after-action / `outcome_unknown` idempotency-class retry | `test/operator-loop/inbox-capability.test.mjs` |
+| Capability tamper / replay-before-and-after-restart / rotation / crash-after-consume / crash-after-action / `outcome_unknown` idempotency-class retry | `gui/server/runtime-adapters/inbox-capability.test.mjs` |
 | G5 bypass tests scoped to the claimed surface ("inbox path gated") | `test/operator-loop/inbox-send-bypass.test.mjs` |
 | G3 recovery: Telegram disabled, token revoked, API-success-without-ack, coordinator restart, phone offline | `test/operator-loop/inbox-recovery.test.mjs` |
 | State-machine transition generation (all legal/illegal transitions enumerated) | `test/operator-loop/inbox-state-machines.test.mjs` |

@@ -11,8 +11,6 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 
 const RED = "\x1b[0;31m",
   GREEN = "\x1b[0;32m",
@@ -54,41 +52,22 @@ const parsed = parseFlatYaml("version: 1\nagent_runtime: hermes\nagent_model: m\
 if (parsed.agent_runtime !== "hermes") fail("parseFlatYaml did not read agent_runtime");
 else ok("flat-yaml reads agent_runtime");
 
-// 3. GUI adapter resolution rules — best-effort (needs gui/server deps installed).
+// 3+4. GUI adapter registry + host-side write guard — validated through the CORE-OWNED contract
+// (packages/monorepo/src/adapter-contract.mjs, AIO-600 C5) instead of inline assertions, so the
+// gui side runs the SAME checks in its own co-located test
+// (gui/server/runtime-adapters/adapter-contract.test.mjs) that travels with the repo cut.
+// Best-effort during the transition: skips with a note when gui/server is absent or its deps
+// aren't installed — the gui test is then the enforcing side.
+const { checkAdapterRegistry, checkGuardWrite } = await import(
+  path.join(DIR, "..", "packages", "monorepo", "src", "adapter-contract.mjs")
+);
 try {
   const reg = await import(path.join(DIR, "..", "gui", "server", "runtime-adapters", "index.mjs"));
-  const cc = reg.createAdapter("claude-code");
-  if (typeof cc.run !== "function") fail("claude-code adapter missing run()");
-  const expectThrow = (rt, needle) => {
-    try {
-      reg.createAdapter(rt);
-      fail(`createAdapter('${rt}') should have thrown`);
-    } catch (e) {
-      if (!String(e.message).includes(needle))
-        fail(`createAdapter('${rt}') wrong error: ${e.message}`);
-    }
-  };
-  expectThrow("claude-api", "not GUI-drivable");
-  expectThrow("bogus", "unknown agent_runtime");
-  // default + unset config
-  const tmp = mkdtempSync(path.join(tmpdir(), "ogr07-"));
-  const cfgDefault = reg.readAgentConfig(tmp); // no aios.yaml
-  if (cfgDefault.runtime !== "claude-code") fail("readAgentConfig default should be claude-code");
-  if (cfgDefault.personality !== "aios")
-    fail("readAgentConfig default personality should be 'aios'");
-  writeFileSync(path.join(tmp, "aios.yaml"), "agent_runtime: codex\nagent_personality: operator\n");
-  const cfg2 = reg.readAgentConfig(tmp);
-  if (cfg2.runtime !== "codex") fail("readAgentConfig did not read agent_runtime");
-  if (cfg2.personality !== "operator") fail("readAgentConfig did not read agent_personality");
-  rmSync(tmp, { recursive: true, force: true });
-  // claude-code adapter resolves an unknown/empty model to the Sonnet default.
-  if (cc.DEFAULT_MODEL !== "claude-sonnet-4-6")
-    fail("claude-code DEFAULT_MODEL should be claude-sonnet-4-6");
-  if (!cc.ALLOWED_MODELS?.has("claude-opus-4-8"))
-    fail("claude-code ALLOWED_MODELS should include claude-opus-4-8");
+  const violations = checkAdapterRegistry(reg, { RUNTIMES, GUI_RUNTIMES });
+  for (const v of violations) fail(v);
   if (!errors)
     ok(
-      "GUI registry: claude-code resolves, claude-api/unknown error, config default + read, model/personality defaults"
+      "GUI registry satisfies the adapter-registry contract (resolution, typed errors, config + model defaults)"
     );
 } catch (e) {
   console.log(
@@ -96,32 +75,15 @@ try {
   );
 }
 
-// 4. Host-side write guard — reuses team-ops-guard.sh as the single governance
-//    source. Tested against this repo (has hooks/team-ops-guard.sh). Needs jq +
-//    bash (the guard's own deps); skips with a note if absent.
+// Write guard: reuses team-ops-guard.sh as the single governance source. Tested against this repo
+// (has hooks/team-ops-guard.sh). Needs jq + bash (the guard's own deps); skips with a note if absent.
 try {
   const repoRoot = path.join(DIR, "..");
   const { guardWrite } = await import(
     path.join(repoRoot, "gui", "server", "runtime-adapters", "guard.mjs")
   );
-  const expect = (label, args, wantOk) => {
-    const r = guardWrite({ repo: repoRoot, ...args });
-    if (r.ok !== wantOk)
-      fail(`guardWrite ${label}: expected ok=${wantOk}, got ok=${r.ok} (${r.reason || ""})`);
-  };
-  expect(
-    "clean deliverable allowed",
-    { path: "2-work/x.md", content: "---\nstatus: draft\nowner: me\n---\nhi" },
-    true
-  );
-  // Split so this fixture file itself doesn't trip OGR03's secret scan in CI.
-  expect("secret blocked", { path: "notes.md", content: "token=AKIA" + "IOSFODNN7EXAMPLE" }, false);
-  expect(
-    "admin-tier in outward dir blocked",
-    { path: "4-shared/deal.md", content: "---\nstatus: draft\n---\nour day rate is confidential" },
-    false
-  );
-  expect("path escape blocked", { path: "../../../../etc/passwd", content: "x" }, false);
+  const violations = checkGuardWrite(guardWrite, repoRoot);
+  for (const v of violations) fail(v);
   if (!errors) ok("guardWrite: clean allowed; secret / admin-tier / path-escape blocked");
 } catch (e) {
   console.log(`  ${YELLOW}—${NC} guardWrite check skipped: ${String(e.message).split("\n")[0]}`);

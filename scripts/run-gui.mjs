@@ -7,6 +7,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readDescriptors } from "./gen-catalog.mjs";
 import { assertGuiRuntimeReady } from "./gui-runtime-preflight.mjs";
+// Single source of the workspace-marker list (AIO-600 C5) — shared with gui/server/index.mjs's
+// startup check. Relative path (not the bare specifier) so it resolves on a bare checkout,
+// same convention as scripts/runtimes.mjs.
+import { WORKSPACE_MARKERS } from "../packages/monorepo/src/workspace-markers.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -154,6 +158,11 @@ export function guiLaunchPlan({
 } = {}) {
   const repo = resolveGuiRepo(args, cwd);
   const env = scrubGuiWorkspaceEnv({ ambient, root, repo });
+  // This launcher IS the toolkit — pass its root explicitly so the GUI server never has to guess
+  // (toolkit-location contract, AIO-600 C5). gui/server/toolkit-locate.mjs is the fallback for
+  // other launch paths. Set after the scrub: AIOS_GUI_*-style control vars survive by name, this
+  // one by ordering.
+  env.AIOS_TOOLKIT_DIR = root;
   const server = path.join(root, "gui", "server", "index.mjs");
   const envFile = path.join(repo, ".env");
   if (!existsSync(envFile)) {
@@ -177,9 +186,9 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
 
 /**
  * Fail fast (before the client build) when the target repo isn't a workspace.
- * Marker list mirrors gui/server/index.mjs's startup check — keep the two in sync.
+ * Marker list is the shared @aios-alpha/monorepo/workspace-markers definition — the same one
+ * gui/server/index.mjs's startup check consumes, so the two can never drift (AIO-600 C5).
  */
-const WORKSPACE_MARKERS = ["aios.yaml", "workspace.yaml", "project.yaml", "engagement.yaml"];
 export function assertGuiRepo(repo) {
   if (WORKSPACE_MARKERS.some((f) => existsSync(path.join(repo, f)))) return;
   console.error(

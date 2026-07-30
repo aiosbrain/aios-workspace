@@ -181,6 +181,123 @@ Removed R4 grandfathers (3):
   "SEAM PARITY" pins the price-table copy. Test files may import
   `scripts/analyze/*` for expectations (R4 exempts test sources).
 
-## C5 — (appended by cluster C5)
+## C5 — Unpriced couplings: toolkit location, optional capabilities, contract inversion
 
-_Pending — cluster C5 appends its surfaces here._
+### Toolkit-location contract
+
+**One implementation: `gui/server/toolkit-locate.mjs`.** Every toolkit path the GUI server needs
+(the `aios` CLI it spawns, the compiled operator loop it optionally loads) resolves through it —
+never a hard-coded `../../` relative to `gui/server`.
+
+Resolution order:
+
+1. explicit `--toolkit-dir <path>` argv flag;
+2. `AIOS_TOOLKIT_DIR` env var;
+3. adjacent-checkout compatibility fallback: `gui/server/../../` (the pre-split layout);
+4. otherwise **fail with an actionable error** (names the candidate, its source, the missing
+   markers, and the fix).
+
+A resolved toolkit must contain `scripts/aios.mjs`, `scaffold/`, and a root `package.json`
+(`TOOLKIT_MARKERS`), and is `realpath`'d before anything is spawned from it. An **explicit**
+source (1 or 2) that fails validation is a hard error — it never silently falls back, so a
+misconfigured launch can't spawn a different toolkit than the one asked for.
+
+**The supported launch path needs no guessing:** `scripts/run-gui.mjs` *is* the toolkit, so it
+sets `AIOS_TOOLKIT_DIR` to its own root in the server's environment (`guiLaunchPlan`). The
+resolver's fallback chain exists for other launch paths (direct `node gui/server/index.mjs`, the
+Tauri shell, post-cut installs).
+
+Consumers: `gui/server/index.mjs` (startup resolution; `AIOS_CLI = toolkitCli()`, which also
+feeds C2/C3's `createAiosCliInvoker`/`createAiosJson` CLI seam and the analysis cache),
+`gui/server/loop.mjs` (loop/asks CLI spawns), `gui/server/operator-loop-capability.mjs`
+(dist load), and `/api/info` (reports `toolkit { dir, source }`).
+
+### Optional capability: compiled operator loop
+
+`gui/server/operator-loop-capability.mjs`. The coordinator-side broker (`brokerDecision`,
+`notifyDeepLink`) and the durable-journal bridge (`createDurableCapabilityJournal`) come from the
+toolkit's **compiled** operator loop at `<toolkit>/dist/operator-loop/index.js`, resolved via the
+toolkit-location contract.
+
+The capability is **optional but never silent**:
+
+- the server probes it at startup; when absent/unloadable it logs one
+  `[capability] operator-loop UNAVAILABLE: …` line naming the path and the fix
+  (`npm run build:loop`), and degrades to the inline envelope broker with **no** durable
+  journalling;
+- `/api/info` carries `capabilities.operatorLoop` (`{ status: "available" | "unavailable" |
+  "unknown", reason }`) so the GUI can render "operator-loop capability unavailable" instead of
+  silently losing journalling.
+
+The authorization authority (validate + durable consume) is the runtime capability store
+(`gui/server/runtime-adapters/capability-store.mjs`, plain ESM, always loaded); only the additive
+I-02 journal + coordinator envelope depend on the compiled loop.
+
+### Adapter-registry contract inversion
+
+The last toolkit→GUI **code** dependency was `validation/check-runtime-adapters.mjs` (OGR07)
+importing `gui/server/runtime-adapters/{index,guard}.mjs`. Inverted into a **core-owned contract
+fixture**: `@aios-alpha/monorepo/adapter-contract` (`packages/monorepo/src/adapter-contract.mjs`)
+defines `checkAdapterRegistry` (registry shape over the canonical
+`@aios-alpha/monorepo/runtimes` data: `RUNTIMES[*].gui` resolution, `GUI_RUNTIMES` parity, typed
+`not GUI-drivable` / `unknown agent_runtime` errors, `readAgentConfig` + model defaults) and
+`checkGuardWrite` (+ `GUARD_SCENARIOS` data for the team-ops-guard governance scenarios).
+
+- **Core side:** OGR07 runs both checks against `gui/server` while it is still in-tree, keeping
+  its skip-when-absent behavior for the transition (gui absent / deps not installed → noted skip,
+  not a failure). Post-cut it simply always skips and core's own registry checks (sections 1–2)
+  keep running.
+- **GUI side:** `gui/server/runtime-adapters/adapter-contract.test.mjs` runs the *same* checks and
+  **travels with the cut** — in-tree it imports the contract by relative path (worktree
+  `node_modules` symlinking, see the marker contract below); post-cut it consumes the published
+  `@aios-alpha/monorepo/adapter-contract` subpath (already exported). The guard check skips when
+  no toolkit (with `hooks/team-ops-guard.sh`) is locatable.
+
+### Workspace-marker contract
+
+**Decision: single-source import, core-owned** (not a parity test). The list of files that make a
+directory an AIOS workspace (`aios.yaml` / `workspace.yaml` / `project.yaml` / `engagement.yaml`)
+was hand-synced between `scripts/run-gui.mjs` and `gui/server/index.mjs`. It is now defined once
+in `@aios-alpha/monorepo/workspace-markers` (`packages/monorepo/src/workspace-markers.mjs`):
+
+- `scripts/run-gui.mjs` imports it by relative path (bare-checkout safe, same convention as the
+  `scripts/runtimes.mjs` shim) — **no core→gui runtime dependency is created**;
+- `gui/server/index.mjs` imports it by relative path in-tree (worktrees symlink `node_modules`
+  from the primary checkout, so a freshly added package subpath does not resolve there); at cut
+  time this becomes the published `@aios-alpha/monorepo/workspace-markers` specifier, an ordinary
+  npm dependency of the GUI repo. The subpath is already exported by `packages/monorepo`.
+
+A parity test is unnecessary because both sides read the same module; drift is impossible by
+construction.
+
+### Test ownership at cut time
+
+Every test that imports (or end-to-end drives) GUI internals, and where it lives when the GUI is
+cut out:
+
+| Test file | GUI coupling | Destination at cut |
+|---|---|---|
+| `gui/server/runtime-adapters/inbox-capability.test.mjs` | `./capability-store.mjs` + `./__fixtures__/capability-fixtures.mjs` (+ compiled operator loop) | **Moved in this PR** from `test/operator-loop/` — already gui-owned, travels with the cut. Its operator-loop import (`../../../dist/operator-loop/index.js`) becomes the published `@aios-alpha/operator-loop` package. |
+| `gui/server/**/*.test.mjs` (all other co-located suites, incl. `adapter-contract.test.mjs`) | gui modules | travel with the gui repo |
+| `test/skill-install.test.mjs` | `gui/server/skill-library.mjs` | gui repo |
+| `test/skill-install-marketplace.test.mjs` | `gui/server/skill-library.mjs` (+ marketplace fixtures) | gui repo |
+| `test/ux/tool-policy.test.mjs` | `gui/server/tool-policy.mjs` | gui repo |
+| `test/ux/flows/onboarding-draft-from-link.mjs` | `gui/server/tool-policy.mjs` | gui repo (with the UX harness) |
+| `test/ux/flows/skills-install-consent.mjs` | `gui/server/skill-library.mjs` | gui repo (with the UX harness) |
+| `test/ux/run-ux.mjs`, `test/ux/proc.mjs`, `test/ux/proc.test.mjs` | spawn `scripts/run-gui.mjs` → `gui/server/index.mjs` end-to-end | gui repo; the harness launches the server via the toolkit-location contract (a toolkit checkout or `AIOS_TOOLKIT_DIR` becomes a test prerequisite) |
+| `test/run-gui.test.mjs`, `test/gui-runtime-preflight.test.mjs` | launcher/preflight logic (core-owned files; read `gui/server/package.json` as data) | stay core with the launcher |
+| `test/local-bugbot-gate.test.mjs`, `test/spec-eval-deterministic.test.mjs`, `test/check-boundaries.test.mjs`, `test/test-suite.test.mjs`, `test/coverage-tools.test.mjs` | path strings / synthetic fixtures only, no gui imports | stay core |
+
+**Cut-time follow-up (flagged, not solved here):** the nightly `inbox-authorization` mutation
+group (`scripts/run-mutation.mjs`) mutates core's `src/operator-loop/inbox/capability.ts` but its
+calibrated oracle is now the gui-owned capability suite. At cut, core must either run that suite
+from an installed gui checkout or re-calibrate the 90% floor against a core-owned oracle — a
+measured decision for the cut PR, recorded per AIO-539's rules.
+
+### src-tauri (deliberately untouched by C5)
+
+C5 does **not** touch `src-tauri/` (`tauri.conf.json`, `main.rs`). The desktop shell is
+currently do-not-demo, and its repointing to the new GUI repo is deliberately deferred to the cut
+itself — **AIO-581 owns that fix in the new repo**. Nothing in the toolkit-location or capability
+contracts above depends on the Tauri shell; it remains a launcher that must set
+`AIOS_GUI_TOKEN` (and, post-cut, `AIOS_TOOLKIT_DIR`) like any other non-toolkit launch path.

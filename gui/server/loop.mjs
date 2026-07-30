@@ -23,10 +23,9 @@
 import { execFile } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const AIOS_CLI = path.join(HERE, "..", "..", "scripts", "aios.mjs");
+// Toolkit CLI path via the toolkit-location contract (AIO-600 C5), not gui/server-relative.
+// Resolved lazily per spawn so importing this module never requires a located toolkit.
+import { toolkitCli } from "./toolkit-locate.mjs";
 
 export const LOOP_CADENCES = ["daily", "weekly"];
 
@@ -76,7 +75,7 @@ export function runLoopCli(repo, args) {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
-      [AIOS_CLI, "loop", ...args, "--repo", repo],
+      [toolkitCli(), "loop", ...args, "--repo", repo],
       { cwd: repo, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout, stderr) => {
         const exitCode = err && typeof err.code === "number" ? err.code : 0;
@@ -114,7 +113,7 @@ export function runAsksCli(repo, args) {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
-      [AIOS_CLI, "asks", ...args, "--repo", repo],
+      [toolkitCli(), "asks", ...args, "--repo", repo],
       { cwd: repo, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout, stderr) => {
         const exitCode = err && typeof err.code === "number" ? err.code : 0;

@@ -194,9 +194,11 @@ test("nightly kill commands use the unit's own tests; the changed-code lane keep
     .commandRunner.command;
   const changedCommand = configFor(inbox, ["dist/operator-loop/inbox/capability.js"], false)
     .commandRunner.command;
-  assert.match(nightlyCommand, /test\/operator-loop\/inbox-capability\.test\.mjs/);
+  assert.match(nightlyCommand, /gui\/server\/runtime-adapters\/inbox-capability\.test\.mjs/);
   assert.doesNotMatch(nightlyCommand, /test\/operator-loop\/\*\.test\.mjs/);
   assert.match(changedCommand, /test\/operator-loop\/\*\.test\.mjs/);
+  // AIO-600 C5: the moved capability suite stays in the changed-code umbrella explicitly.
+  assert.match(changedCommand, /gui\/server\/runtime-adapters\/inbox-capability\.test\.mjs/);
 
   const updateSafety = MUTATION_GROUPS.find((entry) => entry.name === "update-safety");
   const updateNightly = configFor(updateSafety, ["scripts/toolkit-merge.mjs"], true).commandRunner

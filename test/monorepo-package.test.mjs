@@ -90,6 +90,16 @@ const PUBLIC_EXPORTS = {
     "syncOriginRowsFor",
   ],
   "git-files": ["gitFiles"],
+  // AIO-600 C5: the run-gui ↔ gui-server workspace-marker single source, and the
+  // adapter-registry/guard contract checks (OGR07 inversion) — see
+  // docs/gui-toolkit-contract.md §C5.
+  "workspace-markers": ["WORKSPACE_MARKERS"],
+  "adapter-contract": [
+    "CLAUDE_CODE_EXPECTATIONS",
+    "GUARD_SCENARIOS",
+    "checkAdapterRegistry",
+    "checkGuardWrite",
+  ],
   constitution: [
     "CONSTITUTION_RELPATH",
     "DIGEST_END",
@@ -106,7 +116,6 @@ const INTERNAL_SUBPATHS = [
   "internal/flat-yaml",
   "internal/brain-origin",
   "internal/transcript-adapters",
-  "internal/skill-scan", // AIO-600 C2 — consumed by gui/server (documented-private)
   "internal/skill-scan", // AIO-600 C2 — consumed by gui/server (documented-private)
 ];
 

@@ -1,7 +1,7 @@
 // Capability fixture matrix builders (I-07 / AIO-388).
 //
 // Helpers that construct VALID and adversarially-MUTATED capability envelopes, handles, and durable
-// store records for `test/operator-loop/inbox-capability.test.mjs`. They compose the store's own line
+// store records for `gui/server/runtime-adapters/inbox-capability.test.mjs`. They compose the store's own line
 // encoders (`issueLine`/`consumeLine`/`receiptLine`) so a fixture can seed a store in ANY intermediate
 // state — including the crash windows a live `consumeAndExecute` can never leave behind mid-call
 // (tombstone committed, outcome line missing). Everything here is synthetic + admin-tier local; nothing

@@ -19,6 +19,8 @@ paths do not resolve — the exports map below is the whole public surface.
 | `@aios-alpha/monorepo/git-files` | Enumerate a repo's content via git (`git ls-files`), never a filesystem walk (AIO-517). |
 | `@aios-alpha/monorepo/constitution` | Load the repo's engineering-constitution digest for prompt injection. |
 | `@aios-alpha/monorepo/tasks-table` | Markdown task/decision-table parsing + merge writeback (`parseTaskRows`, `mergeTaskWriteback`, canonical statuses). Promoted from `./internal/` in AIO-600 C3: the GUI tasks panel must round-trip tables exactly the way `aios pull` does, so the shared implementation is public rather than copied. Ships `.d.mts` typings. |
+| `@aios-alpha/monorepo/workspace-markers` | The one definition of "what makes a directory an AIOS workspace" (`WORKSPACE_MARKERS`). Shared by the `run-gui` launcher and the GUI server's startup check so the lists can never drift (AIO-600 C5). |
+| `@aios-alpha/monorepo/adapter-contract` | The GUI adapter-registry + write-guard contract checks (`checkAdapterRegistry`, `checkGuardWrite`, `GUARD_SCENARIOS`). Core-owned inversion of OGR07's former direct gui imports; run by both `validation/check-runtime-adapters.mjs` and the GUI's own `adapter-contract.test.mjs` (AIO-600 C5). |
 
 ## Private/unstable internal subpaths
 

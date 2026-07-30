@@ -21,7 +21,7 @@ this spec. No production code changes.
 > mutants / 5m47s in #428) — `bugbot-security` is the only remaining deliberate-red leg. (2) The
 > calibration **measured the inbox floor dip this spec anticipated**: 84.62% (22/26) against the
 > unit-only oracle, and widening `nightlyTests` to the capability-adjacent subset changed nothing,
-> because `test/operator-loop/inbox-capability.test.mjs` is the **only** test in the repo that
+> because `gui/server/runtime-adapters/inbox-capability.test.mjs` is the **only** test in the repo that
 > invokes the broker — no oracle widening can kill what no test asserts. The remediation was the
 > third, most honest option: **strengthen the unit oracle** (assert the journalled event payloads
 > and the optional-journal guard Stryker proved unasserted) — after which the unit-only oracle
@@ -219,7 +219,7 @@ the incident. So:
 - **`scripts/run-mutation.mjs`** — every group gains `nightlyExcludes` (empty where nothing is
   dropped); the narrowed groups gain `nightlyTests`; `nightly` arrays reduce to the declared unit:
   - `inbox-authorization` → `nightly: ["src/operator-loop/inbox/capability.ts"]`,
-    `nightlyTests: ["test/operator-loop/inbox-capability.test.mjs"]`; excludes `scripts/inbox.mjs`
+    `nightlyTests: ["gui/server/runtime-adapters/inbox-capability.test.mjs"]`; excludes `scripts/inbox.mjs`
     and the other **20** `src/operator-loop/inbox/*.ts` files.
   - `update-safety` → `nightly: ["scripts/toolkit-merge.mjs"]`,
     `nightlyTests: ["test/toolkit-merge.test.mjs"]`; excludes `scripts/update.mjs`,
@@ -305,7 +305,7 @@ asserted.
 - `node scripts/run-mutation.mjs --nightly --group inbox-authorization --list` shows exactly
   `dist/operator-loop/inbox/capability.js`, and the generated
   `.stryker-tmp/inbox-authorization.conf.json` shows `thresholds.break: 90` and a kill command
-  containing only `test/operator-loop/inbox-capability.test.mjs` — the calibrated floor now
+  containing only `gui/server/runtime-adapters/inbox-capability.test.mjs` — the calibrated floor now
   enforcing against the unit's own oracle (after the re-measurement check above).
 - One nightly run produces a `mutation-report-<group>` artifact for **every leg that completes** —
   post-AIO-540 (rev 2.1): five (`access-governance`, `inbox-authorization`, `update-safety`,

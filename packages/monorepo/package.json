@@ -22,6 +22,8 @@
   ],
   "exports": {
     "./runtimes": "./src/runtimes.mjs",
+    "./workspace-markers": "./src/workspace-markers.mjs",
+    "./adapter-contract": "./src/adapter-contract.mjs",
     "./workspace-parse": {
       "types": "./src/workspace-parse/index.d.mts",
       "default": "./src/workspace-parse/index.mjs"
