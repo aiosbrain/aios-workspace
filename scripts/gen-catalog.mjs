@@ -165,7 +165,9 @@ export function renderSkillsIndexMd(skills) {
   return sk;
 }
 
-function generate(repo) {
+// Exported as the `aios gen-catalog` CLI surface (hidden; registry descriptor) so the
+// GUI server can refresh catalogs through the CLI seam instead of importing scripts/**.
+export function generate(repo) {
   const skillsDir = path.join(repo, ".claude", "skills");
   const skills = readSkills(repo);
   const integrations = readIntegrations(repo);

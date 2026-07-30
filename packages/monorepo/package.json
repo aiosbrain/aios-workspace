@@ -40,6 +40,7 @@
       "types": "./src/internal/tasks-table.d.mts",
       "default": "./src/internal/tasks-table.mjs"
     },
-    "./internal/transcript-adapters": "./src/internal/transcript-adapters.mjs"
+    "./internal/transcript-adapters": "./src/internal/transcript-adapters.mjs",
+    "./internal/skill-scan": "./src/internal/skill-scan.mjs"
   }
 }

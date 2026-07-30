@@ -1,11 +1,10 @@
 // test/cli-registry.test.mjs — parity guard for the aios.mjs command registry (AIO-512 Phase 1).
 //
 // The registry replaced a 45-branch if/else-if chain plus a hand-maintained USAGE string. These
-// tests are the proof that the replacement is behavior-identical: the command set, each
-// command's root-resolution mode, the help text, the help/unknown-command exit codes, the
-// `--repo` carve-out, and the exit-code contract of each `exit` mode. The last test is the one
-// that makes the refactor worth doing: `aios status` must not drag ship/build/spec-eval into
-// its startup graph.
+// tests prove the replacement is behavior-identical: the command set, each command's
+// root-resolution mode, the help text, the help/unknown-command exit codes, the `--repo`
+// carve-out, and the exit-code contract of each `exit` mode. The last test is the one that
+// makes the refactor worth doing: `aios status` must not drag ship/build into its startup graph.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -76,17 +75,18 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
-  // Post-snapshot: AIO-579 delivery + AIO-605 codebase-health (read-only), AIO-602 repo-bootstrap.
+  // Post-snapshot: AIO-579 delivery + AIO-605 codebase-health (read-only), AIO-602
+  // repo-bootstrap, AIO-600 gen-catalog (hidden GUI seam — gui/server shells it).
   delivery: "offline",
   "codebase-health": "offline",
   "repo-bootstrap": "offline",
+  "gen-catalog": "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
 };
 
-// Commands that owned their own `--repo` flag before the refactor and must keep it (plus
-// `delivery`, added later: its `--repo` is a GitHub slug filter, not the workspace path).
+// Pre-refactor `--repo` owners (plus later `delivery` — a GitHub slug filter, not the ws path).
 const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
 function run(args, opts = {}) {
@@ -159,8 +159,8 @@ test("registry: loaders are lazy — no descriptor holds an eagerly-resolved mod
 });
 
 test("registry: every loader resolves to a real module", async () => {
-  // A typo in a loader's specifier is otherwise only discoverable by running that one
-  // command — the old static imports failed at startup, so this restores that guarantee.
+  // A typo in a loader's specifier is otherwise only discoverable by running that command
+  // — the old static imports failed at startup, so this restores that guarantee.
   for (const d of COMMANDS) {
     if (!d.loader) continue;
     const mod = await d.loader();
@@ -313,6 +313,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
     inbox: ["mod", "cmdInbox", R, C, A],
     delivery: ["mod", "cmdDelivery", R, C, A],
     "repo-bootstrap": ["mod", "cmdRepoBootstrap", A],
+    "gen-catalog": ["mod", "generate", R],
     transcripts: ["mod", "cmdTranscripts", R, C, A],
     pm: ["mod", "cmdPm", C, A],
     mode: ["mod", "cmdMode", R, C, A],
@@ -385,8 +386,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
 
 test("dispatch: exit-status only assigns a truthy status (never clobbers with 0)", () => {
   // The old `update` branch was `if (result.exitStatus) process.exitCode = ...` — it never
-  // wrote 0, so a soft-failure exitCode set deeper in the command survived. An unconditional
-  // `?? 0` would silently turn a failure green.
+  // wrote 0, so a deeper soft-failure exitCode survived; an unconditional `?? 0` would go green.
   const previous = process.exitCode;
   try {
     process.exitCode = 3;
