@@ -7,7 +7,7 @@ import path from "node:path";
 import { c } from "./relay-core.mjs";
 import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
 import { parseModelRef } from "./model-providers.mjs";
-import { loadRubric, runDeterministicChecks, SPEC_BATCH_CONCURRENCY_MAX } from "./spec-eval.mjs";
+import { loadRubric, runDeterministicChecks, SPEC_BATCH_CONCURRENCY_MAX } from "./spec-checks.mjs";
 import { loadSkillContext, parseDeclaredSkills } from "./skill-context.mjs";
 
 const DEFAULT_RUBRIC_REL = path.join(".claude", "rubrics", "spec-readiness.md");
