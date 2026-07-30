@@ -156,8 +156,11 @@ export function buildBugbotPrompt({
 // BLOCKED round to CLEAR (AIO-239 / observation.md §9 — the verdict must not hinge on `**`).
 const MD = "(?:\\*\\*|__|\\*|_)?"; // optional emphasis opener/closer
 
-// Rank for merging/comparing severities across sources (used by the consolidator).
-export const SEVERITY_RANK = { Critical: 4, High: 3, Medium: 2, Low: 1 };
+// Rank for merging/comparing severities across sources (used by the consolidator). Canonical
+// home is the core leaf scripts/severity.mjs (AIO-594); re-exported here so this file's
+// documented surface is unchanged.
+import { SEVERITY_RANK } from "../severity.mjs";
+export { SEVERITY_RANK };
 
 export function canonicalSeverity(value) {
   const found = Object.keys(SEVERITY_RANK).find(

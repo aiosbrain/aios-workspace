@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { rankFindings } from "../scripts/consolidate-findings.mjs";
+import { rankFindings } from "../scripts/severity.mjs";
 import {
   cmdVerify,
   mergeLaneResults,
