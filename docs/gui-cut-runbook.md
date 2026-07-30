@@ -5,14 +5,14 @@ Rehearsed end-to-end on 2026-07-30 against frozen SHA
 merged). Every step below was executed in throwaway directories; the numbers quoted are
 the rehearsal's measured results. Seam contract: `docs/gui-toolkit-contract.md`.
 
-> **Package rename note.** The shared package is being renamed
+> **Package rename note.** The shared package was renamed
 > **`@aios-alpha/monorepo` → `@aiosbrain/foundation`** (directory
-> `packages/monorepo` → `packages/foundation`) in a parallel PR that merges before the
-> cut. This runbook names the package **`@aiosbrain/foundation`** throughout; the
-> rehearsal itself ran **pre-rename at `0ae23a7`**, where the same package was
-> `@aios-alpha/monorepo` in `packages/monorepo` — the mechanics are identical. **The
-> REAL cut freezes a post-rename SHA and re-runs the parity + tarball/publish steps of
-> this runbook against it.**
+> `packages/monorepo` → `packages/foundation`), merged to main in #502. This runbook
+> names the package **`@aiosbrain/foundation`** throughout; the rehearsal itself ran
+> **pre-rename at `0ae23a7`**, where the same package was `@aios-alpha/monorepo` in
+> `packages/monorepo` — the mechanics are identical. **The REAL cut freezes a
+> post-rename SHA and re-runs the parity + tarball/publish steps of this runbook
+> against it.**
 
 ## 0. Inputs
 
@@ -65,10 +65,12 @@ git cat-file --batch-all-objects --batch-check  # enumerate blobs; grep each aga
 ```
 
 Rehearsal: 1852 objects / 868 unique blobs — forbidden paths **clean**, NDA terms
-**clean**, secret patterns **clean except one documented false positive** (the
-`xoxp-new-...` placeholder in 4 vendored `gui/server/skill-library/claude-api/*/managed-agents/README.md`
-docs, identical to what is already on main). Report counts/paths only — never matched
-content.
+**clean**, secret patterns **clean except one documented false positive**: a
+Slack-token-shaped documentation placeholder (`xox<c>-new-...`, with `<c>` a real
+token-type letter in the source — spelled out literally there, masked here so this
+runbook doesn't trip the same scanner) in 4 vendored
+`gui/server/skill-library/claude-api/*/managed-agents/README.md` docs, identical to
+what is already on main. Report counts/paths only — never matched content.
 
 ## 4. Bootstrap the standalone repo
 

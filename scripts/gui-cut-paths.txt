@@ -2,10 +2,11 @@
 # (AIO-594 / AIO-603; consumed as `git filter-repo --paths-from-file <this file>`).
 #
 # Frozen SHA (rehearsed): 0ae23a7fadf6ce36ac9ee54247bf4c7af2b07f98
-# NOTE: the rehearsal ran pre-rename (@aios-alpha/monorepo). The REAL cut freezes a
-# post-rename SHA (@aiosbrain/foundation, packages/foundation) and re-runs the
-# manifest sanity + parity steps of docs/gui-cut-runbook.md against it. The paths
-# below are unaffected by the rename (packages/* is not extracted).
+# NOTE: the rehearsal ran pre-rename (@aios-alpha/monorepo). The rename to
+# @aiosbrain/foundation (packages/foundation) has since merged (#502); the REAL cut
+# freezes a post-rename SHA and re-runs the manifest sanity + parity steps of
+# docs/gui-cut-runbook.md against it. The paths below are unaffected by the rename
+# (packages/* is not extracted).
 # Derivation: docs/gui-toolkit-contract.md "Test ownership at cut time" table + the gui/
 # and src-tauri/ trees + gui-only docs. Full procedure: docs/gui-cut-runbook.md.
 #
