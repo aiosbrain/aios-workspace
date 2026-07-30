@@ -9,6 +9,10 @@ SAME full-metrics payload `aios-ingest scan` would send, plus the contract-shape
 health-only payload is never sent — the brain 422s it and the metrics upsert REPLACES the
 (codebase_id, head_sha) row, so health must always ride on the full block.
 
+Health is opt-in ENRICHMENT, never a gate: if the health file is unreadable, off-contract,
+or describes a different head, the attachment is skipped with a warning and the base scan
+is pushed anyway — base telemetry must never be lost to a health problem.
+
 Auth is identical to `aios-ingest scan`: BrainSettings.from_env() (BRAIN_URL / AIOS_API_KEY /
 AIOS_TEAM) + optional GITHUB_TOKEN for enrichment. No new credentials, no flags for secrets.
 """
@@ -38,6 +42,33 @@ CONTRACT_FIELDS = {
 }
 
 
+def _skip(reason: str) -> None:
+    print(f"codebase_health: {reason} — pushing the base scan WITHOUT health", file=sys.stderr)
+
+
+def load_health(path: str) -> dict | None:
+    """Read + shape-check the mapped health JSON. Any problem → warn and return None
+    (the caller then pushes the plain scan; a health failure never drops base telemetry)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            health = json.load(fh)
+    except (OSError, ValueError) as exc:  # ValueError covers JSONDecodeError
+        _skip(f"cannot read health JSON {path!r}: {exc}")
+        return None
+    if not isinstance(health, dict):
+        _skip("health JSON is not an object")
+        return None
+    missing = CONTRACT_FIELDS - set(health)
+    extra = set(health) - CONTRACT_FIELDS
+    if missing or extra:
+        _skip(
+            f"health JSON does not match the 1.15 contract "
+            f"(missing={sorted(missing)}, extra={sorted(extra)})"
+        )
+        return None
+    return health
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--path", default=".", help="local git checkout to analyze")
@@ -51,15 +82,7 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    with open(args.health_json, encoding="utf-8") as fh:
-        health = json.load(fh)
-    missing = CONTRACT_FIELDS - set(health)
-    extra = set(health) - CONTRACT_FIELDS
-    if missing or extra:
-        sys.exit(
-            f"health JSON does not match the 1.15 contract (missing={sorted(missing)}, "
-            f"extra={sorted(extra)}) — refusing to attach; run the plain scan instead"
-        )
+    health = load_health(args.health_json)
 
     settings = BrainSettings.from_env()
     token = os.environ.get("GITHUB_TOKEN")  # read from env only; never logged
@@ -71,23 +94,29 @@ def main() -> None:
         github_token=token,
     )
 
-    scan_sha = payload["metrics"].get("head_sha")
-    if health["head_sha"] != scan_sha:
-        sys.exit(
-            f"health head_sha {health['head_sha']} != scanned head_sha {scan_sha} — "
-            "refusing to attach a snapshot of a different commit"
-        )
-    payload["metrics"]["codebase_health"] = health
+    if health is not None:
+        scan_sha = payload["metrics"].get("head_sha")
+        if health["head_sha"] != scan_sha:
+            _skip(
+                f"health head_sha {health['head_sha']} != scanned head_sha {scan_sha} "
+                "(snapshot of a different commit)"
+            )
+        else:
+            payload["metrics"]["codebase_health"] = health
 
     async def run() -> None:
         async with BrainClient(settings.base_url, settings.api_key, settings.team) as client:
             print(json.dumps(await client.push_codebase_scan(payload)))
 
     m = payload["metrics"]
+    health_note = (
+        f"{m['codebase_health']['status']} ({m['codebase_health']['score_pct']}%)"
+        if "codebase_health" in m
+        else "not attached"
+    )
     print(
         f"scanned {args.slug}: {m['commits_window']} commits "
-        f"({m['ai_commits_window']} AI-assisted), codebase_health="
-        f"{health['status']} ({health['score_pct']}%)"
+        f"({m['ai_commits_window']} AI-assisted), codebase_health={health_note}"
     )
     asyncio.run(run())
 

@@ -7,14 +7,17 @@
 // is validated BOTH standalone (against $defs.codebaseHealth) and embedded into a full
 // valid metrics payload (never-sparse: health only ever rides on the full block).
 //
-// Two input fixtures, per the AIO-608 spec:
-//   - test/fixtures/codebase-health/cli-run.v1.json — a REAL `aios codebase-health --json`
-//     run captured from this repo (exercises null-band axis omission + bare-date widening);
-//   - a synthetic in-file object covering every mapped field precisely.
+// Two input fixtures (BOTH fully synthetic — the examples-are-synthetic rule forbids real
+// workspace data, shas, or metrics in fixtures):
+//   - test/fixtures/codebase-health/cli-run.v1.json — a shape-faithful synthetic sample of
+//     the full `aios codebase-health --json` output (all seven rubric axes incl. null-band
+//     skipped ones, number schema_version, bare-date measured_at, trailing checks array);
+//   - a minimal synthetic in-file object covering every mapped field precisely.
 // Failure-path invariants: any input that cannot yield a COMPLETE 8-field contract object
 // throws HealthMappingError — the mapper never emits a partial/sparse health object.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +35,7 @@ const schema = JSON.parse(
 const contractFixtures = JSON.parse(
   readFileSync(path.join(ROOT, "docs/contract/codebase-payload-1.15-fixtures.json"), "utf8")
 );
-const realCliRun = JSON.parse(
+const fullCliRun = JSON.parse(
   readFileSync(path.join(ROOT, "test/fixtures/codebase-health/cli-run.v1.json"), "utf8")
 );
 
@@ -77,11 +80,19 @@ function syntheticCli() {
   };
 }
 
-test("real scorer run maps to a contract-valid codebase_health object", () => {
-  const health = toContractCodebaseHealth(realCliRun);
-  assertContractValid(health, "real cli-run fixture");
-  assert.equal(health.head_sha, realCliRun.head_sha);
-  assert.equal(health.rubric_version, realCliRun.rubric_version);
+test("full CLI-shape fixture maps to a contract-valid codebase_health object", () => {
+  const health = toContractCodebaseHealth(fullCliRun);
+  assertContractValid(health, "cli-run fixture");
+  assert.equal(health.head_sha, fullCliRun.head_sha);
+  assert.equal(health.rubric_version, fullCliRun.rubric_version);
+  // The two skipped (null-band) axes must be omitted; the five scored ones kept.
+  assert.deepEqual(Object.keys(health.dimensions).sort(), [
+    "boundaries",
+    "contributor_friction",
+    "docs_parity",
+    "invariants",
+    "modularity",
+  ]);
 });
 
 test("synthetic run maps field-for-field to the contract shape", () => {
@@ -168,10 +179,24 @@ test("error, never sparse: any incomplete or unmappable input throws HealthMappi
     ],
     ["garbage measured_at", () => ({ ...syntheticCli(), measured_at: "yesterday" })],
     ["empty rubric_version", () => ({ ...syntheticCli(), rubric_version: "" })],
+    ["null schema_version", () => ({ ...syntheticCli(), schema_version: null })],
+    ["object schema_version", () => ({ ...syntheticCli(), schema_version: {} })],
+    ["non-finite schema_version", () => ({ ...syntheticCli(), schema_version: Infinity })],
   ];
   for (const [name, make] of cases) {
     assert.throws(() => toContractCodebaseHealth(make()), HealthMappingError, name);
   }
+});
+
+test("CLI entry runs when invoked via a RELATIVE script path (main-module guard)", () => {
+  const out = execFileSync(
+    process.execPath,
+    ["scripts/codebase-health/push-payload.mjs", "test/fixtures/codebase-health/cli-run.v1.json"],
+    { cwd: ROOT, encoding: "utf8" }
+  );
+  const health = JSON.parse(out);
+  assert.equal(health.head_sha, fullCliRun.head_sha);
+  assertContractValid(health, "relative-path CLI invocation");
 });
 
 test("mapper is pure: the input object is never mutated", () => {

@@ -25,7 +25,8 @@
  * Zero dependencies; pure (no clock, no fs, no git) so tests are deterministic.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const STATUS_MAP = { healthy: "pass", degraded: "warn", critical: "fail" };
@@ -84,6 +85,38 @@ function mapDimensions(axes) {
   return dimensions;
 }
 
+// schema_version: only a string or FINITE number may stringify (String(null) → "null" and
+// String({}) → "[object Object]" would smuggle malformed versions past the contract).
+function mapSchemaVersion(sv) {
+  if (typeof sv !== "string" && !(typeof sv === "number" && Number.isFinite(sv))) {
+    fail(
+      `schema_version must be a string or finite number, got ${sv === null ? "null" : typeof sv}`
+    );
+  }
+  const schemaVersion = String(sv);
+  if (schemaVersion.length < 1 || schemaVersion.length > 20) {
+    fail(`schema_version "${schemaVersion}" is out of the contract's 1–20 char bounds`);
+  }
+  return schemaVersion;
+}
+
+function mapStatus(raw) {
+  const status = STATUS_MAP[raw];
+  if (!status) fail(`status "${raw}" is not one of ${Object.keys(STATUS_MAP).join("/")}`);
+  return status;
+}
+
+function mapFailedInvariantIds(ids) {
+  if (!Array.isArray(ids)) fail("failed_invariant_ids must be an array");
+  if (ids.length > 200) fail("failed_invariant_ids exceeds 200 items");
+  for (const id of ids) {
+    if (typeof id !== "string" || !INVARIANT_ID_RE.test(id)) {
+      fail(`failed_invariant_ids entry "${id}" is not a short rubric id (paths are forbidden)`);
+    }
+  }
+  return [...ids];
+}
+
 /**
  * Map one CLI JSON v1 object to the contract `codebase_health` object.
  * @param {object} cli  parsed output of `aios codebase-health --json`
@@ -97,10 +130,6 @@ export function toContractCodebaseHealth(cli) {
   const missing = REQUIRED_CLI_FIELDS.filter((f) => cli[f] === undefined);
   if (missing.length) fail(`input is missing field(s): ${missing.join(", ")}`);
 
-  const schemaVersion = String(cli.schema_version);
-  if (schemaVersion.length < 1 || schemaVersion.length > 20) {
-    fail(`schema_version "${schemaVersion}" is out of the contract's 1–20 char bounds`);
-  }
   if (typeof cli.rubric_version !== "string" || !cli.rubric_version) {
     fail("rubric_version must be a non-empty string");
   }
@@ -110,24 +139,15 @@ export function toContractCodebaseHealth(cli) {
   if (typeof cli.score_pct !== "number" || cli.score_pct < 0 || cli.score_pct > 100) {
     fail(`score_pct must be a number in [0,100], got ${cli.score_pct} (null = unscored run)`);
   }
-  const status = STATUS_MAP[cli.status];
-  if (!status) fail(`status "${cli.status}" is not one of ${Object.keys(STATUS_MAP).join("/")}`);
-  if (!Array.isArray(cli.failed_invariant_ids)) fail("failed_invariant_ids must be an array");
-  if (cli.failed_invariant_ids.length > 200) fail("failed_invariant_ids exceeds 200 items");
-  for (const id of cli.failed_invariant_ids) {
-    if (typeof id !== "string" || !INVARIANT_ID_RE.test(id)) {
-      fail(`failed_invariant_ids entry "${id}" is not a short rubric id (paths are forbidden)`);
-    }
-  }
 
   return {
-    schema_version: schemaVersion,
+    schema_version: mapSchemaVersion(cli.schema_version),
     rubric_version: cli.rubric_version,
     head_sha: cli.head_sha,
     score_pct: cli.score_pct,
-    status,
+    status: mapStatus(cli.status),
     dimensions: mapDimensions(cli.axes),
-    failed_invariant_ids: [...cli.failed_invariant_ids],
+    failed_invariant_ids: mapFailedInvariantIds(cli.failed_invariant_ids),
     measured_at: mapMeasuredAt(cli.measured_at),
   };
 }
@@ -135,7 +155,20 @@ export function toContractCodebaseHealth(cli) {
 // CLI: node scripts/codebase-health/push-payload.mjs <cli-json-file>
 // Prints the contract object on stdout; exits 1 (with the reason on stderr) on any
 // mapping failure so the workflow falls back to pushing the base payload.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// Main-module detection realpaths BOTH sides: process.argv[1] may be relative to the
+// caller's cwd and either side may sit behind a symlink (e.g. a linked worktree).
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(process.argv[1]))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   try {
     const file = process.argv[2];
     if (!file) throw new HealthMappingError("usage: push-payload.mjs <codebase-health-json-file>");
