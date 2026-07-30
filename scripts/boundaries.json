@@ -33,7 +33,7 @@
     },
     {
       "id": "R6",
-      "description": "Core files must not import from the devtools path set — scripts/ship.mjs, scripts/ship/**, scripts/build.mjs, scripts/roadmap-run.mjs, scripts/spec-eval.mjs, scripts/spec-publish.mjs, scripts/consolidate-findings.mjs — which moves to the aiosbrain/aios-devtools repo (AIO-594). Devtools-internal imports are fine, and devtools files may import core: the dependency direction of the cut is devtools → core, never the reverse. Core-shared surfaces extracted for this rule: scripts/verify-cmd.mjs (D1), scripts/severity.mjs (D2), scripts/spec-checks.mjs (D3).",
+      "description": "Core files must not import from the devtools path set — scripts/ship.mjs, scripts/ship/**, scripts/build.mjs, scripts/roadmap-run.mjs, scripts/spec-eval.mjs, scripts/spec-publish.mjs, scripts/consolidate-findings.mjs — which moves to the aiosbrain/aios-devtools repo (AIO-594). Devtools-internal imports are fine, and devtools files may import core: the dependency direction of the cut is devtools → core, never the reverse. Core-shared surfaces extracted for this rule: scripts/verify-cmd.mjs (D1), scripts/severity.mjs (D2), scripts/spec-checks.mjs (D3). Like R1-R4, R6 scans production sources only: test files are exempt as import sources — which tests leave with the cut is decided by the devtools extraction paths manifest, not by this gate.",
       "from": "**",
       "to": "scripts/{ship.mjs,ship/**,build.mjs,roadmap-run.mjs,spec-eval.mjs,spec-publish.mjs,consolidate-findings.mjs}"
     }
@@ -242,6 +242,42 @@
       "to": "scripts/spec-eval.mjs",
       "reason": "R6: `aios relay --spec` planning uses evaluateSpec/loadRecentDecisions/formatFindings/specEvalHints (the LLM eval layer; the deterministic layer already moved to core scripts/spec-checks.mjs). Owner: John (relay is the orchestrator surface). Removal deadline: the operator-loop/relay wave.",
       "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/build.mjs",
+      "reason": "R6: lazy CLI loader registering the devtools `build` command (`loader: () => import(...)`) — registration-only, no load-time coupling. Owner: John (CLI dispatch surface). Removal deadline: the devtools repo cut — these five registrations must be repointed/removed when the command files leave; the stale-grandfather ratchet will force each entry out as that happens.",
+      "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/spec-eval.mjs",
+      "reason": "R6: lazy CLI loader registering the devtools `spec-eval` command (`loader: () => import(...)`) — registration-only, no load-time coupling. Owner: John (CLI dispatch surface). Removal deadline: the devtools repo cut — these five registrations must be repointed/removed when the command files leave; the stale-grandfather ratchet will force each entry out as that happens.",
+      "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/consolidate-findings.mjs",
+      "reason": "R6: lazy CLI loader registering the devtools `consolidate-findings` command (`loader: () => import(...)`) — registration-only, no load-time coupling. Owner: John (CLI dispatch surface). Removal deadline: the devtools repo cut — these five registrations must be repointed/removed when the command files leave; the stale-grandfather ratchet will force each entry out as that happens.",
+      "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/ship.mjs",
+      "reason": "R6: lazy CLI loader registering the devtools `ship` command (`loader: () => import(...)`) — registration-only, no load-time coupling. Owner: John (CLI dispatch surface). Removal deadline: the devtools repo cut — these five registrations must be repointed/removed when the command files leave; the stale-grandfather ratchet will force each entry out as that happens.",
+      "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/roadmap-run.mjs",
+      "reason": "R6: lazy CLI loader registering the devtools `roadmap-run` command (`loader: () => import(...)`) — registration-only, no load-time coupling. Owner: John (CLI dispatch surface). Removal deadline: the devtools repo cut — these five registrations must be repointed/removed when the command files leave; the stale-grandfather ratchet will force each entry out as that happens.",
+      "issue": "AIO-594"
+    },
+    {
+      "from": "scripts/cli/registry.mjs",
+      "to": "scripts/analyze/index.mjs",
+      "reason": "R1: scripts/analyze/ has no top-level barrel (scripts/analyze.mjs) yet — the CLI's lazy `analyze` loader reaches in directly. Measured when the boundary parser learned bare `import(...)` lazy loaders (AIO-594 D4 review); same no-barrel coupling as the other scripts/analyze entries.",
+      "issue": "AIO-597"
     }
   ]
 }

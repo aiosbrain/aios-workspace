@@ -27,17 +27,22 @@
  *        dependency direction of the cut: devtools → core, never the reverse).
  *
  * Design decisions (documented here because they are NOT spelled out in boundaries.json):
- *   - Test files are exempt as an import SOURCE for R1–R4: any path under a `test/` directory, or
- *     matching `*.test.{mjs,cjs,ts,tsx,js}` anywhere (co-located tests like gui/server/foo.test.mjs),
- *     is never scanned. Tests routinely reach into implementation internals to unit-test them
- *     directly — that is normal and is not the coupling this gate exists to catch. R5 is symmetric:
+ *   - Test files are exempt as an import SOURCE for R1–R4 and R6: any path under a `test/`
+ *     directory, or matching `*.test.{mjs,cjs,ts,tsx,js}` anywhere (co-located tests like
+ *     gui/server/foo.test.mjs), is never scanned. Tests routinely reach into implementation
+ *     internals to unit-test them directly — that is normal and is not the coupling this gate
+ *     exists to catch. For R6 specifically: which test files LEAVE with the devtools cut is
+ *     decided by the extraction paths manifest (the AIO-603-style repo-cut rehearsal), not by
+ *     this gate — a test importing ship.mjs is evidence it belongs in that manifest, not a seam
+ *     violation. R5 is symmetric:
  *     it only restricts imports of test/** from OUTSIDE test/, so test-internal helper imports
  *     (e.g. test/ship-*.test.mjs → test/ship-test-helpers.mjs) are unaffected.
  *   - The `grandfathered` list in boundaries.json is ratchet-only-down: every entry is a REAL,
  *     measured (from, to) coupling in the tree at the time this gate was built, not a projection.
  *     Fixing a coupling and deleting its entry needs no permission; adding a new one does.
  *
- * Static parsing: static `import … from`, bare `import "x"`, dynamic `await import("x")` /
+ * Static parsing: static `import … from`, bare `import "x"`, dynamic `import("x")` (with or
+ * without `await` — lazy loaders like `loader: () => import("../x.mjs")` count; AIO-594 review) /
  * `require("x")`. Reports file:line evidence; exits non-zero on any un-grandfathered violation.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -140,7 +145,7 @@ function parseStaticImports(content) {
 
 function parseDynamicImports(content) {
   const out = [];
-  const re = /(?:await\s+import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
+  const re = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
   let m;
   while ((m = re.exec(content)) !== null) {
     out.push({ mod: m[1], index: m.index, detail: `dynamic import("${m[1]}")` });
