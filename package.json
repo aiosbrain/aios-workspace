@@ -10,7 +10,8 @@
   },
   "workspaces": [
     "gui/server",
-    "gui/client"
+    "gui/client",
+    "packages/monorepo"
   ],
   "scripts": {
     "help": "node scripts/npm-menu.mjs",
@@ -31,8 +32,8 @@
     "check:inbox-audit": "node scripts/inbox-redaction-lint.mjs",
     "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",
     "pr:backlog": "node scripts/pr-backlog-report.mjs",
-    "lint": "eslint scripts validation gui/server gui/client/src src test",
-    "lint:fix": "eslint scripts validation gui/server gui/client/src src test --fix",
+    "lint": "eslint scripts validation gui/server gui/client/src src test packages",
+    "lint:fix": "eslint scripts validation gui/server gui/client/src src test packages --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "setup": "npm ci && npm run gui:build",

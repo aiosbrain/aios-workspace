@@ -5,6 +5,7 @@
     "hooks/**/*.mjs",
     "validation/**/*.mjs",
     "gui/server/**/*.mjs",
+    "packages/**/*.mjs",
     "src/**/*.ts"
   ],
   "exclude": [
