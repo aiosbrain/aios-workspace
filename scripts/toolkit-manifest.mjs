@@ -98,6 +98,13 @@ export const MANAGED_PATHS = [
     kind: "file",
     exec: true,
   },
+  // Claude Code statusLine command: context/rate-limit usage in the terminal footer.
+  {
+    dest: "hooks/statusline-command.mjs",
+    src: "hooks/statusline-command.mjs",
+    kind: "file",
+    exec: true,
+  },
   // Cursor cross-repo toolkit guard (IC workspaces): block agent writes/commits to the
   // toolkit PRIMARY checkout while dogfooding from a personal workstation.
   { dest: ".cursor/hooks.json", src: "scaffold/.cursor/hooks.json", kind: "file" },

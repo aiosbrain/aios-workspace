@@ -58,6 +58,15 @@ function fixDefects(dir) {
       "See [the work note](../2-work/note.md) for more."
     )
   );
+  setDecisionDate(dir, new Date().toISOString().slice(0, 10));
+}
+
+function setDecisionDate(dir, date) {
+  const logPath = path.join(dir, "3-log", "decision-log.md");
+  writeFileSync(
+    logPath,
+    readFileSync(logPath, "utf8").replace(/\| 1 \| \d{4}-\d{2}-\d{2} \|/, `| 1 | ${date} |`)
+  );
 }
 
 test("workspace mode: fixture is detected as a stamped workspace", () => {
@@ -113,8 +122,7 @@ test("banding: 0 hard failures + 1 soft miss (stale decision log) -> score 3", (
     const dir = copyFixture("context-health-band3-");
     try {
       fixDefects(dir);
-      const logPath = path.join(dir, "3-log", "decision-log.md");
-      writeFileSync(logPath, readFileSync(logPath, "utf8").replace("2026-07-15", "2026-05-01"));
+      setDecisionDate(dir, "2000-01-01");
       const result = computeContextHealth(dir);
       assert.equal(result.hardFailures, 0);
       assert.equal(result.softMisses, 1);
@@ -132,8 +140,7 @@ test("banding: 0 hard failures + 2 soft misses (stale log + low tier coverage) -
     const dir = copyFixture("context-health-band2-");
     try {
       fixDefects(dir);
-      const logPath = path.join(dir, "3-log", "decision-log.md");
-      writeFileSync(logPath, readFileSync(logPath, "utf8").replace("2026-07-15", "2026-05-01"));
+      setDecisionDate(dir, "2000-01-01");
       const notePath = path.join(dir, "2-work", "note.md");
       writeFileSync(
         notePath,
