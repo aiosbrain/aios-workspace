@@ -16,7 +16,12 @@ process.stdin.on("end", () => {
   }
   const model = payload?.model?.display_name || "Unknown";
   const workspace = payload?.workspace?.project_dir || payload?.workspace?.current_dir || "";
-  const workspaceRoot = workspace ? workspace.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "";
+  const workspaceRoot = workspace
+    ? workspace
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop()
+    : "";
   const ctxUsed = percent(payload?.context_window?.used_percentage);
   const fiveHour = percent(payload?.rate_limits?.five_hour?.used_percentage);
   const sevenDay = percent(payload?.rate_limits?.seven_day?.used_percentage);
