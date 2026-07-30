@@ -114,9 +114,12 @@ EOF
 fi
 
 # Chain to any pre-existing hook of the same name (e.g. a secrets/leak gate).
-# Works whether installed as pre-commit or pre-merge-commit.
+# Works whether installed as pre-commit or pre-merge-commit. Resolved BESIDE this
+# file, not via `--git-path hooks/...` — that helper honors core.hooksPath, so a
+# machine-local install in the common dir of a hooksPath repo (AIO-638) would
+# otherwise chain a dead `<hooksPath>/<name>.chained`.
 hook_name="$(basename "$0")"
-chained="$(git rev-parse --git-path "hooks/${hook_name}.chained" 2>/dev/null || true)"
+chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/${hook_name}.chained"
 if [[ -n "$chained" && -x "$chained" ]]; then
   exec "$chained" "$@"
 fi

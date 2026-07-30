@@ -9,6 +9,14 @@
 #
 # Idempotent: safe to run repeatedly. Because worktrees share the primary's hooks dir, one
 # install covers every worktree.
+#
+# core.hooksPath repos with TRACKED policy hooks (AIO-638): when the resolved destination
+# already carries the line-anchored `# aios-tracked-hook` marker (a version-controlled policy
+# hook, e.g. aios-team-brain's `.githooks/`), this installer must NOT overwrite it — that
+# clobbers a tracked file with an untracked copy. Instead the gate is installed machine-locally
+# into `$(git rev-parse --git-common-dir)/hooks/`, which is exactly the chain target every
+# tracked hook execs. When hooksPath is set but no tracked marker hook exists (older checkout),
+# the legacy behavior (install into the hooksPath dir) is kept.
 
 set -euo pipefail
 
@@ -19,6 +27,11 @@ if [[ -z "$repo_root" ]]; then
 fi
 
 # Resolve the hooks dir honoring a custom core.hooksPath if set.
+common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
+if [[ "$common_dir" != /* ]]; then
+  common_dir="$(cd "$common_dir" && pwd)"
+fi
+common_hooks_dir="$common_dir/hooks"
 hooks_path="$(git config --get core.hooksPath 2>/dev/null || true)"
 if [[ -n "$hooks_path" ]]; then
   if [[ "$hooks_path" != /* ]]; then
@@ -27,11 +40,17 @@ if [[ -n "$hooks_path" ]]; then
     hooks_dir="$hooks_path"
   fi
 else
-  common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"
-  if [[ "$common_dir" != /* ]]; then
-    common_dir="$(cd "$common_dir" && pwd)"
-  fi
-  hooks_dir="$common_dir/hooks"
+  hooks_dir="$common_hooks_dir"
+fi
+
+# TRACKED policy hook at the destination (AIO-638): leave it untouched and install the gate
+# machine-locally into the common dir — the chain target the tracked hook execs. Marker is
+# line-anchored to avoid false positives.
+tracked_marker='^# aios-tracked-hook'
+if [[ "$hooks_dir" != "$common_hooks_dir" && -f "$hooks_dir/pre-push" ]] \
+  && grep -q "$tracked_marker" "$hooks_dir/pre-push" 2>/dev/null; then
+  echo "install-leak-gate-push-hook: tracked pre-push hook at $hooks_dir/pre-push (core.hooksPath) — installing machine-local gate into $common_hooks_dir (chained by the tracked hook)."
+  hooks_dir="$common_hooks_dir"
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,6 +74,11 @@ dispatcher_marker="aios-pre-push-chain-dispatcher"
 preserve_foreign_hook() {
   local source="$1" candidate saved
   [[ -f "$source" ]] || return 0
+  # Never preserve a stray copy of a TRACKED hook: the tracked source still runs via
+  # core.hooksPath, and re-running a copy that itself chains this dir would recurse.
+  if grep -q "$tracked_marker" "$source" 2>/dev/null; then
+    return 0
+  fi
   for candidate in "$hooks_dir"/pre-push.chained-hook.*; do
     [[ -f "$candidate" ]] || continue
     if cmp -s "$source" "$candidate"; then

@@ -63,6 +63,12 @@ const BASH = ["/bin/bash", "/usr/bin/bash"].find((candidate) => existsSync(candi
  * `<repo>/.git`: inside a linked worktree `.git` is a *file*, and hooks are shared from
  * the primary's common dir — so a naive join would point at a path that cannot exist and
  * silently report "no hook installed" for a repo that has one.
+ *
+ * Deliberately NOT hooksPath-aware (AIO-638): in a `core.hooksPath` repo with tracked
+ * policy hooks, `<common-dir>/hooks/<name>` is exactly the machine-local chain target the
+ * tracked hooks exec — writing here can never clobber a tracked hook. The bash installers
+ * (install-primary-commit-guard.sh, install-leak-gate-push-hook.sh) carry the matching
+ * tracked-marker redirect themselves.
  */
 export function postCheckoutHookPath(repo) {
   let commonDir = ".git";

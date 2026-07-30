@@ -91,7 +91,11 @@ EOF
 fi
 
 # ── Chain to any pre-existing pre-commit hook (e.g. the NDA leak gate) ──────
-chained="$(git rev-parse --git-path hooks/pre-commit.chained 2>/dev/null || true)"
+# Resolve the chained hook BESIDE this file, not via `git rev-parse --git-path
+# hooks/...`: that helper honors core.hooksPath, so when this guard is installed
+# machine-locally in the common dir of a hooksPath repo (AIO-638) it would point
+# at a dead `<hooksPath>/pre-commit.chained` instead of our sibling.
+chained="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)/pre-commit.chained"
 if [[ -n "$chained" && -x "$chained" ]]; then
   exec "$chained" "$@"
 fi
