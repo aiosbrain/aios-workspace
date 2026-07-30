@@ -74,16 +74,18 @@ jobs:
       - run: npm run check:context
 
   constitution:
-    name: Constitution guards (domain isolation + size)
+    name: Constitution guards (domain isolation + boundaries + size)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # §4 domains-are-siblings (no cross-domain value imports) + the aios.mjs size gate (AIO-320).
+      # §4 domains-are-siblings (no cross-domain value imports) + the repo-boundary
+      # seam gate for the multi-repo split (AIO-597) + the aios.mjs size gate (AIO-320).
       - run: npm run check:domains
       - run: npm run check:size
+      - run: npm run check:boundaries
       - run: npm run check:inbox-audit
 
   guard:
