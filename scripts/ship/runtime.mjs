@@ -25,8 +25,11 @@ import { SHIP_EXIT } from "./gates.mjs";
 
 // The repo verify chain runBuild runs in the worktree before each review round and pre-merge.
 // Wired into every build/fix round so `aios ship` can never merge code that hasn't passed it.
-export const SHIP_VERIFY_CMD =
-  "npm run build:loop && npm test && npm run lint && npm run format:check";
+// Defined in the core-staying scripts/verify-cmd.mjs (shared with `aios simplify`, which must not
+// import from the devtools path set — AIO-594); re-exported here so ship.mjs's public surface is
+// unchanged.
+import { SHIP_VERIFY_CMD } from "../verify-cmd.mjs";
+export { SHIP_VERIFY_CMD };
 // Default plan-stage timeout. An Opus-xhigh planner with tool access empirically needs
 // 15-40 minutes (every AIO-156 epic plan round exceeded 10); the original 600s default
 // killed the first real-world run mid-work (AIO-194). Override per-run with
