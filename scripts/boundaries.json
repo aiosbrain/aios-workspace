@@ -52,36 +52,6 @@
       "issue": "AIO-597"
     },
     {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/connector.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/gen-catalog.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/lock-marketplace.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/lock-skill-library.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate): skill-library route locking shares the CLI's lock helper.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/skill-library.mjs",
-      "to": "scripts/skill-scan.mjs",
-      "reason": "R4 (measured, not in the original ~13 estimate).",
-      "issue": "AIO-597"
-    },
-    {
       "from": "gui/server/tasks.mjs",
       "to": "scripts/tasks-table.mjs",
       "reason": "R4: known coupling, dies in the GUI decoupling; shares task-table parsing with the CLI.",

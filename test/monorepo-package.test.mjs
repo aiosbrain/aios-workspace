@@ -93,6 +93,7 @@ const INTERNAL_SUBPATHS = [
   "internal/brain-origin",
   "internal/tasks-table",
   "internal/transcript-adapters",
+  "internal/skill-scan", // AIO-600 C2 — consumed by gui/server (documented-private)
 ];
 
 // npm_config_* vars leaked by the parent `npm run` would reconfigure nested npm

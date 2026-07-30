@@ -2,14 +2,12 @@
  * registry.mjs — the declarative command table for `aios` (AIO-512 Phase 1): ONE descriptor
  * per subcommand, replacing the old USAGE string + 45-branch dispatch chain in aios.mjs.
  *
- * Invariants (asserted by test/cli-registry.test.mjs):
- *   - Every name/alias appears exactly once.
- *   - `resolution` is the ONLY thing that decides how the repo root + config are resolved;
- *     silently widening a command from "workspace" to "offline" would let it run against an
- *     unconfigured directory, so the modes are parity-tested against the pre-refactor list.
- *   - `loader` is ALWAYS lazy. Nothing in this file may statically import a command module —
- *     that is the whole point: `aios status` must not parse ship.mjs/build.mjs/spec-eval.mjs.
- *   - `usage` is the exact block of `aios help` lines this command owns ([] = hidden).
+ * Invariants (asserted by test/cli-registry.test.mjs): every name/alias appears exactly
+ * once; `resolution` is the ONLY thing deciding repo-root + config resolution (silently
+ * widening "workspace" → "offline" would run a command against an unconfigured directory,
+ * so modes are parity-tested against the pre-refactor list); `loader` is ALWAYS lazy —
+ * nothing here may statically import a command module (`aios status` must not parse
+ * ship.mjs/build.mjs); `usage` is the exact `aios help` block this command owns ([] = hidden).
  *
  * @typedef {Object} CommandDescriptor
  * @property {string}   name
@@ -27,8 +25,7 @@ import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
 
 /**
  * The command table, in `aios help` order; hidden commands (usage: []) go last.
- * ctx = { repo, cfg, patterns, rest, local } — `local` carries the handlers still living
- * inside scripts/aios.mjs (Phase 2 extracts them) plus the shared helpers they need.
+ * ctx = { repo, cfg, patterns, rest, local } — `local` = handlers still in aios.mjs + helpers.
  * @type {CommandDescriptor[]}
  */
 export const COMMANDS = [
@@ -129,8 +126,8 @@ export const COMMANDS = [
   {
     name: "timeline",
     resolution: "offline",
-    // `timeline` owns `--repo` — repeatable TARGET repo paths (its workspace root comes from
-    // the cwd walk-up or its own `--workspace`). Consuming it here would hide the override.
+    // `timeline` owns `--repo` — repeatable TARGET repo paths (workspace root comes from
+    // the cwd walk-up or `--workspace`); consuming it here would hide the override.
     ownsRepoFlag: true,
     loader: () => import("../timeline.mjs"),
     adapt: async (ctx, mod) => (await mod.cmdTimeline(ctx.repo, ctx.cfg, ctx.rest)) ?? 0,
@@ -139,17 +136,15 @@ export const COMMANDS = [
   },
   {
     name: "mcp",
-    // The GUI-surface bridge: a long-lived stdio MCP server for agents that can't shell out
-    // to this CLI (Claude Desktop/Cowork/claude.ai). Runs with NO workspace — config is
-    // env-first — so it resolves nothing and owns the process until the client disconnects.
+    // GUI-surface bridge: a long-lived stdio MCP server for agents that can't shell out to
+    // this CLI. Runs with NO workspace (env-first config); owns the process until disconnect.
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
       if (mcpCfg.missing.length) {
-        // Brain unconfigured: still start IF a workspace resolves here (offline resolver, so
-        // project.yaml / engagement.yaml workspaces count), exposing local aios_* tools;
-        // brain_* tools then error clearly. With neither config nor workspace: nothing to do.
+        // Brain unconfigured: still start IF a workspace resolves here (offline resolver),
+        // exposing local aios_* tools; brain_* error clearly. Neither: nothing to do.
         const ws = ctx.local.findRepoRootOffline(process.cwd());
         if (!ws) {
           ctx.local.die(
@@ -305,9 +300,8 @@ export const COMMANDS = [
   },
   {
     name: "update",
-    // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
-    // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed
-    // at an arbitrary directory to re-vendor governance into.
+    // update resolves a workspace OR the toolkit checkout — never a bare README dir; an
+    // explicit --repo is validated the SAME way (no re-vendoring into arbitrary dirs).
     resolution: "update-root",
     loader: () => import("../update.mjs"),
     // cmdUpdate returns a structured result (never exits, so callers can read .applyAllowed).
@@ -386,8 +380,7 @@ export const COMMANDS = [
   },
   {
     name: "ship",
-    // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (not a GitHub slug), so they
-    // are NOT in the pr/consolidate opt-out; ship derives the slug via detectRepo(repo).
+    // ship/roadmap-run's `--repo` is a WORKSPACE path (slug comes from detectRepo(repo)).
     resolution: "offline",
     loader: () => import("../ship.mjs"),
     adapt: (ctx, mod) => mod.cmdShip(ctx.repo, ctx.rest),
@@ -410,8 +403,7 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.inbox,
   },
-  // AIO-579 read-only cross-repo reconciliation. `--repo` is a GitHub owner/repo slug filter
-  // (like pr/consolidate-findings), not the workspace path — it owns the flag for that reason.
+  // AIO-579 read-only cross-repo reconciliation; owns `--repo` (a GitHub slug filter).
   {
     name: "delivery",
     resolution: "offline",
@@ -439,6 +431,14 @@ export const COMMANDS = [
     resolution: "workspace",
     adapt: (ctx) => ctx.local.cmdWhoami(ctx.repo, ctx.cfg),
     usage: U.whoami,
+  },
+  // AIO-600 GUI seam: gui/server shells `aios gen-catalog --repo <ws>`, never scripts/*.
+  {
+    name: "gen-catalog",
+    resolution: "offline",
+    loader: () => import("../gen-catalog.mjs"),
+    adapt: (ctx, mod) => mod.generate(ctx.repo),
+    usage: [],
   },
 ];
 

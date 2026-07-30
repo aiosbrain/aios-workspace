@@ -32,6 +32,7 @@ they are deliberately excluded from the package's public-API contract test.
 | `@aios-alpha/monorepo/internal/brain-origin` | Brain origin normalization/locking, used by `brain-client`. |
 | `@aios-alpha/monorepo/internal/tasks-table` | Task-table parsing/writeback, used by `workspace-parse`. |
 | `@aios-alpha/monorepo/internal/transcript-adapters` | Fact/stakeholder wire adapters, used by `workspace-parse`. |
+| `@aios-alpha/monorepo/internal/skill-scan` | Pure static safety scanner for an Agent Skill directory (`scanSkill`). Consumed by the workspace GUI's skill-library install flow and by the `scripts/skill-scan.mjs` CLI shim (AIO-600). |
 
 ## Relationship to @aios-alpha/design
 

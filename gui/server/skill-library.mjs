@@ -12,7 +12,8 @@
 //                   first-party vetted, the scan stays ADVISORY + simple-accept (no typed
 //                   confirm). Trust ranks: official > marketplace > community.
 //   • community   — non-official skills (community.json) with NO first-party provenance.
-//                   Install is GATED: the static scanner (scripts/skill-scan.mjs) runs,
+//                   Install is GATED: the static scanner
+//                   (@aios-alpha/monorepo/internal/skill-scan) runs,
 //                   the findings are surfaced, and an explicit consent step is required —
 //                   a `high` risk class demands a TYPED confirm. The scan is ADVISORY;
 //                   provenance + human review are the real anchor.
@@ -27,14 +28,24 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { LIBRARY_DIR, hashDir, rollupHash } from "../../scripts/lock-skill-library.mjs";
-import { gitFetchSubdir } from "../../scripts/lock-marketplace.mjs";
-import { copyDir, ensureGitignore } from "../../scripts/connector.mjs";
-import { readSkills, frontmatter } from "../../scripts/gen-catalog.mjs";
-import { scanSkill } from "../../scripts/skill-scan.mjs";
+import { scanSkill } from "@aios-alpha/monorepo/internal/skill-scan";
+import {
+  hashDir,
+  rollupHash,
+  gitFetchSubdir,
+  copyDir,
+  ensureGitignore,
+  frontmatter,
+  installedSkillIds,
+} from "./skill-library-util.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const GEN_CATALOG = path.join(SCRIPT_DIR, "..", "..", "scripts", "gen-catalog.mjs");
+// The vendored library lives INSIDE gui/server — this is a gui-owned path, kept in
+// lockstep with the lock scripts' LIBRARY_DIR (scripts/lock-skill-library.mjs).
+const LIBRARY_DIR = path.join(SCRIPT_DIR, "skill-library");
+// The one sanctioned toolkit seam: shell the `aios` CLI (same pattern as loop.mjs /
+// index.mjs) — never import scripts/** (boundary R4, scripts/check-boundaries.mjs).
+const AIOS_CLI = path.join(SCRIPT_DIR, "..", "..", "scripts", "aios.mjs");
 const ID_RE = /^[a-z0-9-]+$/;
 
 function manifest() {
@@ -198,7 +209,9 @@ function writeLedger(repo, led) {
 }
 function refreshCatalog(repo) {
   try {
-    execFileSync(process.execPath, [GEN_CATALOG, "--repo", repo], { stdio: "ignore" });
+    execFileSync(process.execPath, [AIOS_CLI, "gen-catalog", "--repo", repo], {
+      stdio: "ignore",
+    });
   } catch {
     /* best-effort */
   }
@@ -206,7 +219,7 @@ function refreshCatalog(repo) {
 
 /** Library skills (official + marketplace + community, with installed status) + Anthropic-hosted pointers. */
 export function listLibrary(repo) {
-  const installed = new Set(readSkills(repo).map((s) => s.id));
+  const installed = new Set(installedSkillIds(repo));
   const m = manifest();
   const ref = referenced();
   const mkt = marketplaceManifest();

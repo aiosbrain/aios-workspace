@@ -6,11 +6,15 @@
    contract-tested API (`test/monorepo-package.test.mjs`). Public subpaths only:
    `./runtimes`, `./workspace-parse`, `./brain-config`, `./linear-client`,
    `./brain-client`, `./git-files`, `./constitution`. The `./internal/*` subpaths are
-   documented-private shim plumbing and are **off-limits to the GUI** — if the GUI
-   needs something that only exists on an internal subpath, either promote it to a
+   documented-private and **off-limits to the GUI by default** — if the GUI needs
+   something that only exists on an internal subpath, first either promote it to a
    public subpath (a semver event: update the package exports, the frozen surface in
    `test/monorepo-package.test.mjs`, and `packages/monorepo/README.md`) or move a
-   minimal gui-owned implementation into `gui/server`.
+   minimal gui-owned implementation into `gui/server`. As a documented **last resort**
+   (AIO-600 wave rule) the GUI may consume a dedicated internal subpath when neither a
+   CLI seam nor an honest gui-owned copy fits (e.g. a large single-implementation
+   security component); every such use must be recorded in this contract, the package
+   README, and the contract test's internal list.
 2. **`aios <cmd> --json` CLI output** — the GUI shells out to the `aios` CLI and
    parses its machine-readable output. The CLI is the process boundary; the GUI never
    imports the CLI's implementation modules.
@@ -52,9 +56,33 @@ surface: the package API doesn't grow, and the GUI depends on nothing private.
 
 ---
 
-## C2 — (appended by cluster C2)
+## C2 — Skill library (install/scan/uninstall)
 
-_Pending — cluster C2 appends its surfaces here._
+Files: `gui/server/skill-library.mjs` (+ new `gui/server/skill-library-util.mjs`).
+
+Package surfaces consumed:
+
+| Surface | Named imports | Used for |
+| --- | --- | --- |
+| `@aios-alpha/monorepo/internal/skill-scan` (documented-private, last-resort rule above) | `scanSkill` | The advisory static safety scan behind the consent gate. Moved verbatim from `scripts/skill-scan.mjs`, which is now a relative-path re-export shim (+ its unchanged CLI), so the GUI consent gate, OGR09 (`validation/check-skill-library.mjs`), and the CLI scan identically — a 350-line security scanner must stay single-implementation (a copy could drift fail-open), and its structured findings/throws are consumed in-process, so neither a CLI spawn nor a gui copy fits. |
+
+CLI surfaces consumed:
+
+| Surface | Used for |
+| --- | --- |
+| `aios gen-catalog --repo <workspace>` (hidden registry descriptor; `scripts/gen-catalog.mjs` exports `generate()`) | Refreshing the workspace's skills/integrations catalogs after install/uninstall. Spawned via the sanctioned `AIOS_CLI` pattern (same as `gui/server/loop.mjs`); best-effort, `stdio: "ignore"` — replaces the old direct spawn of `scripts/gen-catalog.mjs`. |
+
+Removed R4 grandfathers (5): `skill-library.mjs` → `lock-skill-library.mjs`,
+`lock-marketplace.mjs`, `connector.mjs`, `gen-catalog.mjs`, `skill-scan.mjs`.
+
+| Former deep import | Seam decision |
+|---|---|
+| `LIBRARY_DIR` (lock-skill-library.mjs) | **GUI-owned path.** The vendored library data physically lives at `gui/server/skill-library/`; the gui computes the path itself. The lock scripts keep their own pointer to the same dir — they are the writer side, the gui is the reader side. |
+| `hashDir`, `rollupHash` (lock-skill-library.mjs) | **GUI-owned copy** in `skill-library-util.mjs` (provenance-commented, C1 flat-yaml / C4 price-table pattern). Parity is fail-closed: the committed locks are generated with the scripts-side copies and verified at install with the gui copies, so drift = hash mismatch = refused install + red `test/skill-install*.test.mjs`. |
+| `gitFetchSubdir` (lock-marketplace.mjs) | **GUI-owned copy**, same file/pattern; exercised against scripts-side-built catalogs by `test/skill-install-marketplace.test.mjs` (offline `file://` fixture). |
+| `copyDir`, `ensureGitignore` (connector.mjs) | **GUI-owned copies** — small, stable, generic fs helpers. |
+| `frontmatter`, `readSkills` (gen-catalog.mjs) | **GUI-owned.** `frontmatter` is copied (the block-scalar-aware SKILL.md parser; `workspace-parse`'s flat parser is NOT equivalent). `readSkills` was only used for its ids → replaced by a minimal `installedSkillIds()`. |
+| `scanSkill` (skill-scan.mjs) | **Package internal subpath** — see table above. |
 
 ## C3 — (appended by cluster C3)
 
