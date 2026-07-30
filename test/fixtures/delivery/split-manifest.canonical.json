@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "program": "AIO-594 multi-repo split",
+  "created_at": "2026-07-30T00:00:00Z",
+  "authority": "John Ellison is the only verdict and waiver authority. This file is evidence + state; no tool writing it may merge, delete, push, or record verdicts on John's behalf.",
+  "baseline": {
+    "source_repo": "aiosbrain/aios-workspace",
+    "source_sha": "7912c0f90ac12551de01f4a7d1a68ef970c8acfc",
+    "source_branch": "main",
+    "prior_verified_sha": "82ebdd59cce7cab467b42de69ff09769267393b2",
+    "ci_evidence": {
+      "ci_run": "https://github.com/aiosbrain/aios-workspace/actions/runs/30519521770",
+      "ci_conclusion": "success",
+      "known_failures": [
+        {
+          "workflow": "scan-on-merge",
+          "run": "https://github.com/aiosbrain/aios-workspace/actions/runs/30519521800",
+          "cause": "Bad credentials fetching aios-team-brain scanner (stale repo secret)",
+          "impact": "Blocks the brain push lane (AIO-608b) until the secret is refreshed; does not affect core CI",
+          "owner": "John (mint/refresh token) or agent once token available"
+        },
+        {
+          "workflow": "mutation (push lane)",
+          "run": "https://github.com/aiosbrain/aios-workspace/actions/runs/30516336238",
+          "cause": "unreviewed — pre-baseline commit",
+          "impact": "advisory; investigate during sprint if it repeats on new pushes"
+        }
+      ]
+    },
+    "open_prs": [
+      {
+        "pr": 481,
+        "title": "feat(skills): aios-deck",
+        "disposition": "PARKED — 1 High + 2 Medium unresolved Bugbot findings; touches only scaffold/.claude/skills/aios-deck + docs; no split seams. Owning session must address findings. Not a cut blocker.",
+        "touches_split_seams": false
+      },
+      {
+        "pr": 485,
+        "title": "feat(statusline)",
+        "disposition": "MERGED as 7912c0f (now the baseline SHA)"
+      }
+    ],
+    "worktrees": [
+      {
+        "path": "../aios-workspace-worktrees/feat-aios-deck-builder",
+        "branch": "feat/aios-deck-builder",
+        "disposition": "belongs to parked PR #481; leave untouched"
+      }
+    ],
+    "dirty_files": [],
+    "tools": {
+      "node": "v22.21.1",
+      "npm": "10.9.4",
+      "git": "2.51.0",
+      "gh": "2.89.0",
+      "git-filter-repo": "a40bce548d2c (installed)"
+    },
+    "gates_on_baseline": "check:size, boundary gate, full ci green on 7912c0f (ci run above); boundary grandfathers: 51 total, R4(gui)=19"
+  },
+  "blocking_asks": [
+    {
+      "id": "npm-auth",
+      "status": "open",
+      "owner": "John",
+      "detail": "npm whoami = E401 Unauthorized on this machine. Restore npm auth with publish rights on @aios-alpha (org access + 2FA or granular token). Blocks @aios-alpha/monorepo publish -> blocks G1 fresh-clone-from-published-package criterion. Verify: npm whoami; npm access list packages @aios-alpha; npm publish --dry-run --access public."
+    },
+    {
+      "id": "repo-creation",
+      "status": "open",
+      "owner": "John",
+      "detail": "Authorize creation of public MIT repos aiosbrain/aios-workspace-gui and aiosbrain/aios-devtools (default branch main). Agent (gh account johnellison, org admin) can create them on explicit authorization; will not push rewritten history anywhere else."
+    },
+    {
+      "id": "scan-on-merge-secret",
+      "status": "open",
+      "owner": "John",
+      "detail": "scan-on-merge workflow fails with Bad credentials fetching aios-team-brain. Refresh the repo secret token before enabling the codebase_health push lane (AIO-608b)."
+    }
+  ],
+  "cuts": {
+    "aios-workspace-gui": {
+      "state": "planned",
+      "target_repo": "aiosbrain/aios-workspace-gui (not yet created)",
+      "paths_manifest_sha": null,
+      "frozen_sha": null,
+      "prerequisite_prs": [],
+      "package": {
+        "name": "@aios-alpha/monorepo",
+        "version_target": "0.1.0",
+        "published_version": null,
+        "tarball_integrity": null
+      },
+      "rehearsal": null,
+      "parity": null,
+      "fresh_clone_ci": null,
+      "smoke": null,
+      "verdicts": []
+    },
+    "aios-devtools": {
+      "state": "conditional (after G1 GO; G2 deadline Fri 2026-07-31 17:00)",
+      "target_repo": "aiosbrain/aios-devtools (not yet created)",
+      "paths_manifest_sha": null,
+      "frozen_sha": null,
+      "prerequisite_prs": [],
+      "rehearsal": null,
+      "parity": null,
+      "fresh_clone_ci": null,
+      "verdicts": []
+    }
+  },
+  "unresolved_constraints": [
+    "Monorepo authoritative through the demo; gui/ + src-tauri trees and devtools sources NOT deleted until John's post-demo deletion verdict (AIO-612).",
+    "Devtools infra copies (relay-core, model-call, loop-models, model-providers, pr, skill-context) are temporary duplicates; convergence deadline = cut date + 7 days.",
+    "relay.mjs R6 grandfather: owner John/orchestrator, dies in the operator-loop/relay wave.",
+    "Do NOT move scripts/aios.mjs, scaffold/, .harness/, docs/brain-api.md, or core root package metadata this sprint (stamped-workspace bootstrap invariants).",
+    "Before any future scaffold/ move or operator-loop cut: spec stamp-format v2 (toolkit-merge no-base storm, AIO-351 precedent) + multi-repo toolkit-contribute.",
+    "Brain push flag defaults OFF; may flip on only after staging 201/422/403 + prod read-verify; rollback = flip flag, not redeploy."
+  ],
+  "rollback": {
+    "gui_cut": "Discard the new target repository state; continue on the authoritative monorepo. No monorepo deletion has occurred.",
+    "devtools_cut": "Same as gui_cut.",
+    "brain_push": "Disable push flag (config change, no redeploy)."
+  },
+  "deletion_prs": [],
+  "verdict_log": []
+}

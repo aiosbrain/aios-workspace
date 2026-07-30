@@ -180,5 +180,9 @@ usage:
     [--repo owner/repo]...               aios-workspace + aios-team-brain (offline-safe reads
     [--state o|c|m|all] [--limit N]       only); flags merged PRs with a surviving branch/worktree
     [--local owner/repo=path]...          and stale head-SHA mismatches. Never merges/deletes.
+                                         --json also reports the installed split manifest
+  aios delivery manifest init <file>    validate + install the AIO-594 split-delivery manifest
+    [--repo <workspace-path>] [--force]  to .aios/delivery/split-manifest.json; refuses to
+                                         overwrite without --force. Never writes verdicts.
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)

@@ -9,11 +9,23 @@ import { c } from "../cli-common.mjs";
 
 /**
  * @param {Array<object>} reports  reconcileRepo() output, one per repo
- * @param {{now?: () => Date}} [opts]
+ * @param {{now?: () => Date, manifest?: object|null, manifestWarning?: string|null}} [opts]
+ *   `manifest`/`manifestWarning` (AIO-595): the parsed split-delivery manifest loaded by
+ *   delivery/manifest.mjs, or null plus a warning string when it is absent/invalid. Reported
+ *   as-is — this renderer never writes or mutates manifest state.
  * @returns {string}  machine-readable JSON (stable field names, safe for cron/CI/agent parsing)
  */
-export function renderJson(reports, { now = () => new Date() } = {}) {
-  return JSON.stringify({ generatedAt: now().toISOString(), repos: reports }, null, 2);
+export function renderJson(reports, { now = () => new Date(), manifest, manifestWarning } = {}) {
+  return JSON.stringify(
+    {
+      generatedAt: now().toISOString(),
+      manifest: manifest ?? null,
+      manifestWarning: manifestWarning ?? null,
+      repos: reports,
+    },
+    null,
+    2
+  );
 }
 
 function pad(value, width) {
