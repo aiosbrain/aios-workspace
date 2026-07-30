@@ -1,0 +1,24 @@
+{
+  "_comment": "SYNTHETIC shape-faithful sample of `aios codebase-health --json` (JSON v1, scripts/codebase-health.mjs#toHealthJson). Every value is fake (examples-are-synthetic rule): fabricated head_sha, invented axis counts and check ids. It mirrors the real output shape exactly — number schema_version, bare-date measured_at, the seven rubric axes including null-band (skipped) ones, and a trailing checks array the mapper must ignore.",
+  "schema_version": 1,
+  "rubric_version": "1.0.0",
+  "head_sha": "f1e2d3c4b5a6978897a6b5c4d3e2f10123456789",
+  "measured_at": "2026-01-15",
+  "score_pct": 73,
+  "status": "healthy",
+  "axes": {
+    "modularity": { "band": 2, "passed": 2, "total": 4 },
+    "boundaries": { "band": 3, "passed": 2, "total": 3 },
+    "test_rigor": { "band": null, "passed": 0, "total": 0 },
+    "lint_type": { "band": null, "passed": 1, "total": 1 },
+    "docs_parity": { "band": 4, "passed": 1, "total": 1 },
+    "invariants": { "band": 3, "passed": 1, "total": 2 },
+    "contributor_friction": { "band": 4, "passed": 2, "total": 2 }
+  },
+  "failed_invariant_ids": ["synthetic_gate_a"],
+  "checks": [
+    { "id": "synthetic_gate_a", "ok": false, "value": false },
+    { "id": "synthetic_metric_b", "ok": true, "value": 12 },
+    { "id": "synthetic_skipped_c", "ok": true, "value": null }
+  ]
+}
