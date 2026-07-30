@@ -45,7 +45,12 @@ aios-workspace/
 │                    shipped into every scaffolded workspace + registered in
 │                    .claude/settings.json, so the PreToolUse guard fires there too
 ├── scripts/         scaffold-project.sh · aios.mjs (Team Brain sync CLI) · leak-gate.sh
+├── packages/        @aiosbrain/foundation (npm workspace) — the shared hub modules,
+│                    published to npm; scripts/ paths re-export it as thin shims
 ├── gui/             local web GUI — chat with this repo via the Claude Agent SDK
+│                    (+ src-tauri/, the desktop shell). Now also a standalone repo,
+│                    github.com/aiosbrain/aios-workspace-gui; this in-tree copy stays
+│                    authoritative until the deferred deletion PR (AIO-612)
 ├── examples/        a fully synthetic sample to demo + test the harnesses
 └── docs/            architecture · feature-set · workflows · brain-api (sync contract)
 ```
@@ -116,6 +121,17 @@ Chat with your repo in a browser instead of the terminal — the **local cockpit
 ```bash
 npm run gui -- --repo ~/Projects/acme-workspace
 ```
+
+> **Repo transition note:** the GUI has been cut to a standalone repo —
+> [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui)
+> (history filtered from this repo) — which is its future home. Until the deferred
+> deletion PR (AIO-612) merges, the in-tree `gui/` + `src-tauri/` here remain the
+> authoritative, working copy. The standalone GUI locates a toolkit checkout via
+> [`docs/gui-toolkit-contract.md`](docs/gui-toolkit-contract.md): `--toolkit-dir`
+> flag → `AIOS_TOOLKIT_DIR` env → an adjacent `../aios-workspace` checkout →
+> an actionable error. It builds against the published
+> [`@aiosbrain/foundation`](https://www.npmjs.com/package/@aiosbrain/foundation)
+> package plus the `aios` CLI — never toolkit internals.
 
 The cockpit is more than a chat box:
 

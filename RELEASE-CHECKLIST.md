@@ -16,8 +16,12 @@ made public later. Before flipping it public, complete every item below.
 - [ ] **Confirm the brand decision** — reconcile the `LICENSE` copyright holder with
       the studio brand used in the (removed) strategy docs if the public-facing brand
       differs from the copyright holder.
-- [ ] **Lock repo names + topology** (see the strategy brief §6): final names and
-      whether pillars are federated repos + a thin meta-repo.
+- [ ] **Lock repo names + topology** (see the strategy brief §6) — largely decided and
+      in transition: shared hubs are published as public npm `@aiosbrain/foundation`;
+      the GUI is cut (filtered history) to `github.com/aiosbrain/aios-workspace-gui`,
+      with the in-tree `gui/` + `src-tauri/` authoritative until deletion PR AIO-612;
+      a devtools cut (`aiosbrain/aios-devtools`) is planned but not done. Remaining:
+      complete AIO-612 + decide the devtools cut.
 - [ ] **Secret scan** clean: `validation/check-secrets.sh .`
 - [ ] **Docs drift guard** clean: `npm run check:docs` confirms the V1 hub's
       machine inventories match code/specs.

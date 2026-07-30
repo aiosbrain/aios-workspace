@@ -35,8 +35,13 @@ needs vendoring). No shared build step — each script is a standalone entry poi
   scripts (e.g. `aios.mjs`, `ship.mjs`, `roadmap-run.mjs`, `promote.mjs`, `task-tier.mjs`).
   Since AIO-601 these (plus `runtimes`, `brain-client`, `git-files`, `constitution`,
   `brain-origin`, `tasks-table`, `transcript-adapters`) are one-line shims re-exporting
-  `@aiosbrain/foundation` (`packages/foundation/` — an npm workspace); edit the module
-  bodies there, keep importing the `scripts/` paths from toolkit code.
+  `@aiosbrain/foundation` (`packages/foundation/` — an npm workspace, **published to npm
+  as public `@aiosbrain/foundation@0.1.0`**; public hub subpaths: `runtimes`,
+  `workspace-parse`, `brain-config`, `linear-client`, `brain-client`, `git-files`,
+  `constitution`, plus contract/`internal/*` subpaths — see the package `exports`); edit
+  the module bodies there, keep importing the `scripts/` paths from toolkit code. The
+  standalone GUI repo consumes the published package, never these shims
+  (`docs/gui-toolkit-contract.md`).
 
 ## File-size discipline
 
