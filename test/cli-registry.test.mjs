@@ -76,8 +76,7 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
-  // Post-snapshot additions, same conventions: AIO-579 delivery + AIO-605 codebase-health
-  // (offline read-only), AIO-602 repo-bootstrap (offline, cwd fallback, target is positional).
+  // Post-snapshot: AIO-579 delivery + AIO-605 codebase-health (read-only), AIO-602 repo-bootstrap.
   delivery: "offline",
   "codebase-health": "offline",
   "repo-bootstrap": "offline",

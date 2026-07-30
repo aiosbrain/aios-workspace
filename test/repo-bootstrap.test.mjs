@@ -15,6 +15,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { applyTransform, renderTemplate, runBootstrap } from "../scripts/repo-bootstrap/engine.mjs";
+import { isSameGitRepo } from "../scripts/repo-bootstrap.mjs";
 import {
   BOOTSTRAP_MANAGED,
   BOOTSTRAP_SEED_IF_ABSENT,
@@ -58,6 +60,8 @@ function gitOk(dir, args) {
   assert.equal(r.status, 0, `git ${args.join(" ")} failed: ${r.stderr}`);
   return r.stdout;
 }
+
+const gitOkRaw = (dir, args) => gitOk(dir, args).trim();
 
 /** A throwaway target repo with one pushed commit on main (origin = local bare repo). */
 function makeTarget() {
@@ -247,6 +251,45 @@ test("SEED_IF_ABSENT never overwrites an existing file (even --force), but refil
 });
 
 // ── CLI validation ───────────────────────────────────────────────────────────
+
+test("CLI refuses to stamp any checkout of the toolkit repo — direct, symlinked, or sibling", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "repo-bootstrap-self-"));
+  try {
+    // A symlinked route to the same checkout (~/Tessera-style) is still a self-stamp:
+    // both sides are realpath'd before comparing, so the alias cannot dodge the refusal.
+    const link = path.join(dir, "toolkit-alias");
+    symlinkSync(TOOLKIT, link);
+    const candidates = [TOOLKIT, link];
+    // The PRIMARY checkout of this same repo (a different directory, same common git
+    // dir) — the case found live via ~/Tessera: realpath equality alone missed it.
+    const commonDir = gitOkRaw(TOOLKIT, ["rev-parse", "--git-common-dir"]);
+    const primary = path.dirname(path.resolve(TOOLKIT, commonDir));
+    if (existsSync(path.join(primary, "scripts", "repo-bootstrap.mjs"))) candidates.push(primary);
+    for (const target of candidates) {
+      // --check: belt-and-suspenders — if the refusal ever regressed, this test must
+      // not stamp a real toolkit checkout as a side effect.
+      const r = runCli([target, "--check"]);
+      assert.equal(r.status, 1, `${target}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /refusing to stamp a checkout of the toolkit repository/);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("isSameGitRepo: true for a primary + its linked worktree, false for unrelated repos", () => {
+  const { base, target } = makeTarget();
+  try {
+    const wt = path.join(base, "wt");
+    gitOk(target, ["worktree", "add", "-q", "--detach", wt]);
+    assert.equal(isSameGitRepo(target, wt), true);
+    assert.equal(isSameGitRepo(wt, target), true);
+    assert.equal(isSameGitRepo(target, TOOLKIT), false);
+    assert.equal(isSameGitRepo(path.join(base, "does-not-exist"), target), false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test("CLI rejects a non-git dir and a non-root path", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "repo-bootstrap-nogit-"));

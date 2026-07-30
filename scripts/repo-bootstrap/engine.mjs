@@ -109,10 +109,12 @@ export function readVersionStamp(targetDir) {
 
 function toolkitSha(toolkitDir) {
   try {
+    // NOSONAR javascript:S4036 — `git` comes from the operator's PATH by design;
+    // a developer CLI has no fixed, unwritable install location across machines.
     return execFileSync("git", ["-C", toolkitDir, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+    }).trim(); // NOSONAR
   } catch {
     return "unknown";
   }
@@ -138,8 +140,8 @@ function toolkitSemver(toolkitDir) {
  * @param {boolean} [o.force]    overwrite drifted MANAGED files (seeds stay untouched)
  */
 export function runBootstrap({ toolkitDir, targetDir, params = {}, check = false, force = false }) {
-  const prior = readVersionStamp(targetDir);
-  const priorFiles = prior?.files ?? {};
+  const priorFiles = readVersionStamp(targetDir)?.files ?? {};
+  const ctx = { toolkitDir, targetDir, params, check, force, priorFiles, nextFiles: {} };
   const report = {
     created: [],
     updated: [],
@@ -151,75 +153,81 @@ export function runBootstrap({ toolkitDir, targetDir, params = {}, check = false
     seedKept: [],
     hooks: [],
   };
-  const nextFiles = {};
 
-  for (const entry of BOOTSTRAP_MANAGED) {
-    const theirsContent = resolveSource(entry, toolkitDir, params);
-    const theirs = sha256(theirsContent);
-    const abs = path.join(targetDir, entry.dest);
-    const mine = sha256(readIfExists(abs));
-    const base = priorFiles[entry.dest];
-    const decision = decideMerge({ base, mine, theirs });
-
-    if (decision === "noop") {
-      report.unchanged.push(entry.dest);
-      nextFiles[entry.dest] = theirs;
-      if (!check && entry.exec) chmodSync(abs, 0o755); // re-assert the exec bit
-    } else if (decision === "create" || decision === "take-theirs") {
-      if (!check) writeStamped(targetDir, entry, theirsContent);
-      report[decision === "create" ? "created" : "updated"].push(entry.dest);
-      nextFiles[entry.dest] = theirs;
-    } else if (force) {
-      if (!check) writeStamped(targetDir, entry, theirsContent);
-      report.forced.push(entry.dest);
-      nextFiles[entry.dest] = theirs;
-    } else if (decision === "keep-mine") {
-      // Local edit, source unchanged: keep the file AND the old base so a future
-      // source change still resolves against what was actually stamped.
-      report.keptLocal.push(entry.dest);
-      nextFiles[entry.dest] = base;
-    } else {
-      // merge (all three differ) or fallback (no recorded base, local file differs):
-      // never guess — keep the local file, surface the new source beside it.
-      if (!check) {
-        const incoming = abs + ".aios-incoming";
-        mkdirSync(path.dirname(incoming), { recursive: true });
-        writeFileSync(incoming, theirsContent);
-      }
-      report.conflicts.push(entry.dest);
-      if (base !== undefined) nextFiles[entry.dest] = base;
-    }
-  }
-
-  for (const entry of BOOTSTRAP_SEED_IF_ABSENT) {
-    const abs = path.join(targetDir, entry.dest);
-    if (existsSync(abs)) {
-      // Never read, merge, overwrite, or delete an existing seed — even with --force.
-      report.seedKept.push(entry.dest);
-      continue;
-    }
-    if (!check) writeStamped(targetDir, entry, resolveSource(entry, toolkitDir, params));
-    report.seeded.push(entry.dest);
-  }
-
+  for (const entry of BOOTSTRAP_MANAGED) applyManagedEntry(entry, ctx, report);
+  for (const entry of BOOTSTRAP_SEED_IF_ABSENT) applySeedEntry(entry, ctx, report);
   if (!check) {
     installGitHooks(targetDir, report);
-    const stamp = {
-      bootstrapVersion: BOOTSTRAP_VERSION,
-      toolkitSha: toolkitSha(toolkitDir),
-      toolkitSemver: toolkitSemver(toolkitDir),
-      stampedAt: new Date().toISOString(),
-      params,
-      files: nextFiles,
-    };
-    writeFileSync(
-      path.join(targetDir, BOOTSTRAP_VERSION_FILE),
-      JSON.stringify(stamp, null, 2) + "\n"
-    );
+    writeVersionStamp(ctx);
   }
 
   report.drift = [...report.keptLocal, ...report.conflicts];
   return report;
+}
+
+/** One MANAGED entry: 3-way decide (over hashes) → write / keep / surface. */
+function applyManagedEntry(entry, ctx, report) {
+  const theirsContent = resolveSource(entry, ctx.toolkitDir, ctx.params);
+  const theirs = sha256(theirsContent);
+  const abs = path.join(ctx.targetDir, entry.dest);
+  const mine = sha256(readIfExists(abs));
+  const base = ctx.priorFiles[entry.dest];
+  const decision = decideMerge({ base, mine, theirs });
+
+  if (decision === "noop") {
+    report.unchanged.push(entry.dest);
+    ctx.nextFiles[entry.dest] = theirs;
+    if (!ctx.check && entry.exec) chmodSync(abs, 0o755); // re-assert the exec bit
+  } else if (decision === "create" || decision === "take-theirs") {
+    if (!ctx.check) writeStamped(ctx.targetDir, entry, theirsContent);
+    report[decision === "create" ? "created" : "updated"].push(entry.dest);
+    ctx.nextFiles[entry.dest] = theirs;
+  } else if (ctx.force) {
+    if (!ctx.check) writeStamped(ctx.targetDir, entry, theirsContent);
+    report.forced.push(entry.dest);
+    ctx.nextFiles[entry.dest] = theirs;
+  } else if (decision === "keep-mine") {
+    // Local edit, source unchanged: keep the file AND the old base so a future
+    // source change still resolves against what was actually stamped.
+    report.keptLocal.push(entry.dest);
+    ctx.nextFiles[entry.dest] = base;
+  } else {
+    // merge (all three differ) or fallback (no recorded base, local file differs):
+    // never guess — keep the local file, surface the new source beside it.
+    if (!ctx.check) {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs + ".aios-incoming", theirsContent);
+    }
+    report.conflicts.push(entry.dest);
+    if (base !== undefined) ctx.nextFiles[entry.dest] = base;
+  }
+}
+
+/** One SEED_IF_ABSENT entry: create-only — an existing file is never touched. */
+function applySeedEntry(entry, ctx, report) {
+  if (existsSync(path.join(ctx.targetDir, entry.dest))) {
+    // Never read, merge, overwrite, or delete an existing seed — even with --force.
+    report.seedKept.push(entry.dest);
+    return;
+  }
+  if (!ctx.check)
+    writeStamped(ctx.targetDir, entry, resolveSource(entry, ctx.toolkitDir, ctx.params));
+  report.seeded.push(entry.dest);
+}
+
+function writeVersionStamp({ toolkitDir, targetDir, params, nextFiles }) {
+  const stamp = {
+    bootstrapVersion: BOOTSTRAP_VERSION,
+    toolkitSha: toolkitSha(toolkitDir),
+    toolkitSemver: toolkitSemver(toolkitDir),
+    stampedAt: new Date().toISOString(),
+    params,
+    files: nextFiles,
+  };
+  writeFileSync(
+    path.join(targetDir, BOOTSTRAP_VERSION_FILE),
+    JSON.stringify(stamp, null, 2) + "\n"
+  );
 }
 
 /**
@@ -227,8 +235,10 @@ export function runBootstrap({ toolkitDir, targetDir, params = {}, check = false
  * reference — a bootstrapped repo must guard itself with no adjacent core checkout).
  */
 function installGitHooks(targetDir, report) {
+  // NOSONAR javascript:S4036 — `bash`/`git` come from the operator's PATH by design
+  // (developer CLI, no fixed install location); the script args are absolute paths.
   const run = (cmd, args) =>
-    execFileSync(cmd, args, { cwd: targetDir, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    execFileSync(cmd, args, { cwd: targetDir, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }); // NOSONAR
 
   // pre-commit + pre-merge-commit + reference-transaction (worktree guards).
   run("bash", [path.join(targetDir, ".harness/hooks/git/install-primary-commit-guard.sh")]);

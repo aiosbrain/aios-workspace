@@ -29,8 +29,10 @@ import { runBootstrap } from "./repo-bootstrap/engine.mjs";
 import { BOOTSTRAP_VERSION, BOOTSTRAP_VERSION_FILE } from "./repo-bootstrap/manifest.mjs";
 
 // The stamp SOURCE is the toolkit checkout this module runs from — never the cwd
-// walk-up (the command usually runs pointed AT some other repo).
-const TOOLKIT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// walk-up (the command usually runs pointed AT some other repo). Physically resolved
+// so a symlinked path to the same checkout (~/Tessera-style) can't dodge the
+// self-stamp refusal below.
+const TOOLKIT_DIR = realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
 
 const USAGE = `usage: aios repo-bootstrap <target-repo-path> [options]
 
@@ -45,15 +47,42 @@ options:
   --json                 machine-readable report
 `;
 
-function gitRoot(dir) {
+function git(dir, args) {
   try {
-    return execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+    // NOSONAR javascript:S4036 — resolving `git` via the operator's PATH is the whole
+    // point of a developer CLI; there is no fixed install location across machines.
+    return execFileSync("git", ["-C", dir, ...args], {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+    }).trim(); // NOSONAR
   } catch {
     return null;
   }
+}
+
+const gitRoot = (dir) => git(dir, ["rev-parse", "--show-toplevel"]);
+
+/** Physical path of the repo's COMMON git dir (shared by the primary + every worktree). */
+function gitCommonDir(dir) {
+  const out = git(dir, ["rev-parse", "--git-common-dir"]);
+  if (!out) return null;
+  try {
+    return realpathSync(path.isAbsolute(out) ? out : path.join(dir, out));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when `a` and `b` are checkouts of the SAME repository — same primary, a linked
+ * worktree of it, or any symlinked route to either. Comparing working-dir realpaths is
+ * not enough: the toolkit's primary checkout and its worktrees are different directories
+ * of one repo, and stamping any of them is a self-stamp (found live: pointing the CLI at
+ * the primary via a ~/Tessera symlink stamped governance INTO the primary checkout).
+ */
+export function isSameGitRepo(a, b) {
+  const ca = gitCommonDir(a);
+  return ca !== null && ca === gitCommonDir(b);
 }
 
 function parseArgs(rest) {
@@ -64,22 +93,74 @@ function parseArgs(rest) {
     if (a === "--check") opts.check = true;
     else if (a === "--force") opts.force = true;
     else if (a === "--json") opts.json = true;
-    else if (a === "--lint-script") opts.lint = rest[++i];
-    else if (a === "--test-script") opts.test = rest[++i];
-    else if (a === "--help" || a === "-h") return { help: true };
+    else if (a === "--lint-script" || a === "--test-script") {
+      const value = rest[++i];
+      if (value === undefined) return { error: `${a} needs a value` };
+      opts[a === "--lint-script" ? "lint" : "test"] = value;
+    } else if (a === "--help" || a === "-h") return { help: true };
     else if (a.startsWith("--")) return { error: `unknown option: ${a}` };
     else positional.push(a);
   }
-  if (opts.lint === undefined || opts.test === undefined)
-    return { error: "--lint-script/--test-script need a value" };
   if (positional.length !== 1) return { error: "exactly one <target-repo-path> is required" };
   return { opts, target: positional[0] };
+}
+
+/**
+ * Validate + physically resolve the target. Must be the ROOT of a git repo (hooks are
+ * installed into its .git) and never a checkout of the toolkit repo itself — realpath
+ * compare for the running checkout, common-git-dir compare for the primary/worktrees.
+ * @returns {{ targetDir: string } | { error: string }}
+ */
+function resolveTargetDir(target) {
+  const given = path.resolve(target);
+  if (!existsSync(given)) return { error: `target does not exist: ${given}` };
+  // Physical path: git reports --show-toplevel physically, and on macOS /var is a
+  // symlink to /private/var — a logical/physical mismatch is not a real non-root.
+  const targetDir = realpathSync(given);
+  const root = gitRoot(targetDir);
+  if (!root || realpathSync(root) !== targetDir) {
+    return {
+      error:
+        `target must be the ROOT of a git repository (git hooks are installed into ` +
+        `its .git). Got: ${targetDir}` +
+        (root ? ` (repo root is ${root})` : " (not a git work tree — run `git init` first)"),
+    };
+  }
+  if (targetDir === TOOLKIT_DIR || isSameGitRepo(targetDir, TOOLKIT_DIR)) {
+    return {
+      error:
+        "refusing to stamp a checkout of the toolkit repository onto itself " +
+        "(primary, worktree, or a symlinked route to one).",
+    };
+  }
+  return { targetDir };
 }
 
 function printList(label, items, mark = " ") {
   if (!items.length) return;
   console.log(`${label}:`);
   for (const f of items) console.log(`  ${mark} ${f}`);
+}
+
+function printReport(report, opts, targetDir) {
+  const mode = opts.check ? "check (no writes)" : "stamp";
+  console.log(`aios repo-bootstrap v${BOOTSTRAP_VERSION} — ${mode} → ${targetDir}\n`);
+  printList("created", report.created, "+");
+  printList("updated (source moved, no local edit)", report.updated, "↑");
+  printList("forced (local edit overwritten via --force)", report.forced, "!");
+  printList("kept local edit (drift — source unchanged)", report.keptLocal, "≠");
+  printList("CONFLICT (both changed — new source at <file>.aios-incoming)", report.conflicts, "✗");
+  printList("seeded (create-only)", report.seeded, "+");
+  printList("seed exists — left untouched", report.seedKept, "·");
+  if (report.unchanged.length) console.log(`unchanged: ${report.unchanged.length} file(s)`);
+  if (!opts.check && report.hooks.length) console.log(`git hooks: ${report.hooks.join(", ")}`);
+  if (!opts.check) console.log(`\nrecorded ${BOOTSTRAP_VERSION_FILE}`);
+  if (report.drift.length > 0) {
+    console.log(
+      `\n${report.drift.length} drifted file(s). Resolve by upstreaming the local edit to the ` +
+        `toolkit, or re-run with --force to restore the canonical copy.`
+    );
+  }
 }
 
 /** @returns {number} process exit code */
@@ -95,27 +176,12 @@ export async function cmdRepoBootstrap(rest) {
   }
   const { opts, target } = parsed;
 
-  let targetDir = path.resolve(target);
-  if (!existsSync(targetDir)) {
-    console.error(`aios repo-bootstrap: target does not exist: ${targetDir}`);
+  const resolved = resolveTargetDir(target);
+  if (resolved.error) {
+    console.error(`aios repo-bootstrap: ${resolved.error}`);
     return 1;
   }
-  // Physical path: git reports --show-toplevel physically, and on macOS /var is a
-  // symlink to /private/var — a logical/physical mismatch is not a real non-root.
-  targetDir = realpathSync(targetDir);
-  const root = gitRoot(targetDir);
-  if (!root || realpathSync(root) !== targetDir) {
-    console.error(
-      `aios repo-bootstrap: target must be the ROOT of a git repository (git hooks are ` +
-        `installed into its .git). Got: ${targetDir}` +
-        (root ? ` (repo root is ${root})` : " (not a git work tree — run `git init` first)")
-    );
-    return 1;
-  }
-  if (path.resolve(targetDir) === TOOLKIT_DIR) {
-    console.error("aios repo-bootstrap: refusing to stamp the toolkit checkout onto itself.");
-    return 1;
-  }
+  const { targetDir } = resolved;
 
   const params = {
     REPO_NAME: path.basename(targetDir),
@@ -138,30 +204,11 @@ export async function cmdRepoBootstrap(rest) {
     return 1;
   }
 
+  const drifted = report.drift.length > 0;
   if (opts.json) {
     console.log(JSON.stringify({ target: targetDir, check: opts.check, ...report }, null, 2));
-    return report.drift.length > 0 && opts.check ? 1 : 0;
+  } else {
+    printReport(report, opts, targetDir);
   }
-
-  const mode = opts.check ? "check (no writes)" : "stamp";
-  console.log(`aios repo-bootstrap v${BOOTSTRAP_VERSION} — ${mode} → ${targetDir}\n`);
-  printList("created", report.created, "+");
-  printList("updated (source moved, no local edit)", report.updated, "↑");
-  printList("forced (local edit overwritten via --force)", report.forced, "!");
-  printList("kept local edit (drift — source unchanged)", report.keptLocal, "≠");
-  printList("CONFLICT (both changed — new source at <file>.aios-incoming)", report.conflicts, "✗");
-  printList("seeded (create-only)", report.seeded, "+");
-  printList("seed exists — left untouched", report.seedKept, "·");
-  if (report.unchanged.length) console.log(`unchanged: ${report.unchanged.length} file(s)`);
-  if (!opts.check && report.hooks.length) console.log(`git hooks: ${report.hooks.join(", ")}`);
-  if (!opts.check) console.log(`\nrecorded ${BOOTSTRAP_VERSION_FILE}`);
-
-  if (report.drift.length > 0) {
-    console.log(
-      `\n${report.drift.length} drifted file(s). Resolve by upstreaming the local edit to the ` +
-        `toolkit, or re-run with --force to restore the canonical copy.`
-    );
-    if (opts.check) return 1;
-  }
-  return 0;
+  return drifted && opts.check ? 1 : 0;
 }

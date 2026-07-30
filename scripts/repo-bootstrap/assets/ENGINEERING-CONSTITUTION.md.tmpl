@@ -19,15 +19,18 @@
 
 ## §8 Invariant registry
 
-Machine-enforced invariants and the stamped tooling that enforces them. Add rows as
-this repo grows; never delete a row without deleting the enforcement (and vice versa).
+Same convention as the canonical core registry (`aios-workspace`
+`docs/ENGINEERING-CONSTITUTION.md` §8): every enforced invariant is listed with the
+tool that enforces it and where that tool actually runs, and **an invariant lands with
+its wired enforcer in the same PR** — a rule with no enforcer row is aspirational and
+does not belong in this table.
 
-| ID           | Invariant                                                                                                      | Enforced by                                                                                                                                                        |
-| ------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| INV-SIZE     | Every source file ≤ 500 lines (default-deny; `grandfathered` is a per-file ceiling that only ratchets DOWN)     | `scripts/check-file-size.mjs` + `scripts/size-caps.json` — CI job `governance gates`                                                                                 |
-| INV-BOUNDARY | Import seams hold: barrels only into `scripts/<cmd>/`, `src/**` never imports `scripts/**`, tests are a leaf    | `scripts/check-boundaries.mjs` + `scripts/boundaries.json` — CI job `governance gates`                                                                               |
-| INV-LEAK     | No confidential identifier is ever published; push is the publication event                                     | `scripts/leak-gate.sh` (baseline always on; term set via `AIOS_LEAK_TERMS_B64`/local install) + `hooks/git/pre-push-leak-gate` (installed to `.git/hooks/pre-push`)  |
-| INV-WORKTREE | No authored commits or edits in the primary checkout; branch creation there is blocked; worktrees self-hydrate  | `.harness/hooks/git/pre-commit-primary-guard` (strict) + `reference-transaction-strand-guard` + `.harness/hooks/guard-worktree.sh` (wired via `.claude/settings.json`) |
+| Invariant                                                                                                       | Enforcer                                                                                                                                | Runs in                                                        |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| file-size gate — every source file ≤ 500 lines (default-deny; `grandfathered` ceilings only ratchet DOWN)        | `scripts/check-file-size.mjs` + `scripts/size-caps.json`                                                                                   | CI `governance gates` job                                       |
+| boundary gate — import seams hold (barrels only into `scripts/<cmd>/`, `src/**` never imports `scripts/**`, tests are a leaf) | `scripts/check-boundaries.mjs` + `scripts/boundaries.json`                                                                                 | CI `governance gates` job                                       |
+| leak gate — no confidential identifier is ever published; push is the publication event                          | `scripts/leak-gate.sh` (baseline always on; term set via `AIOS_LEAK_TERMS_B64`/local install), installed as `hooks/git/pre-push-leak-gate` | pre-push git hook + CI `governance gates` job                   |
+| worktree discipline — no authored commits or edits in the primary checkout; branch creation there is blocked     | `.harness/hooks/git/pre-commit-primary-guard` (strict) + `reference-transaction-strand-guard` + `.harness/hooks/guard-worktree.sh`         | git hooks (installed by the bootstrap) + agent PreToolUse hooks |
 
 ## Provenance
 

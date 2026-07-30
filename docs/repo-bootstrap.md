@@ -12,7 +12,9 @@ aios repo-bootstrap <target-repo-path> \
 ```
 
 The target must be the **root of a git repository** (git hooks are installed into its
-`.git`). Code lives in `scripts/repo-bootstrap.mjs` (CLI barrel) +
+`.git`), and never a checkout of the toolkit repo itself — the CLI refuses the running
+checkout (realpath-compared, so symlinked routes count) and any primary/worktree sharing
+the toolkit's common git dir. Code lives in `scripts/repo-bootstrap.mjs` (CLI barrel) +
 `scripts/repo-bootstrap/{manifest,engine}.mjs` + `scripts/repo-bootstrap/assets/`.
 
 ## Buckets (deliberately mirroring `aios update`)
