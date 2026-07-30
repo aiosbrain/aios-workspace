@@ -9,13 +9,13 @@
  * Zero dependencies.
  */
 
-import { AXIS_LABELS, attentionCard, contextHealthCard } from "./aem.mjs";
+import { AXIS_LABELS, attentionCard, contextHealthCard, codebaseHealthCard } from "./aem.mjs";
 import {
   scoreCognitiveErgonomics,
   ergonomicsBaseline,
   AXIS_LABEL_ERGONOMICS,
 } from "./ergonomics.mjs";
-import { AXIS_GUIDE, ergonomicsTip, contextHealthTip } from "./guidance.mjs";
+import { AXIS_GUIDE, ergonomicsTip, contextHealthTip, codebaseHealthTip } from "./guidance.mjs";
 
 // Plain-English meaning of each Spine level (so "Spine L4" actually says something).
 const SPINE_GLOSS = {
@@ -100,7 +100,7 @@ function plainStat(key, s) {
 }
 
 /** Default terminal report — human-readable, every axis self-explaining. */
-export function renderText(result, color, contextHealth) {
+export function renderText(result, color, contextHealth, codebaseHealth) {
   const c = color || { dim: (s) => s, green: (s) => s, yellow: (s) => s };
   const { window: win, tools, totals, placement, signals } = result;
   const L = [];
@@ -175,6 +175,15 @@ export function renderText(result, color, contextHealth) {
       L.push(c.dim(`    ${failing.map((f) => f.label).join(" · ")}`));
     }
   }
+  // Codebase health card — SHADOW, structural code health (AIO-605), NEVER an
+  // axis. Renders only when a scoring succeeded (codebaseHealth non-null);
+  // silently omitted otherwise so a missing/failed scoring never breaks the report.
+  const cbCard = codebaseHealthCard(codebaseHealth);
+  if (cbCard) {
+    L.push(`  Codebase health — ${cbCard.reading}`);
+    const tip = codebaseHealthTip(cbCard.metrics.status);
+    if (tip) L.push(c.dim(`    ${tip}`));
+  }
   L.push("");
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
@@ -236,7 +245,7 @@ export function renderReport(result, color, contextHealth) {
 }
 
 /** Machine-readable shape (no raw events, no message text). */
-export function toJson(result, costData, contextHealth) {
+export function toJson(result, costData, contextHealth, codebaseHealth) {
   const days = result.days || [];
   const bands = shadowBands(days);
   const out = {
@@ -268,6 +277,12 @@ export function toJson(result, costData, contextHealth) {
   const chCard = contextHealthCard(contextHealth);
   if (chCard) {
     out.context_health = chCard;
+  }
+  // Codebase health SHADOW card (AIO-605) — omitted entirely when the scoring
+  // didn't run / threw (codebaseHealth is null), same pattern as context_health.
+  const cbCard = codebaseHealthCard(codebaseHealth);
+  if (cbCard) {
+    out.codebase_health = cbCard;
   }
   if (costData) {
     out.costs = {

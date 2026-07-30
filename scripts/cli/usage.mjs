@@ -190,6 +190,10 @@ export const USAGE_LINES = {
     "  aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,",
     "                                        read-only, 0-4): context files, tiers, catalog, sync",
   ],
+  "codebase-health": [
+    "  aios codebase-health [path] [--json]  composed codebase-health score (read-only): size/seam",
+    "                                        ratchets, coverage, lint/type, docs drift, invariants",
+  ],
   worktree: [
     "  aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary",
     "    [--base <ref>]                     --base defaults to origin/main; links node_modules,",

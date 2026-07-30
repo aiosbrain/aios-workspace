@@ -27,8 +27,7 @@ const PROBE = pathToFileURL(path.join(DIR, "helpers", "import-probe.mjs")).href;
 const USAGE_FIXTURE = path.join(DIR, "fixtures", "aios-usage.txt");
 
 // ── the pre-refactor truth, transcribed from the if/else-if chain + OFFLINE_CMDS set + the
-// `update` / `mcp` carve-outs at scripts/aios.mjs@737116f. Do NOT regenerate this from the
-// registry — it is the independent side of the parity assertion.
+// `update`/`mcp` carve-outs at aios.mjs@737116f. NOT regenerated from the registry — independent side.
 const PRE_REFACTOR = {
   // workspace: findRepoRoot, aios.yaml REQUIRED
   status: "workspace",
@@ -77,16 +76,16 @@ const PRE_REFACTOR = {
   instincts: "offline",
   worktree: "offline",
   timeline: "offline",
-  // AIO-579 read-only slice — added after the pre-refactor snapshot, same convention as `inbox`.
+  // AIO-579 + AIO-605 — added after the pre-refactor snapshot, same offline read-only convention.
   delivery: "offline",
+  "codebase-health": "offline",
   // special resolution
   update: "update-root",
   mcp: "pre-config",
 };
 
 // Commands that owned their own `--repo` flag before the refactor and must keep it (plus
-// `delivery`, added later for the same reason: its `--repo` is a GitHub owner/repo slug filter,
-// not the workspace path).
+// `delivery`, added later for the same reason — a GitHub owner/repo slug, not the workspace path).
 const PRE_REFACTOR_OWNS_REPO = ["pr", "consolidate-findings", "timeline", "delivery"];
 
 function run(args, opts = {}) {
@@ -305,6 +304,7 @@ test("registry: every adapt hands its module the EXACT argument signature (table
       { api: l.api, resolveMember: l.resolveMember, loadDotEnv: l.loadDotEnv },
     ],
     "context-health": ["mod", "runContextHealthCli", R, A, l.c],
+    "codebase-health": ["mod", "runCodebaseHealthCli", R, A, l.c],
     loop: ["mod", "cmdLoop", R, C, A],
     timeline: ["mod", "cmdTimeline", R, C, A],
     "maturity-week": ["mod", "cmdMaturityWeek", R, A],

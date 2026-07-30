@@ -51,6 +51,7 @@ export const CATEGORIES = {
       "check:domains",
       "check:size",
       "check:boundaries",
+      "check:codebase-health", // AIO-605 advisory delta vs the committed baseline
       "check:inbox-audit",
       "eval:transcripts",
       "pr:backlog",

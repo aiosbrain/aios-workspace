@@ -117,6 +117,8 @@ usage:
     [--json]                            machine output; the Team Brain scanner records scores
   aios context-health [path] [--json]   score the repo's Context Engineering Health (offline,
                                         read-only, 0-4): context files, tiers, catalog, sync
+  aios codebase-health [path] [--json]  composed codebase-health score (read-only): size/seam
+                                        ratchets, coverage, lint/type, docs drift, invariants
   aios worktree add <feat/branch>    create a git worktree + hydrate all config from primary
     [--base <ref>]                     --base defaults to origin/main; links node_modules,
                                        copies opencode.json/.claude/settings, wires hooks

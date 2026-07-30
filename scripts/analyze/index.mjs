@@ -51,6 +51,20 @@ async function gatherContextHealth(repo) {
   }
 }
 
+// Codebase health SHADOW card (AIO-605) — same lazy/defensive contract as the
+// context-health gather: a missing module or any runtime error degrades to null
+// and never fails `aios analyze`. Runs in "cheap" mode so the card never adds
+// the expensive evaluators (eslint/tsc/gh) to an analyze run; the canonical
+// full reading stays `aios codebase-health`.
+async function gatherCodebaseHealth(repo) {
+  try {
+    const mod = await import("../codebase-health.mjs");
+    return await mod.computeCodebaseHealth(repo, { mode: "cheap" });
+  } catch {
+    return null;
+  }
+}
+
 // Text/JSONL parsers (read file bytes). Cursor is SQLite — handled separately.
 const PARSERS = { claude: parseClaude, codex: parseCodex, opencode: parseOpencode };
 const ALL_TOOLS = ["claude", "codex", "cursor", "opencode"];
@@ -275,11 +289,12 @@ export async function cmdAnalyze(repo, cfg, rest, helpers = {}) {
     repo,
   });
   const contextHealth = await gatherContextHealth(repo);
+  const codebaseHealth = await gatherCodebaseHealth(repo);
 
   if (opts.json) {
-    console.log(JSON.stringify(toJson(result, costData, contextHealth), null, 2));
+    console.log(JSON.stringify(toJson(result, costData, contextHealth, codebaseHealth), null, 2));
   } else {
-    console.log(renderText(result, color, contextHealth));
+    console.log(renderText(result, color, contextHealth, codebaseHealth));
     const costBlock = renderCostSummary(costData, color);
     if (costBlock) console.log(costBlock);
     if (opts.report) console.log(renderReport(result, color, contextHealth));

@@ -26,6 +26,7 @@
     "check:domains": "node scripts/check-domain-isolation.mjs",
     "check:size": "node scripts/check-file-size.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:codebase-health": "node scripts/check-codebase-health.mjs",
     "check:v1-linear": "node scripts/check-v1-linear-drift.mjs",
     "check:inbox-audit": "node scripts/inbox-redaction-lint.mjs",
     "eval:transcripts": "node evals/transcript-extraction/extraction-eval.mjs",

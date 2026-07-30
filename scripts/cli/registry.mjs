@@ -296,6 +296,14 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.runContextHealthCli(ctx.repo, ctx.rest, ctx.local.c),
     usage: U["context-health"],
   },
+  // AIO-605 composed structural scorer — read-only; exit 0 on any successful scoring.
+  {
+    name: "codebase-health",
+    resolution: "offline",
+    loader: () => import("../codebase-health.mjs"),
+    adapt: (ctx, mod) => mod.runCodebaseHealthCli(ctx.repo, ctx.rest, ctx.local.c),
+    usage: U["codebase-health"],
+  },
   {
     name: "worktree",
     resolution: "offline",
@@ -403,7 +411,6 @@ export const COMMANDS = [
     exit: "exit-code",
     usage: U["roadmap-run"],
   },
-
   // The Unified Inbox is a headline V1 surface; it was unreachable from `aios --help` until the
   // UX audit found that nothing in the CLI's own help mentioned it (S3-8).
   {
@@ -413,7 +420,6 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.inbox,
   },
-
   // AIO-579 read-only slice: cross-repo PR/worktree/branch reconciliation. `--repo` here is a
   // GitHub owner/repo slug filter (like pr/consolidate-findings), not the workspace path — it
   // owns the flag for the same reason they do.
