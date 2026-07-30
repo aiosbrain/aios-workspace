@@ -100,6 +100,27 @@ done
 
 # Only enforce on outward/shared directories (new 4-shared; legacy variants)
 if echo "$FILE_PATH" | grep -qE "(4-shared|04-shared|04-client-surface|06-client-surface|05-workspace)" 2>/dev/null; then
+  # 2a. Explicit tier tag: a file the owner marked `access: admin` (or its `private`
+  # alias — see docs/tier-vocabulary.md) must never be written into an outward/shared
+  # directory, regardless of content patterns (AIO-600 C5 review finding — previously
+  # only the pattern heuristics below caught admin content here).
+  ACCESS_TAG=$(printf '%s\n' "$CONTENT" | awk '
+    NR==1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    /^---[[:space:]]*$/ { exit }
+    /^[[:space:]]*access:/ {
+      sub(/^[[:space:]]*access:[[:space:]]*/, "")
+      gsub(/["'"'"'\r[:space:]]/, "")
+      print tolower($0); exit
+    }' 2>/dev/null || true)
+  case "$ACCESS_TAG" in
+    admin|private)
+      echo "BLOCKED by team-ops-guard: access: ${ACCESS_TAG} content in team/client directory" >&2
+      echo "File: $FILE_PATH" >&2
+      echo "Admin-tier files (access: admin/private) cannot be written to workspace or client-surface directories." >&2
+      exit 2
+      ;;
+  esac
+
   SENSITIVE_PATTERNS=(
     'day rate'
     'Day Rate'

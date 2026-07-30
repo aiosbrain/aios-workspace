@@ -126,8 +126,14 @@ export const MUTATION_GROUPS = [
     // (42s): with coverageAnalysis "off" every mutant reruns the whole command,
     // so the umbrella suite would cost hours per night. Floor re-measured on
     // the calibration dispatch before it is trusted (mutation-denominator.md).
-    nightlyTests: ["test/operator-loop/inbox-capability.test.mjs"],
-    tests: ["test/operator-loop/*.test.mjs"],
+    nightlyTests: ["gui/server/runtime-adapters/inbox-capability.test.mjs"],
+    // The capability suite moved to gui/server (AIO-600 C5: it exercises the gui-owned durable
+    // store and travels with the repo cut), so the operator-loop glob no longer covers it —
+    // listed explicitly to keep it in the changed-code umbrella.
+    tests: [
+      "test/operator-loop/*.test.mjs",
+      "gui/server/runtime-adapters/inbox-capability.test.mjs",
+    ],
     // This floor is calibrated for the exact compiled target only. Do not
     // project a single-file score onto the much larger mutation group.
     breakThresholdByTarget: { "dist/operator-loop/inbox/capability.js": 90 },

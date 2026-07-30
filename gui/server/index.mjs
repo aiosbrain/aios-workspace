@@ -85,6 +85,12 @@ import {
 } from "./tasks.mjs";
 import { searchSessions } from "./sessions-search.mjs";
 import { writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "node:fs";
+import { getToolkit, toolkitCli } from "./toolkit-locate.mjs";
+import { loadCoordinator, operatorLoopStatus } from "./operator-loop-capability.mjs";
+// Single-source workspace-marker list shared with scripts/run-gui.mjs (AIO-600 C5). Relative
+// path in-tree (worktrees symlink node_modules from the primary, so a just-added package subpath
+// would not resolve); becomes the published `@aios-alpha/monorepo/workspace-markers` at cut time.
+import { WORKSPACE_MARKERS } from "../../packages/monorepo/src/workspace-markers.mjs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
 // PreToolUse guard hook still vets every Write/Edit for secrets and tier leaks).
@@ -126,45 +132,26 @@ function flag(name, dflt) {
 const repo = path.resolve(flag("--repo", process.cwd()));
 const port = parseInt(flag("--port", "8790"), 10);
 
-// I-03/I-07 + AIO-427: lazily load the coordinator-side broker (brokerDecision / notifyDeepLink) and
-// the durable-journal composition bridge (createDurableCapabilityJournal) from the compiled
-// operator-loop. Guarded so a missing/unbuilt dist degrades to an inline envelope broker with NO
-// journalling — the server must start even before `npm run build:loop`. The AUTHORITY that matters
-// (validate + durable consume) is the runtime store, which is already statically imported above; the
-// durable I-02 journal is additive and only wired when the compiled loop is present.
-let _coordinatorPromise;
-function loadCoordinator() {
-  if (!_coordinatorPromise) {
-    _coordinatorPromise = import("../../dist/operator-loop/index.js").catch(() => ({
-      // Inline fallback broker: the coordinator never authorizes — it only echoes the digest the
-      // human saw into the envelope. Journalling is a no-op until the compiled loop (+ I-02) is present.
-      brokerDecision: (projection, decision) => ({
-        handle: projection.handle,
-        decision,
-        digest: projection.digest,
-        brokeredAt: new Date().toISOString(),
-      }),
-      notifyDeepLink: (ask) => ({
-        handle: ask.handle,
-        deepLink: ask.deepLink,
-        at: new Date().toISOString(),
-        lane: "notify-deep-link",
-      }),
-      // No compiled journal writer available → no durable journal sink (uniform call sites below).
-      createDurableCapabilityJournal: () => undefined,
-    }));
-  }
-  return _coordinatorPromise;
+// Toolkit resolution (AIO-600 C5): every toolkit path resolves through the toolkit-location
+// contract (toolkit-locate.mjs: --toolkit-dir > AIOS_TOOLKIT_DIR > adjacent checkout > fail) —
+// never a hard-coded ../../. See docs/gui-toolkit-contract.md.
+let TOOLKIT;
+try {
+  TOOLKIT = getToolkit();
+} catch (e) {
+  console.error(`error: ${e.message}`);
+  process.exit(1);
 }
 
-if (
-  !existsSync(path.join(repo, "aios.yaml")) &&
-  !existsSync(path.join(repo, "workspace.yaml")) &&
-  !existsSync(path.join(repo, "project.yaml")) &&
-  !existsSync(path.join(repo, "engagement.yaml"))
-) {
+// Probe the OPTIONAL operator-loop capability now, so absence is reported at startup (one log
+// line + /api/info's capabilities field), never silently on first use (AIO-600 C5). The lazy
+// I-03/I-07 + AIO-427 coordinator loader + inline fallback broker live in
+// operator-loop-capability.mjs.
+loadCoordinator();
+
+if (!WORKSPACE_MARKERS.some((f) => existsSync(path.join(repo, f)))) {
   console.error(
-    `error: ${repo} does not look like an AIOS workspace (no aios.yaml/workspace.yaml/project.yaml/engagement.yaml)`
+    `error: ${repo} does not look like an AIOS workspace (no ${WORKSPACE_MARKERS.join("/")})`
   );
   process.exit(1);
 }
@@ -200,7 +187,15 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
   if (url.pathname === "/api/info") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ repo }));
+    // capabilities.operatorLoop: the GUI shows "operator-loop capability unavailable" instead of
+    // silently losing durable journalling (AIO-600 C5; see operator-loop-capability.mjs).
+    return res.end(
+      JSON.stringify({
+        repo,
+        toolkit: { dir: TOOLKIT.dir, source: TOOLKIT.source },
+        capabilities: { operatorLoop: operatorLoopStatus },
+      })
+    );
   }
   if (url.pathname === "/api/catalog") {
     aiosJson(["catalog", "--json"], { raw: true }).then(({ status, body }) => {
@@ -1011,7 +1006,8 @@ const server = http.createServer((req, res) => {
 });
 
 // Run the aios CLI against the target repo; reuses the CLI's exact plan/push logic.
-const AIOS_CLI = path.join(SCRIPT_DIR, "..", "..", "scripts", "aios.mjs");
+// Resolved via the toolkit-location contract (AIO-600 C5), not gui/server-relative.
+const AIOS_CLI = toolkitCli();
 function runAios(args, cb) {
   execFile(
     process.execPath,

@@ -2,15 +2,15 @@
 //
 // The two-authority split under test:
 //   • coordinator side (compiled): brokerDecision / notifyDeepLink / createInMemoryJournal
-//       imported from ../../dist/operator-loop/index.js
+//       imported from ../../../dist/operator-loop/index.js
 //   • owning-runtime side (durable store): issueHandle / consumeAndExecute / readCapabilities
-//       imported from ../../gui/server/runtime-adapters/capability-store.mjs
+//       imported from ./capability-store.mjs
 //
 // EXIT (verbatim from the spec): tamper rejection + replay-rejection-after-runtime-restart proven.
 // Restart is simulated in-test by re-importing the store module with a fresh URL (a new module
 // instance with zero in-memory state) and re-folding the durable NDJSON tombstone from disk.
 //
-// Run: node --test test/operator-loop/inbox-capability.test.mjs
+// Run: node --test gui/server/runtime-adapters/inbox-capability.test.mjs
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,7 +25,7 @@ import {
   createDurableCapabilityJournal,
   readJournalSegments,
   rebuildReadModel,
-} from "../../dist/operator-loop/index.js";
+} from "../../../dist/operator-loop/index.js";
 import {
   issueHandle,
   consumeAndExecute,
@@ -36,7 +36,7 @@ import {
   retryEligibility,
   capabilityDigest,
   CAPABILITY_STORE_REL,
-} from "../../gui/server/runtime-adapters/capability-store.mjs";
+} from "./capability-store.mjs";
 import {
   ws as fxWs,
   sampleRequest as fxRequest,
@@ -47,7 +47,7 @@ import {
   FIXTURE_IDENTITY,
   FIXTURE_AUDIENCE,
   FIXTURE_EPOCH,
-} from "../../gui/server/runtime-adapters/__fixtures__/capability-fixtures.mjs";
+} from "./__fixtures__/capability-fixtures.mjs";
 
 const IDENTITY = "/repo/aios-workspace@feat/inbox";
 
@@ -152,7 +152,7 @@ test("EXIT (b): replay-after-runtime-restart — consumed handle rejected via du
 
     // Simulate a FULL runtime restart: import a fresh module instance (zero in-memory state) and
     // re-fold the store from disk. The consumed tombstone must still reject a replay.
-    const fresh = await import("../../gui/server/runtime-adapters/capability-store.mjs?restart=1");
+    const fresh = await import("./capability-store.mjs?restart=1");
     assert.equal(fresh.loadRecord(root, handle).state, "consumed", "tombstone survived restart");
 
     const second = counter();
@@ -925,7 +925,7 @@ test("I-07 family 7 (replay): consumed handle rejected before and after restart,
     assert.equal(c.n, 1, "no re-execution on in-process replay");
 
     // Replay AFTER restart: a fresh module instance re-folds the durable tombstone + receipt from disk.
-    const fresh = await import("../../gui/server/runtime-adapters/capability-store.mjs?fam7=1");
+    const fresh = await import("./capability-store.mjs?fam7=1");
     const afterRestart = fresh.consumeAndExecute(root, handle, brokered, {
       identity: FIXTURE_IDENTITY,
       execute,

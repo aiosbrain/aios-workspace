@@ -150,7 +150,7 @@ alter the asks store, the brain, or any external surface.
 
 | Area | Canonical doc | Test files |
 |---|---|---|
-| Full build contract (journal schema, state machines, capability handle, reply PDP, observation record, D5/D6 decisions, pre-registered metrics) | [`unified-inbox.md`](./unified-inbox.md) | `test/operator-loop/inbox-journal-replay.test.mjs`, `inbox-journal-store.test.mjs`, `inbox-state-machines.test.mjs`, `inbox-capability.test.mjs`, `inbox-reply-policy.test.mjs`, `inbox-observations-dualread.test.mjs`, `inbox-ranking-fixtures.test.mjs` |
+| Full build contract (journal schema, state machines, capability handle, reply PDP, observation record, D5/D6 decisions, pre-registered metrics) | [`unified-inbox.md`](./unified-inbox.md) | `test/operator-loop/inbox-journal-replay.test.mjs`, `inbox-journal-store.test.mjs`, `inbox-state-machines.test.mjs`, `gui/server/runtime-adapters/inbox-capability.test.mjs`, `inbox-reply-policy.test.mjs`, `inbox-observations-dualread.test.mjs`, `inbox-ranking-fixtures.test.mjs` |
 | Original vision framing (superseded — mine for rationale, not for contracts) | [`../../prd-unified-agent-inbox.md`](../../prd-unified-agent-inbox.md) | — |
 | CLI + read view | `scripts/inbox.mjs` | `test/operator-loop/inbox-cli.test.mjs`, `inbox-recovery.test.mjs`, `inbox-send-bypass.test.mjs` |
 | Outbox / Gmail send | `src/operator-loop/inbox/outbox.ts`, `scripts/inbox-coordinator.mjs` | `test/operator-loop/inbox-outbox.test.mjs`, `inbox-outbox-gog.test.mjs` |
