@@ -11,7 +11,7 @@
   "workspaces": [
     "gui/server",
     "gui/client",
-    "packages/monorepo"
+    "packages/foundation"
   ],
   "scripts": {
     "help": "node scripts/npm-menu.mjs",

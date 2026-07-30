@@ -62,7 +62,7 @@
       "id": "npm-auth",
       "status": "open",
       "owner": "John",
-      "detail": "npm whoami = E401 Unauthorized on this machine. Restore npm auth with publish rights on @aios-alpha (org access + 2FA or granular token). Blocks @aios-alpha/monorepo publish -> blocks G1 fresh-clone-from-published-package criterion. Verify: npm whoami; npm access list packages @aios-alpha; npm publish --dry-run --access public."
+      "detail": "npm whoami = E401 Unauthorized on this machine. Restore npm auth with publish rights on @aiosbrain (org access + 2FA or granular token). Blocks @aiosbrain/foundation publish -> blocks G1 fresh-clone-from-published-package criterion. Verify: npm whoami; npm access list packages @aiosbrain; npm publish --dry-run --access public."
     },
     {
       "id": "repo-creation",
@@ -85,7 +85,7 @@
       "frozen_sha": null,
       "prerequisite_prs": [],
       "package": {
-        "name": "@aios-alpha/monorepo",
+        "name": "@aiosbrain/foundation",
         "version_target": "0.1.0",
         "published_version": null,
         "tarball_integrity": null

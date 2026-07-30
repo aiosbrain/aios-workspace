@@ -4,12 +4,12 @@
 // `meta` + `run(host)` and emits the same WS event shapes (delta | tool_use |
 // tool_result | assistant_done | result | error), so the React client is
 // runtime-agnostic. Runtime names + capabilities come from the single source of
-// truth in @aios-alpha/monorepo/runtimes (shared with `aios skills export` +
+// truth in @aiosbrain/foundation/runtimes (shared with `aios skills export` +
 // validators). See docs/byoa.md.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { RUNTIMES, GUI_RUNTIMES } from "@aios-alpha/monorepo/runtimes";
+import { RUNTIMES, GUI_RUNTIMES } from "@aiosbrain/foundation/runtimes";
 import { parseFlatScalars } from "./flat-config.mjs";
 import * as claudeCode from "./claude-code.mjs";
 import * as acp from "./acp.mjs";

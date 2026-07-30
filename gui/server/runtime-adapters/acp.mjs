@@ -1,6 +1,6 @@
 // ACP adapter — drives the session over the Agent Client Protocol (JSON-RPC on
 // stdio) against a spawned agent process. Used by every `driver: "acp"` runtime
-// in @aios-alpha/monorepo/runtimes — Hermes (`hermes acp`) and OpenClaw (`openclaw acp`,
+// in @aiosbrain/foundation/runtimes — Hermes (`hermes acp`) and OpenClaw (`openclaw acp`,
 // a Gateway-backed ACP bridge) both ride this one adapter.
 //
 // Governance model — two layers, because ACP file mutation has two paths:
@@ -35,7 +35,7 @@ import {
   RequestError,
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
-import { GUI_RUNTIMES } from "@aios-alpha/monorepo/runtimes";
+import { GUI_RUNTIMES } from "@aiosbrain/foundation/runtimes";
 
 export const meta = { driver: "acp" };
 

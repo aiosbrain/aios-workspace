@@ -2,15 +2,15 @@
 
 **The GUI (`gui/server` + `gui/client`) consumes exactly two toolkit surfaces:**
 
-1. **`@aios-alpha/monorepo` public subpaths** (`packages/monorepo`) — the frozen,
-   contract-tested API (`test/monorepo-package.test.mjs`). Public subpaths only:
+1. **`@aiosbrain/foundation` public subpaths** (`packages/foundation`) — the frozen,
+   contract-tested API (`test/foundation-package.test.mjs`). Public subpaths only:
    `./runtimes`, `./workspace-parse`, `./brain-config`, `./linear-client`,
    `./brain-client`, `./git-files`, `./constitution`, `./tasks-table` (promoted from
    internal in C3, below). The `./internal/*` subpaths are
    documented-private and **off-limits to the GUI by default** — if the GUI needs
    something that only exists on an internal subpath, first either promote it to a
    public subpath (a semver event: update the package exports, the frozen surface in
-   `test/monorepo-package.test.mjs`, and `packages/monorepo/README.md`) or move a
+   `test/foundation-package.test.mjs`, and `packages/foundation/README.md`) or move a
    minimal gui-owned implementation into `gui/server`. As a documented **last resort**
    (AIO-600 wave rule) the GUI may consume a dedicated internal subpath when neither a
    CLI seam nor an honest gui-owned copy fits (e.g. a large single-implementation
@@ -41,13 +41,13 @@ Package surfaces consumed:
 
 | Surface | Named imports | Used for |
 | --- | --- | --- |
-| `@aios-alpha/monorepo/runtimes` | `RUNTIMES`, `GUI_RUNTIMES`, `runtimeCapabilities`, `modelCatalog`, `isModelAllowed`, `modelRejectionMessage`, `allowedApprovalModeIds`, `fullAccessEnabled` | Runtime registry + capability payloads, per-runtime model catalogs and write validation, approval-mode governance |
+| `@aiosbrain/foundation/runtimes` | `RUNTIMES`, `GUI_RUNTIMES`, `runtimeCapabilities`, `modelCatalog`, `isModelAllowed`, `modelRejectionMessage`, `allowedApprovalModeIds`, `fullAccessEnabled` | Runtime registry + capability payloads, per-runtime model catalogs and write validation, approval-mode governance |
 
 CLI `--json` surfaces consumed: none (this cluster is registry/config only).
 
 **flat-yaml decision (documented choice):** `runtime-adapters/index.mjs` previously
 imported `parseFlatYaml` from `scripts/flat-yaml.mjs`, whose package home is the
-documented-private `@aios-alpha/monorepo/internal/flat-yaml`. The GUI's only use is
+documented-private `@aiosbrain/foundation/internal/flat-yaml`. The GUI's only use is
 reading five flat scalar keys (`agent_runtime`, `agent_model`, `agent_base_url`,
 `agent_personality`, `memory_review`) from `aios.yaml` — a format subset frozen
 repo-wide by OGR04. Rather than promote a generic YAML parser onto the package's
@@ -65,7 +65,7 @@ Package surfaces consumed:
 
 | Surface | Named imports | Used for |
 | --- | --- | --- |
-| `@aios-alpha/monorepo/internal/skill-scan` (documented-private, last-resort rule above) | `scanSkill` | The advisory static safety scan behind the consent gate. Moved verbatim from `scripts/skill-scan.mjs`, which is now a relative-path re-export shim (+ its unchanged CLI), so the GUI consent gate, OGR09 (`validation/check-skill-library.mjs`), and the CLI scan identically — a 350-line security scanner must stay single-implementation (a copy could drift fail-open), and its structured findings/throws are consumed in-process, so neither a CLI spawn nor a gui copy fits. |
+| `@aiosbrain/foundation/internal/skill-scan` (documented-private, last-resort rule above) | `scanSkill` | The advisory static safety scan behind the consent gate. Moved verbatim from `scripts/skill-scan.mjs`, which is now a relative-path re-export shim (+ its unchanged CLI), so the GUI consent gate, OGR09 (`validation/check-skill-library.mjs`), and the CLI scan identically — a 350-line security scanner must stay single-implementation (a copy could drift fail-open), and its structured findings/throws are consumed in-process, so neither a CLI spawn nor a gui copy fits. |
 
 CLI surfaces consumed:
 
@@ -94,8 +94,8 @@ Package surfaces consumed:
 
 | Surface | Named imports | Used for |
 | --- | --- | --- |
-| `@aios-alpha/monorepo/workspace-parse` | `parseFrontmatter`, `normalizeTier` | Task-file tier resolution (`tasks.mjs`); personality frontmatter scan (`catalog.mjs`) |
-| `@aios-alpha/monorepo/tasks-table` | `parseTaskRows`, `mergeTaskWriteback` (+ `TaskRow` via the exports-map `types` condition) | Tasks panel row parse + single-row writeback |
+| `@aiosbrain/foundation/workspace-parse` | `parseFrontmatter`, `normalizeTier` | Task-file tier resolution (`tasks.mjs`); personality frontmatter scan (`catalog.mjs`) |
+| `@aiosbrain/foundation/tasks-table` | `parseTaskRows`, `mergeTaskWriteback` (+ `TaskRow` via the exports-map `types` condition) | Tasks panel row parse + single-row writeback |
 
 **tasks-table promotion (documented choice):** `tasks.mjs` needed
 `parseTaskRows`/`mergeTaskWriteback`, which lived on the documented-private
@@ -105,9 +105,9 @@ gui-owned copy was rejected: the writeback grammar (row_key matching, hierarchy-
 widening, body-never-touched) is exactly what makes the cockpit round-trip a table the
 way `aios pull` does, and a drifting copy would corrupt task files silently. So the
 subpath was **promoted to public `./tasks-table`** as the prescribed semver event:
-package `exports` map updated, surface frozen in `test/monorepo-package.test.mjs`
+package `exports` map updated, surface frozen in `test/foundation-package.test.mjs`
 (9 named exports; `./internal/tasks-table` now asserted NOT to resolve), and
-`packages/monorepo/README.md` moved it into the public table. The in-package relative
+`packages/foundation/README.md` moved it into the public table. The in-package relative
 importers (`workspace-parse/{core,decisions}.mjs`) and the `scripts/tasks-table.*`
 shims follow the file move; no historical import path broke.
 
@@ -131,8 +131,8 @@ Removed R4 grandfathers (5):
 
 | Former deep import | Seam decision |
 |---|---|
-| `gui/server/tasks.mjs` → `scripts/tasks-table.mjs` | Package: `@aios-alpha/monorepo/tasks-table` (promoted public, above). |
-| `gui/server/tasks.mjs` → `scripts/workspace-parse.mjs` | Package: `@aios-alpha/monorepo/workspace-parse` (public). |
+| `gui/server/tasks.mjs` → `scripts/tasks-table.mjs` | Package: `@aiosbrain/foundation/tasks-table` (promoted public, above). |
+| `gui/server/tasks.mjs` → `scripts/workspace-parse.mjs` | Package: `@aiosbrain/foundation/workspace-parse` (public). |
 | `gui/server/index.mjs` → `scripts/gen-catalog.mjs` | CLI seam `aios catalog --json`; `firstSentence` is a provenance-commented 4-line copy in `catalog.mjs`; the personalities scan (GUI-only concept) moved to `catalog.mjs` on the public `workspace-parse` parser. |
 | `gui/server/index.mjs` → `scripts/connector.mjs` | CLI seam `aios connector …` (all 8 actions), spawned through `aios-json.mjs`. |
 | `gui/server/index.mjs` → `scripts/brain-config.mjs` | Deleted outright — `resolveBrainConfig` was only used inside the connector routes, and the CLI seam resolves the brain config on its own side of the boundary. |
@@ -237,9 +237,9 @@ I-02 journal + coordinator envelope depend on the compiled loop.
 
 The last toolkit→GUI **code** dependency was `validation/check-runtime-adapters.mjs` (OGR07)
 importing `gui/server/runtime-adapters/{index,guard}.mjs`. Inverted into a **core-owned contract
-fixture**: `@aios-alpha/monorepo/adapter-contract` (`packages/monorepo/src/adapter-contract.mjs`)
+fixture**: `@aiosbrain/foundation/adapter-contract` (`packages/foundation/src/adapter-contract.mjs`)
 defines `checkAdapterRegistry` (registry shape over the canonical
-`@aios-alpha/monorepo/runtimes` data: `RUNTIMES[*].gui` resolution, `GUI_RUNTIMES` parity, typed
+`@aiosbrain/foundation/runtimes` data: `RUNTIMES[*].gui` resolution, `GUI_RUNTIMES` parity, typed
 `not GUI-drivable` / `unknown agent_runtime` errors, `readAgentConfig` + model defaults) and
 `checkGuardWrite` (+ `GUARD_SCENARIOS` data for the team-ops-guard governance scenarios).
 
@@ -250,7 +250,7 @@ defines `checkAdapterRegistry` (registry shape over the canonical
 - **GUI side:** `gui/server/runtime-adapters/adapter-contract.test.mjs` runs the *same* checks and
   **travels with the cut** — in-tree it imports the contract by relative path (worktree
   `node_modules` symlinking, see the marker contract below); post-cut it consumes the published
-  `@aios-alpha/monorepo/adapter-contract` subpath (already exported). The guard check skips when
+  `@aiosbrain/foundation/adapter-contract` subpath (already exported). The guard check skips when
   no toolkit (with `hooks/team-ops-guard.sh`) is locatable.
 
 ### Workspace-marker contract
@@ -258,14 +258,14 @@ defines `checkAdapterRegistry` (registry shape over the canonical
 **Decision: single-source import, core-owned** (not a parity test). The list of files that make a
 directory an AIOS workspace (`aios.yaml` / `workspace.yaml` / `project.yaml` / `engagement.yaml`)
 was hand-synced between `scripts/run-gui.mjs` and `gui/server/index.mjs`. It is now defined once
-in `@aios-alpha/monorepo/workspace-markers` (`packages/monorepo/src/workspace-markers.mjs`):
+in `@aiosbrain/foundation/workspace-markers` (`packages/foundation/src/workspace-markers.mjs`):
 
 - `scripts/run-gui.mjs` imports it by relative path (bare-checkout safe, same convention as the
   `scripts/runtimes.mjs` shim) — **no core→gui runtime dependency is created**;
 - `gui/server/index.mjs` imports it by relative path in-tree (worktrees symlink `node_modules`
   from the primary checkout, so a freshly added package subpath does not resolve there); at cut
-  time this becomes the published `@aios-alpha/monorepo/workspace-markers` specifier, an ordinary
-  npm dependency of the GUI repo. The subpath is already exported by `packages/monorepo`.
+  time this becomes the published `@aiosbrain/foundation/workspace-markers` specifier, an ordinary
+  npm dependency of the GUI repo. The subpath is already exported by `packages/foundation`.
 
 A parity test is unnecessary because both sides read the same module; drift is impossible by
 construction.

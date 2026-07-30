@@ -1,9 +1,9 @@
 // adapter-contract.test.mjs — gui/server's side of the adapter-registry contract (AIO-600 C5).
 //
-// The contract itself is CORE-OWNED (@aios-alpha/monorepo/adapter-contract): core's OGR07
+// The contract itself is CORE-OWNED (@aiosbrain/foundation/adapter-contract): core's OGR07
 // (validation/check-runtime-adapters.mjs) runs the same checks against this registry while both
 // live in one tree (skip-when-absent), and THIS test keeps enforcing them from the gui side after
-// the repo cut — it imports only gui modules + the published @aios-alpha/monorepo package.
+// the repo cut — it imports only gui modules + the published @aiosbrain/foundation package.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,12 +12,12 @@ import path from "node:path";
 
 // Relative paths in-tree (worktrees symlink node_modules from the primary checkout, so
 // just-added package subpaths don't resolve there); these become the published
-// `@aios-alpha/monorepo/{adapter-contract,runtimes}` specifiers at cut time.
+// `@aiosbrain/foundation/{adapter-contract,runtimes}` specifiers at cut time.
 import {
   checkAdapterRegistry,
   checkGuardWrite,
-} from "../../../packages/monorepo/src/adapter-contract.mjs";
-import { RUNTIMES, GUI_RUNTIMES } from "../../../packages/monorepo/src/runtimes.mjs";
+} from "../../../packages/foundation/src/adapter-contract.mjs";
+import { RUNTIMES, GUI_RUNTIMES } from "../../../packages/foundation/src/runtimes.mjs";
 import * as registry from "./index.mjs";
 import { guardWrite } from "./guard.mjs";
 import { locateToolkit } from "../toolkit-locate.mjs";

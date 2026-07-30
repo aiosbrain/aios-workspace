@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { allowedApprovalModeIds, claudeApprovalModes } from "@aios-alpha/monorepo/runtimes";
+import { allowedApprovalModeIds, claudeApprovalModes } from "@aiosbrain/foundation/runtimes";
 
 // Governance regression for the composer approval-mode selector (AIO-116).
 //

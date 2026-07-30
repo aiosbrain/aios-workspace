@@ -10,7 +10,7 @@ import { assertGuiRuntimeReady } from "./gui-runtime-preflight.mjs";
 // Single source of the workspace-marker list (AIO-600 C5) — shared with gui/server/index.mjs's
 // startup check. Relative path (not the bare specifier) so it resolves on a bare checkout,
 // same convention as scripts/runtimes.mjs.
-import { WORKSPACE_MARKERS } from "../packages/monorepo/src/workspace-markers.mjs";
+import { WORKSPACE_MARKERS } from "../packages/foundation/src/workspace-markers.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -186,7 +186,7 @@ export function buildGuiClient({ root = ROOT, run = execFileSync } = {}) {
 
 /**
  * Fail fast (before the client build) when the target repo isn't a workspace.
- * Marker list is the shared @aios-alpha/monorepo/workspace-markers definition — the same one
+ * Marker list is the shared @aiosbrain/foundation/workspace-markers definition — the same one
  * gui/server/index.mjs's startup check consumes, so the two can never drift (AIO-600 C5).
  */
 export function assertGuiRepo(repo) {

@@ -7,7 +7,7 @@
 //     (skip-when-absent during the transition), and
 //   • gui/server runs the SAME checks in its own co-located test
 //     (gui/server/runtime-adapters/adapter-contract.test.mjs), which travels with the repo cut.
-// Post-cut the GUI consumes this module via the published `@aios-alpha/monorepo/adapter-contract`
+// Post-cut the GUI consumes this module via the published `@aiosbrain/foundation/adapter-contract`
 // subpath; core keeps validating its own runtimes data. See docs/gui-toolkit-contract.md.
 //
 // Every check returns an ARRAY OF VIOLATION STRINGS (empty = contract satisfied) — callers decide

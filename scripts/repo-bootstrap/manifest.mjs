@@ -87,10 +87,10 @@ export const BOOTSTRAP_MANAGED = [
   { dest: "scripts/check-file-size.mjs", src: "scripts/check-file-size.mjs" },
   { dest: "scripts/check-boundaries.mjs", src: "scripts/check-boundaries.mjs" },
   // Both gates import `./git-files.mjs`. Since AIO-601 the toolkit's scripts/git-files.mjs
-  // is a relative-path SHIM into packages/monorepo — stamping the shim would dangle in a
+  // is a relative-path SHIM into packages/foundation — stamping the shim would dangle in a
   // target with no packages/ tree, so stamp the resolved module BODY (self-contained,
   // node:child_process only) at the path the gates import.
-  { dest: "scripts/git-files.mjs", src: "packages/monorepo/src/git-files.mjs" },
+  { dest: "scripts/git-files.mjs", src: "packages/foundation/src/git-files.mjs" },
   // check-file-size.mjs imports globToRegex from here — copied whole so the gate
   // stays a byte-identical copy of the canonical one (no import rewriting).
   { dest: "validation/agent-readiness-lib.mjs", src: "validation/agent-readiness-lib.mjs" },
