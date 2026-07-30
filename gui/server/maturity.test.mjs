@@ -1,8 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildMaturityPayload, TREND_DAYS } from "./maturity.mjs";
+// Test-only EXPECTATIONS imports (exempt from the R4 boundary — production
+// maturity.mjs no longer imports scripts/analyze at all, AIO-600): the analyze
+// internals define what the CLI's `presentation` block carries.
 import { AXIS_GUIDE, ergonomicsTip } from "../../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS } from "../../scripts/analyze/aem.mjs";
+import { toJson } from "../../scripts/analyze/report.mjs";
 
 // A representative `analyze --json` document (subset of report.mjs `toJson`).
 const SAMPLE = {
@@ -24,6 +28,13 @@ const SAMPLE = {
   },
   axes_shadow: { cognitive_ergonomics: 2 },
   attention: { reading: "orchestration-heavy — protect focus blocks" },
+  // The GUI seam block toJson ships (AIO-600) — labels/coaching/tip arrive in
+  // the JSON itself, not via imports of the analyze internals.
+  presentation: {
+    axis_labels: AXIS_LABELS,
+    axis_guide: AXIS_GUIDE,
+    ergonomics_tip: ergonomicsTip("orchestration-heavy — protect focus blocks"),
+  },
   days: [
     {
       date: "2026-07-01",
@@ -106,6 +117,47 @@ test("W2-absent (no ergonomicsTip) degrades to empty CE tip, no throw", () => {
   // the rest of the payload is still well-formed
   assert.equal(p.weakest, "verification");
   assert.equal(p.axes.length, 5);
+});
+
+test("legacy snapshot without `presentation` degrades gracefully (pre-AIO-600 cache)", () => {
+  // A persisted analysis-snapshot.json written by a pre-seam CLI has no
+  // presentation block — the panel must still render: keys stand in for
+  // labels, glosses/coaching/tip are simply omitted until the next refresh.
+  const { presentation: _omit, ...legacy } = SAMPLE;
+  const p = buildMaturityPayload(JSON.stringify(legacy));
+  assert.equal(p.spine, "L2");
+  assert.equal(p.axes.length, 5);
+  for (const a of p.axes) {
+    assert.equal(a.label, a.key);
+    assert.equal(a.gloss, "");
+  }
+  assert.equal(p.guidance.weakest, null);
+  assert.equal(p.guidance.ergonomics_tip, "");
+});
+
+test("SEAM PARITY: the real toJson output carries everything the panel renders", () => {
+  // Drift guard for the AIO-600 contract: feed an actual report.mjs toJson()
+  // document (the exact surface `aios analyze --json` emits) through the
+  // reshaper and assert labels, glosses, weakest coaching, and the CE tip all
+  // arrive — with the values the analyze internals define.
+  const result = {
+    window: SAMPLE.window,
+    tools: SAMPLE.tools,
+    totals: SAMPLE.totals,
+    signals: {},
+    placement: SAMPLE.placement,
+    days: [{ date: "2026-07-01", signals: {}, placement: { overall: 2.0 } }],
+  };
+  const doc = toJson(result, null, null, null);
+  const p = buildMaturityPayload(JSON.stringify(doc));
+  assert.deepEqual(p.guidance.weakest, AXIS_GUIDE.verification);
+  for (const a of p.axes) {
+    assert.equal(a.label, AXIS_LABELS[a.key]);
+    assert.equal(a.gloss, AXIS_GUIDE[a.key].gloss);
+  }
+  // toJson precomputes the tip from its own attention reading — the payload
+  // must agree with guidance.mjs applied to that same reading.
+  assert.equal(p.guidance.ergonomics_tip, ergonomicsTip(doc.attention.reading));
 });
 
 test("empty / zeroed analyze run yields a well-formed payload", () => {

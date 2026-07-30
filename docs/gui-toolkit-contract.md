@@ -60,9 +60,49 @@ _Pending — cluster C2 appends its surfaces here._
 
 _Pending — cluster C3 appends its surfaces here._
 
-## C4 — (appended by cluster C4)
+## C4 — Maturity panel + cost config
 
-_Pending — cluster C4 appends its surfaces here._
+Files: `gui/server/maturity.mjs`, `gui/server/cost-config.mjs`.
+
+Package surfaces consumed: none.
+
+CLI `--json` surfaces consumed:
+
+| Surface | Fields consumed | Used for |
+| --- | --- | --- |
+| `aios analyze --json` (report.mjs `toJson`, via the shared analysis cache) | `presentation.axis_labels`, `presentation.axis_guide`, `presentation.ergonomics_tip` (plus the pre-existing `placement`/`axes_shadow`/`attention`/`days` reads) | Maturity panel axis labels, glosses, weakest-axis coaching, and the CE tip |
+
+Removed R4 grandfathers (3):
+
+| Former deep import | Seam decision |
+|---|---|
+| `gui/server/maturity.mjs` → `scripts/analyze/guidance.mjs` (`AXIS_GUIDE`, `ergonomicsTip`) | **CLI JSON seam.** `aios analyze --json` (report.mjs `toJson`) now ships an additive `presentation` block: `{ axis_labels, axis_guide, ergonomics_tip }`. The panel reads it from the same snapshot it already parses; `maturity.mjs` now has zero imports. |
+| `gui/server/maturity.mjs` → `scripts/analyze/aem.mjs` (`AXIS_LABELS`) | Same — `presentation.axis_labels` in the analyze JSON. |
+| `gui/server/cost-config.mjs` → `scripts/analyze/claude-plan.mjs` (`PLAN_PRICES`) | **GUI-owned copy + parity test** (the same pattern as C1's flat-yaml decision). The plan price table is needed synchronously on the settings/ledger read path (resolving a bare `claude.plan` to its list price without spawning the CLI), so the JSON seam doesn't fit. `cost-config.mjs` carries a provenance-commented copy; `cost-config.test.mjs` deep-equals it against the CLI export, so any price drift fails tests. |
+
+**The `presentation` block (analyze JSON, additive):**
+
+```jsonc
+{
+  // ...existing toJson fields...
+  "presentation": {
+    "axis_labels": { "verification": "Verification", /* … per axis */ },
+    "axis_guide": { "verification": { "gloss": "…", "meaning": "…", "why": "…", "steps": ["…"] }, /* … */ },
+    "ergonomics_tip": "…" // precomputed from this window's attention reading; "" when none
+  }
+}
+```
+
+- Purely additive — no existing field moved or renamed; the frozen toJson key-set
+  test (`test/analyze-render.test.mjs`) was deliberately extended.
+- **Legacy snapshots degrade gracefully:** a persisted pre-seam
+  `.aios/gui/analysis-snapshot.json` has no `presentation`; the panel then
+  renders axis keys as labels and omits glosses/coaching/CE tip until the next
+  analyze refresh. `buildMaturityPayload` never throws on its absence.
+- Drift guards: `gui/server/maturity.test.mjs` "SEAM PARITY" feeds a real
+  `toJson()` document through the reshaper; `gui/server/cost-config.test.mjs`
+  "SEAM PARITY" pins the price-table copy. Test files may import
+  `scripts/analyze/*` for expectations (R4 exempts test sources).
 
 ## C5 — (appended by cluster C5)
 

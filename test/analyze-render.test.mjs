@@ -141,6 +141,10 @@ const FROZEN_KEYS = [
   "axes_shadow",
   "attention",
   "days",
+  // AIO-600 GUI seam: additive presentation vocabulary (labels/guide/CE tip)
+  // so gui/server/maturity.mjs consumes the CLI JSON instead of deep-importing
+  // aem.mjs / guidance.mjs. Deliberate contract extension.
+  "presentation",
 ];
 check(
   "toJson top-level keys are exactly the frozen set, in order",

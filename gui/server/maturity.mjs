@@ -10,11 +10,13 @@
  * Cognitive Ergonomics stays SHADOW / local-only here: it is surfaced as `ce_band`
  * for display only and never enters placement, never syncs (AIO-190 Phase A).
  *
- * Zero runtime dependencies beyond the two analyze modules it reshapes from.
+ * DECOUPLED from the analyze internals (AIO-600): axis labels, glosses, coaching,
+ * and the CE tip all arrive in the CLI JSON's `presentation` block (toJson) —
+ * this module never imports scripts/analyze/*. A legacy snapshot without
+ * `presentation` (e.g. a persisted pre-upgrade analysis-snapshot.json) degrades
+ * gracefully: keys stand in for labels, glosses/coaching/tip are omitted until
+ * the next analyze refresh. Zero imports, zero runtime dependencies.
  */
-
-import { AXIS_GUIDE, ergonomicsTip } from "../../scripts/analyze/guidance.mjs";
-import { AXIS_LABELS } from "../../scripts/analyze/aem.mjs";
 
 // The shared analysis cache runs `aios analyze --since 35d` (the cost panel needs the
 // whole calendar month), but the Maturity panel promises a "30-day trend" and must
@@ -24,21 +26,31 @@ export const TREND_DAYS = 30;
 /**
  * @param {string} stdout - raw stdout of `aios analyze --json`
  * @param {{AXIS_GUIDE?: object, AXIS_LABELS?: object, ergonomicsTip?: Function}} [deps]
- *   - test seam. `ergonomicsTip` may be omitted (the W2-absent case) → no CE tip.
+ *   - test seam, overriding the JSON's `presentation` block. `ergonomicsTip` may
+ *     be passed as undefined (the W2-absent case) → no CE tip.
  * @returns {object} the MaturityResponse payload
  */
 export function buildMaturityPayload(stdout, deps = {}) {
-  const guide = deps.AXIS_GUIDE ?? AXIS_GUIDE;
-  const labels = deps.AXIS_LABELS ?? AXIS_LABELS;
-  // Resolve via `in` so an explicit `{ ergonomicsTip: undefined }` disables the tip.
-  const tip = "ergonomicsTip" in deps ? deps.ergonomicsTip : ergonomicsTip;
-
   let data;
   try {
     data = JSON.parse(stdout);
   } catch {
     throw new Error("maturity: analyze --json produced unparseable output");
   }
+
+  const pres = data.presentation && typeof data.presentation === "object" ? data.presentation : {};
+  const guide = deps.AXIS_GUIDE ?? pres.axis_guide ?? {};
+  const labels = deps.AXIS_LABELS ?? pres.axis_labels ?? {};
+  // Resolve via `in` so an explicit `{ ergonomicsTip: undefined }` disables the tip.
+  // Without a deps override, the tip is the string toJson precomputed for this window.
+  const ergonomicsTip =
+    "ergonomicsTip" in deps
+      ? typeof deps.ergonomicsTip === "function"
+        ? deps.ergonomicsTip(data.attention?.reading ?? "")
+        : ""
+      : typeof pres.ergonomics_tip === "string"
+        ? pres.ergonomics_tip
+        : "";
 
   const placement = data.placement ?? null;
   const axesScores = placement?.axes ?? {};
@@ -68,7 +80,7 @@ export function buildMaturityPayload(stdout, deps = {}) {
     days,
     guidance: {
       weakest: weakest ? (guide[weakest] ?? null) : null,
-      ergonomics_tip: typeof tip === "function" ? tip(data.attention?.reading ?? "") : "",
+      ergonomics_tip: ergonomicsTip,
     },
   };
 }
