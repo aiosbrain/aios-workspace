@@ -125,7 +125,7 @@ file must exist and be reachable from `test:prepare` or a CI workflow. Rows mark
 | Invariant | Enforcer | Runs in |
 |---|---|---|
 | file-size gate — default-deny caps on every source file | `scripts/check-file-size.mjs` | `test:prepare` (`check:size`) + CI `constitution` job |
-| boundary gate — module dependency boundaries (`scripts/boundaries.json`) | `scripts/check-boundaries.mjs` | test suite (`test/check-boundaries.test.mjs`); named `check:boundaries` gate in `test:prepare` + CI — pending PR #486 (AIO-597) |
+| boundary gate — module dependency boundaries (`scripts/boundaries.json`) | `scripts/check-boundaries.mjs` | `test:prepare` (`check:boundaries`) + CI `constitution` job; defense in depth via `test/check-boundaries.test.mjs` |
 | domain isolation — domains are siblings, no cross-domain value imports | `scripts/check-domain-isolation.mjs` | `test:prepare` (`check:domains`) + CI `constitution` job |
 | leak gate — no confidential terms leave the machine | `scripts/leak-gate.sh` (installed as `hooks/git/pre-push-leak-gate`) | pre-push git hook + CI `guard` job |
 | coverage floors — changed-line + baseline coverage floors | `scripts/check-coverage.mjs` | CI coverage shards (`test:coverage`) |
