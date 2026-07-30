@@ -4,7 +4,7 @@
 // parseEvidenceRows lives here (not core.mjs) so the dependency stays one-directional:
 // decisions.mjs -> core.mjs, never the reverse.
 
-import { parseTableRows, dateCell } from "../internal/tasks-table.mjs";
+import { parseTableRows, dateCell } from "../tasks-table.mjs";
 import { normalizeTier, parseFactRows, parseStakeholderMentionRows } from "./core.mjs";
 
 export function parseEvidenceRows(kind, body) {

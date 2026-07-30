@@ -13,8 +13,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { parseTaskRows, mergeTaskWriteback } from "../../scripts/tasks-table.mjs";
-import { parseFrontmatter, normalizeTier } from "../../scripts/workspace-parse.mjs";
+import { parseTaskRows, mergeTaskWriteback } from "@aios-alpha/monorepo/tasks-table";
+import { parseFrontmatter, normalizeTier } from "@aios-alpha/monorepo/workspace-parse";
 
 // Fields the cockpit is allowed to edit. Title + body/description are brain-canonical
 // (the markdown body never round-trips), so an attempt to patch them is rejected.
@@ -84,7 +84,7 @@ export function derivePushState(status, rel) {
 /**
  * Build the `GET /api/tasks` body (minus pushState, which the route fills from `aios status`).
  * Reads the file, resolves its file-level tier, and parses the rows.
- * @returns {{ rel: string, tier: string|null, rows: import("../../scripts/tasks-table.d.mts").TaskRow[] }}
+ * @returns {{ rel: string, tier: string|null, rows: import("@aios-alpha/monorepo/tasks-table").TaskRow[] }}
  */
 export function readTasks(file) {
   const content = readFileSync(file.abs, "utf8");

@@ -276,6 +276,8 @@ export const USAGE_LINES = {
     "    AIO-<n>]] [--dry-run]",
   ],
   whoami: [],
+  catalog: [],
+  connector: [],
   inbox: [
     "  aios inbox [list] [--raw] [--why]      one ranked queue over asks + comms (local, admin-tier)",
     "    [--json]                            --why shows the ranker's reasoning per row",

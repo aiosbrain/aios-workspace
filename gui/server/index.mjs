@@ -17,14 +17,7 @@
 
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
-import {
-  readFileSync,
-  existsSync,
-  mkdirSync,
-  appendFileSync,
-  readdirSync,
-  unlinkSync,
-} from "node:fs";
+import { readFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -60,25 +53,10 @@ import {
   getRuntime,
   postRuntime,
 } from "./config-routes.mjs";
-import {
-  readSkills,
-  readIntegrations,
-  firstSentence,
-  frontmatter,
-} from "../../scripts/gen-catalog.mjs";
-import {
-  listConnectors,
-  getDescriptor,
-  validateConnector,
-  storeConnector,
-  storeExistingConnector,
-  unwireConnector,
-  readBlueprint,
-  startOAuth,
-  checkOAuthStatus,
-  storeOAuthConnector,
-} from "../../scripts/connector.mjs";
-import { resolveBrainConfig } from "../../scripts/brain-config.mjs";
+// AIO-600: catalog + connector data now crosses the CLI seam (`aios catalog --json`,
+// `aios connector …` via aiosJson below) instead of deep-importing scripts/**.
+import { listPersonalities, mapCatalog, blueprintResponse } from "./catalog.mjs";
+import { createAiosJson } from "./aios-json.mjs";
 import { listLibrary, installSkill, uninstallSkill, scanSkillById } from "./skill-library.mjs";
 import { evaluateToolPolicy } from "./tool-policy.mjs";
 import { readSessionIndex, upsertSession, visibleSessionIndex } from "./session-index.mjs";
@@ -225,8 +203,11 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ repo }));
   }
   if (url.pathname === "/api/catalog") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(readCatalog(repo)));
+    aiosJson(["catalog", "--json"], { raw: true }).then(({ status, body }) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(status === 200 ? mapCatalog(body) : body));
+    });
+    return;
   }
   // ── agent config: model (+ personality, Phase 4) — token-gated ──
   if (url.pathname === "/api/config" && req.method === "GET") {
@@ -878,14 +859,17 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  // ── connector engine (token-gated) ──
+  // ── connector engine (token-gated) — every action crosses the `aios connector` seam ──
   if (url.pathname === "/api/connectors") {
     if (url.searchParams.get("token") !== TOKEN) {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ connectors: listConnectors(repo) }));
+    aiosJson(["connector", "list"]).then(({ status, body }) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(body));
+    });
+    return;
   }
   // ── who am I (token-gated) — role drives UI (only leads see the Team surface) ──
   if (url.pathname === "/api/me" && req.method === "GET") {
@@ -913,17 +897,15 @@ const server = http.createServer((req, res) => {
       res.writeHead(401);
       return res.end("unauthorized");
     }
-    // refresh from the brain, then return the (now team-aware) connectors
+    // refresh from the brain, then return the (now team-aware) connectors; a failed
+    // connector-seam spawn forwards its error status instead of reading as "no connectors"
     runAios(["pull", "blueprint"], (err, out, stderr) => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          ok: !err,
-          blueprint: readBlueprint(repo),
-          connectors: listConnectors(repo),
-          note: err ? stripAnsi((stderr || "") + (out || "")) : null,
-        })
-      );
+      aiosJson(["connector", "blueprint"]).then((envelope) => {
+        const note = stripAnsi((stderr || "") + (out || ""));
+        const { status, body } = blueprintResponse(!!err, note, envelope);
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
+      });
     });
     return;
   }
@@ -979,23 +961,13 @@ const server = http.createServer((req, res) => {
       res.writeHead(405);
       return res.end("method not allowed");
     }
-    (async () => {
-      try {
-        const d = getDescriptor(repo, id);
-        const cfg = resolveBrainConfig(repo);
-        if (!cfg.brain_url || !cfg.api_key) {
-          res.writeHead(503, { "Content-Type": "application/json" });
-          return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
-        }
-        const result =
-          action === "start" ? await startOAuth(d, cfg) : await checkOAuthStatus(d, cfg);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (e) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: e.message }));
+    // The 503 (no brain) / 502 (relay error) mapping lives in the CLI seam now.
+    aiosJson(["connector", action === "start" ? "oauth-start" : "oauth-status", id]).then(
+      ({ status, body }) => {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
       }
-    })();
+    );
     return;
   }
   const conn = url.pathname.match(
@@ -1013,73 +985,17 @@ const server = http.createServer((req, res) => {
       if (body.length > 1e5) req.destroy();
     });
     req.on("end", () => {
-      // Secrets arrive here in the POST body and are held in memory only — never logged,
-      // never written to .sessions; only persisted (encrypted) by storeConnector.
-      let secrets = {};
-      try {
-        secrets = JSON.parse(body || "{}").secrets || {};
-      } catch {
-        /* bad body */
-      }
-      (async () => {
-        try {
-          const d = getDescriptor(repo, id);
-          if (action === "unwire") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify(unwireConnector(repo, d)));
-          }
-          if (action === "store-existing") {
-            const existing = await storeExistingConnector(repo, d);
-            res.writeHead(existing.ok ? 200 : 422, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify(existing));
-          }
-          if (action === "store" && d.auth_mode === "oauth") {
-            const cfg = resolveBrainConfig(repo);
-            if (!cfg.brain_url || !cfg.api_key) {
-              res.writeHead(503, { "Content-Type": "application/json" });
-              return res.end(JSON.stringify({ ok: false, error: "no_brain_connection" }));
-            }
-            try {
-              const stored = await storeOAuthConnector(repo, d, cfg);
-              res.writeHead(200, { "Content-Type": "application/json" });
-              return res.end(JSON.stringify({ ok: true, ...stored }));
-            } catch (e) {
-              if (e.code === "oauth_not_connected") {
-                res.writeHead(422, { "Content-Type": "application/json" });
-                return res.end(
-                  JSON.stringify({ ok: false, error: "oauth_not_connected", message: e.message })
-                );
-              }
-              throw e;
-            }
-          }
-          const result = await validateConnector(d, secrets);
-          if (action === "validate") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify(result)); // checks/identity/instance — no secrets
-          }
-          // store: only persist on a passing validation
-          if (!result.ok) {
-            res.writeHead(422, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify({ ok: false, validation: result }));
-          }
-          const stored = storeConnector(repo, d, { ...secrets, ...(result.captured || {}) });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              ok: true,
-              ...stored,
-              identity: result.identity,
-              instance: result.instance,
-            })
-          );
-        } catch (e) {
-          res.writeHead(e.code === "credential_missing" ? 422 : 500, {
-            "Content-Type": "application/json",
-          });
-          res.end(JSON.stringify({ ok: false, error: e.message }));
-        }
-      })();
+      // Secrets arrive here in the POST body and are relayed to the connector CLI over
+      // STDIN only (never argv — that's `ps`-visible), never logged, never written to
+      // .sessions; the CLI persists them encrypted. The 422/503/500 mapping (validation,
+      // credential_missing, no brain, oauth_not_connected) lives in the seam.
+      const needsSecrets = action === "validate" || action === "store";
+      aiosJson(["connector", action, id, ...(needsSecrets ? ["--secrets-stdin"] : [])], {
+        stdin: needsSecrets ? body || "{}" : undefined,
+      }).then(({ status, body: result }) => {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      });
     });
     return;
   }
@@ -1108,6 +1024,8 @@ function stripAnsi(s) {
   // eslint-disable-next-line no-control-regex
   return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
+// JSON machine-surface runner for the connector/catalog seams — same CLI, same repo pinning.
+const aiosJson = createAiosJson({ cliPath: AIOS_CLI, repo });
 
 // Shared analysis cache behind /api/maturity + /api/costs (AIO-453).
 // One `aios analyze --json --since 35d` snapshot serves both routes; the last-good
@@ -1153,39 +1071,6 @@ function setAiosKey(repoDir, key, value) {
   else if (re.test(text)) text = text.replace(re, line);
   else text = text.replace(/\n*$/, "\n") + line + "\n";
   fsWriteFileSync(p, text);
-}
-
-// Scan .claude/personalities/ → [{ id, name, description }]. id is the filename
-// stem (already constrained to safe chars by the scan); used by the picker + to
-// validate a personality write.
-function listPersonalities(repoDir) {
-  const dir = path.join(repoDir, ".claude", "personalities");
-  if (!existsSync(dir)) return [];
-  const out = [];
-  for (const f of readdirSync(dir).sort()) {
-    if (!f.endsWith(".md")) continue;
-    const id = f.replace(/\.md$/, "");
-    if (!/^[a-z0-9-]+$/.test(id)) continue;
-    let fm = {};
-    try {
-      fm = frontmatter(readFileSync(path.join(dir, f), "utf8"));
-    } catch {
-      /* skip */
-    }
-    out.push({ id, name: fm.name || id, description: firstSentence(fm.description || "") });
-  }
-  return out;
-}
-
-// Surface the workspace's skills + integrations to the GUI. Reuses the same robust
-// parser gen-catalog.mjs uses, so the GUI is accurate without a separate build step.
-function readCatalog(repoDir) {
-  const skills = readSkills(repoDir).map((s) => ({
-    name: s.name,
-    kind: s.kind,
-    description: firstSentence(s.description),
-  }));
-  return { skills, integrations: readIntegrations(repoDir) };
 }
 
 // ── websocket: one connection = one SDK session ─────────────────────────────

@@ -31,15 +31,15 @@
     "./brain-client": "./src/brain-client.mjs",
     "./git-files": "./src/git-files.mjs",
     "./constitution": "./src/constitution.mjs",
+    "./tasks-table": {
+      "types": "./src/tasks-table.d.mts",
+      "default": "./src/tasks-table.mjs"
+    },
     "./internal/flat-yaml": {
       "types": "./src/internal/flat-yaml.d.mts",
       "default": "./src/internal/flat-yaml.mjs"
     },
     "./internal/brain-origin": "./src/internal/brain-origin.mjs",
-    "./internal/tasks-table": {
-      "types": "./src/internal/tasks-table.d.mts",
-      "default": "./src/internal/tasks-table.mjs"
-    },
     "./internal/transcript-adapters": "./src/internal/transcript-adapters.mjs",
     "./internal/skill-scan": "./src/internal/skill-scan.mjs"
   }

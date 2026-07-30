@@ -34,36 +34,6 @@
   ],
   "grandfathered": [
     {
-      "from": "gui/server/index.mjs",
-      "to": "scripts/brain-config.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/index.mjs",
-      "to": "scripts/connector.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/index.mjs",
-      "to": "scripts/gen-catalog.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/tasks.mjs",
-      "to": "scripts/tasks-table.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling; shares task-table parsing with the CLI.",
-      "issue": "AIO-597"
-    },
-    {
-      "from": "gui/server/tasks.mjs",
-      "to": "scripts/workspace-parse.mjs",
-      "reason": "R4: known coupling, dies in the GUI decoupling; shares frontmatter parsing with the CLI.",
-      "issue": "AIO-597"
-    },
-    {
       "from": "hooks/instinct-observe.mjs",
       "to": "scripts/analyze/maturity-store.mjs",
       "reason": "R2: hook reaches into scripts/analyze/ directly; no barrel exists to route through yet.",
