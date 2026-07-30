@@ -1,3 +1,3 @@
 // Back-compat typings shim (AIO-601): declarations moved with the module into
-// @aios-alpha/monorepo. Keeps src/operator-loop imports of scripts/tasks-table.mjs typed.
-export * from "@aios-alpha/monorepo/internal/tasks-table";
+// packages/monorepo. Relative path so nodenext tsc resolves without node_modules.
+export * from "../packages/monorepo/src/internal/tasks-table.mjs";
