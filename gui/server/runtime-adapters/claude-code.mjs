@@ -15,7 +15,7 @@ import {
   allowedApprovalModeIds,
   fullAccessEnabled,
   modelCatalog,
-} from "@aios-alpha/monorepo/runtimes";
+} from "@aiosbrain/foundation/runtimes";
 
 // Whether "Full access" (bypassPermissions) is enabled. Gated OFF by default: the mode
 // is only advertised when this env flag is set (see runtimes.claudeApprovalModes), and
@@ -96,7 +96,7 @@ export function loadMemory(repo) {
 // GUI gets a fast, cheap default instead of Claude Code's heavy fallback.
 //
 // AIO-536: the list itself now lives in the shared registry
-// (@aios-alpha/monorepo/runtimes → RUNTIME_MODEL_CATALOGS["claude-code"]) alongside every other
+// (@aiosbrain/foundation/runtimes → RUNTIME_MODEL_CATALOGS["claude-code"]) alongside every other
 // runtime's catalog; these re-exports keep the existing import sites and values EXACTLY
 // as they were (same ids, same order, same default).
 const CLAUDE_CATALOG = modelCatalog("claude-code");

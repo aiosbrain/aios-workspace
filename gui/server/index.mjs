@@ -45,7 +45,7 @@ import {
   capabilityTargets,
 } from "./runtime-adapters/capability-store.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
-import { GUI_RUNTIMES, runtimeCapabilities } from "@aios-alpha/monorepo/runtimes";
+import { GUI_RUNTIMES, runtimeCapabilities } from "@aiosbrain/foundation/runtimes";
 import {
   createCatalogResolver,
   getConfig,
@@ -89,8 +89,8 @@ import { getToolkit, toolkitCli } from "./toolkit-locate.mjs";
 import { loadCoordinator, operatorLoopStatus } from "./operator-loop-capability.mjs";
 // Single-source workspace-marker list shared with scripts/run-gui.mjs (AIO-600 C5). Relative
 // path in-tree (worktrees symlink node_modules from the primary, so a just-added package subpath
-// would not resolve); becomes the published `@aios-alpha/monorepo/workspace-markers` at cut time.
-import { WORKSPACE_MARKERS } from "../../packages/monorepo/src/workspace-markers.mjs";
+// would not resolve); becomes the published `@aiosbrain/foundation/workspace-markers` at cut time.
+import { WORKSPACE_MARKERS } from "../../packages/foundation/src/workspace-markers.mjs";
 
 // Tools that run without a permission prompt (read-only + workspace edits — the
 // PreToolUse guard hook still vets every Write/Edit for secrets and tier leaks).

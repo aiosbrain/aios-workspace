@@ -13,7 +13,7 @@
 //                   confirm). Trust ranks: official > marketplace > community.
 //   • community   — non-official skills (community.json) with NO first-party provenance.
 //                   Install is GATED: the static scanner
-//                   (@aios-alpha/monorepo/internal/skill-scan) runs,
+//                   (@aiosbrain/foundation/internal/skill-scan) runs,
 //                   the findings are surfaced, and an explicit consent step is required —
 //                   a `high` risk class demands a TYPED confirm. The scan is ADVISORY;
 //                   provenance + human review are the real anchor.
@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { scanSkill } from "@aios-alpha/monorepo/internal/skill-scan";
+import { scanSkill } from "@aiosbrain/foundation/internal/skill-scan";
 import {
   hashDir,
   rollupHash,

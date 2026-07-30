@@ -53,13 +53,13 @@ if (parsed.agent_runtime !== "hermes") fail("parseFlatYaml did not read agent_ru
 else ok("flat-yaml reads agent_runtime");
 
 // 3+4. GUI adapter registry + host-side write guard — validated through the CORE-OWNED contract
-// (packages/monorepo/src/adapter-contract.mjs, AIO-600 C5) instead of inline assertions, so the
+// (packages/foundation/src/adapter-contract.mjs, AIO-600 C5) instead of inline assertions, so the
 // gui side runs the SAME checks in its own co-located test
 // (gui/server/runtime-adapters/adapter-contract.test.mjs) that travels with the repo cut.
 // Best-effort during the transition: skips with a note when gui/server is absent or its deps
 // aren't installed — the gui test is then the enforcing side.
 const { checkAdapterRegistry, checkGuardWrite } = await import(
-  path.join(DIR, "..", "packages", "monorepo", "src", "adapter-contract.mjs")
+  path.join(DIR, "..", "packages", "foundation", "src", "adapter-contract.mjs")
 );
 try {
   const reg = await import(path.join(DIR, "..", "gui", "server", "runtime-adapters", "index.mjs"));

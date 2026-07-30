@@ -135,7 +135,7 @@ export function ensureGitignore(repo, entries = [".env", ".env.keys"]) {
 }
 
 // ── SKILL.md frontmatter (copy of scripts/gen-catalog.mjs) ───────────────────────────
-// NOT replaceable by @aios-alpha/monorepo/workspace-parse's parseFrontmatter: that one
+// NOT replaceable by @aiosbrain/foundation/workspace-parse's parseFrontmatter: that one
 // is a flat-YAML reader, while SKILL.md descriptions routinely use `|`/`>` block
 // scalars and lists, which this parser handles. Same behavior as the parser the lock
 // scripts use to build index.json descriptions.

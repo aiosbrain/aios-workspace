@@ -11,7 +11,7 @@
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { parseFrontmatter } from "@aios-alpha/monorepo/workspace-parse";
+import { parseFrontmatter } from "@aiosbrain/foundation/workspace-parse";
 
 // Provenance: copied from scripts/gen-catalog.mjs `firstSentence` (AIO-600) — a
 // 4-line stable display helper; not worth a package subpath or a CLI round-trip.

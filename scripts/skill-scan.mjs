@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Back-compat shim (AIO-600 C2): the scanner body moved to packages/monorepo
-// (@aios-alpha/monorepo/internal/skill-scan) so gui/server imports the package subpath
+// Back-compat shim (AIO-600 C2): the scanner body moved to packages/foundation
+// (@aiosbrain/foundation/internal/skill-scan) so gui/server imports the package subpath
 // instead of reaching into scripts/ (boundary R4). Re-exported by RELATIVE path (not
 // the bare specifier) so the shim resolves on a bare checkout with no node_modules —
 // CI guard jobs and the aios-update vendor snapshot execute scripts/ without an
 // npm install. The CLI entry stays here, unchanged:
 //
 //   node scripts/skill-scan.mjs <skill-dir> [--json]
-export * from "../packages/monorepo/src/internal/skill-scan.mjs";
+export * from "../packages/foundation/src/internal/skill-scan.mjs";
 
-import { scanSkill } from "../packages/monorepo/src/internal/skill-scan.mjs";
+import { scanSkill } from "../packages/foundation/src/internal/skill-scan.mjs";
 
 function main() {
   const args = process.argv.slice(2);

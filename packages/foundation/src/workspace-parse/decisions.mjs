@@ -1,6 +1,6 @@
 // Decision-table scanning + H3 row redaction, split from core.mjs purely to satisfy the
 // repo file-size gate (scripts/size-caps.json defaultCap) when workspace-parse moved into
-// @aios-alpha/monorepo (AIO-601). Same module surface: ./index.mjs re-exports both halves.
+// @aiosbrain/foundation (AIO-601). Same module surface: ./index.mjs re-exports both halves.
 // parseEvidenceRows lives here (not core.mjs) so the dependency stays one-directional:
 // decisions.mjs -> core.mjs, never the reverse.
 

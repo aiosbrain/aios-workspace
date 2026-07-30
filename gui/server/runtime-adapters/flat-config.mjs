@@ -4,7 +4,7 @@
 // flat scalar `key: value` lines (agent_runtime, agent_model, agent_base_url,
 // agent_personality, memory_review). That subset is frozen repo-wide by OGR04, so a
 // tiny local parser is the honest surface here: the alternative was promoting the
-// toolkit's generic parseFlatYaml (@aios-alpha/monorepo/internal/flat-yaml, a
+// toolkit's generic parseFlatYaml (@aiosbrain/foundation/internal/flat-yaml, a
 // documented-PRIVATE subpath) onto the package's frozen public API just to keep one
 // import alive. See docs/gui-toolkit-contract.md.
 //

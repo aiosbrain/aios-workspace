@@ -1,7 +1,7 @@
 /**
  * internal/skill-scan.mjs — pure, reusable static safety scanner for an Agent Skill
  * directory. Moved verbatim from scripts/skill-scan.mjs (AIO-600 C2) so gui/server can
- * import it via @aios-alpha/monorepo/internal/skill-scan instead of reaching into
+ * import it via @aiosbrain/foundation/internal/skill-scan instead of reaching into
  * scripts/ (boundary R4); the CLI entry stays in the scripts/skill-scan.mjs shim.
  *
  * Phase 3.5 (untrusted-install). #17 shipped a TRUSTED official library where safety

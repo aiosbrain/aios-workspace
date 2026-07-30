@@ -6,7 +6,7 @@
 //   • scripts/run-gui.mjs (core launcher) — fail-fast before the client build
 //   • gui/server/index.mjs (GUI server) — startup check
 // Core imports it by RELATIVE path (bare-checkout safe, same convention as scripts/runtimes.mjs);
-// the GUI imports the published bare specifier `@aios-alpha/monorepo/workspace-markers`, which
+// the GUI imports the published bare specifier `@aiosbrain/foundation/workspace-markers`, which
 // survives the repo cut as an npm dependency. See docs/gui-toolkit-contract.md.
 
 export const WORKSPACE_MARKERS = ["aios.yaml", "workspace.yaml", "project.yaml", "engagement.yaml"];

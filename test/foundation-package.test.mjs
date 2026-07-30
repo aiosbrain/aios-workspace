@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// test/monorepo-package.test.mjs — contract tests for @aios-alpha/monorepo (AIO-601).
+// test/foundation-package.test.mjs — contract tests for @aiosbrain/foundation (AIO-601).
 //
 //   (a) Freezes the PUBLIC API surface: every public subpath must expose exactly the
 //       named exports listed below (measured from the pre-move scripts/*.mjs hubs at
@@ -23,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PKG_DIR = path.join(ROOT, "packages", "monorepo");
+const PKG_DIR = path.join(ROOT, "packages", "foundation");
 
 /** The frozen public surface. Changing this table IS a semver event for the package. */
 const PUBLIC_EXPORTS = {
@@ -138,11 +138,11 @@ function npmJson(args, cwd) {
 
 test("every public subpath exposes exactly its frozen named exports", async () => {
   for (const [subpath, expected] of Object.entries(PUBLIC_EXPORTS)) {
-    const mod = await import(`@aios-alpha/monorepo/${subpath}`);
+    const mod = await import(`@aiosbrain/foundation/${subpath}`);
     assert.deepEqual(
       Object.keys(mod).sort(),
       [...expected].sort(),
-      `export surface drifted for @aios-alpha/monorepo/${subpath}`
+      `export surface drifted for @aiosbrain/foundation/${subpath}`
     );
     assert.ok(!("default" in mod), `${subpath} must not grow a default export`);
   }
@@ -150,26 +150,46 @@ test("every public subpath exposes exactly its frozen named exports", async () =
 
 test("internal subpaths resolve (shim plumbing, surface unfrozen)", async () => {
   for (const subpath of INTERNAL_SUBPATHS) {
-    const mod = await import(`@aios-alpha/monorepo/${subpath}`);
+    const mod = await import(`@aiosbrain/foundation/${subpath}`);
     assert.ok(Object.keys(mod).length > 0, `${subpath} resolved but exports nothing`);
   }
 });
 
 test("the root specifier and undeclared deep paths do not resolve", async () => {
   const denied = [
-    "@aios-alpha/monorepo",
-    "@aios-alpha/monorepo/src/runtimes.mjs",
-    "@aios-alpha/monorepo/src/internal/flat-yaml.mjs",
-    "@aios-alpha/monorepo/internal",
-    "@aios-alpha/monorepo/internal/tasks-table", // promoted to ./tasks-table (AIO-600 C3)
-    "@aios-alpha/monorepo/workspace-parse/core",
-    "@aios-alpha/monorepo/package.json",
+    "@aiosbrain/foundation",
+    "@aiosbrain/foundation/src/runtimes.mjs",
+    "@aiosbrain/foundation/src/internal/flat-yaml.mjs",
+    "@aiosbrain/foundation/internal",
+    "@aiosbrain/foundation/internal/tasks-table", // promoted to ./tasks-table (AIO-600 C3)
+    "@aiosbrain/foundation/workspace-parse/core",
+    "@aiosbrain/foundation/package.json",
   ];
   for (const specifier of denied) {
     await assert.rejects(
       () => import(specifier),
       (err) => err.code === "ERR_PACKAGE_PATH_NOT_EXPORTED" || err.code === "ERR_MODULE_NOT_FOUND",
       `${specifier} must not resolve`
+    );
+  }
+});
+
+test("the retired @aios-alpha/monorepo specifiers do not resolve (AIO-601 rename)", async () => {
+  // The package was renamed @aios-alpha/monorepo -> @aiosbrain/foundation before any
+  // publish. Nothing may still resolve under the old scope: a resolvable old specifier
+  // means a stale workspace link or a missed rename site.
+  const retired = [
+    "@aios-alpha/monorepo",
+    "@aios-alpha/monorepo/runtimes",
+    "@aios-alpha/monorepo/workspace-parse",
+    "@aios-alpha/monorepo/tasks-table",
+    "@aios-alpha/monorepo/internal/flat-yaml",
+  ];
+  for (const specifier of retired) {
+    await assert.rejects(
+      () => import(specifier),
+      (err) => err.code === "ERR_MODULE_NOT_FOUND",
+      `${specifier} must no longer resolve after the rename`
     );
   }
 });
@@ -204,7 +224,7 @@ test("npm pack ships src + README + LICENSE and nothing else", () => {
 });
 
 test("tarball installs into a fresh project and every public subpath imports", () => {
-  const scratch = mkdtempSync(path.join(tmpdir(), "aios-monorepo-pack-"));
+  const scratch = mkdtempSync(path.join(tmpdir(), "aios-foundation-pack-"));
   try {
     execFileSync("npm", ["pack", "--pack-destination", scratch], {
       cwd: PKG_DIR,
@@ -229,7 +249,7 @@ test("tarball installs into a fresh project and every public subpath imports", (
     const script = `
       const surface = ${JSON.stringify(PUBLIC_EXPORTS)};
       for (const [subpath, expected] of Object.entries(surface)) {
-        const mod = await import("@aios-alpha/monorepo/" + subpath);
+        const mod = await import("@aiosbrain/foundation/" + subpath);
         const got = Object.keys(mod).sort().join(",");
         const want = [...expected].sort().join(",");
         if (got !== want) throw new Error(subpath + " drifted in tarball: " + got);

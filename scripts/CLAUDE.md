@@ -35,7 +35,7 @@ needs vendoring). No shared build step — each script is a standalone entry poi
   scripts (e.g. `aios.mjs`, `ship.mjs`, `roadmap-run.mjs`, `promote.mjs`, `task-tier.mjs`).
   Since AIO-601 these (plus `runtimes`, `brain-client`, `git-files`, `constitution`,
   `brain-origin`, `tasks-table`, `transcript-adapters`) are one-line shims re-exporting
-  `@aios-alpha/monorepo` (`packages/monorepo/` — an npm workspace); edit the module
+  `@aiosbrain/foundation` (`packages/foundation/` — an npm workspace); edit the module
   bodies there, keep importing the `scripts/` paths from toolkit code.
 
 ## File-size discipline

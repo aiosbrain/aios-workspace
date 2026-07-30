@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url";
 import { parseFlatYaml, stripQuotes } from "./internal/flat-yaml.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-// The toolkit repo root. This module lives at <toolkit>/packages/monorepo/src/ (Node
+// The toolkit repo root. This module lives at <toolkit>/packages/foundation/src/ (Node
 // resolves the workspace symlink to its real path, so import.meta.url is the packages/
-// path even when imported as @aios-alpha/monorepo). Outside the toolkit repo (e.g. a
+// path even when imported as @aiosbrain/foundation). Outside the toolkit repo (e.g. a
 // tarball install) this resolves to a directory with no .env / node_modules/.bin, and
 // every consumer below already degrades gracefully (existsSync guards + PATH fallback).
 const TOOLKIT_ROOT = path.join(SCRIPT_DIR, "..", "..", "..");
