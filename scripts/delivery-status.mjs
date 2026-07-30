@@ -152,7 +152,8 @@ function cmdManifest(repo, rest) {
   let targetRepo = repo;
   if (repoIdx !== -1) {
     const value = args[repoIdx + 1];
-    if (value === undefined) die("`aios delivery manifest init --repo` needs a path — got no value");
+    if (value === undefined)
+      die("`aios delivery manifest init --repo` needs a path — got no value");
     targetRepo = path.resolve(value);
   }
   const positional = args.filter(
@@ -196,12 +197,20 @@ export async function cmdDelivery(repo, cfg, args) {
 
   // `--repo` on status is (still) a GitHub owner/repo slug filter — but a value that is
   // unmistakably a LOCAL path (absolute, or ./relative) carries the flag's meaning everywhere
-  // else in the CLI: it overrides the dispatch-resolved workspace path (which `ownsRepoFlag`
-  // deliberately left unconsumed) instead of silently filtering every slug out.
+  // else in the CLI: it names the aios-workspace checkout to report against. An explicit path
+  // is honored EXACTLY as given for the workspace's own local reconciliation and for manifest
+  // loading — no resolveLocalCheckout basename guessing, which would silently swap a
+  // differently-named checkout dir for a guessed `…/aios-workspace` sibling. It also replaces
+  // the dispatch-resolved `repo` so the sibling-repo guess starts from the right container.
   const slugValues = [];
+  let explicitRepoPath = null;
   for (const v of repoValues) {
-    if (path.isAbsolute(v) || v.startsWith(".")) repo = path.resolve(v);
-    else slugValues.push(v);
+    if (path.isAbsolute(v) || v.startsWith(".")) {
+      explicitRepoPath = path.resolve(v);
+      repo = explicitRepoPath;
+    } else {
+      slugValues.push(v);
+    }
   }
 
   const repoFilter = slugValues.length ? new Set(slugValues) : null;
@@ -221,8 +230,13 @@ export async function cmdDelivery(repo, cfg, args) {
   const reports = [];
 
   for (const target of targets) {
+    // Precedence: per-repo --local override, then (for the workspace itself) an explicit
+    // path-form --repo used verbatim, then the sibling/basename convention guess.
     const localPath =
-      localOverrides.get(target.slug) ?? resolveLocalCheckout(repo, target.localName);
+      localOverrides.get(target.slug) ??
+      (target.localName === "aios-workspace" && explicitRepoPath
+        ? explicitRepoPath
+        : resolveLocalCheckout(repo, target.localName));
 
     let prs = null;
     let prsError = null;
@@ -276,9 +290,12 @@ export async function cmdDelivery(repo, cfg, args) {
 
   // The split-delivery manifest (AIO-595) lives in the aios-workspace checkout regardless of
   // which repos this run was filtered to — it is program-level state, reported read-only.
-  // Absence/invalidity is a WARNING, not an error: it never changes the exit code.
+  // Absence/invalidity is a WARNING, not an error: it never changes the exit code. Same
+  // precedence as the reconciliation loop: --local, then an explicit path-form --repo used
+  // verbatim (no basename guessing), then the convention guess.
   const workspaceLocal =
     localOverrides.get("aiosbrain/aios-workspace") ??
+    explicitRepoPath ??
     resolveLocalCheckout(repo, "aios-workspace");
   const { manifest, warning: manifestWarning } = loadManifest(workspaceLocal);
 

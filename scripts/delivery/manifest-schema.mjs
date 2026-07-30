@@ -178,7 +178,8 @@ export function validateSplitManifest(data) {
   requireArray(errors, data, "unresolved_constraints");
   if (Array.isArray(data.unresolved_constraints)) {
     data.unresolved_constraints.forEach((s, i) => {
-      if (!isNonEmptyString(s)) errors.push(`unresolved_constraints[${i}]: expected a non-empty string`);
+      if (!isNonEmptyString(s))
+        errors.push(`unresolved_constraints[${i}]: expected a non-empty string`);
     });
   }
 

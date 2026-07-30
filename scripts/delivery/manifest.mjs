@@ -67,7 +67,10 @@ export function loadManifest(repoPath) {
   }
   const { manifest, errors } = readManifestFile(file);
   if (!manifest) {
-    return { manifest: null, warning: `split manifest at ${file} is invalid: ${errors.join("; ")}` };
+    return {
+      manifest: null,
+      warning: `split manifest at ${file} is invalid: ${errors.join("; ")}`,
+    };
   }
   return { manifest, warning: null };
 }

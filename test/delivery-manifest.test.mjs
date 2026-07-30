@@ -76,7 +76,12 @@ test("schema: rejects a cut that dropped the nullable evidence keys", () => {
   delete m.cuts["aios-workspace-gui"].rehearsal;
   delete m.cuts["aios-workspace-gui"].fresh_clone_ci;
   const errors = validateSplitManifest(m);
-  assert.ok(errors.some((e) => e === "cuts.aios-workspace-gui.rehearsal: key required (use null when not yet produced)"));
+  assert.ok(
+    errors.some(
+      (e) =>
+        e === "cuts.aios-workspace-gui.rehearsal: key required (use null when not yet produced)"
+    )
+  );
   assert.ok(errors.some((e) => /cuts\.aios-workspace-gui\.fresh_clone_ci: key required/.test(e)));
 });
 
@@ -307,18 +312,33 @@ test("status --json: surfaces the installed manifest, and null + a warning when 
 
       // `--repo <absolute path>` on status is a workspace-path override, not a slug filter:
       // both slugs stay in the report and the manifest is loaded from that path.
+      // `--repo <absolute path>` on status is a workspace-path override, honored VERBATIM.
+      // `workspaceRepo` is a temp dir whose basename is NOT "aios-workspace", and no --local
+      // override is given for the workspace slug — so both the workspace's local
+      // reconciliation and the manifest load must use the explicit path itself, not a
+      // resolveLocalCheckout basename/sibling guess (which would point at a dir that does
+      // not exist here). Only the brain sibling keeps its --local pin.
       const viaPath = captureConsole(() =>
         cmdDelivery("/nonexistent-dispatch-root", {}, [
           "status",
           "--json",
           "--repo",
           workspaceRepo,
-          ...locals,
+          "--local",
+          `aiosbrain/aios-team-brain=${brainRepo}`,
         ])
       );
       assert.equal(await viaPath.result, 0);
       const parsedViaPath = JSON.parse(viaPath.output);
       assert.equal(parsedViaPath.repos.length, 2, "a path-form --repo must not filter slugs");
+      const wsViaPath = parsedViaPath.repos.find((r) => r.slug === "aiosbrain/aios-workspace");
+      assert.equal(
+        wsViaPath.localPath,
+        workspaceRepo,
+        "an explicit path-form --repo must be used verbatim for the workspace, no basename guessing"
+      );
+      assert.equal(wsViaPath.localError, null);
+      assert.equal(parsedViaPath.manifestWarning, null);
       assert.equal(parsedViaPath.manifest.program, "AIO-594 multi-repo split");
 
       // A corrupted installed manifest degrades to null + warning, never an exception.
