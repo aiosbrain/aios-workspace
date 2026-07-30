@@ -206,6 +206,30 @@ test("flags anything outside test/ importing test/** (R5)", () => {
   assert.match(r.out, /\[R5\]/);
 });
 
+test("flags a core file importing the devtools path set (R6)", () => {
+  const r = runIn({
+    extraFiles: {
+      "scripts/build.mjs": `export const b = 1;\n`,
+      "scripts/core-thing.mjs": `import { b } from "./build.mjs";\nexport const x = b;\n`,
+    },
+  });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /\[R6\]/);
+});
+
+test("devtools-internal and devtools→core imports are not R6", () => {
+  const r = runIn({
+    extraFiles: {
+      "scripts/plain.mjs": `export const plain = 1;\n`,
+      "scripts/build.mjs": `export const b = 1;\n`,
+      // devtools-internal (ship → build) and devtools → core (ship/runtime → plain) both allowed.
+      "scripts/ship.mjs": `import { b } from "./build.mjs";\nexport { runtime } from "./ship/runtime.mjs";\nexport const s = b;\n`,
+      "scripts/ship/runtime.mjs": `import { plain } from "../plain.mjs";\nexport const runtime = plain;\n`,
+    },
+  });
+  assert.equal(r.code, 0, r.out);
+});
+
 test("exempts a *.test.mjs source file from R1-R4 (tests reach into internals)", () => {
   const r = runIn({
     extraFiles: {

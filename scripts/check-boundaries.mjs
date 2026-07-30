@@ -20,6 +20,11 @@
  *   R4 — gui/server must not deep-import scripts/** at all, at any depth (future aios-workspace-gui
  *        seam contract: CLI --json output + @aios-alpha/toolkit-common only).
  *   R5 — nothing outside test/** may import test/** (tests are a leaf).
+ *   R6 — core files must not import from the devtools path set (scripts/ship.mjs, scripts/ship/**,
+ *        scripts/build.mjs, scripts/roadmap-run.mjs, scripts/spec-eval.mjs, scripts/spec-publish.mjs,
+ *        scripts/consolidate-findings.mjs) — those files move to the aios-devtools repo (AIO-594).
+ *        Devtools-internal imports are fine, and devtools files may import core (that is the
+ *        dependency direction of the cut: devtools → core, never the reverse).
  *
  * Design decisions (documented here because they are NOT spelled out in boundaries.json):
  *   - Test files are exempt as an import SOURCE for R1–R4: any path under a `test/` directory, or
@@ -191,6 +196,11 @@ function matchRule(fromRel, toRel) {
   // R5 is symmetric to the others: it restricts test/** as a TARGET, from any non-test source.
   if (/^test\//.test(toRel)) return "R5";
 
+  // R6 — the devtools path set (AIO-594) as a TARGET, from any non-devtools source. Checked
+  // before R1-R4 because the repo seam is the stronger claim; devtools-internal imports
+  // (e.g. ship.mjs → build.mjs) fall through to the barrel rules below.
+  if (DEVTOOLS_PATH_RE.test(toRel) && !DEVTOOLS_PATH_RE.test(fromRel)) return "R6";
+
   if (fromRel.startsWith("scripts/")) {
     const deep = toRel.match(/^scripts\/([^/]+)\/.+$/);
     if (!deep) return null; // target is a top-level scripts/*.mjs barrel → always fine
@@ -217,6 +227,10 @@ function matchRule(fromRel, toRel) {
 
   return null;
 }
+
+// The devtools path set (AIO-594): the exact files moving to the aiosbrain/aios-devtools repo.
+const DEVTOOLS_PATH_RE =
+  /^scripts\/(ship\.mjs$|ship\/|build\.mjs$|roadmap-run\.mjs$|spec-eval\.mjs$|spec-publish\.mjs$|consolidate-findings\.mjs$)/;
 
 function buildGrandfatherKey(from, to) {
   return `${from} ${to}`;
