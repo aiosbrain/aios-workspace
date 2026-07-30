@@ -110,11 +110,29 @@ export const GUARD_SCENARIOS = [
     wantOk: false,
   },
   {
-    label: "admin-tier in outward dir blocked",
+    // Explicitly tagged admin-tier content: the `access:` tag alone must block the
+    // write into an outward dir, independent of any content-pattern heuristics.
+    label: "explicit access: admin in outward dir blocked",
+    args: {
+      path: "4-shared/notes.md",
+      content: "---\naccess: admin\nstatus: draft\nowner: me\n---\nplain meeting notes",
+    },
+    wantOk: false,
+  },
+  {
+    // Admin-tier content PATTERN without an admin tag: the heuristics still catch it.
+    label: "admin-tier content pattern in outward dir blocked",
     args: {
       path: "4-shared/deal.md",
       content: "---\nstatus: draft\n---\nour day rate is confidential",
     },
+    wantOk: false,
+  },
+  {
+    // Default-deny is a hard invariant: content with no resolvable access frontmatter
+    // must not reach an outward dir either.
+    label: "missing access frontmatter in outward dir blocked (default-deny)",
+    args: { path: "4-shared/untagged.md", content: "no frontmatter at all" },
     wantOk: false,
   },
   {

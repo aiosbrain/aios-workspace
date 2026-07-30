@@ -42,8 +42,21 @@ export function locateToolkit({
 } = {}) {
   const i = argv.indexOf("--toolkit-dir");
   let candidate;
-  if (i !== -1 && argv[i + 1]) candidate = { dir: argv[i + 1], source: "--toolkit-dir" };
-  else if (env.AIOS_TOOLKIT_DIR)
+  if (i !== -1) {
+    // A PRESENT flag is an explicit source: a missing value (trailing flag, or another
+    // option where the path should be) is a hard, actionable error — never a silent
+    // fall-through to env/fallback, same rule as an explicit-but-invalid path.
+    const value = argv[i + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(
+        "--toolkit-dir requires a path argument (got " +
+          (value ? `'${value}'` : "nothing") +
+          "). Pass --toolkit-dir <toolkit-checkout>, or drop the flag to use " +
+          "AIOS_TOOLKIT_DIR / the adjacent-checkout fallback."
+      );
+    }
+    candidate = { dir: value, source: "--toolkit-dir" };
+  } else if (env.AIOS_TOOLKIT_DIR)
     candidate = { dir: env.AIOS_TOOLKIT_DIR, source: "AIOS_TOOLKIT_DIR" };
   else candidate = { dir: fallbackDir, source: "adjacent-checkout" };
 
