@@ -23,8 +23,7 @@ import { parseModelRef } from "./model-providers.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { captureBranchDiff } from "./review-bugbot.mjs";
 import { constitutionPromptLines, loadConstitutionDigest } from "./constitution.mjs";
-// Runtime-only access (inside cmdSimplify), so the ship↔simplify import cycle is safe.
-import { SHIP_VERIFY_CMD } from "./ship.mjs";
+import { SHIP_VERIFY_CMD } from "./verify-cmd.mjs";
 
 export const SIMPLIFY_DONE_TOKEN = "SIMPLIFY_DONE";
 export const SIMPLIFY_NOOP_TOKEN = "SIMPLIFY_NOOP";
