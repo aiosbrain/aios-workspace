@@ -46,6 +46,38 @@ COMMON_DIR="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"
 [[ "$COMMON_DIR" = /* ]] || COMMON_DIR="$(cd "$REPO_ROOT/$COMMON_DIR" && pwd)"
 COMMON_HOOKS_DIR="$COMMON_DIR/hooks"
 TRACKED_MARKER='^# aios-tracked-hook'
+TRACKED_HOOKS_DIR=0
+if [[ "$HOOKS_DIR" != "$COMMON_HOOKS_DIR" ]]; then
+  for candidate in "$HOOKS_DIR"/*; do
+    if [[ -f "$candidate" ]] && grep -q "$TRACKED_MARKER" "$candidate" 2>/dev/null; then
+      TRACKED_HOOKS_DIR=1
+      break
+    fi
+  done
+fi
+
+# Some policy repos track only the hook names that carry repository-specific
+# policy. The remaining guards must still live in core.hooksPath to execute, but
+# they are machine-local artifacts and must not dirty the policy checkout. Ignore
+# only an exact, previously absent generated hook path via the repo-local exclude
+# file; tracked files are unaffected by info/exclude.
+exclude_machine_local_hook() {
+  local target="$1" relative exclude_file pattern
+  [[ "$TRACKED_HOOKS_DIR" = 1 && ! -e "$target" ]] || return 0
+  [[ "$target" = "$HOOKS_DIR"/* ]] || return 0
+  case "$target" in
+    "$REPO_ROOT"/*) ;;
+    *) return 0 ;;
+  esac
+  relative="${target#"$REPO_ROOT"/}"
+  exclude_file="$(git -C "$REPO_ROOT" rev-parse --git-path info/exclude 2>/dev/null)"
+  [[ "$exclude_file" = /* ]] || exclude_file="$REPO_ROOT/$exclude_file"
+  pattern="/$relative"
+  if ! grep -Fqx "$pattern" "$exclude_file" 2>/dev/null; then
+    printf '%s\n' "$pattern" >> "$exclude_file"
+    echo "[harness] excluded machine-local hook $relative via $exclude_file"
+  fi
+}
 
 # install_guard <src> <marker> <hook-name>...  — copy <src> to each named hook,
 # idempotently, chaining any pre-existing unrelated hook of that name. A hook
@@ -64,6 +96,7 @@ install_guard() {
       mkdir -p "$dir"
     fi
     target="$dir/$hook"
+    exclude_machine_local_hook "$target"
     if [[ -f "$target" ]] && grep -q "$marker" "$target" 2>/dev/null; then
       echo "[harness] $marker already installed at $target"
       continue

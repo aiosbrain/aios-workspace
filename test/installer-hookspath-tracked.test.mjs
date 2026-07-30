@@ -333,6 +333,23 @@ test("harness installer: tracked pre-commit redirects per hook; unmarked names k
     readFileSync(path.join(hooksDir, "reference-transaction"), "utf8"),
     /reference-transaction-strand-guard/
   );
+  // Machine-local hooks that must live in a tracked hooksPath directory are
+  // excluded through the repository-local info/exclude file. They remain
+  // executable without leaving the policy checkout dirty.
+  const status = execFileSync("git", ["-C", repo, "status", "--porcelain"], {
+    encoding: "utf8",
+    env: GIT_ENV,
+  });
+  assert.equal(status.trim(), "");
+  const ignored = execFileSync(
+    "git",
+    ["-C", repo, "check-ignore", ".githooks/pre-merge-commit", ".githooks/reference-transaction"],
+    { encoding: "utf8", env: GIT_ENV }
+  );
+  assert.deepEqual(ignored.trim().split("\n").sort(), [
+    ".githooks/pre-merge-commit",
+    ".githooks/reference-transaction",
+  ]);
 
   // idempotent re-run: everything byte-identical, no chain files sprouting
   const guardAfterFirst = readFileSync(path.join(commonHooksDir, "pre-commit"));
