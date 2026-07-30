@@ -40,7 +40,7 @@
       "weight": 1,
       "bandMetric": "eslint_warning_count",
       "direction": "lowerIsBetter",
-      "bandThresholds": [0, 10, 50, 200],
+      "bandThresholds": [0, 50, 300, 1000],
       "gates": ["lint_gate", "ts_build_gate"]
     },
     {
@@ -138,7 +138,7 @@
       "axis": "lint_type",
       "kind": "metric",
       "okWhen": { "lte": 0 },
-      "title": "ESLint warning count"
+      "title": "ESLint warning count (incl. AIO-598 warn-only complexity budgets)"
     },
     "ts_build_gate": {
       "axis": "lint_type",

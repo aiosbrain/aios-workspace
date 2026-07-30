@@ -2,7 +2,7 @@
   "_comment": "Committed codebase-health baseline (AIO-605). Regenerate deliberately with `node scripts/check-codebase-health.mjs --write-baseline` after a structural change lands — never by hand. Compared ADVISORY-only by the CI step (always exit 0 in v0.9.0).",
   "generated_at": "2026-07-30",
   "rubric_version": "1.0.0",
-  "score_pct": 83,
+  "score_pct": 75,
   "status": "healthy",
   "axes": {
     "modularity": {
@@ -21,8 +21,8 @@
       "total": 0
     },
     "lint_type": {
-      "band": 4,
-      "passed": 3,
+      "band": 2,
+      "passed": 2,
       "total": 3
     },
     "docs_parity": {
@@ -32,8 +32,8 @@
     },
     "invariants": {
       "band": 4,
-      "passed": 1,
-      "total": 1
+      "passed": 2,
+      "total": 2
     },
     "contributor_friction": {
       "band": 4,
@@ -100,8 +100,8 @@
     },
     {
       "id": "eslint_warning_count",
-      "ok": true,
-      "value": 0
+      "ok": false,
+      "value": 288
     },
     {
       "id": "ts_build_gate",
@@ -116,12 +116,12 @@
     {
       "id": "invariant_registry_missing_enforcers",
       "ok": true,
-      "value": null
+      "value": 0
     },
     {
       "id": "ci_wall_clock_minutes",
       "ok": true,
-      "value": 2.9
+      "value": 3.1
     },
     {
       "id": "ratchet_debt_total",

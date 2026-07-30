@@ -83,9 +83,15 @@ function checkModularityBreaches(repo) {
     timeout: HEAVY_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
   });
-  if (r.error || r.status !== 0) return skip("OGR13 metrics unavailable (codebase-memory graph)");
+  if (r.error || r.status === null) return skip("OGR13 metrics did not run");
+  // Parse stdout REGARDLESS of exit code: in ratchet mode the gate exits non-zero
+  // while still printing a valid --json payload — a real breach must never read as
+  // "unavailable" (that would silently improve the axis). Only unparseable/empty
+  // stdout means the metrics source itself was unavailable.
   const parsed = readJsonSafe(r.stdout);
-  if (!Array.isArray(parsed?.breaches)) return skip("OGR13 output had no breaches array");
+  if (!Array.isArray(parsed?.breaches)) {
+    return skip("OGR13 metrics unavailable (no parseable --json output)");
+  }
   return {
     value: parsed.breaches.length,
     detail: `${parsed.breaches.length} OGR13 ratchet breach(es) vs committed baseline`,
