@@ -42,7 +42,7 @@ different file sets, independent evolution.
 | `.harness/adapters/run-hook.sh`, `.harness/adapters/claude-code/normalize.sh`, `.harness/adapters/claude-code/run-strict-guard.sh` | MANAGED | copied | Runtime adapter: Claude Code payload → portable event; `run-strict-guard.sh` exports the strict edit+commit policies. |
 | `scripts/check-file-size.mjs` | MANAGED | copied | Byte-identical copy of the canonical default-deny size gate. Reads the target-owned `scripts/size-caps.json`. |
 | `scripts/check-boundaries.mjs` | MANAGED | copied | Byte-identical copy of the seam gate. Reads the target-owned co-located `scripts/boundaries.json`. |
-| `scripts/git-files.mjs` | MANAGED | copied | Shared git-enumeration helper both gates import. |
+| `scripts/git-files.mjs` | MANAGED | copied (resolved body) | Shared git-enumeration helper both gates import. Sourced from `packages/monorepo/src/git-files.mjs` — the toolkit's own `scripts/git-files.mjs` is a relative-path shim into `packages/` (AIO-601) that would dangle in a target with no `packages/` tree, so the self-contained module body is stamped at the import path instead. |
 | `validation/agent-readiness-lib.mjs` | MANAGED | copied | Copied whole so `check-file-size.mjs` needs no import rewriting (it imports `globToRegex` from here). |
 | `scripts/leak-gate.sh` | MANAGED | copied | Confidentiality gate; baseline shape rules always on, term set via `AIOS_LEAK_TERMS_B64` / `~/.config/aios-nda/`. |
 | `hooks/git/pre-push-leak-gate` | MANAGED | copied | Push-is-publication gate; self-locates `scripts/leak-gate.sh` in the target. |
