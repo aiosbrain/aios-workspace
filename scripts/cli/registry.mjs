@@ -1,8 +1,6 @@
 /**
- * registry.mjs — the declarative command table for `aios` (AIO-512 Phase 1).
- *
- * ONE descriptor per subcommand. This replaces the hand-maintained USAGE string and the
- * 45-branch if/else-if dispatch chain that used to live at the bottom of scripts/aios.mjs.
+ * registry.mjs — the declarative command table for `aios` (AIO-512 Phase 1): ONE descriptor
+ * per subcommand, replacing the old USAGE string + 45-branch dispatch chain in aios.mjs.
  *
  * Invariants (asserted by test/cli-registry.test.mjs):
  *   - Every name/alias appears exactly once.
@@ -28,11 +26,9 @@
 import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
 
 /**
- * The command table, in `aios help` order. Hidden commands (usage: []) go last.
- *
- * ctx = { repo, cfg, patterns, rest, local } — `local` carries the handlers that still
- * live inside scripts/aios.mjs (Phase 2 extracts them) plus the shared helpers they need.
- *
+ * The command table, in `aios help` order; hidden commands (usage: []) go last.
+ * ctx = { repo, cfg, patterns, rest, local } — `local` carries the handlers still living
+ * inside scripts/aios.mjs (Phase 2 extracts them) plus the shared helpers they need.
  * @type {CommandDescriptor[]}
  */
 export const COMMANDS = [
@@ -144,20 +140,16 @@ export const COMMANDS = [
   {
     name: "mcp",
     // The GUI-surface bridge: a long-lived stdio MCP server for agents that can't shell out
-    // to this CLI (Claude Desktop/Cowork/claude.ai — NOT Codex or Conductor, which run real
-    // shell sessions and call this CLI directly). It must run with NO workspace —
-    // config is env-first — so it resolves nothing and owns the process until the client
-    // disconnects.
+    // to this CLI (Claude Desktop/Cowork/claude.ai). Runs with NO workspace — config is
+    // env-first — so it resolves nothing and owns the process until the client disconnects.
     resolution: "pre-config",
     loader: () => import("../brain-mcp.mjs"),
     adapt: async (ctx, mod) => {
       const mcpCfg = mod.resolveBrainConfig();
       if (mcpCfg.missing.length) {
-        // Brain unconfigured: still start IF a workspace resolves here, exposing local aios_*
-        // tools (the Operator Loop collector). brain_* tools return a clear "not configured"
-        // error when called. With neither brain config nor a workspace, there's nothing to do.
-        // Use the offline resolver so project.yaml / engagement.yaml workspaces are recognized
-        // too (matches `aios loop` + the MCP tool's findWorkspaceRoot, not just aios.yaml).
+        // Brain unconfigured: still start IF a workspace resolves here (offline resolver, so
+        // project.yaml / engagement.yaml workspaces count), exposing local aios_* tools;
+        // brain_* tools then error clearly. With neither config nor workspace: nothing to do.
         const ws = ctx.local.findRepoRootOffline(process.cwd());
         if (!ws) {
           ctx.local.die(
@@ -394,9 +386,8 @@ export const COMMANDS = [
   },
   {
     name: "ship",
-    // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (the generic walk-up, like
-    // build/relay) — NOT a GitHub slug — so they are NOT in the pr/consolidate opt-out.
-    // Ship derives the GitHub slug internally via detectRepo(repo).
+    // ship + roadmap-run take `--repo <path>` as a WORKSPACE path (not a GitHub slug), so they
+    // are NOT in the pr/consolidate opt-out; ship derives the slug via detectRepo(repo).
     resolution: "offline",
     loader: () => import("../ship.mjs"),
     adapt: (ctx, mod) => mod.cmdShip(ctx.repo, ctx.rest),
@@ -411,8 +402,7 @@ export const COMMANDS = [
     exit: "exit-code",
     usage: U["roadmap-run"],
   },
-  // The Unified Inbox is a headline V1 surface; it was unreachable from `aios --help` until the
-  // UX audit found that nothing in the CLI's own help mentioned it (S3-8).
+  // Headline V1 surface — was unreachable from `aios --help` until the UX audit (S3-8).
   {
     name: "inbox",
     resolution: "offline",
@@ -420,9 +410,8 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdInbox(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.inbox,
   },
-  // AIO-579 read-only slice: cross-repo PR/worktree/branch reconciliation. `--repo` here is a
-  // GitHub owner/repo slug filter (like pr/consolidate-findings), not the workspace path — it
-  // owns the flag for the same reason they do.
+  // AIO-579 read-only cross-repo reconciliation. `--repo` is a GitHub owner/repo slug filter
+  // (like pr/consolidate-findings), not the workspace path — it owns the flag for that reason.
   {
     name: "delivery",
     resolution: "offline",
@@ -431,6 +420,17 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdDelivery(ctx.repo, ctx.cfg, ctx.rest),
     exit: "exit-code",
     usage: U.delivery,
+  },
+
+  // AIO-602 split stamp — SOURCE is the toolkit checkout this module runs from; TARGET is positional.
+  {
+    name: "repo-bootstrap",
+    resolution: "offline",
+    cwdFallback: () => true,
+    loader: () => import("../repo-bootstrap.mjs"),
+    adapt: (ctx, mod) => mod.cmdRepoBootstrap(ctx.rest),
+    exit: "exit-code",
+    usage: U["repo-bootstrap"],
   },
 
   // ── hidden (no help text; reachable but undocumented, exactly as before) ────

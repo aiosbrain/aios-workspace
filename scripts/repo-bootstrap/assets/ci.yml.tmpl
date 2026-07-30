@@ -1,0 +1,64 @@
+# CI skeleton seeded by `aios repo-bootstrap` (AIO-602). This repo owns it from here —
+# the bootstrap never overwrites an existing ci.yml. The governance-gates job mirrors
+# the aios-workspace invariants (ENGINEERING-CONSTITUTION.md §8): file-size cap,
+# repo-boundary seams, and the confidentiality leak gate.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: governance gates (size + boundaries + leak)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: File-size gate (default-deny, ratchet-only-down)
+        run: node scripts/check-file-size.mjs
+      - name: Repo-boundary gate
+        run: node scripts/check-boundaries.mjs
+      - name: Confidentiality leak gate
+        # Terms come from the AIOS_LEAK_TERMS_B64 secret (never stored in the repo).
+        # Without the secret the gate enforces its always-on baseline shape rules.
+        env:
+          AIOS_LEAK_TERMS_B64: ${{ secrets.AIOS_LEAK_TERMS_B64 }}
+        run: bash scripts/leak-gate.sh .
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+      - name: Lint
+        run: |
+          if [ -f package.json ]; then npm run {{LINT_SCRIPT}} --if-present; else echo "no package.json — skipping lint"; fi
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+      - name: Test
+        run: |
+          if [ -f package.json ]; then npm run {{TEST_SCRIPT}} --if-present; else echo "no package.json — skipping tests"; fi

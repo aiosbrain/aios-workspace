@@ -1,0 +1,40 @@
+# Engineering Constitution — {{REPO_NAME}}
+
+> Seeded by `aios repo-bootstrap` v{{BOOTSTRAP_VERSION}} (AIO-602). This repo owns this
+> file from here — the bootstrap never overwrites it. The **canonical** engineering
+> constitution is the AIOS core toolkit's `docs/ENGINEERING-CONSTITUTION.md`
+> (repo: `aios-workspace`); this file carries the repo-local invariant registry and
+> defers to the canonical doc for principles (spec-before-code, module boundaries,
+> tier safety, verification-is-the-value, the simplification bar).
+
+## Working conventions
+
+- **All work happens in linked git worktrees.** The primary checkout never carries an
+  authored commit, on any branch — it only advances via `git merge --ff-only`. This is
+  enforced fail-closed by the stamped guard pack (see INV-WORKTREE below); override a
+  genuine hotfix with `AIOS_ALLOW_PRIMARY_COMMIT=1`.
+- **Spec before build** for any non-trivial change; verification (tests + gates) is the
+  definition of done, not a narrative claim.
+- **Never weaken a gate to make a change ship.** Grandfather lists ratchet down only.
+
+## §8 Invariant registry
+
+Same convention as the canonical core registry (`aios-workspace`
+`docs/ENGINEERING-CONSTITUTION.md` §8): every enforced invariant is listed with the
+tool that enforces it and where that tool actually runs, and **an invariant lands with
+its wired enforcer in the same PR** — a rule with no enforcer row is aspirational and
+does not belong in this table.
+
+| Invariant                                                                                                       | Enforcer                                                                                                                                | Runs in                                                        |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| file-size gate — every source file ≤ 500 lines (default-deny; `grandfathered` ceilings only ratchet DOWN)        | `scripts/check-file-size.mjs` + `scripts/size-caps.json`                                                                                   | CI `governance gates` job                                       |
+| boundary gate — import seams hold (barrels only into `scripts/<cmd>/`, `src/**` never imports `scripts/**`, tests are a leaf) | `scripts/check-boundaries.mjs` + `scripts/boundaries.json`                                                                                 | CI `governance gates` job                                       |
+| leak gate — no confidential identifier is ever published; push is the publication event                          | `scripts/leak-gate.sh` (baseline always on; term set via `AIOS_LEAK_TERMS_B64`/local install), installed as `hooks/git/pre-push-leak-gate` | pre-push git hook + CI `governance gates` job                   |
+| worktree discipline — no authored commits or edits in the primary checkout; branch creation there is blocked     | `.harness/hooks/git/pre-commit-primary-guard` (strict) + `reference-transaction-strand-guard` + `.harness/hooks/guard-worktree.sh`         | git hooks (installed by the bootstrap) + agent PreToolUse hooks |
+
+## Provenance
+
+Stamped from the AIOS core toolkit — see `.aios-bootstrap-version` for the bootstrap
+semver, source toolkit sha, and per-file content hashes. Re-run `aios repo-bootstrap .`
+to sync managed files (drift is surfaced, never clobbered); see the core toolkit's
+`docs/repo-bootstrap.md` for the full stamped-file classification.

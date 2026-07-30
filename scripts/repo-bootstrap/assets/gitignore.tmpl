@@ -1,0 +1,13 @@
+# Seeded by `aios repo-bootstrap` (AIO-602) — this repo owns it from here.
+node_modules/
+
+# Per-worktree local state (hydration marker etc.) — never tracked.
+.aios/
+
+# Environment / secrets (dotenvx-style). .env.keys is backed up out-of-band only.
+.env
+.env.*
+!.env.example
+
+# Bootstrap re-run conflict artifacts (resolve, then delete).
+*.aios-incoming

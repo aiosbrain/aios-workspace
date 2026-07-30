@@ -1,0 +1,27 @@
+{
+  "$comment": "Seeded by `aios repo-bootstrap` (AIO-602). Wires the strict worktree guard for Claude Code: every Write/Edit and Bash call is checked against this repo's OWN .harness guard pack — edits and commands that touch the PRIMARY checkout are blocked (work belongs in a linked worktree). Merge your own permissions/hooks into this file; the bootstrap never overwrites it once it exists.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_edit guard-worktree.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.harness/adapters/claude-code/run-strict-guard.sh\" pre_command guard-worktree.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

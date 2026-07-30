@@ -292,4 +292,9 @@ export const USAGE_LINES = {
     "    [--repo <workspace-path>] [--force]  to .aios/delivery/split-manifest.json; refuses to",
     "                                         overwrite without --force. Never writes verdicts.",
   ],
+  "repo-bootstrap": [
+    "  aios repo-bootstrap <target-repo>     stamp the governance surface into a split repo (worktree",
+    "    [--check] [--force] [--json]         guards, size/boundary/leak gates, hydration, CI seed);",
+    "    [--lint-script <s>] [--test-script <s>]  re-runs detect drift via .aios-bootstrap-version",
+  ],
 };
