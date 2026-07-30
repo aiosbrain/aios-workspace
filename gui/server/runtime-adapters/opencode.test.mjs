@@ -21,7 +21,7 @@ import {
   cachedProviderCatalog,
   _resetCatalogCache,
 } from "./opencode.mjs";
-import { modelCatalog } from "../../../scripts/runtimes.mjs";
+import { modelCatalog } from "@aios-alpha/monorepo/runtimes";
 
 test("authHeader: no password → no Authorization header", () => {
   assert.deepEqual(authHeader(undefined), {});
