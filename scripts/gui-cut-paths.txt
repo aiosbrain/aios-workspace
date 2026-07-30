@@ -1,0 +1,27 @@
+# gui-cut-paths.txt — definitive extraction path list for the aios-workspace-gui repo cut
+# (AIO-594 / AIO-603; consumed as `git filter-repo --paths-from-file <this file>`).
+#
+# Frozen SHA (rehearsed): 0ae23a7fadf6ce36ac9ee54247bf4c7af2b07f98
+# Derivation: docs/gui-toolkit-contract.md "Test ownership at cut time" table + the gui/
+# and src-tauri/ trees + gui-only docs. Full procedure: docs/gui-cut-runbook.md.
+#
+# Format: literal paths, one per line; directory lines match the whole subtree.
+# Comments (#) are stripped before use: grep -v '^#' scripts/gui-cut-paths.txt
+#
+# --- the GUI product tree ---
+gui/README.md
+gui/client
+gui/server
+# --- desktop shell (repointing deferred to AIO-581 in the new repo) ---
+src-tauri
+# --- tests that move with the gui (contract test-ownership table) ---
+test/skill-install.test.mjs
+test/skill-install-marketplace.test.mjs
+# skill-scan-fixtures is SHARED with core's test/skill-scan.test.mjs: it is extracted
+# here AND retained in core by the deletion PR (AIO-612) — both repos keep a copy.
+test/skill-scan-fixtures
+# the whole UX harness travels ("gui repo (with the UX harness)")
+test/ux
+# --- gui-only docs ---
+docs/desktop-app.md
+docs/plan-agentic-ux-testing.md
