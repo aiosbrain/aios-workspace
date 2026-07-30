@@ -105,7 +105,11 @@ they don't recognize.
   whose destination hook carries the line-anchored `# aios-tracked-hook` marker (a tracked
   policy hook, e.g. aios-team-brain's `.githooks/`), the installers leave the tracked file
   untouched and install machine-locally into `$(git rev-parse --git-common-dir)/hooks/` —
-  the chain target the tracked hook execs (AIO-638).
+  the chain target the tracked hook execs. If that policy directory does not provide a
+  tracked dispatcher for another required hook name, the stamped harness installer keeps
+  the executable hook in `core.hooksPath` and adds only that generated path to the
+  repository-local `.git/info/exclude`, preserving both enforcement and a clean checkout
+  (AIO-638).
 - **Validators + hooks are the contract, not vibes.** Run `validation/validate-all.sh <workspace>`
   before claiming a scaffold/template change works. The secrets validator (`check-secrets.sh` +
   `leak-gate.sh` + the `team-ops-guard` hook) is a hard gate — **never commit secrets**, and never
