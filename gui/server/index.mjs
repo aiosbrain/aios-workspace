@@ -52,7 +52,7 @@ import {
   capabilityTargets,
 } from "./runtime-adapters/capability-store.mjs";
 import { guardWrite as runGuardWrite } from "./runtime-adapters/guard.mjs";
-import { GUI_RUNTIMES, runtimeCapabilities } from "../../scripts/runtimes.mjs";
+import { GUI_RUNTIMES, runtimeCapabilities } from "@aios-alpha/monorepo/runtimes";
 import {
   createCatalogResolver,
   getConfig,

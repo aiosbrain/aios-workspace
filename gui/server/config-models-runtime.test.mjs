@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { WebSocket } from "ws";
-import { RUNTIME_MODEL_CATALOGS } from "../../scripts/runtimes.mjs";
+import { RUNTIME_MODEL_CATALOGS } from "@aios-alpha/monorepo/runtimes";
 // Shared with ws-session-guard.test.mjs — one spawn/boot helper, not two.
 import { withServer } from "./server-test-harness.mjs";
 

@@ -15,7 +15,7 @@ import {
   modelCatalog,
   isModelAllowed,
   modelRejectionMessage,
-} from "../../scripts/runtimes.mjs";
+} from "@aios-alpha/monorepo/runtimes";
 import { cachedProviderCatalog, resolveProviderCatalog } from "./runtime-adapters/opencode.mjs";
 
 // Cold `opencode serve` boot + provider fetch is ~5s; past this we serve the seeded

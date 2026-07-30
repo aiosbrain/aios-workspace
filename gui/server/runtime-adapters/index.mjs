@@ -4,19 +4,19 @@
 // `meta` + `run(host)` and emits the same WS event shapes (delta | tool_use |
 // tool_result | assistant_done | result | error), so the React client is
 // runtime-agnostic. Runtime names + capabilities come from the single source of
-// truth in scripts/runtimes.mjs (shared with `aios skills export` + validators).
-// See docs/byoa.md.
+// truth in @aios-alpha/monorepo/runtimes (shared with `aios skills export` +
+// validators). See docs/byoa.md.
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { parseFlatYaml } from "../../../scripts/flat-yaml.mjs";
-import { RUNTIMES, GUI_RUNTIMES } from "../../../scripts/runtimes.mjs";
+import { RUNTIMES, GUI_RUNTIMES } from "@aios-alpha/monorepo/runtimes";
+import { parseFlatScalars } from "./flat-config.mjs";
 import * as claudeCode from "./claude-code.mjs";
 import * as acp from "./acp.mjs";
 import * as codex from "./codex.mjs";
 import * as opencode from "./opencode.mjs";
 
-// driver → adapter module. Every gui:true runtime in scripts/runtimes.mjs resolves here.
+// driver → adapter module. Every gui:true runtime in the shared registry resolves here.
 const ADAPTERS = {
   "claude-sdk": claudeCode,
   acp: acp, // hermes (+ openclaw once its spawn command is confirmed)
@@ -30,7 +30,7 @@ export function readAgentConfig(repo) {
   const p = path.join(repo, "aios.yaml");
   if (existsSync(p)) {
     try {
-      cfg = parseFlatYaml(readFileSync(p, "utf8"));
+      cfg = parseFlatScalars(readFileSync(p, "utf8"));
     } catch {
       cfg = {};
     }
