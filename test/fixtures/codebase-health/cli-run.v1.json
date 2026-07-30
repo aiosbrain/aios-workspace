@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "rubric_version": "1.0.0",
+  "head_sha": "0ae23a7fadf6ce36ac9ee54247bf4c7af2b07f98",
+  "measured_at": "2026-07-30",
+  "score_pct": 80,
+  "status": "healthy",
+  "axes": {
+    "modularity": {
+      "band": 2,
+      "passed": 1,
+      "total": 4
+    },
+    "boundaries": {
+      "band": 2,
+      "passed": 2,
+      "total": 3
+    },
+    "test_rigor": {
+      "band": null,
+      "passed": 0,
+      "total": 0
+    },
+    "lint_type": {
+      "band": null,
+      "passed": 1,
+      "total": 1
+    },
+    "docs_parity": {
+      "band": 4,
+      "passed": 1,
+      "total": 1
+    },
+    "invariants": {
+      "band": 4,
+      "passed": 2,
+      "total": 2
+    },
+    "contributor_friction": {
+      "band": 4,
+      "passed": 2,
+      "total": 2
+    }
+  },
+  "failed_invariant_ids": [],
+  "checks": [
+    {
+      "id": "file_size_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "size_grandfather_count",
+      "ok": false,
+      "value": 62
+    },
+    {
+      "id": "size_grandfather_max",
+      "ok": false,
+      "value": 2688
+    },
+    {
+      "id": "modularity_breaches",
+      "ok": false,
+      "value": 3
+    },
+    {
+      "id": "boundary_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "boundary_grandfather_count",
+      "ok": false,
+      "value": 32
+    },
+    {
+      "id": "domain_isolation_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "coverage_lines_pct",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "coverage_floor_headroom",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "mutation_score_pct",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "lint_gate",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "eslint_warning_count",
+      "ok": true,
+      "value": null
+    },
+    {
+      "id": "ts_build_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "docs_drift_gate",
+      "ok": true,
+      "value": true
+    },
+    {
+      "id": "invariant_registry_missing_enforcers",
+      "ok": true,
+      "value": 0
+    },
+    {
+      "id": "ci_wall_clock_minutes",
+      "ok": true,
+      "value": 2.9
+    },
+    {
+      "id": "ratchet_debt_total",
+      "ok": true,
+      "value": 94
+    },
+    {
+      "id": "invariant_gate_failures",
+      "ok": true,
+      "value": 0
+    }
+  ]
+}
