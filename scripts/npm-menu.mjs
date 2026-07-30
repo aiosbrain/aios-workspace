@@ -50,6 +50,7 @@ export const CATEGORIES = {
       "check:v1-linear",
       "check:domains",
       "check:size",
+      "check:boundaries",
       "check:inbox-audit",
       "eval:transcripts",
       "pr:backlog",
