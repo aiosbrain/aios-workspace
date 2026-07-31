@@ -957,10 +957,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
   });
 
   let baseSha = resolveBaseSha({ wt, base, resumed, dryRun, repo });
-  const resolveBugbotBase =
-    opts.resolveBugbotBase ??
-    (await loadToolkitModule("review-bugbot.mjs")).resolveRequiredBugbotBase;
+  let resolveBugbotBase = opts.resolveBugbotBase;
   if (bugbot && !dryRun) {
+    resolveBugbotBase ??= (await loadToolkitModule("review-bugbot.mjs")).resolveRequiredBugbotBase;
     const verifiedBase = resolveBugbotBase(wt);
     if (!verifiedBase.ok) {
       console.error(c.red("\n✗ local Bugbot base verification failed — build blocked."));

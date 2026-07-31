@@ -70,3 +70,14 @@ test("the seam file set matches check-boundaries' devtools set (drift guard)", (
     assert.ok(gate.includes(base), `${rel} missing from check-boundaries DEVTOOLS_PATH_RE`);
   }
 });
+
+test("build resolves the review engine only on a Bugbot-enabled path", () => {
+  const build = readFileSync(path.join(repoRoot, "scripts", "build.mjs"), "utf8");
+  const gateStart = build.indexOf("if (bugbot && !dryRun)");
+  const eagerLoad = build.indexOf('loadToolkitModule("review-bugbot.mjs")');
+  assert.ok(gateStart >= 0, "build must retain the Bugbot-enabled gate");
+  assert.ok(
+    eagerLoad > gateStart,
+    "build must not require a toolkit checkout when the Bugbot engine is disabled"
+  );
+});
