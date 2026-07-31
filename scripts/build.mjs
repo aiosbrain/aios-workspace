@@ -48,13 +48,10 @@ import {
 } from "./relay-core.mjs";
 import { slugify as slugifyBase } from "./cli-common.mjs";
 import { callAgentModel, requirePromptModelKey, reviewCallForModel } from "./model-call.mjs";
-import {
-  runLocalBugbotReview,
-  hasCriticalOrHighFindings,
-  REQUIRED_BUGBOT_FAIL_ON,
-  REQUIRED_BUGBOT_MODEL,
-  resolveRequiredBugbotBase,
-} from "./review-bugbot.mjs";
+// The verdict matcher is a core-leaf import (severity.mjs); the review engine itself loads
+// via the toolkit seam at point-of-use (AIO-594 F1; docs/devtools-toolkit-contract.md).
+import { hasCriticalOrHighFindings } from "./severity.mjs";
+import { loadToolkitModule } from "./toolkit-locate.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { parseModelRef } from "./model-providers.mjs";
 import { cmdPr } from "./pr.mjs";
@@ -960,8 +957,9 @@ export async function runBuild({ repo, plan, branch, opts }) {
   });
 
   let baseSha = resolveBaseSha({ wt, base, resumed, dryRun, repo });
-  const resolveBugbotBase = opts.resolveBugbotBase ?? resolveRequiredBugbotBase;
+  let resolveBugbotBase = opts.resolveBugbotBase;
   if (bugbot && !dryRun) {
+    resolveBugbotBase ??= (await loadToolkitModule("review-bugbot.mjs")).resolveRequiredBugbotBase;
     const verifiedBase = resolveBugbotBase(wt);
     if (!verifiedBase.ok) {
       console.error(c.red("\n✗ local Bugbot base verification failed — build blocked."));
@@ -1311,8 +1309,8 @@ async function finish({
   verify,
   bugbot,
   cursorTimeout,
-  resolveBugbotBase = resolveRequiredBugbotBase,
-  runBugbotReview = runLocalBugbotReview,
+  resolveBugbotBase,
+  runBugbotReview,
 }) {
   // Re-capture: reviewer (--force) may have committed after MERGE_READY was emitted.
   snapshotDiff(wt, baseSha);
@@ -1356,22 +1354,23 @@ async function finish({
 
   // Bugbot runs before ANY ship action (merge OR push/PR) — never after code leaves.
   if ((merge || pr) && bugbot && !dryRun) {
-    const verifiedBase = resolveBugbotBase(wt);
+    const rb = await loadToolkitModule("review-bugbot.mjs");
+    const verifiedBase = (resolveBugbotBase ?? rb.resolveRequiredBugbotBase)(wt);
     if (!verifiedBase.ok) {
       console.error(c.red("\n✗ local Bugbot base verification failed — merge blocked."));
       console.error(c.dim(verifiedBase.reason));
       return EXIT.GATE_FAILED;
     }
-    const bb = await runBugbotReview({
+    const bb = await (runBugbotReview ?? rb.runLocalBugbotReview)({
       repo,
       worktree: wt,
       baseSha: verifiedBase.baseSha,
       branch,
       cursorTimeout,
-      failOn: REQUIRED_BUGBOT_FAIL_ON,
+      failOn: rb.REQUIRED_BUGBOT_FAIL_ON,
       includeWorktree: true,
       readOnly: true,
-      model: REQUIRED_BUGBOT_MODEL,
+      model: rb.REQUIRED_BUGBOT_MODEL,
     });
     log("Pre-merge Bugbot review", bb.output.slice(-8000));
     if (!bb.ok) {
