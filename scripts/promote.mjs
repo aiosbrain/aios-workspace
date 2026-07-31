@@ -21,7 +21,6 @@
  */
 
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -31,10 +30,14 @@ import {
   unlinkSync,
   statSync,
 } from "node:fs";
-import { c, die, loadSecretPatterns, findSecret } from "./cli-common.mjs";
+import { c, die } from "./cli-common.mjs";
+import { defaultScanFile } from "./scan-file.mjs";
 import { parseFrontmatter, normalizeTier, parseDecisionRows } from "./workspace-parse.mjs";
 
-const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
+// The default secret + leak-gate scan lives in the scan-file.mjs core leaf (AIO-594) so
+// devtools-bound spec-publish.mjs doesn't have to import this whole command module for it.
+// Re-exported here for back-compat with this module's historical surface.
+export { defaultScanFile } from "./scan-file.mjs";
 
 // Always treated as a private/outside-sync source, canonical + legacy spine names.
 const KNOWN_PRIVATE_DIRS = new Set(["5-personal", "05-personal"]);
@@ -196,25 +199,6 @@ function nextDecisionNumber(logContent) {
 
 function isoDate(now) {
   return now.toISOString().slice(0, 10);
-}
-
-/** Default scan: shared secret patterns (in-process) + the confidentiality leak-gate (shelled out). */
-export function defaultScanFile(destAbs) {
-  const findings = [];
-  const content = readFileSync(destAbs, "utf8");
-  const secretHit = findSecret(content, loadSecretPatterns());
-  if (secretHit) findings.push(`secret pattern matched: ${secretHit}`);
-
-  const leakGate = path.join(SCRIPT_DIR, "leak-gate.sh");
-  if (existsSync(leakGate)) {
-    try {
-      execFileSync(leakGate, [destAbs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    } catch (e) {
-      const out = [e.stdout, e.stderr].filter(Boolean).join("\n").trim();
-      findings.push(out || "leak-gate: FAILED");
-    }
-  }
-  return { clean: findings.length === 0, findings };
 }
 
 export async function cmdPromote(repo, cfg, args, opts = {}) {

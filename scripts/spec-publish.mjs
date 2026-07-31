@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createLinearClient, resolveLinearApiKey } from "./linear-client.mjs";
-import { defaultScanFile } from "./promote.mjs";
+import { defaultScanFile } from "./scan-file.mjs";
 import { loadSkillContext, skillSha256 } from "./skill-context.mjs";
 
 const TRUSTED_GIT_BIN = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"].find(
