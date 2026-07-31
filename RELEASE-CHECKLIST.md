@@ -16,8 +16,12 @@ made public later. Before flipping it public, complete every item below.
 - [ ] **Confirm the brand decision** — reconcile the `LICENSE` copyright holder with
       the studio brand used in the (removed) strategy docs if the public-facing brand
       differs from the copyright holder.
-- [ ] **Lock repo names + topology** (see the strategy brief §6): final names and
-      whether pillars are federated repos + a thin meta-repo.
+- [ ] **Lock repo names + topology** (see `CLAUDE.md` §2c and `RESOLVER.md`) — largely decided and
+      in transition: shared hubs are published as public npm `@aiosbrain/foundation`;
+      the GUI is cut (filtered history) to `github.com/aiosbrain/aios-workspace-gui`,
+      with the in-tree `gui/` + `src-tauri/` authoritative until deletion PR AIO-612;
+      a devtools cut (`aiosbrain/aios-devtools`) is planned but not done. Remaining:
+      complete AIO-612 + decide the devtools cut.
 - [ ] **Secret scan** clean: `validation/check-secrets.sh .`
 - [ ] **Docs drift guard** clean: `npm run check:docs` confirms the V1 hub's
       machine inventories match code/specs.
@@ -31,7 +35,7 @@ made public later. Before flipping it public, complete every item below.
 - [ ] **Website docs are not ahead of release**: public website copy must not present
       V1 as shipped until the V1 hub is release-ready and cross-repo docs sync is clean.
 - [ ] **CI green** on the public ruleset (leak gate + secrets + validators + harness syntax).
-- [ ] Decide the **open/closed boundary** per component (strategy brief §7).
+- [ ] Decide the **open/closed boundary** per component.
 
 ## Ongoing (already enforced in CI)
 - Leak gate, secret scan, validator suite, harness syntax checks, and the docs drift guard run on every PR.

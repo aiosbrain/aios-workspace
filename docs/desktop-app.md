@@ -1,5 +1,17 @@
 # Desktop app (Tauri shell)
 
+> **Canonical copy has moved.** This document's canonical home is now the standalone
+> GUI repo, [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui).
+> This in-tree copy is kept while the monorepo remains authoritative and will be
+> removed from core by the deferred deletion PR (AIO-612).
+>
+> **Current limitations:** the desktop shell runs only from this in-tree, full-toolkit
+> layout and is **do-not-demo** for v0.9.0. The standalone GUI server can locate a
+> toolkit through [`gui-toolkit-contract.md`](gui-toolkit-contract.md), including
+> `AIOS_TOOLKIT_DIR`, but the Tauri shell does not read that contract or environment
+> variable. A standalone desktop launch is unsupported until AIO-581 establishes the
+> supported layout or implementation; AIO-581 is owned by the GUI repo.
+
 The desktop app makes AIOS Workspace usable without a terminal: double-click, pick
 your workspace folder, and you're in the cockpit (chat · integrations · review & push).
 

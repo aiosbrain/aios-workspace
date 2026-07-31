@@ -14,6 +14,15 @@ A contributor's AIOS install is really **two** repos, not one:
    person actually works and commits into. Its CLI is a **thin shim** that forwards
    every `aios <cmd>` to the toolkit checkout, so command code never needs vendoring.
 
+> **Multi-repo split note:** the GUI is being cut out of the toolkit repo into
+> `aiosbrain/aios-workspace-gui` (the in-tree `gui/` stays authoritative until the
+> deferred deletion PR, AIO-612). The standalone GUI resolves the same toolkit
+> checkout this design assumes — via `AIOS_TOOLKIT_DIR` (see
+> `gui-toolkit-contract.md`) — so the two-piece model here becomes three pieces,
+> all sharing one toolkit location. For existing workspace owners the migration at
+> v0.9.0 is one `aios update` plus setting `AIOS_TOOLKIT_DIR` in `.envrc` — no
+> re-scaffold.
+
 A scaffolded workspace also carries a **vendored copy** of the governance surface
 (`.claude/{skills,rules,rubrics,commands}`, `hooks/`, `validation/`) — files Claude Code
 and the validators read *in place*. `aios update` re-syncs exactly that surface from the

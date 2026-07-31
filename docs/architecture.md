@@ -154,6 +154,24 @@ one context to do everything. See `docs/workflows.md`.
 
 How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep them.
 
+- **Shared hubs live in `@aiosbrain/foundation`.** The seven hub modules — `runtimes`,
+  `workspace-parse`, `brain-config`, `linear-client`, `brain-client`, `git-files`,
+  `constitution` — live in `packages/foundation/` (an npm workspace) and are **published
+  to npm as public `@aiosbrain/foundation`** (0.1.0). The historical `scripts/` paths
+  are one-line re-export shims; edit the module bodies in the package, keep importing
+  the `scripts/` paths from toolkit code.
+- **The GUI is mid-split to its own repo.** The GUI has been cut (filtered history) to
+  `github.com/aiosbrain/aios-workspace-gui`, its future home. **This repo's in-tree
+  `gui/` + `src-tauri/` remain the authoritative, working copy until the deferred
+  deletion PR (AIO-612) merges.** The seam is pinned by
+  [`gui-toolkit-contract.md`](gui-toolkit-contract.md): the GUI consumes only the
+  published `@aiosbrain/foundation` subpaths + `aios <cmd> --json` output, and locates
+  the toolkit via `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → a pre-split relative fallback
+  (`gui/server/../../` — only resolves while the GUI lives inside a toolkit checkout;
+  fails in the standalone repo, where `AIOS_TOOLKIT_DIR` or `--toolkit-dir` is
+  required) → actionable error. `scripts/check-boundaries.mjs` enforces the seams as
+  import rules.
+  (A devtools cut, `aiosbrain/aios-devtools`, is planned but not yet done.)
 - **One brain HTTP front door.** All traffic to the Team Brain v1 API goes through
   `scripts/brain-client.mjs` (`createBrainClient` → `fetchJson`/`query`/`streamQuery`). Both the
   CLI (`scripts/aios.mjs`) and the MCP bridge (`scripts/brain-mcp.mjs`) use it; config resolution

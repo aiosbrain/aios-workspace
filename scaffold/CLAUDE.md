@@ -39,7 +39,8 @@ using `{{PLACEHOLDER}}` syntax — e.g. `{{SLUG}}`, `{{OWNER}}`, `{{CONTEXT}}`,
   `personalities/`, `descriptors/`, `settings.json`, `integrations.json`.
 - `scaffold/scripts/aios.mjs` — a **delegating shim**, not the real CLI: it forwards
   every command to the canonical toolkit checkout (`../aios/aios-workspace` or
-  `AIOS_TOOLKIT_DIR`). Never vendor the full CLI here.
+  `AIOS_TOOLKIT_DIR` — the same env var the standalone GUI's toolkit-location contract
+  uses, see `docs/gui-toolkit-contract.md`). Never vendor the full CLI here.
 - `scaffold/AGENTS.md.tmpl` + `scaffold/RESOLVER.md.tmpl` live at the scaffold **root**,
   not under `.claude/` — confirmed by directory listing, don't move them.
 - `.opencode/`, `.mcp.json`/`.mcp.example.json`, `.envrc`, `.env.example`, `bin/aios` —

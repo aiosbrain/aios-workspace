@@ -2,9 +2,11 @@
 /**
  * Repo-boundary / seam gate (AIO-597, Wave 1 of the multi-repo split).
  *
- * This repo is being split into several repos (see ../CLAUDE.md and RESOLVER.md for the planned
- * topology: aios-workspace core, @aios-alpha/toolkit-common, aios-workspace-gui, aios-devtools,
- * @aios-alpha/operator-loop). This validator encodes the future repo seams as import rules NOW, so
+ * This repo is being split into several repos (see ../CLAUDE.md §2c and RESOLVER.md "Repo
+ * Topology" for the current state: aios-workspace core, @aiosbrain/foundation (published npm
+ * package, née @aios-alpha/toolkit-common), aios-workspace-gui (cut; in-tree copy authoritative
+ * until AIO-612), aios-devtools (planned), the operator-loop package (planned)). This validator
+ * encodes the repo seams as import rules NOW, so
  * cross-seam coupling cannot accumulate before the cut. Bespoke check-* style (error text =
  * remediation prompt), not dependency-cruiser — parsing approach and reporting style mirror
  * `scripts/check-domain-isolation.mjs` (do not edit that file; it is a separate, orthogonal gate for
