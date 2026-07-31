@@ -247,12 +247,83 @@ shell_redirection_targets() {
   '
 }
 
+# shell_command_segments <command> -> one simple compound-command segment per
+# line. Separators inside quotes are data. Heredocs remain a single segment so
+# shell_redirection_targets can continue to distinguish their bodies from shell
+# syntax.
+shell_command_segments() {
+  if printf '%s' "$1" | grep -q '<<'; then
+    printf '%s\n' "$1"
+    return
+  fi
+  printf '%s' "$1" | awk '
+    function emit() {
+      gsub(/^[ \t]+|[ \t]+$/, "", segment)
+      if (segment != "") print segment
+      segment = ""
+    }
+    {
+      if (NR > 1) emit()
+      quote = ""
+      escaped = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        nextc = substr($0, i + 1, 1)
+        if (escaped) {
+          segment = segment c
+          escaped = 0
+        } else if (c == "\\") {
+          segment = segment c
+          escaped = 1
+        } else if (quote != "") {
+          segment = segment c
+          if (c == quote) quote = ""
+        } else if (c == "\047" || c == "\"") {
+          segment = segment c
+          quote = c
+        } else if (c == "&" && nextc == "&" &&
+                   segment ~ /^[ \t]*(cd|pushd)[ \t]+/) {
+          segment = segment " && "
+          i++
+        } else if (c == ";" || c == "|" || c == "&") {
+          emit()
+          if (nextc == c) i++
+        } else {
+          segment = segment c
+        }
+      }
+    }
+    END { emit() }
+  '
+}
+
+# segment_allows_primary <segment> -> true only when the command-local escape
+# hatch is set directly or through env. This is deliberately scoped to one
+# compound-command segment; it must never authorize a later `&&`/`;` command.
+segment_allows_primary() {
+  printf '%s' "$1" | grep -Eq \
+    '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)'
+}
+
+# command_without_env_prefix <segment> -> command after leading direct/env
+# assignments. It is used only for classification, never executed.
+command_without_env_prefix() {
+  printf '%s' "$1" | sed -E \
+    -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
+    -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//'
+}
+
 CWD=$(printf '%s' "$EVENT" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD=$(pwd)
 
 if [ "$MODE" = "command" ]; then
-  CMD=$(printf '%s' "$EVENT" | jq -r '.command // empty') || exit 3
-  [ -n "$CMD" ] || exit 3
+  FULL_CMD=$(printf '%s' "$EVENT" | jq -r '.command // empty') || exit 3
+  [ -n "$FULL_CMD" ] || exit 3
+
+check_command_segment() {
+  CMD=$1
+  segment_allows_primary "$CMD" && return 0
+  CLASS_CMD=$(command_without_env_prefix "$CMD")
 
   TDIR=$(target_dir "$CMD" "$CWD")
   [ -d "$TDIR" ] || TDIR="$CWD"
@@ -274,7 +345,13 @@ if [ "$MODE" = "command" ]; then
     # (`tar -cf`) only reads and is deliberately NOT matched.
     _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
     _cands=$(printf '%s' "$CMD" | shell_redirection_targets)
-    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re"; then
+    # Package managers own an `install` subcommand. Treating that word as the
+    # filesystem utility made bare npm/pnpm/yarn/bun commands false positives;
+    # redirects and explicit write utilities in other segments are still scanned.
+    _is_package_manager=0
+    printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)([[:space:]]|$)' && _is_package_manager=1
+    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re" &&
+       { [ "$_is_package_manager" = 0 ] || ! printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)[[:space:]]+install([[:space:]]|$)'; }; then
       _cands="$_cands
 $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
     elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
@@ -316,7 +393,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
   fi
 
   set -- $(probe "$TDIR"); KIND=${1:-none}; BRANCH=${2:-}
-  [ "$KIND" = "primary" ] || exit 0
+  [ "$KIND" = "primary" ] || return 0
 
   NORM=$(norm_git "$CMD")
 
@@ -341,6 +418,20 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
       block "committing on non-default branch '$BRANCH' in the primary checkout" \
         "Feature commits belong in a worktree, never on a branch committed in the primary checkout."
     fi
+  fi
+  return 0
+}
+
+  if printf '%s' "$FULL_CMD" | grep -q '<<'; then
+    check_command_segment "$FULL_CMD"
+  else
+    SEGMENTS=$(shell_command_segments "$FULL_CMD") || exit 3
+    while IFS= read -r CMD_SEGMENT || [ -n "$CMD_SEGMENT" ]; do
+      [ -n "$CMD_SEGMENT" ] || continue
+      check_command_segment "$CMD_SEGMENT"
+    done <<EOF
+$SEGMENTS
+EOF
   fi
   exit 0
 fi

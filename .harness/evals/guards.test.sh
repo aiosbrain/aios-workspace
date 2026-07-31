@@ -127,6 +127,20 @@ t "allows commit on main in primary"  0 "$H/guard-worktree.sh" "$(wpc "$WT" 'git
 printf '%s' "$(wpc "$WT" 'git commit -m x')" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main commit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main commit"; fi
 t "allows commit inside worktree"     0 "$H/guard-worktree.sh" "$(wpc "$WT/wt" 'git commit -m x')"
+# AIO-637: command-local overrides are honored in direct and env-prefixed
+# forms, but apply to exactly one compound-command segment.
+t "allows direct command-local primary override" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "allows env-prefixed command-local primary override" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "direct override does not leak across compound command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git status && git checkout -b feat/not-overridden')"
+t "env override does not leak across compound command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git status; git checkout -b feat/not-overridden')"
+t "later overridden segment is independently allowed" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'git status && HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "compound git targets are classified independently" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "git -C $WT/wt status && git -C $WT checkout -b feat/blocked")"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
 printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
@@ -147,6 +161,15 @@ ts "strict allows cp outside primary w/ redirect" 0 "$(wpc "$WT/wt" 'cp /tmp/a /
 ts "strict blocks mkdir -p new deep primary path" 2 "$(wpc "$WT/wt" "mkdir -p $WT/new1/new2")"
 ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x > $WT/new1/new2/f.txt")"
 ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
+# AIO-637: package-manager `install` is not the filesystem `install` utility.
+ts "strict allows npm install in primary" 0 "$(wpc "$WT" 'npm install')"
+ts "strict allows pnpm install in primary" 0 "$(wpc "$WT" 'pnpm install')"
+ts "strict allows yarn install in primary" 0 "$(wpc "$WT" 'yarn install')"
+ts "strict allows bun install in primary" 0 "$(wpc "$WT" 'bun install')"
+ts "strict still blocks write after package manager segment" 2 \
+  "$(wpc "$WT/wt" "npm install && echo x > $WT/package-write")"
+ts "strict still blocks tee after package manager segment" 2 \
+  "$(wpc "$WT/wt" "pnpm install; echo x | tee $WT/package-write")"
 ts "strict allows greater-than text in a heredoc from a worktree" 0 \
   "$(wpc "$WT/wt" $'git commit -F - <<\'MSG\'\n531 lines > ../a.txt\nMSG')"
 ts "strict closes tab-stripping heredoc before a real redirect" 2 \
