@@ -61,14 +61,7 @@ jobs:
 
       - name: Fetch the ingestion scanner from aios-team-brain
         if: env.AIOS_API_KEY != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: aiosbrain/aios-team-brain
-          ref: 8c29919236e602af63508abf5e988d4ab1d97eff
-          path: .brain-scanner
-          sparse-checkout: ingestion
-          persist-credentials: false
-          token: ""
+        run: bash .github/scripts/fetch-brain-scanner.sh .brain-scanner
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: env.AIOS_API_KEY != ''
