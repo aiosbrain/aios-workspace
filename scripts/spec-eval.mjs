@@ -22,6 +22,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { c } from "./relay-core.mjs";
+import { getToolkit, loadToolkitModule } from "./toolkit-locate.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
 import { callPromptModel, requirePromptModelKey } from "./model-call.mjs";
 import {
@@ -945,17 +946,32 @@ export function formatScorecard(loop) {
 // ── soft EE4 decision enrichment ──────────────────────────────────────────────────────────────
 
 /** Read the recent human-in-the-loop decision corpus (EE4) as soft context for the evaluator.
- *  Never blocks: returns [] on any error (unbuilt loop, missing store, read failure). */
+ *  Never blocks — but never degrades SILENTLY either (AIO-594 F5): when the toolkit's compiled
+ *  operator loop is unavailable, one stderr line names the cause and the fix, then [] is
+ *  returned (the enrichment is advisory context, not a gate). The dist belongs to the TOOLKIT
+ *  checkout (resolved via the toolkit seam), not the repo being evaluated. */
+let warnedNoDecisionStore = false;
 export async function loadRecentDecisions(repo, limit = 5) {
+  const degrade = (reason) => {
+    if (!warnedNoDecisionStore) {
+      warnedNoDecisionStore = true;
+      console.error(
+        c.yellow(`spec-eval: EE4 decision enrichment unavailable — ${reason}. Evaluating on.`)
+      );
+    }
+    return [];
+  };
   try {
-    const distPath = path.join(SCRIPT_DIR, "..", "dist", "operator-loop", "index.js");
-    if (!existsSync(distPath)) return [];
+    const distPath = path.join(getToolkit().dir, "dist", "operator-loop", "index.js");
+    if (!existsSync(distPath))
+      return degrade(`${distPath} is missing (run \`npm run build:loop\` in the toolkit)`);
     const mod = await import(pathToFileURL(distPath).href);
-    if (typeof mod.readDecisions !== "function") return [];
+    if (typeof mod.readDecisions !== "function")
+      return degrade(`${distPath} exports no readDecisions()`);
     const { decisions } = mod.readDecisions(repo);
     return Array.isArray(decisions) ? decisions.slice(-limit) : [];
-  } catch {
-    return [];
+  } catch (e) {
+    return degrade(e?.message ?? String(e));
   }
 }
 
@@ -1078,7 +1094,8 @@ export async function cmdSpec(repo, args) {
   }
   if (sub === "author") {
     const models = resolveLoopModels({ repo });
-    const { cmdSpecAuthor } = await import("./spec-author.mjs");
+    // Stays-core spec-author.mjs loads via the toolkit seam (AIO-594 F4).
+    const { cmdSpecAuthor } = await loadToolkitModule("spec-author.mjs");
     process.exit(await cmdSpecAuthor(repo, args.slice(1), { models }));
   }
   const { flag, has, file } = specArgv(rest);

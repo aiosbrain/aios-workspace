@@ -21,6 +21,7 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseModelRef } from "../model-providers.mjs";
+import { loadToolkitModule } from "../toolkit-locate.mjs";
 import { SHIP_EXIT } from "./gates.mjs";
 
 // The repo verify chain runBuild runs in the worktree before each review round and pre-merge.
@@ -164,7 +165,9 @@ export async function defaultMakeAnthropic() {
   return new Anthropic();
 }
 export async function defaultCallOpus(anthropic, messages, planCfg) {
-  const { callOpus } = await import("../relay.mjs");
+  // Stays-core relay.mjs loads via the toolkit seam, not a sibling-relative import, so this
+  // path also works standalone in aios-devtools (AIO-594 F3).
+  const { callOpus } = await loadToolkitModule("relay.mjs");
   return callOpus(anthropic, messages, planCfg);
 }
 export function defaultWriteAudit(repo, issue, name, text) {

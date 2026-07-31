@@ -38,8 +38,15 @@ import { c } from "./relay-core.mjs";
 import { callPromptModel } from "./model-call.mjs";
 import { detectRepo } from "./pr.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import { hasCriticalOrHighFindings, hasFindingsAtOrAbove } from "./review-bugbot.mjs";
-import { normalizeSeverity, rankFindings, rankSeverity } from "./severity.mjs";
+// The verdict matchers live in the core leaf severity.mjs (AIO-594 F1) — a devtools-bound
+// file must not statically import stays-core review-bugbot.mjs.
+import {
+  hasCriticalOrHighFindings,
+  hasFindingsAtOrAbove,
+  normalizeSeverity,
+  rankFindings,
+  rankSeverity,
+} from "./severity.mjs";
 import { DIFF_CAP } from "./build.mjs";
 
 const ISSUE_RE = /^AIO-\d+$/;

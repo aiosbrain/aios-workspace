@@ -1432,7 +1432,7 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   assert.equal(childEnv.AIOS_BUGBOT_MODEL, undefined);
   assert.equal(childEnv.KEEP, "yes");
   assert.doesNotMatch(build, /AIOS_BUGBOT_MODEL/);
-  assert.match(build, /model:\s*REQUIRED_BUGBOT_MODEL/);
+  assert.match(build, /model:\s*(?:\w+\.)?REQUIRED_BUGBOT_MODEL/); // AIO-594 seam-qualified
   assert.match(ship, /const reviewModel = REQUIRED_BUGBOT_MODEL/);
 });
 

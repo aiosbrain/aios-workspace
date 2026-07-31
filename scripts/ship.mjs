@@ -44,13 +44,10 @@ import {
   specEvalHints,
   DEFAULT_SPEC_GATE,
 } from "./spec-eval.mjs";
-import {
-  REQUIRED_BUGBOT_MODEL,
-  resolveRequiredBugbotBase,
-  runLocalPrePrReview,
-} from "./review-bugbot.mjs";
+// Core-staying engines (review-bugbot, simplify) load via the toolkit seam at point-of-use —
+// never a static import (AIO-594 F1/F6; docs/devtools-toolkit-contract.md).
+import { loadToolkitModule } from "./toolkit-locate.mjs";
 import { loadConstitutionDigest } from "./constitution.mjs";
-import { runSimplify } from "./simplify.mjs";
 import { loadSkillContext, parseDeclaredSkills } from "./skill-context.mjs";
 
 import {
@@ -749,6 +746,8 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   const buildLog = path.join(auditDir, "build.md");
   const artifactExists = deps.artifactExists ?? existsSync;
   // The mandatory local gate remains pinned; reviewer selection and loop config cannot override it.
+  const { REQUIRED_BUGBOT_MODEL, resolveRequiredBugbotBase, runLocalPrePrReview } =
+    await loadToolkitModule("review-bugbot.mjs");
   const reviewModel = REQUIRED_BUGBOT_MODEL;
   const resolveReviewSnapshot = () => {
     const head = (gitExec(["rev-parse", branch], repo) ?? "").trim();
@@ -1251,7 +1250,7 @@ export async function runShip({ repo, issue: issueId, opts, deps }) {
   // ship but never block one). A kept cleanup is a new changeset: invalidate every review
   // checkpoint and require a resumed exact-head review instead of relabeling stale evidence.
   if (!opts.noSimplify && !state.simplifyDone && !state.merged) {
-    const simplifyDep = deps.runSimplify ?? runSimplify;
+    const simplifyDep = deps.runSimplify ?? (await loadToolkitModule("simplify.mjs")).runSimplify;
     const sCfg = models.simplify;
     progress("simplify: post-review cleanup pass started");
     const sRes = await simplifyDep({
