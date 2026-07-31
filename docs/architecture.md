@@ -166,8 +166,11 @@ How the `scripts/` and `gui/` code is layered. These boundaries hold today; keep
   deletion PR (AIO-612) merges.** The seam is pinned by
   [`gui-toolkit-contract.md`](gui-toolkit-contract.md): the GUI consumes only the
   published `@aiosbrain/foundation` subpaths + `aios <cmd> --json` output, and locates
-  the toolkit via `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → adjacent-checkout fallback →
-  actionable error. `scripts/check-boundaries.mjs` enforces the seams as import rules.
+  the toolkit via `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → a pre-split relative fallback
+  (`gui/server/../../` — only resolves while the GUI lives inside a toolkit checkout;
+  fails in the standalone repo, where `AIOS_TOOLKIT_DIR` or `--toolkit-dir` is
+  required) → actionable error. `scripts/check-boundaries.mjs` enforces the seams as
+  import rules.
   (A devtools cut, `aiosbrain/aios-devtools`, is planned but not yet done.)
 - **One brain HTTP front door.** All traffic to the Team Brain v1 API goes through
   `scripts/brain-client.mjs` (`createBrainClient` → `fetchJson`/`query`/`streamQuery`). Both the

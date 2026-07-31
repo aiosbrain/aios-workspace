@@ -5,10 +5,12 @@
 > This in-tree copy is kept while the monorepo remains authoritative and will be
 > removed from core by the deferred deletion PR (AIO-612).
 >
-> **Current limitations:** the desktop shell runs in **adjacent-checkout mode only**
-> (it needs a toolkit checkout next to the GUI — see
-> [`gui-toolkit-contract.md`](gui-toolkit-contract.md)) and is **do-not-demo** for
-> v0.9.0. Self-contained bundling is AIO-581, owned by the GUI repo.
+> **Current limitations:** the desktop shell runs in **adjacent-checkout mode only** —
+> it resolves the toolkit through the GUI server's toolkit-location contract
+> ([`gui-toolkit-contract.md`](gui-toolkit-contract.md)), whose relative fallback only
+> works while the GUI lives inside a toolkit checkout (this monorepo layout); a
+> standalone launch must set `AIOS_TOOLKIT_DIR`. It is **do-not-demo** for v0.9.0.
+> Self-contained bundling is AIO-581, owned by the GUI repo.
 
 The desktop app makes AIOS Workspace usable without a terminal: double-click, pick
 your workspace folder, and you're in the cockpit (chat · integrations · review & push).

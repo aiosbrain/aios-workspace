@@ -128,8 +128,11 @@ npm run gui -- --repo ~/Projects/acme-workspace
 > deletion PR (AIO-612) merges, the in-tree `gui/` + `src-tauri/` here remain the
 > authoritative, working copy. The standalone GUI locates a toolkit checkout via
 > [`docs/gui-toolkit-contract.md`](docs/gui-toolkit-contract.md): `--toolkit-dir`
-> flag → `AIOS_TOOLKIT_DIR` env → an adjacent `../aios-workspace` checkout →
-> an actionable error. It builds against the published
+> flag → `AIOS_TOOLKIT_DIR` env → a pre-split relative fallback (`gui/server/../../`,
+> which only resolves while the GUI lives *inside* a toolkit checkout, i.e. this
+> monorepo layout — it fails in the standalone repo) → an actionable error.
+> Standalone installs must set `AIOS_TOOLKIT_DIR` or pass `--toolkit-dir`.
+> It builds against the published
 > [`@aiosbrain/foundation`](https://www.npmjs.com/package/@aiosbrain/foundation)
 > package plus the `aios` CLI — never toolkit internals.
 
