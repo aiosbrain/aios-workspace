@@ -19,9 +19,12 @@ function withCandidate(content, run) {
 }
 
 test("defaultScanFile reports a clean temporary file as clean", () => {
-  withCandidate("# Synthetic release note\n\nNo credentials or private identifiers.\n", (candidate) => {
-    assert.deepEqual(scanFileDirect(candidate), { clean: true, findings: [] });
-  });
+  withCandidate(
+    "# Synthetic release note\n\nNo credentials or private identifiers.\n",
+    (candidate) => {
+      assert.deepEqual(scanFileDirect(candidate), { clean: true, findings: [] });
+    }
+  );
 });
 
 test("defaultScanFile rejects a synthetic secret without echoing its value or path", () => {
