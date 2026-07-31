@@ -13,10 +13,13 @@ rubric-gated self-correction** so their output is trustworthy, and a **sync
 client + local GUI** for deciding what leaves your machine and pushing it to the
 brain.
 
-There are **two repositories** in AIOS, and they are not the same thing:
+AIOS is organized across **three repositories**, with distinct responsibilities:
 
 - **This repo — the individual workspace.** One per person. You work here; you
   choose what to share. Nothing leaves until you `aios push` it.
+- **The [standalone GUI](https://github.com/aiosbrain/aios-workspace-gui).**
+  The future home of the local web GUI and desktop shell; the in-tree copy here
+  remains authoritative until AIO-612.
 - **The [Team Brain](docs/brain-api.md).** The *one* shared service that receives
   everyone's pushes and answers questions across the team. It is the only "team"
   layer.
