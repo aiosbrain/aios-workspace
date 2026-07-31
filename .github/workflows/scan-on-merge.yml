@@ -9,9 +9,9 @@ name: scan-on-merge
 #   AIOS_BRAIN_URL    — e.g. https://aios-team-brain-production.up.railway.app
 #   AIOS_TEAM         — team slug (e.g. aios)
 #   AIOS_API_KEY      — a TEAM-TIER api key (codebase scans are team-tier; least-privilege)
-#   BRAIN_REPO_TOKEN  — a read-only token (PAT / fine-grained) that can checkout aiosbrain/
-#                       aios-team-brain (to fetch the scanner). The built-in GITHUB_TOKEN can't
-#                       read a sibling private repo.
+#
+# The scanner source is fetched anonymously from the public Team Brain repository at an exact
+# commit. No cross-repository token is required.
 #
 # Optional repo VARIABLE (not a secret): AIOS_PUSH_CODEBASE_HEALTH=1 — also attach the
 # workspace's codebase-health snapshot to the scan payload (AIO-608). Default OFF/absent.
@@ -19,6 +19,9 @@ name: scan-on-merge
 on:
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: scan-on-merge
@@ -34,15 +37,16 @@ jobs:
       BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
       AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history — the scanner reads the commit window
+          persist-credentials: false
 
       # Produce coverage/coverage-summary.json + lcov.info for the scanner's _read_coverage()
       # to pick up — otherwise test_coverage_pct lands null and the Codebases dashboard shows
       # "no reports" even though the suite exists and runs. `|| true`: this is a metrics
       # source, not a gate — never block the scan on coverage (the real gate lives in ci.yml).
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: env.AIOS_API_KEY != ''
         with:
           # Repo pins Node 22 (engines >=22 <23; better-sqlite3 ABI) — same as ci.yml.
@@ -57,14 +61,16 @@ jobs:
 
       - name: Fetch the ingestion scanner from aios-team-brain
         if: env.AIOS_API_KEY != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: aiosbrain/aios-team-brain
+          ref: 8c29919236e602af63508abf5e988d4ab1d97eff
           path: .brain-scanner
           sparse-checkout: ingestion
-          token: ${{ secrets.BRAIN_REPO_TOKEN }}
+          persist-credentials: false
+          token: ""
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: env.AIOS_API_KEY != ''
         with:
           python-version: "3.12"
@@ -112,4 +118,4 @@ jobs:
 
       - name: Skip note
         if: env.AIOS_API_KEY == ''
-        run: echo "scan secrets not configured (BRAIN_URL/AIOS_TEAM/AIOS_API_KEY/BRAIN_REPO_TOKEN) — skipping."
+        run: echo "scan secrets not configured (BRAIN_URL/AIOS_TEAM/AIOS_API_KEY) — skipping."
