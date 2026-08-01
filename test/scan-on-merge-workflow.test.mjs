@@ -19,7 +19,7 @@ const SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97";
 const BRAIN_SHA = "8c29919236e602af63508abf5e988d4ab1d97eff";
 
 test("scan-on-merge grants only read access to repository contents", () => {
-  assert.match(workflow, /permissions:\n  contents: read\n/);
+  assert.match(workflow, /permissions:\n {2}contents: read\n/);
   assert.doesNotMatch(workflow, /(?:contents|actions|checks|packages|pull-requests): write/);
 });
 
