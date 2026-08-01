@@ -47,6 +47,12 @@ Depends on: none
 
 **Deferred:** (TODO: follow-up issues or slices cut at authoring time)
 
+**Fenced out:** (only if this spec raises a blanket constraint — "no change to any file
+`/` renders", "must stay byte-identical", "do not touch X". List what that fence pushes
+out and where each item lands: a sibling spec, a follow-up issue. A `Deferred:` list does
+not cover it; the fence is what excluded the work, so the fence has to account for it.
+Delete this line if no fence is raised.)
+
 ## Implementation approach
 
 <!-- Optional human guidance. Leave implementation latitude to the builder when unknown. -->

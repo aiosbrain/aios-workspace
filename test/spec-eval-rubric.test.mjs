@@ -20,8 +20,8 @@ test("loadRubric parses frontmatter + all SR rows", () => {
   assert.equal(r.frontmatter.budget, 2);
   assert.equal(r.frontmatter.pass, "no-must-fails");
   const ids = r.rows.map((row) => row.id);
-  assert.equal(ids.length, 17);
-  for (let i = 1; i <= 17; i++) assert.ok(ids.includes(`SR${i}`), `SR${i}`);
+  assert.equal(ids.length, 19);
+  for (let i = 1; i <= 19; i++) assert.ok(ids.includes(`SR${i}`), `SR${i}`);
 });
 
 test("resolveRubricPath — explicit > repo-local > toolkit fallback", () => {
