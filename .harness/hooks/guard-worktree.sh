@@ -29,6 +29,7 @@
 # HEAD is treated as "not a feature branch" (allowed) so bisect/tag inspection works.
 #
 # Overrides: HARNESS_ALLOW_PRIMARY_CHECKOUT=1 disables the guard entirely.
+#            HARNESS_/AIOS_ALLOW_PRIMARY_COMMIT=1 (env or command-local): `git commit` only.
 #            HARNESS_PRIMARY_COMMIT_POLICY=strict blocks every primary commit.
 #            HARNESS_PRIMARY_EDIT_POLICY=strict blocks every primary edit (incl. main).
 #            HARNESS_PRIMARY_EXEMPT (default `aios.yaml`) space-separated basenames.
@@ -104,46 +105,35 @@ block() {
   exit 2
 }
 
+# resolve_path_tok <token> <fallback-dir> — strip one quote layer and resolve.
+# NEVER eval $1 (attacker-controlled, unexecuted command text): a leading ~ is
+# expanded by pure $HOME string substitution; no shell expansion happens.
+resolve_path_tok() {
+  _t=$(printf '%s' "$1" | sed "s/^['\"]//; s/['\"]\$//")
+  case "$_t" in
+    /*)    printf '%s' "$_t" ;;
+    "~")   printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
+    *)     printf '%s' "$2/$_t" ;;
+  esac
+}
+
 # target_dir <command> <fallback> -> the dir a git command actually operates in,
 # honoring `git -C <dir>` / `git -C=<dir>` (global option, immediately after git)
 # then a leading `cd <dir> &&` / `pushd <dir> &&`. Falls back to the session cwd.
 target_dir() {
   _cmd=$1; _fb=$2
-  _t=$(printf '%s' "$_cmd" | sed -nE "s/.*(^|[^[:alnum:]_])git[[:space:]]+-C(=|[[:space:]]+)('[^']*'|\"[^\"]*\"|[^[:space:];&|]+).*/\3/p" | head -1)
-  if [ -z "$_t" ]; then
-    _t=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
-  fi
-  [ -n "$_t" ] || { printf '%s' "$_fb"; return; }
-  _t=$(printf '%s' "$_t" | sed "s/^['\"]//; s/['\"]\$//")
-  # NEVER eval $_t — it is attacker-controlled, unexecuted command text. Expand a
-  # leading ~ / ~/ with a pure string substitution of $HOME; anything else is
-  # treated as a path relative to the fallback dir. No shell expansion happens.
-  case "$_t" in
-    /*)    printf '%s' "$_t" ;;
-    "~")   printf '%s' "$HOME" ;;
-    "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
-    *)     printf '%s' "$_fb/$_t" ;;
-  esac
+  _t0=$(printf '%s' "$_cmd" | sed -nE "s/.*(^|[^[:alnum:]_])git[[:space:]]+-C(=|[[:space:]]+)('[^']*'|\"[^\"]*\"|[^[:space:];&|]+).*/\3/p" | head -1)
+  [ -n "$_t0" ] || _t0=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
+  if [ -n "$_t0" ]; then resolve_path_tok "$_t0" "$_fb"; else printf '%s' "$_fb"; fi
 }
 
 # shell_dir <command> <fallback> -> cwd in which shell redirects and file
 # mutation operands resolve. Unlike target_dir, `git -C` does not affect the
 # shell process cwd; only a leading cd/pushd does.
 shell_dir() {
-  _cmd=$1
-  _fb=$2
-  _t=$(printf '%s' "$_cmd" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
-  [ -n "$_t" ] || {
-    printf '%s' "$_fb"
-    return
-  }
-  _t=$(printf '%s' "$_t" | sed "s/^['\"]//; s/['\"]\$//")
-  case "$_t" in
-    /*) printf '%s' "$_t" ;;
-    "~") printf '%s' "$HOME" ;;
-    "~/"*) printf '%s/%s' "$HOME" "${_t#~/}" ;;
-    *) printf '%s' "$_fb/$_t" ;;
-  esac
+  _t0=$(printf '%s' "$1" | sed -nE "s/^[[:space:]]*(cd|pushd)[[:space:]]+(--[[:space:]]+)?('[^']*'|\"[^\"]*\"|[^[:space:];&|]+)[[:space:]]*(&&|;).*/\3/p" | head -1)
+  if [ -n "$_t0" ]; then resolve_path_tok "$_t0" "$2"; else printf '%s' "$2"; fi
 }
 
 # norm_git <command> -> command with the run of git GLOBAL options (right after
@@ -159,34 +149,44 @@ norm_git() {
   return
 }
 
+# Shared awk heredoc bookkeeping for the two scanners below.
+AWK_HEREDOC='
+  function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
+    i = start; strip_tabs = substr(line, i, 1) == "-"
+    if (strip_tabs) i++
+    while (substr(line, i, 1) ~ /[ \t]/) i++
+    quote = substr(line, i, 1)
+    if (quote == "\047" || quote == "\"") i++; else quote = ""
+    delim = ""
+    while (i <= length(line)) {
+      c = substr(line, i, 1)
+      if ((quote != "" && c == quote) ||
+          (quote == "" && c ~ /[ \t;|&<>]/)) break
+      delim = delim c
+      i++
+    }
+    if (delim != "") {
+      heredoc[++heredoc_count] = delim; heredoc_strip_tabs[heredoc_count] = strip_tabs
+    }
+    return i
+  }
+  function in_heredoc_body(line) {
+    if (heredoc_current > 0 && heredoc_current <= heredoc_count) {
+      closing_line = line
+      if (heredoc_strip_tabs[heredoc_current]) sub(/^\t+/, "", closing_line)
+      if (closing_line == heredoc[heredoc_current]) heredoc_current++
+      return 1
+    }
+    return 0
+  }
+'
+
 # shell_redirection_targets <command> -> one output-redirection target per line.
 # Operators inside quotes and every line of a heredoc body are data, not shell
 # syntax. The scanner intentionally does not execute or expand command text.
 shell_redirection_targets() {
-  awk '
+  awk "$AWK_HEREDOC"'
     function space(c) { return c == " " || c == "\t" }
-    function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
-      i = start
-      strip_tabs = substr(line, i, 1) == "-"
-      if (strip_tabs) i++
-      while (space(substr(line, i, 1))) i++
-      quote = substr(line, i, 1)
-      if (quote == "\047" || quote == "\"") i++
-      else quote = ""
-      delim = ""
-      while (i <= length(line)) {
-        c = substr(line, i, 1)
-        if ((quote != "" && c == quote) ||
-            (quote == "" && (space(c) || c ~ /[;|&<>]/))) break
-        delim = delim c
-        i++
-      }
-      if (delim != "") {
-        heredoc[++count] = delim
-        heredoc_strips_tabs[count] = strip_tabs
-      }
-      return i
-    }
     function emit_target(line, start,    i, c, quote, escaped, target) {
       i = start
       while (space(substr(line, i, 1))) i++
@@ -216,12 +216,7 @@ shell_redirection_targets() {
       return i
     }
     {
-      if (current > 0 && current <= count) {
-        closing_line = $0
-        if (heredoc_strips_tabs[current]) sub(/^\t+/, "", closing_line)
-        if (closing_line == heredoc[current]) current++
-        next
-      }
+      if (in_heredoc_body($0)) next
       quote = ""
       escaped = 0
       for (i = 1; i <= length($0); i++) {
@@ -242,22 +237,113 @@ shell_redirection_targets() {
           if (substr($0, i + 1, 1) != "&") i = emit_target($0, i + 1)
         }
       }
-      if (current == 0 && count > 0) current = 1
+      if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
     }
   '
+}
+
+shell_command_segments() {
+  printf '%s' "$1" | awk "$AWK_HEREDOC"'
+    function emit(kind) {
+      gsub(/^[ \t]+|[ \t]+$/, "", segment)
+      if (segment != "") print kind "|" segment
+      segment = ""
+    }
+    {
+      if (in_heredoc_body($0)) next
+      quote = ""; escaped = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        nextc = substr($0, i + 1, 1)
+        if (escaped) {
+          segment = segment c; escaped = 0
+        } else if (c == "\\") {
+          segment = segment c; escaped = 1
+        } else if (quote != "") {
+          segment = segment c
+          if (c == quote) quote = ""
+        } else if (c == "\047" || c == "\"") {
+          segment = segment c; quote = c
+        } else if (c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[ \t]/)) { break
+        } else if (c == "<" && nextc == "<") {
+          segment = segment c nextc
+          i++
+          heredoc_end = remember_heredoc($0, i + 1)
+          segment = segment substr($0, i + 1, heredoc_end - i)
+          i = heredoc_end
+        } else if ((c == "&" || c == "|") && nextc == c) {
+          emit(in_pipeline ? "P" : "S"); i++; in_pipeline = 0
+        } else if (c == "|") {
+          emit("P"); in_pipeline = 1
+        } else if (c == "&") {
+          emit("P"); in_pipeline = 0
+        } else if (c == ";") {
+          emit(in_pipeline ? "P" : "S"); in_pipeline = 0
+        } else if (c == "(" && segment ~ /^[ \t]*$/) {
+          # AIO-637 F3/F6: unquoted `(` at command position opens a subshell
+          # (O/C markers let the driver restore the tracked cwd at the close).
+          # A `)` closing a mid-word paren ($(..), %(refname)) or with no open
+          # at all (case patterns) stays DATA — never splits a segment.
+          print "O|("; segment = ""; in_pipeline = 0; depth++
+        } else if (c == ")" && (depth > 0 || paren > 0)) {
+          if (paren > 0) { paren--; segment = segment c }
+          else { emit(in_pipeline ? "P" : "S"); print "C|)"; in_pipeline = 0; depth-- }
+        } else {
+          if (c == "(") paren++
+          segment = segment c
+        }
+      }
+      emit(in_pipeline ? "P" : "S"); in_pipeline = 0
+      if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
+    }
+  '
+}
+
+# Command-local override recognition (<VAR>=1 directly or behind `env`), scoped
+# to exactly one segment. AIO-637 F1: AIOS_ALLOW_PRIMARY_COMMIT is the pre-commit
+# hook's documented hotfix escape hatch — honored for the COMMIT check only.
+segment_allows_var() {
+  printf '%s' "$1" | grep -Eq \
+    '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*'"$2"'=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+'"$2"'=1([[:space:]]|$)'
+}
+segment_allows_primary() { segment_allows_var "$1" HARNESS_ALLOW_PRIMARY_CHECKOUT; }
+segment_allows_primary_commit() { segment_allows_var "$1" HARNESS_ALLOW_PRIMARY_COMMIT ||
+  segment_allows_var "$1" AIOS_ALLOW_PRIMARY_COMMIT; } # F7: both names (git-hook parity)
+command_without_env_prefix() {
+  printf '%s' "$1" | sed -E \
+    -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
+    -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//'
+}
+
+# AIO-637 F2: if|elif|while|until stripped too — a cd in a compound-command
+# CONDITION (`if cd <dir>; then …`) changes the parent shell cwd.
+segment_cd_target() {
+  _cd_cmd=$(printf '%s' "$1" | sed -E -e 's/^[[:space:]]*\{[[:space:]]*//' \
+    -e 's/^[[:space:]]*(if|elif|while|until|then|do|else)[[:space:]]+//' -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
+    -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//' -e 's/^[[:space:]]*(command([[:space:]]+--)?|builtin)[[:space:]]+//' \
+    -e 's/[[:space:]]+[0-9]*(>>?|<)[[:space:]]*[^[:space:]]+.*$//')
+  case "$_cd_cmd" in
+    cd[[:space:]]*|pushd[[:space:]]*) shell_dir "$_cd_cmd;" "$2" ;;
+    *) return 1 ;;
+  esac
 }
 
 CWD=$(printf '%s' "$EVENT" | jq -r '.cwd // empty')
 [ -n "$CWD" ] || CWD=$(pwd)
 
 if [ "$MODE" = "command" ]; then
-  CMD=$(printf '%s' "$EVENT" | jq -r '.command // empty') || exit 3
-  [ -n "$CMD" ] || exit 3
+  FULL_CMD=$(printf '%s' "$EVENT" | jq -r '.command // empty') || exit 3
+  [ -n "$FULL_CMD" ] || exit 3
 
-  TDIR=$(target_dir "$CMD" "$CWD")
-  [ -d "$TDIR" ] || TDIR="$CWD"
-  SDIR=$(shell_dir "$CMD" "$CWD")
-  [ -d "$SDIR" ] || SDIR="$CWD"
+check_command_segment() {
+  CMD=$1
+  segment_allows_primary "$CMD" && return 0
+  CLASS_CMD=$(command_without_env_prefix "$CMD")
+
+  TDIR=$(target_dir "$CMD" "$BASE_CWD")
+  [ -d "$TDIR" ] || TDIR="$BASE_CWD"
+  SDIR=$(shell_dir "$CMD" "$BASE_CWD")
+  [ -d "$SDIR" ] || SDIR="$BASE_CWD"
 
   # Under strict edit policy, shell file mutations are held to the same rule as
   # pre_edit Write/Edit: no writes into a PRIMARY checkout (>, >>, cp, mv, rm,
@@ -274,7 +360,10 @@ if [ "$MODE" = "command" ]; then
     # (`tar -cf`) only reads and is deliberately NOT matched.
     _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
     _cands=$(printf '%s' "$CMD" | shell_redirection_targets)
-    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re"; then
+    _is_package_manager=0
+    printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)([[:space:]]|$)' && _is_package_manager=1
+    if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re" &&
+       { [ "$_is_package_manager" = 0 ] || ! printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)[[:space:]]+install([[:space:]]|$)'; }; then
       _cands="$_cands
 $(printf '%s\n' "$CMD" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF' | grep -Evx "$_muts|sed|cp|mv|rsync|tar|bsdtar|unzip|ditto")"
     elif printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])(cp|mv|rsync)[[:space:]]'; then
@@ -316,7 +405,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
   fi
 
   set -- $(probe "$TDIR"); KIND=${1:-none}; BRANCH=${2:-}
-  [ "$KIND" = "primary" ] || exit 0
+  [ "$KIND" = "primary" ] || return 0
 
   NORM=$(norm_git "$CMD")
 
@@ -334,7 +423,9 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
 
   # Committing in the primary checkout (belt-and-suspenders with the git hook).
   if printf '%s' "$NORM" | grep -qE 'git[[:space:]]+commit([[:space:]]|$)'; then
-    if [ "${HARNESS_PRIMARY_COMMIT_POLICY:-default-ok}" = "strict" ]; then
+    if [ "${HARNESS_ALLOW_PRIMARY_COMMIT:-${AIOS_ALLOW_PRIMARY_COMMIT:-0}}" = "1" ] || segment_allows_primary_commit "$CMD"; then
+      : # documented genuine-hotfix escape hatch — same override the git hook honors
+    elif [ "${HARNESS_PRIMARY_COMMIT_POLICY:-default-ok}" = "strict" ]; then
       block "committing in the primary checkout (branch '$BRANCH', strict policy)" \
         "The primary checkout only advances via \`git merge --ff-only\`; author commits in a worktree."
     elif ! is_default_branch "$BRANCH" "$TDIR"; then
@@ -342,6 +433,32 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
         "Feature commits belong in a worktree, never on a branch committed in the primary checkout."
     fi
   fi
+  return 0
+}
+
+  BASE_CWD=$CWD
+  CWD_STACK=''  # AIO-637 F3: newline-separated stack of pre-subshell cwds
+  NL='
+'
+  SEGMENTS=$(shell_command_segments "$FULL_CMD") || exit 3
+  while IFS= read -r CMD_RECORD || [ -n "$CMD_RECORD" ]; do
+    [ -n "$CMD_RECORD" ] || continue
+    SEGMENT_SCOPE=${CMD_RECORD%%|*}
+    CMD_SEGMENT=${CMD_RECORD#*|}
+    case "$SEGMENT_SCOPE" in
+      O) CWD_STACK="$BASE_CWD$NL$CWD_STACK"; continue ;;
+      C) if [ -n "$CWD_STACK" ]; then
+           BASE_CWD=${CWD_STACK%%"$NL"*}; CWD_STACK=${CWD_STACK#*"$NL"}
+         fi; continue ;;
+    esac
+    check_command_segment "$CMD_SEGMENT"
+    if [ "$SEGMENT_SCOPE" = S ]; then
+      NEXT_CWD=$(segment_cd_target "$CMD_SEGMENT" "$BASE_CWD") || NEXT_CWD=
+      [ -n "$NEXT_CWD" ] && [ -d "$NEXT_CWD" ] && BASE_CWD=$NEXT_CWD
+    fi
+  done <<EOF
+$SEGMENTS
+EOF
   exit 0
 fi
 

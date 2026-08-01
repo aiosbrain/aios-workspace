@@ -119,6 +119,12 @@ WT=$(mktemp -d)
   git worktree add -q -b feat/x "$WT/wt" main ) >/dev/null 2>&1
 wpc() { jq -cn --arg cwd "$1" --arg cmd "$2" '{protocol_version:"1.0",event:"pre_command",runtime:{name:"mock"},cwd:$cwd,command:$cmd}'; }
 wpe() { jq -cn --arg cwd "$1" --arg p "$2" '{protocol_version:"1.0",event:"pre_edit",runtime:{name:"mock"},cwd:$cwd,paths:[{path:$p,action:"update"}],added_content:[]}'; }
+tcommit_strict() { # name expected_exit json — strict commit policy
+  local name="$1" want="$2" json="$3" got
+  printf '%s' "$json" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+  got=$?
+  if [ "$got" = "$want" ]; then PASS=$((PASS+1)); echo "PASS ($got): $name"; else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"; fi
+}
 t "blocks checkout -b in primary"     2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git checkout -b feat/y')"
 t "blocks switch -c in primary"       2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git switch -c feat/z')"
 t "blocks git branch <new> in primary" 2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git branch newb')"
@@ -127,6 +133,89 @@ t "allows commit on main in primary"  0 "$H/guard-worktree.sh" "$(wpc "$WT" 'git
 printf '%s' "$(wpc "$WT" 'git commit -m x')" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main commit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main commit"; fi
 t "allows commit inside worktree"     0 "$H/guard-worktree.sh" "$(wpc "$WT/wt" 'git commit -m x')"
+# AIO-637: command-local overrides are honored in direct and env-prefixed
+# forms, but apply to exactly one compound-command segment.
+t "allows direct command-local primary override" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "allows env-prefixed command-local primary override" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "direct override does not leak across compound command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git status && git checkout -b feat/not-overridden')"
+t "env override does not leak across compound command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git status; git checkout -b feat/not-overridden')"
+t "later overridden segment is independently allowed" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" 'git status && HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
+t "compound git targets are classified independently" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "git -C $WT/wt status && git -C $WT checkout -b feat/blocked")"
+t "semicolon cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT; git checkout -b feat/blocked")"
+t "newline cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'cd '"$WT"$'\ngit checkout -b feat/blocked')"
+t "chained cd state reaches primary branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT/wt && cd $WT && git checkout -b feat/blocked")"
+t "reverse chained cd reaches worktree branch command" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" "cd $WT && cd $WT/wt && git checkout -b feat/allowed")"
+t "assignment-prefixed cd state carries" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "FLAG=1 cd $WT; git checkout -b feat/blocked")"
+t "env-prefixed cd state carries conservatively" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "env FLAG=1 cd $WT; git checkout -b feat/blocked")"
+t "command-prefixed cd state carries" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "command cd $WT; git checkout -b feat/blocked")"
+t "brace-group cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "{ cd $WT; }; git checkout -b feat/blocked")"
+t "redirected cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT >/tmp/cd.log; git checkout -b feat/blocked")"
+t "builtin cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "builtin cd $WT; git checkout -b feat/blocked")"
+t "command -- cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "command -- cd $WT; git checkout -b feat/blocked")"
+t "comment after cd does not hide cwd transition" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'cd '"$WT"$' # enter primary\ngit checkout -b feat/blocked')"
+t "if-group cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "if true; then cd $WT; fi; git checkout -b feat/blocked")"
+# AIO-637 F2: a cd in an if/while CONDITION changes the parent shell cwd too
+t "if-condition cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "if cd $WT; then git checkout -b feat/blocked; fi")"
+t "while-condition cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "while cd $WT; do git checkout -b feat/blocked; done")"
+t "if-condition cd to worktree keeps branch command safe" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" "if cd $WT/wt; then git checkout -b feat/allowed; fi")"
+# AIO-637 F3: a subshell-scoped cd applies inside the parens, never past them
+t "subshell cd reaches primary branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "(cd $WT && git checkout -b feat/blocked)")"
+t "subshell cd does not persist into later branch command" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "(cd $WT && git status); git checkout -b feat/allowed")"
+t "pipeline-local cd does not persist" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT | cat; git checkout -b feat/allowed")"
+t "background cd does not persist" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT & wait; git checkout -b feat/allowed")"
+tcommit_strict "semicolon cd state carries into strict commit" 2 \
+  "$(wpc "$WT/wt" "cd $WT; git commit -m blocked")"
+t "direct override before heredoc does not leak after terminator" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\ngit checkout -b harmless-data\nBODY\ngit -C '"$WT"$' checkout -b feat/blocked')"
+t "env override before heredoc does not leak after terminator" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\ngit checkout -b harmless-data\nBODY\ngit -C '"$WT"$' checkout -b feat/blocked')"
+tcommit_strict "heredoc override does not leak into strict commit" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\ngit -C '"$WT"$' commit -m blocked')"
+# AIO-637 F1: the documented pre-commit escape hatch (CLAUDE.md §5) is honored
+# by the agent hook under strict commit policy — direct and env-prefixed,
+# segment-scoped, and commit-scoped (it never unlocks branch creation).
+tcommit_strict "strict honors direct AIOS_ALLOW_PRIMARY_COMMIT override" 0 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict honors env-prefixed AIOS_ALLOW_PRIMARY_COMMIT override" 0 \
+  "$(wpc "$WT" 'env AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict still blocks primary commit without AIOS override" 2 \
+  "$(wpc "$WT" 'git commit -m no-override')"
+tcommit_strict "AIOS commit override does not leak across compound command" 2 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m one && git commit -m two')"
+tcommit_strict "AIOS commit override does not unlock branch creation" 2 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git checkout -b feat/nope')"
+# AIO-637 F7: HARNESS_ALLOW_PRIMARY_COMMIT (the git hook's primary name) too
+tcommit_strict "strict honors direct HARNESS_ALLOW_PRIMARY_COMMIT override" 0 "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict honors env-prefixed HARNESS_ALLOW_PRIMARY_COMMIT override" 0 "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "HARNESS commit override does not unlock branch creation" 2 "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_COMMIT=1 git checkout -b feat/nope')"
+t "branch-like heredoc body is inert" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'cat <<\'BODY\'\ngit -C '"$WT"$' checkout -b harmless-data\nBODY\ngit status')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
 printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
@@ -147,6 +236,90 @@ ts "strict allows cp outside primary w/ redirect" 0 "$(wpc "$WT/wt" 'cp /tmp/a /
 ts "strict blocks mkdir -p new deep primary path" 2 "$(wpc "$WT/wt" "mkdir -p $WT/new1/new2")"
 ts "strict blocks redirect into new deep primary path" 2 "$(wpc "$WT/wt" "echo x > $WT/new1/new2/f.txt")"
 ts "strict allows mkdir -p deep path outside repos" 0 "$(wpc "$WT/wt" 'mkdir -p /tmp/guards431/new1/new2')"
+# AIO-637: package-manager `install` is not the filesystem `install` utility.
+ts "strict allows npm install in primary" 0 "$(wpc "$WT" 'npm install')"
+ts "strict allows pnpm install in primary" 0 "$(wpc "$WT" 'pnpm install')"
+ts "strict allows yarn install in primary" 0 "$(wpc "$WT" 'yarn install')"
+ts "strict allows bun install in primary" 0 "$(wpc "$WT" 'bun install')"
+ts "strict still blocks write after package manager segment" 2 \
+  "$(wpc "$WT/wt" "npm install && echo x > $WT/package-write")"
+ts "strict still blocks tee after package manager segment" 2 \
+  "$(wpc "$WT/wt" "pnpm install; echo x | tee $WT/package-write")"
+ts "strict semicolon cd state carries into redirect" 2 \
+  "$(wpc "$WT/wt" "cd $WT; echo x > primary-write")"
+ts "strict newline cd state carries into copy" 2 \
+  "$(wpc "$WT/wt" $'cd '"$WT"$'\ncp /tmp/source primary-copy')"
+ts "strict chained cd state reaches primary copy" 2 \
+  "$(wpc "$WT/wt" "cd $WT/wt && cd $WT && cp /tmp/source primary-copy")"
+ts "strict reverse chained cd reaches worktree copy" 0 \
+  "$(wpc "$WT" "cd $WT && cd $WT/wt && cp /tmp/source worktree-copy")"
+ts "strict assignment-prefixed cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "FLAG=1 cd $WT; echo x > primary-write")"
+ts "strict command-prefixed cd reaches primary move" 2 \
+  "$(wpc "$WT/wt" "command cd $WT; mv /tmp/source primary-move")"
+ts "strict brace-group cd reaches primary tee" 2 \
+  "$(wpc "$WT/wt" "{ cd $WT; }; echo x | tee primary-tee")"
+ts "strict redirected cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "cd $WT >/tmp/cd.log; echo x > primary-write")"
+ts "strict builtin cd reaches primary copy" 2 \
+  "$(wpc "$WT/wt" "builtin cd $WT; cp /tmp/source primary-copy")"
+ts "strict command -- cd reaches primary move" 2 \
+  "$(wpc "$WT/wt" "command -- cd $WT; mv /tmp/source primary-move")"
+ts "strict comment after cd does not hide cwd transition" 2 \
+  "$(wpc "$WT/wt" $'cd '"$WT"$' # enter primary\necho x > primary-write')"
+ts "strict if-group cd reaches primary tee" 2 \
+  "$(wpc "$WT/wt" "if true; then cd $WT; fi; echo x | tee primary-tee")"
+# AIO-637 F2: cd in a compound-command CONDITION is tracked
+ts "strict if-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "if cd $WT; then echo x > primary-write; fi")"
+ts "strict while-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "while cd $WT; do echo x > primary-write; done")"
+ts "strict until-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "until cd $WT; do echo x > primary-write; done")"
+ts "strict elif-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "if false; then :; elif cd $WT; then echo x > primary-write; fi")"
+ts "strict if-condition cd to worktree keeps write safe" 0 \
+  "$(wpc "$WT" "if cd $WT/wt; then echo x > worktree-write; fi")"
+# AIO-637 F3: subshell cd is scoped to the parenthesized group
+ts "strict subshell cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "(cd $WT && echo x > f)")"
+ts "strict subshell cd to worktree keeps write safe" 0 \
+  "$(wpc "$WT" "(cd $WT/wt && echo x > f)")"
+ts "strict subshell cd does not leak past the closing paren" 0 \
+  "$(wpc "$WT/wt" "(cd $WT && ls); echo x > local.txt")"
+ts "strict subshell close restores tracked parent cwd" 2 \
+  "$(wpc "$WT/wt" "cd $WT; (cd /tmp && ls); echo x > primary-write")"
+# AIO-637 F6: a `)` closing a mid-word $(…) is data — a command-substitution
+# argument must not split the primary destination away from its command.
+ts "strict blocks cp with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "cp \$(cat list) $WT/dst")"
+ts "strict blocks tee with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "echo y | tee \$(cat list) $WT/f")"
+ts "strict blocks mv with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "mv \$(ls x) $WT/dst")"
+ts "strict blocks cmd-subst arg inside subshell into primary" 2 "$(wpc "$WT/wt" "(cp \$(cat list) $WT/dst2)")"
+ts "strict allows cp with cmd-subst arg outside primary" 0 "$(wpc "$WT/wt" "cp \$(cat list) /tmp/dst637")"
+ts "strict case pattern stays inert for safe write" 0 "$(wpc "$WT/wt" "case x in a) echo hi;; esac; echo x > local.txt")"
+ts "strict case pattern does not hide a primary write" 2 "$(wpc "$WT/wt" "case x in a) echo hi;; esac; echo x > $WT/case-write")"
+ts "strict pipeline-local cd does not persist into copy" 0 \
+  "$(wpc "$WT/wt" "cd $WT | cat; cp /tmp/source worktree-copy")"
+ts "strict pipeline-local cd does not affect peer redirect" 0 \
+  "$(wpc "$WT/wt" "cd $WT | echo x > worktree-write")"
+ts "strict background cd does not persist into copy" 0 \
+  "$(wpc "$WT/wt" "cd $WT & wait; cp /tmp/source worktree-copy")"
+ts "strict semicolon cd state carries into tee" 2 \
+  "$(wpc "$WT/wt" "cd $WT; echo x | tee primary-tee")"
+ts "strict semicolon cd state carries into move" 2 \
+  "$(wpc "$WT/wt" "cd $WT; mv /tmp/source primary-move")"
+ts "strict direct override before heredoc does not leak into write" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\necho x > harmless-data\nBODY\necho x > '"$WT"$'/primary-write')"
+ts "strict env override before heredoc does not leak into write" 2 \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\necho x > harmless-data\nBODY\necho x > '"$WT"$'/primary-write')"
+ts "strict heredoc override does not leak into tee" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\necho x | tee '"$WT"$'/primary-tee')"
+ts "strict heredoc override does not leak into copy" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\ncp /tmp/source '"$WT"$'/primary-copy')"
+ts "strict heredoc override does not leak into move" 2 \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\nmv /tmp/source '"$WT"$'/primary-move')"
+ts "strict redirect-like heredoc body is inert" 0 \
+  "$(wpc "$WT/wt" $'cat <<\'BODY\'\necho x > '"$WT"$'/harmless-data\nBODY\necho done')"
 ts "strict allows greater-than text in a heredoc from a worktree" 0 \
   "$(wpc "$WT/wt" $'git commit -F - <<\'MSG\'\n531 lines > ../a.txt\nMSG')"
 ts "strict closes tab-stripping heredoc before a real redirect" 2 \
