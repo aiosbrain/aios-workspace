@@ -1,26 +1,36 @@
-name: Publish @aiosbrain/aios to npm (Trusted Publishing / OIDC)
+name: Publish to npm (Trusted Publishing / OIDC)
 
-# Publishes the CLI package @aiosbrain/aios using npm Trusted Publishing — NO npm
-# token stored anywhere (IP-scoped granular tokens do not work from CI runners;
-# OIDC is the supported path, proven on @aios-alpha/design + /ui).
+# Publishes @aiosbrain/aios (repo root) or @aiosbrain/foundation (packages/foundation)
+# using npm Trusted Publishing — NO npm token stored anywhere (IP-scoped granular tokens
+# do not work from CI runners; OIDC is the supported path, proven on @aios-alpha/design + /ui).
 #
-# Manual dispatch only, with an explicit version input that must EXACTLY match
-# package.json on the chosen ref — publishing is a deliberate act, never a side
+# Manual dispatch only, with an explicit version input that must EXACTLY match the chosen
+# package's package.json on the chosen ref — publishing is a deliberate act, never a side
 # effect of a merge, and the input guards against dispatching the wrong ref.
 #
-# One-time setup on npmjs.com (web UI — cannot be scripted), after the first
-# manual publish or via the package settings once the name is claimed:
-#   npmjs.com → @aiosbrain/aios → Settings → Trusted Publisher → GitHub Actions:
-#     Organization/user: aiosbrain          (must EXACTLY match the GitHub org)
+# One-time setup on npmjs.com (web UI — cannot be scripted), per package:
+#   npmjs.com → the package → Settings → Trusted Publisher → GitHub Actions:
+#     Organization/user: aiosbrain            (must EXACTLY match the GitHub org)
 #     Repository:        aios-workspace
 #     Workflow filename: publish-npm.yml
-# (Same shape as @aiosbrain/foundation.)
+# (Both packages point at this same workflow file.)
+#
+# NOTE: no `registry-url` on setup-node — it writes an `_authToken` placeholder into
+# .npmrc that OIDC does not need (empirically OIDC still wins with npm >= 11.5.1, but
+# omitting it is cleaner). npm is pinned with lifecycle scripts disabled.
 
 on:
   workflow_dispatch:
     inputs:
+      package:
+        description: "Which package to publish"
+        required: true
+        type: choice
+        options:
+          - aios
+          - foundation
       version:
-        description: "Version to publish — must equal package.json's version on this ref (e.g. 0.9.1)"
+        description: "Version to publish — must equal the chosen package.json's version on this ref (e.g. 0.9.1)"
         required: true
         type: string
 
@@ -32,33 +42,69 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          registry-url: "https://registry.npmjs.org"
 
       # Trusted publishing needs npm >= 11.5.1 (newer than the npm bundled with Node 22).
-      - name: Upgrade npm
-        run: npm install -g npm@latest
+      - name: Upgrade npm (pinned)
+        run: npm install -g npm@12.0.2 --ignore-scripts
 
-      - name: Version guard (input must match package.json)
+      - name: Resolve package directory
+        id: pkg
+        env:
+          INPUT_PACKAGE: ${{ inputs.package }}
         run: |
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ "${{ inputs.version }}" != "$PKG_VERSION" ]; then
-            echo "::error::input version '${{ inputs.version }}' != package.json version '$PKG_VERSION' on this ref — bump package.json (with a CHANGELOG entry) first."
+          if [ "$INPUT_PACKAGE" = "foundation" ]; then
+            echo "dir=packages/foundation" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Name + version guard (manifest must be the selected package at the input version)
+        env:
+          INPUT_PACKAGE: ${{ inputs.package }}
+          INPUT_VERSION: ${{ inputs.version }}
+          PKG_DIR: ${{ steps.pkg.outputs.dir }}
+        run: |
+          PKG_VERSION="$(node -p "require('./$PKG_DIR/package.json').version")"
+          PKG_NAME="$(node -p "require('./$PKG_DIR/package.json').name")"
+          if [ "$INPUT_PACKAGE" = "foundation" ]; then EXPECTED="@aiosbrain/foundation"; else EXPECTED="@aiosbrain/aios"; fi
+          if [ "$PKG_NAME" != "$EXPECTED" ]; then
+            echo "::error::manifest at $PKG_DIR is '$PKG_NAME', expected '$EXPECTED' — refusing to publish a renamed/wrong package."
             exit 1
           fi
+          if [ "$INPUT_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::input version '$INPUT_VERSION' != $PKG_NAME version '$PKG_VERSION' on this ref — bump package.json (with a CHANGELOG entry) first."
+            exit 1
+          fi
+          echo "Publishing $PKG_NAME@$PKG_VERSION"
 
       - name: Install (builds dist/ via postinstall)
         run: npm ci
 
-      - name: Build operator-loop strictly (dist/ ships in the tarball)
+      - name: Build operator-loop strictly (dist/ ships in the @aiosbrain/aios tarball)
+        if: inputs.package == 'aios'
         run: AIOS_LOOP_BUILD_STRICT=1 node scripts/ensure-loop-built.mjs
 
       - name: Golden-path gate (pack → clean install → scaffold → validate → status)
+        if: inputs.package == 'aios'
         run: npm run test:pack-golden
 
+      - name: Foundation gate (contract/parity tests + pack sanity)
+        if: inputs.package == 'foundation'
+        run: |
+          node --test --test-force-exit test/foundation-package.test.mjs
+          npm pack --dry-run --workspace packages/foundation
+
       - name: Publish @aiosbrain/aios
+        if: inputs.package == 'aios'
         run: npm publish
+
+      - name: Publish @aiosbrain/foundation
+        if: inputs.package == 'foundation'
+        run: npm publish --workspace packages/foundation
