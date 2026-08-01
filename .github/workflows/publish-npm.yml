@@ -1,0 +1,64 @@
+name: Publish @aiosbrain/aios to npm (Trusted Publishing / OIDC)
+
+# Publishes the CLI package @aiosbrain/aios using npm Trusted Publishing — NO npm
+# token stored anywhere (IP-scoped granular tokens do not work from CI runners;
+# OIDC is the supported path, proven on @aios-alpha/design + /ui).
+#
+# Manual dispatch only, with an explicit version input that must EXACTLY match
+# package.json on the chosen ref — publishing is a deliberate act, never a side
+# effect of a merge, and the input guards against dispatching the wrong ref.
+#
+# One-time setup on npmjs.com (web UI — cannot be scripted), after the first
+# manual publish or via the package settings once the name is claimed:
+#   npmjs.com → @aiosbrain/aios → Settings → Trusted Publisher → GitHub Actions:
+#     Organization/user: aiosbrain          (must EXACTLY match the GitHub org)
+#     Repository:        aios-workspace
+#     Workflow filename: publish-npm.yml
+# (Same shape as @aiosbrain/foundation.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish — must equal package.json's version on this ref (e.g. 0.9.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: lets the job mint the OIDC token npm verifies
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs npm >= 11.5.1 (newer than the npm bundled with Node 22).
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Version guard (input must match package.json)
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${{ inputs.version }}" != "$PKG_VERSION" ]; then
+            echo "::error::input version '${{ inputs.version }}' != package.json version '$PKG_VERSION' on this ref — bump package.json (with a CHANGELOG entry) first."
+            exit 1
+          fi
+
+      - name: Install (builds dist/ via postinstall)
+        run: npm ci
+
+      - name: Build operator-loop strictly (dist/ ships in the tarball)
+        run: AIOS_LOOP_BUILD_STRICT=1 node scripts/ensure-loop-built.mjs
+
+      - name: Golden-path gate (pack → clean install → scaffold → validate → status)
+        run: npm run test:pack-golden
+
+      - name: Publish @aiosbrain/aios
+        run: npm publish

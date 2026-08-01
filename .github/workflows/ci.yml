@@ -388,6 +388,23 @@ jobs:
       - run: npm ci
       - run: npm run test:install-smoke
 
+  pack-golden:
+    # AIO-668: the @aiosbrain/aios npm package must stay repo-clone-independent.
+    # Packs the tarball, installs it into a clean prefix, then scaffolds +
+    # validates + runs offline `aios status` from the installed location only.
+    name: npm pack golden path
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code != 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:pack-golden
+
   mutation:
     name: Changed-code mutation (calibration)
     runs-on: ubuntu-latest

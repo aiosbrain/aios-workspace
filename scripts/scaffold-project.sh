@@ -628,12 +628,12 @@ if [ -d "$SCAFFOLD/.claude/commands" ]; then
   mkdir -p "$OUTPUT/.claude/commands"
   cp "$SCAFFOLD/.claude/commands/"*.md "$OUTPUT/.claude/commands/" 2>/dev/null || true
 fi
-if [ -f "$SCAFFOLD/opencode.json" ]; then
-  cp "$SCAFFOLD/opencode.json" "$OUTPUT/opencode.json"
-fi
+[ ! -f "$SCAFFOLD/opencode.json" ] || cp "$SCAFFOLD/opencode.json" "$OUTPUT/opencode.json"
 if [ -d "$SCAFFOLD/.opencode" ]; then
   mkdir -p "$OUTPUT/.opencode"
   cp -R "$SCAFFOLD/.opencode/." "$OUTPUT/.opencode/"
+  # npm strips .gitignore files from published tarballs (AIO-668) — recreate the .opencode one.
+  [ -f "$OUTPUT/.opencode/.gitignore" ] || echo "node_modules/" > "$OUTPUT/.opencode/.gitignore"
 fi
 
 # Governance guard: ship the PreToolUse hook + its secret patterns + the hook
