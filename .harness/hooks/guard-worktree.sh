@@ -247,7 +247,6 @@ shell_redirection_targets() {
   '
 }
 
-# Emit compound-command segments while suppressing heredoc bodies as data.
 shell_command_segments() {
   printf '%s' "$1" | awk '
     function emit(kind) {
@@ -294,6 +293,7 @@ shell_command_segments() {
           if (c == quote) quote = ""
         } else if (c == "\047" || c == "\"") {
           segment = segment c; quote = c
+        } else if (c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[ \t]/)) { break
         } else if (c == "<" && nextc == "<") {
           segment = segment c nextc
           i++
@@ -304,7 +304,9 @@ shell_command_segments() {
           emit(in_pipeline ? "P" : "S"); i++; in_pipeline = 0
         } else if (c == "|") {
           emit("P"); in_pipeline = 1
-        } else if (c == ";" || c == "&") {
+        } else if (c == "&") {
+          emit("P"); in_pipeline = 0
+        } else if (c == ";") {
           emit(in_pipeline ? "P" : "S"); in_pipeline = 0
         } else {
           segment = segment c
@@ -320,8 +322,6 @@ segment_allows_primary() {
   printf '%s' "$1" | grep -Eq \
     '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)'
 }
-
-# Strip leading direct/env assignments for classification; never execute them.
 command_without_env_prefix() {
   printf '%s' "$1" | sed -E \
     -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
@@ -330,8 +330,9 @@ command_without_env_prefix() {
 
 segment_cd_target() {
   _cd_cmd=$(printf '%s' "$1" | sed -E -e 's/^[[:space:]]*\{[[:space:]]*//' \
-    -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//' \
-    -e 's/^[[:space:]]*command[[:space:]]+//')
+    -e 's/^[[:space:]]*(then|do|else)[[:space:]]+//' -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
+    -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//' -e 's/^[[:space:]]*(command([[:space:]]+--)?|builtin)[[:space:]]+//' \
+    -e 's/[[:space:]]+[0-9]*(>>?|<)[[:space:]]*[^[:space:]]+.*$//')
   case "$_cd_cmd" in
     cd[[:space:]]*|pushd[[:space:]]*) shell_dir "$_cd_cmd;" "$2" ;;
     *) return 1 ;;
@@ -370,7 +371,6 @@ check_command_segment() {
     # (`tar -cf`) only reads and is deliberately NOT matched.
     _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
     _cands=$(printf '%s' "$CMD" | shell_redirection_targets)
-    # Package-manager `install` is not the filesystem utility.
     _is_package_manager=0
     printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)([[:space:]]|$)' && _is_package_manager=1
     if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re" &&
