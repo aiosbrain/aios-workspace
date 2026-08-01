@@ -79,6 +79,8 @@ by the rubric↔code drift test).
 | SR15 | Decidability — every must-path is decidable. Bounded design latitude whose output is human-reviewed before merge is a PASS (a reviewed PR is recoverable); a blocker is only a decision with no downstream catch (unstated perf/SLA target, prerequisite with no "what if missing" branch, ambiguous external contract) | llm-read | yes |
 | SR16 | No ungrounded architecture claims — "reuses X / extends Y / builds on Z" resolves to real files (path resolution deterministic; claim adequacy llm-read) | det+llm | yes |
 | SR17 | Increment-bounded — the spec is one reviewable PR. Blocks when it enumerates many tasks AND spans many unrelated top-level code surfaces (mixed-concern, oversized) with no explicit one-PR increment statement; an explicit increment statement or a single signal is advisory. `test/`, `docs/`, `scaffold/` don't count as surfaces (they measure spec completeness, not mixed concerns) | deterministic | yes |
+| SR18 | Scope-fence accounting — a blanket constraint ("no change to any file X renders", "must be byte-identical", "do not touch Y") names what it excludes and where that work goes. A `Deferred:` list alone does not satisfy it: the fence is what pushed the work out, so the fence is what has to account for it (fence + destination deterministic; completeness of the accounting llm-read) | deterministic + llm-read | conditional |
+| SR19 | Acceptance criteria are mutually satisfiable — no two criteria that cannot both hold at once (e.g. "fix the em-dashes in `Foo.astro`" alongside "`dist/index.html` must be byte-identical", where `Foo.astro` renders into that page) | llm-read | yes |
 
 ## Template mapping
 
@@ -91,9 +93,9 @@ Canonical scaffold: `docs/agentic-ergonomics/aios-issue-template.md` (author via
 | `## Outcomes` | SR5 (target state; pairs with `## Scope`) |
 | `## Interface / integration points` | SR3, SR9 |
 | `## Dependencies` | SR4 |
-| `## Scope` | SR5 |
+| `## Scope` | SR5, SR18 (`**Fenced out:**` when a blanket constraint is raised) |
 | `## Implementation approach` | advisory (builder latitude) |
-| `## Acceptance criteria` | SR2, SR11 |
+| `## Acceptance criteria` | SR2, SR11, SR19 |
 | `### Automated` / `### Manual` / `### Visual` | SR2 sub-tiers (Automated observability: advisory nudge) |
 | `## Build-with` | SR6 |
 | `## Tier safety` | SR7 |

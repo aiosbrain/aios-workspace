@@ -57,6 +57,7 @@ export {
   SR17_TASK_LIMIT,
   SR17_SURFACE_LIMIT,
   assessScopeBound,
+  assessScopeFence,
   runDeterministicChecks,
   DETERMINISTIC_CHECK_IDS,
   SPEC_BATCH_CONCURRENCY_MAX,
