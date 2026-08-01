@@ -210,6 +210,10 @@ tcommit_strict "AIOS commit override does not leak across compound command" 2 \
   "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m one && git commit -m two')"
 tcommit_strict "AIOS commit override does not unlock branch creation" 2 \
   "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git checkout -b feat/nope')"
+# AIO-637 F7: HARNESS_ALLOW_PRIMARY_COMMIT (the git hook's primary name) too
+tcommit_strict "strict honors direct HARNESS_ALLOW_PRIMARY_COMMIT override" 0 "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict honors env-prefixed HARNESS_ALLOW_PRIMARY_COMMIT override" 0 "$(wpc "$WT" 'env HARNESS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "HARNESS commit override does not unlock branch creation" 2 "$(wpc "$WT" 'HARNESS_ALLOW_PRIMARY_COMMIT=1 git checkout -b feat/nope')"
 t "branch-like heredoc body is inert" 0 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" $'cat <<\'BODY\'\ngit -C '"$WT"$' checkout -b harmless-data\nBODY\ngit status')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
@@ -285,6 +289,15 @@ ts "strict subshell cd does not leak past the closing paren" 0 \
   "$(wpc "$WT/wt" "(cd $WT && ls); echo x > local.txt")"
 ts "strict subshell close restores tracked parent cwd" 2 \
   "$(wpc "$WT/wt" "cd $WT; (cd /tmp && ls); echo x > primary-write")"
+# AIO-637 F6: a `)` closing a mid-word $(…) is data — a command-substitution
+# argument must not split the primary destination away from its command.
+ts "strict blocks cp with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "cp \$(cat list) $WT/dst")"
+ts "strict blocks tee with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "echo y | tee \$(cat list) $WT/f")"
+ts "strict blocks mv with cmd-subst arg into primary" 2 "$(wpc "$WT/wt" "mv \$(ls x) $WT/dst")"
+ts "strict blocks cmd-subst arg inside subshell into primary" 2 "$(wpc "$WT/wt" "(cp \$(cat list) $WT/dst2)")"
+ts "strict allows cp with cmd-subst arg outside primary" 0 "$(wpc "$WT/wt" "cp \$(cat list) /tmp/dst637")"
+ts "strict case pattern stays inert for safe write" 0 "$(wpc "$WT/wt" "case x in a) echo hi;; esac; echo x > local.txt")"
+ts "strict case pattern does not hide a primary write" 2 "$(wpc "$WT/wt" "case x in a) echo hi;; esac; echo x > $WT/case-write")"
 ts "strict pipeline-local cd does not persist into copy" 0 \
   "$(wpc "$WT/wt" "cd $WT | cat; cp /tmp/source worktree-copy")"
 ts "strict pipeline-local cd does not affect peer redirect" 0 \

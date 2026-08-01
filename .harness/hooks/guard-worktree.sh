@@ -29,7 +29,7 @@
 # HEAD is treated as "not a feature branch" (allowed) so bisect/tag inspection works.
 #
 # Overrides: HARNESS_ALLOW_PRIMARY_CHECKOUT=1 disables the guard entirely.
-#            AIOS_ALLOW_PRIMARY_COMMIT=1 (env or command-local) allows `git commit` only.
+#            HARNESS_/AIOS_ALLOW_PRIMARY_COMMIT=1 (env or command-local): `git commit` only.
 #            HARNESS_PRIMARY_COMMIT_POLICY=strict blocks every primary commit.
 #            HARNESS_PRIMARY_EDIT_POLICY=strict blocks every primary edit (incl. main).
 #            HARNESS_PRIMARY_EXEMPT (default `aios.yaml`) space-separated basenames.
@@ -106,9 +106,8 @@ block() {
 }
 
 # resolve_path_tok <token> <fallback-dir> — strip one quote layer and resolve.
-# NEVER eval $1 — it is attacker-controlled, unexecuted command text. A leading
-# ~ / ~/ is expanded by pure string substitution of $HOME; anything else is
-# treated as a path relative to the fallback dir. No shell expansion happens.
+# NEVER eval $1 (attacker-controlled, unexecuted command text): a leading ~ is
+# expanded by pure $HOME string substitution; no shell expansion happens.
 resolve_path_tok() {
   _t=$(printf '%s' "$1" | sed "s/^['\"]//; s/['\"]\$//")
   case "$_t" in
@@ -150,8 +149,7 @@ norm_git() {
   return
 }
 
-# Shared awk heredoc bookkeeping for the two scanners below (record << delims,
-# consume body lines up to the terminator).
+# Shared awk heredoc bookkeeping for the two scanners below.
 AWK_HEREDOC='
   function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
     i = start; strip_tabs = substr(line, i, 1) == "-"
@@ -282,15 +280,16 @@ shell_command_segments() {
         } else if (c == ";") {
           emit(in_pipeline ? "P" : "S"); in_pipeline = 0
         } else if (c == "(" && segment ~ /^[ \t]*$/) {
-          # AIO-637 F3: unquoted `(` at command position opens a subshell —
-          # O/C markers let the driver restore the tracked cwd at the close
-          # (a subshell cd never persists past `)`). Mid-word parens ($(..),
-          # %(refname)) stay data; an unmatched close is ignored fail-closed.
-          print "O|("; segment = ""; in_pipeline = 0
-        } else if (c == ")") {
-          emit(in_pipeline ? "P" : "S")
-          print "C|)"; in_pipeline = 0
+          # AIO-637 F3/F6: unquoted `(` at command position opens a subshell
+          # (O/C markers let the driver restore the tracked cwd at the close).
+          # A `)` closing a mid-word paren ($(..), %(refname)) or with no open
+          # at all (case patterns) stays DATA — never splits a segment.
+          print "O|("; segment = ""; in_pipeline = 0; depth++
+        } else if (c == ")" && (depth > 0 || paren > 0)) {
+          if (paren > 0) { paren--; segment = segment c }
+          else { emit(in_pipeline ? "P" : "S"); print "C|)"; in_pipeline = 0; depth-- }
         } else {
+          if (c == "(") paren++
           segment = segment c
         }
       }
@@ -308,7 +307,8 @@ segment_allows_var() {
     '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*'"$2"'=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+'"$2"'=1([[:space:]]|$)'
 }
 segment_allows_primary() { segment_allows_var "$1" HARNESS_ALLOW_PRIMARY_CHECKOUT; }
-segment_allows_primary_commit() { segment_allows_var "$1" AIOS_ALLOW_PRIMARY_COMMIT; }
+segment_allows_primary_commit() { segment_allows_var "$1" HARNESS_ALLOW_PRIMARY_COMMIT ||
+  segment_allows_var "$1" AIOS_ALLOW_PRIMARY_COMMIT; } # F7: both names (git-hook parity)
 command_without_env_prefix() {
   printf '%s' "$1" | sed -E \
     -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
@@ -423,7 +423,7 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
 
   # Committing in the primary checkout (belt-and-suspenders with the git hook).
   if printf '%s' "$NORM" | grep -qE 'git[[:space:]]+commit([[:space:]]|$)'; then
-    if [ "${AIOS_ALLOW_PRIMARY_COMMIT:-0}" = "1" ] || segment_allows_primary_commit "$CMD"; then
+    if [ "${HARNESS_ALLOW_PRIMARY_COMMIT:-${AIOS_ALLOW_PRIMARY_COMMIT:-0}}" = "1" ] || segment_allows_primary_commit "$CMD"; then
       : # documented genuine-hotfix escape hatch — same override the git hook honors
     elif [ "${HARNESS_PRIMARY_COMMIT_POLICY:-default-ok}" = "strict" ]; then
       block "committing in the primary checkout (branch '$BRANCH', strict policy)" \
