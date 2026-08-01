@@ -14,6 +14,7 @@ import {
   touchesSyncSurface,
   classifyPathContext,
   assessScopeBound,
+  assessScopeFence,
 } from "../scripts/spec-eval.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,43 @@ test("SR17 — explicit increment statement downgrades the oversized blocker to 
   const sr17 = runDeterministicChecks(spec, { repo: REPO }).filter((f) => f.ruleId === "SR17");
   assert.equal(sr17.length, 1);
   assert.equal(sr17[0].severity, "minor", "author-bounded increment must not hard-block");
+});
+
+test("SR18 — a scope fence with no destination for the work it excludes is a blocker", () => {
+  const spec = [
+    "# Spec",
+    "## Scope",
+    "**In:** the new page.",
+    "**Deferred:** the product video.",
+    "No change to any file that `/` renders.",
+  ].join("\n");
+  const b = blockerIds(runDeterministicChecks(spec));
+  assert.ok(b.has("SR18"), "a fence that accounts for nothing must block");
+});
+
+test("SR18 — naming where the fenced work goes clears it", () => {
+  const base = ["# Spec", "## Scope", "**In:** the new page.", "Must stay byte-identical."];
+  assert.ok(blockerIds(runDeterministicChecks(base.join("\n"))).has("SR18"));
+  const accounted = [
+    ...base,
+    "**Fenced out:** the shared-component copy fixes, tracked as a sibling spec.",
+  ];
+  assert.ok(!blockerIds(runDeterministicChecks(accounted.join("\n"))).has("SR18"));
+});
+
+test("SR18 — a per-file note in an integration list is not a scope fence", () => {
+  // "leave it unchanged" against one named path is integration detail, not a constraint that
+  // excludes a class of work. Scanning the whole document fired on well-formed specs, so the
+  // fence is looked for only in scope-bearing sections.
+  const spec = [
+    "# Spec",
+    "## Integration points",
+    "- `scripts/relay.mjs` — the gate hard-codes the rubric path; leave it unchanged.",
+    "## Scope",
+    "**In:** the resolver.",
+  ].join("\n");
+  assert.equal(assessScopeFence(spec).fenced, false);
+  assert.ok(!blockerIds(runDeterministicChecks(spec)).has("SR18"));
 });
 
 test("assessScopeBound — counts tasks, distinct surfaces, and increment statement", () => {

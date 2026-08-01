@@ -22,6 +22,7 @@ export {
   SR17_TASK_LIMIT,
   SR17_SURFACE_LIMIT,
   assessScopeBound,
+  assessScopeFence,
   runDeterministicChecks,
 } from "./spec-checks/deterministic.mjs";
 
