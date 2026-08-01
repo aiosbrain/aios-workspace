@@ -173,6 +173,18 @@ t "comment after cd does not hide cwd transition" 2 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" $'cd '"$WT"$' # enter primary\ngit checkout -b feat/blocked')"
 t "if-group cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" "if true; then cd $WT; fi; git checkout -b feat/blocked")"
+# AIO-637 F2: a cd in an if/while CONDITION changes the parent shell cwd too
+t "if-condition cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "if cd $WT; then git checkout -b feat/blocked; fi")"
+t "while-condition cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "while cd $WT; do git checkout -b feat/blocked; done")"
+t "if-condition cd to worktree keeps branch command safe" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" "if cd $WT/wt; then git checkout -b feat/allowed; fi")"
+# AIO-637 F3: a subshell-scoped cd applies inside the parens, never past them
+t "subshell cd reaches primary branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "(cd $WT && git checkout -b feat/blocked)")"
+t "subshell cd does not persist into later branch command" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "(cd $WT && git status); git checkout -b feat/allowed")"
 t "pipeline-local cd does not persist" 0 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" "cd $WT | cat; git checkout -b feat/allowed")"
 t "background cd does not persist" 0 "$H/guard-worktree.sh" \
@@ -185,6 +197,19 @@ t "env override before heredoc does not leak after terminator" 2 "$H/guard-workt
   "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\ngit checkout -b harmless-data\nBODY\ngit -C '"$WT"$' checkout -b feat/blocked')"
 tcommit_strict "heredoc override does not leak into strict commit" 2 \
   "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\ngit -C '"$WT"$' commit -m blocked')"
+# AIO-637 F1: the documented pre-commit escape hatch (CLAUDE.md §5) is honored
+# by the agent hook under strict commit policy — direct and env-prefixed,
+# segment-scoped, and commit-scoped (it never unlocks branch creation).
+tcommit_strict "strict honors direct AIOS_ALLOW_PRIMARY_COMMIT override" 0 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict honors env-prefixed AIOS_ALLOW_PRIMARY_COMMIT override" 0 \
+  "$(wpc "$WT" 'env AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m hotfix')"
+tcommit_strict "strict still blocks primary commit without AIOS override" 2 \
+  "$(wpc "$WT" 'git commit -m no-override')"
+tcommit_strict "AIOS commit override does not leak across compound command" 2 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git commit -m one && git commit -m two')"
+tcommit_strict "AIOS commit override does not unlock branch creation" 2 \
+  "$(wpc "$WT" 'AIOS_ALLOW_PRIMARY_COMMIT=1 git checkout -b feat/nope')"
 t "branch-like heredoc body is inert" 0 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" $'cat <<\'BODY\'\ngit -C '"$WT"$' checkout -b harmless-data\nBODY\ngit status')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
@@ -240,6 +265,26 @@ ts "strict comment after cd does not hide cwd transition" 2 \
   "$(wpc "$WT/wt" $'cd '"$WT"$' # enter primary\necho x > primary-write')"
 ts "strict if-group cd reaches primary tee" 2 \
   "$(wpc "$WT/wt" "if true; then cd $WT; fi; echo x | tee primary-tee")"
+# AIO-637 F2: cd in a compound-command CONDITION is tracked
+ts "strict if-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "if cd $WT; then echo x > primary-write; fi")"
+ts "strict while-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "while cd $WT; do echo x > primary-write; done")"
+ts "strict until-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "until cd $WT; do echo x > primary-write; done")"
+ts "strict elif-condition cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "if false; then :; elif cd $WT; then echo x > primary-write; fi")"
+ts "strict if-condition cd to worktree keeps write safe" 0 \
+  "$(wpc "$WT" "if cd $WT/wt; then echo x > worktree-write; fi")"
+# AIO-637 F3: subshell cd is scoped to the parenthesized group
+ts "strict subshell cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "(cd $WT && echo x > f)")"
+ts "strict subshell cd to worktree keeps write safe" 0 \
+  "$(wpc "$WT" "(cd $WT/wt && echo x > f)")"
+ts "strict subshell cd does not leak past the closing paren" 0 \
+  "$(wpc "$WT/wt" "(cd $WT && ls); echo x > local.txt")"
+ts "strict subshell close restores tracked parent cwd" 2 \
+  "$(wpc "$WT/wt" "cd $WT; (cd /tmp && ls); echo x > primary-write")"
 ts "strict pipeline-local cd does not persist into copy" 0 \
   "$(wpc "$WT/wt" "cd $WT | cat; cp /tmp/source worktree-copy")"
 ts "strict pipeline-local cd does not affect peer redirect" 0 \
