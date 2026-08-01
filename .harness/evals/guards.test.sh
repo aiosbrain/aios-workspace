@@ -119,6 +119,12 @@ WT=$(mktemp -d)
   git worktree add -q -b feat/x "$WT/wt" main ) >/dev/null 2>&1
 wpc() { jq -cn --arg cwd "$1" --arg cmd "$2" '{protocol_version:"1.0",event:"pre_command",runtime:{name:"mock"},cwd:$cwd,command:$cmd}'; }
 wpe() { jq -cn --arg cwd "$1" --arg p "$2" '{protocol_version:"1.0",event:"pre_edit",runtime:{name:"mock"},cwd:$cwd,paths:[{path:$p,action:"update"}],added_content:[]}'; }
+tcommit_strict() { # name expected_exit json — strict commit policy
+  local name="$1" want="$2" json="$3" got
+  printf '%s' "$json" | HARNESS_PRIMARY_COMMIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
+  got=$?
+  if [ "$got" = "$want" ]; then PASS=$((PASS+1)); echo "PASS ($got): $name"; else FAIL=$((FAIL+1)); echo "FAIL (got $got, want $want): $name"; fi
+}
 t "blocks checkout -b in primary"     2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git checkout -b feat/y')"
 t "blocks switch -c in primary"       2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git switch -c feat/z')"
 t "blocks git branch <new> in primary" 2 "$H/guard-worktree.sh" "$(wpc "$WT" 'git branch newb')"
@@ -141,6 +147,20 @@ t "later overridden segment is independently allowed" 0 "$H/guard-worktree.sh" \
   "$(wpc "$WT" 'git status && HARNESS_ALLOW_PRIMARY_CHECKOUT=1 git checkout -b feat/override')"
 t "compound git targets are classified independently" 2 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" "git -C $WT/wt status && git -C $WT checkout -b feat/blocked")"
+t "semicolon cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT; git checkout -b feat/blocked")"
+t "newline cd state carries into branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'cd '"$WT"$'\ngit checkout -b feat/blocked')"
+tcommit_strict "semicolon cd state carries into strict commit" 2 \
+  "$(wpc "$WT/wt" "cd $WT; git commit -m blocked")"
+t "direct override before heredoc does not leak after terminator" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\ngit checkout -b harmless-data\nBODY\ngit -C '"$WT"$' checkout -b feat/blocked')"
+t "env override before heredoc does not leak after terminator" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\ngit checkout -b harmless-data\nBODY\ngit -C '"$WT"$' checkout -b feat/blocked')"
+tcommit_strict "heredoc override does not leak into strict commit" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\ngit -C '"$WT"$' commit -m blocked')"
+t "branch-like heredoc body is inert" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" $'cat <<\'BODY\'\ngit -C '"$WT"$' checkout -b harmless-data\nBODY\ngit status')"
 t "allows edit on main in primary"    0 "$H/guard-worktree.sh" "$(wpe "$WT" "$WT/a.txt")"
 printf '%s' "$(wpe "$WT" "$WT/a.txt")" | HARNESS_PRIMARY_EDIT_POLICY=strict bash "$H/guard-worktree.sh" >/dev/null 2>&1
 if [ $? = 2 ]; then PASS=$((PASS+1)); echo "PASS (2): strict policy blocks main edit (agent hook)"; else FAIL=$((FAIL+1)); echo "FAIL: strict agent-hook should block main edit"; fi
@@ -170,6 +190,26 @@ ts "strict still blocks write after package manager segment" 2 \
   "$(wpc "$WT/wt" "npm install && echo x > $WT/package-write")"
 ts "strict still blocks tee after package manager segment" 2 \
   "$(wpc "$WT/wt" "pnpm install; echo x | tee $WT/package-write")"
+ts "strict semicolon cd state carries into redirect" 2 \
+  "$(wpc "$WT/wt" "cd $WT; echo x > primary-write")"
+ts "strict newline cd state carries into copy" 2 \
+  "$(wpc "$WT/wt" $'cd '"$WT"$'\ncp /tmp/source primary-copy')"
+ts "strict semicolon cd state carries into tee" 2 \
+  "$(wpc "$WT/wt" "cd $WT; echo x | tee primary-tee")"
+ts "strict semicolon cd state carries into move" 2 \
+  "$(wpc "$WT/wt" "cd $WT; mv /tmp/source primary-move")"
+ts "strict direct override before heredoc does not leak into write" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\necho x > harmless-data\nBODY\necho x > '"$WT"$'/primary-write')"
+ts "strict env override before heredoc does not leak into write" 2 \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\necho x > harmless-data\nBODY\necho x > '"$WT"$'/primary-write')"
+ts "strict heredoc override does not leak into tee" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\necho x | tee '"$WT"$'/primary-tee')"
+ts "strict heredoc override does not leak into copy" 2 \
+  "$(wpc "$WT/wt" $'HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\ncp /tmp/source '"$WT"$'/primary-copy')"
+ts "strict heredoc override does not leak into move" 2 \
+  "$(wpc "$WT/wt" $'env HARNESS_ALLOW_PRIMARY_CHECKOUT=1 cat <<\'BODY\'\nharmless\nBODY\nmv /tmp/source '"$WT"$'/primary-move')"
+ts "strict redirect-like heredoc body is inert" 0 \
+  "$(wpc "$WT/wt" $'cat <<\'BODY\'\necho x > '"$WT"$'/harmless-data\nBODY\necho done')"
 ts "strict allows greater-than text in a heredoc from a worktree" 0 \
   "$(wpc "$WT/wt" $'git commit -F - <<\'MSG\'\n531 lines > ../a.txt\nMSG')"
 ts "strict closes tab-stripping heredoc before a real redirect" 2 \

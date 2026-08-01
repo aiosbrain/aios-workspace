@@ -247,23 +247,43 @@ shell_redirection_targets() {
   '
 }
 
-# shell_command_segments <command> -> one simple compound-command segment per
-# line. Separators inside quotes are data. Heredocs remain a single segment so
-# shell_redirection_targets can continue to distinguish their bodies from shell
-# syntax.
+# Emit compound-command segments while suppressing heredoc bodies as data.
 shell_command_segments() {
-  if printf '%s' "$1" | grep -q '<<'; then
-    printf '%s\n' "$1"
-    return
-  fi
   printf '%s' "$1" | awk '
     function emit() {
       gsub(/^[ \t]+|[ \t]+$/, "", segment)
       if (segment != "") print segment
       segment = ""
     }
+    function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
+      i = start
+      strip_tabs = substr(line, i, 1) == "-"
+      if (strip_tabs) i++
+      while (substr(line, i, 1) ~ /[ \t]/) i++
+      quote = substr(line, i, 1)
+      if (quote == "\047" || quote == "\"") i++
+      else quote = ""
+      delim = ""
+      while (i <= length(line)) {
+        c = substr(line, i, 1)
+        if ((quote != "" && c == quote) ||
+            (quote == "" && c ~ /[ \t;|&<>]/)) break
+        delim = delim c
+        i++
+      }
+      if (delim != "") {
+        heredoc[++heredoc_count] = delim
+        heredoc_strip_tabs[heredoc_count] = strip_tabs
+      }
+      return i
+    }
     {
-      if (NR > 1) emit()
+      if (heredoc_current > 0 && heredoc_current <= heredoc_count) {
+        closing_line = $0
+        if (heredoc_strip_tabs[heredoc_current]) sub(/^\t+/, "", closing_line)
+        if (closing_line == heredoc[heredoc_current]) heredoc_current++
+        next
+      }
       quote = ""
       escaped = 0
       for (i = 1; i <= length($0); i++) {
@@ -281,6 +301,12 @@ shell_command_segments() {
         } else if (c == "\047" || c == "\"") {
           segment = segment c
           quote = c
+        } else if (c == "<" && nextc == "<") {
+          segment = segment c nextc
+          i++
+          heredoc_end = remember_heredoc($0, i + 1)
+          segment = segment substr($0, i + 1, heredoc_end - i)
+          i = heredoc_end
         } else if (c == "&" && nextc == "&" &&
                    segment ~ /^[ \t]*(cd|pushd)[ \t]+/) {
           segment = segment " && "
@@ -292,21 +318,19 @@ shell_command_segments() {
           segment = segment c
         }
       }
+      emit()
+      if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
     }
-    END { emit() }
   '
 }
 
-# segment_allows_primary <segment> -> true only when the command-local escape
-# hatch is set directly or through env. This is deliberately scoped to one
-# compound-command segment; it must never authorize a later `&&`/`;` command.
+# A command-local escape hatch applies to this segment only.
 segment_allows_primary() {
   printf '%s' "$1" | grep -Eq \
     '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)'
 }
 
-# command_without_env_prefix <segment> -> command after leading direct/env
-# assignments. It is used only for classification, never executed.
+# Strip leading direct/env assignments for classification; never execute them.
 command_without_env_prefix() {
   printf '%s' "$1" | sed -E \
     -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
@@ -325,10 +349,10 @@ check_command_segment() {
   segment_allows_primary "$CMD" && return 0
   CLASS_CMD=$(command_without_env_prefix "$CMD")
 
-  TDIR=$(target_dir "$CMD" "$CWD")
-  [ -d "$TDIR" ] || TDIR="$CWD"
-  SDIR=$(shell_dir "$CMD" "$CWD")
-  [ -d "$SDIR" ] || SDIR="$CWD"
+  TDIR=$(target_dir "$CMD" "$BASE_CWD")
+  [ -d "$TDIR" ] || TDIR="$BASE_CWD"
+  SDIR=$(shell_dir "$CMD" "$BASE_CWD")
+  [ -d "$SDIR" ] || SDIR="$BASE_CWD"
 
   # Under strict edit policy, shell file mutations are held to the same rule as
   # pre_edit Write/Edit: no writes into a PRIMARY checkout (>, >>, cp, mv, rm,
@@ -345,9 +369,7 @@ check_command_segment() {
     # (`tar -cf`) only reads and is deliberately NOT matched.
     _extract_re='(^|[[:space:]&;|({])(tar|bsdtar)[[:space:]]+(([^;|&]*[[:space:]])?(-[[:alnum:]]*x[[:alnum:]]*|--extract)([[:space:]=]|$)|x[[:alnum:]]*([[:space:]]|$))|(^|[[:space:]&;|({])(unzip|ditto)[[:space:]]'
     _cands=$(printf '%s' "$CMD" | shell_redirection_targets)
-    # Package managers own an `install` subcommand. Treating that word as the
-    # filesystem utility made bare npm/pnpm/yarn/bun commands false positives;
-    # redirects and explicit write utilities in other segments are still scanned.
+    # Package-manager `install` is not the filesystem utility.
     _is_package_manager=0
     printf '%s' "$CLASS_CMD" | grep -Eq '^[[:space:]]*(npm|pnpm|yarn|bun)([[:space:]]|$)' && _is_package_manager=1
     if printf '%s' "$CMD" | grep -Eq '(^|[[:space:]&;|({])('"$_muts"')[[:space:]]|sed[[:space:]]+(-[[:alnum:]]*i|--in-place)|'"$_extract_re" &&
@@ -422,17 +444,21 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
   return 0
 }
 
-  if printf '%s' "$FULL_CMD" | grep -q '<<'; then
-    check_command_segment "$FULL_CMD"
-  else
-    SEGMENTS=$(shell_command_segments "$FULL_CMD") || exit 3
-    while IFS= read -r CMD_SEGMENT || [ -n "$CMD_SEGMENT" ]; do
-      [ -n "$CMD_SEGMENT" ] || continue
-      check_command_segment "$CMD_SEGMENT"
-    done <<EOF
+  BASE_CWD=$CWD
+  SEGMENTS=$(shell_command_segments "$FULL_CMD") || exit 3
+  while IFS= read -r CMD_SEGMENT || [ -n "$CMD_SEGMENT" ]; do
+    [ -n "$CMD_SEGMENT" ] || continue
+    check_command_segment "$CMD_SEGMENT"
+    case "$CMD_SEGMENT" in
+      cd[[:space:]]*|pushd[[:space:]]*)
+        NEXT_CWD=$(shell_dir "$CMD_SEGMENT;" "$BASE_CWD")
+        [ -d "$NEXT_CWD" ] && BASE_CWD=$NEXT_CWD
+        ;;
+      *) ;;
+    esac
+  done <<EOF
 $SEGMENTS
 EOF
-  fi
   exit 0
 fi
 
