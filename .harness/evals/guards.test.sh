@@ -151,6 +151,20 @@ t "semicolon cd state carries into branch command" 2 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" "cd $WT; git checkout -b feat/blocked")"
 t "newline cd state carries into branch command" 2 "$H/guard-worktree.sh" \
   "$(wpc "$WT/wt" $'cd '"$WT"$'\ngit checkout -b feat/blocked')"
+t "chained cd state reaches primary branch command" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT/wt && cd $WT && git checkout -b feat/blocked")"
+t "reverse chained cd reaches worktree branch command" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT" "cd $WT && cd $WT/wt && git checkout -b feat/allowed")"
+t "assignment-prefixed cd state carries" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "FLAG=1 cd $WT; git checkout -b feat/blocked")"
+t "env-prefixed cd state carries conservatively" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "env FLAG=1 cd $WT; git checkout -b feat/blocked")"
+t "command-prefixed cd state carries" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "command cd $WT; git checkout -b feat/blocked")"
+t "brace-group cd state carries to parent shell" 2 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "{ cd $WT; }; git checkout -b feat/blocked")"
+t "pipeline-local cd does not persist" 0 "$H/guard-worktree.sh" \
+  "$(wpc "$WT/wt" "cd $WT | cat; git checkout -b feat/allowed")"
 tcommit_strict "semicolon cd state carries into strict commit" 2 \
   "$(wpc "$WT/wt" "cd $WT; git commit -m blocked")"
 t "direct override before heredoc does not leak after terminator" 2 "$H/guard-worktree.sh" \
@@ -194,6 +208,20 @@ ts "strict semicolon cd state carries into redirect" 2 \
   "$(wpc "$WT/wt" "cd $WT; echo x > primary-write")"
 ts "strict newline cd state carries into copy" 2 \
   "$(wpc "$WT/wt" $'cd '"$WT"$'\ncp /tmp/source primary-copy')"
+ts "strict chained cd state reaches primary copy" 2 \
+  "$(wpc "$WT/wt" "cd $WT/wt && cd $WT && cp /tmp/source primary-copy")"
+ts "strict reverse chained cd reaches worktree copy" 0 \
+  "$(wpc "$WT" "cd $WT && cd $WT/wt && cp /tmp/source worktree-copy")"
+ts "strict assignment-prefixed cd reaches primary write" 2 \
+  "$(wpc "$WT/wt" "FLAG=1 cd $WT; echo x > primary-write")"
+ts "strict command-prefixed cd reaches primary move" 2 \
+  "$(wpc "$WT/wt" "command cd $WT; mv /tmp/source primary-move")"
+ts "strict brace-group cd reaches primary tee" 2 \
+  "$(wpc "$WT/wt" "{ cd $WT; }; echo x | tee primary-tee")"
+ts "strict pipeline-local cd does not persist into copy" 0 \
+  "$(wpc "$WT/wt" "cd $WT | cat; cp /tmp/source worktree-copy")"
+ts "strict pipeline-local cd does not affect peer redirect" 0 \
+  "$(wpc "$WT/wt" "cd $WT | echo x > worktree-write")"
 ts "strict semicolon cd state carries into tee" 2 \
   "$(wpc "$WT/wt" "cd $WT; echo x | tee primary-tee")"
 ts "strict semicolon cd state carries into move" 2 \

@@ -250,19 +250,17 @@ shell_redirection_targets() {
 # Emit compound-command segments while suppressing heredoc bodies as data.
 shell_command_segments() {
   printf '%s' "$1" | awk '
-    function emit() {
+    function emit(kind) {
       gsub(/^[ \t]+|[ \t]+$/, "", segment)
-      if (segment != "") print segment
+      if (segment != "") print kind "|" segment
       segment = ""
     }
     function remember_heredoc(line, start,    i, c, quote, delim, strip_tabs) {
-      i = start
-      strip_tabs = substr(line, i, 1) == "-"
+      i = start; strip_tabs = substr(line, i, 1) == "-"
       if (strip_tabs) i++
       while (substr(line, i, 1) ~ /[ \t]/) i++
       quote = substr(line, i, 1)
-      if (quote == "\047" || quote == "\"") i++
-      else quote = ""
+      if (quote == "\047" || quote == "\"") i++; else quote = ""
       delim = ""
       while (i <= length(line)) {
         c = substr(line, i, 1)
@@ -272,8 +270,7 @@ shell_command_segments() {
         i++
       }
       if (delim != "") {
-        heredoc[++heredoc_count] = delim
-        heredoc_strip_tabs[heredoc_count] = strip_tabs
+        heredoc[++heredoc_count] = delim; heredoc_strip_tabs[heredoc_count] = strip_tabs
       }
       return i
     }
@@ -284,47 +281,41 @@ shell_command_segments() {
         if (closing_line == heredoc[heredoc_current]) heredoc_current++
         next
       }
-      quote = ""
-      escaped = 0
+      quote = ""; escaped = 0
       for (i = 1; i <= length($0); i++) {
         c = substr($0, i, 1)
         nextc = substr($0, i + 1, 1)
         if (escaped) {
-          segment = segment c
-          escaped = 0
+          segment = segment c; escaped = 0
         } else if (c == "\\") {
-          segment = segment c
-          escaped = 1
+          segment = segment c; escaped = 1
         } else if (quote != "") {
           segment = segment c
           if (c == quote) quote = ""
         } else if (c == "\047" || c == "\"") {
-          segment = segment c
-          quote = c
+          segment = segment c; quote = c
         } else if (c == "<" && nextc == "<") {
           segment = segment c nextc
           i++
           heredoc_end = remember_heredoc($0, i + 1)
           segment = segment substr($0, i + 1, heredoc_end - i)
           i = heredoc_end
-        } else if (c == "&" && nextc == "&" &&
-                   segment ~ /^[ \t]*(cd|pushd)[ \t]+/) {
-          segment = segment " && "
-          i++
-        } else if (c == ";" || c == "|" || c == "&") {
-          emit()
-          if (nextc == c) i++
+        } else if ((c == "&" || c == "|") && nextc == c) {
+          emit(in_pipeline ? "P" : "S"); i++; in_pipeline = 0
+        } else if (c == "|") {
+          emit("P"); in_pipeline = 1
+        } else if (c == ";" || c == "&") {
+          emit(in_pipeline ? "P" : "S"); in_pipeline = 0
         } else {
           segment = segment c
         }
       }
-      emit()
+      emit(in_pipeline ? "P" : "S"); in_pipeline = 0
       if (heredoc_current == 0 && heredoc_count > 0) heredoc_current = 1
     }
   '
 }
 
-# A command-local escape hatch applies to this segment only.
 segment_allows_primary() {
   printf '%s' "$1" | grep -Eq \
     '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]]+)[[:space:]]+)*HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)|^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*([[:space:]]+[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)*[[:space:]]+HARNESS_ALLOW_PRIMARY_CHECKOUT=1([[:space:]]|$)'
@@ -335,6 +326,16 @@ command_without_env_prefix() {
   printf '%s' "$1" | sed -E \
     -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' \
     -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//'
+}
+
+segment_cd_target() {
+  _cd_cmd=$(printf '%s' "$1" | sed -E -e 's/^[[:space:]]*\{[[:space:]]*//' \
+    -e 's/^[[:space:]]*env([[:space:]]+-[^[:space:]]+)*//' -e 's/^([[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+)+[[:space:]]*//' \
+    -e 's/^[[:space:]]*command[[:space:]]+//')
+  case "$_cd_cmd" in
+    cd[[:space:]]*|pushd[[:space:]]*) shell_dir "$_cd_cmd;" "$2" ;;
+    *) return 1 ;;
+  esac
 }
 
 CWD=$(printf '%s' "$EVENT" | jq -r '.cwd // empty')
@@ -446,16 +447,15 @@ $(printf '%s\n' "$_nored" | tr ';|&(){}<>' ' ' | tr ' \t' '\n\n' | awk 'NF && $0
 
   BASE_CWD=$CWD
   SEGMENTS=$(shell_command_segments "$FULL_CMD") || exit 3
-  while IFS= read -r CMD_SEGMENT || [ -n "$CMD_SEGMENT" ]; do
-    [ -n "$CMD_SEGMENT" ] || continue
+  while IFS= read -r CMD_RECORD || [ -n "$CMD_RECORD" ]; do
+    [ -n "$CMD_RECORD" ] || continue
+    SEGMENT_SCOPE=${CMD_RECORD%%|*}
+    CMD_SEGMENT=${CMD_RECORD#*|}
     check_command_segment "$CMD_SEGMENT"
-    case "$CMD_SEGMENT" in
-      cd[[:space:]]*|pushd[[:space:]]*)
-        NEXT_CWD=$(shell_dir "$CMD_SEGMENT;" "$BASE_CWD")
-        [ -d "$NEXT_CWD" ] && BASE_CWD=$NEXT_CWD
-        ;;
-      *) ;;
-    esac
+    if [ "$SEGMENT_SCOPE" = S ]; then
+      NEXT_CWD=$(segment_cd_target "$CMD_SEGMENT" "$BASE_CWD") || NEXT_CWD=
+      [ -n "$NEXT_CWD" ] && [ -d "$NEXT_CWD" ] && BASE_CWD=$NEXT_CWD
+    fi
   done <<EOF
 $SEGMENTS
 EOF
