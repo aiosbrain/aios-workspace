@@ -65,7 +65,7 @@ seams as import rules). Current, verified state:
 | Shared hubs (`runtimes`, `workspace-parse`, `brain-config`, `linear-client`, `brain-client`, `git-files`, `constitution`) | `@aiosbrain/foundation` — `packages/foundation/`, published to npm (public, 0.1.0) | Shipped. `scripts/` paths are one-line re-export shims. |
 | GUI + desktop shell | `github.com/aiosbrain/aios-workspace-gui` (filtered history from core at freeze SHA `d6dcdeb` / tag `cut/gui-freeze`) | **Cut, but the in-tree `gui/` + `src-tauri/` here remain authoritative** — they still exist and still work; their deletion from core is a deferred post-demo PR (AIO-612). Seam contract: `docs/gui-toolkit-contract.md` (toolkit location: `--toolkit-dir` → `AIOS_TOOLKIT_DIR` → pre-split relative fallback `gui/server/../../`, which only resolves in this in-tree layout → actionable error; standalone installs must set `AIOS_TOOLKIT_DIR` or `--toolkit-dir`). |
 | Desktop (Tauri) | travels with the GUI repo | Adjacent-checkout mode only; **do-not-demo** for v0.9.0. Self-contained bundling is AIO-581, owned by the GUI repo. |
-| Devtools | `aiosbrain/aios-devtools` | **Planned only** — conditional, not cut. |
+| Devtools | `aiosbrain/aios-devtools` | **Cut** (AIO-594; bootstrapped, pinned-toolkit CI, main protected) — the in-tree `scripts/` implementations here remain authoritative until the removal PR lands. Seam contract: `docs/devtools-toolkit-contract.md`. |
 
 Migration for existing workspace owners at v0.9.0: one `aios update` + set
 `AIOS_TOOLKIT_DIR` in `.envrc`. No re-scaffold.
