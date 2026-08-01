@@ -33,6 +33,7 @@ export const CATEGORIES = {
       "test:ux",
       "test:coverage",
       "test:install-smoke",
+      "test:pack-golden",
       "test:mutation",
     ],
   },

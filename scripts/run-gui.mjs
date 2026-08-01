@@ -198,7 +198,24 @@ export function assertGuiRepo(repo) {
   process.exit(1);
 }
 
+/**
+ * The @aiosbrain/aios npm package ships the CLI only (no gui/). Without this check the
+ * failure is a cryptic "Cannot find module …/gui/server/index.mjs" from a spawned node.
+ */
+export function assertGuiShipped(root = ROOT) {
+  if (existsSync(path.join(root, "gui", "server", "index.mjs"))) return;
+  console.error(
+    "error: the AIOS GUI is not included in this install (gui/server is missing).\n" +
+      "  The npm package @aiosbrain/aios ships the CLI, scaffold, and validators only.\n" +
+      "  To run the GUI, clone the full toolkit and launch it from the checkout:\n" +
+      "    git clone https://github.com/aiosbrain/aios-workspace && cd aios-workspace\n" +
+      "    npm install && npm run gui"
+  );
+  process.exit(1);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  assertGuiShipped();
   assertGuiRuntimeReady();
   const launch = normalizeGuiLauncherArgs(process.argv.slice(2));
   assertGuiRepo(resolveGuiRepo(launch.serverArgs)); // validate BEFORE the (slow) client build

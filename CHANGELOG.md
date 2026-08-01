@@ -10,6 +10,43 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-08-01
+
+The CLI becomes an independently installable npm package (AIO-668). Nothing in
+the sync protocol changes — brain-api stays at **v1.15**. The patch bump exists
+because v0.9.0 was tagged before this packaging work; publishing post-tag
+content as `0.9.0` would misrepresent what the tag points at.
+
+### Added
+
+- **`@aiosbrain/aios` npm package** — `package.json` is now publishable
+  (`aios-workspace` → `@aiosbrain/aios`, `private` removed, public
+  `publishConfig`), with a `files` allowlist shipping exactly the CLI's traced
+  runtime surface: `scripts/`, `scaffold/`, `validation/`, `hooks/`, the
+  prebuilt `dist/` operator-loop, the relative-path foundation sources
+  (`packages/foundation/src`), and the pinned contracts (`docs/brain-api.md`,
+  `docs/ENGINEERING-CONSTITUTION.md`, `docs/GETTING-STARTED.md`). `gui/`,
+  `src-tauri/`, `test/`, `examples/`, and `.github/` do not ship.
+  `@aiosbrain/foundation ^0.1.0` is declared as a real dependency (local dev
+  keeps resolving the `packages/foundation` workspace copy). **Not yet
+  published** — the first publish is a deliberate `publish-npm.yml` dispatch.
+- **Golden-path pack test + CI lane** (`npm run test:pack-golden`,
+  `test/npm-pack-golden-path.test.mjs`) — packs the tarball, installs it into a
+  clean prefix, then runs `aios --help`, scaffolds a consultant workspace,
+  runs `validation/validate-all.sh --quick`, and drives offline
+  `aios status`/`push --dry-run` from the installed location only, proving the
+  CLI is repo-clone-independent.
+- **`publish-npm.yml`** — tokenless npm Trusted Publishing (OIDC) via
+  `workflow_dispatch` with an explicit version input that must match
+  `package.json`; runs the golden-path gate before `npm publish`.
+
+### Fixed
+
+- `npm run gui` in a GUI-less install now fails with one actionable diagnostic
+  instead of a cryptic module-not-found from the spawned server, and
+  `scaffold-project.sh` recreates `.opencode/.gitignore` when the scaffold
+  source lost it to npm's tarball `.gitignore` stripping.
+
 ## [0.9.0] — 2026-08-01
 
 The multi-repo split release (AIO-594/AIO-597): the one-repo layout is cut along

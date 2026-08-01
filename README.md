@@ -58,6 +58,23 @@ aios-workspace/
 └── docs/            architecture · feature-set · workflows · brain-api (sync contract)
 ```
 
+## Install via npm
+
+From v0.9.1 (pending first publish) the `aios` CLI ships as an independent npm
+package, so you can scaffold and drive a workspace without cloning this repo:
+
+```bash
+npm install -g @aiosbrain/aios   # CLI + scaffold + validators (no GUI)
+aios --help
+```
+
+The npm package carries the sync client, the workspace scaffold
+(`scripts/scaffold-project.sh`), the OGR validators (`validation/`), the
+governance hooks, and the pinned contracts (`docs/brain-api.md`,
+`docs/ENGINEERING-CONSTITUTION.md`). The GUI, desktop app, tests, and examples
+stay in this repo — clone it for those. The unscoped `aios` package on npm is an
+unrelated project.
+
 ## Quickstart
 
 > **Want to actually drive this?** [`docs/GUIDE.md`](docs/GUIDE.md) — *The AIOS operating manual* —

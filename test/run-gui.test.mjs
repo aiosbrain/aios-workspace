@@ -18,6 +18,7 @@ function dotenvKeypair() {
 
 import {
   assertGuiRepo,
+  assertGuiShipped,
   buildGuiClient,
   guiLaunchPlan,
   normalizeGuiLauncherArgs,
@@ -44,6 +45,30 @@ test("assertGuiRepo accepts a marker-bearing workspace and exits(1) on anything 
     assert.ok(errors.some((line) => line.includes("does not look like an AIOS workspace")));
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("assertGuiShipped returns on a full checkout and exits(1) with one actionable diagnostic on a CLI-only install", (t) => {
+  assertGuiShipped(); // this repo has gui/server — must return, not exit
+
+  const cliOnly = mkdtempSync(path.join(tmpdir(), "run-gui-npm-install-"));
+  try {
+    const exits = [];
+    const errors = [];
+    t.mock.method(process, "exit", (code) => {
+      exits.push(code);
+    });
+    t.mock.method(console, "error", (line) => {
+      errors.push(String(line));
+    });
+    assertGuiShipped(cliOnly);
+    assert.deepEqual(exits, [1]);
+    assert.ok(errors.some((line) => line.includes("GUI is not included in this install")));
+    assert.ok(
+      errors.some((line) => line.includes("git clone https://github.com/aiosbrain/aios-workspace"))
+    );
+  } finally {
+    rmSync(cliOnly, { recursive: true, force: true });
   }
 });
 
