@@ -20,8 +20,9 @@ made public later. Before flipping it public, complete every item below.
       in transition: shared hubs are published as public npm `@aiosbrain/foundation`;
       the GUI is cut (filtered history) to `github.com/aiosbrain/aios-workspace-gui`,
       with the in-tree `gui/` + `src-tauri/` authoritative until deletion PR AIO-612;
-      a devtools cut (`aiosbrain/aios-devtools`) is planned but not done. Remaining:
-      complete AIO-612 + decide the devtools cut.
+      the devtools command set is cut to `github.com/aiosbrain/aios-devtools`,
+      with the in-tree `scripts/` implementations authoritative until the removal
+      PR lands. Remaining: complete AIO-612 + the devtools removal PR.
 - [ ] **Secret scan** clean: `validation/check-secrets.sh .`
 - [ ] **Docs drift guard** clean: `npm run check:docs` confirms the V1 hub's
       machine inventories match code/specs.
