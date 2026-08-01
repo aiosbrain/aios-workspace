@@ -5,10 +5,89 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.14**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.15**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
 ## [Unreleased]
+
+## [0.9.0] — 2026-08-01
+
+The multi-repo split release (AIO-594/AIO-597): the one-repo layout is cut along
+declared, tested seams into a published foundation package, a standalone GUI
+repo, and a devtools repo — while the core toolkit in this repo stays
+authoritative for every cut surface until the deferred deletion PRs land. The
+Brain API contract stays within major `v1` at revision **1.15**.
+
+### Added
+
+- **`@aiosbrain/foundation` 0.1.0 published to npm (public)** — the shared hub
+  modules (`runtimes`, `workspace-parse`, `brain-config`, `linear-client`,
+  `brain-client`, `git-files`, `constitution`) extracted into the
+  `packages/foundation/` npm workspace; the old `scripts/` paths remain as
+  one-line re-export shims so nothing consuming them breaks. (AIO-601, #492,
+  renamed from `@aios-alpha/monorepo` in #502)
+- **Toolkit-runtime seams + contracts** — the GUI reaches the toolkit only
+  through the toolkit-location contract (`--toolkit-dir` → `AIOS_TOOLKIT_DIR` →
+  pre-split relative fallback; `docs/gui-toolkit-contract.md`), and the
+  devtools-bound command set (`ship`, `build`, `roadmap-run`, `spec-eval`,
+  `spec-publish`, `consolidate-findings`) reaches core-staying modules only
+  through `scripts/toolkit-locate.mjs` (`docs/devtools-toolkit-contract.md`).
+  (AIO-600 C1–C5 #495–#499, AIO-594 #511)
+- **Boundary gate** — `scripts/check-boundaries.mjs` encodes the repo seams as
+  import rules and runs as a named CI gate (`check:boundaries`), including rule
+  **R6**: core must not import the devtools path set. (AIO-597 #464/#486,
+  AIO-594 #508)
+- **`aios codebase-health`** — composed codebase-health scorer + rubric + CLI
+  with an advisory CI baseline delta (AIO-605, #494). Brain API revision
+  **1.15** adds an optional, scalar-only `metrics.codebase_health` object on
+  `POST /codebases` (AIO-608, #489); the scan-on-merge workflow can attach the
+  snapshot to its scan payload — opt-in via the `AIOS_PUSH_CODEBASE_HEALTH=1`
+  repo variable (default OFF in the workflow; enabled on the canonical repo).
+  (AIO-608, #501)
+- **`aios repo-bootstrap`** — governance stamp installer for split repos, used
+  to bootstrap the cut repositories. (AIO-602, #493)
+- **Delivery manifest tooling** — durable split-delivery manifest with read-only
+  reporting (AIO-595, #491) and `aios delivery status` cross-repo
+  PR/worktree/branch reconciliation (AIO-579, #466).
+
+### Changed
+
+- **GUI + desktop shell cut to `github.com/aiosbrain/aios-workspace-gui`** —
+  filtered history from core at freeze SHA `d6dcdeb` (tag `cut/gui-freeze`).
+  The in-tree `gui/` + `src-tauri/` remain present and authoritative in 0.9.0;
+  their deletion from core is a deferred post-demo PR (AIO-612). (AIO-603 #500,
+  AIO-594 #509)
+- **Devtools command set cut to `github.com/aiosbrain/aios-devtools`** —
+  bootstrapped via `aios repo-bootstrap` with pinned-toolkit CI; the in-tree
+  `scripts/` implementations remain authoritative until the removal PR lands.
+  (AIO-594)
+- **Harness guards hardened** — command segmentation + cwd scope fixed in the
+  guard hooks (AIO-637, #513), shell redirects parsed without quoted false
+  positives (#472), and the hook installers never clobber tracked
+  `core.hooksPath` policy hooks (AIO-638, #503/#504).
+- Also in this release: TypeScript covered by typescript-eslint with warn-only
+  complexity budgets (AIO-598, #487); the file-size gate flipped to
+  default-deny with a ratchet (#463); CI lanes path-filtered (AIO-599, #467);
+  the leak gate enforces a name-free baseline on push, not just merge (#450);
+  the Claude Code statusline ships to every scaffolded workspace (#485); the
+  spec-eval adversarial layer is opt-in (AIO-573, #460); Local Bugbot is
+  optional — current-head cloud review satisfies the review gate (AIO-567,
+  #484).
+
+### Migration (0.8.0 → 0.9.0)
+
+- **Existing workspace owners:** run `aios update` once, and set
+  `AIOS_TOOLKIT_DIR` in your workspace `.envrc` to your toolkit checkout. No
+  re-scaffold is needed.
+- **Standalone GUI installs** (from `aios-workspace-gui`) must locate the
+  toolkit explicitly — set `AIOS_TOOLKIT_DIR` or pass `--toolkit-dir`; the
+  relative fallback only resolves in the in-tree monorepo layout
+  (`docs/gui-toolkit-contract.md`).
+- **In-tree GUI still works:** because the deletion is deferred (AIO-612), the
+  `gui/` + `src-tauri/` trees in this repo are still present and authoritative
+  in 0.9.0 — nothing changes for in-tree GUI users this release.
+- **Desktop (Tauri)** is adjacent-checkout mode only and not demo-ready;
+  self-contained bundling is AIO-581, owned by the GUI repo.
 
 ## [0.8.0] — 2026-07-28
 
