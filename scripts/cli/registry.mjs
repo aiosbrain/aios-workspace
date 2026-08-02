@@ -20,6 +20,7 @@
  */
 
 import { USAGE_HEADER, USAGE_FOOTER, USAGE_LINES as U } from "./usage.mjs";
+import { DEVTOOLS_COMMANDS as DT } from "./devtools-commands.mjs";
 
 /**
  * The command table, in `aios help` order; hidden commands (usage: []) go last. ctx =
@@ -323,13 +324,7 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdRelay(ctx.repo, ctx.rest),
     usage: U.relay,
   },
-  {
-    name: "build",
-    resolution: "offline",
-    loader: () => import("../build.mjs"),
-    adapt: (ctx, mod) => mod.cmdBuild(ctx.repo, ctx.rest),
-    usage: U.build,
-  },
+  DT.build,
   {
     name: "simplify",
     resolution: "offline",
@@ -338,13 +333,7 @@ export const COMMANDS = [
     exit: "exit-code",
     usage: U.simplify,
   },
-  {
-    name: "spec",
-    resolution: "offline",
-    loader: () => import("../spec-eval.mjs"),
-    adapt: (ctx, mod) => mod.cmdSpec(ctx.repo, ctx.rest),
-    usage: U.spec,
-  },
+  DT.spec,
   {
     name: "pr",
     resolution: "offline",
@@ -353,15 +342,7 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdPr(ctx.repo, ctx.rest),
     usage: U.pr,
   },
-  {
-    name: "consolidate-findings",
-    resolution: "offline",
-    ownsRepoFlag: true, // same GitHub-slug `--repo` as `pr` — dispatch must not consume it
-    loader: () => import("../consolidate-findings.mjs"),
-    adapt: (ctx, mod) => mod.cmdConsolidateFindings(ctx.repo, ctx.rest),
-    exit: "exit-code",
-    usage: U["consolidate-findings"],
-  },
+  DT["consolidate-findings"],
   {
     name: "review-bugbot",
     resolution: "offline",
@@ -369,23 +350,8 @@ export const COMMANDS = [
     adapt: (ctx, mod) => mod.cmdReviewBugbot(ctx.repo, ctx.rest),
     usage: U["review-bugbot"],
   },
-  {
-    name: "ship",
-    // ship/roadmap-run's `--repo` is a WORKSPACE path (slug comes from detectRepo(repo)).
-    resolution: "offline",
-    loader: () => import("../ship.mjs"),
-    adapt: (ctx, mod) => mod.cmdShip(ctx.repo, ctx.rest),
-    exit: "exit-code",
-    usage: U.ship,
-  },
-  {
-    name: "roadmap-run",
-    resolution: "offline",
-    loader: () => import("../roadmap-run.mjs"),
-    adapt: (ctx, mod) => mod.cmdRoadmapRun(ctx.repo, ctx.rest),
-    exit: "exit-code",
-    usage: U["roadmap-run"],
-  },
+  DT.ship,
+  DT["roadmap-run"],
   {
     name: "inbox", // headline V1 surface — unreachable from `aios --help` until UX audit S3-8
     resolution: "offline",
