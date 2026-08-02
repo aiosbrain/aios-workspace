@@ -15,7 +15,7 @@ import {
   resolveBase,
   unquoteGitPath,
 } from "../scripts/check-coverage.mjs";
-import { mergeTotals, prefixRelativeLcov } from "../scripts/merge-coverage.mjs";
+import { mergeTotals, prefixRelativeLcov, prefixSummaryFiles } from "../scripts/merge-coverage.mjs";
 import {
   collectShardFiles,
   parseArgs as parseRunCoverageArgs,
@@ -250,6 +250,76 @@ test("client LCOV paths are rooted before reports are merged", () => {
     prefixRelativeLcov("SF:C:\\repo\\src\\lib\\api.ts\n", "gui/client"),
     "SF:C:\\repo\\src\\lib\\api.ts\n"
   );
+});
+
+test("client summary keys are namespaced so a shared path cannot clobber the root entry", () => {
+  // AIO-514: the merge used to be a bare `{...root, ...client}` spread. Both reports legitimately
+  // contain `src/index.ts`, so the client's row silently replaced the root's — totals stayed
+  // right, per-file rows did not.
+  const root = { "src/index.ts": { lines: { pct: 90 } }, total: { lines: { pct: 90 } } };
+  const client = { "src/index.ts": { lines: { pct: 10 } }, total: { lines: { pct: 10 } } };
+
+  const merged = { ...prefixSummaryFiles(root, ""), ...prefixSummaryFiles(client, "gui/client") };
+
+  assert.deepEqual(Object.keys(merged).sort(), ["gui/client/src/index.ts", "src/index.ts"]);
+  assert.equal(merged["src/index.ts"].lines.pct, 90, "root entry must survive the merge");
+  assert.equal(merged["gui/client/src/index.ts"].lines.pct, 10);
+});
+
+test("prefixSummaryFiles drops `total` and leaves absolute paths alone", () => {
+  const summary = {
+    "src/a.ts": { lines: { pct: 1 } },
+    "/abs/b.ts": { lines: { pct: 2 } },
+    "C:\\repo\\c.ts": { lines: { pct: 3 } },
+    total: { lines: { pct: 4 } },
+  };
+  assert.deepEqual(Object.keys(prefixSummaryFiles(summary, "gui/client")).sort(), [
+    "/abs/b.ts",
+    "C:\\repo\\c.ts",
+    "gui/client/src/a.ts",
+  ]);
+});
+
+test("merge-coverage succeeds with no gui/client report (AIO-612 GUI deletion)", async () => {
+  // The in-tree gui/ is scheduled for deletion (AIO-612). Requiring its coverage report meant the
+  // day it goes, `npm run test:coverage` throws, no artifact is produced, and the scanner pushes
+  // test_coverage_pct null — surfacing on the Codebases dashboard as a false 0%.
+  const dir = mkdtempSync(path.join(tmpdir(), "merge-cov-"));
+  try {
+    const metric = { total: 10, covered: 8, skipped: 0, pct: 80 };
+    mkdirSync(path.join(dir, "coverage", "root"), { recursive: true });
+    writeFileSync(
+      path.join(dir, "coverage", "root", "coverage-summary.json"),
+      JSON.stringify({
+        "scripts/a.mjs": { lines: metric },
+        total: {
+          lines: metric,
+          statements: metric,
+          functions: metric,
+          branches: metric,
+        },
+      })
+    );
+    writeFileSync(
+      path.join(dir, "coverage", "root", "lcov.info"),
+      "TN:\nSF:scripts/a.mjs\nLF:10\nLH:8\nend_of_record\n"
+    );
+
+    const script = path.resolve("scripts/merge-coverage.mjs");
+    const { spawnSync } = await import("node:child_process");
+    const run = spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8" });
+
+    assert.equal(run.status, 0, `merge-coverage exited ${run.status}: ${run.stderr}`);
+    assert.match(run.stdout, /root only — no gui\/client report/);
+
+    const merged = JSON.parse(
+      readFileSync(path.join(dir, "coverage", "coverage-summary.json"), "utf8")
+    );
+    assert.equal(merged.total.lines.pct, 80, "root-only totals must pass through unchanged");
+    assert.ok(merged["scripts/a.mjs"], "root per-file rows must survive");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("coverage CLI rejects missing values and local baseline overwrite shortcuts", () => {

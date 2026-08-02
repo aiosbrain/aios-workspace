@@ -37,31 +37,71 @@ export function prefixRelativeLcov(text, prefix) {
   );
 }
 
+/**
+ * Namespace the CLIENT summary's per-file keys the same way `prefixRelativeLcov` namespaces its
+ * `SF:` records (AIO-514). Without this the merge was a bare `{...root, ...client}` spread, so
+ * any path present in BOTH reports — `src/index.ts` is the obvious one — had its root entry
+ * silently replaced by the client's. Totals stayed correct, which is exactly why it went
+ * unnoticed: only the per-file rows were wrong.
+ *
+ * Root keys are left alone: they are already root-relative, and rewriting them would churn every
+ * path in the artifact for no gain. Prefixing one side is enough to make a collision impossible.
+ * `total` is not a file key and is re-derived by the caller, so it is dropped rather than
+ * prefixed.
+ */
+export function prefixSummaryFiles(summary, prefix) {
+  const out = {};
+  for (const [file, entry] of Object.entries(summary)) {
+    if (file === "total") continue;
+    const absolute = file.startsWith("/") || /^[A-Za-z]:[\\/]/.test(file);
+    out[absolute || !prefix ? file : `${prefix}/${file}`] = entry;
+  }
+  return out;
+}
+
 function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+const EMPTY_TOTAL = Object.freeze(
+  Object.fromEntries(METRICS.map((m) => [m, { total: 0, covered: 0, skipped: 0, pct: 100 }]))
+);
+
 function main() {
-  if (!existsSync(ROOT_SUMMARY) || !existsSync(CLIENT_SUMMARY)) {
-    const missing = [ROOT_SUMMARY, CLIENT_SUMMARY].filter((file) => !existsSync(file));
-    throw new Error(`merge-coverage: missing required report(s): ${missing.join(", ")}`);
+  // Only the root report is required. The client report is OPTIONAL by design: `gui/` is being
+  // cut to aiosbrain/aios-workspace-gui (AIO-612), and a hard requirement here meant the day the
+  // in-tree GUI is deleted, `npm run test:coverage` throws → no coverage artifact → the scanner
+  // reports test_coverage_pct null → the Codebases dashboard shows this repo at 0%. That is the
+  // same false-zero already visible on scaffolded workspaces; there is no reason to walk into it
+  // a second time on the flagship repo.
+  if (!existsSync(ROOT_SUMMARY)) {
+    throw new Error(`merge-coverage: missing required report: ${ROOT_SUMMARY}`);
   }
 
   const rootReport = readJson(ROOT_SUMMARY);
-  const clientReport = readJson(CLIENT_SUMMARY);
-  const total = mergeTotals(rootReport.total, clientReport.total);
-  const merged = { ...rootReport, ...clientReport, total };
+  const hasClient = existsSync(CLIENT_SUMMARY);
+  const clientReport = hasClient ? readJson(CLIENT_SUMMARY) : null;
+
+  const total = mergeTotals(rootReport.total, clientReport?.total ?? EMPTY_TOTAL);
+  const merged = {
+    ...prefixSummaryFiles(rootReport, ""),
+    ...(clientReport ? prefixSummaryFiles(clientReport, "gui/client") : {}),
+    total,
+  };
   writeFileSync(OUTPUT_SUMMARY, `${JSON.stringify(merged, null, 2)}\n`);
 
   writeFileSync(OUTPUT_LCOV, readFileSync(ROOT_LCOV, "utf8"));
-  appendFileSync(
-    OUTPUT_LCOV,
-    `\n${prefixRelativeLcov(readFileSync(CLIENT_LCOV, "utf8"), "gui/client")}`
-  );
+  if (hasClient && existsSync(CLIENT_LCOV)) {
+    appendFileSync(
+      OUTPUT_LCOV,
+      `\n${prefixRelativeLcov(readFileSync(CLIENT_LCOV, "utf8"), "gui/client")}`
+    );
+  }
 
   console.log(
     `merge-coverage: lines ${total.lines.pct}% · branches ${total.branches.pct}% · ` +
-      `${Object.keys(merged).length - 1} production files`
+      `${Object.keys(merged).length - 1} production files` +
+      (hasClient ? "" : " (root only — no gui/client report)")
   );
 }
 
