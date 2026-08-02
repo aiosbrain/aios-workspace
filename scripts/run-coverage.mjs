@@ -135,6 +135,37 @@ async function runNodeSuiteUnderC8(tempDirectory, extraSuiteArgs = [], extraC8Ar
   ]);
 }
 
+/**
+ * Run the suite, then produce the coverage artifact WHETHER OR NOT the suite passed, then
+ * propagate the suite's failure.
+ *
+ * Injectable so the ordering contract is testable without spawning a real suite. The invariant:
+ * `merge` is always attempted, and a suite failure always wins as the thrown error.
+ *
+ * @param {() => Promise<void>} runSuite
+ * @param {() => Promise<void>} merge
+ */
+export async function mergeThenPropagate(runSuite, merge) {
+  let suiteError;
+  try {
+    await runSuite();
+  } catch (error) {
+    suiteError = error;
+  }
+
+  try {
+    await merge();
+  } catch (mergeError) {
+    // A merge failure on its own is real and must surface. After a suite failure it is usually
+    // a consequence (a crash so early that c8 wrote nothing), and masking the original failure
+    // with it would send you debugging the wrong thing.
+    if (!suiteError) throw mergeError;
+    console.error(`coverage artifact unavailable after suite failure: ${mergeError.message}`);
+  }
+
+  if (suiteError) throw suiteError;
+}
+
 async function runFull() {
   await ensureLoopBuiltStrict();
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-"));
@@ -146,8 +177,24 @@ async function runFull() {
     // Client coverage is sub-second; sequencing it avoids future port/fixture
     // conflicts if browser tests grow integration coverage.
     await runClientCoverage();
-    await runNodeSuiteUnderC8(tempDirectory);
-    await execute(process.execPath, ["scripts/merge-coverage.mjs"]);
+
+    // The suite's pass/fail and the coverage ARTIFACT are two different outputs, and they were
+    // coupled: a single failing test threw here, so merge-coverage.mjs never ran and
+    // coverage/coverage-summary.json was never written.
+    //
+    // That silently destroyed the metric. scan-on-merge.yml runs `npm run test:coverage || true`
+    // — deliberately, because coverage is a metrics source and must never block the scan — so the
+    // throw was swallowed, the scan proceeded, the scanner found no artifact, and pushed
+    // test_coverage_pct: null. The Codebases dashboard then showed this repo with no coverage at
+    // all despite a 2500-test suite. It had never once reported.
+    //
+    // c8 writes its report even when the wrapped process exits nonzero (verified), so the raw
+    // data for everything that DID execute is already on disk by the time we get here. Produce
+    // the artifact, THEN propagate the failure — the gate keeps failing exactly as before.
+    await mergeThenPropagate(
+      () => runNodeSuiteUnderC8(tempDirectory),
+      () => execute(process.execPath, ["scripts/merge-coverage.mjs"])
+    );
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
