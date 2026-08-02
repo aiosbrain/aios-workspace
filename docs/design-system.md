@@ -76,3 +76,36 @@ border plus a subtle shadow; dark steps the surface and border, with glow instea
 shadows.
 
 See `DESIGN.md` in the package for the full contract, palettes, and do's/don'ts.
+
+## Slide decks — the one sanctioned exception to "import, don't copy"
+
+The `aios-deck` skill (`scaffold/.claude/skills/aios-deck/`) is the deck medium's
+version of this contract: a shared `deck-base.css` plus swappable theme files, so
+brand work is not re-derived per deck.
+
+It **inlines** its theme tokens rather than importing them from
+`@aios-alpha/design`. This is a deliberate exception, not drift. A deck's whole
+delivery model is a zipped folder emailed to someone who double-clicks
+`deck.html` — it runs from `file://` and cannot resolve `node_modules`, a bare
+specifier, or any path outside its own folder. An `@import` from the package
+fails silently on the recipient's machine.
+
+What keeps the copy honest:
+
+- Each generated theme carries a header comment recording the **pinned package
+  version plus the sha256 of the token files it was derived from**, so drift is
+  detectable rather than invisible.
+- `deck-base.css` itself defines **no** colour or font value. It declares a
+  machine-readable token contract between `@token-contract:begin/end` markers,
+  and `scripts/qa-deck.mjs` fails a deck whose theme omits any required token.
+- Structural scales (radius, spacing, rule widths) are copied from the package's
+  `radius.json` / `space.json` rather than hardcoded per component — that was a
+  live violation of rule 1 in the shipped deck CSS this skill replaced.
+
+Note also that the light theme (`aios-light`) is derived from the package's light
+palette but is **not** a mechanical 1:1 alias — several tokens have no package
+source, and two package values needed a documented deviation (`surface` and
+`elevated` are both `#ffffff` in the package, which would make floating chrome
+invisible; lime `#84cc16` fails contrast as text on near-white). Every deviation
+is commented in the theme file and its rule is written down in
+`scaffold/.claude/skills/aios-deck/reference/brand-schema.md`.

@@ -1,0 +1,116 @@
+/* ============================================================================
+   Theme: AIOS Light — the product identity, inverted field
+   Mode: light
+   For: deck-base.css v1.0.0 (satisfies the full 30-token contract)
+
+   Derived from @aios-alpha/design v0.3.0
+     tokens/color.light.json  sha256 3e3a34eed0d6d3fc61663338df83fb99a6dc1755c00d687282f3472380d8382a
+     dist/tokens.css          sha256 6e3f39de69d7ca13e639490020d426c7e1b951aa45089caa2ac85f793254c238
+   Recorded: 2026-07-29
+
+   This theme is NEW. The package ships a light mode that had never been used
+   for a deck, so several tokens needed derivation rather than a 1:1 alias —
+   each of those is commented inline with the reason. Same typefaces and the
+   same signature gradient as aios-dark: it is the same product voice on an
+   inverted field, not a different brand.
+
+   Tokens are INLINED rather than @import-ed on purpose: a deck is handed over
+   as a file:// folder and cannot resolve node_modules (reference/gotchas.md #13).
+
+   Role card (human-readable): aios-light.md
+   ============================================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Surfaces.
+     DEVIATION: the package maps both `surface` and `elevated` to #ffffff.
+     Taken literally that makes the floating HUD pills invisible against a
+     white card. So --surface takes the package's `surface` (#ffffff) and
+     --elevated takes the package's `muted` (#f3f3f0), which is the only value
+     in the light palette that actually reads as raised chrome. */
+  --bg:            #fafaf8;
+  --surface:       #ffffff;
+  --elevated:      #f3f3f0;
+  --page-backdrop: #e8e8e4;   /* derived: must NOT equal --bg, or the slide
+                                 edges vanish. One clear step darker, same
+                                 warm cast as the package's greys. */
+
+  /* Text */
+  --fg:   #1a1a1a;
+  --fg-2: #57534e;
+  --fg-3: #a8a29e;
+
+  /* Borders */
+  --border:         rgba(0, 0, 0, 0.10);
+  --border-visible: rgba(0, 0, 0, 0.14);
+  --border-strong:  rgba(0, 0, 0, 0.22);
+
+  /* Brand hues */
+  --violet:        #7c3aed;
+  --violet-strong: #6d28d9;   /* derived: darker step — on a light field the
+                                 `-strong` steps go down, not up */
+  --blue:          #2563eb;   /* derived: no package source. A light-mode-safe
+                                 blue kept clearly distinct from --violet,
+                                 because --blue is the ONLY signal that marks a
+                                 recommended option. Reuse violet here and that
+                                 signal disappears. */
+  --cyan:           #2dd4bf;  /* INVERSION: the package's `cyan` is already the
+                                 dark #0d9488. Tints need a lighter value, so
+                                 --cyan takes the lighter teal and ... */
+  --cyan-strong:    #0d9488;  /* ... --cyan-strong takes the package value, for
+                                 the .note--info rule that carries small text. */
+  --emerald:       #10b981;
+  --amber:         #f59e0b;
+  --red:           #ef4444;
+  --lime:          #84cc16;   /* the package accent. Usable as a FILL (the CTA
+                                 pill carries dark text on top of it) but never
+                                 as a text colour in this theme — see
+                                 --kicker-color below. */
+  /* Text ON filled lime. The package's own accent-fg. Mode-independent: lime is
+     bright in every theme, so this is always near-black. Never set it to --bg —
+     on this theme --bg is near-white, which put white on citron at ~1.7:1. */
+  --accent-fg:     #0a0a0a;
+
+  /* Composite.
+     DERIVED: the dark theme's #8b5cf6 / #10b981 / #84cc16 are too light to
+     read as a rule on #fafaf8, so each stop drops one step. Same identity,
+     light-mode values. Still rationed to the accent bar, the list markers and
+     the step numerals — never text, never a card background. */
+  --gradient-prism: linear-gradient(135deg, #7c3aed 0%, #059669 50%, #65a30d 100%);
+
+  /* DERIVED — the most important derivation in this theme. The AIOS accent
+     lime (#84cc16) fails 4.5:1 badly on near-white, so the eyebrow uses a dark
+     olive step of the same hue: it keeps the accent identity and clears the
+     contrast gate. Never substitute #84cc16 back in here. */
+  --kicker-color: #4d7c0f;
+
+  /* Photo slides. White text on an always-dark scrim, regardless of mode.
+     --photo-scrim-rgb is a BARE TRIPLET (consumed as
+     rgba(var(--photo-scrim-rgb), 0.88)) — a hex here silently breaks every
+     photo slide. Warmed slightly toward this palette's warm greys. */
+  --photo-fg:        #ffffff;
+  --photo-fg-soft:   rgba(255, 255, 255, 0.85);
+  --photo-scrim-rgb: 10, 10, 8;
+
+  /* Shadow — two stacked shadows tinted with the text colour, no light
+     hairline (a hairline is a dark-mode device; on white the border does it). */
+  --shot-shadow: 0 20px 50px rgba(26, 26, 26, 0.14), 0 6px 16px rgba(26, 26, 26, 0.08);
+
+  /* Fonts — identical to aios-dark. Same product, same voice. */
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-body:    'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-kicker:  var(--font-mono);
+
+  /* Weights — Instrument Serif has NO true bold axis. Asking for 700 triggers
+     a synthesized faux-bold that looks broken. Same trap as the dark theme. */
+  --weight-display: 400;
+  --weight-heading: 400;
+
+  /* Optional */
+  --accent-bar-height: 4px;   /* between the dark theme's 3px hairline and the
+                                 editorial theme's 5px — a light field needs
+                                 more than black does, but the product identity
+                                 stays restrained */
+  --deck-logo-height:  26px;  /* a light theme needs the DARK logo variant */
+}
