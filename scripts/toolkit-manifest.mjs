@@ -54,6 +54,26 @@ export const MANAGED_PATHS = [
   // Claude Code settings that register the shipped hooks (personal overrides live in
   // .claude/settings.local.json, which stays PERSONAL). Verbatim copy — safe to manage.
   { dest: ".claude/settings.json", src: "scaffold/.claude/settings.json", kind: "file" },
+  // Brain reporting CI. MANAGED rather than stamped-once because both the pinned Team Brain
+  // scanner SHA and the `@aiosbrain/aios` version range in the workflow go stale — a workspace
+  // that never re-syncs would keep scanning against a frozen sidecar. File entries, not a dir
+  // overlay, so a person's own workflows in .github/ are never touched.
+  {
+    dest: ".github/workflows/scan-on-merge.yml",
+    src: "scaffold/.github/workflows/scan-on-merge.yml",
+    kind: "file",
+  },
+  {
+    dest: ".github/scripts/fetch-brain-scanner.sh",
+    src: "scaffold/.github/scripts/fetch-brain-scanner.sh",
+    kind: "file",
+    exec: true,
+  },
+  {
+    dest: ".github/scripts/scan_with_health.py",
+    src: "scaffold/.github/scripts/scan_with_health.py",
+    kind: "file",
+  },
   // Skill/doc router + routing fixtures — shipped into the workspace, updated on sync.
   { dest: "RESOLVER.md", src: "scaffold/RESOLVER.md.tmpl", kind: "file" },
   {
@@ -197,7 +217,12 @@ export const SCAFFOLD_UNMANAGED = [
   ".opencode", // opencode export surface — hydration
   ".claude/integrations.json", // generated per-workspace by gen-catalog
   ".aios-toolkit-version", // the sync stamp itself (workspace state, not content)
-  ".github", // CI/workflows are toolkit-dev-only; not shipped-then-synced
+  // `.github` as a whole is NOT unmanaged any more: the scan-on-merge workflow and its two
+  // helper scripts are MANAGED (see MANAGED_PATHS) so a pinned-SHA or toolkit-range fix
+  // reaches every workspace through `aios update`. Only CODEOWNERS is stamped once — it names
+  // this workspace's owner, which the toolkit must never overwrite. A person's own workflows
+  // sit alongside and are untouched, because these are file entries, not a dir overlay.
+  ".github/CODEOWNERS",
   ".planning", // scaffolded empty; a person's own planning space
   "CODEOWNERS", // repo-ownership file, stamped once
   // Stamp-time TEMPLATED files: toolkit origin, but personalized on scaffold, so they

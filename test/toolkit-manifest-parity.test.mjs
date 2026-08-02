@@ -12,7 +12,12 @@ import {
 } from "../scripts/toolkit-manifest.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const scaffold = readFileSync(path.join(here, "../scripts/scaffold-project.sh"), "utf8");
+// Both files, because the repo-meta writes (CODEOWNERS, brain CI, .gitignore, planning stub)
+// were extracted out of scaffold-project.sh when it hit its size-cap ratchet. Scanning only
+// the main script would silently stop enforcing classification for everything that moved —
+// the exact drift this test exists to prevent.
+const SCAFFOLD_SOURCES = ["../scripts/scaffold-project.sh", "../scripts/scaffold-repo-meta.sh"];
+const scaffold = SCAFFOLD_SOURCES.map((p) => readFileSync(path.join(here, p), "utf8")).join("\n");
 
 /**
  * Every toolkit path `scaffold-project.sh` stamps into a fresh workspace must be
