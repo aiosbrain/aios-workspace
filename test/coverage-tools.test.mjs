@@ -15,11 +15,7 @@ import {
   resolveBase,
   unquoteGitPath,
 } from "../scripts/check-coverage.mjs";
-import {
-  mergeTotals,
-  prefixRelativeLcov,
-  prefixSummaryFiles,
-} from "../scripts/merge-coverage.mjs";
+import { mergeTotals, prefixRelativeLcov, prefixSummaryFiles } from "../scripts/merge-coverage.mjs";
 import {
   collectShardFiles,
   parseArgs as parseRunCoverageArgs,
