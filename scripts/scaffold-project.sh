@@ -706,27 +706,8 @@ if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/gen-catalog.mjs" ]; then
   node "$SCRIPT_DIR/gen-catalog.mjs" --repo "$OUTPUT" >/dev/null 2>&1 || true
 fi
 
-# CODEOWNERS
-cat > "$OUTPUT/.github/CODEOWNERS" << EOF
-# $SLUG — owned by @$OWNER
-* @$OWNER
-EOF
-
-cat > "$OUTPUT/.gitignore" << EOF
-.env
-.env.local
-.aios/
-*.pyc
-__pycache__/
-.DS_Store
-node_modules/
-EOF
-
-cat > "$OUTPUT/.planning/README.md" << EOF
-# Planning — $OWNER
-
-Deliberation space. Not promoted.
-EOF
+# Repository-meta files: CODEOWNERS, brain-reporting CI, .gitignore, planning stub.
+. "$SCRIPT_DIR/scaffold-repo-meta.sh"
 
 echo "Initializing git..."
 cd "$OUTPUT"

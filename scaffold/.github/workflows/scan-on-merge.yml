@@ -1,0 +1,124 @@
+name: scan-on-merge
+
+# Push this workspace's agent-readiness + codebase-health to the Team Brain on every merge.
+#
+# Without this file a scaffolded workspace never reaches the Codebases dashboard at all: the
+# brain's GitHub-API fallback path fills identity and contribution rows but deliberately writes
+# no `code_metrics` (it has no checkout), so a linked-but-unscanned workspace shows null
+# readiness, null health, and null coverage forever.
+#
+# Required repo secrets. Until all three are set, every step is skipped and the job exits 0 —
+# a workspace with no brain credentials stays green, it does not go red:
+#   AIOS_BRAIN_URL   e.g. https://aios-team-brain-production.up.railway.app
+#   AIOS_TEAM        your team slug
+#   AIOS_API_KEY     a TEAM-tier API key (codebase metrics are team-tier; least privilege —
+#                    never use an admin key here)
+#
+# Set them with:
+#   gh secret set AIOS_BRAIN_URL --body "https://..."
+#   gh secret set AIOS_TEAM      --body "your-team"
+#   gh secret set AIOS_API_KEY   --body "aios_..."
+#
+# The scanner itself is fetched anonymously from the public Team Brain repo at a pinned commit,
+# so no cross-repository token is involved.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-on-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: workspace readiness scan → brain
+    runs-on: ubuntu-latest
+    env:
+      AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+      BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+      AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the scanner reads the commit window
+          persist-credentials: false
+
+      - name: Skip note
+        if: env.AIOS_API_KEY == '' || env.BRAIN_URL == '' || env.AIOS_TEAM == ''
+        run: |
+          echo "Brain credentials not configured — skipping the scan."
+          echo "Set AIOS_BRAIN_URL, AIOS_TEAM and AIOS_API_KEY to enable it."
+
+      - uses: actions/setup-node@v4
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        with:
+          node-version: "22"
+
+      # The toolkit comes from npm, not from a sibling checkout. A workspace's own
+      # scripts/aios.mjs is a delegating shim that resolves the toolkit via AIOS_TOOLKIT_DIR or
+      # an adjacent ../aios/aios-workspace — neither of which exists on a CI runner.
+      - name: Install the AIOS toolkit
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        run: npm install -g @aiosbrain/aios@^0.9
+
+      # Optional: most workspaces are content repos with no suite, and that is fine — coverage
+      # then reports as "no report", NOT as 0%. Only run it when the workspace actually defines
+      # the script, and never let it fail the scan: this is a metrics source, not a gate.
+      - name: Generate coverage (only if this workspace has a suite)
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        run: |
+          if [ -f package.json ] && node -e "process.exit(require('./package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
+            echo "test:coverage found — running it."
+            npm ci || npm install
+            npm run test:coverage || true
+          else
+            echo "no test:coverage script — skipping (coverage will report as 'no report')."
+          fi
+
+      - name: Compute codebase health
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        continue-on-error: true # enrichment, never a gate
+        run: |
+          aios codebase-health --json > "$RUNNER_TEMP/codebase-health.v1.json"
+          node "$(npm root -g)/@aiosbrain/aios/scripts/codebase-health/push-payload.mjs" \
+            "$RUNNER_TEMP/codebase-health.v1.json" > "$RUNNER_TEMP/codebase-health.contract.json"
+
+      - name: Fetch the ingestion scanner from aios-team-brain
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        run: bash .github/scripts/fetch-brain-scanner.sh .brain-scanner
+
+      - uses: actions/setup-python@v5
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        with:
+          python-version: "3.12"
+
+      - name: Install the scanner
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        run: pip install -e .brain-scanner/ingestion
+
+      - name: Scan this workspace into the brain
+        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The slug is derived from the repository name — this workflow is repo-agnostic on
+        # purpose, so it works unmodified in every scaffolded workspace.
+        run: |
+          SLUG="${GITHUB_REPOSITORY##*/}"
+          HEALTH_JSON="$RUNNER_TEMP/codebase-health.contract.json"
+          if [ -s "$HEALTH_JSON" ]; then
+            # scan_with_health.py reuses the sidecar's own analyzer + client, so the brain gets
+            # the SAME full-metrics payload `aios-ingest scan` would send, plus codebase_health.
+            # A sparse health-only payload is never sent — the brain 422s those, and the metrics
+            # upsert REPLACES the (codebase_id, head_sha) row.
+            python .github/scripts/scan_with_health.py \
+              --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY" \
+              --health-json "$HEALTH_JSON" \
+              || aios-ingest scan --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+          else
+            aios-ingest scan --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+          fi
