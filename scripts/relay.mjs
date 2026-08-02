@@ -26,20 +26,20 @@ import {
   makeLogger,
 } from "./relay-core.mjs";
 import { callPromptModel } from "./model-call.mjs";
-import { runBuild, parseBuildArgs } from "./build.mjs";
 import { resolveLoopModels } from "./loop-models.mjs";
-import {
-  evaluateSpec,
-  loadRubric,
-  loadRecentDecisions,
-  formatFindings,
-  specEvalHints,
-} from "./spec-eval.mjs";
+// `build.mjs` and `spec-eval.mjs` are devtools-bound (AIO-594) and relay is core-staying, so
+// these were the two hardest R6 grandfathers in scripts/boundaries.json — the ones blocking the
+// removal PR. They now load through the dispatch adapter at point of use: `aios relay` without
+// --build and without --spec never touches devtools at all. Note only the LLM eval layer crosses
+// the seam; the deterministic spec layer already lives in core (scripts/spec-checks.mjs).
+import { loadDevtoolsModule } from "./devtools-dispatch.mjs";
 
 const DEFAULT_SKILL = "/review-plan";
 
-/** The declared evaluator tier of a --spec file, refusing with file context on a bad value. */
-function specEvalTierFromFile(specPath, specText) {
+/** The declared evaluator tier of a --spec file, refusing with file context on a bad value.
+ *  `specEvalHints` is injected rather than imported: it comes from the devtools spec-eval
+ *  module, which the caller has already loaded through the dispatch adapter. */
+function specEvalTierFromFile(specEvalHints, specPath, specText) {
   try {
     return specEvalHints(specText).tier;
   } catch (e) {
@@ -245,6 +245,10 @@ export async function cmdRelay(repo, args) {
     const p = path.resolve(specFile);
     if (!existsSync(p)) die(`--spec file not found: ${specFile}`);
     const specText = readFileSync(p, "utf8");
+    // Point-of-use load: only `--spec` needs the LLM eval layer, so a plain `aios relay` never
+    // requires devtools to be present at all.
+    const { evaluateSpec, loadRubric, loadRecentDecisions, formatFindings, specEvalHints } =
+      await loadDevtoolsModule("spec-eval");
     let rubric;
     try {
       rubric = loadRubric(path.join(repo, ".claude", "rubrics", "spec-readiness.md"));
@@ -262,7 +266,7 @@ export async function cmdRelay(repo, args) {
       // `specText` is the raw --spec file here (not buildSpecTextFromIssue), so no heading masks
       // the frontmatter. A malformed value is reported against the file, like the CLI does, rather
       // than escaping as a bare parse error from aios.mjs's top-level catch.
-      tier: specEvalTierFromFile(p, specText),
+      tier: specEvalTierFromFile(specEvalHints, p, specText),
       anthropic,
       evalCfg: models.spec_eval,
       decisions,
@@ -315,6 +319,8 @@ export async function cmdRelay(repo, args) {
       // Chained one-shot: hand the in-memory approved plan to the build phase.
       if (build) {
         console.log(c.blue("\n── handing approved plan to the build phase ──────────────────"));
+        // Point-of-use load: only the chained `--build` handoff needs the build engine.
+        const { runBuild, parseBuildArgs } = await loadDevtoolsModule("build");
         const buildOpts = parseBuildArgs(args);
         buildOpts.rounds = buildRounds; // relay --rounds governs the PLAN loop; build uses --build-rounds
         buildOpts.skill = "/ai-code-review"; // relay --skill is the plan reviewer, not the code reviewer
