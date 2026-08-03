@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import {
   clientWorkspaceStatus,
   hasClientWorkspace,
+  isResolvedWorkspace,
   main,
-  matchesWorkspacePatterns,
 } from "../scripts/run-coverage.mjs";
 
 /**
@@ -27,7 +28,12 @@ const SUMMARY = JSON.stringify({
   total: { lines: METRIC, statements: METRIC, functions: METRIC, branches: METRIC },
 });
 
-/** A fixture repo root: shard data for `--merge 1`, and optionally a gui/client workspace. */
+/**
+ * A fixture repo root: shard data for `--merge 1`, and optionally a gui/client workspace.
+ *
+ * `registered` writes the lockfile entry npm would write, because that is what the guard reads.
+ * The lockfile-vs-npm parity test below proves the shape is npm's own rather than one we invented.
+ */
 function makeRoot({ manifest = false, registered = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "run-cov-guard-"));
   mkdirSync(path.join(root, "coverage", "shard-1"), { recursive: true });
@@ -37,6 +43,26 @@ function makeRoot({ manifest = false, registered = false } = {}) {
     JSON.stringify({
       name: "fixture",
       workspaces: registered ? ["gui/server", "gui/client"] : ["gui/server"],
+    })
+  );
+  writeFileSync(
+    path.join(root, "package-lock.json"),
+    JSON.stringify({
+      name: "fixture",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "fixture" },
+        "gui/server": { name: "@fixture/server" },
+        // npm writes BOTH a member entry keyed by path and an install-tree link keyed by
+        // node_modules/<name>. Only the first means "this is a workspace".
+        "node_modules/@fixture/server": { resolved: "gui/server", link: true },
+        ...(registered
+          ? {
+              "gui/client": { name: "@fixture/client" },
+              "node_modules/@fixture/client": { resolved: "gui/client", link: true },
+            }
+          : {}),
+      },
     })
   );
   if (manifest) {
@@ -67,61 +93,124 @@ function recorder(root) {
   };
 }
 
-test("matchesWorkspacePatterns handles exact, glob and normalized workspace entries", () => {
-  const m = (patterns, target = "gui/client") => matchesWorkspacePatterns(patterns, target);
-  assert.equal(m(["gui/client"]), true);
-  assert.equal(m(["./gui/client/"]), true);
-  assert.equal(m(["gui/*"]), true);
-  assert.equal(m(["gui/**"]), true);
-  assert.equal(m(["packages/*"]), false);
-  assert.equal(m(["gui/clientx"]), false);
-  assert.equal(m([]), false);
-  // `*` must not cross a path separator, or `packages/*` would swallow `packages/a/b`.
-  assert.equal(m(["gui/*"], "gui/client/sub"), false);
-  // `**` spans zero segments, so `gui/**/client` covers `gui/client` — npm agrees.
-  assert.equal(m(["gui/**/client"]), true);
-  assert.equal(m(["gui/**/client"], "gui/a/b/client"), true);
-  // `?` is one non-separator character; `[...]` is a character class.
-  assert.equal(m(["gui/clien?"]), true);
-  assert.equal(m(["gui/clien[t]"]), true);
-  assert.equal(m(["gui/clien[!t]"]), false);
-  assert.equal(m(["gui/?"]), false);
-  // A literal `.` must not act as a regex wildcard: `gui/client.` is not `gui/client`.
-  assert.equal(m(["gui/client."]), false);
-});
-
-test("matchesWorkspacePatterns honours npm's `!` exclusions (AIO-612)", () => {
-  // THE FALSE POSITIVE THIS GUARD EXISTS TO AVOID. npm resolves `workspaces` as an ordered
-  // include/exclude set: ["gui/*", "!gui/client"] yields NO gui/client workspace, and
-  // `npm run test:coverage --workspace gui/client` exits 1 with "No workspaces found".
-  // Judging entries independently sees the `gui/*` include and wrongly answers "present";
-  // the spawn then fails, and in runFull that failure is swallowed by scan-on-merge.yml's
-  // `|| true`, publishing null coverage against a fully green CI.
-  assert.equal(matchesWorkspacePatterns(["gui/*", "!gui/client"], "gui/client"), false);
-  assert.equal(matchesWorkspacePatterns(["gui/**", "!gui/*"], "gui/client"), false);
-  assert.equal(matchesWorkspacePatterns(["!gui/client", "gui/*"], "gui/client"), false);
-  // An exclusion that does not cover the target leaves the include standing.
-  assert.equal(matchesWorkspacePatterns(["gui/*", "!gui/server"], "gui/client"), true);
-  // An exclusion alone never includes anything.
-  assert.equal(matchesWorkspacePatterns(["!gui/client"], "gui/client"), false);
-});
-
-test("clientWorkspaceStatus reports a negated workspace as deregistered (AIO-612)", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "run-cov-negated-"));
+test("isResolvedWorkspace reads the lockfile, and answers no when it cannot", () => {
+  const live = makeRoot({ manifest: true, registered: true });
+  const dereg = makeRoot({ manifest: true, registered: false });
+  const noLock = makeRoot({ manifest: true, registered: true });
+  rmSync(path.join(noLock, "package-lock.json"));
+  const badLock = makeRoot({ manifest: true, registered: true });
+  writeFileSync(path.join(badLock, "package-lock.json"), "{ not json");
   try {
-    mkdirSync(path.join(root, "gui", "client"), { recursive: true });
-    writeFileSync(path.join(root, "gui", "client", "package.json"), '{"name":"client"}');
-    writeFileSync(
-      path.join(root, "package.json"),
-      JSON.stringify({ name: "fixture", workspaces: ["gui/*", "!gui/client"] })
-    );
-    // Manifest on disk, include pattern matches — and npm still resolves no workspace.
-    assert.equal(clientWorkspaceStatus(root), "deregistered");
-    assert.equal(hasClientWorkspace(root), false);
+    assert.equal(isResolvedWorkspace(live, "gui/client"), true);
+    assert.equal(isResolvedWorkspace(live, "gui/server"), true);
+    assert.equal(isResolvedWorkspace(dereg, "gui/client"), false);
+    // An install-tree link is not the member entry.
+    assert.equal(isResolvedWorkspace(live, "node_modules/@fixture/client"), false);
+    // No lockfile / unparseable lockfile => "not a workspace". That skips the client pass and
+    // shrinks the reported total, which trips the ratchet on the merge lane — loud. Defaulting
+    // the other way would run a spawn that fails and, in runFull, fail silently.
+    assert.equal(isResolvedWorkspace(noLock, "gui/client"), false);
+    assert.equal(isResolvedWorkspace(badLock, "gui/client"), false);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    for (const d of [live, dereg, noLock, badLock]) rmSync(d, { recursive: true, force: true });
   }
 });
+
+/**
+ * PARITY WITH REAL NPM — the test that makes the oracle claim honest.
+ *
+ * A hand-rolled glob matcher stood here and was wrong in both directions: `["gui/*",
+ * "!gui/client"]` read as present when npm resolves nothing (false positive → the null-coverage
+ * incident), and `gui/client/**`, `gui/{client,server}`, `gui/@(client|server)`, `gui/clien?`,
+ * `gui/clien[t]` all read as absent when npm accepts them (false negative → ~1.9k lines silently
+ * dropped from the denominator). Both classes came out of adversarial review.
+ *
+ * So this asserts agreement with npm itself rather than with our reading of npm: for each
+ * registration form, generate a real lockfile, then ask npm to run a script in the workspace and
+ * compare its exit status with the predicate.
+ */
+test(
+  "clientWorkspaceStatus agrees with real npm across every registration form",
+  { timeout: 300_000 },
+  (t) => {
+    let npmVersion;
+    try {
+      npmVersion = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+    } catch {
+      return t.skip("npm is not runnable in this environment");
+    }
+
+    const CASES = [
+      ["gui/client"],
+      ["./gui/client/"],
+      ["gui/*"],
+      ["gui/**"],
+      ["gui/**/client"],
+      ["gui/client/**"],
+      ["gui/clien?"],
+      ["gui/clien[t]"],
+      ["gui/{client,server}"],
+      ["gui/@(client|server)"],
+      ["gui/*", "!gui/client"],
+      ["gui/**", "!gui/*"],
+      ["!gui/client", "gui/*"],
+      ["gui/*", "!gui/server"],
+      ["!gui/client"],
+      ["gui/client."],
+      ["gui/clien[!t]"],
+      ["gui/?"],
+      ["packages/*"],
+      [],
+    ];
+
+    for (const workspaces of CASES) {
+      const root = mkdtempSync(path.join(tmpdir(), "run-cov-npm-parity-"));
+      try {
+        for (const member of ["client", "server"]) {
+          mkdirSync(path.join(root, "gui", member), { recursive: true });
+          writeFileSync(
+            path.join(root, "gui", member, "package.json"),
+            JSON.stringify({ name: `@fixture/${member}`, version: "1.0.0", scripts: { probe: "" } })
+          );
+        }
+        writeFileSync(
+          path.join(root, "package.json"),
+          JSON.stringify({ name: "fixture", version: "1.0.0", private: true, workspaces })
+        );
+        // Lockfile only: no network, no node_modules, but npm's real workspace resolution.
+        try {
+          execFileSync("npm", ["install", "--package-lock-only", "--no-audit", "--no-fund"], {
+            cwd: root,
+            stdio: "pipe",
+          });
+        } catch {
+          /* npm may refuse to write a lockfile; the predicate must then answer "not a workspace" */
+        }
+
+        let npmResolves;
+        try {
+          execFileSync("npm", ["run", "probe", "--workspace", "gui/client"], {
+            cwd: root,
+            stdio: "pipe",
+          });
+          npmResolves = true;
+        } catch {
+          npmResolves = false;
+        }
+
+        assert.equal(
+          clientWorkspaceStatus(root) === "present",
+          npmResolves,
+          `workspaces ${JSON.stringify(workspaces)}: guard says ` +
+            `${clientWorkspaceStatus(root)}, npm ${npmResolves ? "resolves" : "does NOT resolve"} ` +
+            `gui/client (npm ${npmVersion})`
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+);
 
 test("client workspace predicate requires the manifest AND npm registration (AIO-612)", () => {
   const gone = makeRoot();

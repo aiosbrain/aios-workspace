@@ -125,73 +125,42 @@ function runClientCoverage(exec = execute) {
   return exec("npm", ["run", "test:coverage", "--workspace", CLIENT_WORKSPACE]);
 }
 
-function rootWorkspacePatterns(root) {
-  // An unreadable/unparseable root manifest means npm cannot resolve ANY workspace, so treating
-  // it as "no workspaces" matches what the npm call would do — without throwing from the guard.
+/**
+ * Is `target` a resolved npm workspace of `root`?
+ *
+ * ASKS NPM RATHER THAN PREDICTING IT. `package-lock.json` records the workspace set npm itself
+ * resolved: every member gets a top-level `packages["<dir>"]` entry keyed by its path from the
+ * root. Reading that is an oracle, not a reimplementation.
+ *
+ * The alternative — re-deriving the set from `package.json`'s `workspaces` globs — means
+ * reimplementing minimatch, and a partial reimplementation is wrong in both directions:
+ *
+ *   - `["gui/*", "!gui/client"]` resolves to NO gui/client workspace, because npm reads the array
+ *     as an ordered include/exclude set. Judging entries independently sees the include and says
+ *     "present"; the spawn then fails, and in `runFull` that failure is swallowed by
+ *     scan-on-merge.yml's `|| true`, so the scanner publishes `test_coverage_pct: null` behind a
+ *     green CI. That is the exact incident this guard exists to prevent.
+ *   - `gui/client/**`, `gui/{client,server}`, `gui/@(client|server)`, `gui/clien?` and
+ *     `gui/clien[t]` are all valid registrations npm accepts. Missing any of them skips a live
+ *     workspace and silently drops its ~1.9k lines from the coverage denominator.
+ *
+ * Both classes were found by adversarial review of the hand-rolled matcher this replaces. The
+ * lockfile has no such failure modes: it is whatever npm decided.
+ *
+ * Staleness is not a hole. A lockfile that disagrees with `package.json` makes `npm ci` fail
+ * outright, and CI runs `npm ci` before any coverage step — so no CI run can reach here with the
+ * two out of sync. An unreadable or absent lockfile answers "not a workspace", which skips the
+ * client pass and shrinks the reported total: that trips the coverage ratchet on the merge lane,
+ * which is loud. The opposite default would be silent.
+ */
+export function isResolvedWorkspace(root, target) {
   try {
-    const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-    const list = Array.isArray(manifest.workspaces)
-      ? manifest.workspaces
-      : manifest.workspaces?.packages;
-    return Array.isArray(list) ? list.filter((entry) => typeof entry === "string") : [];
+    const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
+    // `node_modules/<name>` keys are the install-tree links to a member, not the member entry.
+    return Boolean(lock.packages?.[target]) && !target.includes("node_modules/");
   } catch {
-    return [];
+    return false;
   }
-}
-
-/**
- * Does one `workspaces` entry's glob cover `target`?
- *
- * A leading `!` is NOT handled here — it is an exclusion marker for the whole entry, not part of
- * the glob, so `workspacePatternCovers` answers only "does the glob body match". The caller owns
- * include-vs-exclude precedence.
- *
- * Supports the npm/minimatch subset that can appear in a `workspaces` array: `**` (any depth,
- * including zero segments, so `a/` + `**` + `/b` also covers `a/b`), `*` (one segment), `?` (one non-separator
- * character) and `[...]` character classes. Everything else is a literal.
- */
-function workspacePatternCovers(pattern, target) {
-  const normalized = pattern.replace(/^\.\//, "").replace(/\/+$/, "");
-  // One pass over the pattern, so no placeholder can collide with literal text. Character
-  // classes are matched whole (`[!a-z]` → `[^a-z]`) — scanning their contents separately would
-  // let an inner `*` or `.` be rewritten as if it were a glob operator.
-  const source = normalized.replace(
-    /\[!?\]?[^\]]*\]|\/\*\*\/|\*\*|\*|\?|[.+^${}()|[\]\\]/g,
-    (token) => {
-      // `a/**/b` must also match `a/b`: minimatch lets `**` span zero path segments, so the
-      // separators around it collapse. Written as `/(?:.*/)?` rather than `/.*/`.
-      if (token === "/**/") return "/(?:.*/)?";
-      if (token === "**") return ".*";
-      if (token === "*") return "[^/]*";
-      if (token === "?") return "[^/]";
-      if (token.startsWith("[")) return token.startsWith("[!") ? `[^${token.slice(2)}` : token;
-      return `\\${token}`;
-    }
-  );
-  return new RegExp(`^${source}$`).test(target);
-}
-
-/**
- * Is `target` a workspace, given the whole `workspaces` array?
- *
- * Exclusions are why this takes the full list rather than being folded per-entry. npm resolves
- * `workspaces` as an ordered include/exclude set, so `["gui/*", "!gui/client"]` yields NO
- * gui/client workspace and `npm --workspace gui/client` exits 1 with "No workspaces found".
- * Testing entries independently with `.some()` sees the `gui/*` include, answers "present", and
- * lands in exactly the false-positive direction this guard exists to prevent: the spawn fails,
- * and in `runFull` that failure is swallowed by scan-on-merge.yml's `|| true`, so the scanner
- * publishes `test_coverage_pct: null` with a green CI. Any exclusion match wins outright.
- */
-export function matchesWorkspacePatterns(patterns, target) {
-  let included = false;
-  for (const entry of patterns) {
-    if (entry.startsWith("!")) {
-      if (workspacePatternCovers(entry.slice(1), target)) return false;
-    } else if (workspacePatternCovers(entry, target)) {
-      included = true;
-    }
-  }
-  return included;
 }
 
 /**
@@ -202,7 +171,7 @@ export function matchesWorkspacePatterns(patterns, target) {
  * - the manifest `gui/client/package.json` must exist. A bare `gui/client/` directory (stale
  *   build output, an untracked `coverage/` left behind after the sources go) is not a workspace;
  *   npm resolves `--workspace gui/client` through the manifest.
- * - the root `package.json` `workspaces` array must still match `gui/client`. AIO-612 PR-B
+ * - npm must still resolve `gui/client` as a workspace (see `isResolvedWorkspace`). AIO-612 PR-B
  *   deregisters the workspace at one stage and deletes the tree at a later one, so the repo
  *   passes THROUGH a state where the manifest is still on disk but npm already answers
  *   `No workspaces found: --workspace=gui/client` and exits 1. A manifest-only predicate returns
@@ -214,8 +183,7 @@ export function matchesWorkspacePatterns(patterns, target) {
  */
 export function clientWorkspaceStatus(root = ROOT) {
   if (!existsSync(path.join(root, "gui", "client", "package.json"))) return "no-manifest";
-  const registered = matchesWorkspacePatterns(rootWorkspacePatterns(root), CLIENT_WORKSPACE);
-  return registered ? "present" : "deregistered";
+  return isResolvedWorkspace(root, CLIENT_WORKSPACE) ? "present" : "deregistered";
 }
 
 export function hasClientWorkspace(root = ROOT) {
