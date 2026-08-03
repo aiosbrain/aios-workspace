@@ -844,9 +844,10 @@ With no query parameters, the response is the summary:
 }
 ```
 
-`bySource`, `byMember`, and `divergentItems` are best-effort observability reads: a database failure
-is logged server-side and yields the same empty/zero summary the admin page uses. Consumers therefore
-MUST treat an empty summary as “quiet or unavailable,” not proof that attribution is healthy.
+`bySource`, `byMember`, and `divergentItems` are independent best-effort observability reads. A
+database failure in one sub-read is logged server-side and degrades only that field to `[]` or `0`;
+the other fields can still contain data. Consumers therefore MUST treat any empty/zero field as
+“quiet or unavailable,” not proof that attribution is healthy.
 
 `?member=<uuid>` selects a member drill-down; `?member=unattributed` selects the null-attribution
 bucket. Optional `source=<normalized-source>` filters that bucket and `limit=<positive integer>`
@@ -871,9 +872,12 @@ rate_limited`. **Rate limit:** 60/min per key.
 ### `GET /api/v1/timeline` — tier-scoped seven-day work ledger
 
 Returns the Brain's cached seven-day day → person → work ledger. The authenticated key's tier is
-applied at the item/task/decision visibility choke-points: a `team` key can see `team` + `external`
-work, while an `external` key sees only `external` work. There is no separate RLS backstop, so this
-application-level filter is the isolation boundary.
+applied at the item/task/decision visibility choke-points: an `external` key sees only `external`
+work, while a `team` key is unfiltered within its authenticated team and can see every stored access
+level, including an internal `admin` row. Normal member-facing ingest rejects `admin`/`private`
+content before it can cross the boundary; the broader team-tier read also covers admin rows created
+inside the Brain. There is no separate RLS backstop, so this application-level filter is the
+isolation boundary.
 
 ```json
 {
