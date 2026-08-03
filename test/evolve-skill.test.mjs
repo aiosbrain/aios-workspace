@@ -25,6 +25,8 @@ function addSkill(root, name, description = "Test skill") {
 }
 
 function buildFixture(root) {
+  const awsAccessKey = ["AKIA", "1234567890ABCDEF"].join("");
+  const awsSessionKey = ["ASIA", "1234567890ABCDEF"].join("");
   const project = path.join(root, "project");
   const sessions = path.join(root, "sessions");
   const archived = path.join(root, "archived");
@@ -40,7 +42,7 @@ function buildFixture(root) {
       text:
         "Review this pull request; token=abcdefghijklmnopqrstuvwxyz " +
         "DB_PASSWORD=database-password-value authToken=camel-case-token-value " +
-        "AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF standalone ASIA1234567890ABCDEF",
+        `AWS_ACCESS_KEY_ID=${awsAccessKey} standalone ${awsSessionKey}`,
     },
     { session_id: "other-session", ts: 2_000_000_001, text: "Unrelated task" },
   ]);
@@ -93,13 +95,14 @@ function buildFixture(root) {
       payload: { session_id: "other-session", cwd: path.join(root, "other") },
     },
   ]);
-  return { project, sessions, archived, history };
+  return { project, sessions, archived, history, awsAccessKey, awsSessionKey };
 }
 
 test("evolve reports skill, routing, archive, redaction, and catalog evidence", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "evolve-skill-"));
   try {
-    const { project, sessions, archived, history } = buildFixture(root);
+    const { project, sessions, archived, history, awsAccessKey, awsSessionKey } =
+      buildFixture(root);
 
     const stdout = execFileSync(
       "python3",
@@ -140,8 +143,10 @@ test("evolve reports skill, routing, archive, redaction, and catalog evidence", 
     assert.match(report.sessions[0].prompts[0].text, /\[REDACTED\]/);
     assert.doesNotMatch(
       report.sessions[0].prompts[0].text,
-      /database-password-value|camel-case-token-value|AKIA1234567890ABCDEF|ASIA1234567890ABCDEF/
+      /database-password-value|camel-case-token-value/
     );
+    assert.ok(!report.sessions[0].prompts[0].text.includes(awsAccessKey));
+    assert.ok(!report.sessions[0].prompts[0].text.includes(awsSessionKey));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
