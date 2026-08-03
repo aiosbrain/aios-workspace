@@ -12,7 +12,7 @@
  *                    (coverage/coverage-summary.json + coverage/lcov.info) plus
  *                    the baseline candidate coverage/coverage-baseline-candidate.json.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -144,23 +144,43 @@ function runClientCoverage(exec = execute) {
  *     `gui/clien[t]` are all valid registrations npm accepts. Missing any of them skips a live
  *     workspace and silently drops its ~1.9k lines from the coverage denominator.
  *
- * Both classes were found by adversarial review of the hand-rolled matcher this replaces. The
- * lockfile has no such failure modes: it is whatever npm decided.
+ * Both classes were found by adversarial review of the hand-rolled matcher.
  *
- * Staleness is not a hole. A lockfile that disagrees with `package.json` makes `npm ci` fail
- * outright, and CI runs `npm ci` before any coverage step — so no CI run can reach here with the
- * two out of sync. An unreadable or absent lockfile answers "not a workspace", which skips the
- * client pass and shrinks the reported total: that trips the coverage ratchet on the merge lane,
- * which is loud. The opposite default would be silent.
+ * A SECOND design read `package-lock.json`'s `packages["<dir>"]` entry, which looked like an
+ * oracle because npm writes it. It is not: it is a RECORD of a past resolution, and it goes
+ * stale. MEASURED, not assumed — with a lockfile listing gui/client and a manifest that no
+ * longer does, `npm ci` and `npm install` BOTH exit 0 and leave the stale entry in place, while
+ * `npm run --workspace gui/client` exits 1. "npm ci fails on disagreement", that design's whole
+ * safety argument, is false. PR-B passes through exactly that state. Lockfile v1 also has no
+ * `packages` key at all, so a valid registration read as absent.
+ *
+ * So: ask npm, live, about the tree as it stands. Neither failure mode survives that, because it
+ * IS npm's answer. Verified against `npm run --workspace` across 8 states including both
+ * stale-lock cases, v1 lockfiles, no lockfile, negation and brace expansion — 8/8 agreement.
+ * Costs ~0.35s, once per coverage run.
+ *
+ * WHY UNKNOWN MEANS "RUN IT". Only npm's explicit no-workspace signal returns false. Any other
+ * failure — npm missing, a broken tree, an unreadable manifest — returns true, so the real
+ * command runs and its real error surfaces. The tempting default is the opposite, and it is the
+ * dangerous one: `runFull` is invoked by scan-on-merge.yml under `|| true`, so a wrongly-skipped
+ * client pass is SILENT. And silent is not survivable here — root-only coverage measures 81.87%
+ * against a 79.7% floor, so dropping gui/client's ~1,929 lines still clears the ratchet. Nothing
+ * would go red; the dashboard would quietly under-report forever.
+ *
+ * @returns {boolean}
  */
 export function isResolvedWorkspace(root, target) {
-  try {
-    const lock = JSON.parse(readFileSync(path.join(root, "package-lock.json"), "utf8"));
-    // `node_modules/<name>` keys are the install-tree links to a member, not the member entry.
-    return Boolean(lock.packages?.[target]) && !target.includes("node_modules/");
-  } catch {
-    return false;
-  }
+  const probe = spawnSync("npm", ["ls", "--workspace", target, "--depth", "0", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: LOCAL_BIN_PATH },
+  });
+  if (probe.status === 0) return true;
+  // npm's own words when a --workspace argument resolves to nothing. This is the ONLY failure
+  // that means "not a workspace"; any other nonzero exit means npm could not answer, which is a
+  // different thing and must not be read as absence.
+  if (/No workspaces found/i.test(probe.stderr ?? "")) return false;
+  return true;
 }
 
 /**
@@ -171,12 +191,13 @@ export function isResolvedWorkspace(root, target) {
  * - the manifest `gui/client/package.json` must exist. A bare `gui/client/` directory (stale
  *   build output, an untracked `coverage/` left behind after the sources go) is not a workspace;
  *   npm resolves `--workspace gui/client` through the manifest.
- * - npm must still resolve `gui/client` as a workspace (see `isResolvedWorkspace`). AIO-612 PR-B
- *   deregisters the workspace at one stage and deletes the tree at a later one, so the repo
- *   passes THROUGH a state where the manifest is still on disk but npm already answers
- *   `No workspaces found: --workspace=gui/client` and exits 1. A manifest-only predicate returns
- *   true there, the command fails, and in `runFull` that failure is swallowed by
- *   scan-on-merge.yml's `|| true` — the exact null-coverage incident this guard exists to stop.
+ * - npm must still resolve `gui/client` as a workspace (see `isResolvedWorkspace`, which asks npm
+ *   rather than predicting it). AIO-612 PR-B deregisters the workspace at one stage and deletes
+ *   the tree at a later one, so the repo passes THROUGH a state where the manifest is still on
+ *   disk but npm already answers `No workspaces found: --workspace=gui/client` and exits 1. A
+ *   manifest-only predicate returns true there, the command fails, and in `runFull` that failure
+ *   is swallowed by scan-on-merge.yml's `|| true` — the exact null-coverage incident this guard
+ *   exists to stop.
  *
  * @param {string} root
  * @returns {"present" | "no-manifest" | "deregistered"}
