@@ -5,7 +5,7 @@ loosely based on [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601.
 
 This is the **individual workspace** repo. The Team Brain sync contract
-(`docs/brain-api.md`) is versioned separately; it is currently at **v1.15**
+(`docs/brain-api.md`) is versioned separately; it is currently at **v1.16**
 (additive within major `v1`). Entries predating a bump did not change the protocol.
 
 ## [Unreleased]
@@ -14,7 +14,9 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 This corrective patch contains the scan-on-merge and skill-routing fixes that landed after the
 `0.10.0` artifact was published. The top-level command registry and devtools migration are
-unchanged. The Team Brain API contract also remains at **v1.15**.
+unchanged. Separately, the Team Brain API contract is now **v1.16**: the contract catches up with
+the already-shipped authenticated attribution-health and work-timeline reads; neither route's
+runtime behavior changed.
 
 ### Fixed
 
