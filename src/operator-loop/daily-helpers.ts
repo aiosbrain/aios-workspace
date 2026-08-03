@@ -12,7 +12,7 @@ export const END_OF_TIME = "9999-12-31";
 
 const BLOCKED_RE = /\b(blocked|blocker|waiting|stalled|paused|on[-\s]hold)\b/i;
 const NEEDS_REPLY_RE = /\b(needs?|needing|awaiting)\s+(?:a\s+)?repl(?:y|ies)\b/i;
-const DAY_RE = /^(\d{4}-\d{2}-\d{2})/;
+const DAY_RE = /^(\d{4}-\d{2}-\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
 const QUEUED_SEVERITY_RANK: Record<AskSeverity, number> = {
   blocker: 0,
   decision: 1,
@@ -117,6 +117,7 @@ export function dayOf(value: string | null | undefined): string | null {
   const match = DAY_RE.exec(value);
   const day = match?.[1];
   if (!day) return null;
+  if (!Number.isFinite(Date.parse(value))) return null;
   const instant = Date.parse(`${day}T00:00:00.000Z`);
   if (!Number.isFinite(instant)) return null;
   return new Date(instant).toISOString().slice(0, 10) === day ? day : null;
