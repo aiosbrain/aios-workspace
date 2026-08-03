@@ -78,8 +78,21 @@ const SR17_INCREMENT_RE =
 // The deterministic half is narrow on purpose. It cannot know WHAT a fence excludes, so it does
 // not try; it only requires that a spec raising a fence names a destination for what the fence
 // pushes out. The adversarial layer judges whether that accounting is actually complete.
-const SR18_FENCE_RE =
-  /\b(no change(s)? to any|must (be|remain) (byte-)?identical|byte-identical|must not be (modified|changed|touched)|not modified by this (slice|spec|pr)|leave [^.\n]{0,40} (untouched|unchanged)|do not (modify|touch|change) [^.\n]{0,40}|unchanged (against|from) )/i;
+const SR18_DIRECT_FENCE_PATTERNS = [
+  /\bno changes? to any\b/i,
+  /\bmust (?:be|remain) (?:byte-)?identical\b/i,
+  /\bbyte-identical\b/i,
+  /\bmust not be (?:modified|changed|touched)\b/i,
+  /\bnot modified by this (?:slice|spec|pr)\b/i,
+  /\bdo not (?:modify|touch|change) [^.\n]{0,40}/i,
+  /\bunchanged (?:against|from) /i,
+];
+
+// "Leave it unchanged" describes one item and is not a blanket scope fence. Treat a leave-clause
+// as a fence only when its target is explicitly class-wide (a quantifier or a plural surface).
+const SR18_LEAVE_RE = /\bleave\s+([^.\n]{1,80}?)\s+(?:untouched|unchanged)\b/gi;
+const SR18_CLASS_WIDE_TARGET_RE =
+  /\b(?:all|any|every|everything|anything|entire|files|pages|routes|outputs|artifacts|content)\b/i;
 
 // Naming where the excluded work goes. A "Deferred:" list alone does NOT count: the spec that
 // prompted this criterion had one, and the fenced items still were not in it.
@@ -98,14 +111,35 @@ const SR18_SCOPE_SECTION_RE =
  * Pure + deterministic so it can be unit-tested directly.
  */
 export function assessScopeFence(specText) {
-  const scopeText = extractSections(specText)
-    .filter((sec) => SR18_SCOPE_SECTION_RE.test(sec.heading))
-    .map((sec) => sec.body)
-    .join("\n");
-  const m = scopeText.match(SR18_FENCE_RE);
+  const ancestry = [];
+  const scopeBodies = [];
+  for (const sec of extractSections(specText)) {
+    if (sec.level === 0) continue;
+    while (ancestry.length && ancestry.at(-1).level >= sec.level) ancestry.pop();
+    const inScope = SR18_SCOPE_SECTION_RE.test(sec.heading) || Boolean(ancestry.at(-1)?.inScope);
+    if (inScope) scopeBodies.push(sec.body);
+    ancestry.push({ level: sec.level, inScope });
+  }
+  const scopeText = scopeBodies.join("\n");
+  let phrase = null;
+  for (const pattern of SR18_DIRECT_FENCE_PATTERNS) {
+    const match = scopeText.match(pattern);
+    if (match) {
+      phrase = match[0].trim();
+      break;
+    }
+  }
+  if (!phrase) {
+    for (const match of scopeText.matchAll(SR18_LEAVE_RE)) {
+      if (SR18_CLASS_WIDE_TARGET_RE.test(match[1])) {
+        phrase = match[0].trim();
+        break;
+      }
+    }
+  }
   return {
-    fenced: Boolean(m),
-    phrase: m ? m[0].trim() : null,
+    fenced: Boolean(phrase),
+    phrase,
     destinationNamed: SR18_DESTINATION_RE.test(specText),
   };
 }
