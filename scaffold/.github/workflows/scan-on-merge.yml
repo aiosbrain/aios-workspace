@@ -24,8 +24,7 @@ name: scan-on-merge
 
 on:
   push:
-    branches: [main, master]
-  workflow_dispatch:
+    branches: [main]
 
 permissions:
   contents: read
@@ -38,24 +37,36 @@ jobs:
   scan:
     name: workspace readiness scan → brain
     runs-on: ubuntu-latest
-    env:
-      AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
-      BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
-      AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
     steps:
-      - uses: actions/checkout@v4
+      # Secrets are intentionally scoped to this no-dependency probe and the final upload step.
+      # Checkout, package installation, builds, and repository-controlled coverage scripts must
+      # never inherit the Brain credential.
+      - name: Check Brain configuration
+        id: brain
+        env:
+          AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+          BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+          AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
+        run: |
+          if [[ -n "$AIOS_API_KEY" && -n "$BRAIN_URL" && -n "$AIOS_TEAM" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the scanner reads the commit window
           persist-credentials: false
 
       - name: Skip note
-        if: env.AIOS_API_KEY == '' || env.BRAIN_URL == '' || env.AIOS_TEAM == ''
+        if: steps.brain.outputs.configured != 'true'
         run: |
           echo "Brain credentials not configured — skipping the scan."
           echo "Set AIOS_BRAIN_URL, AIOS_TEAM and AIOS_API_KEY to enable it."
 
-      - uses: actions/setup-node@v4
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.brain.outputs.configured == 'true'
         with:
           node-version: "22"
 
@@ -63,25 +74,27 @@ jobs:
       # scripts/aios.mjs is a delegating shim that resolves the toolkit via AIOS_TOOLKIT_DIR or
       # an adjacent ../aios/aios-workspace — neither of which exists on a CI runner.
       - name: Install the AIOS toolkit
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
-        run: npm install -g @aiosbrain/aios@^0.9
+        if: steps.brain.outputs.configured == 'true'
+        run: npm install -g @aiosbrain/aios@0.9.1 --ignore-scripts
 
       # Optional: most workspaces are content repos with no suite, and that is fine — coverage
       # then reports as "no report", NOT as 0%. Only run it when the workspace actually defines
-      # the script, and never let it fail the scan: this is a metrics source, not a gate.
+      # the script and has a lockfile. Never let it fail the scan: this is a metrics source, not
+      # a gate. Lifecycle scripts are disabled during install; the named coverage script remains
+      # an explicit, auditable execution step.
       - name: Generate coverage (only if this workspace has a suite)
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        if: steps.brain.outputs.configured == 'true'
         run: |
-          if [ -f package.json ] && node -e "process.exit(require('./package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
+          if [ -f package-lock.json ] && node -e "process.exit(require('./package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
             echo "test:coverage found — running it."
-            npm ci || npm install
+            npm ci --ignore-scripts
             npm run test:coverage || true
           else
-            echo "no test:coverage script — skipping (coverage will report as 'no report')."
+            echo "no locked test:coverage suite — skipping (coverage will report as 'no report')."
           fi
 
       - name: Compute codebase health
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        if: steps.brain.outputs.configured == 'true'
         continue-on-error: true # enrichment, never a gate
         run: |
           aios codebase-health --json > "$RUNNER_TEMP/codebase-health.v1.json"
@@ -89,22 +102,28 @@ jobs:
             "$RUNNER_TEMP/codebase-health.v1.json" > "$RUNNER_TEMP/codebase-health.contract.json"
 
       - name: Fetch the ingestion scanner from aios-team-brain
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        if: steps.brain.outputs.configured == 'true'
         run: bash .github/scripts/fetch-brain-scanner.sh .brain-scanner
 
-      - uses: actions/setup-python@v5
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.brain.outputs.configured == 'true'
         with:
           python-version: "3.12"
 
-      - name: Install the scanner
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
-        run: pip install -e .brain-scanner/ingestion
+      - name: Install scanner runtime dependencies
+        if: steps.brain.outputs.configured == 'true'
+        run: >-
+          pip install --only-binary=:all: --require-hashes
+          -r .github/scripts/brain-scanner-requirements.txt
 
       - name: Scan this workspace into the brain
-        if: env.AIOS_API_KEY != '' && env.BRAIN_URL != '' && env.AIOS_TEAM != ''
+        if: steps.brain.outputs.configured == 'true'
         env:
+          AIOS_API_KEY: ${{ secrets.AIOS_API_KEY }}
+          BRAIN_URL: ${{ secrets.AIOS_BRAIN_URL }}
+          AIOS_TEAM: ${{ secrets.AIOS_TEAM }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: .brain-scanner/ingestion
         # The slug is derived from the repository name — this workflow is repo-agnostic on
         # purpose, so it works unmodified in every scaffolded workspace.
         run: |
@@ -118,7 +137,9 @@ jobs:
             python .github/scripts/scan_with_health.py \
               --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY" \
               --health-json "$HEALTH_JSON" \
-              || aios-ingest scan --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+              || python -m aios_ingest.cli scan \
+                --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
           else
-            aios-ingest scan --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+            python -m aios_ingest.cli scan \
+              --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
           fi
