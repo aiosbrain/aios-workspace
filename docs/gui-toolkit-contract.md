@@ -78,8 +78,8 @@ Removed R4 grandfathers (5): `skill-library.mjs` → `lock-skill-library.mjs`,
 
 | Former deep import | Seam decision |
 |---|---|
-| `LIBRARY_DIR` (lock-skill-library.mjs) | **GUI-owned path.** The vendored library data physically lives at `gui/server/skill-library/`; the gui computes the path itself. The lock scripts keep their own pointer to the same dir — they are the writer side, the gui is the reader side. |
-| `hashDir`, `rollupHash` (lock-skill-library.mjs) | **GUI-owned copy** in `skill-library-util.mjs` (provenance-commented, C1 flat-yaml / C4 price-table pattern). Parity is fail-closed: the committed locks are generated with the scripts-side copies and verified at install with the gui copies, so drift = hash mismatch = refused install + red `test/skill-install*.test.mjs`. |
+| `LIBRARY_DIR` (lock-skill-library.mjs) | **GUI-owned path** — and, as of AIO-702, so is the writer. `scripts/lock-skill-library.mjs` and OGR09's `validation/check-skill-library.mjs` were **deleted from this repo** and now live in `aiosbrain/aios-workspace-gui` alongside the `gui/server/skill-library/` data they operate on, where that repo's `gates` CI job runs the validator. Writer and reader are no longer split across repos. |
+| `hashDir`, `rollupHash` (lock-skill-library.mjs) | **GUI-owned copy** in `skill-library-util.mjs` (provenance-commented, C1 flat-yaml / C4 price-table pattern). The two-sided parity argument below is now historical: after AIO-702 both the generating and the verifying side are in the GUI repo, so there is no cross-repo drift left to be fail-closed about. |
 | `gitFetchSubdir` (lock-marketplace.mjs) | **GUI-owned copy**, same file/pattern; exercised against scripts-side-built catalogs by `test/skill-install-marketplace.test.mjs` (offline `file://` fixture). |
 | `copyDir`, `ensureGitignore` (connector.mjs) | **GUI-owned copies** — small, stable, generic fs helpers. |
 | `frontmatter`, `readSkills` (gen-catalog.mjs) | **GUI-owned.** `frontmatter` is copied (the block-scalar-aware SKILL.md parser; `workspace-parse`'s flat parser is NOT equivalent). `readSkills` was only used for its ids → replaced by a minimal `installedSkillIds()`. |

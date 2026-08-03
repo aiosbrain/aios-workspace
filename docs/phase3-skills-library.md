@@ -1,5 +1,12 @@
 # Phase 3 — Skills Library (cockpit): trusted official-library MVP
 
+> **Ownership moved (AIO-702).** The skill library and the programs that maintain it now
+> live in [`aiosbrain/aios-workspace-gui`](https://github.com/aiosbrain/aios-workspace-gui).
+> `scripts/lock-skill-library.mjs` and `validation/check-skill-library.mjs` (OGR09) were
+> deleted from this repo; the library data at `gui/server/skill-library/` follows with the
+> rest of `gui/` under AIO-612. The GUI repo runs OGR09 in its own `gates` CI job. Paths
+> named below are historical — read them as `aios-workspace-gui` paths.
+
 > Status: **implemented** (#17, merged). Phases 1/2/4 of the cockpit
 > overhaul shipped in #16. This is the deferred Skills surface. Scope is
 > deliberately narrow: **v1 installs only vendored, official, Apache-2.0 skills**,

@@ -60,7 +60,12 @@ case "$MODE" in
     run_check "OGR08 — Scaffold Guard" "$SCRIPT_DIR/check-scaffold-guard.mjs"
     run_check "OGR11 — Scaffold Git Workflow" "$SCRIPT_DIR/check-scaffold-git-workflow.mjs"
     run_check "OGR12 — OpenCode Scaffold" "$SCRIPT_DIR/check-opencode-scaffold.mjs"
-    run_check "OGR09 — Skill Library" "$SCRIPT_DIR/check-skill-library.mjs"
+    # OGR09 (Skill Library) is no longer run here. The vendored library data lives at
+    # gui/server/skill-library/, which docs/gui-toolkit-contract.md declares a GUI-owned
+    # path, and AIO-702 moved the writer + validator into aiosbrain/aios-workspace-gui,
+    # where its own `gates` CI job runs `node validation/check-skill-library.mjs` against
+    # the tree it actually owns. Keeping a second copy here would re-read a path this repo
+    # is about to delete (AIO-612) and would ENOENT the moment it does.
     run_check "OGR10 — Agent Readiness (advisory)" "$SCRIPT_DIR/check-agent-readiness.mjs"
     run_check "OGR13 — Modularity (advisory)" "$SCRIPT_DIR/check-modularity.mjs"
     run_check "OGR14 — File Governance (anti-sprawl ratchet)" "$SCRIPT_DIR/check-file-governance.mjs"
