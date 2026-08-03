@@ -139,9 +139,7 @@ jobs:
             # upsert REPLACES the (codebase_id, head_sha) row.
             python .github/scripts/scan_with_health.py \
               --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY" \
-              --health-json "$HEALTH_JSON" \
-              || python -m aios_ingest.cli scan \
-                --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+              --health-json "$HEALTH_JSON"
           else
             python -m aios_ingest.cli scan \
               --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
