@@ -20,6 +20,7 @@
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { consumeDevtoolsDirArg } from "../devtools-dispatch.mjs";
 import { findCommand, nearestCommand, renderUsage } from "./registry.mjs";
 
 const HELP_TOKENS = new Set(["-h", "--help", "help"]);
@@ -54,6 +55,11 @@ export async function dispatch({ argv, local, resolvers }) {
     );
     process.exit(1);
   }
+
+  // The devtools checkout selector chooses which implementation the lazy loader imports; it is
+  // not an argument to that implementation. The loader reads the original process argv, while
+  // this removes the selector pair from the command-facing `rest` array.
+  if (desc.usesDevtoolsDir) consumeDevtoolsDirArg(rest);
 
   // `pr` and `consolidate-findings` own their own `--repo` flag — a GitHub owner/repo slug,
   // NOT the workspace path. `timeline` owns it too — repeatable TARGET repo paths (its

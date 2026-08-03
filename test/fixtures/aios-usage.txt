@@ -191,3 +191,4 @@ usage:
     [--lint-script <s>] [--test-script <s>]  re-runs detect drift via .aios-bootstrap-version
 options:
   --repo <path>               team-ops repo (default: walk up from cwd)
+  --devtools-dir <path>       devtools checkout (build/spec/ship/roadmap/consolidate)

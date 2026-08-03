@@ -15,6 +15,7 @@ export const USAGE_HEADER = [
 export const USAGE_FOOTER = [
   "options:",
   "  --repo <path>               team-ops repo (default: walk up from cwd)",
+  "  --devtools-dir <path>       devtools checkout (build/spec/ship/roadmap/consolidate)",
 ];
 
 export const USAGE_LINES = {

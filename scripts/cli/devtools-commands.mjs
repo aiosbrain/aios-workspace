@@ -25,6 +25,7 @@ export const DEVTOOLS_COMMANDS = {
   build: {
     name: "build",
     resolution: "offline",
+    usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("build"),
     adapt: (ctx, mod) => mod.cmdBuild(ctx.repo, ctx.rest),
     usage: U.build,
@@ -33,7 +34,8 @@ export const DEVTOOLS_COMMANDS = {
   spec: {
     name: "spec",
     resolution: "offline",
-    loader: () => loadDevtoolsModule("spec-eval"),
+    usesDevtoolsDir: true,
+    loader: () => loadDevtoolsModule("spec-eval", { command: "spec" }),
     adapt: (ctx, mod) => mod.cmdSpec(ctx.repo, ctx.rest),
     usage: U.spec,
   },
@@ -41,6 +43,7 @@ export const DEVTOOLS_COMMANDS = {
   "consolidate-findings": {
     name: "consolidate-findings",
     resolution: "offline",
+    usesDevtoolsDir: true,
     ownsRepoFlag: true, // same GitHub-slug `--repo` as `pr` — dispatch must not consume it
     loader: () => loadDevtoolsModule("consolidate-findings"),
     adapt: (ctx, mod) => mod.cmdConsolidateFindings(ctx.repo, ctx.rest),
@@ -52,6 +55,7 @@ export const DEVTOOLS_COMMANDS = {
     name: "ship",
     // ship/roadmap-run's `--repo` is a WORKSPACE path (slug comes from detectRepo(repo)).
     resolution: "offline",
+    usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("ship"),
     adapt: (ctx, mod) => mod.cmdShip(ctx.repo, ctx.rest),
     exit: "exit-code",
@@ -61,6 +65,7 @@ export const DEVTOOLS_COMMANDS = {
   "roadmap-run": {
     name: "roadmap-run",
     resolution: "offline",
+    usesDevtoolsDir: true,
     loader: () => loadDevtoolsModule("roadmap-run"),
     adapt: (ctx, mod) => mod.cmdRoadmapRun(ctx.repo, ctx.rest),
     exit: "exit-code",

@@ -12,6 +12,7 @@
  * @property {string[]} [aliases]
  * @property {"pre-config"|"update-root"|"offline"|"workspace"} resolution
  * @property {boolean}  [ownsRepoFlag]  true => dispatch must NOT consume `--repo`
+ * @property {boolean}  [usesDevtoolsDir] true => dispatch consumes the global devtools selector
  * @property {(rest: string[]) => boolean} [cwdFallback]  offline-only: accept cwd as the root
  * @property {() => Promise<object>} [loader]  lazy module import; omitted for inline handlers
  * @property {(ctx: object, mod: object|null) => Promise<any>} adapt
