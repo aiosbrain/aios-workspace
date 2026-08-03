@@ -12,11 +12,22 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [0.10.0] — 2026-08-03
 
+The standalone Workspace release completes the devtools extraction and makes the
+published CLI the supported installation boundary. The Team Brain API contract is
+unchanged at **v1.15**.
+
 ### Added
 
 - **One-click Team Brain Create path (AIO-445)** — `aios onboard` explains the Railway app +
   Postgres deployment and cost boundary, stops for approval before opening the official template,
   and can resume directly into Join when deployment is ready.
+- **Devtools migration preflight (AIO-665)** — `npm run check:devtools` resolves every delegated
+  command, reports whether it came from the pinned package or `AIOS_DEVTOOLS_DIR`, and fails with
+  actionable installation and rollback guidance when the package is unavailable.
+- **Brain-reporting scaffold CI** — newly scaffolded workspaces include the protected-main scan
+  workflow and report real codebase-health and coverage evidence instead of silently treating
+  missing coverage as zero.
+- **`aios-deck` skill** — a reusable, brand-themeable deck builder with a visual QA gate.
 
 ### Changed
 
@@ -24,6 +35,32 @@ This is the **individual workspace** repo. The Team Brain sync contract
   `https://aiosbrain.dev/deploy/team-brain/` front door, then reuses Join's canonical-origin human
   gate and `GET /api/v1/me` proof. No Brain origin or API key is persisted before validation, and
   onboarding still never pushes workspace content.
+- **Devtools ownership moved out of core (AIO-661/AIO-662)** — `ship`, `build`, `roadmap-run`,
+  `spec`, and `consolidate-findings` now dispatch to exactly pinned
+  `@aiosbrain/aios-devtools@0.2.0`; their former in-tree implementations and tests were removed.
+  The dispatch seam remains fail-open for unrelated core commands and fail-closed with an
+  actionable diagnostic for each delegated command.
+- The scan-on-merge workflow and its scaffold source now use immutable Action and scanner SHAs,
+  exact hash-locked dependencies, lifecycle scripts disabled during installation, and narrowly
+  scoped Brain credentials. It runs only after a push to protected `main`.
+
+### Fixed
+
+- Coverage production now writes its artifact even when a test suite fails; GUI coverage is
+  optional and no longer collides with the core report key.
+- SR18 scope-fence evaluation now distinguishes a per-file “leave unchanged” instruction from a
+  blanket scope freeze, carries Scope semantics into nested headings, and exits them at the correct
+  sibling level. Devtools CI is pinned to the reviewed current-core implementation.
+- Daily operator-loop items reject malformed due dates instead of accepting invalid calendar text.
+
+### Migration (0.9.x → 0.10.0)
+
+- Global installs: `npm install -g @aiosbrain/aios@0.10.0`, then run
+  `npm run check:devtools` from a toolkit checkout when validating the delegated command package.
+- Adjacent devtools development: export `AIOS_DEVTOOLS_DIR=/path/to/aios-devtools`; the preflight
+  names that source explicitly. Remove the variable to return to the pinned npm dependency.
+- Rollback: install `@aiosbrain/aios@0.9.1`, whose tarball still contains the in-tree devtools
+  implementations. The complete procedure is in `docs/devtools-migration.md`.
 
 ## [0.9.1] — 2026-08-01
 
