@@ -45,7 +45,10 @@ Referenced by `scripts/check-boundaries.mjs`; the fuller table is `CLAUDE.md` §
   set `AIOS_TOOLKIT_DIR` or `--toolkit-dir`.
 - **Desktop (Tauri)** — adjacent-checkout mode only; **do-not-demo** for v0.9.0;
   bundling = AIO-581 (GUI repo).
-- **Devtools** (`aiosbrain/aios-devtools`) — planned/conditional, **not cut**.
+- **Devtools** (`aiosbrain/aios-devtools`) — **cut and removed** (AIO-662). `ship`, `build`,
+  `roadmap-run`, `spec-eval`, `spec-publish`, `consolidate-findings` no longer live here. Core
+  dispatches via `scripts/devtools-dispatch.mjs`; `@aiosbrain/aios-devtools` is a dependency, so
+  the commands still work on a plain install. Changing one of them means a PR in that repo.
 
 ## Functional Areas
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // test/constitution.test.mjs — unit tests for the engineering-constitution digest loader
-// (scripts/constitution.mjs) and its injection into the ship/build prompt builders.
-// Zero-dep, no network. Run: node test/constitution.test.mjs
+// (scripts/constitution.mjs). Zero-dep, no network. Run: node test/constitution.test.mjs
+//
+// SCOPE (AIO-662): this file covers the loader only — extraction, file resolution, and the
+// prompt LINES it produces. Whether ship/build actually splice those lines into their prompts
+// is devtools behaviour and is asserted in aios-devtools (test/constitution-injection.test.mjs).
+// Keeping the injection assertions here would mean core importing scripts/ship.mjs and
+// scripts/build.mjs purely to test them — exactly the coupling the repo split exists to remove.
+// The seam between the two halves is `constitutionPromptLines`, which is verified below.
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,8 +20,6 @@ import {
   loadConstitutionDigest,
   constitutionPromptLines,
 } from "../scripts/constitution.mjs";
-import { buildPlanPrompt, buildGptReviewPrompt } from "../scripts/ship.mjs";
-import { buildImplementPrompt } from "../scripts/build.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -74,41 +78,23 @@ console.log("constitutionPromptLines");
   check("digest is last line", lines.at(-1) === DIGEST);
 }
 
-console.log("prompt injection");
+// The consumer contract, asserted without importing a consumer. Devtools' prompt builders splice
+// exactly this array; pinning its shape here is what lets the injection tests live in the other
+// repo without the two halves silently drifting apart.
+console.log("prompt-lines contract (the seam devtools consumes)");
 {
-  const issue = { identifier: "AIO-1", title: "t", description: "d" };
-  const withC = buildPlanPrompt(issue, "pack", null, DIGEST);
-  const withoutC = buildPlanPrompt(issue, "pack", null);
-  check("plan prompt carries digest", withC.includes(DIGEST));
-  check("plan prompt unchanged without digest", !withoutC.includes("Engineering constitution"));
-
-  const rev = buildGptReviewPrompt("plan", "diff", 7, DIGEST);
-  check("review prompt carries digest", rev.includes(DIGEST));
-  check("review prompt flags violations as findings", rev.includes("violates the constitution"));
+  const lines = constitutionPromptLines(DIGEST);
   check(
-    "review prompt unchanged without digest",
-    !buildGptReviewPrompt("plan", "diff", 7).includes("Engineering constitution")
+    "returns an array of strings",
+    Array.isArray(lines) && lines.every((l) => typeof l === "string")
   );
-
-  const impl = buildImplementPrompt("PLAN", { branch: "b", constitution: DIGEST });
-  check("implement prompt carries digest", impl.includes(DIGEST));
+  check("no digest → nothing to splice", constitutionPromptLines(null).length === 0);
+  check("undefined behaves as absent", constitutionPromptLines(undefined).length === 0);
   check(
-    "digest sits before the wrap-up instruction",
-    impl.indexOf(DIGEST) < impl.indexOf("When done, briefly summarize")
+    "heading is stable — devtools greps 'Engineering constitution' to assert absence",
+    lines.filter((l) => l.startsWith("## Engineering constitution")).length === 1
   );
-  const implResume = buildImplementPrompt("PLAN", {
-    branch: "b",
-    constitution: DIGEST,
-    resumeLog: "abc earlier work",
-  });
-  check(
-    "resume splice unaffected: resume block stays before Rules",
-    implResume.indexOf("earlier work") < implResume.indexOf("## Rules")
-  );
-  check(
-    "implement prompt unchanged without digest",
-    !buildImplementPrompt("PLAN", { branch: "b" }).includes("Engineering constitution")
-  );
+  check("digest body is carried verbatim", lines.at(-1) === DIGEST);
 }
 
 if (failed) {

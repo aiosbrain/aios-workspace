@@ -8,7 +8,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,7 +16,7 @@ import {
   DEVTOOLS_MODULES,
   DEVTOOLS_PACKAGE,
   explicitDevtoolsDir,
-  loadDevtoolsModule,
+  missingPackageError,
   resolveDevtoolsModule,
 } from "../scripts/devtools-dispatch.mjs";
 
@@ -114,43 +114,62 @@ test("AIOS_DEVTOOLS_DIR is honoured, and a valueless flag is an actionable error
 
 test("an unknown module name is refused with the known set", () => {
   assert.throws(() => resolveDevtoolsModule("nope"), /unknown devtools module 'nope'/);
+  // spec-publish is deliberately absent: devtools-internal (reached via spec-eval), not a
+  // core dispatch target, and not in the package exports map.
   assert.deepEqual(DEVTOOLS_MODULES, [
     "ship",
     "build",
     "roadmap-run",
     "spec-eval",
-    "spec-publish",
     "consolidate-findings",
   ]);
 });
 
-test("a missing package fails with an install instruction, not ERR_MODULE_NOT_FOUND", async () => {
-  // Post-cut this is the error an operator without devtools actually hits. A bare
-  // "Cannot find package" with no next step is exactly what the contract exists to prevent.
-  const core = tmpTree();
-  try {
-    await assert.rejects(
-      () =>
-        loadDevtoolsModule("roadmap-run", {
-          coreScripts: path.join(core, "scripts"),
-          argv: [],
-          env: {},
-        }),
-      (err) => {
-        assert.match(err.message, /lives in @aiosbrain\/aios-devtools, which is not installed/);
-        assert.match(err.message, /npm i -D @aiosbrain\/aios-devtools/);
-        assert.match(err.message, /AIOS_DEVTOOLS_DIR/);
-        return true;
-      }
-    );
-  } finally {
-    rmSync(core, { recursive: true, force: true });
+test("a missing/unexported package maps to an install instruction, not ERR_MODULE_NOT_FOUND", () => {
+  // Post-cut @aiosbrain/aios-devtools is a real dependency, so this branch can no longer be
+  // reached by simply not installing it — hence the extracted mapper. A test that silently
+  // stopped exercising this path would be worse than no test.
+  const pkgResolved = { kind: "package", specifier: "@aiosbrain/aios-devtools/ship" };
+
+  for (const msg of [
+    "Cannot find package '@aiosbrain/aios-devtools'",
+    "ERR_MODULE_NOT_FOUND",
+    `Package subpath './ship' is not defined by "exports"`,
+  ]) {
+    const mapped = missingPackageError("ship", pkgResolved, new Error(msg));
+    assert.ok(mapped, `should map: ${msg}`);
+    assert.match(mapped.message, /npm i @aiosbrain\/aios-devtools/);
+    assert.match(mapped.message, /AIOS_DEVTOOLS_DIR/);
   }
+
+  // An unrelated failure inside the module must surface unchanged, never be relabelled as
+  // "not installed" — that would send you installing something you already have.
+  assert.equal(
+    missingPackageError("ship", pkgResolved, new Error("TypeError: x is not a function")),
+    null
+  );
+  // A file-resolved load is never an install problem.
+  assert.equal(
+    missingPackageError(
+      "ship",
+      { kind: "file", specifier: "file:///x" },
+      new Error("ERR_MODULE_NOT_FOUND")
+    ),
+    null
+  );
 });
 
-test("every declared module resolves in this checkout (in-tree, pre-cut)", () => {
+test("every declared module resolves to a real package subpath export", async () => {
+  // Post-cut the in-tree files are gone, so this is what actually proves the adapter works:
+  // each name must be a subpath the package genuinely exports. Listing a devtools-internal
+  // module here (spec-publish) failed exactly this check.
+  const pkg = JSON.parse(
+    readFileSync(new URL("../node_modules/@aiosbrain/aios-devtools/package.json", import.meta.url))
+  );
   for (const name of DEVTOOLS_MODULES) {
-    const r = resolveDevtoolsModule(name, { argv: [], env: {} });
-    assert.equal(r.source, "in-tree", `${name} should resolve in-tree before the cut`);
+    assert.ok(
+      pkg.exports[`./${name}`],
+      `${name} is dispatched by core but @aiosbrain/aios-devtools does not export ./${name}`
+    );
   }
 });

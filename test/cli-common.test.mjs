@@ -9,10 +9,10 @@
 // pushes. Consolidating onto the shared run-strip slugify (/^-+|-+$/g) is a flagged
 // behaviour change; this test pins that for REAL identity inputs (repo basenames,
 // git user names) the output is byte-identical, so no brain-side identity/dedupe key
-// silently changes. It also pins build.mjs's bound {maxLen:40, fallback:"task"} form.
+// silently changes. The build.mjs bound form { maxLen: 40, fallback: "task" } is asserted in
+// aios-devtools (AIO-662); core pins only the unbound base form it owns.
 
 import { c, die, sha256, slugify, gitConfig } from "../scripts/cli-common.mjs";
-import { slugify as buildSlugify } from "../scripts/build.mjs";
 
 let failed = 0;
 const RED = "\x1b[0;31m",
@@ -64,18 +64,15 @@ console.log("slugify — durable identity inputs are unchanged (aios.mjs project
   }
 }
 
-console.log("slugify — build.mjs bound form { maxLen: 40, fallback: 'task' }");
+// The BASE form's contract. build.mjs binds this with { maxLen: 40, fallback: "task" }, and
+// that binding is asserted in aios-devtools (AIO-662) — core cannot import build.mjs to check
+// it without recreating the coupling the repo split removes. What core owes the other side is
+// that the unbound form stays unclamped and un-defaulted, which is exactly what makes a
+// binding meaningful.
+console.log("slugify — base form takes no clamp or fallback");
 {
-  check(
-    "lowercases + hyphenates (build)",
-    buildSlugify("Add an aios Build Phase!! (v2)") === "add-an-aios-build-phase-v2"
-  );
-  check("empty → task (build)", buildSlugify("") === "task");
-  check("caps length ≤ 40 (build)", buildSlugify("x".repeat(100)).length <= 40);
-  check(
-    "base form has no clamp/fallback (contrast)",
-    slugify("") === "" && slugify("x".repeat(100)).length === 100
-  );
+  check("empty stays empty (no fallback)", slugify("") === "");
+  check("length is not capped", slugify("x".repeat(100)).length === 100);
 }
 
 console.log("sha256");
