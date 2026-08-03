@@ -30,9 +30,18 @@ import { buildBaseline } from "./check-coverage.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const C8 = path.join(ROOT, "node_modules", "c8", "bin", "c8.js");
-const COVERAGE_DIR = path.join(ROOT, "coverage");
-const OUTPUT_SUMMARY = path.join(COVERAGE_DIR, "coverage-summary.json");
-const CANDIDATE_FILE = path.join(COVERAGE_DIR, "coverage-baseline-candidate.json");
+
+// Root-derived so `runFull`/`runMerge` can be driven against a fixture root in tests instead of
+// only against this checkout.
+function coveragePaths(root) {
+  const dir = path.join(root, "coverage");
+  return {
+    dir,
+    summary: path.join(dir, "coverage-summary.json"),
+    candidate: path.join(dir, "coverage-baseline-candidate.json"),
+    lcov: path.join(dir, "lcov.info"),
+  };
+}
 
 export function shardDirectory(index, root = ROOT) {
   return path.join(root, "coverage", `shard-${index}`);
@@ -110,27 +119,70 @@ function execute(command, args, options = {}) {
   });
 }
 
-function runClientCoverage() {
-  return execute("npm", ["run", "test:coverage", "--workspace", "gui/client"]);
+const CLIENT_WORKSPACE = "gui/client";
+
+function runClientCoverage(exec = execute) {
+  return exec("npm", ["run", "test:coverage", "--workspace", CLIENT_WORKSPACE]);
+}
+
+function rootWorkspacePatterns(root) {
+  // An unreadable/unparseable root manifest means npm cannot resolve ANY workspace, so treating
+  // it as "no workspaces" matches what the npm call would do — without throwing from the guard.
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+    const list = Array.isArray(manifest.workspaces)
+      ? manifest.workspaces
+      : manifest.workspaces?.packages;
+    return Array.isArray(list) ? list.filter((entry) => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function matchesWorkspacePattern(pattern, target) {
+  const normalized = pattern.replace(/^\.\//, "").replace(/\/+$/, "");
+  // Single pass, so no sentinel can collide with literal text in the pattern.
+  const source = normalized.replace(/\*\*|\*|[.+^${}()|[\]\\?]/g, (token) => {
+    if (token === "**") return ".*";
+    if (token === "*") return "[^/]*";
+    return `\\${token}`;
+  });
+  return new RegExp(`^${source}$`).test(target);
 }
 
 /**
- * Is the `gui/client` npm workspace actually present and runnable here?
+ * Why `gui/client` cannot be covered here — or `"present"` when it can.
  *
- * Keyed on `gui/client/package.json`, not on a `gui/` or `gui/client/` directory existing: the
- * thing we are about to do is `npm run test:coverage --workspace gui/client`, which npm resolves
- * through that manifest. A leftover empty `gui/client/` (a stale build dir, an untracked
- * `coverage/` left behind after the source is deleted) would satisfy a directory check and then
- * fail the npm call — the exact failure this guard exists to prevent.
+ * TWO conditions, because either one alone is a false positive:
+ *
+ * - the manifest `gui/client/package.json` must exist. A bare `gui/client/` directory (stale
+ *   build output, an untracked `coverage/` left behind after the sources go) is not a workspace;
+ *   npm resolves `--workspace gui/client` through the manifest.
+ * - the root `package.json` `workspaces` array must still match `gui/client`. AIO-612 PR-B
+ *   deregisters the workspace at one stage and deletes the tree at a later one, so the repo
+ *   passes THROUGH a state where the manifest is still on disk but npm already answers
+ *   `No workspaces found: --workspace=gui/client` and exits 1. A manifest-only predicate returns
+ *   true there, the command fails, and in `runFull` that failure is swallowed by
+ *   scan-on-merge.yml's `|| true` — the exact null-coverage incident this guard exists to stop.
  *
  * @param {string} root
+ * @returns {"present" | "no-manifest" | "deregistered"}
  */
+export function clientWorkspaceStatus(root = ROOT) {
+  if (!existsSync(path.join(root, "gui", "client", "package.json"))) return "no-manifest";
+  const registered = rootWorkspacePatterns(root).some((pattern) =>
+    matchesWorkspacePattern(pattern, CLIENT_WORKSPACE)
+  );
+  return registered ? "present" : "deregistered";
+}
+
 export function hasClientWorkspace(root = ROOT) {
-  return existsSync(path.join(root, "gui", "client", "package.json"));
+  return clientWorkspaceStatus(root) === "present";
 }
 
 /**
- * Run the client Vitest coverage pass, or skip it loudly when `gui/client` is gone.
+ * Run the client Vitest coverage pass, or skip it loudly when `gui/client` is not a usable
+ * workspace.
  *
  * Both callers (`runFull` and `runMerge`) go through here. `runMerge` is exercised by CI's
  * coverage job; `runFull` is NOT exercised by any CI job — it is reached only via
@@ -138,17 +190,24 @@ export function hasClientWorkspace(root = ROOT) {
  * throws here fails silently and the scanner pushes `test_coverage_pct: null`. Guarding one site
  * and not the other would look green and report nothing.
  *
- * Injectable so the skip path is testable without spawning npm.
- *
  * @param {() => Promise<void>} run
  * @param {string} root
  * @returns {Promise<boolean>} whether the client pass actually ran
  */
 export async function runClientCoverageIfPresent(run = runClientCoverage, root = ROOT) {
-  if (!hasClientWorkspace(root)) {
+  const status = clientWorkspaceStatus(root);
+  if (status !== "present") {
     // Same terminology as merge-coverage.mjs's "(root only — no gui/client report)" so the skip
-    // reads as a deliberate decision in CI output, not as a step that quietly did nothing.
-    console.log("run-coverage: skipping gui/client coverage (root only — no gui/client workspace)");
+    // reads as a deliberate decision in CI output, not as a step that quietly did nothing. The
+    // reason is named because "deleted" and "still on disk but deregistered" want different
+    // follow-ups from whoever is reading the log.
+    console.log(
+      `run-coverage: skipping gui/client coverage (root only — ${
+        status === "no-manifest"
+          ? "no gui/client workspace"
+          : "gui/client is no longer a registered npm workspace"
+      })`
+    );
     return false;
   }
   await run();
@@ -159,12 +218,17 @@ export async function runClientCoverageIfPresent(run = runClientCoverage, root =
 // tsc diagnostic instead of dozens of ERR_MODULE_NOT_FOUND failures against a
 // missing/stale dist/ (same guard as `npm run test:node`). Merge mode only
 // reports over already-collected data, so it is exempt.
-function ensureLoopBuiltStrict() {
-  return execute(process.execPath, ["scripts/ensure-loop-built.mjs", "--strict"]);
+function ensureLoopBuiltStrict(exec = execute) {
+  return exec(process.execPath, ["scripts/ensure-loop-built.mjs", "--strict"]);
 }
 
-async function runNodeSuiteUnderC8(tempDirectory, extraSuiteArgs = [], extraC8Args = []) {
-  await execute(process.execPath, [
+async function runNodeSuiteUnderC8(
+  tempDirectory,
+  extraSuiteArgs = [],
+  extraC8Args = [],
+  exec = execute
+) {
+  await exec(process.execPath, [
     C8,
     "--temp-directory",
     tempDirectory,
@@ -207,17 +271,18 @@ export async function mergeThenPropagate(runSuite, merge) {
   if (suiteError) throw suiteError;
 }
 
-async function runFull() {
-  await ensureLoopBuiltStrict();
+export async function runFull({ root = ROOT, exec = execute } = {}) {
+  const paths = coveragePaths(root);
+  await ensureLoopBuiltStrict(exec);
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-"));
   try {
-    rmSync(COVERAGE_DIR, { recursive: true, force: true });
-    rmSync(path.join(ROOT, "gui", "client", "coverage"), { recursive: true, force: true });
+    rmSync(paths.dir, { recursive: true, force: true });
+    rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
 
     // Keep the independently configured reports separate and deterministic.
     // Client coverage is sub-second; sequencing it avoids future port/fixture
     // conflicts if browser tests grow integration coverage.
-    await runClientCoverageIfPresent();
+    await runClientCoverageIfPresent(() => runClientCoverage(exec), root);
 
     // The suite's pass/fail and the coverage ARTIFACT are two different outputs, and they were
     // coupled: a single failing test threw here, so merge-coverage.mjs never ran and
@@ -233,26 +298,27 @@ async function runFull() {
     // data for everything that DID execute is already on disk by the time we get here. Produce
     // the artifact, THEN propagate the failure — the gate keeps failing exactly as before.
     await mergeThenPropagate(
-      () => runNodeSuiteUnderC8(tempDirectory),
-      () => execute(process.execPath, ["scripts/merge-coverage.mjs"])
+      () => runNodeSuiteUnderC8(tempDirectory, [], [], exec),
+      () => exec(process.execPath, ["scripts/merge-coverage.mjs"])
     );
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 }
 
-async function runShard(shard) {
-  await ensureLoopBuiltStrict();
-  const shardDir = shardDirectory(shard.index);
+async function runShard(shard, { root = ROOT, exec = execute } = {}) {
+  await ensureLoopBuiltStrict(exec);
+  const shardDir = shardDirectory(shard.index, root);
   rmSync(shardDir, { recursive: true, force: true });
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
   // report generation — the merge step is the only report/gate producer.
   await runNodeSuiteUnderC8(
     shardDir,
     [`--shard=${shard.raw}`],
-    ["--reporter=none", "--clean=false"]
+    ["--reporter=none", "--clean=false"],
+    exec
   );
-  console.log(`run-coverage: shard ${shard.raw} raw coverage in ${path.relative(ROOT, shardDir)}`);
+  console.log(`run-coverage: shard ${shard.raw} raw coverage in ${path.relative(root, shardDir)}`);
 }
 
 export function collectShardFiles(total, root = ROOT) {
@@ -295,41 +361,47 @@ export function collectShardFiles(total, root = ROOT) {
   return files;
 }
 
-async function runMerge(total) {
-  const files = collectShardFiles(total);
-  rmSync(path.join(COVERAGE_DIR, "root"), { recursive: true, force: true });
-  rmSync(path.join(ROOT, "gui", "client", "coverage"), { recursive: true, force: true });
-  rmSync(OUTPUT_SUMMARY, { force: true });
-  rmSync(path.join(COVERAGE_DIR, "lcov.info"), { force: true });
+export async function runMerge(total, { root = ROOT, exec = execute } = {}) {
+  const paths = coveragePaths(root);
+  const files = collectShardFiles(total, root);
+  rmSync(path.join(paths.dir, "root"), { recursive: true, force: true });
+  rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
+  rmSync(paths.summary, { force: true });
+  rmSync(paths.lcov, { force: true });
 
-  await runClientCoverageIfPresent();
+  await runClientCoverageIfPresent(() => runClientCoverage(exec), root);
 
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-merge-"));
   try {
     for (const file of files) copyFileSync(file.source, path.join(tempDirectory, file.name));
     // Report over the union of every shard's raw V8 data with the same
     // .c8rc.json include/exclude/remap rules as the unsharded run.
-    await execute(process.execPath, [C8, "report", "--temp-directory", tempDirectory]);
+    await exec(process.execPath, [C8, "report", "--temp-directory", tempDirectory]);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 
-  await execute(process.execPath, ["scripts/merge-coverage.mjs"]);
+  await exec(process.execPath, ["scripts/merge-coverage.mjs"]);
 
-  const summary = JSON.parse(readFileSync(OUTPUT_SUMMARY, "utf8"));
-  mkdirSync(COVERAGE_DIR, { recursive: true });
-  writeFileSync(CANDIDATE_FILE, `${JSON.stringify(buildBaseline(summary), null, 2)}\n`);
+  const summary = JSON.parse(readFileSync(paths.summary, "utf8"));
+  mkdirSync(paths.dir, { recursive: true });
+  writeFileSync(paths.candidate, `${JSON.stringify(buildBaseline(summary), null, 2)}\n`);
   console.log(
     `run-coverage: merged ${total} shard(s) → coverage/coverage-summary.json, ` +
       "coverage/lcov.info, coverage/coverage-baseline-candidate.json"
   );
 }
 
-async function main(argv) {
+/**
+ * The real dispatcher. `deps` ({ root, exec }) defaults to this checkout and a real spawn, and is
+ * overridden ONLY by tests — which drive this entry point rather than the guard helper, so a
+ * regression that unguards one mode's `runClientCoverage` call is caught at the call site.
+ */
+export async function main(argv, deps = {}) {
   const options = parseArgs(argv);
-  if (options.mode === "shard") await runShard(options.shard);
-  else if (options.mode === "merge") await runMerge(options.merge);
-  else await runFull();
+  if (options.mode === "shard") await runShard(options.shard, deps);
+  else if (options.mode === "merge") await runMerge(options.merge, deps);
+  else await runFull(deps);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
