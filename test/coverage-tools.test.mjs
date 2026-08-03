@@ -18,7 +18,9 @@ import {
 import { mergeTotals, prefixRelativeLcov, prefixSummaryFiles } from "../scripts/merge-coverage.mjs";
 import {
   collectShardFiles,
+  hasClientWorkspace,
   parseArgs as parseRunCoverageArgs,
+  runClientCoverageIfPresent,
   shardDirectory,
 } from "../scripts/run-coverage.mjs";
 
@@ -318,6 +320,45 @@ test("merge-coverage succeeds with no gui/client report (AIO-612 GUI deletion)",
     assert.equal(merged.total.lines.pct, 80, "root-only totals must pass through unchanged");
     assert.ok(merged["scripts/a.mjs"], "root per-file rows must survive");
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("run-coverage skips the client pass when gui/client is gone (AIO-612 GUI deletion)", async () => {
+  // runClientCoverageIfPresent guards BOTH call sites: runFull (reached only by
+  // `npm run test:coverage`, which no CI job runs except scan-on-merge.yml under `|| true`) and
+  // runMerge (CI's coverage job). Unguarded, the day gui/client is deleted the runFull site
+  // throws into a swallowed `|| true` — green CI, and test_coverage_pct pushed as null forever.
+  const dir = mkdtempSync(path.join(tmpdir(), "run-cov-"));
+  const logs = [];
+  const log = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    let calls = 0;
+    const run = async () => {
+      calls += 1;
+    };
+
+    // No gui/ at all → skip, and say so.
+    assert.equal(await runClientCoverageIfPresent(run, dir), false);
+    assert.equal(calls, 0, "the client workspace script must not be invoked when it is gone");
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /root only — no gui\/client workspace/);
+
+    // A leftover EMPTY gui/client directory must not satisfy the predicate: npm resolves
+    // `--workspace gui/client` through the manifest, so a bare dir would still fail the spawn.
+    mkdirSync(path.join(dir, "gui", "client", "coverage"), { recursive: true });
+    assert.equal(hasClientWorkspace(dir), false, "an empty gui/client dir is not a workspace");
+    assert.equal(await runClientCoverageIfPresent(run, dir), false);
+    assert.equal(calls, 0);
+
+    // Manifest present → the pass still runs exactly as before.
+    writeFileSync(path.join(dir, "gui", "client", "package.json"), '{"name":"client"}\n');
+    assert.equal(hasClientWorkspace(dir), true);
+    assert.equal(await runClientCoverageIfPresent(run, dir), true);
+    assert.equal(calls, 1, "the client pass must still run while gui/client exists");
+  } finally {
+    console.log = log;
     rmSync(dir, { recursive: true, force: true });
   }
 });

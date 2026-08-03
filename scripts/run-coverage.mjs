@@ -114,6 +114,47 @@ function runClientCoverage() {
   return execute("npm", ["run", "test:coverage", "--workspace", "gui/client"]);
 }
 
+/**
+ * Is the `gui/client` npm workspace actually present and runnable here?
+ *
+ * Keyed on `gui/client/package.json`, not on a `gui/` or `gui/client/` directory existing: the
+ * thing we are about to do is `npm run test:coverage --workspace gui/client`, which npm resolves
+ * through that manifest. A leftover empty `gui/client/` (a stale build dir, an untracked
+ * `coverage/` left behind after the source is deleted) would satisfy a directory check and then
+ * fail the npm call — the exact failure this guard exists to prevent.
+ *
+ * @param {string} root
+ */
+export function hasClientWorkspace(root = ROOT) {
+  return existsSync(path.join(root, "gui", "client", "package.json"));
+}
+
+/**
+ * Run the client Vitest coverage pass, or skip it loudly when `gui/client` is gone.
+ *
+ * Both callers (`runFull` and `runMerge`) go through here. `runMerge` is exercised by CI's
+ * coverage job; `runFull` is NOT exercised by any CI job — it is reached only via
+ * `npm run test:coverage`, which scan-on-merge.yml runs under `|| true`. So a `runFull` that
+ * throws here fails silently and the scanner pushes `test_coverage_pct: null`. Guarding one site
+ * and not the other would look green and report nothing.
+ *
+ * Injectable so the skip path is testable without spawning npm.
+ *
+ * @param {() => Promise<void>} run
+ * @param {string} root
+ * @returns {Promise<boolean>} whether the client pass actually ran
+ */
+export async function runClientCoverageIfPresent(run = runClientCoverage, root = ROOT) {
+  if (!hasClientWorkspace(root)) {
+    // Same terminology as merge-coverage.mjs's "(root only — no gui/client report)" so the skip
+    // reads as a deliberate decision in CI output, not as a step that quietly did nothing.
+    console.log("run-coverage: skipping gui/client coverage (root only — no gui/client workspace)");
+    return false;
+  }
+  await run();
+  return true;
+}
+
 // Modes that execute the Node suite must fail on a TS compile error with one
 // tsc diagnostic instead of dozens of ERR_MODULE_NOT_FOUND failures against a
 // missing/stale dist/ (same guard as `npm run test:node`). Merge mode only
@@ -176,7 +217,7 @@ async function runFull() {
     // Keep the independently configured reports separate and deterministic.
     // Client coverage is sub-second; sequencing it avoids future port/fixture
     // conflicts if browser tests grow integration coverage.
-    await runClientCoverage();
+    await runClientCoverageIfPresent();
 
     // The suite's pass/fail and the coverage ARTIFACT are two different outputs, and they were
     // coupled: a single failing test threw here, so merge-coverage.mjs never ran and
@@ -261,7 +302,7 @@ async function runMerge(total) {
   rmSync(OUTPUT_SUMMARY, { force: true });
   rmSync(path.join(COVERAGE_DIR, "lcov.info"), { force: true });
 
-  await runClientCoverage();
+  await runClientCoverageIfPresent();
 
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-merge-"));
   try {
