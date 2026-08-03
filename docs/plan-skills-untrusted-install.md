@@ -76,7 +76,9 @@ Consent and friction scale **down** with provenance, **up** with risk.
    Claude Code sandboxing model.
 
 ## Reuse
-- `scripts/lock-skill-library.mjs` (`hashDir`/`rollupHash`), the install **ledger**, and
+- `hashDir`/`rollupHash` (now `gui/server/skill-library-util.mjs` here, and
+  `scripts/lock-skill-library.mjs` in `aiosbrain/aios-workspace-gui` — core's copy of that
+  writer was retired in AIO-702), the install **ledger**, and
   `gui/server/skill-library.mjs`'s collision/edit/safe-uninstall logic — all generalize.
 - The runtime **PreToolUse guard** (OGR08) remains the backstop for anything a skill
   later does, regardless of tier.

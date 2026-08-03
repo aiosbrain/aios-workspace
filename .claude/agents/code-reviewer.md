@@ -29,7 +29,6 @@ You are the AIOS Workspace Code Reviewer. Local Bugbot is the mandatory canonica
 - OGR06: Skill export / BYOA
 - OGR07: Runtime adapters / BYOA
 - OGR08: Scaffold guard
-- OGR09: Skill library
 - OGR10: Agent readiness (advisory)
 
 If any validator regex is weakened or a skip condition is added, flag it as High.

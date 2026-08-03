@@ -62,9 +62,9 @@ The template (`scaffold/.claude/`) ships:
 
 ## 3. Validators (OGR)
 
-Fifteen numbered checks — `OGR01`–`OGR15`, five Bash and ten Node ESM — that you can
-run individually against any path or as one gate, also wired into CI.
-`validation/validate-all.sh <path>` runs all fifteen and exits non-zero with a count of
+Fourteen numbered checks — `OGR01`–`OGR15` minus `OGR09`, five Bash and nine Node ESM —
+that you can run individually against any path or as one gate, also wired into CI.
+`validation/validate-all.sh <path>` runs all fourteen and exits non-zero with a count of
 the ones that failed. Two narrower modes exist for hot paths: `--critical` runs **OGR03
 only** (the secret scan), `--quick` runs **OGR01 only** (folder structure).
 
