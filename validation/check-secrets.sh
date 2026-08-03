@@ -52,6 +52,65 @@ PATTERNS=(
   "Bearer Token|Bearer\s+[A-Za-z0-9_\-\.]{20,}"
 )
 
+# OGR03 scans executable test fixtures and generated design sources instead of
+# excluding those trees. A small set of explicit, non-secret literals therefore
+# needs line-level classification. Keep these exceptions exact: nearby opaque
+# values must continue to fail the same underlying patterns.
+strip_known_non_secrets() {
+  local label="$1"
+  local line="$2"
+  local match_file="$3"
+  local placeholder
+  local sanitized="$line"
+  local placeholders=(
+    datamechanics_secret
+    test-auth-secret-which-is-long-enough
+    existing-auth-secret-do-not-rotate
+    xoxb-EXAMPLE-NOT-REAL
+    xoxb-LOCAL
+    xoxb-x
+    xoxb-SUPER-secret-token-zzz999
+    xoxb-REAL-slack-token-abc123
+    xoxb-TIER-secret-token-abc123
+    xoxb-bot-token
+    xoxp-invalid
+    xoxb-test
+    xoxb-1234567890-abcdefABCDEF
+    xoxb-123
+    sk-ant-REAL-anthropic-key-xyz
+    example-invite-password
+    second-invite-password
+    whatever-password
+    not-the-real-password
+  )
+
+  for placeholder in "${placeholders[@]}"; do
+    # Token-character boundaries prevent a short fixture such as xoxb-123 from
+    # allowlisting a real credential that merely begins with those bytes.
+    sanitized=$(printf '%s\n' "$sanitized" | sed -E "s/(^|[^A-Za-z0-9_-])${placeholder}([^A-Za-z0-9_-]|$)/\\1\\2/g")
+  done
+
+  # This is Railway's prompt shown to the operator, not a configured value.
+  if [ "$label" = "Password Assignment" ] &&
+    [[ "$sanitized" == *"ADMIN_PASSWORD: 'A strong first-login password'"* ]]; then
+    sanitized="${sanitized//ADMIN_PASSWORD: \'A strong first-login password\'/ADMIN_PASSWORD_PROMPT}"
+  fi
+  if [ "$label" = "Password Assignment" ] &&
+    [[ "$sanitized" == *'credentialSummary({ password: "generated", supplied: false })'* ]]; then
+    sanitized="${sanitized//'credentialSummary({ password: "generated", supplied: false })'/'credentialSummary({ generated: true, supplied: false })'}"
+  fi
+
+  # Pencil stores a document identifier under this misleading field name. Only
+  # an RFC-4122 UUID in the exact JSON field is exempt; opaque fileToken values
+  # and UUIDs assigned to ordinary token fields remain findings.
+  if [ "$label" = "Generic Token" ] && [[ "$match_file" == */aios-design.pen ]] &&
+    printf '%s\n' "$sanitized" | grep -qE '"fileToken"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"'; then
+    sanitized=$(printf '%s\n' "$sanitized" | sed -E 's/"fileToken"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"/"fileDocumentId": "[OGR03-DOCUMENT-ID]"/g')
+  fi
+
+  printf '%s\n' "$sanitized"
+}
+
 # Files to scan (exclude .git, binary files, local .env, .env.example, the vendored
 # skill-library — integrity-locked official upstream skills (OGR09), whose docs
 # carry example/placeholder tokens like "xoxp-new-..." that are not real secrets —
@@ -141,27 +200,46 @@ for entry in "${PATTERNS[@]}"; do
   # Only flag if near "toggl" or "api" keywords
   # Guard the empty-list case: with no input, both BSD and GNU xargs would run grep once
   # with no file args, making it read stdin and hang. Only scan when the list is non-empty.
-  if [ ! -s "$SCAN_LIST" ]; then
-    matches=""
-  elif [ "$label" = "Toggl API Token" ]; then
-    matches=$(xargs -0 grep -lniE -e "(toggl|api).{0,20}$pattern" < "$SCAN_LIST" 2>/dev/null || true)
-  else
-    matches=$(xargs -0 grep -lniE -e "$pattern" < "$SCAN_LIST" 2>/dev/null || true)
+  FINDINGS="${SCAN_LIST}.findings"
+  : > "$FINDINGS"
+  if [ -s "$SCAN_LIST" ]; then
+    effective_pattern="$pattern"
+    if [ "$label" = "Toggl API Token" ]; then
+      effective_pattern="(toggl|api).{0,20}$pattern"
+    fi
+
+    # Keep grep batched: invoking it once per file turns a cross-repo release
+    # gate into files × patterns processes. -a is security-critical: without it,
+    # one NUL byte changes grep's output to "Binary file ... matches", which has
+    # no line number and was silently discarded by the parser. -H preserves the
+    # source path while xargs -0 retains whitespace-safe file enumeration.
+    while IFS= read -r hit; do
+      [ -z "$hit" ] && continue
+      match_file="${hit%%:*}"
+      numbered_line="${hit#*:}"
+      matched_line="${numbered_line#*:}"
+      sanitized_line=$(strip_known_non_secrets "$label" "$matched_line" "$match_file")
+      if ! printf '%s\n' "$sanitized_line" | grep -qiE -e "$effective_pattern"; then
+        continue
+      fi
+      printf '%s\t%s\n' "$match_file" "$numbered_line" >> "$FINDINGS"
+    done < <(xargs -0 grep -aHniE -e "$effective_pattern" < "$SCAN_LIST" 2>/dev/null || true)
   fi
 
-  if [ -n "$matches" ]; then
+  if [ -s "$FINDINGS" ]; then
     echo -e "  ${RED}✗ $label${NC}"
-    while IFS= read -r match_file; do
-      rel_path="${match_file#$REPO/}"
-      # Show the matching line (truncated) but redact the actual secret
-      line=$(grep -niE -e "$pattern" -- "$match_file" 2>/dev/null | head -3 | sed 's/\(.\{80\}\).*/\1.../')
-      echo "    $rel_path:"
-      echo "$line" | while IFS= read -r l; do
-        echo "      $l"
-      done
-    done <<< "$matches"
+    last_file=""
+    while IFS=$'\t' read -r match_file hit; do
+      rel_path="${match_file#"$REPO"/}"
+      if [ "$match_file" != "$last_file" ]; then
+        echo "    $rel_path:"
+        last_file="$match_file"
+      fi
+      printf '%s\n' "$hit" | sed 's/\(.\{80\}\).*/      \1.../'
+    done < "$FINDINGS"
     ERRORS=$((ERRORS + 1))
   fi
+  rm -f "$FINDINGS"
 done
 
 # Also check for .env files that are actually TRACKED by git — not just present on
