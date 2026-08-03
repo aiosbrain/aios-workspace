@@ -19,7 +19,7 @@ export const ONBOARDING_PATHS = [
   {
     value: "create",
     label: "Create",
-    hint: "Review the existing self-host prerequisites and guide.",
+    hint: "Deploy a Team Brain + Postgres from the official Railway template, then connect it.",
   },
 ];
 

@@ -71,8 +71,8 @@ function stamp(dir) {
   };
 }
 
-function keyConfigured(dir, keyEnv) {
-  if (String(process.env[keyEnv] || "").trim()) return true;
+function keyConfigured(dir, keyEnv, env) {
+  if (String(env[keyEnv] || "").trim()) return true;
   try {
     const raw = readFileSync(path.join(dir, ".env"), "utf8");
     return raw.split("\n").some((line) => {
@@ -84,10 +84,10 @@ function keyConfigured(dir, keyEnv) {
   }
 }
 
-function brainState(dir, yaml) {
-  const rawUrl = String(process.env.AIOS_BRAIN_URL || yaml.brain_url || "").trim();
+function brainState(dir, yaml, env) {
+  const rawUrl = String(env.AIOS_BRAIN_URL || yaml.brain_url || "").trim();
   const keyEnv = String(yaml.api_key_env || "AIOS_API_KEY").trim();
-  const hasKey = keyConfigured(dir, keyEnv);
+  const hasKey = keyConfigured(dir, keyEnv, env);
   let normalization = { ok: null, origin: null, error: null };
   if (rawUrl) {
     try {
@@ -106,7 +106,7 @@ function brainState(dir, yaml) {
     completeness,
     url_configured: !!rawUrl,
     api_key_configured: hasKey,
-    team_id_configured: !!String(process.env.AIOS_TEAM || yaml.team_id || "").trim(),
+    team_id_configured: !!String(env.AIOS_TEAM || yaml.team_id || "").trim(),
     normalization,
   };
 }
@@ -192,7 +192,7 @@ function toolkitState(dir) {
   };
 }
 
-function workspaceState(dir, toolkit) {
+function workspaceState(dir, toolkit, env) {
   const yaml = readYaml(dir);
   const present = CORE_MARKERS.filter((marker) => existsSync(path.join(dir, marker)));
   const missing = CORE_MARKERS.filter((marker) => !present.includes(marker));
@@ -210,7 +210,7 @@ function workspaceState(dir, toolkit) {
     version_stamp: versionStamp,
     toolkit_stale: toolkitStale,
     git: gitState(dir),
-    brain: brainState(dir, yaml),
+    brain: brainState(dir, yaml, env),
   };
 }
 
@@ -235,10 +235,16 @@ function recommendation(workspaces) {
   };
 }
 
-export function inspectOnboarding({ startDir = process.cwd(), repo, roots, toolkitDir } = {}) {
+export function inspectOnboarding({
+  startDir = process.cwd(),
+  repo,
+  roots,
+  toolkitDir,
+  env = process.env,
+} = {}) {
   const toolkitCandidates = [
     toolkitDir,
-    process.env.AIOS_TOOLKIT_DIR,
+    env.AIOS_TOOLKIT_DIR,
     MODULE_TOOLKIT,
     path.join(os.homedir(), "Projects", "aios", "aios-workspace"),
   ].filter(Boolean);
@@ -257,7 +263,7 @@ export function inspectOnboarding({ startDir = process.cwd(), repo, roots, toolk
   for (const root of searchRoots) collectCandidates(root, root === repo ? 1 : 3, found, seen);
   const preferred = repo ? path.resolve(repo) : null;
   const workspaces = [...found]
-    .map((dir) => workspaceState(dir, toolkit))
+    .map((dir) => workspaceState(dir, toolkit, env))
     .sort((a, b) =>
       a.path === preferred ? -1 : b.path === preferred ? 1 : a.path.localeCompare(b.path)
     );

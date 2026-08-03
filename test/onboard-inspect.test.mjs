@@ -25,7 +25,12 @@ function makeWorkspace(root, { url = "", key = "", partial = false } = {}) {
 test("fresh state recommends scaffold and performs no writes", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "aios-inspect-empty-"));
   try {
-    const report = inspectOnboarding({ startDir: root, roots: [root], toolkitDir: "/nonexistent" });
+    const report = inspectOnboarding({
+      startDir: root,
+      roots: [root],
+      toolkitDir: "/nonexistent",
+      env: {},
+    });
     assert.equal(report.recommended_action, "scaffold");
     assert.deepEqual(report.workspace_candidates, []);
     assert.equal(report.live_state, true);
@@ -41,7 +46,7 @@ test("join configuration is complete without team_id and copied UI URLs normaliz
     key: "aios_k_secret",
   });
   try {
-    const report = inspectOnboarding({ repo: ws, roots: [ws] });
+    const report = inspectOnboarding({ repo: ws, roots: [ws], env: {} });
     const candidate = report.workspace_candidates[0];
     assert.equal(candidate.brain.completeness, "configured");
     assert.equal(candidate.brain.team_id_configured, false);
@@ -60,7 +65,7 @@ test("partial and unsafe configurations recommend repair", () => {
     partial: true,
   });
   try {
-    const report = inspectOnboarding({ repo: ws, roots: [ws] });
+    const report = inspectOnboarding({ repo: ws, roots: [ws], env: {} });
     assert.equal(report.recommended_action, "repair-configuration");
     assert.equal(report.workspace_candidates[0].brain.normalization.ok, false);
   } finally {
@@ -74,7 +79,7 @@ test("dirty workspace is reported but never changed", () => {
   writeFileSync(path.join(ws, "personal-note.txt"), "keep me\n");
   try {
     const before = readFileSync(path.join(ws, "personal-note.txt"), "utf8");
-    const report = inspectOnboarding({ repo: ws, roots: [ws] });
+    const report = inspectOnboarding({ repo: ws, roots: [ws], env: {} });
     assert.equal(report.workspace_candidates[0].git.dirty, true);
     assert.equal(readFileSync(path.join(ws, "personal-note.txt"), "utf8"), before);
   } finally {
