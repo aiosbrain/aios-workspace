@@ -24,8 +24,7 @@ name: scan-on-merge
 
 on:
   push:
-    branches: [main, master]
-  workflow_dispatch:
+    branches: [main]
 
 permissions:
   contents: read

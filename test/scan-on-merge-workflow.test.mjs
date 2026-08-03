@@ -111,6 +111,14 @@ test("Brain secrets are scoped only to the configuration probe and final upload"
   }
 });
 
+test("secret-bearing scans can run only after a push to protected main", () => {
+  for (const contents of [workflow, scaffoldWorkflow]) {
+    assert.match(contents, /^on:\n {2}push:\n {4}branches: \[main\]$/m);
+    assert.doesNotMatch(contents, /workflow_dispatch/);
+    assert.doesNotMatch(contents, /pull_request(?:_target)?:/);
+  }
+});
+
 test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () => {
   assert.match(workflow, /npm ci --ignore-scripts/);
   assert.match(scaffoldWorkflow, /npm install -g @aiosbrain\/aios@0\.9\.1 --ignore-scripts/);
