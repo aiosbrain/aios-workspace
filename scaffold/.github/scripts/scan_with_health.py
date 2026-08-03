@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """scan_with_health.py — `aios-ingest scan` with `metrics.codebase_health` attached (AIO-608).
 
-Used ONLY by the opt-in path of .github/workflows/scan-on-merge.yml (repo variable
-AIOS_PUSH_CODEBASE_HEALTH=1). It reuses the ingestion sidecar's own analyzer + client
-(installed from aios-team-brain in the preceding workflow step) so the brain receives the
+Used by the health-enrichment path of .github/workflows/scan-on-merge.yml whenever Brain
+credentials are configured and a non-empty contract-shaped health JSON was produced. It
+reuses the ingestion sidecar's own analyzer + client from the pinned Team Brain checkout so
+the brain receives the
 SAME full-metrics payload `aios-ingest scan` would send, plus the contract-shaped
 `codebase_health` object produced by scripts/codebase-health/push-payload.mjs. A sparse
 health-only payload is never sent — the brain 422s it and the metrics upsert REPLACES the
