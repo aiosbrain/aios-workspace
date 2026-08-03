@@ -149,6 +149,37 @@ test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () =
   );
 });
 
+test("optional coverage dependency failures do not abort the Brain scan", () => {
+  for (const [name, contents] of [
+    ["repository", workflow],
+    ["scaffold", scaffoldWorkflow],
+  ]) {
+    assert.match(
+      contents,
+      /if npm ci --ignore-scripts; then[\s\S]*?npm run test:coverage \|\| true/,
+      name
+    );
+    assert.match(
+      contents,
+      /else\n\s+echo "dependency install failed — continuing without a coverage report\."/,
+      name
+    );
+  }
+});
+
+test("health upload failures are not retried with a destructive plain upload", () => {
+  for (const [name, contents] of [
+    ["repository", workflow],
+    ["scaffold", scaffoldWorkflow],
+  ]) {
+    assert.doesNotMatch(
+      contents,
+      /scan_with_health\.py[\s\S]*?\|\|\s+python -m aios_ingest\.cli scan/,
+      name
+    );
+  }
+});
+
 test("the scaffold's exact toolkit pin resolves from the public npm registry", () => {
   const match = scaffoldWorkflow.match(
     /npm install -g (@aiosbrain\/aios@(\d+\.\d+\.\d+)) --ignore-scripts/

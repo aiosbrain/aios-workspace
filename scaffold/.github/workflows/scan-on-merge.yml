@@ -87,8 +87,11 @@ jobs:
         run: |
           if [ -f package-lock.json ] && node -e "process.exit(require('./package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
             echo "test:coverage found — running it."
-            npm ci --ignore-scripts
-            npm run test:coverage || true
+            if npm ci --ignore-scripts; then
+              npm run test:coverage || true
+            else
+              echo "dependency install failed — continuing without a coverage report."
+            fi
           else
             echo "no locked test:coverage suite — skipping (coverage will report as 'no report')."
           fi
@@ -136,9 +139,7 @@ jobs:
             # upsert REPLACES the (codebase_id, head_sha) row.
             python .github/scripts/scan_with_health.py \
               --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY" \
-              --health-json "$HEALTH_JSON" \
-              || python -m aios_ingest.cli scan \
-                --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
+              --health-json "$HEALTH_JSON"
           else
             python -m aios_ingest.cli scan \
               --path . --slug "$SLUG" --full-name "$GITHUB_REPOSITORY"
