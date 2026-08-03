@@ -181,22 +181,19 @@ def select_rows(
     metadata: dict[str, dict[str, str]],
     args: argparse.Namespace,
 ) -> tuple[list[dict[str, Any]], bool]:
+    project_scoped = not args.all_projects
     if not rows:
-        return [], False
+        return [], project_scoped
     anchor = max(row["timestamp"] for row in rows)
     cutoff = anchor - args.days * 86400
     recent = [row for row in rows if row["timestamp"] >= cutoff]
 
-    project_scoped = False
-    if not args.all_projects:
-        scoped = [
+    if project_scoped:
+        recent = [
             row
             for row in recent
             if path_is_within(metadata.get(row["session_id"], {}).get("cwd", ""), args.project_root)
         ]
-        if scoped:
-            recent = scoped
-            project_scoped = True
 
     latest_by_session: dict[str, int] = {}
     for row in recent:

@@ -147,3 +147,39 @@ test("evolve rejects non-positive limits", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must be positive/);
 });
+
+test("evolve fails closed when no session metadata matches the project", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "evolve-scope-"));
+  try {
+    const project = path.join(root, "project");
+    const history = path.join(root, "history.jsonl");
+    mkdirSync(project);
+    writeJsonl(history, [
+      { session_id: "unscoped-session", ts: 2_000_000_000, text: "Private unrelated task" },
+    ]);
+
+    const stdout = execFileSync(
+      "python3",
+      [
+        analyzer,
+        "--history",
+        history,
+        "--sessions-dir",
+        path.join(root, "missing-sessions"),
+        "--archived-sessions-dir",
+        path.join(root, "missing-archived"),
+        "--project-root",
+        project,
+        "--include-prompts",
+        "--json",
+      ],
+      { encoding: "utf8" }
+    );
+    const report = JSON.parse(stdout);
+    assert.equal(report.project_scoped, true);
+    assert.equal(report.session_count, 0);
+    assert.equal(report.prompt_count, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
