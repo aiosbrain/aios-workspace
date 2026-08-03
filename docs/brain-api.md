@@ -1,6 +1,6 @@
 # AIOS Team Brain — API Contract
 
-**Version: 1.15** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.15**
+**Version: 1.16** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.16**
 also carries the separately negotiated internal Executor gateway contract **1.10**; it does not
 claim unimplemented member-facing v1.10 routes. This document is the single pinned contract between the
 contributor repo (this toolkit's `aios` CLI) and the `aios-team-brain` service. Both
@@ -199,6 +199,12 @@ writeback/registration pulls), so a newer client still works against an older br
   [`contract/codebase-payload-1.15-fixtures.json`](./contract/codebase-payload-1.15-fixtures.json).
   This revision is doc + schema only — it enables no push lane; the canonical pusher remains the
   ingestion sidecar.*
+- *2026-08-03 — **v1.16**: documented two authenticated reads that were already shipped:
+  **`GET /api/v1/attribution`** (team-tier admin-only attribution health summary and member
+  drill-down) and **`GET /api/v1/timeline`** (tier-scoped seven-day work ledger). **No wire or
+  runtime behavior changed.** This revision closes the shipped-but-undocumented gap found by the
+  release conformance audit. The five managed-GitHub member routes below remain contract-first,
+  governed deferrals and are not claimed as implemented by this revision.*
 
 ---
 
@@ -353,6 +359,8 @@ the gate — see `lib/api/rate-limit.ts`):
 - managed GitHub `connect`: 10/min per member; `validate`: 20/min; `status`: 60/min;
   `disconnect`: 10/min; repository discovery: 30/min
 - `GET /company-graph`: 60/min per key
+- `GET /attribution`: 60/min per key (team-tier admin role only)
+- `GET /timeline`: 60/min per key
 - `POST /query`: 10/min per member; daily budgets enforced server-side
 - `POST /metrics`: 60/min per key
 - `POST /work-events`: 60/min per key
@@ -806,6 +814,103 @@ when present, must match that team.
 > **tagged workspace release that advertises v1.5 `company-graph`** requires the `aios-team-brain`
 > endpoint **deployed first**; gate that with `/docs-sync` (contract-version + feature-vs-website
 > check) before tagging.
+
+## Context projection endpoints (v1.16 alignment)
+
+These reads were implemented before document revision 1.16. This section records their shipped
+wire behavior; it does not introduce a new route or payload.
+
+### `GET /api/v1/attribution` — attribution health (team-tier admin only)
+
+Returns the same all-tier attribution-health view used by the Brain's Admin → Attribution page.
+Because the read spans `team` and `admin` content and has no RLS backstop, the route requires both a
+**team-tier key** and the authenticated member role **`admin`**. Any other authenticated principal
+gets `403 forbidden` before the read runs.
+
+With no query parameters, the response is the summary:
+
+```json
+{
+  "bySource": [
+    { "source": "git", "isSignal": false, "items": 12, "human": 10,
+      "connector": 1, "unattributed": 1, "pctHuman": 83.3 }
+  ],
+  "byMember": [
+    { "memberId": "uuid", "displayName": "Alex", "total": 10,
+      "bySource": [{ "source": "git", "isSignal": false, "items": 10 }] }
+  ],
+  "lowAttributionSources": [],
+  "divergentItems": 0
+}
+```
+
+`bySource`, `byMember`, and `divergentItems` are independent best-effort observability reads. A
+database failure in one sub-read is logged server-side and degrades only that field to `[]` or `0`;
+the other fields can still contain data. Consumers therefore MUST treat any empty/zero field as
+“quiet or unavailable,” not proof that attribution is healthy.
+
+`?member=<uuid>` selects a member drill-down; `?member=unattributed` selects the null-attribution
+bucket. Optional `source=<normalized-source>` filters that bucket and `limit=<positive integer>`
+caps newest-first results (default 200, maximum 500):
+
+```json
+{
+  "member": "uuid-or-unattributed",
+  "items": [
+    { "id": "uuid", "path": "commits/repo/sha.md", "title": "Ship change",
+      "kind": "artifact", "source": "git", "updatedAt": "ISO8601", "locked": false,
+      "signal": "github:alex", "method": "provider", "resolvesToName": "Alex",
+      "mismatch": false, "credited": ["Alex"] }
+  ]
+}
+```
+
+Unlike the summary, a drill-down database failure is `500 internal`; a non-UUID `member` other than
+`unattributed` is `400 bad_request`. Other errors: `401 unauthorized`; `403 forbidden`; `429
+rate_limited`. **Rate limit:** 60/min per key.
+
+### `GET /api/v1/timeline` — tier-scoped seven-day work ledger
+
+Returns the Brain's cached seven-day day → person → work ledger. The authenticated key's tier is
+applied at the item/task/decision visibility choke-points: an `external` key sees only `external`
+work, while a `team` key is unfiltered within its authenticated team and can see every stored access
+level, including an internal `admin` row. Normal member-facing ingest rejects `admin`/`private`
+content before it can cross the boundary; the broader team-tier read also covers admin rows created
+inside the Brain. There is no separate RLS backstop, so this application-level filter is the
+isolation boundary.
+
+```json
+{
+  "window_days": 7,
+  "days": [
+    {
+      "date": "2026-08-03", "label": "Today",
+      "people": [
+        {
+          "memberId": "uuid", "name": "Alex", "handle": "alex", "avatarUrl": null,
+          "total": 1, "summary": "Optional generated synopsis.",
+          "tasks": [
+            { "taskId": "uuid", "title": "Align contract", "status": "in_progress",
+              "source": "linear", "evidenceCount": 1,
+              "sources": [{ "source": "git", "count": 1, "items": [] }] }
+          ],
+          "other": [], "unlinked": 0, "signals": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+The v1 wire is exactly `{ "window_days": 7, "days": TimelineDay[] }`; the internal cache's
+`freshness` envelope is deliberately not serialized. Evidence items in each `sources[].items[]`
+carry `id`, `title`, `source`, `kind`, `at`, and optional `url`, `linkedTask`, or `linkVia` metadata.
+Task groups may include an optional `assignee { name, avatarUrl }`; person rows may omit `summary`
+and `avatarUrl`. Signal groups carry `kind`, `count`, and `items[]`. Consumers MUST tolerate additive
+optional fields within these nested records.
+
+**Errors:** `401 unauthorized`; `429 rate_limited`; `500 internal` when the ledger cannot be read or
+built. **Rate limit:** 60/min per key.
 
 ## `GET /api/v1/integrations` — enabled integration selections (non-secret)
 
