@@ -313,7 +313,7 @@ export function writeSkillExportRoutings(skills, outBase, native) {
 export function routeSkillPrompt({ suite, prompt, stage = "interactive", explicit = false }) {
   const normalized = prompt.toLowerCase();
   const explicitId = suite.skills.find((skill) =>
-    new RegExp(`(?:\\$|/)${skill.id}(?:\\b|$)`, "i").test(prompt)
+    new RegExp(`(?:\\$|/)${skill.id}(?![\\w-])`, "i").test(prompt)
   );
   if (explicitId) {
     return validateSkillSelection({
