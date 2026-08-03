@@ -160,9 +160,10 @@ const childEvents = codexEvents(CHILD, "cdx-child");
   const combined = computeSignals(cev.concat(childEvents));
   check("delegated prompt does not inflate human task count", combined.tasks === 1);
   check(
-    "Codex subagent usage and token delegation are now observable",
-    combined.subagent_usage > 0 && combined.delegation_ratio > 0
+    "child rollout folds into its human-root session",
+    combined.sessions === 1 && combined.subagent_usage === 1
   );
+  check("Codex delegated-token ratio is now observable", combined.delegation_ratio > 0);
   check("current Codex exec interface counts as a verify tool", combined.verify_tool_rate === 1);
 }
 
