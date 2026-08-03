@@ -139,15 +139,59 @@ function rootWorkspacePatterns(root) {
   }
 }
 
-export function matchesWorkspacePattern(pattern, target) {
+/**
+ * Does one `workspaces` entry's glob cover `target`?
+ *
+ * A leading `!` is NOT handled here — it is an exclusion marker for the whole entry, not part of
+ * the glob, so `workspacePatternCovers` answers only "does the glob body match". The caller owns
+ * include-vs-exclude precedence.
+ *
+ * Supports the npm/minimatch subset that can appear in a `workspaces` array: `**` (any depth,
+ * including zero segments, so `a/` + `**` + `/b` also covers `a/b`), `*` (one segment), `?` (one non-separator
+ * character) and `[...]` character classes. Everything else is a literal.
+ */
+function workspacePatternCovers(pattern, target) {
   const normalized = pattern.replace(/^\.\//, "").replace(/\/+$/, "");
-  // Single pass, so no sentinel can collide with literal text in the pattern.
-  const source = normalized.replace(/\*\*|\*|[.+^${}()|[\]\\?]/g, (token) => {
-    if (token === "**") return ".*";
-    if (token === "*") return "[^/]*";
-    return `\\${token}`;
-  });
+  // One pass over the pattern, so no placeholder can collide with literal text. Character
+  // classes are matched whole (`[!a-z]` → `[^a-z]`) — scanning their contents separately would
+  // let an inner `*` or `.` be rewritten as if it were a glob operator.
+  const source = normalized.replace(
+    /\[!?\]?[^\]]*\]|\/\*\*\/|\*\*|\*|\?|[.+^${}()|[\]\\]/g,
+    (token) => {
+      // `a/**/b` must also match `a/b`: minimatch lets `**` span zero path segments, so the
+      // separators around it collapse. Written as `/(?:.*/)?` rather than `/.*/`.
+      if (token === "/**/") return "/(?:.*/)?";
+      if (token === "**") return ".*";
+      if (token === "*") return "[^/]*";
+      if (token === "?") return "[^/]";
+      if (token.startsWith("[")) return token.startsWith("[!") ? `[^${token.slice(2)}` : token;
+      return `\\${token}`;
+    }
+  );
   return new RegExp(`^${source}$`).test(target);
+}
+
+/**
+ * Is `target` a workspace, given the whole `workspaces` array?
+ *
+ * Exclusions are why this takes the full list rather than being folded per-entry. npm resolves
+ * `workspaces` as an ordered include/exclude set, so `["gui/*", "!gui/client"]` yields NO
+ * gui/client workspace and `npm --workspace gui/client` exits 1 with "No workspaces found".
+ * Testing entries independently with `.some()` sees the `gui/*` include, answers "present", and
+ * lands in exactly the false-positive direction this guard exists to prevent: the spawn fails,
+ * and in `runFull` that failure is swallowed by scan-on-merge.yml's `|| true`, so the scanner
+ * publishes `test_coverage_pct: null` with a green CI. Any exclusion match wins outright.
+ */
+export function matchesWorkspacePatterns(patterns, target) {
+  let included = false;
+  for (const entry of patterns) {
+    if (entry.startsWith("!")) {
+      if (workspacePatternCovers(entry.slice(1), target)) return false;
+    } else if (workspacePatternCovers(entry, target)) {
+      included = true;
+    }
+  }
+  return included;
 }
 
 /**
@@ -170,9 +214,7 @@ export function matchesWorkspacePattern(pattern, target) {
  */
 export function clientWorkspaceStatus(root = ROOT) {
   if (!existsSync(path.join(root, "gui", "client", "package.json"))) return "no-manifest";
-  const registered = rootWorkspacePatterns(root).some((pattern) =>
-    matchesWorkspacePattern(pattern, CLIENT_WORKSPACE)
-  );
+  const registered = matchesWorkspacePatterns(rootWorkspacePatterns(root), CLIENT_WORKSPACE);
   return registered ? "present" : "deregistered";
 }
 

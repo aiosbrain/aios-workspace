@@ -7,7 +7,7 @@ import {
   clientWorkspaceStatus,
   hasClientWorkspace,
   main,
-  matchesWorkspacePattern,
+  matchesWorkspacePatterns,
 } from "../scripts/run-coverage.mjs";
 
 /**
@@ -67,15 +67,60 @@ function recorder(root) {
   };
 }
 
-test("matchesWorkspacePattern handles exact, glob and normalized workspace entries", () => {
-  assert.equal(matchesWorkspacePattern("gui/client", "gui/client"), true);
-  assert.equal(matchesWorkspacePattern("./gui/client/", "gui/client"), true);
-  assert.equal(matchesWorkspacePattern("gui/*", "gui/client"), true);
-  assert.equal(matchesWorkspacePattern("gui/**", "gui/client"), true);
-  assert.equal(matchesWorkspacePattern("packages/*", "gui/client"), false);
-  assert.equal(matchesWorkspacePattern("gui/clientx", "gui/client"), false);
+test("matchesWorkspacePatterns handles exact, glob and normalized workspace entries", () => {
+  const m = (patterns, target = "gui/client") => matchesWorkspacePatterns(patterns, target);
+  assert.equal(m(["gui/client"]), true);
+  assert.equal(m(["./gui/client/"]), true);
+  assert.equal(m(["gui/*"]), true);
+  assert.equal(m(["gui/**"]), true);
+  assert.equal(m(["packages/*"]), false);
+  assert.equal(m(["gui/clientx"]), false);
+  assert.equal(m([]), false);
   // `*` must not cross a path separator, or `packages/*` would swallow `packages/a/b`.
-  assert.equal(matchesWorkspacePattern("gui/*", "gui/client/sub"), false);
+  assert.equal(m(["gui/*"], "gui/client/sub"), false);
+  // `**` spans zero segments, so `gui/**/client` covers `gui/client` — npm agrees.
+  assert.equal(m(["gui/**/client"]), true);
+  assert.equal(m(["gui/**/client"], "gui/a/b/client"), true);
+  // `?` is one non-separator character; `[...]` is a character class.
+  assert.equal(m(["gui/clien?"]), true);
+  assert.equal(m(["gui/clien[t]"]), true);
+  assert.equal(m(["gui/clien[!t]"]), false);
+  assert.equal(m(["gui/?"]), false);
+  // A literal `.` must not act as a regex wildcard: `gui/client.` is not `gui/client`.
+  assert.equal(m(["gui/client."]), false);
+});
+
+test("matchesWorkspacePatterns honours npm's `!` exclusions (AIO-612)", () => {
+  // THE FALSE POSITIVE THIS GUARD EXISTS TO AVOID. npm resolves `workspaces` as an ordered
+  // include/exclude set: ["gui/*", "!gui/client"] yields NO gui/client workspace, and
+  // `npm run test:coverage --workspace gui/client` exits 1 with "No workspaces found".
+  // Judging entries independently sees the `gui/*` include and wrongly answers "present";
+  // the spawn then fails, and in runFull that failure is swallowed by scan-on-merge.yml's
+  // `|| true`, publishing null coverage against a fully green CI.
+  assert.equal(matchesWorkspacePatterns(["gui/*", "!gui/client"], "gui/client"), false);
+  assert.equal(matchesWorkspacePatterns(["gui/**", "!gui/*"], "gui/client"), false);
+  assert.equal(matchesWorkspacePatterns(["!gui/client", "gui/*"], "gui/client"), false);
+  // An exclusion that does not cover the target leaves the include standing.
+  assert.equal(matchesWorkspacePatterns(["gui/*", "!gui/server"], "gui/client"), true);
+  // An exclusion alone never includes anything.
+  assert.equal(matchesWorkspacePatterns(["!gui/client"], "gui/client"), false);
+});
+
+test("clientWorkspaceStatus reports a negated workspace as deregistered (AIO-612)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "run-cov-negated-"));
+  try {
+    mkdirSync(path.join(root, "gui", "client"), { recursive: true });
+    writeFileSync(path.join(root, "gui", "client", "package.json"), '{"name":"client"}');
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "fixture", workspaces: ["gui/*", "!gui/client"] })
+    );
+    // Manifest on disk, include pattern matches — and npm still resolves no workspace.
+    assert.equal(clientWorkspaceStatus(root), "deregistered");
+    assert.equal(hasClientWorkspace(root), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("client workspace predicate requires the manifest AND npm registration (AIO-612)", () => {
