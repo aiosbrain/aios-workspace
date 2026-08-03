@@ -1,5 +1,4 @@
-// C4 classifier tests (daily.ts buildDailyOrientation). Pure over manifest literals + a prior
-// change-snapshot (built via diffSignals). Run after `npm run build:loop`.
+// C4 classifier tests: pure manifest literals + diffSignals snapshots. Run after `npm run build:loop`.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -120,6 +119,7 @@ test("task owed / omitted / blocked classification, with precedence Blocked > Ow
     t("unblocked", { status: "unblocked", due: "2026-12-01" }), // "unblocked" ≠ blocked → omitted
     t("done", { status: "done", due: "2026-06-01" }), // closed → omitted
     t("malformed", { status: "open", due: "next week" }), // unparseable due → not owed → omitted
+    t("malformed-suffix", { status: "open", due: "2026-06-01garbage" }), // malformed due → not owed
     t("invalid-day", { status: "open", due: "2026-02-31" }), // impossible day → not owed
   ]);
   // Baseline so no task is "changed" — isolates owed/blocked/omit.
