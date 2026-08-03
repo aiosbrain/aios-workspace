@@ -7,10 +7,17 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 import { computeContextHealth } from "../scripts/context-health.mjs";
+import { checkVersionLabels } from "../scripts/context-version-labels.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = path.join(repoRoot, "test", "fixtures", "fake-workspace");
 const checkContextScript = path.join(repoRoot, "scripts", "check-context.mjs");
+const BRAIN_API_LABELS =
+  "# AIOS Team Brain — API Contract\n\n**Version: 1.16** is the shipped member-facing Brain API (`/api/v1`). **Document revision: 1.16**\nalso carries the separately negotiated internal Executor gateway contract **1.10**;\n";
+const CANONICAL_CLAUDE_PIN =
+  "## 4. The pinned sync contract — do not drift ⚠️\n\n**`docs/brain-api.md` is the single pinned contract (document revision **1.16**, member-facing API **1.16**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\nthe Team Brain. Both sides build against it. **Any change to the sync protocol is a versioned change\nin that file first**\n";
+const CANONICAL_CONSTITUTION_PIN =
+  "## Quick reference\n\n| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |\n";
 
 /** Copy the fixture into a fresh tmpdir so a test can mutate it without touching the checked-in fixture. */
 function copyFixture(prefix) {
@@ -222,6 +229,196 @@ test("repo mode: this toolkit repo's own root is detected as 'repo' mode with cl
   const result = computeContextHealth(repoRoot);
   assert.equal(result.mode, "repo");
   assert.equal(result.hardFailures, 0);
+});
+
+test("repo mode: stale constitution brain-api quick reference hard-fails", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "context-health-constitution-version-"));
+  try {
+    mkdirSync(path.join(dir, "docs"), { recursive: true });
+    writeFileSync(path.join(dir, "docs", "brain-api.md"), BRAIN_API_LABELS);
+    writeFileSync(path.join(dir, "CLAUDE.md"), CANONICAL_CLAUDE_PIN);
+    writeFileSync(
+      path.join(dir, "docs", "ENGINEERING-CONSTITUTION.md"),
+      "## Quick reference\n\n| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.10) |\n"
+    );
+
+    const result = computeContextHealth(dir);
+    const check = findCheck(result, "version-labels");
+    assert.equal(check.ok, false);
+    assert.match(check.detail, /ENGINEERING-CONSTITUTION\.md/);
+    assert.equal(result.hardFailures, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("version labels: missing constitution cannot pass", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+    if (filePath.endsWith("CLAUDE.md")) return "Pinned brain-api contract: v1.16\n";
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+  assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+});
+
+test("version labels: missing authoritative contract fails for the toolkit", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("package.json")) return '{"name":"@aiosbrain/aios"}';
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+  const result = checkVersionLabels("/repo", readFile);
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /toolkit is missing docs\/brain-api\.md/);
+});
+
+test("version labels: remaining toolkit markers keep missing contract applicable", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("scripts/context-health.mjs")) return "export const toolkit = true;\n";
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+  assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+});
+
+test("version labels: only one exact governed CLAUDE.md pin can satisfy validation", async (t) => {
+  const exactPin = CANONICAL_CLAUDE_PIN;
+  const exactReadFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+    if (filePath.endsWith("CLAUDE.md")) return exactPin;
+    return CANONICAL_CONSTITUTION_PIN;
+  };
+  assert.equal(checkVersionLabels("/repo", exactReadFile).ok, true);
+
+  const inertFenceMarkerReadFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+    if (filePath.endsWith("CLAUDE.md")) return `<!--\n\`\`\`\n-->\n${CANONICAL_CLAUDE_PIN}`;
+    return CANONICAL_CONSTITUTION_PIN;
+  };
+  assert.equal(checkVersionLabels("/repo", inertFenceMarkerReadFile).ok, true);
+
+  const nearMisses = [
+    "Unrelated brain-api tooling release: v1.16\n",
+    "Pinned brain-api contract: v1.16\n",
+    "`docs/brain-api.md` is the single pinned contract (document revision **1.16**, member-facing API **1.16**, internal gateway **1.10**, major `/api/v1`)** between this toolkit and\n",
+    "**`docs/brain-api.md` is the single pinned contract (document revision **1.16**, malformed suffix\n",
+    exactPin.split("\nthe Team Brain.")[0] + "\n",
+    exactPin.replace("member-facing API **1.16**", "member-facing API **9.9**"),
+    exactPin.replace("internal gateway **1.10**", "internal gateway **9.9**"),
+    exactPin
+      .replace("member-facing API **1.16**", "member-facing API **1.10**")
+      .replace("internal gateway **1.10**", "internal gateway **1.16**"),
+    `${exactPin}${exactPin}`,
+    `${exactPin.replace("1.16", "1.15")}Unrelated brain-api tooling release: v1.16\n`,
+  ];
+
+  for (const [index, claudeText] of nearMisses.entries()) {
+    await t.test(`near miss ${index + 1} fails closed`, () => {
+      const readFile = (filePath) => {
+        if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+        if (filePath.endsWith("CLAUDE.md")) return claudeText;
+        return CANONICAL_CONSTITUTION_PIN;
+      };
+      assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+    });
+  }
+});
+
+test("version labels: duplicate constitution rows fail closed", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+    if (filePath.endsWith("CLAUDE.md")) return CANONICAL_CLAUDE_PIN;
+    return [
+      "## Quick reference",
+      "",
+      "| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |",
+      "| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.10) |",
+      "",
+    ].join("\n");
+  };
+  assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+});
+
+test("version labels: duplicate authoritative contract labels fail closed", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md"))
+      return `${BRAIN_API_LABELS}**Document revision: 1.10**\n`;
+    if (filePath.endsWith("CLAUDE.md")) return CANONICAL_CLAUDE_PIN;
+    return CANONICAL_CONSTITUTION_PIN;
+  };
+  assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+});
+
+test("version labels: Brain header claims are title-bound and CRLF-safe", async (t) => {
+  const brainVariants = [
+    [BRAIN_API_LABELS.replaceAll("\n", "\r\n"), true],
+    [BRAIN_API_LABELS.replace("# AIOS Team Brain — API Contract", "# Wrong title"), false],
+    [
+      `# AIOS Team Brain — API Contract\n\nHeader removed.\n\nBody decoy:\n${BRAIN_API_LABELS.slice(BRAIN_API_LABELS.indexOf("**Version:"))}`,
+      false,
+    ],
+  ];
+
+  for (const [index, [brainText, expected]] of brainVariants.entries()) {
+    await t.test(`header variant ${index + 1}`, () => {
+      const readFile = (filePath) => {
+        if (filePath.endsWith("brain-api.md")) return brainText;
+        if (filePath.endsWith("CLAUDE.md")) return CANONICAL_CLAUDE_PIN;
+        return CANONICAL_CONSTITUTION_PIN;
+      };
+      assert.equal(checkVersionLabels("/repo", readFile).ok, expected);
+    });
+  }
+});
+
+test("version labels: fenced and wrong-section context decoys fail closed", async (t) => {
+  const claudeDeclaration = CANONICAL_CLAUDE_PIN.split("\n").slice(2).join("\n");
+  const constitutionRow = CANONICAL_CONSTITUTION_PIN.split("\n").slice(2).join("\n");
+  const cases = [
+    [
+      `## 4. The pinned sync contract — do not drift ⚠️\n\n\`\`\`md\n${claudeDeclaration}\`\`\`\n`,
+      CANONICAL_CONSTITUTION_PIN,
+    ],
+    [CANONICAL_CLAUDE_PIN, `## Quick reference\n\n\`\`\`md\n${constitutionRow}\`\`\`\n`],
+    [
+      `## 4. The pinned sync contract — do not drift ⚠️\n\n\`\`\`md\n${claudeDeclaration}\`\`\`\n`,
+      `## Quick reference\n\n\`\`\`md\n${constitutionRow}\`\`\`\n`,
+    ],
+    [`## 5. Other\n\n${claudeDeclaration}`, CANONICAL_CONSTITUTION_PIN],
+    [CANONICAL_CLAUDE_PIN, `## Other\n\n${constitutionRow}`],
+    [
+      `## 4. The pinned sync contract — do not drift ⚠️\n\n~~~md\n${claudeDeclaration}~~~\n`,
+      CANONICAL_CONSTITUTION_PIN,
+    ],
+    [
+      `## 4. The pinned sync contract — do not drift ⚠️\n\n\`\`\`\`md\n\`\`\`\n${claudeDeclaration}\`\`\`\`\n`,
+      CANONICAL_CONSTITUTION_PIN,
+    ],
+    [
+      `## 4. The pinned sync contract — do not drift ⚠️\n\n<!--\n${claudeDeclaration}-->\n`,
+      CANONICAL_CONSTITUTION_PIN,
+    ],
+    [CANONICAL_CLAUDE_PIN, `## Quick reference\n\n<!-- ${constitutionRow.trim()} -->\n`],
+  ];
+
+  for (const [index, [claudeText, constitutionText]] of cases.entries()) {
+    await t.test(`decoy ${index + 1}`, () => {
+      const readFile = (filePath) => {
+        if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+        if (filePath.endsWith("CLAUDE.md")) return claudeText;
+        return constitutionText;
+      };
+      assert.equal(checkVersionLabels("/repo", readFile).ok, false);
+    });
+  }
+});
+
+test("version labels: non-ENOENT read errors fail closed", () => {
+  const readFile = (filePath) => {
+    if (filePath.endsWith("brain-api.md")) return BRAIN_API_LABELS;
+    throw Object.assign(new Error("denied"), { code: "EACCES" });
+  };
+  const result = checkVersionLabels("/repo", readFile);
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /couldn't read/);
 });
 
 test("null-safety: soft checks in repo mode report value null (not a throw) with no git and no repo files", () => {

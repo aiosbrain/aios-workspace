@@ -30,6 +30,7 @@ import { missingSeedPaths, resolveLocalToolkitDir, gitSha } from "./update.mjs";
 import { toolkitMeta } from "./toolkit-meta.mjs";
 import { readSkills, renderSkillsIndexMd } from "./gen-catalog.mjs";
 import { gitFiles } from "./git-files.mjs";
+import { checkVersionLabels } from "./context-version-labels.mjs";
 
 export const SOFT_THRESHOLDS = {
   staleness_versions: 2,
@@ -362,38 +363,6 @@ function checkMissingSeeds(repoPath) {
 }
 
 // ── repo-mode checks ─────────────────────────────────────────────────────────
-
-function checkVersionLabels(repoPath) {
-  const brainApiPath = path.join(repoPath, "docs", "brain-api.md");
-  const brainApiText = readIf(brainApiPath);
-  if (brainApiText === null)
-    return { ok: true, value: null, detail: "no docs/brain-api.md (non-toolkit repo)" };
-  const claudeText = readIf(path.join(repoPath, "CLAUDE.md")) || "";
-
-  // Prefer "Document revision: N.M" (the label CLAUDE.md's pinned-contract section tracks);
-  // fall back to "Version: N.M" (toolkit-meta.mjs's brainApiVersion() anchor) if absent.
-  const docRev = brainApiText.match(/\*\*Document revision:\s*([0-9]+\.[0-9]+)\*\*/)?.[1];
-  const version = brainApiText.match(/\*\*Version:\s*([0-9]+\.[0-9]+)\*\*/)?.[1];
-  const label = docRev || version;
-  if (!label)
-    return {
-      ok: false,
-      value: null,
-      detail: "docs/brain-api.md header has no Version/Document revision label",
-    };
-
-  const claudeLabels = new Set(
-    (claudeText.match(/\bv?(\d+\.\d+)\b/g) || []).map((s) => s.replace(/^v/, ""))
-  );
-  const found = claudeLabels.has(label);
-  return {
-    ok: found,
-    value: found ? label : `expected ${label}, not referenced`,
-    detail: found
-      ? `CLAUDE.md references brain-api ${label}`
-      : `CLAUDE.md doesn't mention brain-api's current label (${label}); docs/brain-api.md and CLAUDE.md have drifted`,
-  };
-}
 
 function checkContextsList(repoPath) {
   const scaffoldScript = path.join(repoPath, "scripts", "scaffold-project.sh");

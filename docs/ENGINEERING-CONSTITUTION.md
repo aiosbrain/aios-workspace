@@ -133,7 +133,7 @@ file must exist and be reachable from `test:prepare` or a CI workflow. Rows mark
 | context-health — context-engineering health floors | `scripts/check-context.mjs` (wraps `scripts/context-health.mjs`) | `check:context` in CI `context-health` job |
 | toolkit-manifest parity — manifest buckets ↔ scaffold destinations in lockstep | `test/toolkit-manifest-parity.test.mjs` | test suite (`test:node` + CI test shards) |
 | contract-schema parity — vendored brain JSON Schema ↔ client validator agree | `test/item-payload-schema-parity.test.mjs` | test suite (`test:node` + CI test shards) |
-| brain-api revision label — CLAUDE.md pinned-contract label matches `docs/brain-api.md` | `checkVersionLabels()` in `scripts/context-health.mjs` (via `scripts/check-context.mjs`) | `check:context` in CI `context-health` job |
+| brain-api revision label — CLAUDE.md pinned-contract label matches `docs/brain-api.md` | `checkVersionLabels()` in `scripts/context-version-labels.mjs`, invoked by `scripts/context-health.mjs` via `scripts/check-context.mjs` | `check:context` in CI `context-health` job |
 | codebase-health — repo-level health rubric | `validation/codebase-health.rubric.json` | pending AIO-605 (not yet built) |
 
 ---
@@ -142,7 +142,7 @@ file must exist and be reachable from `test:prepare` or a CI workflow. Rows mark
 
 | Concern | Source of truth |
 |---|---|
-| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.10) |
+| Sync protocol | [`docs/brain-api.md`](./brain-api.md) (v1.16) |
 | Design system | `aios-design/DESIGN.md` |
 | Engineering / workflow layer | **this file** |
 | Conventions & tiers | `scaffold/.claude/rules/` |
