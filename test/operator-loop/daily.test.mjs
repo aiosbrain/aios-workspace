@@ -1,5 +1,4 @@
-// C4 classifier tests (daily.ts buildDailyOrientation). Pure over manifest literals + a prior
-// change-snapshot (built via diffSignals). Run after `npm run build:loop`.
+// C4 classifier tests: pure manifest literals + diffSignals snapshots. Run after `npm run build:loop`.
 
 import test from "node:test";
 import assert from "node:assert/strict";
