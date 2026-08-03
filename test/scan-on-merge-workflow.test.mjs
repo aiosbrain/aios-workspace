@@ -113,7 +113,7 @@ test("Brain secrets are scoped only to the configuration probe and final upload"
 
 test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () => {
   assert.match(workflow, /npm ci --ignore-scripts/);
-  assert.match(scaffoldWorkflow, /npm install -g @aiosbrain\/aios@0\.9\.0 --ignore-scripts/);
+  assert.match(scaffoldWorkflow, /npm install -g @aiosbrain\/aios@0\.9\.1 --ignore-scripts/);
   assert.match(scaffoldWorkflow, /npm ci --ignore-scripts/);
   assert.doesNotMatch(scaffoldWorkflow, /npm ci \|\| npm install/);
   for (const contents of [workflow, scaffoldWorkflow]) {
@@ -139,4 +139,19 @@ test("scanner dependencies are exact, hashed, binary-only, and scaffolded", () =
     (requirements.match(/--hash=sha256:[0-9a-f]{64}/g) ?? []).length,
     requirementLines.length
   );
+});
+
+test("the scaffold's exact toolkit pin resolves from the public npm registry", () => {
+  const match = scaffoldWorkflow.match(
+    /npm install -g (@aiosbrain\/aios@(\d+\.\d+\.\d+)) --ignore-scripts/
+  );
+  assert.ok(match, "missing exact toolkit install pin");
+  const [, specifier, expectedVersion] = match;
+  const result = spawnSync("npm", ["view", specifier, "version", "--json"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: { ...process.env, npm_config_ignore_scripts: "true" },
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.equal(JSON.parse(result.stdout), expectedVersion);
 });

@@ -76,7 +76,7 @@ jobs:
       # an adjacent ../aios/aios-workspace — neither of which exists on a CI runner.
       - name: Install the AIOS toolkit
         if: steps.brain.outputs.configured == 'true'
-        run: npm install -g @aiosbrain/aios@0.9.0 --ignore-scripts
+        run: npm install -g @aiosbrain/aios@0.9.1 --ignore-scripts
 
       # Optional: most workspaces are content repos with no suite, and that is fine — coverage
       # then reports as "no report", NOT as 0%. Only run it when the workspace actually defines
