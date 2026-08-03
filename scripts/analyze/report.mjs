@@ -9,7 +9,13 @@
  * Zero dependencies.
  */
 
-import { AXIS_LABELS, attentionCard, contextHealthCard, codebaseHealthCard } from "./aem.mjs";
+import {
+  AXIS_LABELS,
+  attentionCard,
+  contextHealthCard,
+  codebaseHealthCard,
+  nextSpineBlockers,
+} from "./aem.mjs";
 import {
   scoreCognitiveErgonomics,
   ergonomicsBaseline,
@@ -281,6 +287,10 @@ export function toJson(result, costData, contextHealth, codebaseHealth) {
     axis_guide: AXIS_GUIDE,
     ergonomics_tip: ergonomicsTip(out.attention?.reading ?? ""),
   };
+  const nextSpine = nextSpineBlockers(result.placement.axes, result.signals);
+  if (nextSpine.target) {
+    out.presentation.next_spine = nextSpine;
+  }
   // Context health SHADOW card (repo/workspace hygiene) — omitted entirely when
   // the check didn't run / threw (contextHealth is null), same pattern as `costs`.
   const chCard = contextHealthCard(contextHealth);
