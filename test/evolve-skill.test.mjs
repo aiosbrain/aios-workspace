@@ -37,7 +37,10 @@ function buildFixture(root) {
     {
       session_id: "session-one",
       ts: 2_000_000_000,
-      text: "Review this pull request; token=abcdefghijklmnopqrstuvwxyz",
+      text:
+        "Review this pull request; token=abcdefghijklmnopqrstuvwxyz " +
+        "DB_PASSWORD=database-password-value authToken=camel-case-token-value " +
+        "AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF standalone ASIA1234567890ABCDEF",
     },
     { session_id: "other-session", ts: 2_000_000_001, text: "Unrelated task" },
   ]);
@@ -113,7 +116,7 @@ test("evolve reports skill, routing, archive, redaction, and catalog evidence", 
         "--include-prompts",
         "--json",
       ],
-      { encoding: "utf8" }
+      { encoding: "utf8", timeout: 10_000 }
     );
     const report = JSON.parse(stdout);
     assert.equal(report.session_count, 1);
@@ -135,6 +138,10 @@ test("evolve reports skill, routing, archive, redaction, and catalog evidence", 
     assert.deepEqual(report.sessions[0].usage_evidence.declared_skills, ["ai-code-review"]);
     assert.equal(report.sessions[0].usage_evidence.skill_instruction_reads["relative-skill"], 1);
     assert.match(report.sessions[0].prompts[0].text, /\[REDACTED\]/);
+    assert.doesNotMatch(
+      report.sessions[0].prompts[0].text,
+      /database-password-value|camel-case-token-value|AKIA1234567890ABCDEF|ASIA1234567890ABCDEF/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -143,6 +150,7 @@ test("evolve reports skill, routing, archive, redaction, and catalog evidence", 
 test("evolve rejects non-positive limits", () => {
   const result = spawnSync("python3", [analyzer, "--max-sessions", "0"], {
     encoding: "utf8",
+    timeout: 10_000,
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must be positive/);
@@ -173,7 +181,7 @@ test("evolve fails closed when no session metadata matches the project", () => {
         "--include-prompts",
         "--json",
       ],
-      { encoding: "utf8" }
+      { encoding: "utf8", timeout: 10_000 }
     );
     const report = JSON.parse(stdout);
     assert.equal(report.project_scoped, true);
