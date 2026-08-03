@@ -15,6 +15,12 @@ test("offers the Personal / Join / Create contract in that order", () => {
   );
 });
 
+test("Create names the Railway deployment and connection outcome", () => {
+  const create = ONBOARDING_PATHS.find((item) => item.value === "create");
+  assert.match(create.hint, /Railway template/i);
+  assert.match(create.hint, /connect/i);
+});
+
 test("buildConnectorOptions pins the Team Brain first and pre-selects it", () => {
   const pinned = { id: "__team_brain__", name: "AIOS Team Brain", summary: "Powers sync" };
   const connectors = [

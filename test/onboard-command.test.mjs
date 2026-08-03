@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { runToolkitUpgrade } from "../scripts/onboard-command.mjs";
+import { brainSeedForOnboarding, runToolkitUpgrade } from "../scripts/onboard-command.mjs";
 
 // The toolkit-upgrade subsection of `aios onboard`, extracted so its SEQUENCING can be unit
 // tested deterministically with a stubbed `cmdUpdate` — no real git/process spawning. This is
@@ -20,11 +20,23 @@ const CLEAN_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "behind" }
 const DIRTY_TOOLKIT = { path: "/tk", git: { dirty: true }, relation: "behind" };
 const DIVERGED_TOOLKIT = { path: "/tk", git: { dirty: false }, relation: "diverged" };
 
-test("the pinned V2 contract describes the runtime's single inspect/preview path", () => {
+test("Create resumes Join without silently reusing a previously configured Brain", () => {
+  const cfg = { brain_url: "https://old-brain.example.com", api_key: "old-secret" };
+  assert.deepEqual(brainSeedForOnboarding(cfg), {
+    brainUrl: "https://old-brain.example.com",
+    apiKey: "old-secret",
+  });
+  assert.deepEqual(brainSeedForOnboarding(cfg, { createdNewBrain: true }), {
+    brainUrl: null,
+    apiKey: null,
+  });
+});
+
+test("the pinned V3 contract describes inspect, Railway Create, and Join resume", () => {
   const contract = JSON.parse(
     readFileSync(new URL("../docs/contract/onboarding-orchestration.json", import.meta.url), "utf8")
   );
-  assert.equal(contract.version, 2);
+  assert.equal(contract.version, 3);
   assert.deepEqual(contract.paths, ["Personal", "Join", "Create"]);
   assert.equal(contract.inspection.command, "aios onboard --inspect --json");
   assert.equal(contract.inspection.readOnly, true);
@@ -32,6 +44,13 @@ test("the pinned V2 contract describes the runtime's single inspect/preview path
   assert.equal(contract.upgrade.previewIncludesSafetyCheck, true);
   assert.equal(contract.join.teamIdentitySource, "api_key");
   assert.equal(contract.join.teamIdRequired, false);
+  assert.equal(contract.create.mode, "railway-template");
+  assert.equal(contract.create.provider, "railway");
+  assert.equal(contract.create.deployUrl, "https://aiosbrain.dev/deploy/team-brain/");
+  assert.equal(contract.create.prerequisites.activeRailwayPlan, true);
+  assert.equal(contract.create.prerequisites.plansUrl, "https://railway.com/workspace/plans");
+  assert.deepEqual(contract.create.resume.required, ["brainUrl", "apiKey"]);
+  assert.equal(contract.create.resume.validationRequest, "GET /api/v1/me");
   assert.equal(contract.sharing.pushDuringOnboarding, false);
   assert.ok(contract.forbiddenMarkers.includes("aios update --check"));
 });

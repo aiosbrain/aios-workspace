@@ -11,6 +11,7 @@ import {
 import { createBrainClient } from "./brain-client.mjs";
 import { normalizeBrainOrigin } from "./brain-origin.mjs";
 import { persistBrainOrigin } from "./onboard-config.mjs";
+import { runCreateFlow } from "./onboard-create.mjs";
 import { formatInspection, inspectOnboarding } from "./onboard-inspect.mjs";
 import { cmdUpdate } from "./update.mjs";
 import { installWorktreeSafetyBackstops } from "./worktree.mjs";
@@ -107,6 +108,13 @@ export async function runToolkitUpgrade(
   }
 }
 
+/** Create must collect the newly deployed Brain identity, never silently reuse an older one. */
+export function brainSeedForOnboarding(cfg, { createdNewBrain = false } = {}) {
+  return createdNewBrain
+    ? { brainUrl: null, apiKey: null }
+    : { brainUrl: cfg.brain_url || null, apiKey: cfg.api_key || null };
+}
+
 /** Guided onboarding, isolated from the main CLI so basic command loading stays small and dependency-free. */
 export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction }) {
   if (args.includes("--inspect")) {
@@ -185,17 +193,16 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     return;
   }
 
-  const onboardingPath = await pickOnboardingPath(
-    cfg.brain_url && cfg.api_key ? "join" : "personal"
-  );
+  let onboardingPath = await pickOnboardingPath(cfg.brain_url && cfg.api_key ? "join" : "personal");
+  let createdNewBrain = false;
   if (onboardingPath === "create") {
-    clack.log.info(
-      "Create uses the existing guided self-host path; this release does not create setup bundles or new auth endpoints."
-    );
-    clack.outro(
-      "Your best next step: open https://aiosbrain.dev/guides/team-brain/ and review the prerequisites."
-    );
-    return;
+    const create = await runCreateFlow({ confirm, clack });
+    if (!create.resumeJoin) {
+      clack.outro("Your best next step: finish the deployment or continue in standalone mode.");
+      return;
+    }
+    onboardingPath = "join";
+    createdNewBrain = true;
   }
 
   await runToolkitUpgrade(repo, cfg, inspection, { confirm, clack });
@@ -203,10 +210,11 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
   const backedUp = backupConfig(repo);
   if (backedUp.length) clack.log.info(`Backed up existing config first: ${backedUp.join(", ")}`);
 
+  const brainSeed = brainSeedForOnboarding(cfg, { createdNewBrain });
   let safeConfiguredOrigin = null;
-  if (cfg.brain_url) {
+  if (brainSeed.brainUrl) {
     try {
-      safeConfiguredOrigin = normalizeBrainOrigin(cfg.brain_url);
+      safeConfiguredOrigin = normalizeBrainOrigin(brainSeed.brainUrl);
     } catch (error) {
       clack.log.warn(`Configured Brain URL is unsafe: ${error.message}`);
     }
@@ -215,7 +223,7 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
     id: TEAM_BRAIN_PSEUDO_ID,
     name: "AIOS Team Brain",
     summary: "Powers push/pull/status/query — get your key from your dashboard's profile page",
-    status: cfg.api_key && safeConfiguredOrigin ? "wired" : "available",
+    status: brainSeed.apiKey && safeConfiguredOrigin ? "wired" : "available",
   };
   const selection = await pickConnectors(connectors, {
     pinned: onboardingPath === "join" ? teamBrainOption : null,
@@ -246,7 +254,7 @@ export async function cmdOnboard(repo, cfg, args = [], { connectFlow, nextAction
       }
     }
 
-    let key = cfg.api_key;
+    let key = brainSeed.apiKey;
     let enteredKey = false;
     if (origin && !key) {
       key = await askSecret("AIOS_API_KEY", {

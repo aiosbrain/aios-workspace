@@ -10,6 +10,21 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-03
+
+### Added
+
+- **One-click Team Brain Create path (AIO-445)** — `aios onboard` explains the Railway app +
+  Postgres deployment and cost boundary, stops for approval before opening the official template,
+  and can resume directly into Join when deployment is ready.
+
+### Changed
+
+- The pinned onboarding orchestration contract is v3. Create now uses the stable
+  `https://aiosbrain.dev/deploy/team-brain/` front door, then reuses Join's canonical-origin human
+  gate and `GET /api/v1/me` proof. No Brain origin or API key is persisted before validation, and
+  onboarding still never pushes workspace content.
+
 ## [0.9.1] — 2026-08-01
 
 The CLI becomes an independently installable npm package (AIO-668). Nothing in
