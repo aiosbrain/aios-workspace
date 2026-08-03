@@ -9,6 +9,13 @@
  * Zero dependencies.
  */
 
+/**
+ * @typedef {{ kind: "chat", label: string, prompt: string }
+ *   | { kind: "command", label: string, command: string }
+ *   | { kind: "edit", label: string, target: string, intent: string }
+ *   | { kind: "doc", label: string, path: string }} MaturityAction
+ */
+
 export const AXIS_GUIDE = {
   verification: {
     gloss: "does the agent check its own work?",
@@ -19,6 +26,20 @@ export const AXIS_GUIDE = {
       "Before you accept a change, have the agent run the tests or build and show you it passes.",
       "Give it a check it can run itself: a test command, a type-check, a lint, a smoke script — even a screenshot for UI work.",
       'For anything risky, ask "how would you prove this works?" and make it actually do that before moving on.',
+    ],
+    /** @type {MaturityAction[]} */
+    actions: [
+      {
+        kind: "chat",
+        label: "Design a verification check",
+        prompt:
+          "Inspect this project and help me define the cheapest honest check that proves my current task works. Run it and report the observed evidence.",
+      },
+      {
+        kind: "doc",
+        label: "Read the verification-first module",
+        path: ".claude/skills/agentic-maturity/curriculum.md#module-verification-first-l3--l4--highest-priority-when-verification-is-weak",
+      },
     ],
   },
   context_hygiene: {
@@ -31,6 +52,8 @@ export const AXIS_GUIDE = {
       "Keep a short CLAUDE.md with the project's key facts so it doesn't re-learn them every time.",
       "Point it at the specific files or folders that matter, instead of the whole repo.",
     ],
+    /** @type {MaturityAction[]} */
+    actions: [{ kind: "command", label: "Check context health", command: "aios context-health" }],
   },
   autonomy: {
     gloss: "how much you let it run on its own",
@@ -41,6 +64,15 @@ export const AXIS_GUIDE = {
       "For low-risk, reversible work (editing files on a branch, running tests), let it proceed without approving each step.",
       "Hand whole pieces of work to sub-agents or run tasks in parallel, instead of supervising one action at a time.",
       "Keep the short leash only where a mistake is costly (deploys, deletes, production) — and lengthen it as your checks (the Verification axis) prove reliable.",
+    ],
+    /** @type {MaturityAction[]} */
+    actions: [
+      {
+        kind: "chat",
+        label: "Calibrate the agent leash",
+        prompt:
+          "Classify my current task by risk and reversibility, then propose what the agent can do autonomously and which actions still need approval.",
+      },
     ],
   },
   learning: {
@@ -53,6 +85,16 @@ export const AXIS_GUIDE = {
       "Turn a workflow you repeat into a reusable skill or slash-command.",
       "Build a small toolbelt (handy scripts, MCP servers) the agent can reach for instead of improvising.",
     ],
+    /** @type {MaturityAction[]} */
+    actions: [
+      {
+        kind: "edit",
+        label: "Capture a durable correction",
+        target: "CLAUDE.md",
+        intent:
+          "Turn the latest repeated correction into one concise, generally applicable project rule.",
+      },
+    ],
   },
   cost_governance: {
     gloss: "tokens & money spent per task",
@@ -63,6 +105,14 @@ export const AXIS_GUIDE = {
       "Keep the working context tight — fewer, more relevant files in play at once.",
       "Use a cheaper, faster model for simple tasks; save the big model for the genuinely hard ones.",
       "Watch for the agent re-reading the same large files or looping on a tool — that's pure waste.",
+    ],
+    /** @type {MaturityAction[]} */
+    actions: [
+      {
+        kind: "command",
+        label: "Review billing-window cost",
+        command: "aios analyze --since billing",
+      },
     ],
   },
 };

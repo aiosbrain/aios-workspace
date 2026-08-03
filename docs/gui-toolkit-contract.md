@@ -147,13 +147,13 @@ CLI `--json` surfaces consumed:
 
 | Surface | Fields consumed | Used for |
 | --- | --- | --- |
-| `aios analyze --json` (report.mjs `toJson`, via the shared analysis cache) | `presentation.axis_labels`, `presentation.axis_guide`, `presentation.ergonomics_tip` (plus the pre-existing `placement`/`axes_shadow`/`attention`/`days` reads) | Maturity panel axis labels, glosses, weakest-axis coaching, and the CE tip |
+| `aios analyze --json` (report.mjs `toJson`, via the shared analysis cache) | `presentation.axis_labels`, `presentation.axis_guide` (including typed `actions`), `presentation.next_spine`, `presentation.ergonomics_tip` (plus the pre-existing `placement`/`axes_shadow`/`attention`/`days` reads) | Maturity panel axis labels, glosses, actionable weakest-axis coaching, exact next-level blockers, and the CE tip |
 
 Removed R4 grandfathers (3):
 
 | Former deep import | Seam decision |
 |---|---|
-| `gui/server/maturity.mjs` → `scripts/analyze/guidance.mjs` (`AXIS_GUIDE`, `ergonomicsTip`) | **CLI JSON seam.** `aios analyze --json` (report.mjs `toJson`) now ships an additive `presentation` block: `{ axis_labels, axis_guide, ergonomics_tip }`. The panel reads it from the same snapshot it already parses; `maturity.mjs` now has zero imports. |
+| `gui/server/maturity.mjs` → `scripts/analyze/guidance.mjs` (`AXIS_GUIDE`, `ergonomicsTip`) | **CLI JSON seam.** `aios analyze --json` (report.mjs `toJson`) ships an additive `presentation` block: `{ axis_labels, axis_guide, next_spine?, ergonomics_tip }`. The panel reads it from the same snapshot it already parses; `maturity.mjs` now has zero imports. |
 | `gui/server/maturity.mjs` → `scripts/analyze/aem.mjs` (`AXIS_LABELS`) | Same — `presentation.axis_labels` in the analyze JSON. |
 | `gui/server/cost-config.mjs` → `scripts/analyze/claude-plan.mjs` (`PLAN_PRICES`) | **GUI-owned copy + parity test** (the same pattern as C1's flat-yaml decision). The plan price table is needed synchronously on the settings/ledger read path (resolving a bare `claude.plan` to its list price without spawning the CLI), so the JSON seam doesn't fit. `cost-config.mjs` carries a provenance-commented copy; `cost-config.test.mjs` deep-equals it against the CLI export, so any price drift fails tests. |
 
@@ -164,7 +164,23 @@ Removed R4 grandfathers (3):
   // ...existing toJson fields...
   "presentation": {
     "axis_labels": { "verification": "Verification", /* … per axis */ },
-    "axis_guide": { "verification": { "gloss": "…", "meaning": "…", "why": "…", "steps": ["…"] }, /* … */ },
+    "axis_guide": {
+      "verification": {
+        "gloss": "…", "meaning": "…", "why": "…", "steps": ["…"],
+        "actions": [
+          { "kind": "chat", "label": "…", "prompt": "…" },
+          { "kind": "doc", "label": "…", "path": "…" }
+        ]
+      },
+      /* … one or more typed actions per axis; command/edit carry their kind-specific payload */
+    },
+    "next_spine": {
+      "target": "L4", "mode": "all",
+      "blockers": [
+        { "axis": "verification", "signal": "verify_tool_rate", "current": 0.09,
+          "currentScore": 2, "neededScore": 3, "neededValue": 0.12 }
+      ]
+    }, // omitted at L5
     "ergonomics_tip": "…" // precomputed from this window's attention reading; "" when none
   }
 }

@@ -8,8 +8,10 @@
 // and text↔JSON band agreement.
 // Synthetic fixtures only. Zero network, zero deps. Run: node test/analyze-render.test.mjs
 
+import { existsSync } from "node:fs";
+
 import { renderText, toJson, buildPushPayload } from "../scripts/analyze/report.mjs";
-import { ergonomicsTip } from "../scripts/analyze/guidance.mjs";
+import { AXIS_GUIDE, ergonomicsTip } from "../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS, placement, contextHealthCard } from "../scripts/analyze/aem.mjs";
 import { AXIS_LABEL_ERGONOMICS, MIN_BASELINE_DAYS } from "../scripts/analyze/ergonomics.mjs";
 
@@ -72,6 +74,17 @@ function resultFrom(days) {
 
 const RICH = resultFrom(steadyDays(MIN_BASELINE_DAYS + 2)); // 7 days → non-null rollup, nulls days 0–4
 const SPARSE = resultFrom(steadyDays(3)); // 3 days → baseline never forms → null rollup
+const TOP = resultFrom([
+  day("2026-06-30", {
+    verify_tool_rate: 1,
+    cache_hit_rate: 1,
+    delegation_ratio: 1,
+    subagent_usage: 1,
+    permission_events: 20,
+    tool_diversity: 10,
+    tokens_per_task: 1,
+  }),
+]);
 
 // ── the CE line + shadow marker ─────────────────────────────────────────────
 
@@ -149,6 +162,88 @@ const FROZEN_KEYS = [
 check(
   "toJson top-level keys are exactly the frozen set, in order",
   JSON.stringify(Object.keys(toJson(RICH))) === JSON.stringify(FROZEN_KEYS)
+);
+
+// ── structured maturity actions (AIO-706) ─────────────────────────────────
+
+console.log("AXIS_GUIDE — typed actions");
+check(
+  "every canonical axis carries at least one structured action",
+  Object.keys(AXIS_LABELS).every(
+    (axis) => Array.isArray(AXIS_GUIDE[axis]?.actions) && AXIS_GUIDE[axis].actions.length > 0
+  )
+);
+const maturityActions = Object.values(AXIS_GUIDE).flatMap((guide) => guide.actions ?? []);
+check(
+  "the action vocabulary exercises chat, command, edit, and doc consumers",
+  ["chat", "command", "edit", "doc"].every((kind) =>
+    maturityActions.some((action) => action.kind === kind)
+  )
+);
+function isNonEmpty(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function isValidAction(action) {
+  if (!isNonEmpty(action.label)) return false;
+  switch (action.kind) {
+    case "chat":
+      return isNonEmpty(action.prompt);
+    case "command":
+      return isNonEmpty(action.command);
+    case "edit":
+      return isNonEmpty(action.target) && isNonEmpty(action.intent);
+    case "doc":
+      return isNonEmpty(action.path);
+    default:
+      return false;
+  }
+}
+check(
+  "every action has an allowed kind and its required non-empty payload",
+  maturityActions.every(isValidAction)
+);
+check(
+  "every doc action resolves to a file shipped into scaffolded workspaces",
+  maturityActions
+    .filter((action) => action.kind === "doc")
+    .every((action) =>
+      existsSync(new URL(`../scaffold/${action.path.split("#", 1)[0]}`, import.meta.url))
+    )
+);
+check(
+  "existing prose guidance remains three steps plus gloss, meaning, and why",
+  Object.values(AXIS_GUIDE).every(
+    (guide) =>
+      [guide.gloss, guide.meaning, guide.why].every(isNonEmpty) &&
+      guide.steps.length === 3 &&
+      guide.steps.every(isNonEmpty)
+  )
+);
+
+// ── next-spine blockers in the JSON seam (AIO-706) ────────────────────────
+
+console.log("toJson — next-spine blockers");
+check(
+  "a below-L5 placement carries its exact next-level blockers",
+  (() => {
+    const next = toJson(RICH).presentation.next_spine;
+    const blocker = next?.blockers?.[0];
+    return (
+      next?.target === "L5" &&
+      next.mode === "all" &&
+      next.blockers.length === 1 &&
+      blocker.axis === "learning" &&
+      blocker.signal === "tool_diversity" &&
+      blocker.current === 4 &&
+      blocker.currentScore === 2 &&
+      blocker.neededScore === 3 &&
+      blocker.neededValue === 6
+    );
+  })()
+);
+check(
+  "an L5 placement omits next_spine rather than emitting an empty shape",
+  !("next_spine" in toJson(TOP).presentation)
 );
 
 // ── text band agrees with the JSON shadow band (acceptance criterion) ───────
