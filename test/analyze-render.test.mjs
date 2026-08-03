@@ -8,6 +8,8 @@
 // and text↔JSON band agreement.
 // Synthetic fixtures only. Zero network, zero deps. Run: node test/analyze-render.test.mjs
 
+import { existsSync } from "node:fs";
+
 import { renderText, toJson, buildPushPayload } from "../scripts/analyze/report.mjs";
 import { AXIS_GUIDE, ergonomicsTip } from "../scripts/analyze/guidance.mjs";
 import { AXIS_LABELS, placement, contextHealthCard } from "../scripts/analyze/aem.mjs";
@@ -199,6 +201,14 @@ function isValidAction(action) {
 check(
   "every action has an allowed kind and its required non-empty payload",
   maturityActions.every(isValidAction)
+);
+check(
+  "every doc action resolves to a file shipped into scaffolded workspaces",
+  maturityActions
+    .filter((action) => action.kind === "doc")
+    .every((action) =>
+      existsSync(new URL(`../scaffold/${action.path.split("#", 1)[0]}`, import.meta.url))
+    )
 );
 check(
   "existing prose guidance remains three steps plus gloss, meaning, and why",
