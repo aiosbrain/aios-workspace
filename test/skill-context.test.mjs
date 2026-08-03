@@ -159,4 +159,10 @@ test("external-write skills never route semantically but explicit invocation wor
     routeSkillPrompt({ suite, prompt: "Use $linear-publish-spec for AIO-1." })?.id,
     "linear-publish-spec"
   );
+  assert.equal(
+    routeSkillPrompt({ suite, prompt: "Use /linear-publish-spec for AIO-1." })?.id,
+    "linear-publish-spec"
+  );
+  assert.equal(routeSkillPrompt({ suite, prompt: "Use $linear-publish-spec-typo." }), null);
+  assert.equal(routeSkillPrompt({ suite, prompt: "Use /linear-publish-spec-typo." }), null);
 });

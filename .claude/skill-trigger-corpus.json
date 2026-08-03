@@ -96,7 +96,9 @@
         "make this spec ready",
         "draft an issue",
         "evaluate the issue",
-        "repair the local candidate"
+        "repair the local candidate",
+        "Use $linear-publish-spec-typo for AIO-1.",
+        "Use /linear-publish-spec-typo for AIO-1."
       ],
       "overlap": [
         "publish this spec to Linear after review this spec",
