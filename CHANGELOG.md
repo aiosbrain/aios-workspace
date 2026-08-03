@@ -10,6 +10,33 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-08-03
+
+This corrective patch contains the scan-on-merge fixes that landed after the
+`0.10.0` artifact was published. It does not change the CLI, devtools migration,
+or Team Brain API contract, which remains at **v1.15**.
+
+### Fixed
+
+- Optional coverage dependency installation is now genuinely fail-open: an `npm ci`
+  failure cannot prevent the Workspace or a scaffolded consumer from reaching its Brain scan.
+- The scaffold health wrapper no longer retries an uncertain upload as a plain payload. This
+  prevents a second request from replacing the same codebase/commit row without health data.
+- Regression guards now enforce both failure paths in the live and scaffold workflows.
+
+### Migration and rollback
+
+- Upgrade the CLI and the template used for newly scaffolded workspaces with
+  `npm install -g @aiosbrain/aios@0.10.1`. There is no configuration or data migration from
+  `0.10.0`. A global install does not rewrite the managed workflow already copied into an
+  existing workspace.
+- To apply the fix to an existing workspace, check out Workspace `v0.10.1`, then run
+  `aios update --from <path-to-v0.10.1-checkout> --no-pull` from that workspace. Review and
+  commit the resulting managed-file update normally.
+- To roll back the copied workflow, repeat that update from a Workspace `v0.10.0` checkout;
+  reinstall `@aiosbrain/aios@0.10.0` as well if the CLI must also be rolled back. The `0.10.0`
+  line retains the devtools extraction, preflight, and migration docs.
+
 ## [0.10.0] — 2026-08-03
 
 The standalone Workspace release completes the devtools extraction and makes the
