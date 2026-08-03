@@ -60,6 +60,32 @@ export const DEVTOOLS_MODULES = Object.freeze([
 
 export const DEVTOOLS_PACKAGE = "@aiosbrain/aios-devtools";
 
+/**
+ * Consume the core-owned global checkout selector from a command's argument list.
+ *
+ * `loadDevtoolsModule()` reads the original process argv to select the implementation, while the
+ * selected command must receive only its own arguments. Keeping both sides on this parser prevents
+ * the selector path from being mistaken for a build plan or an unknown spec option.
+ *
+ * @param {string[]} argv mutated in place
+ * @returns {?string} the selected directory, or null when the flag was absent
+ */
+export function consumeDevtoolsDirArg(argv) {
+  const i = argv.indexOf("--devtools-dir");
+  if (i === -1) return null;
+  const value = argv[i + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(
+      "--devtools-dir requires a path argument (got " +
+        (value ? `'${value}'` : "nothing") +
+        `). Pass --devtools-dir <aios-devtools-checkout>, or drop the flag to use ` +
+        `AIOS_DEVTOOLS_DIR.`
+    );
+  }
+  argv.splice(i, 2);
+  return value;
+}
+
 function assertKnown(name) {
   if (!DEVTOOLS_MODULES.includes(name)) {
     throw new Error(
@@ -76,17 +102,8 @@ export function explicitDevtoolsDir({
   env = process.env,
 } = {}) {
   if (devtoolsDir) return { dir: devtoolsDir, source: "--devtools-dir" };
-  const i = argv.indexOf("--devtools-dir");
-  if (i !== -1) {
-    const value = argv[i + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(
-        "--devtools-dir requires a path argument (got " +
-          (value ? `'${value}'` : "nothing") +
-          `). Pass --devtools-dir <aios-devtools-checkout>, or drop the flag to use ` +
-          `AIOS_DEVTOOLS_DIR.`
-      );
-    }
+  const value = consumeDevtoolsDirArg([...argv]);
+  if (value) {
     return { dir: value, source: "--devtools-dir" };
   }
   if (env.AIOS_DEVTOOLS_DIR) return { dir: env.AIOS_DEVTOOLS_DIR, source: "AIOS_DEVTOOLS_DIR" };
@@ -139,7 +156,7 @@ export async function loadDevtoolsModule(name, opts = {}) {
   try {
     return await import(resolved.specifier);
   } catch (error) {
-    throw missingPackageError(name, resolved, error) ?? error;
+    throw missingPackageError(name, resolved, error, opts.command) ?? error;
   }
 }
 
@@ -151,7 +168,7 @@ export async function loadDevtoolsModule(name, opts = {}) {
  * a real dependency: the "package missing" path can no longer be reached by simply not having it
  * installed, and a test that silently stopped exercising the branch would be worse than no test.
  */
-export function missingPackageError(name, resolved, error) {
+export function missingPackageError(name, resolved, error, command = name) {
   if (resolved.kind !== "package") return null;
   if (
     !/ERR_MODULE_NOT_FOUND|Cannot find package|is not defined by "exports"/.test(
@@ -160,8 +177,12 @@ export function missingPackageError(name, resolved, error) {
   ) {
     return null;
   }
+  // Name the command the OPERATOR typed, not the module it happens to resolve to. `aios spec`
+  // loads the `spec-eval` module, and telling someone their "'spec-eval' command" is missing
+  // sends them looking for a command that does not exist.
+  const named = command === name ? `'${command}'` : `'${command}' (${name})`;
   return new Error(
-    `the '${name}' command lives in ${DEVTOOLS_PACKAGE}, which is not installed ` +
+    `the ${named} command lives in ${DEVTOOLS_PACKAGE}, which is not installed ` +
       `(or does not export ./${name}).\n` +
       `  Install it:             npm i ${DEVTOOLS_PACKAGE}\n` +
       `  Or point at a checkout: AIOS_DEVTOOLS_DIR=<path-to-aios-devtools>\n` +

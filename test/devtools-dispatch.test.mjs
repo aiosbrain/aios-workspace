@@ -8,17 +8,23 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  consumeDevtoolsDirArg,
   DEVTOOLS_MODULES,
   DEVTOOLS_PACKAGE,
   explicitDevtoolsDir,
   missingPackageError,
   resolveDevtoolsModule,
 } from "../scripts/devtools-dispatch.mjs";
+import { DEVTOOLS_COMMANDS } from "../scripts/cli/devtools-commands.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const AIOS = path.join(ROOT, "scripts", "aios.mjs");
 
 function tmpTree() {
   const dir = mkdtempSync(path.join(tmpdir(), "devtools-dispatch-"));
@@ -110,6 +116,45 @@ test("AIOS_DEVTOOLS_DIR is honoured, and a valueless flag is an actionable error
     () => explicitDevtoolsDir({ argv: ["--devtools-dir", "--other"], env: {} }),
     /requires a path argument/
   );
+});
+
+test("the global --devtools-dir selector is consumed before the selected command runs", () => {
+  const checkout = tmpTree();
+  try {
+    for (const [command, module, handler] of [
+      ["spec", "spec-eval", "cmdSpec"],
+      ["build", "build", "cmdBuild"],
+    ]) {
+      writeFileSync(
+        path.join(checkout, "scripts", `${module}.mjs`),
+        `export function ${handler}(repo, rest) { console.log(JSON.stringify({ repo, rest })); }\n`
+      );
+      const result = spawnSync(
+        process.execPath,
+        [AIOS, command, "--devtools-dir", checkout, "--help"],
+        { cwd: ROOT, encoding: "utf8", env: { ...process.env, AIOS_DEVTOOLS_DIR: "" } }
+      );
+      assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+      assert.deepEqual(JSON.parse(result.stdout.trim()).rest, ["--help"], command);
+    }
+
+    const rest = ["--json", "--devtools-dir", checkout, "--help"];
+    assert.equal(consumeDevtoolsDirArg(rest), checkout);
+    assert.deepEqual(rest, ["--json", "--help"]);
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test("every devtools command declares the global checkout selector", () => {
+  assert.deepEqual(
+    Object.values(DEVTOOLS_COMMANDS)
+      .filter((descriptor) => descriptor.usesDevtoolsDir)
+      .map((descriptor) => descriptor.name)
+      .sort(),
+    ["build", "consolidate-findings", "roadmap-run", "ship", "spec"]
+  );
+  assert.ok(Object.values(DEVTOOLS_COMMANDS).every((descriptor) => descriptor.usesDevtoolsDir));
 });
 
 test("an unknown module name is refused with the known set", () => {

@@ -33,6 +33,8 @@ const REQUIRED_TARBALL_PATHS = [
   "package/validation/check-structure.sh",
   "package/hooks/team-ops-guard.sh",
   "package/docs/brain-api.md",
+  "package/docs/devtools-migration.md",
+  "package/docs/devtools-toolkit-contract.md",
   "package/docs/ENGINEERING-CONSTITUTION.md",
   // The scripts/* foundation shims re-export by RELATIVE path (../packages/foundation/src),
   // so the foundation sources must ride along inside the tarball.

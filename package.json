@@ -23,6 +23,7 @@
     "packages/foundation/src",
     "packages/foundation/package.json",
     "docs/brain-api.md",
+    "docs/devtools-*.md",
     "docs/ENGINEERING-CONSTITUTION.md",
     "docs/GETTING-STARTED.md",
     "CHANGELOG.md"
@@ -57,7 +58,7 @@
     "format:check": "prettier --check .",
     "setup": "npm ci && npm run gui:build",
     "test": "npm run test:prepare && npm run test:node && npm run test:client && npm run test:rust",
-    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:inbox-audit",
+    "test:prepare": "node scripts/ensure-native-abi.mjs && npm run build:loop && npm run check:domains && npm run check:size && npm run check:boundaries && npm run check:devtools && npm run check:inbox-audit",
     "pretest:node": "node scripts/ensure-native-abi.mjs",
     "test:node": "node scripts/ensure-loop-built.mjs --strict && node scripts/test-suite.mjs",
     "test:node:list": "node scripts/test-suite.mjs --list",
@@ -75,7 +76,8 @@
     "test:mutation:nightly": "node scripts/run-mutation.mjs --nightly",
     "app:dev": "npm run gui:preflight && npm run gui:build && dotenvx run -- tauri dev",
     "app:build": "npm run gui:preflight && npm run gui:build && tauri build",
-    "app:icon": "tauri icon"
+    "app:icon": "tauri icon",
+    "check:devtools": "node scripts/devtools-preflight.mjs"
   },
   "packageManager": "npm@10.9.4",
   "engines": {
@@ -103,7 +105,7 @@
   },
   "dependencies": {
     "@aios-alpha/design": "^0.3.0",
-    "@aiosbrain/aios-devtools": "^0.2.0",
+    "@aiosbrain/aios-devtools": "0.2.0",
     "@aiosbrain/foundation": "^0.1.0",
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
     "@anthropic-ai/sdk": "^0.115.0",
