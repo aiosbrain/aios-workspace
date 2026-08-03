@@ -68,7 +68,6 @@ const VERIFY_TOOLS = new Set([
   "run_terminal_cmd",
   "execute_command", // Claude / generic
   "exec_command",
-  "exec", // Codex custom tool-call interface
   "local_shell_call", // Codex
 ]);
 
@@ -291,12 +290,14 @@ export function computeAttentionSignals(events) {
  * to buildPushPayload (report.mjs) — they never cross the tier boundary to the brain (EE10).
  */
 export function computeSignals(events) {
-  const bySession = new Map();
   const rootSession = codexRootSessionResolver(events);
-  for (const ev of events) {
-    const sessionId = ev.tool === "codex" ? rootSession(ev.session_id) : ev.session_id;
-    if (!bySession.has(sessionId)) bySession.set(sessionId, []);
-    bySession.get(sessionId).push(ev);
+  const canonicalEvents = events.map((ev) =>
+    ev.tool === "codex" ? { ...ev, session_id: rootSession(ev.session_id) } : ev
+  );
+  const bySession = new Map();
+  for (const ev of canonicalEvents) {
+    if (!bySession.has(ev.session_id)) bySession.set(ev.session_id, []);
+    bySession.get(ev.session_id).push(ev);
   }
 
   let tasks = 0;
@@ -375,7 +376,7 @@ export function computeSignals(events) {
     subagent_usage: ratio(sessionsWithSubagent, sessions),
     permission_events: permissionEvents,
     // Attention / sanity signals (LOCAL-ONLY — never pushed; see buildPushPayload).
-    ...computeAttentionSignals(events),
+    ...computeAttentionSignals(canonicalEvents),
   };
 }
 

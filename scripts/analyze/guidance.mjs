@@ -88,11 +88,17 @@ export const AXIS_GUIDE = {
     /** @type {MaturityAction[]} */
     actions: [
       {
+        kind: "chat",
+        label: "Review skill reuse",
+        prompt:
+          "Review recent repeated work and corrections. Identify which installed skills were eligible, which were invoked, and what should become or update a reusable skill. Recommend a CLAUDE.md rule only when evidence shows a repeated project-wide constraint that no skill already covers.",
+      },
+      {
         kind: "edit",
-        label: "Capture a durable correction",
-        target: "CLAUDE.md",
+        label: "Update a reusable skill",
+        target: ".claude/skills/",
         intent:
-          "Turn the latest repeated correction into one concise, generally applicable project rule.",
+          "After the skill-reuse review identifies a repeated workflow, update the matching reusable skill or create a narrowly scoped one.",
       },
     ],
   },

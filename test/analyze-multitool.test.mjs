@@ -124,12 +124,33 @@ const CHILD = [
   {
     type: "response_item",
     timestamp: "2026-06-10T10:01:02Z",
-    payload: { type: "custom_tool_call", name: "exec", call_id: "c2", input: "pwd" },
+    payload: {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "c2",
+      input: "const r = await tools.exec_command({ cmd: 'pwd' }); text(r.output);",
+    },
   },
   {
     type: "response_item",
     timestamp: "2026-06-10T10:01:03Z",
     payload: { type: "custom_tool_call_output", call_id: "c2", output: "ok" },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03.500Z",
+    payload: {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "c3",
+      input:
+        "const r = await tools.mcp__codebase_memory_mcp__search_graph({ project: 'p', query: 'x' }); text(r);",
+    },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03.750Z",
+    payload: { type: "custom_tool_call_output", call_id: "c3", output: "ok" },
   },
   {
     type: "event_msg",
@@ -149,7 +170,11 @@ const CHILD = [
 const childEvents = codexEvents(CHILD, "cdx-child");
 {
   check(
-    "custom_tool_call/output → tool_use/result",
+    "shell custom_tool_call is classified as exec_command",
+    childEvents.some((e) => e.block_type === "tool_use" && e.tool_name === "exec_command")
+  );
+  check(
+    "non-shell custom_tool_call remains generic exec",
     childEvents.some((e) => e.block_type === "tool_use" && e.tool_name === "exec") &&
       childEvents.some((e) => e.block_type === "tool_result")
   );
@@ -164,7 +189,14 @@ const childEvents = codexEvents(CHILD, "cdx-child");
     combined.sessions === 1 && combined.subagent_usage === 1
   );
   check("Codex delegated-token ratio is now observable", combined.delegation_ratio > 0);
-  check("current Codex exec interface counts as a verify tool", combined.verify_tool_rate === 1);
+  check(
+    "only shell-backed Codex exec calls count as verification",
+    combined.verify_tool_rate === 2 / 3
+  );
+  check(
+    "child rollout does not inflate attention concurrency",
+    combined.concurrent_sessions_peak === 1
+  );
 }
 
 // ── Cursor ──────────────────────────────────────────────────────────────────

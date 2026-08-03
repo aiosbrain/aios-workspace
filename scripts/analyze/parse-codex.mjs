@@ -68,6 +68,19 @@ export function createCtx(fallbackId) {
   };
 }
 
+/**
+ * Codex exposes both shell execution and orchestration/MCP calls through the
+ * generic `exec` custom-tool wrapper. Inspect the wrapper program transiently
+ * and retain only the derived tool class so verification metrics count actual
+ * terminal execution without storing command bodies or other tool arguments.
+ */
+function codexToolName(item) {
+  const name = item.name || null;
+  if (item.type !== "custom_tool_call" || name !== "exec") return name;
+  const input = typeof item.input === "string" ? item.input : "";
+  return /\btools\.(?:exec_command|write_stdin)\s*\(/u.test(input) ? "exec_command" : "exec";
+}
+
 export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)) {
   const events = [];
 
@@ -124,7 +137,7 @@ export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)
               ...base(),
               actor: ctx.actor,
               block_type: "tool_use",
-              tool_name: p.name || null,
+              tool_name: codexToolName(p),
             })
           );
         } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {

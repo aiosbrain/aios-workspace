@@ -114,6 +114,33 @@ check(
     "tool breadth only — skill use and cross-session compounding are not yet observed"
   )
 );
+check(
+  "structured learning action audits skill reuse before proposing project rules",
+  (() => {
+    const actions = toJson(RICH).presentation.axis_guide.learning.actions;
+    return (
+      actions.some(
+        (action) =>
+          action.kind === "chat" &&
+          action.prompt.includes("installed skills") &&
+          action.prompt.includes("CLAUDE.md rule only when evidence")
+      ) && !actions.some((action) => action.kind === "edit" && action.target === "CLAUDE.md")
+    );
+  })()
+);
+check(
+  "learning proxy disclaimer remains visible when another axis is weakest",
+  (() => {
+    const nonLearningWeakest = {
+      ...RICH,
+      placement: { ...RICH.placement, weakest: "cost_governance" },
+    };
+    const matches = renderText(nonLearningWeakest).match(
+      /skill use and cross-session compounding are not yet observed/g
+    );
+    return matches?.length === 1;
+  })()
+);
 
 // ── the CE line + shadow marker ─────────────────────────────────────────────
 

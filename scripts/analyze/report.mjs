@@ -123,6 +123,13 @@ export function renderText(result, color, contextHealth, codebaseHealth) {
   for (const [key, label] of Object.entries(AXIS_LABELS)) {
     const score = placement.axes[key];
     L.push(`  ${label.padEnd(22)} ${bar(score)} ${fmtNum(score, 1)}  ${AXIS_GUIDE[key].gloss}`);
+    if (key === "learning") {
+      L.push(
+        c.dim(
+          `    Current signal: ${fmtNum(signals.tool_diversity, 1)} distinct tool interfaces per session; skill use and cross-session compounding are not yet observed.`
+        )
+      );
+    }
   }
   // Cognitive ergonomics — SHADOW band (AIO-190 Phase A). Rendered beside the
   // axes but deliberately NOT a maturity axis: uncalibrated, local-only, never
@@ -193,13 +200,6 @@ export function renderText(result, color, contextHealth, codebaseHealth) {
   L.push("");
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
-  if (w === "learning") {
-    L.push(
-      c.dim(
-        `    Current signal: ${fmtNum(signals.tool_diversity, 1)} distinct tool interfaces per session; skill use and cross-session compounding are not yet observed.`
-      )
-    );
-  }
   L.push(`    ${AXIS_GUIDE[w].steps[0]}`);
   const ceTip = ergonomicsTip(att.reading);
   if (ceTip) L.push(c.dim(`  Cognitive ergonomics (shadow): ${ceTip}`));
