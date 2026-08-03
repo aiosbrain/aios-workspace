@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolve"
+  short_description: "Audit skill routing and compound session learnings"
+  default_prompt: "Use $evolve to audit recent sessions, actual skill usage, routing gaps, and reusable workflow improvements."
