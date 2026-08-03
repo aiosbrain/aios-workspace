@@ -1395,8 +1395,6 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   assert.doesNotMatch(openCode, /promptAsync/);
   assert.match(hydration, /cp -Rn.*scaffold\/\.opencode/s);
 
-  const build = readFileSync(path.join(REPO, "scripts", "build.mjs"), "utf8");
-  const ship = readFileSync(path.join(REPO, "scripts", "ship.mjs"), "utf8");
   // Assert the gate's BEHAVIOUR, never its source text: source-text matching breaks under
   // the mutation lane (Stryker rewrites the very literals a regex is looking for) and does
   // not actually prove the child is invoked correctly.
@@ -1431,9 +1429,10 @@ test("all four checked-in runtime adapters point to the shared gate", () => {
   assert.equal(childEnv.HTTPS_PROXY, undefined);
   assert.equal(childEnv.AIOS_BUGBOT_MODEL, undefined);
   assert.equal(childEnv.KEEP, "yes");
-  assert.doesNotMatch(build, /AIOS_BUGBOT_MODEL/);
-  assert.match(build, /model:\s*(?:\w+\.)?REQUIRED_BUGBOT_MODEL/); // AIO-594 seam-qualified
-  assert.match(ship, /const reviewModel = REQUIRED_BUGBOT_MODEL/);
+  // The matching assertions that build.mjs/ship.mjs cannot be steered onto a forged reviewer
+  // model live in aios-devtools now (AIO-662) — they are source-text checks on devtools files,
+  // which core can no longer read. Core keeps the part it owns: that the CHILD is invoked with
+  // the required model, asserted behaviourally above via reviewChildArgs().
 });
 
 test("manual check-exit mode returns non-zero on an infrastructure failure", () => {

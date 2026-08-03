@@ -14,7 +14,7 @@ needs vendoring). No shared build step — each script is a standalone entry poi
 | Sync CLI | `aios.mjs` (dispatch entry) |
 | Toolkit self-update | `toolkit-manifest.mjs` (4 buckets), `toolkit-merge.mjs` (3-way merge), `toolkit-contribute.mjs` (upstream a local fix via a throwaway worktree), `toolkit-meta.mjs` (semver + brain-api version stamping) |
 | Inbox ops | `inbox.mjs`, `inbox-coordinator.mjs`, `inbox-host-verify.mjs`, `inbox-host-restore-drill.mjs`, `inbox-redaction-lint.mjs` |
-| Build/ship pipeline | `build.mjs`, `ship.mjs`, `roadmap-run.mjs`, `spec-eval.mjs`, `loop.mjs` (daily/weekly/writeback CLI) |
+| Build/ship pipeline | **Not here — `aiosbrain/aios-devtools`** (AIO-662). `ship`, `build`, `roadmap-run`, `spec-eval`, `spec-publish`, `consolidate-findings` left this repo; core dispatches to them through `devtools-dispatch.mjs`. `loop.mjs` (daily/weekly/writeback CLI) stays. |
 | `analyze/` subdir | usage/cost/ergonomics tooling: `aem.mjs`, `cost-report.mjs`, `ergonomics.mjs`, `ergonomics-calibrate.mjs`, `cursor-api.mjs`, `metrics.mjs`, `guidance.mjs` |
 | Guards | `leak-gate.sh` (secret-leak gate), `check-domain-isolation.mjs`, `check-file-size.mjs` |
 
@@ -45,8 +45,12 @@ needs vendoring). No shared build step — each script is a standalone entry poi
 
 ## File-size discipline
 
-`check-file-size.mjs` enforces line caps from `scripts/size-caps.json`: `scripts/aios.mjs`
-(explicitly grandfathered per AIO-320/AIO-315) and, since AIO-560, `scripts/ship.mjs`
-(1756 lines, after the CLI-args/gates/prompts/runtime split into `scripts/ship/*.mjs`).
-Extraction PRs ratchet both caps down — per AIO-315 the numbers only ever go down.
-Prefer extracting to a new script over growing either file further.
+`check-file-size.mjs` enforces line caps from `scripts/size-caps.json` — most notably
+`scripts/aios.mjs` (explicitly grandfathered per AIO-320/AIO-315). Caps ratchet down: per
+AIO-315 the numbers only ever go down, and an extraction PR lowers the recorded cap to match.
+Prefer extracting to a new script over growing a capped file further — that is why
+`scripts/cli/devtools-commands.mjs` exists (AIO-661 split it out of `cli/registry.mjs`, which
+was at exactly its 500-line cap).
+
+`scripts/ship.mjs`'s cap is gone with the file itself (AIO-662); the devtools repo owns that
+discipline now.

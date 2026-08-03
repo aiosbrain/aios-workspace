@@ -19,16 +19,15 @@
  * Resolution order:
  *   (a) explicit `--devtools-dir <path>` argv flag (or a `devtoolsDir` param)
  *   (b) `AIOS_DEVTOOLS_DIR` env var
- *   (c) the in-tree implementation at `scripts/<name>.mjs`, while it still exists
+ *   (c) an in-tree implementation at `scripts/<name>.mjs`, if one exists
  *   (d) the installed `@aiosbrain/aios-devtools` package
  *   (e) fail with an actionable error naming what was tried
  *
- * (c) BEFORE (d) is deliberate and load-bearing for this PR. Until the removal PR lands, CLAUDE.md
- * §2c says the in-tree `scripts/` implementations are authoritative — so preferring the published
- * package here would silently swap which code runs (npm 0.2.0 vs this checkout's HEAD) as a side
- * effect of a seam change. With this order the seam is a behavioural NO-OP today: every load
- * resolves to exactly the file the old static import named. When the removal PR deletes those
- * files, (c) simply stops matching and (d) takes over, with no further change here.
+ * (c) is now dormant in this repo: AIO-662 deleted the in-tree implementations, so every load
+ * resolves through (d). It is retained because it is what made the seam land as a behavioural
+ * no-op — while the in-tree copies were still authoritative, preferring the package would have
+ * silently swapped which code runs (npm's release vs this checkout's HEAD) as a side effect of a
+ * seam change. It also still serves anyone running against a tree that has not taken the removal.
  *
  * An EXPLICIT source (a/b) that doesn't resolve is a hard error — it never silently falls back,
  * for the same reason toolkit-locate refuses to: a wrong-but-working fallback would run different
@@ -41,14 +40,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The devtools-bound command set (AIO-594). Keys are both the in-tree basename and the
- *  package subpath export, which is why one name serves both resolution paths. */
+/**
+ * The devtools modules CORE dispatches to (AIO-594). Names are both the in-tree basename and the
+ * package subpath export, which is why one name serves both resolution paths.
+ *
+ * `spec-publish` is deliberately NOT here. It is devtools-INTERNAL — reached through
+ * `spec-eval.mjs`, never dispatched from core — and correspondingly it is not in the
+ * `@aiosbrain/aios-devtools` package `exports` map. Listing it made this set "every devtools
+ * file" rather than "every core dispatch target", which only showed up once the in-tree copies
+ * were gone and resolution actually had to go through the package (AIO-662).
+ */
 export const DEVTOOLS_MODULES = Object.freeze([
   "ship",
   "build",
   "roadmap-run",
   "spec-eval",
-  "spec-publish",
   "consolidate-findings",
 ]);
 
@@ -133,17 +139,32 @@ export async function loadDevtoolsModule(name, opts = {}) {
   try {
     return await import(resolved.specifier);
   } catch (error) {
-    if (
-      resolved.kind === "package" &&
-      /ERR_MODULE_NOT_FOUND|Cannot find package/.test(String(error?.message))
-    ) {
-      throw new Error(
-        `the '${name}' command lives in ${DEVTOOLS_PACKAGE}, which is not installed.\n` +
-          `  Install it:            npm i -D ${DEVTOOLS_PACKAGE}\n` +
-          `  Or point at a checkout: AIOS_DEVTOOLS_DIR=<path-to-aios-devtools>\n` +
-          `  See docs/devtools-toolkit-contract.md.`
-      );
-    }
-    throw error;
+    throw missingPackageError(name, resolved, error) ?? error;
   }
+}
+
+/**
+ * Map a failed package load onto an actionable install instruction, or null when the failure is
+ * something else and must surface as-is.
+ *
+ * Separated from `loadDevtoolsModule` so it stays testable now that `@aiosbrain/aios-devtools` is
+ * a real dependency: the "package missing" path can no longer be reached by simply not having it
+ * installed, and a test that silently stopped exercising the branch would be worse than no test.
+ */
+export function missingPackageError(name, resolved, error) {
+  if (resolved.kind !== "package") return null;
+  if (
+    !/ERR_MODULE_NOT_FOUND|Cannot find package|is not defined by "exports"/.test(
+      String(error?.message)
+    )
+  ) {
+    return null;
+  }
+  return new Error(
+    `the '${name}' command lives in ${DEVTOOLS_PACKAGE}, which is not installed ` +
+      `(or does not export ./${name}).\n` +
+      `  Install it:             npm i ${DEVTOOLS_PACKAGE}\n` +
+      `  Or point at a checkout: AIOS_DEVTOOLS_DIR=<path-to-aios-devtools>\n` +
+      `  See docs/devtools-toolkit-contract.md.`
+  );
 }
