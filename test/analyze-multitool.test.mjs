@@ -2,8 +2,9 @@
 // test/analyze-multitool.test.mjs — Phase 2 parsers: Codex rollout records and
 // Cursor bubble rows → NormalizedEvent. Synthetic inline fixtures (no real data).
 // Key checks: Codex user_message→task, token_count→usage with the cached-token
-// subtraction (in = fresh), function_call→tool_use; Cursor type 1/2 mapping,
-// tool extraction, text-length prompt gating, composerId→session_id.
+// subtraction (in = fresh), legacy + current tool calls, subagent attribution;
+// Cursor type 1/2 mapping, tool extraction, text-length prompt gating,
+// composerId→session_id.
 //
 // Zero network, zero deps. Run: node test/analyze-multitool.test.mjs
 
@@ -97,11 +98,72 @@ const cev = codexEvents(CODEX, "cdx1");
   check("cached → cache_read (12000)", tokenEv && tokenEv.tokens.cache_read === 12000);
   check("reasoning folded into output (400+100 = 500)", tokenEv && tokenEv.tokens.out === 500);
   const sig = computeSignals(cev);
-  check(
-    "Codex has no subagents (delegation 0)",
-    sig.delegation_ratio === 0 && sig.subagent_usage === 0
-  );
+  check("root Codex session has no invented delegation", sig.delegation_ratio === 0);
   check("exec_command counts as a verify tool", sig.verify_tool_rate === 1);
+}
+
+console.log("parse-codex — current custom tools + subagent rollout");
+const CHILD = [
+  {
+    type: "session_meta",
+    timestamp: "2026-06-10T10:01:00Z",
+    payload: {
+      id: "cdx-child",
+      cwd: "/home/me/proj",
+      parent_thread_id: "cdx1",
+      forked_from_id: "cdx1",
+      thread_source: "subagent",
+      source: { subagent: { thread_spawn: { parent_thread_id: "cdx1", depth: 1 } } },
+    },
+  },
+  {
+    type: "event_msg",
+    timestamp: "2026-06-10T10:01:01Z",
+    payload: { type: "user_message", message: "delegated work" },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:02Z",
+    payload: { type: "custom_tool_call", name: "exec", call_id: "c2", input: "pwd" },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03Z",
+    payload: { type: "custom_tool_call_output", call_id: "c2", output: "ok" },
+  },
+  {
+    type: "event_msg",
+    timestamp: "2026-06-10T10:01:04Z",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 3000,
+          cached_input_tokens: 1000,
+          output_tokens: 500,
+        },
+      },
+    },
+  },
+];
+const childEvents = codexEvents(CHILD, "cdx-child");
+{
+  check(
+    "custom_tool_call/output → tool_use/result",
+    childEvents.some((e) => e.block_type === "tool_use" && e.tool_name === "exec") &&
+      childEvents.some((e) => e.block_type === "tool_result")
+  );
+  check(
+    "child rollout events are attributed to the subagent and parent thread",
+    childEvents.every((e) => e.actor === "subagent" && e.turn_parent === "cdx1")
+  );
+  const combined = computeSignals(cev.concat(childEvents));
+  check("delegated prompt does not inflate human task count", combined.tasks === 1);
+  check(
+    "Codex subagent usage and token delegation are now observable",
+    combined.subagent_usage > 0 && combined.delegation_ratio > 0
+  );
+  check("current Codex exec interface counts as a verify tool", combined.verify_tool_rate === 1);
 }
 
 // ── Cursor ──────────────────────────────────────────────────────────────────

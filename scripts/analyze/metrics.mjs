@@ -68,6 +68,7 @@ const VERIFY_TOOLS = new Set([
   "run_terminal_cmd",
   "execute_command", // Claude / generic
   "exec_command",
+  "exec", // Codex custom tool-call interface
   "local_shell_call", // Codex
 ]);
 

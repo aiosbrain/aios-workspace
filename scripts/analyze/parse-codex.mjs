@@ -7,13 +7,15 @@
  *     turn_context  — model, cwd, approval_policy (per-turn context)
  *     event_msg     — payload.type: user_message (a real prompt) | token_count
  *                     (usage: info.last_token_usage) | agent_message | error | …
- *     response_item — payload.type: function_call (tool use, payload.name) |
- *                     function_call_output (tool result) | message | reasoning
+ *     response_item — payload.type: function_call / custom_tool_call (tool use,
+ *                     payload.name) | function_call_output /
+ *                     custom_tool_call_output (tool result) | message | reasoning
  *
  * We map: user_message→task root · token_count→assistant usage (last_token_usage,
  * the per-turn delta, so it doesn't double-count the cumulative total) ·
- * function_call→tool_use · function_call_output→tool_result. Codex is single-
- * agent, so there are no subagent events (delegation signals read 0, correctly).
+ * function/custom_tool_call→tool_use · matching output→tool_result. A rollout
+ * whose session metadata identifies it as a subagent is attributed to the
+ * subagent actor and linked to its parent thread.
  *
  * Stateful across records (session/turn context carries forward). Zero deps.
  */
@@ -56,7 +58,14 @@ function codexTokens(u) {
  * records with EXACTLY the state a full parse would have had at that point.
  */
 export function createCtx(fallbackId) {
-  return { session_id: fallbackId, project: null, branch: null, model: null };
+  return {
+    session_id: fallbackId,
+    project: null,
+    branch: null,
+    model: null,
+    actor: "assistant",
+    turn_parent: null,
+  };
 }
 
 export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)) {
@@ -73,6 +82,7 @@ export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)
       model: ctx.model,
       git_branch: ctx.branch,
       project: ctx.project,
+      turn_parent: ctx.turn_parent,
     });
 
     switch (r.type) {
@@ -80,6 +90,8 @@ export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)
         ctx.session_id = p.id || fallbackId;
         ctx.project = projectFromCwd(p.cwd);
         ctx.branch = p.git?.branch || null;
+        ctx.actor = p.thread_source === "subagent" || p.source?.subagent ? "subagent" : "assistant";
+        ctx.turn_parent = p.parent_thread_id || p.forked_from_id || null;
         break;
 
       case "turn_context":
@@ -89,32 +101,34 @@ export function recordsToEvents(records, fallbackId, ctx = createCtx(fallbackId)
 
       case "event_msg":
         if (p.type === "user_message") {
-          events.push(makeEvent({ ...base(), actor: "user", block_type: "text" }));
+          // A delegated prompt starts a child rollout, not a second human task.
+          const actor = ctx.actor === "subagent" ? "subagent" : "user";
+          events.push(makeEvent({ ...base(), actor, block_type: "text" }));
         } else if (p.type === "token_count") {
           const usage = codexTokens(p.info?.last_token_usage);
           if (usage)
             events.push(
-              makeEvent({ ...base(), actor: "assistant", block_type: "text", tokens: usage })
+              makeEvent({ ...base(), actor: ctx.actor, block_type: "text", tokens: usage })
             );
         } else if (p.type === "error") {
           events.push(
-            makeEvent({ ...base(), actor: "assistant", block_type: "tool_result", is_error: true })
+            makeEvent({ ...base(), actor: ctx.actor, block_type: "tool_result", is_error: true })
           );
         }
         break;
 
       case "response_item":
-        if (p.type === "function_call") {
+        if (p.type === "function_call" || p.type === "custom_tool_call") {
           events.push(
             makeEvent({
               ...base(),
-              actor: "assistant",
+              actor: ctx.actor,
               block_type: "tool_use",
               tool_name: p.name || null,
             })
           );
-        } else if (p.type === "function_call_output") {
-          events.push(makeEvent({ ...base(), actor: "assistant", block_type: "tool_result" }));
+        } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+          events.push(makeEvent({ ...base(), actor: ctx.actor, block_type: "tool_result" }));
         }
         // message / reasoning → text we don't need (prompt is event_msg user_message)
         break;

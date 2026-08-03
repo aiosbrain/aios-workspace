@@ -97,7 +97,7 @@ function plainStat(key, s) {
     case "autonomy":
       return `${pct(s.delegation_ratio)} of work was delegated to sub-agents; ${pct(s.subagent_usage)} of sessions used one`;
     case "learning":
-      return `${fmtNum(s.tool_diversity, 1)} distinct tools per session (a proxy for your toolbelt; capped at 3 — logs can't see CLAUDE.md/skill growth)`;
+      return `${fmtNum(s.tool_diversity, 1)} distinct tool interfaces per session (tool breadth only — skill use and cross-session compounding are not yet observed)`;
     case "cost_governance":
       return `$${fmtNum(s.cost_per_task)} and ${fmtTokens(s.tokens_per_task)} fresh tokens per task`;
     default:
@@ -193,6 +193,13 @@ export function renderText(result, color, contextHealth, codebaseHealth) {
   L.push("");
   const w = placement.weakest;
   L.push(c.yellow(`  Biggest opportunity: ${AXIS_LABELS[w]} — ${AXIS_GUIDE[w].gloss}`));
+  if (w === "learning") {
+    L.push(
+      c.dim(
+        `    Current signal: ${fmtNum(signals.tool_diversity, 1)} distinct tool interfaces per session; skill use and cross-session compounding are not yet observed.`
+      )
+    );
+  }
   L.push(`    ${AXIS_GUIDE[w].steps[0]}`);
   const ceTip = ergonomicsTip(att.reading);
   if (ceTip) L.push(c.dim(`  Cognitive ergonomics (shadow): ${ceTip}`));
