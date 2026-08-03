@@ -102,6 +102,20 @@ test("every non-pending enforcer is reachable from test:prepare or a CI workflow
   }
 });
 
+test("brain-api revision registry names the checker owner and invocation chain", () => {
+  const row = rows.find((candidate) => candidate.invariant.startsWith("brain-api revision label"));
+  assert.ok(row, "brain-api revision label invariant is registered");
+  assert.deepEqual(row.enforcerPaths, [
+    "scripts/context-version-labels.mjs",
+    "scripts/context-health.mjs",
+    "scripts/check-context.mjs",
+  ]);
+
+  const wrapper = readFileSync(path.join(ROOT, "scripts/context-health.mjs"), "utf8");
+  assert.match(wrapper, /from "\.\/context-version-labels\.mjs"/);
+  assert.match(wrapper, /checkVersionLabels\(repoPath\)/);
+});
+
 test("parser is strict about malformed registries", () => {
   assert.throws(
     () => parseInvariantRegistry("# no registry here"),
