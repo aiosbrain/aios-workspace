@@ -3,8 +3,10 @@
 
 import { describe, test, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
-import { CostBarChart, COST_CHART_H } from "./CostBarChart";
+import { AIOS_COST_CURSOR_BLUE, colorFor, CostBarChart, COST_CHART_H } from "./CostBarChart";
 import {
   CostSettingsForm,
   buildConfigPatch,
@@ -33,6 +35,238 @@ const FIVE = [
 ];
 
 describe("CostBarChart", () => {
+  test("provider colors are canonical design tokens", () => {
+    expect(colorFor("claude", 0)).toBe("var(--aios-violet)");
+    expect(colorFor("anthropic", 0)).toBe("var(--aios-fuchsia)");
+    expect(AIOS_COST_CURSOR_BLUE).toBe("#3b82f6");
+    expect(colorFor("cursor", 0)).toBe(AIOS_COST_CURSOR_BLUE);
+    expect(colorFor("codex", 0)).toBe("var(--aios-emerald)");
+    expect(colorFor("opencode", 0)).toBe("var(--aios-amber)");
+    expect(Array.from({ length: 6 }, (_, i) => colorFor("unknown", i))).toEqual([
+      "var(--aios-violet)",
+      "var(--aios-fuchsia)",
+      "var(--aios-emerald)",
+      "var(--aios-amber)",
+      "var(--aios-cyan)",
+      "var(--aios-destructive)",
+    ]);
+    expect(colorFor("unknown", 6)).toBe("var(--aios-violet)");
+  });
+
+  test("GUI source carries no raw color literals", () => {
+    const raw =
+      /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|hwb|color|device-cmyk)\s*\(/gi;
+    const colorPropertyValue =
+      /(?:\[\s*["'](?:color|background|background-color|backgroundColor|border|border-color|borderColor|fill|stroke)["']\s*\]|["'](?:color|background|background-color|backgroundColor|border|border-color|borderColor|fill|stroke)["']|\b(?:color|background|background-color|backgroundColor|border|border-color|borderColor|fill|stroke))\s*:\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`|([^;\n}>]*)(?=;|}|>|$))/gi;
+    const paintAttributeValue =
+      /\b(?:fill|stroke)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}|([^\s>]+))/gi;
+    const colorKeyword =
+      /\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|green|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen|currentcolor|transparent|inherit|initial|revert-layer|revert|unset|none|accentcolor|accentcolortext|activeborder|activecaption|activetext|appworkspace|background|buttonborder|buttonface|buttonhighlight|buttonshadow|buttontext|canvas|canvastext|captiontext|field|fieldtext|graytext|highlight|highlighttext|inactiveborder|inactivecaption|inactivecaptiontext|infobackground|infotext|linktext|mark|marktext|menu|menutext|scrollbar|selecteditem|selecteditemtext|threeddarkshadow|threedface|threedhighlight|threedlightshadow|threedshadow|visitedtext|window|windowframe|windowtext)\b(?!\s*\()/gi;
+    const allowedColorKeywords = new Set(["currentcolor", "transparent"]);
+    const cssWideKeywords = new Set(["inherit", "initial", "revert", "revert-layer", "unset"]);
+    const nonColorPaintKeywords = new Set(["none"]);
+    const cssSystemKeywords = new Set([
+      "accentcolor",
+      "accentcolortext",
+      "activeborder",
+      "activecaption",
+      "activetext",
+      "appworkspace",
+      "background",
+      "buttonborder",
+      "buttonface",
+      "buttonhighlight",
+      "buttonshadow",
+      "buttontext",
+      "canvas",
+      "canvastext",
+      "captiontext",
+      "field",
+      "fieldtext",
+      "graytext",
+      "highlight",
+      "highlighttext",
+      "inactiveborder",
+      "inactivecaption",
+      "inactivecaptiontext",
+      "infobackground",
+      "infotext",
+      "linktext",
+      "mark",
+      "marktext",
+      "menu",
+      "menutext",
+      "scrollbar",
+      "selecteditem",
+      "selecteditemtext",
+      "threeddarkshadow",
+      "threedface",
+      "threedhighlight",
+      "threedlightshadow",
+      "threedshadow",
+      "visitedtext",
+      "window",
+      "windowframe",
+      "windowtext",
+    ]);
+    const governedSystemKeywords = new Set<string>();
+    const stripComments = (source: string) =>
+      source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/<!--[\s\S]*?-->/g, "");
+    const skippedDirectories = new Set([".git", "coverage", "dist", "node_modules", "vendor"]);
+    const files = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        if (entry.isDirectory() && skippedDirectories.has(entry.name)) return [];
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) return files(path);
+        return /\.(?:css|ts|tsx|astro|mdx|svg|js|mjs|html)$/.test(entry.name) &&
+          !/\.(?:test|spec)\./.test(entry.name)
+          ? [path]
+          : [];
+      });
+    for (const mutation of [
+      "#abc",
+      "rgb(1 2 3)",
+      "rgba(1 2 3 / .5)",
+      "hsl(1 2% 3%)",
+      "hsla(1 2% 3% / .5)",
+      "oklch(60% .2 20)",
+      "oklab(60% .2 .1)",
+      "lab(60% .2 .1)",
+      "lch(60% .2 20)",
+      "hwb(20 30% 40%)",
+      "color(display-p3 1 0 0)",
+      "device-cmyk(0 1 1 0)",
+    ]) {
+      expect(stripComments(`const mutation = '${mutation}'`).match(raw)?.length).toBeGreaterThan(0);
+    }
+    const keywordsFromValue = (value: string) => {
+      if (/^(?:text|bg|border)-[a-z0-9-]+$/i.test(value.trim())) return [];
+      return (
+        value
+          .replace(/\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/g, "")
+          .replace(/\burl\(\s*(?:"[^"]*"|'[^']*'|[^)])*\)/gi, "")
+          .replace(/--[\w-]+/g, "")
+          .replace(/\b[a-z][\w-]*\s*(?=\()/gi, "")
+          .match(colorKeyword) ?? []
+      );
+    };
+    const colorKeywords = (source: string) =>
+      [
+        ...[...stripComments(source).matchAll(colorPropertyValue)].flatMap((match) =>
+          keywordsFromValue(match[1] ?? match[2] ?? match[3] ?? match[4])
+        ),
+        ...[...stripComments(source).matchAll(paintAttributeValue)].flatMap((match) =>
+          keywordsFromValue(match[1] ?? match[2] ?? match[3] ?? match[4])
+        ),
+      ].map((value) => value.toLowerCase());
+    const classifyColorKeywords = (source: string) => {
+      const values = colorKeywords(source);
+      return {
+        allowed: values.filter((value) => allowedColorKeywords.has(value)),
+        cssWide: values.filter((value) => cssWideKeywords.has(value)),
+        nonColorPaint: values.filter((value) => nonColorPaintKeywords.has(value)),
+        system: values.filter((value) => cssSystemKeywords.has(value)),
+        governedSystem: values.filter((value) => governedSystemKeywords.has(value)),
+        disallowed: values.filter(
+          (value) =>
+            !allowedColorKeywords.has(value) &&
+            !cssWideKeywords.has(value) &&
+            !nonColorPaintKeywords.has(value) &&
+            !governedSystemKeywords.has(value)
+        ),
+      };
+    };
+    expect(
+      classifyColorKeywords(
+        'color: currentColor; background-color: transparent; fill="none"; color: inherit; color: initial; color: unset; color: revert; color: revert-layer;'
+      )
+    ).toEqual({
+      allowed: ["currentcolor", "transparent"],
+      cssWide: ["inherit", "initial", "unset", "revert", "revert-layer"],
+      nonColorPaint: ["none"],
+      system: [],
+      governedSystem: [],
+      disallowed: [],
+    });
+    for (const mutation of ["red", "blue", "CanvasText", "ButtonFace", "rebeccapurple"]) {
+      expect(classifyColorKeywords(`color: ${mutation};`).disallowed).toEqual([
+        mutation.toLowerCase(),
+      ]);
+    }
+    for (const keyword of cssSystemKeywords) {
+      const classified = classifyColorKeywords(`color: ${keyword};`);
+      expect(classified.system).toEqual([keyword]);
+      expect(classified.governedSystem).toEqual([]);
+      expect(classified.disallowed).toEqual([keyword]);
+    }
+    expect(classifyColorKeywords('fill="red"; stroke={"CanvasText"}').disallowed).toEqual([
+      "red",
+      "canvastext",
+    ]);
+    expect(classifyColorKeywords("fill=red stroke=CanvasText").disallowed).toEqual([
+      "red",
+      "canvastext",
+    ]);
+    expect(classifyColorKeywords("color: var(--missing-color, blue);").disallowed).toEqual([
+      "blue",
+    ]);
+    for (const [mutation, expected] of [
+      ["border: 1px solid red;", ["red"]],
+      ["background: url(x) blue;", ["blue"]],
+      ["background: url(red.svg) blue; color: var(--red);", ["blue"]],
+      ["border: var(--missing, 1px solid red);", ["red"]],
+      ["background: var(--missing, url(x) CanvasText);", ["canvastext"]],
+      ["background: linear-gradient(red, blue);", ["red", "blue"]],
+      ["background: var(--red) blue;", ["blue"]],
+      ["background: theme.value red;", ["red"]],
+      ["color: Palette.value blue;", ["blue"]],
+      ["<div style=color:red>", ["red"]],
+      ["color: red", ["red"]],
+      ["fill={`red`}", ["red"]],
+      ['fill={ok ? "red" : "blue"}', ["red", "blue"]],
+      ['const style = { background: ok ? "red" : "blue" }', ["red", "blue"]],
+      ["const style = { background: `${value} red` }", ["red"]],
+      ['const style = { "background": "red" }', ["red"]],
+      ['const style = { ["border"]: "1px solid blue" }', ["blue"]],
+    ] as const) {
+      expect(classifyColorKeywords(mutation).disallowed).toEqual(expected);
+    }
+    expect(
+      classifyColorKeywords(
+        'fill={ ok ? "red" : "blue" } stroke={ ok ? "CanvasText" : "rebeccapurple" }'
+      ).disallowed
+    ).toEqual(["red", "blue", "canvastext", "rebeccapurple"]);
+    expect(
+      classifyColorKeywords(
+        '<div style="color: red; background: url(x) blue; border: 1px solid rebeccapurple"></div>'
+      ).disallowed
+    ).toEqual(["red", "blue", "rebeccapurple"]);
+    expect(
+      classifyColorKeywords(
+        'const styles = { background: "url(x) red", backgroundColor: "blue", border: "1px solid rebeccapurple", borderColor: "CanvasText" }'
+      ).disallowed
+    ).toEqual(["red", "blue", "rebeccapurple", "canvastext"]);
+    expect(classifyColorKeywords("color: CanvasText;").system).toEqual(["canvastext"]);
+    const found = files(".").flatMap((path) =>
+      (stripComments(readFileSync(path, "utf8")).match(raw) ?? []).map(
+        (value) => `${path.replace(/^\.\//, "")}: ${value}`
+      )
+    );
+    expect(found).toEqual(["src/components/cost/CostBarChart.tsx: #3b82f6"]);
+    const named = files(".").flatMap((path) =>
+      classifyColorKeywords(readFileSync(path, "utf8")).disallowed.map(
+        (value) => `${path.replace(/^\.\//, "")}: ${value}`
+      )
+    );
+    expect(named).toEqual([]);
+    expect(readFileSync("src/components/cost/CostBarChart.tsx", "utf8")).toContain(
+      "Governed provider-identity exception"
+    );
+  });
+
   test("height is fixed regardless of provider count", () => {
     const two = renderToStaticMarkup(<CostBarChart rows={TWO} period="2026-07" />);
     const five = renderToStaticMarkup(<CostBarChart rows={FIVE} period="2026-07" />);

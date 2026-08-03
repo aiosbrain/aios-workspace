@@ -1,14 +1,23 @@
 import type { CostProviderActual } from "../../types/protocol";
 
 // Provider colors mirror the Team Brain cost charts so both surfaces read as one system.
+// Governed provider-identity exception: Cursor's brand blue is not a published AIOS token.
+export const AIOS_COST_CURSOR_BLUE = "#3b82f6";
 const PROVIDER_COLOR: Record<string, string> = {
-  claude: "#7c3aed",
-  anthropic: "#a78bfa",
-  cursor: "#3b82f6",
-  codex: "#4ade80",
-  opencode: "#f59e0b",
+  claude: "var(--aios-violet)",
+  anthropic: "var(--aios-fuchsia)",
+  cursor: AIOS_COST_CURSOR_BLUE,
+  codex: "var(--aios-emerald)",
+  opencode: "var(--aios-amber)",
 };
-const CYCLE = ["#7c3aed", "#3b82f6", "#4ade80", "#f59e0b", "#2dd4bf", "#d946ef"];
+const CYCLE = [
+  "var(--aios-violet)",
+  "var(--aios-fuchsia)",
+  "var(--aios-emerald)",
+  "var(--aios-amber)",
+  "var(--aios-cyan)",
+  "var(--aios-destructive)",
+];
 export function colorFor(provider: string, i: number): string {
   return PROVIDER_COLOR[provider] ?? CYCLE[i % CYCLE.length];
 }
