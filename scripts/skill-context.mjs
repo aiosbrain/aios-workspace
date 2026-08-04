@@ -312,9 +312,16 @@ export function writeSkillExportRoutings(skills, outBase, native) {
 
 export function routeSkillPrompt({ suite, prompt, stage = "interactive", explicit = false }) {
   const normalized = prompt.toLowerCase();
-  const explicitId = suite.skills.find((skill) =>
-    new RegExp(`(?:\\$|/)${skill.id}(?![\\w-])`, "i").test(prompt)
-  );
+  const explicitId = suite.skills.find((skill) => {
+    // A sigil is a command only at a real token boundary. This rejects URL,
+    // filesystem-path, and embedded-token substrings while retaining ordinary
+    // prose such as `Use $skill.` or `(try /skill)`.
+    const boundaryBefore = String.raw`(?:^|[^\w./-])`;
+    const commandTerminator = String.raw`(?=$|[^\w/-])`;
+    return new RegExp(`${boundaryBefore}(?:\\$|/)${skill.id}${commandTerminator}`, "i").test(
+      prompt
+    );
+  });
   if (explicitId) {
     return validateSkillSelection({
       suite,
