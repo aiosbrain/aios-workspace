@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 // wrong one. Exercised by extracting the real function from the installer and sourcing it.
 
 const SCRIPT = fileURLToPath(new URL("../scripts/install-aios-shell.sh", import.meta.url));
+const SCAFFOLD_SCRIPT = fileURLToPath(new URL("../scripts/scaffold-project.sh", import.meta.url));
 
 /** The `aios()` function exactly as install-aios-shell.sh writes it into ~/.zshrc. */
 function aiosFunctionSource() {
@@ -122,4 +123,13 @@ test("installer persists the selected personal workspace for cross-repo agent co
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("scaffold passes its resolved workspace directory to the shell installer", () => {
+  const scaffold = readFileSync(SCAFFOLD_SCRIPT, "utf8");
+  assert.match(
+    scaffold,
+    /cd "\$OUTPUT"[\s\S]*?install-aios-shell\.sh" --agent-workspace "\$PWD"/,
+    "relative --output paths must not be re-resolved beneath the newly created workspace"
+  );
 });
