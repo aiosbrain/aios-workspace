@@ -22,7 +22,11 @@ export const PAYLOAD_FILES = Object.freeze([
   "coverage-summary.json",
   "lcov.info",
 ]);
-const BUNDLE_FILES = Object.freeze([...PAYLOAD_FILES, "manifest.json"].sort());
+function compareStrings(left, right) {
+  return left.localeCompare(right, "en");
+}
+
+const BUNDLE_FILES = Object.freeze([...PAYLOAD_FILES, "manifest.json"].sort(compareStrings));
 const IDENTITY_KEYS = Object.freeze(["repository", "runId", "sha"]);
 
 function fail(message) {
@@ -30,7 +34,7 @@ function fail(message) {
 }
 
 function sortedKeys(value) {
-  return Object.keys(value).sort();
+  return Object.keys(value).sort(compareStrings);
 }
 
 function assertExactKeys(value, expected, label) {
@@ -38,7 +42,7 @@ function assertExactKeys(value, expected, label) {
     fail(`${label} must be an object`);
   }
   const actual = sortedKeys(value);
-  const wanted = [...expected].sort();
+  const wanted = [...expected].sort(compareStrings);
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
     fail(`${label} keys must be exactly: ${wanted.join(", ")}`);
   }
@@ -52,7 +56,7 @@ function validateIdentity(identity, label = "identity") {
   if (!/^[0-9a-f]{40}$/.test(identity.sha)) {
     fail(`${label}.sha must be a lowercase 40-character hexadecimal commit SHA`);
   }
-  if (!/^[1-9][0-9]*$/.test(identity.runId)) {
+  if (!/^[1-9]\d*$/.test(identity.runId)) {
     fail(`${label}.runId must be a positive decimal string`);
   }
   return identity;
@@ -89,8 +93,8 @@ function inspectDirectory(directory, expectedEntries, label) {
   if (!root.isDirectory()) fail(`${label} must be a directory`);
 
   const entries = readdirSync(directory, { withFileTypes: true });
-  const names = entries.map((entry) => entry.name).sort();
-  const wanted = [...expectedEntries].sort();
+  const names = entries.map((entry) => entry.name).sort(compareStrings);
+  const wanted = [...expectedEntries].sort(compareStrings);
   if (names.length !== wanted.length || names.some((name, index) => name !== wanted[index])) {
     const missing = wanted.filter((name) => !names.includes(name));
     const unexpected = names.filter((name) => !wanted.includes(name));
