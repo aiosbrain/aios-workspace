@@ -13,6 +13,7 @@
  * @property {"pre-config"|"update-root"|"offline"|"workspace"} resolution
  * @property {boolean}  [ownsRepoFlag]  true => dispatch must NOT consume `--repo`
  * @property {boolean}  [usesDevtoolsDir] true => dispatch consumes the global devtools selector
+ * @property {boolean}  [agentWorkspaceFallback] use AIOS_AGENT_WORKSPACE when cwd is not stamped
  * @property {(rest: string[]) => boolean} [cwdFallback]  offline-only: accept cwd as the root
  * @property {() => Promise<object>} [loader]  lazy module import; omitted for inline handlers
  * @property {(ctx: object, mod: object|null) => Promise<any>} adapt
@@ -50,6 +51,7 @@ export const COMMANDS = [
   {
     name: "connect",
     resolution: "offline",
+    agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdConnect(ctx.repo, ctx.rest),
     usage: U.connect,
   },
@@ -97,12 +99,14 @@ export const COMMANDS = [
   {
     name: "query",
     resolution: "workspace",
+    agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdQuery(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.query,
   },
   {
     name: "member",
     resolution: "workspace",
+    agentWorkspaceFallback: true,
     loader: () => import("../member-cli.mjs"),
     adapt: (ctx, mod) =>
       mod.cmdMember(ctx.repo, ctx.cfg, ctx.rest, {
@@ -113,6 +117,7 @@ export const COMMANDS = [
   {
     name: "stakeholders",
     resolution: "workspace",
+    agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdStakeholders(ctx.repo, ctx.cfg, ctx.rest),
     usage: U.stakeholders,
   },
@@ -210,6 +215,7 @@ export const COMMANDS = [
   {
     name: "pm",
     resolution: "workspace",
+    agentWorkspaceFallback: true,
     loader: () => import("../pm.mjs"),
     adapt: (ctx, mod) => mod.cmdPm(ctx.cfg, ctx.rest),
     usage: U.pm,
