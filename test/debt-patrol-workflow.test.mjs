@@ -59,6 +59,15 @@ test("workflow binds analysis and health to one exact revalidated head", () => {
   assert.equal((workflow.match(/retention-days: 90/g) ?? []).length, 2);
 });
 
+test("health scoring resolves the target checkout before command dispatch", () => {
+  const healthStep = workflow.slice(
+    workflow.indexOf("- name: Compute redacted v2 health evidence"),
+    workflow.indexOf("- name: Revalidate moving head and elapsed budget before upload")
+  );
+  assert.match(healthStep, /scripts\/aios\.mjs codebase-health --repo \.patrol\/target --json/);
+  assert.doesNotMatch(healthStep, /scripts\/aios\.mjs codebase-health \.patrol\/target(?:\s|\\)/);
+});
+
 test("Brain credentials are scoped only to the final exact-head delivery step", () => {
   assert.equal((workflow.match(/secrets\.AIOS_API_KEY/g) ?? []).length, 1);
   assert.equal((workflow.match(/secrets\.AIOS_BRAIN_URL/g) ?? []).length, 1);

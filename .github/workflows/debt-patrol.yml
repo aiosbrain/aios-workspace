@@ -134,7 +134,7 @@ jobs:
 
       - name: Compute redacted v2 health evidence
         run: |
-          node .patrol/manager/scripts/aios.mjs codebase-health .patrol/target --json \
+          node .patrol/manager/scripts/aios.mjs codebase-health --repo .patrol/target --json \
             > "$RUNNER_TEMP/codebase-health.v2.json"
           node .patrol/manager/scripts/codebase-health/push-payload.mjs \
             "$RUNNER_TEMP/codebase-health.v2.json" \
