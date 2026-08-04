@@ -3,15 +3,17 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { initializeWorktreeDependencies } from "../scripts/worktree-init.mjs";
@@ -37,6 +39,7 @@ function fixture({ installed = false } = {}) {
       packages: {
         "": { devDependencies: { prettier: "^3.9.6" } },
         "node_modules/prettier": { version: "3.9.6", dev: true },
+        "node_modules/prettier-plugin-test": { version: "1.0.0", dev: true },
       },
     })
   );
@@ -46,8 +49,18 @@ function fixture({ installed = false } = {}) {
 
 function installPrettier(primary) {
   const packageDir = path.join(primary, "node_modules", "prettier");
-  mkdirSync(packageDir, { recursive: true });
-  writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ version: "3.9.6" }));
+  mkdirSync(path.join(packageDir, "bin"), { recursive: true });
+  writeFileSync(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "prettier", version: "3.9.6", bin: "./bin/prettier.cjs" })
+  );
+  writeFileSync(path.join(packageDir, "bin", "prettier.cjs"), "#!/usr/bin/env node\n");
+  const binDir = path.join(primary, "node_modules", ".bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, "prettier"), "#!/bin/sh\n");
+  const transitive = path.join(primary, "node_modules", "prettier-plugin-test");
+  mkdirSync(transitive, { recursive: true });
+  writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
 }
 
 function assertSharedLink(primary, worktree) {
@@ -93,8 +106,33 @@ test("missing dev dependency is restored in the primary before linking", () => {
   assertSharedLink(primary, worktree);
 });
 
+test("matching root manifest still restores missing binary and transitive packages", () => {
+  const { primary, worktree } = fixture();
+  const packageDir = path.join(primary, "node_modules", "prettier");
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    path.join(packageDir, "package.json"),
+    JSON.stringify({ name: "prettier", version: "3.9.6", bin: "./bin/prettier.cjs" })
+  );
+  let installCalls = 0;
+
+  initializeWorktreeDependencies({
+    primary,
+    worktree,
+    install: () => {
+      installCalls += 1;
+      installPrettier(primary);
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(installCalls, 1);
+  assertSharedLink(primary, worktree);
+});
+
 test("forced restore failure exits non-zero and leaves no misleading link", () => {
   const { primary, worktree } = fixture();
+  symlinkSync(path.join(primary, "node_modules"), path.join(worktree, "node_modules"), "dir");
   const fakeBin = path.join(path.dirname(primary), "fake-bin");
   mkdirSync(fakeBin);
   const fakeNpm = path.join(fakeBin, "npm");
@@ -115,5 +153,64 @@ test("forced restore failure exits non-zero and leaves no misleading link", () =
     result.stderr,
     /npm ci could not restore shared dependencies \(exit 47\).*npm ci --include=dev/s
   );
-  assert.equal(existsSync(path.join(worktree, "node_modules")), false);
+  assert.throws(() => lstatSync(path.join(worktree, "node_modules")), { code: "ENOENT" });
+});
+
+function finished(child) {
+  return new Promise((resolve) => {
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (status) => resolve({ status, stderr }));
+  });
+}
+
+test("concurrent hydrations serialize the primary restore and the waiter rechecks", async () => {
+  const { primary, worktree } = fixture();
+  const secondWorktree = path.join(path.dirname(primary), "worktree-two");
+  mkdirSync(secondWorktree);
+  const fakeBin = path.join(path.dirname(primary), "concurrent-bin");
+  mkdirSync(fakeBin);
+  const calls = path.join(path.dirname(primary), "npm-calls");
+  const fakeNpm = path.join(fakeBin, "npm");
+  writeFileSync(
+    fakeNpm,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+fs.appendFileSync(process.env.AIOS_TEST_NPM_CALLS, "call\\n");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+const root = process.cwd();
+const pkg = path.join(root, "node_modules", "prettier");
+fs.mkdirSync(path.join(pkg, "bin"), { recursive: true });
+fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "prettier", version: "3.9.6", bin: "./bin/prettier.cjs" }));
+fs.writeFileSync(path.join(pkg, "bin", "prettier.cjs"), "");
+fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
+fs.writeFileSync(path.join(root, "node_modules", ".bin", "prettier"), "");
+const transitive = path.join(root, "node_modules", "prettier-plugin-test");
+fs.mkdirSync(transitive, { recursive: true });
+fs.writeFileSync(path.join(transitive, "package.json"), JSON.stringify({ version: "1.0.0" }));
+`
+  );
+  chmodSync(fakeNpm, 0o755);
+  const env = {
+    ...process.env,
+    AIOS_TEST_NPM_CALLS: calls,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+  };
+  const args = (target) => [WORKTREE_INIT, "--primary", primary, "--worktree", target];
+  const first = spawn(process.execPath, args(worktree), {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const second = spawn(process.execPath, args(secondWorktree), {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [firstResult, secondResult] = await Promise.all([finished(first), finished(second)]);
+
+  assert.deepEqual([firstResult.status, secondResult.status], [0, 0]);
+  assert.equal(firstResult.stderr + secondResult.stderr, "");
+  assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
+  assertSharedLink(primary, worktree);
+  assertSharedLink(primary, secondWorktree);
 });
