@@ -111,10 +111,22 @@ test("installer persists the selected personal workspace for cross-repo agent co
       env: { ...process.env, AIOS_SHELL_RC: rc, AIOS_AGENT_ENV_FILE: zshenv },
     });
     assert.equal(install.status, 0, install.stderr);
-    const source = spawnSync("zsh", ["-lc", 'print -r -- "$AIOS_AGENT_WORKSPACE"'], {
-      encoding: "utf8",
-      env: { ...process.env, AIOS_AGENT_WORKSPACE: "", ZDOTDIR: root },
-    });
+    const zsh = process.platform === "darwin" ? "zsh" : "bash";
+    const source = spawnSync(
+      zsh,
+      zsh === "zsh"
+        ? ["-lc", 'print -r -- "$AIOS_AGENT_WORKSPACE"']
+        : ["-c", 'source "$AIOS_AGENT_ENV_FILE"; printf "%s\\n" "$AIOS_AGENT_WORKSPACE"'],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AIOS_AGENT_WORKSPACE: "",
+          AIOS_AGENT_ENV_FILE: zshenv,
+          ZDOTDIR: root,
+        },
+      }
+    );
     assert.equal(source.status, 0, source.stderr);
     assert.equal(source.stdout.trim(), workspace);
   } finally {
