@@ -104,7 +104,9 @@ function resolveRoot(desc, repoArg, rest, r) {
   // appropriate for account-scoped integration operations, but must not turn a
   // bare `aios push` in an arbitrary repository into a sync of somebody else's
   // workspace.
-  const agentWorkspace = !repoArg && desc.agentWorkspaceFallback ? findAgentWorkspace(r.die) : null;
+  const localWorkspace = repoArg ? null : r.findRepoRoot(process.cwd());
+  const agentWorkspace = () =>
+    !repoArg && desc.agentWorkspaceFallback ? findAgentWorkspace(r.die) : null;
   if (desc.resolution === "update-root") {
     // update resolves a workspace OR the toolkit checkout — never a bare README dir (see
     // findUpdateRoot). An explicit --repo is validated the SAME way, so it can't be pointed at
@@ -119,12 +121,14 @@ function resolveRoot(desc, repoArg, rest, r) {
   } else if (desc.resolution === "offline") {
     // Offline commands don't require aios.yaml (analyze reads local ~/.<tool> logs; time reads
     // ~/.claude session logs; --push uses env/.env or aios.yaml brain config).
-    repo = repoArg ? path.resolve(repoArg) : agentWorkspace || r.findRepoRootOffline(process.cwd());
+    repo = repoArg
+      ? path.resolve(repoArg)
+      : localWorkspace || agentWorkspace() || r.findRepoRootOffline(process.cwd());
     if (!repo && desc.cwdFallback?.(rest)) repo = process.cwd();
     if (!repo) r.die("could not locate repo root — pass --repo <path>");
     cfg = hasConfig(repo) ? r.loadConfig(repo) : r.loadOfflineConfig(repo);
   } else {
-    repo = repoArg ? path.resolve(repoArg) : r.findRepoRoot(process.cwd()) || agentWorkspace;
+    repo = repoArg ? path.resolve(repoArg) : localWorkspace || agentWorkspace();
     if (!repo) r.die("no aios.yaml found walking up from cwd — pass --repo <path>");
     cfg = r.loadConfig(repo);
   }

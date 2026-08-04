@@ -70,7 +70,6 @@ export const COMMANDS = [
   {
     name: "work",
     resolution: "workspace",
-    agentWorkspaceFallback: true,
     adapt: (ctx) => ctx.local.cmdWork(ctx.repo, ctx.cfg, ctx.patterns, ctx.rest),
     usage: U.work,
   },
