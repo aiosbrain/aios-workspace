@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   clientWorkspaceStatus,
   hasClientWorkspace,
@@ -75,8 +75,8 @@ function recorder(root) {
     calls,
     clientRuns: () =>
       calls.filter((c) => c.command === "npm" && c.args.includes("gui/client")).length,
-    exec: async (command, args) => {
-      calls.push({ command, args });
+    exec: async (command, args, options) => {
+      calls.push({ command, args, options });
       if (args.some((a) => String(a).endsWith("merge-coverage.mjs"))) {
         mkdirSync(path.join(root, "coverage"), { recursive: true });
         writeFileSync(path.join(root, "coverage", "coverage-summary.json"), SUMMARY);
@@ -434,6 +434,95 @@ test("merge mode still writes the baseline candidate when the client pass is ski
       readFileSync(path.join(root, "coverage", "coverage-baseline-candidate.json"), "utf8")
     );
     assert.ok(candidate, "coverage-baseline-candidate.json must still be written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/* ----------------------------------------------------------------------------------------------
+ * Findings from the adversarial review at 0f9dec9. Each of these had a demonstrated path back to
+ * the null-coverage incident, so each gets a test rather than only a fix.
+ * ------------------------------------------------------------------------------------------- */
+
+test("absence is detected even when npm routes the error to STDOUT (AIO-612)", () => {
+  // MEASURED on npm 10.9.4: with NPM_CONFIG_LOGLEVEL=silent, `npm ls --workspace <x> --json`
+  // exits 1 with `{"error":{"summary":"No workspaces found: ..."}}` on STDOUT and an EMPTY
+  // stderr. A guard reading only stderr calls that "npm could not answer", returns present, runs
+  // the deleted workspace, and in runFull the failure is swallowed by `|| true`. An operator's
+  // npm loglevel must not be able to switch this guard off.
+  const root = makeRoot({ manifest: true, registered: false });
+  try {
+    const silent = { ...process.env, NPM_CONFIG_LOGLEVEL: "silent" };
+    const probe = spawnSync("npm", ["ls", "--workspace", "gui/client", "--depth", "0", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      env: silent,
+    });
+    assert.notEqual(probe.status, 0, "precondition: npm rejects the deregistered workspace");
+    assert.equal(probe.stderr.trim(), "", "precondition: silent loglevel leaves stderr empty");
+    assert.match(probe.stdout, /No workspaces found/, "precondition: the message is on stdout");
+
+    const previous = process.env.NPM_CONFIG_LOGLEVEL;
+    process.env.NPM_CONFIG_LOGLEVEL = "silent";
+    try {
+      assert.equal(isResolvedWorkspace(root, "gui/client"), false);
+      assert.equal(clientWorkspaceStatus(root), "deregistered");
+    } finally {
+      if (previous === undefined) delete process.env.NPM_CONFIG_LOGLEVEL;
+      else process.env.NPM_CONFIG_LOGLEVEL = previous;
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("full mode still writes the artifact when the client pass FAILS (AIO-612)", async () => {
+  // The guard returns true whenever npm cannot give a definitive answer, so a client failure
+  // unrelated to the cut (a malformed gui/client/package.json is enough) can still reach the real
+  // command. That used to throw straight out of runFull, so merge-coverage.mjs never ran and NO
+  // artifact was written — the same null-coverage outcome by a different route. Root coverage is
+  // real data; the dashboard should get it. The failure must still propagate.
+  const root = makeRoot({ manifest: true, registered: true });
+  const rec = recorder(root);
+  const failing = async (command, args, options) => {
+    if (command === "npm" && args.includes("gui/client")) throw new Error("client coverage boom");
+    return rec.exec(command, args, options);
+  };
+  const log = console.error;
+  console.error = () => {};
+  let threw = null;
+  try {
+    await main([], { root, exec: failing });
+  } catch (error) {
+    threw = error;
+  } finally {
+    console.error = log;
+  }
+  try {
+    assert.ok(threw, "a client-coverage failure must still fail the run");
+    assert.match(threw.message, /client coverage boom/);
+    assert.ok(
+      rec.calls.some((c) => c.args.some((a) => String(a).endsWith("merge-coverage.mjs"))),
+      "the coverage artifact must still be produced before the failure propagates"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an injected root also drives the executor's cwd (AIO-612)", async () => {
+  // Probing one tree while executing in another answers a question about a directory the command
+  // never touches. Every spawn runFull makes must carry the injected root.
+  const root = makeRoot({ manifest: true, registered: true });
+  const rec = recorder(root);
+  try {
+    await main([], { root, exec: rec.exec });
+    const withoutCwd = rec.calls.filter((c) => c.options?.cwd !== root);
+    assert.deepEqual(
+      withoutCwd.map((c) => `${c.command} ${c.args.join(" ")}`),
+      [],
+      "every spawn must run in the injected root"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

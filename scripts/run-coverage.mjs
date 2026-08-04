@@ -102,6 +102,13 @@ const LOCAL_BIN_PATH = [path.join(ROOT, "node_modules", ".bin"), process.env.PAT
   .filter(Boolean)
   .join(path.delimiter);
 
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{cwd?: string}} [options] — `cwd` defaults to this checkout. Callers that were handed an
+ *   injected `root` MUST pass it: probing one tree while executing in another answers a question
+ *   about a directory the command never touches.
+ */
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -121,8 +128,8 @@ function execute(command, args, options = {}) {
 
 const CLIENT_WORKSPACE = "gui/client";
 
-function runClientCoverage(exec = execute) {
-  return exec("npm", ["run", "test:coverage", "--workspace", CLIENT_WORKSPACE]);
+function runClientCoverage(exec = execute, root = ROOT) {
+  return exec("npm", ["run", "test:coverage", "--workspace", CLIENT_WORKSPACE], { cwd: root });
 }
 
 /**
@@ -169,6 +176,9 @@ function runClientCoverage(exec = execute) {
  *
  * @returns {boolean}
  */
+// npm's phrasing when a `--workspace` argument resolves to nothing.
+const NO_WORKSPACE_SIGNAL = /No workspaces found/i;
+
 export function isResolvedWorkspace(root, target) {
   // NOSONAR javascript:S4036 — `npm` must come from PATH, and specifically from the SAME PATH
   // `execute()` gives the real client-coverage spawn (node_modules/.bin first). A probe resolved
@@ -181,7 +191,21 @@ export function isResolvedWorkspace(root, target) {
   // npm's own words when a --workspace argument resolves to nothing. This is the ONLY failure
   // that means "not a workspace"; any other nonzero exit means npm could not answer, which is a
   // different thing and must not be read as absence.
-  if (/No workspaces found/i.test(probe.stderr ?? "")) return false;
+  //
+  // BOTH STREAMS, because which one carries it depends on config. Measured on npm 10.9.4: with
+  // NPM_CONFIG_LOGLEVEL=silent the message goes to STDOUT as `{"error":{"summary":...}}` and
+  // stderr is EMPTY. Checking stderr alone reads that as "npm could not answer", returns true,
+  // and runs the deleted workspace — and in runFull that failure is swallowed by
+  // scan-on-merge.yml's `|| true`. A guard that only works at the default loglevel is not a
+  // guard; an operator's npm config should not be able to turn it off.
+  if (NO_WORKSPACE_SIGNAL.test(probe.stderr ?? "")) return false;
+  const stdout = probe.stdout ?? "";
+  if (NO_WORKSPACE_SIGNAL.test(stdout)) return false;
+  try {
+    if (NO_WORKSPACE_SIGNAL.test(JSON.parse(stdout)?.error?.summary ?? "")) return false;
+  } catch {
+    // Not JSON — the raw-text check above already covered it.
+  }
   return true;
 }
 
@@ -251,26 +275,31 @@ export async function runClientCoverageIfPresent(run = runClientCoverage, root =
 // tsc diagnostic instead of dozens of ERR_MODULE_NOT_FOUND failures against a
 // missing/stale dist/ (same guard as `npm run test:node`). Merge mode only
 // reports over already-collected data, so it is exempt.
-function ensureLoopBuiltStrict(exec = execute) {
-  return exec(process.execPath, ["scripts/ensure-loop-built.mjs", "--strict"]);
+function ensureLoopBuiltStrict(exec = execute, root = ROOT) {
+  return exec(process.execPath, ["scripts/ensure-loop-built.mjs", "--strict"], { cwd: root });
 }
 
 async function runNodeSuiteUnderC8(
   tempDirectory,
   extraSuiteArgs = [],
   extraC8Args = [],
-  exec = execute
+  exec = execute,
+  root = ROOT
 ) {
-  await exec(process.execPath, [
-    C8,
-    "--temp-directory",
-    tempDirectory,
-    ...extraC8Args,
+  await exec(
     process.execPath,
-    "scripts/test-suite.mjs",
-    "--concurrency=4",
-    ...extraSuiteArgs,
-  ]);
+    [
+      C8,
+      "--temp-directory",
+      tempDirectory,
+      ...extraC8Args,
+      process.execPath,
+      "scripts/test-suite.mjs",
+      "--concurrency=4",
+      ...extraSuiteArgs,
+    ],
+    { cwd: root }
+  );
 }
 
 /**
@@ -306,7 +335,7 @@ export async function mergeThenPropagate(runSuite, merge) {
 
 export async function runFull({ root = ROOT, exec = execute } = {}) {
   const paths = coveragePaths(root);
-  await ensureLoopBuiltStrict(exec);
+  await ensureLoopBuiltStrict(exec, root);
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-"));
   try {
     rmSync(paths.dir, { recursive: true, force: true });
@@ -315,7 +344,25 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     // Keep the independently configured reports separate and deterministic.
     // Client coverage is sub-second; sequencing it avoids future port/fixture
     // conflicts if browser tests grow integration coverage.
-    await runClientCoverageIfPresent(() => runClientCoverage(exec), root);
+    //
+    // DEFERRED, for exactly the reason spelled out below about the Node suite. This call used to
+    // throw straight out of runFull, so merge-coverage.mjs never ran and NO artifact was written
+    // at all — the same null-coverage outcome, reached by a different route. It is the direction
+    // the guard cannot fix: whenever `isResolvedWorkspace` cannot get a definitive answer it
+    // returns true and lets the real command run, so an unrelated client failure (a malformed
+    // gui/client/package.json is enough) destroyed the ROOT coverage number too. Root coverage is
+    // still real data and the dashboard should get it; the failure is re-thrown after the merge,
+    // so the command still exits nonzero.
+    let clientError = null;
+    try {
+      await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
+    } catch (error) {
+      clientError = error;
+      console.error(
+        `run-coverage: client coverage FAILED (${error.message}) — continuing so the root ` +
+          "artifact is still produced; this failure is re-thrown after the merge."
+      );
+    }
 
     // The suite's pass/fail and the coverage ARTIFACT are two different outputs, and they were
     // coupled: a single failing test threw here, so merge-coverage.mjs never ran and
@@ -331,16 +378,19 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     // data for everything that DID execute is already on disk by the time we get here. Produce
     // the artifact, THEN propagate the failure — the gate keeps failing exactly as before.
     await mergeThenPropagate(
-      () => runNodeSuiteUnderC8(tempDirectory, [], [], exec),
-      () => exec(process.execPath, ["scripts/merge-coverage.mjs"])
+      () => runNodeSuiteUnderC8(tempDirectory, [], [], exec, root),
+      () => exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root })
     );
+    // Reached only when the suite passed; mergeThenPropagate re-throws a suite failure itself,
+    // and that is the more informative error when both fail.
+    if (clientError) throw clientError;
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 }
 
 async function runShard(shard, { root = ROOT, exec = execute } = {}) {
-  await ensureLoopBuiltStrict(exec);
+  await ensureLoopBuiltStrict(exec, root);
   const shardDir = shardDirectory(shard.index, root);
   rmSync(shardDir, { recursive: true, force: true });
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
@@ -349,7 +399,8 @@ async function runShard(shard, { root = ROOT, exec = execute } = {}) {
     shardDir,
     [`--shard=${shard.raw}`],
     ["--reporter=none", "--clean=false"],
-    exec
+    exec,
+    root
   );
   console.log(`run-coverage: shard ${shard.raw} raw coverage in ${path.relative(root, shardDir)}`);
 }
@@ -402,19 +453,19 @@ export async function runMerge(total, { root = ROOT, exec = execute } = {}) {
   rmSync(paths.summary, { force: true });
   rmSync(paths.lcov, { force: true });
 
-  await runClientCoverageIfPresent(() => runClientCoverage(exec), root);
+  await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
 
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-merge-"));
   try {
     for (const file of files) copyFileSync(file.source, path.join(tempDirectory, file.name));
     // Report over the union of every shard's raw V8 data with the same
     // .c8rc.json include/exclude/remap rules as the unsharded run.
-    await exec(process.execPath, [C8, "report", "--temp-directory", tempDirectory]);
+    await exec(process.execPath, [C8, "report", "--temp-directory", tempDirectory], { cwd: root });
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 
-  await exec(process.execPath, ["scripts/merge-coverage.mjs"]);
+  await exec(process.execPath, ["scripts/merge-coverage.mjs"], { cwd: root });
 
   const summary = JSON.parse(readFileSync(paths.summary, "utf8"));
   mkdirSync(paths.dir, { recursive: true });
