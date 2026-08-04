@@ -14,7 +14,10 @@ set -euo pipefail
 
 MARK_BEGIN="# >>> aios-shell begin >>>"
 MARK_END="# <<< aios-shell end <<<"
+ENV_MARK_BEGIN="# >>> aios-agent-workspace begin >>>"
+ENV_MARK_END="# <<< aios-agent-workspace end <<<"
 TARGET="${AIOS_SHELL_RC:-$HOME/.zshrc}"
+ENV_TARGET="${AIOS_AGENT_ENV_FILE:-$HOME/.zshenv}"
 dry_run=false
 uninstall=false
 agent_workspace=""
@@ -49,10 +52,17 @@ if [[ -n "$agent_workspace" ]]; then
   workspace_export="export AIOS_AGENT_WORKSPACE=$(printf '%q' "$agent_workspace")"
 fi
 
+ENV_BLOCK=""
+if [[ -n "$workspace_export" ]]; then
+  ENV_BLOCK="$ENV_MARK_BEGIN
+# AIOS personal workspace for non-interactive agent shells.
+$workspace_export
+$ENV_MARK_END"
+fi
+
 read -r -d '' BLOCK <<'EOF' || true
 # >>> aios-shell begin >>>
 # AIOS CLI — finds aios.yaml walking up from cwd; installed by aios-workspace/scripts/install-aios-shell.sh
-__AIOS_AGENT_WORKSPACE_EXPORT__
 aios() {
   local dir="$PWD"
   while [[ "$dir" != "/" ]]; do
@@ -91,33 +101,44 @@ aios() {
 }
 # <<< aios-shell end <<<
 EOF
-block_prefix="${BLOCK%%__AIOS_AGENT_WORKSPACE_EXPORT__*}"
-block_suffix="${BLOCK#*__AIOS_AGENT_WORKSPACE_EXPORT__}"
-BLOCK="${block_prefix}${workspace_export}${block_suffix}"
 
 strip_block() {
-  awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+  awk -v b="$2" -v e="$3" '
     $0 == b { skip=1; next }
     $0 == e { skip=0; next }
     !skip { print }
   ' "$1"
 }
 
+replace_block() {
+  local target="$1" begin="$2" end="$3" block="$4"
+  touch "$target"
+  if grep -qF "$begin" "$target" 2>/dev/null; then
+    strip_block "$target" "$begin" "$end" > "${target}.tmp" && mv "${target}.tmp" "$target"
+  fi
+  printf '\n%s\n' "$block" >> "$target"
+}
+
 if $uninstall; then
-  [[ -f "$TARGET" ]] || exit 0
-  strip_block "$TARGET" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
-  echo "Removed aios() from $TARGET"
+  if [[ -f "$TARGET" ]]; then
+    strip_block "$TARGET" "$MARK_BEGIN" "$MARK_END" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
+    echo "Removed aios() from $TARGET"
+  fi
+  if [[ -f "$ENV_TARGET" ]]; then
+    strip_block "$ENV_TARGET" "$ENV_MARK_BEGIN" "$ENV_MARK_END" > "${ENV_TARGET}.tmp" && mv "${ENV_TARGET}.tmp" "$ENV_TARGET"
+    echo "Removed AIOS agent workspace from $ENV_TARGET"
+  fi
   exit 0
 fi
 
 if $dry_run; then
   printf '%s\n' "$BLOCK"
+  [[ -z "$ENV_BLOCK" ]] || printf '\n%s\n' "$ENV_BLOCK"
   exit 0
 fi
 
-touch "$TARGET"
-if grep -qF "$MARK_BEGIN" "$TARGET" 2>/dev/null; then
-  strip_block "$TARGET" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
+replace_block "$TARGET" "$MARK_BEGIN" "$MARK_END" "$BLOCK"
+if [[ -n "$ENV_BLOCK" ]]; then
+  replace_block "$ENV_TARGET" "$ENV_MARK_BEGIN" "$ENV_MARK_END" "$ENV_BLOCK"
 fi
-printf '\n%s\n' "$BLOCK" >> "$TARGET"
 echo "Installed aios() in $TARGET — run: source $TARGET"
