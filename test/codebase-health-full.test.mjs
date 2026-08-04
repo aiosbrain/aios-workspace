@@ -183,6 +183,10 @@ test("repository profile makes automation admission fail closed and explicit", a
     assert.equal(full.quality_gate, "pass");
     assert.equal(full.automation_eligible, true);
 
+    const defaultFull = await withStubPath(repo, () => computeCodebaseHealth(repo));
+    assert.equal(defaultFull.mode, "full");
+    assert.equal(defaultFull.automation_eligible, true);
+
     const cheap = await computeCodebaseHealth(repo, { mode: "cheap" });
     assert.equal(cheap.evidence_status, "partial");
     assert.equal(cheap.quality_gate, "unknown");
@@ -198,9 +202,59 @@ test("a malformed committed profile fails closed instead of silently using defau
   const repo = equippedRepo();
   try {
     write(repo, "validation/codebase-health.profile.json", "{not-json\n");
+    await assert.rejects(() => computeCodebaseHealth(repo, { mode: "full" }), SyntaxError);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("an empty required-check set fails closed", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: [],
+        stale_after_days: {},
+      })
+    );
     await assert.rejects(
       () => computeCodebaseHealth(repo, { mode: "full" }),
-      /Unexpected token|Expected property name/
+      /missing id\/version\/required_checks/
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("stale required evidence is observable and blocks automation", async () => {
+  const repo = equippedRepo();
+  try {
+    write(
+      repo,
+      "coverage/coverage-report.json",
+      JSON.stringify({ lines_pct: 84, measured_at: "2020-01-01" })
+    );
+    write(
+      repo,
+      "validation/codebase-health.profile.json",
+      JSON.stringify({
+        id: "fixture.service",
+        version: "1.0.0",
+        required_checks: ["coverage_lines_pct"],
+        stale_after_days: { coverage_lines_pct: 1 },
+      })
+    );
+    const result = await withStubPath(repo, () => computeCodebaseHealth(repo));
+    assert.equal(result.evidence_status, "stale");
+    assert.equal(result.quality_gate, "unknown");
+    assert.equal(result.automation_eligible, false);
+    assert.equal(
+      result.findings.find((finding) => finding.check_id === "coverage_lines_pct")?.evidence_status,
+      "stale"
     );
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -246,7 +300,7 @@ test("full mode composes a repository typecheck script when build:loop is absent
   }
 });
 
-test("OGR13 with empty/unparseable stdout is skipped — only then unavailable", async () => {
+test("OGR13 with empty/unparseable stdout is failed evidence", async () => {
   const repo = equippedRepo();
   try {
     write(repo, "validation/check-modularity.mjs", 'console.error("boom");\nprocess.exit(1);\n');
@@ -254,6 +308,7 @@ test("OGR13 with empty/unparseable stdout is skipped — only then unavailable",
     const check = result.checks.find((c) => c.id === "modularity_breaches");
     assert.equal(check.value, null);
     assert.equal(check.ok, true);
+    assert.equal(check.evidence_status, "error");
     assert.match(check.detail, /unavailable/);
   } finally {
     rmSync(repo, { recursive: true, force: true });

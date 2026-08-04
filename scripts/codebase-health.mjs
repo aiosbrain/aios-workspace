@@ -81,6 +81,7 @@ export function loadHealthProfile(repoPath, rubric, profilePath) {
     !profileId.test(profile.id) ||
     !profileId.test(profile.version) ||
     !Array.isArray(profile.required_checks) ||
+    profile.required_checks.length === 0 ||
     profile.required_checks.some((id) => typeof id !== "string") ||
     typeof staleAfterDays !== "object" ||
     staleAfterDays === null ||
@@ -113,7 +114,7 @@ function evidenceState(result, staleAfterDays) {
 }
 
 function aggregateEvidence(requiredChecks) {
-  if (requiredChecks.length === 0) return "complete";
+  if (requiredChecks.length === 0) return "missing";
   const states = requiredChecks.map((check) => check.evidence_status);
   if (states.every((state) => state === "complete")) return "complete";
   if (states.includes("error")) return "error";
@@ -202,9 +203,10 @@ function okFromRubric(spec, value) {
  *   (eslint, tsc, gh, graph metrics) — those checks report null (skipped).
  */
 export async function computeCodebaseHealth(repoPath, opts = {}) {
+  const mode = opts.mode ?? "full";
   const rubric = loadHealthRubric(opts.rubricPath);
   const profile = loadHealthProfile(repoPath, rubric, opts.profilePath);
-  const evaluated = await evaluateChecks(repoPath, rubric, { mode: opts.mode ?? "full" });
+  const evaluated = await evaluateChecks(repoPath, rubric, { mode });
   const requiredIds = new Set(profile.required_checks);
 
   const checks = [];
@@ -281,8 +283,7 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
     (check) => check.evidence_status === "complete" && check.ok === false
   );
   const quality_gate = qualityGateFor(evidence_status, requiredFailure);
-  const automation_eligible =
-    opts.mode === "full" && quality_gate === "pass" && status !== "critical";
+  const automation_eligible = mode === "full" && quality_gate === "pass" && status !== "critical";
   const findings = findingsFor(rubric, profile, checks);
   const skipped = checks.filter((c) => c.value === null).length;
   const summary = healthSummary({
@@ -300,7 +301,7 @@ export async function computeCodebaseHealth(repoPath, opts = {}) {
     rubric_version: rubric.version,
     profile_id: profile.id,
     profile_version: profile.version,
-    mode: opts.mode ?? "full",
+    mode,
     checks,
     axes,
     score_pct: score,

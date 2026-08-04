@@ -93,7 +93,9 @@ function checkModularityBreaches(repo) {
     timeout: HEAVY_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
   });
-  if (r.error || r.status === null) return skip("OGR13 metrics did not run");
+  if (r.error || r.status === null) {
+    return failedEvidence(`OGR13 metrics did not run (${r.error?.code ?? "timeout"})`);
+  }
   // Parse stdout REGARDLESS of exit code: in ratchet mode the gate exits non-zero
   // while still printing a valid --json payload — a real breach must never read as
   // "unavailable" (that would silently improve the axis). Only unparseable/empty
