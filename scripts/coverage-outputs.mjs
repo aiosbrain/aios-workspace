@@ -99,6 +99,12 @@ export const COVERAGE_OUTPUTS = [
 
 export const stagingDirectory = (root) => path.join(root, "coverage", STAGING_DIR);
 
+/** Whether a previous completed run still has a scanner-readable output in coverage/. */
+export function hasCanonicalCoverageOutputs(root) {
+  const coverageDir = path.join(root, "coverage");
+  return COVERAGE_OUTPUTS.some(([, canonical]) => existsSync(path.join(coverageDir, canonical)));
+}
+
 function lstatIfPresent(target) {
   try {
     return lstatSync(target);

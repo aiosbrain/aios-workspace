@@ -11,6 +11,7 @@ import path from "node:path";
 import { buildBaseline } from "../check-coverage.mjs";
 import {
   cleanupSuccessfulCoverageRun,
+  hasCanonicalCoverageOutputs,
   markCoverageDegraded,
   markShardFailed,
   promoteCoverageOutputs,
@@ -158,9 +159,13 @@ export async function runShard(
   { root = ROOT, exec = execute, removeSnapshot = removeRotatedSnapshot } = {}
 ) {
   const shardDir = shardDirectory(shard.index, root);
-  // Hide stale raw JSON and sentinels together before strict prep. A prep failure therefore writes
-  // a fresh sentinel at the expected shard path while the previous raw data remains quarantined.
-  const shardSnapshot = rotateShardDirectory(shardDir);
+  // A previous completed full/merge run may have left scanner-readable canonical outputs. Hide
+  // that entire tree with the same one-rename boundary before strict prep; its shard data belongs
+  // to the previous measurement and must not be mixed into this new shard series. Otherwise,
+  // rotate only this shard so independently accumulated sibling shards remain available.
+  const shardSnapshot = hasCanonicalCoverageOutputs(root)
+    ? rotateCoverageDirectory(root)
+    : rotateShardDirectory(shardDir);
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
   // report generation — the merge step is the only report/gate producer.
   try {

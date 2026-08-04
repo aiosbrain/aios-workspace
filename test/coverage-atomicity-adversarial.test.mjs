@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { COVERAGE_SNAPSHOT_PREFIX } from "../scripts/coverage-outputs.mjs";
@@ -102,6 +110,32 @@ test("a failed merge keeps rotated shards for an immediate retry", async () => {
     assert.ok(existsSync(at(root, "lcov.info")));
     assert.deepEqual(snapshots(root), []);
     assert.equal(existsSync(at(root, ".staged")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shard prep failure atomically hides canonical outputs from an earlier run", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  const prepFail = async (command, args, options) => {
+    if (args.some((arg) => String(arg).endsWith("ensure-loop-built.mjs"))) {
+      throw new Error("tsc failed");
+    }
+    return rec.exec(command, args, options);
+  };
+  try {
+    writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
+    writeFileSync(at(root, "lcov.info"), LCOV);
+
+    await assert.rejects(main(["--shard", "1/1"], { root, exec: prepFail }), /tsc failed/);
+    assert.equal(existsSync(at(root, "coverage-summary.json")), false);
+    assert.equal(existsSync(at(root, "lcov.info")), false);
+    assert.ok(existsSync(at(root, "shard-1/shard-failed.marker")));
+    const [snapshot] = snapshots(root);
+    assert.ok(snapshot, "the complete previous measurement should remain forensic");
+    assert.equal(readFileSync(path.join(root, snapshot, "coverage-summary.json"), "utf8"), SUMMARY);
+    assert.equal(readFileSync(path.join(root, snapshot, "lcov.info"), "utf8"), LCOV);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
