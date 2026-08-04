@@ -69,6 +69,10 @@ test("OGR03 still blocks nearby real-secret counterexamples", () => {
     assert.match(output, /Slack Token/);
     assert.match(output, /Password Assignment/);
     assert.match(output, /OGR03 FAILED/);
+    assert.match(output, /line 1: \[REDACTED\]/);
+    assert.ok(!output.includes(opaque), "multi-rule diagnostics must not echo the opaque secret");
+    assert.ok(!output.includes(realisticSlack), "multi-rule diagnostics must not echo the Slack token");
+    assert.ok(!output.includes(uuid), "multi-rule diagnostics must not echo token-shaped UUIDs");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -86,7 +90,9 @@ test("OGR03 treats a tracked NUL-containing file as text and blocks its secret",
     assert.equal(result.status, 1, output);
     assert.match(output, /AWS Access Key/);
     assert.match(output, /payload\.dat/);
+    assert.match(output, /line 1: \[REDACTED\]/);
     assert.match(output, /OGR03 FAILED/);
+    assert.ok(!output.includes(awsKey), "NUL-containing file diagnostics must not echo the secret");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

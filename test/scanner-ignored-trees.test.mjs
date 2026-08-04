@@ -112,6 +112,8 @@ test("check-secrets: the same secret in a TRACKED file blocks", () => {
     assert.equal(code, 1, `expected a block, got:\n${out}`);
     assert.match(out, /OGR03 FAILED/);
     assert.match(out, /2-work\/notes\.md/);
+    assert.match(out, /line 1: \[REDACTED\]/);
+    assert.ok(!out.includes(AWS_KEY), "tracked-file diagnostics must not echo the matched secret");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -125,6 +127,8 @@ test("check-secrets: the same secret in an UNTRACKED, non-ignored file blocks", 
     const { code, out } = run(CHECK_SECRETS, [dir]);
     assert.equal(code, 1, `expected a block, got:\n${out}`);
     assert.match(out, /2-work\/scratch\.md/);
+    assert.match(out, /line 1: \[REDACTED\]/);
+    assert.ok(!out.includes(AWS_KEY), "untracked-file diagnostics must not echo the matched secret");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -138,6 +142,8 @@ test("check-secrets: still scans a non-git directory (the aios build change-set 
     const { code, out } = run(CHECK_SECRETS, [dir]);
     assert.equal(code, 1, `expected a block in the non-git fallback, got:\n${out}`);
     assert.match(out, /sub\/changed\.md/);
+    assert.match(out, /line 1: \[REDACTED\]/);
+    assert.ok(!out.includes(AWS_KEY), "non-git diagnostics must not echo the matched secret");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

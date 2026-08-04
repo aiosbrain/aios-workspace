@@ -217,25 +217,30 @@ for entry in "${PATTERNS[@]}"; do
       [ -z "$hit" ] && continue
       match_file="${hit%%:*}"
       numbered_line="${hit#*:}"
+      line_number="${numbered_line%%:*}"
       matched_line="${numbered_line#*:}"
       sanitized_line=$(strip_known_non_secrets "$label" "$matched_line" "$match_file")
       if ! printf '%s\n' "$sanitized_line" | grep -qiE -e "$effective_pattern"; then
         continue
       fi
-      printf '%s\t%s\n' "$match_file" "$numbered_line" >> "$FINDINGS"
+      # Never persist or print the matching line. The raw bytes are needed only
+      # for the in-memory false-positive classification above; diagnostics keep
+      # the actionable rule, file and line number without turning CI logs (or
+      # this temporary findings file) into a second secret exposure.
+      printf '%s\t%s\n' "$match_file" "$line_number" >> "$FINDINGS"
     done < <(xargs -0 grep -aHniE -e "$effective_pattern" < "$SCAN_LIST" 2>/dev/null || true)
   fi
 
   if [ -s "$FINDINGS" ]; then
     echo -e "  ${RED}✗ $label${NC}"
     last_file=""
-    while IFS=$'\t' read -r match_file hit; do
+    while IFS=$'\t' read -r match_file line_number; do
       rel_path="${match_file#"$REPO"/}"
       if [ "$match_file" != "$last_file" ]; then
         echo "    $rel_path:"
         last_file="$match_file"
       fi
-      printf '%s\n' "$hit" | sed 's/\(.\{80\}\).*/      \1.../'
+      echo "      line $line_number: [REDACTED]"
     done < "$FINDINGS"
     ERRORS=$((ERRORS + 1))
   fi
