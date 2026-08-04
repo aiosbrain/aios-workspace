@@ -20,9 +20,27 @@ if [[ "$main_worktree" == "$here" ]]; then
 fi
 
 scaffold="$main_worktree/scaffold"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── symlinks (safe to share from primary) ──────────────────────────────────
-for name in node_modules .envrc .env.keys .env; do
+# node_modules is special: a partial install in the primary makes every linked
+# worktree partial too. Verify the lockfile-declared root dependencies and, when
+# needed, restore the primary with npm ci BEFORE creating the shared link.
+if [[ -f "$script_dir/worktree-init.mjs" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[aios] node is required to verify shared worktree dependencies; node_modules was not linked" >&2
+    exit 1
+  fi
+  node "$script_dir/worktree-init.mjs" --primary "$main_worktree" --worktree "$here"
+else
+  src="$main_worktree/node_modules"
+  if [[ -e "$src" && ! -e "$here/node_modules" ]]; then
+    ln -sfn "$src" "$here/node_modules"
+    echo "linked node_modules -> $src"
+  fi
+fi
+
+for name in .envrc .env.keys .env; do
   src="$main_worktree/$name"
   [[ -e "$src" ]] || continue
   if [[ -L "$here/$name" ]]; then

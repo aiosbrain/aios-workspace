@@ -73,6 +73,10 @@ function makePrimary({ withHydrator = true, withLeakGate = true } = {}) {
     const dest = path.join(repo, "scripts", "link-worktree-env.sh");
     copyFileSync(path.join(TOOLKIT, "scripts", "link-worktree-env.sh"), dest);
     chmodSync(dest, 0o755);
+    copyFileSync(
+      path.join(TOOLKIT, "scripts", "worktree-init.mjs"),
+      path.join(repo, "scripts", "worktree-init.mjs")
+    );
   }
   if (withLeakGate) {
     copyFileSync(
