@@ -56,9 +56,24 @@ export function parseArgs(argv) {
   for (const required of ["repo", "pr"]) {
     if (!values[required]) throw new Error(`--${required} is required`);
   }
-  if (!/^[^/\s]+\/[^/\s]+$/.test(values.repo)) throw new Error("--repo must be owner/name");
-  if (!/^[0-9]+$/.test(values.pr)) throw new Error("--pr must be a number");
+  // Strict, not merely "has a slash": every path this builds is interpolated into a GitHub
+  // API URL, so an owner or name that could contain `.`/`..`/`%`/`?` would let a caller
+  // redirect the request at a different endpoint. Anchored to GitHub's real owner/repo
+  // charset, and each segment must start alphanumerically so `.` and `..` cannot appear.
+  if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(values.repo)) {
+    throw new Error("--repo must be owner/name");
+  }
+  if (!/^\d+$/.test(values.pr)) throw new Error("--pr must be a number");
   return values;
+}
+
+/**
+ * Build a repository API path with every segment percent-encoded. Paths are never
+ * interpolated raw: `repoPath` is the only way this file names a GitHub resource, so no
+ * caller-supplied value can escape its segment and re-point the request.
+ */
+function repoPath(repo, ...segments) {
+  return `/repos/${[...repo.split("/"), ...segments].map((part) => encodeURIComponent(String(part))).join("/")}`;
 }
 
 async function request(pathname, { method = "GET", body } = {}) {
@@ -77,9 +92,10 @@ async function request(pathname, { method = "GET", body } = {}) {
   });
   if (response.status === 204) return null;
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const body = await response.text().catch(() => "");
+    const detail = body ? `: ${body.slice(0, 200)}` : "";
     const error = new Error(
-      `GitHub ${method} ${pathname} failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`
+      `GitHub ${method} ${pathname} failed with HTTP ${response.status}${detail}`
     );
     error.status = response.status;
     throw error;
@@ -110,9 +126,7 @@ async function hasWriteAccess(repo, login, cache) {
   if (cache.has(login)) return cache.get(login);
   let authorized = false;
   try {
-    const result = await request(
-      `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`
-    );
+    const result = await request(repoPath(repo, "collaborators", login, "permission"));
     authorized = WRITE_PERMISSIONS.has(result?.permission);
   } catch (error) {
     if (error.status !== 404) throw error;
@@ -129,7 +143,7 @@ async function hasWriteAccess(repo, login, cache) {
  */
 async function resolveExemption(repo, number, labels) {
   if (!labels.includes(EXEMPTION_LABEL)) return null;
-  const timeline = await paginate(`/repos/${repo}/issues/${number}/timeline`);
+  const timeline = await paginate(repoPath(repo, "issues", number, "timeline"));
   const labelled = timeline.filter(
     (event) => event.event === "labeled" && event.label?.name === EXEMPTION_LABEL
   );
@@ -139,7 +153,7 @@ async function resolveExemption(repo, number, labels) {
 }
 
 export async function gatherPullRequestFacts(repo, number, options = {}) {
-  const pull = await request(`/repos/${repo}/pulls/${number}`);
+  const pull = await request(repoPath(repo, "pulls", number));
   const headSha = options.headSha || pull.head?.sha;
   if (!headSha) throw new Error("PR head SHA is unavailable");
   const labels = (pull.labels || []).map((label) => label.name);
@@ -148,7 +162,7 @@ export async function gatherPullRequestFacts(repo, number, options = {}) {
     // A push must invalidate an exemption exactly as it invalidates evidence, or the
     // exemption becomes the hole: label a docs typo, then push real code into it.
     // Removing the label is itself a timeline event, so the reset is auditable too.
-    await request(`/repos/${repo}/issues/${number}/labels/${encodeURIComponent(EXEMPTION_LABEL)}`, {
+    await request(repoPath(repo, "issues", number, "labels", EXEMPTION_LABEL), {
       method: "DELETE",
     });
     labels.splice(labels.indexOf(EXEMPTION_LABEL), 1);
@@ -158,8 +172,8 @@ export async function gatherPullRequestFacts(repo, number, options = {}) {
   if (exemption) return { headSha, comments: [], exemption };
 
   const [issueComments, reviews] = await Promise.all([
-    paginate(`/repos/${repo}/issues/${number}/comments`),
-    paginate(`/repos/${repo}/pulls/${number}/reviews`),
+    paginate(repoPath(repo, "issues", number, "comments")),
+    paginate(repoPath(repo, "pulls", number, "reviews")),
   ]);
   const raw = [
     ...issueComments.map((comment) => ({
@@ -225,7 +239,10 @@ export function renderReport(verdict, { repo, number, headSha }) {
 }
 
 async function postStatus(repo, headSha, verdict, targetUrl) {
-  await request(`/repos/${repo}/statuses/${headSha}`, {
+  if (!/^[0-9a-f]{40}$/.test(headSha)) {
+    throw new Error("refusing to post a status against a value that is not a commit SHA");
+  }
+  await request(repoPath(repo, "statuses", headSha), {
     method: "POST",
     body: {
       state: verdict.ok ? "success" : "failure",

@@ -181,6 +181,14 @@ describe("review evidence — CLI surface", () => {
     assert.throws(() => parseArgs(["repo"]), /unexpected argument/);
   });
 
+  it("refuses a repo name that could re-point the API path somewhere else", () => {
+    for (const repo of ["../..", "o/..", "./r", "o/r?x=1", "o/r#f", "o/r/extra", "o/r%2e%2e"]) {
+      assert.throws(() => parseArgs(["--repo", repo, "--pr", "1"]), /owner\/name/, repo);
+    }
+    assert.doesNotThrow(() => parseArgs(["--repo", "aiosbrain/aios-workspace", "--pr", "1"]));
+    assert.doesNotThrow(() => parseArgs(["--repo", "a-b.c_d/e.f-g_h", "--pr", "1"]));
+  });
+
   it("prints the attestation template, bound to the head, when it fails", () => {
     const report = renderReport(
       { ok: false, kind: "missing", summary: "nope", rejected: [] },
