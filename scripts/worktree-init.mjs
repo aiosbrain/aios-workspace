@@ -98,7 +98,22 @@ function binDirectory(primary, lockKey) {
   return path.join(primary, lockKey.slice(0, index + marker.length - 1), ".bin");
 }
 
-function installedPackageProblem(primary, lockKey, lockEntry) {
+function nativePackageProblem(primary, lockKey, manifest) {
+  if (manifest.name !== "better-sqlite3") return null;
+  const packageDir = path.join(primary, lockKey);
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      'const Database = require(process.argv[1]); const database = new Database(":memory:"); database.close();',
+      packageDir,
+    ],
+    { cwd: primary, stdio: "ignore", shell: false }
+  );
+  return probe.status === 0 ? null : `${lockKey} (unusable native payload)`;
+}
+
+function installedPackageProblem(primary, lockKey, lockEntry, runtimePlatform) {
   const packageDir = path.join(primary, lockKey);
   if (!existsSync(packageDir)) return `${lockKey} (missing)`;
   if (lockEntry.link) return null;
@@ -107,15 +122,17 @@ function installedPackageProblem(primary, lockKey, lockEntry) {
   try {
     const manifest = readJson(manifestPath, manifestPath);
     if (manifest.version !== lockEntry.version) return `${lockKey} (wrong version)`;
+    const nativeProblem = nativePackageProblem(primary, lockKey, manifest);
+    if (nativeProblem) return nativeProblem;
     for (const [name, target] of binNames(lockEntry, manifest)) {
       if (!name || !existsSync(path.resolve(packageDir, target))) {
         return `${lockKey} (missing binary target ${name || "unnamed"})`;
       }
       const binDir = binDirectory(primary, lockKey);
-      const shims = process.platform === "win32" ? [`${name}.cmd`, `${name}.ps1`] : [name];
+      const shims = runtimePlatform === "win32" ? [`${name}.cmd`] : [name];
       const shimExists = shims.some((candidate) => {
         const shim = path.join(binDir, candidate);
-        if (process.platform === "win32") return existsSync(shim);
+        if (runtimePlatform === "win32") return existsSync(shim);
         try {
           accessSync(shim, fsConstants.X_OK);
           return true;
@@ -131,11 +148,11 @@ function installedPackageProblem(primary, lockKey, lockEntry) {
   }
 }
 
-export function missingLockedDependencies(primary) {
+export function missingLockedDependencies(primary, { platform = process.platform } = {}) {
   const packages = lockedDependencies(primary);
   if (packages === null) return null;
   return packages
-    .map(([lockKey, entry]) => installedPackageProblem(primary, lockKey, entry))
+    .map(([lockKey, entry]) => installedPackageProblem(primary, lockKey, entry, platform))
     .filter(Boolean);
 }
 

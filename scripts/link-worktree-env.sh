@@ -152,9 +152,13 @@ fi
 # primary's compiled better_sqlite3.node. If the active Node's ABI differs from
 # what that addon was built for (the classic ABI 127-vs-147 crash), the
 # operator-loop DB tests fail for an environment-only reason. Probe it now and
-# auto-rebuild or point at the pinned Node (.nvmrc) — best-effort, never aborts.
+# auto-rebuild or point at the pinned Node (.nvmrc). Do not stamp hydration as
+# ready when the shared native dependency is still unusable.
 if command -v node >/dev/null 2>&1 && [[ -f "$here/scripts/ensure-native-abi.mjs" ]]; then
-  (cd "$here" && node scripts/ensure-native-abi.mjs) || echo "native-abi: better-sqlite3 needs attention (see message above)"
+  if ! (cd "$here" && node scripts/ensure-native-abi.mjs); then
+    echo "native-abi: better-sqlite3 remains unusable; hydration was not marked ready" >&2
+    exit 1
+  fi
 fi
 
 # ── operator-loop build ─────────────────────────────────────────────────────
