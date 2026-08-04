@@ -2,8 +2,9 @@
 // test/analyze-multitool.test.mjs — Phase 2 parsers: Codex rollout records and
 // Cursor bubble rows → NormalizedEvent. Synthetic inline fixtures (no real data).
 // Key checks: Codex user_message→task, token_count→usage with the cached-token
-// subtraction (in = fresh), function_call→tool_use; Cursor type 1/2 mapping,
-// tool extraction, text-length prompt gating, composerId→session_id.
+// subtraction (in = fresh), legacy + current tool calls, subagent attribution;
+// Cursor type 1/2 mapping, tool extraction, text-length prompt gating,
+// composerId→session_id.
 //
 // Zero network, zero deps. Run: node test/analyze-multitool.test.mjs
 
@@ -97,11 +98,105 @@ const cev = codexEvents(CODEX, "cdx1");
   check("cached → cache_read (12000)", tokenEv && tokenEv.tokens.cache_read === 12000);
   check("reasoning folded into output (400+100 = 500)", tokenEv && tokenEv.tokens.out === 500);
   const sig = computeSignals(cev);
-  check(
-    "Codex has no subagents (delegation 0)",
-    sig.delegation_ratio === 0 && sig.subagent_usage === 0
-  );
+  check("root Codex session has no invented delegation", sig.delegation_ratio === 0);
   check("exec_command counts as a verify tool", sig.verify_tool_rate === 1);
+}
+
+console.log("parse-codex — current custom tools + subagent rollout");
+const CHILD = [
+  {
+    type: "session_meta",
+    timestamp: "2026-06-10T10:01:00Z",
+    payload: {
+      id: "cdx-child",
+      cwd: "/home/me/proj",
+      parent_thread_id: "cdx1",
+      forked_from_id: "cdx1",
+      thread_source: "subagent",
+      source: { subagent: { thread_spawn: { parent_thread_id: "cdx1", depth: 1 } } },
+    },
+  },
+  {
+    type: "event_msg",
+    timestamp: "2026-06-10T10:01:01Z",
+    payload: { type: "user_message", message: "delegated work" },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:02Z",
+    payload: {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "c2",
+      input: "const r = await tools.exec_command({ cmd: 'pwd' }); text(r.output);",
+    },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03Z",
+    payload: { type: "custom_tool_call_output", call_id: "c2", output: "ok" },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03.500Z",
+    payload: {
+      type: "custom_tool_call",
+      name: "exec",
+      call_id: "c3",
+      input:
+        "const r = await tools.mcp__codebase_memory_mcp__search_graph({ project: 'p', query: 'x' }); text(r);",
+    },
+  },
+  {
+    type: "response_item",
+    timestamp: "2026-06-10T10:01:03.750Z",
+    payload: { type: "custom_tool_call_output", call_id: "c3", output: "ok" },
+  },
+  {
+    type: "event_msg",
+    timestamp: "2026-06-10T10:01:04Z",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 3000,
+          cached_input_tokens: 1000,
+          output_tokens: 500,
+        },
+      },
+    },
+  },
+];
+const childEvents = codexEvents(CHILD, "cdx-child");
+{
+  check(
+    "shell custom_tool_call is classified as exec_command",
+    childEvents.some((e) => e.block_type === "tool_use" && e.tool_name === "exec_command")
+  );
+  check(
+    "non-shell custom_tool_call remains generic exec",
+    childEvents.some((e) => e.block_type === "tool_use" && e.tool_name === "exec") &&
+      childEvents.some((e) => e.block_type === "tool_result")
+  );
+  check(
+    "child rollout events are attributed to the subagent and parent thread",
+    childEvents.every((e) => e.actor === "subagent" && e.turn_parent === "cdx1")
+  );
+  const combined = computeSignals(cev.concat(childEvents));
+  check("delegated prompt does not inflate human task count", combined.tasks === 1);
+  check(
+    "child rollout folds into its human-root session",
+    combined.sessions === 1 && combined.subagent_usage === 1
+  );
+  check("Codex delegated-token ratio is now observable", combined.delegation_ratio > 0);
+  check(
+    "only shell-backed Codex exec calls count as verification",
+    combined.verify_tool_rate === 2 / 3
+  );
+  check(
+    "child rollout does not inflate attention concurrency",
+    combined.concurrent_sessions_peak === 1
+  );
 }
 
 // ── Cursor ──────────────────────────────────────────────────────────────────

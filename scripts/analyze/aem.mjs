@@ -90,8 +90,9 @@ export function scoreAutonomy(s) {
 
 // Learning / compounding: "Repeats corrections (0) · adds fixes to CLAUDE.md
 // sometimes (2) · corrections feed back, builds skills (4)". Session logs can't
-// observe rule write-back, so we use tool-diversity (building a toolbelt) as a
-// weak proxy and CAP at 3 — true compounding needs cross-session evidence.
+// observe rule write-back, so we use tool-interface diversity as a weak breadth
+// proxy and CAP at 3. It cannot distinguish multiple skills routed through one
+// interface; true compounding needs cross-session evidence.
 export function scoreLearning(s) {
   return Math.min(3, band(s.tool_diversity, LEARNING_BANDS));
 }

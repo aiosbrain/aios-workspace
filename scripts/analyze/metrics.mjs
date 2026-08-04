@@ -132,6 +132,37 @@ function ratio(n, d) {
   return d > 0 ? n / d : 0;
 }
 
+/**
+ * Codex stores each delegated thread as its own rollout file. Fold those child
+ * ids through their parent chain so `sessions` and `subagent_usage` retain the
+ * cross-provider meaning: human-root sessions, and the share of roots that used
+ * at least one subagent. Claude already emits sidechains under the root session
+ * id, so this canonicalization is intentionally Codex-only.
+ */
+function codexRootSessionResolver(events) {
+  const parents = new Map();
+  for (const ev of events) {
+    if (
+      ev.tool === "codex" &&
+      ev.actor === "subagent" &&
+      ev.turn_parent &&
+      ev.turn_parent !== ev.session_id &&
+      !parents.has(ev.session_id)
+    ) {
+      parents.set(ev.session_id, ev.turn_parent);
+    }
+  }
+  return (sessionId) => {
+    let current = sessionId;
+    const seen = new Set();
+    while (parents.has(current) && !seen.has(current)) {
+      seen.add(current);
+      current = parents.get(current);
+    }
+    return current;
+  };
+}
+
 // Idle-gap threshold (minutes) for splitting the global activity timeline into focus blocks.
 // SOURCE OF TRUTH: DEFAULT_IDLE_GAP_MIN in src/operator-loop/time/config.ts. Duplicated here as
 // a literal (NOT imported) because metrics.mjs is plain ESM and must never import from dist/.
@@ -259,8 +290,12 @@ export function computeAttentionSignals(events) {
  * to buildPushPayload (report.mjs) — they never cross the tier boundary to the brain (EE10).
  */
 export function computeSignals(events) {
+  const rootSession = codexRootSessionResolver(events);
+  const canonicalEvents = events.map((ev) =>
+    ev.tool === "codex" ? { ...ev, session_id: rootSession(ev.session_id) } : ev
+  );
   const bySession = new Map();
-  for (const ev of events) {
+  for (const ev of canonicalEvents) {
     if (!bySession.has(ev.session_id)) bySession.set(ev.session_id, []);
     bySession.get(ev.session_id).push(ev);
   }
@@ -341,7 +376,7 @@ export function computeSignals(events) {
     subagent_usage: ratio(sessionsWithSubagent, sessions),
     permission_events: permissionEvents,
     // Attention / sanity signals (LOCAL-ONLY — never pushed; see buildPushPayload).
-    ...computeAttentionSignals(events),
+    ...computeAttentionSignals(canonicalEvents),
   };
 }
 

@@ -81,18 +81,24 @@ export const AXIS_GUIDE = {
       "Whether fixes and lessons get captured — in CLAUDE.md, reusable skills, or commands — so you stop re-explaining the same things every session.",
     why: "Without this you re-teach the agent the same corrections forever. With it, every new session starts smarter than the last.",
     steps: [
-      "When you correct the agent on something, add that rule to CLAUDE.md so it sticks next time.",
-      "Turn a workflow you repeat into a reusable skill or slash-command.",
-      "Build a small toolbelt (handy scripts, MCP servers) the agent can reach for instead of improvising.",
+      "Before substantial work, check which installed skill triggers match the task and invoke the ones that materially apply.",
+      "Turn repeated workflows into reusable skills, then verify that later sessions discover and reuse them.",
+      "Add a project rule to CLAUDE.md only when repeated corrections show it belongs there and no existing skill already covers it.",
     ],
     /** @type {MaturityAction[]} */
     actions: [
       {
+        kind: "chat",
+        label: "Review skill reuse",
+        prompt:
+          "Review recent repeated work and corrections. Identify which installed skills were eligible, which were invoked, and what should become or update a reusable skill. Recommend a CLAUDE.md rule only when evidence shows a repeated project-wide constraint that no skill already covers.",
+      },
+      {
         kind: "edit",
-        label: "Capture a durable correction",
-        target: "CLAUDE.md",
+        label: "Update a reusable skill",
+        target: ".claude/skills/",
         intent:
-          "Turn the latest repeated correction into one concise, generally applicable project rule.",
+          "After the skill-reuse review identifies a repeated workflow, update the matching reusable skill or create a narrowly scoped one.",
       },
     ],
   },
