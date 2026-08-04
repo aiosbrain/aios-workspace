@@ -12,6 +12,14 @@ This is the **individual workspace** repo. The Team Brain sync contract
 
 ### Added
 
+- **Per-PR review-evidence gate (AIO-777)** — a PR is mergeable only while a write-access
+  reviewer's attestation names its **current** head SHA; a push makes prior evidence stale and
+  the `review-evidence` commit status goes red until the new head is re-reviewed. Exemptions are
+  a `REVIEW_EXEMPT` comment naming the same head, so an exemption cannot go stale either. The
+  body validator is a
+  recorded copy of the hub's release-gate validator. Scope is deliberate and narrow: it answers
+  "has anything reviewed this exact commit?", not "is that review honest?" — every write-access
+  actor is trusted. See `docs/pr-review-evidence.md`.
 - **Code Maintenance Loop Phase 0 (AIO-610)** — codebase-health v2 distinguishes the observed
   score from evidence completeness and automation admission, loads per-repository capability
   profiles, and emits stable redacted findings for Team Brain. Missing, stale, or errored required

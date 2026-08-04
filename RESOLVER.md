@@ -27,6 +27,8 @@ addition.
 | Workflow-layer (operator loop) code | `docs/ENGINEERING-CONSTITUTION.md` — all-TypeScript, spec→plan→tasks→implement |
 | Secrets anywhere | `validation/check-secrets.sh` + `scripts/leak-gate.sh` + team-ops-guard are hard gates; never weaken to pass a commit |
 | Any harness change | Keep its rubric honest (`scaffold/.claude/rubrics/`) — the rubric is what makes output trustworthy |
+| Merging any PR in this repo | `docs/pr-review-evidence.md` — the `review-evidence` status must be green: something on the PR, posted by someone with write access, names the **current** head SHA. A push makes everything prior stale, on purpose. An exemption is the same binding with a different token (`REVIEW_EXEMPT`), so it cannot go stale either |
+| Any change to `scripts/review-evidence.mjs` | It is a recorded copy of the hub's `scripts/validate-adversarial-review.mjs`. Port the change both ways by hand — `npm run check:review-evidence-parity -- --hub <hub checkout>` is a spot check that catches one copy moving, **not** drift protection (it never runs in CI and cannot see a defect both copies share). Read the threat model in that file's header before assuming the gate stops forged evidence: it does not, by design |
 | Any `packages/foundation/` change, or GUI work (now in `aiosbrain/aios-workspace-gui`) | Repo topology (below) + seam contract `docs/gui-toolkit-contract.md`; `npm run check:boundaries` enforces the seams |
 
 ## Repo Topology (multi-repo split, AIO-597 — in transition)
