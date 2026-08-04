@@ -5,6 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { STAGING_DIR } from "./coverage-outputs.mjs";
 
 const ROOT = process.cwd();
 const ROOT_SUMMARY = path.join(ROOT, "coverage", "root", "coverage-summary.json");
@@ -14,17 +15,22 @@ const CLIENT_LCOV = path.join(ROOT, "gui", "client", "coverage", "lcov.info");
 const METRICS = ["lines", "statements", "functions", "branches"];
 
 /**
- * Where to write. `run-coverage.mjs` passes a STAGING directory, because the canonical names mean
- * "a run completed successfully" and this script runs long before that is known — see
- * scripts/coverage-outputs.mjs. Defaults to `coverage/` so a bare `node scripts/merge-coverage.mjs`
- * still behaves as it always did.
+ * `run-coverage.mjs` is the only publication authority, so this lower-level helper may write only
+ * to its exact staging directory. Validate that boundary before reading any input or creating any
+ * output; a default of coverage/ (or the repository root) would create a scanner-readable side
+ * entrance around promote-on-success.
  */
 function outputDirectory(argv) {
   const index = argv.indexOf("--out-dir");
-  if (index === -1) return path.join(ROOT, "coverage");
+  if (index === -1) throw new Error("--out-dir is required");
   const value = argv[index + 1];
   if (!value || value.startsWith("--")) throw new Error("--out-dir requires a value");
-  return path.resolve(ROOT, value);
+  const resolved = path.resolve(ROOT, value);
+  const staging = path.join(ROOT, "coverage", STAGING_DIR);
+  if (resolved !== staging) {
+    throw new Error(`--out-dir must resolve to ${staging}`);
+  }
+  return resolved;
 }
 
 export function mergeTotals(a, b) {

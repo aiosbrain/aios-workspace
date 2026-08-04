@@ -10,6 +10,7 @@ __pycache__/
 .env.local
 dist/
 coverage/
+.coverage-stale-*
 .stryker-tmp/
 reports/mutation/
 test/ux/evidence/

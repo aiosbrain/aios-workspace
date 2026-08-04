@@ -10,11 +10,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildBaseline } from "../check-coverage.mjs";
 import {
-  invalidateCoverageOutputs,
+  cleanupSuccessfulCoverageRun,
   markCoverageDegraded,
   markShardFailed,
   promoteCoverageOutputs,
   refuseMergeIfShardsFailed,
+  removeRotatedSnapshot,
+  rotateCoverageDirectory,
+  rotateShardDirectory,
   stagingDirectory,
 } from "../coverage-outputs.mjs";
 import {
@@ -32,12 +35,16 @@ import {
   shardDirectory,
 } from "./runtime.mjs";
 
-export async function runFull({ root = ROOT, exec = execute } = {}) {
-  const paths = coveragePaths(root);
-  // FIRST, before any step that can throw. `ensureLoopBuiltStrict` used to run ahead of this, so
-  // a failed strict prep aborted the run with the PREVIOUS run's outputs still sitting at the
-  // canonical names, to be published as though they were this run's.
-  rmSync(paths.dir, { recursive: true, force: true });
+export async function runFull({
+  root = ROOT,
+  exec = execute,
+  removeSnapshot = removeRotatedSnapshot,
+} = {}) {
+  // FIRST filesystem operation: one same-filesystem rename hides every old canonical path
+  // together. Snapshot cleanup happens only after that namespace boundary and cannot expose a
+  // torn state even if it fails or the process is killed.
+  const coverageSnapshot = rotateCoverageDirectory(root);
+  removeSnapshot(coverageSnapshot);
   rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
 
   await ensureLoopBuiltStrict(exec, root);
@@ -127,19 +134,24 @@ export async function runFull({ root = ROOT, exec = execute } = {}) {
     if (clientError) throw clientError;
 
     promoteCoverageOutputs(root);
+    cleanupSuccessfulCoverageRun(root);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 }
 
-export async function runShard(shard, { root = ROOT, exec = execute } = {}) {
-  await ensureLoopBuiltStrict(exec, root);
+export async function runShard(
+  shard,
+  { root = ROOT, exec = execute, removeSnapshot = removeRotatedSnapshot } = {}
+) {
   const shardDir = shardDirectory(shard.index, root);
-  // Wholesale wipe, so a sentinel from this shard's previous run cannot outlive it.
-  rmSync(shardDir, { recursive: true, force: true });
+  // Hide stale raw JSON and sentinels together before strict prep. A prep failure therefore writes
+  // a fresh sentinel at the expected shard path while the previous raw data remains quarantined.
+  const shardSnapshot = rotateShardDirectory(shardDir);
   // c8 collects raw V8 data into the shard directory; --reporter=none skips
   // report generation — the merge step is the only report/gate producer.
   try {
+    await ensureLoopBuiltStrict(exec, root);
     await runNodeSuiteUnderC8(
       shardDir,
       [`--shard=${shard.raw}`],
@@ -147,56 +159,67 @@ export async function runShard(shard, { root = ROOT, exec = execute } = {}) {
       exec,
       root
     );
+    removeSnapshot(shardSnapshot);
   } catch (error) {
-    // Record the failure WHERE THE MERGE WILL SEE IT, then fail as before. c8 has already
-    // written partial data for whatever ran, and that data is indistinguishable from a complete
-    // shard — so without this the merge would happily build a plausible number out of it.
-    markShardFailed(shardDir, error.message);
+    // Record prep, suite, and post-rotation cleanup failures WHERE THE MERGE WILL SEE THEM. Never
+    // replace the real error if writing the explanatory sentinel also fails.
+    try {
+      markShardFailed(shardDir, error.message);
+    } catch (markerError) {
+      console.error(`run-coverage: could not record shard failure: ${markerError.message}`);
+    }
     throw error;
   }
   console.log(`run-coverage: shard ${shard.raw} raw coverage in ${path.relative(root, shardDir)}`);
 }
 
-export async function runMerge(total, { root = ROOT, exec = execute } = {}) {
+export async function runMerge(
+  total,
+  { root = ROOT, exec = execute, removeSnapshot = removeRotatedSnapshot } = {}
+) {
   const paths = coveragePaths(root);
-  // FIRST, for the same reason runFull invalidates first: everything below can throw, and a
-  // previous run's canonical pair must never survive an aborted one. This mode cannot just wipe
-  // coverage/ — the shard data it is about to read lives there — so it invalidates precisely.
-  invalidateCoverageOutputs(root);
-
-  const files = collectShardFiles(total, root);
-  refuseMergeIfShardsFailed(
-    root,
-    Array.from({ length: total }, (_, i) => shardDirectory(i + 1, root))
+  // FIRST filesystem operation: rotate the whole tree. The immutable snapshot is the shard input;
+  // every report, marker, staging file, and promoted output below belongs to a fresh coverage/.
+  const coverageSnapshot = rotateCoverageDirectory(root);
+  const shardSource = coverageSnapshot ?? paths.dir;
+  const shardDirs = Array.from({ length: total }, (_, i) =>
+    shardDirectory(i + 1, root, shardSource)
   );
-
-  rmSync(path.join(paths.dir, "root"), { recursive: true, force: true });
-  rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
-
-  await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
-
-  const staged = stagingDirectory(root);
+  refuseMergeIfShardsFailed(root, shardDirs);
+  const files = collectShardFiles(total, root, shardSource);
   const tempDirectory = mkdtempSync(path.join(tmpdir(), "aios-c8-merge-"));
   try {
     for (const file of files) copyFileSync(file.source, path.join(tempDirectory, file.name));
+    // The snapshot is no longer load-bearing only after every accepted V8 file is in temp.
+    removeSnapshot(coverageSnapshot);
+
+    rmSync(path.join(paths.dir, "root"), { recursive: true, force: true });
+    rmSync(path.join(root, "gui", "client", "coverage"), { recursive: true, force: true });
+
+    await runClientCoverageIfPresent(() => runClientCoverage(exec, root), root);
+
     // Report over the union of every shard's raw V8 data with the same
     // .c8rc.json include/exclude/remap rules as the unsharded run.
     await exec(process.execPath, [C8, "report", "--temp-directory", tempDirectory], { cwd: root });
+
+    const staged = stagingDirectory(root);
+    await exec(process.execPath, ["scripts/merge-coverage.mjs", "--out-dir", staged], {
+      cwd: root,
+    });
+
+    // Built from the STAGED summary, and staged itself: like the summary and the lcov it is a
+    // result, and results do not exist until the run has completed.
+    const summary = JSON.parse(readFileSync(path.join(staged, "coverage-summary.json"), "utf8"));
+    mkdirSync(staged, { recursive: true });
+    writeFileSync(
+      path.join(staged, "coverage-baseline-candidate.json"),
+      `${JSON.stringify(buildBaseline(summary), null, 2)}\n`
+    );
+
+    const published = promoteCoverageOutputs(root);
+    cleanupSuccessfulCoverageRun(root);
+    console.log(`run-coverage: merged ${total} shard(s) → ${published.join(", ")}`);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
-
-  await exec(process.execPath, ["scripts/merge-coverage.mjs", "--out-dir", staged], { cwd: root });
-
-  // Built from the STAGED summary, and staged itself: like the summary and the lcov it is a
-  // result, and results do not exist until the run has completed.
-  const summary = JSON.parse(readFileSync(path.join(staged, "coverage-summary.json"), "utf8"));
-  mkdirSync(staged, { recursive: true });
-  writeFileSync(
-    path.join(staged, "coverage-baseline-candidate.json"),
-    `${JSON.stringify(buildBaseline(summary), null, 2)}\n`
-  );
-
-  const published = promoteCoverageOutputs(root);
-  console.log(`run-coverage: merged ${total} shard(s) → ${published.join(", ")}`);
 }

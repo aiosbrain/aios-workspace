@@ -24,8 +24,16 @@
  *   - a merge that explodes after writing never had canonical names to leave behind;
  *   - a crash anywhere before promotion leaves nothing canonical, because nothing canonical was
  *     ever created;
- *   - a stale pair from a previous run is removed at invalidation, which is the FIRST thing
- *     either mode does — before any prep step that could fail and abort the run.
+ *   - a stale pair from a previous run is hidden by rotating the whole coverage directory aside,
+ *     which is the FIRST namespace change either mode makes — before any prep step that could
+ *     fail and abort the run.
+ *
+ * That rotation is one same-filesystem rename to an ignored sibling. Once it completes there is
+ * no torn invalidation state: every old coverage path moved together. A SIGKILL before the rename
+ * executes, or a filesystem that rejects the rename before changing the namespace, cannot be
+ * repaired by this process while consumers insist on fixed paths; do not describe that impossible
+ * pre-syscall window as protected. Cleanup of the rotated snapshot is deliberately separate and
+ * non-load-bearing.
  *
  * Promotion itself is several renames rather than one, because consumers require fixed filenames
  * and no single filesystem operation can create them all. That is safe here for a reason
@@ -37,11 +45,22 @@
  * The degradation marker below is EXPLANATORY, not load-bearing. It tells a human why there is
  * no number. Nothing depends on it having been written for the system to be safe.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 /** Where a run assembles its outputs before they have earned the canonical names. */
 export const STAGING_DIR = ".staged";
+export const COVERAGE_SNAPSHOT_PREFIX = ".coverage-stale-";
+export const SHARD_SNAPSHOT_PREFIX = ".stale-shard-";
 
 /** Written alongside the outputs to say, in prose, why there is no publishable number. */
 export const DEGRADED_MARKER = "coverage-degraded.json";
@@ -80,22 +99,67 @@ export const COVERAGE_OUTPUTS = [
 export const stagingDirectory = (root) => path.join(root, "coverage", STAGING_DIR);
 
 /**
- * Remove everything a previous run may have left that could be mistaken for this one's result.
+ * Rotate a directory to a unique sibling in one namespace-changing operation.
  *
- * MUST BE THE FIRST THING EITHER MODE DOES — before `ensureLoopBuiltStrict`, before the suite,
- * before anything that can throw. Running it later was its own bug: a prep step that failed left
- * the PREVIOUS run's canonical pair on disk, to be published as though it were this run's.
- *
- * Deliberately does not touch `coverage/root` or `coverage/shard-*`: merge mode needs the shard
- * data it is about to read, and full mode wipes the whole directory separately.
+ * `operations` is injectable only so the structural test can prove the primitive performs one
+ * parent rename and no child removal. Production callers use the Node filesystem functions.
  */
-export function invalidateCoverageOutputs(root) {
-  const dir = path.join(root, "coverage");
+function rotateDirectoryAside(
+  directory,
+  snapshotName,
+  { pathExists = existsSync, rename = renameSync } = {}
+) {
+  if (!pathExists(directory)) return null;
+  const snapshot = path.join(path.dirname(directory), snapshotName);
+  rename(directory, snapshot);
+  return snapshot;
+}
+
+/**
+ * Hide every old canonical output and shard together. This must be the first filesystem operation
+ * in full and merge modes. The snapshot remains a sibling so the rename cannot cross filesystems.
+ */
+export function rotateCoverageDirectory(
+  root,
+  { uuid = randomUUID, pathExists = existsSync, rename = renameSync } = {}
+) {
+  return rotateDirectoryAside(path.join(root, "coverage"), `${COVERAGE_SNAPSHOT_PREFIX}${uuid()}`, {
+    pathExists,
+    rename,
+  });
+}
+
+/** Rotate one shard through the same single-rename primitive used for the whole coverage tree. */
+export function rotateShardDirectory(
+  shardDir,
+  { uuid = randomUUID, pathExists = existsSync, rename = renameSync } = {}
+) {
+  return rotateDirectoryAside(
+    shardDir,
+    `${SHARD_SNAPSHOT_PREFIX}${path.basename(shardDir).slice("shard-".length)}-${uuid()}`,
+    { pathExists, rename }
+  );
+}
+
+/** Recursive snapshot cleanup is intentionally separate from the namespace boundary above. */
+export function removeRotatedSnapshot(snapshot) {
+  if (snapshot) rmSync(snapshot, { recursive: true, force: true });
+}
+
+/** Remove staging and obsolete forensic snapshots after a successful publication. */
+export function cleanupSuccessfulCoverageRun(root) {
   rmSync(stagingDirectory(root), { recursive: true, force: true });
-  rmSync(path.join(dir, DEGRADED_MARKER), { force: true });
-  for (const [, canonical, degraded] of COVERAGE_OUTPUTS) {
-    rmSync(path.join(dir, canonical), { force: true });
-    rmSync(path.join(dir, degraded), { force: true });
+  for (const entry of readdirSync(root)) {
+    if (entry.startsWith(COVERAGE_SNAPSHOT_PREFIX)) {
+      rmSync(path.join(root, entry), { recursive: true, force: true });
+    }
+  }
+  const coverageDir = path.join(root, "coverage");
+  if (!existsSync(coverageDir)) return;
+  for (const entry of readdirSync(coverageDir)) {
+    if (/^\.stale-shard-\d+-/.test(entry)) {
+      rmSync(path.join(coverageDir, entry), { recursive: true, force: true });
+    }
   }
 }
 

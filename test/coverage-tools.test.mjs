@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -268,7 +268,7 @@ test("prefixSummaryFiles drops `total` and leaves absolute paths alone", () => {
   ]);
 });
 
-test("merge-coverage succeeds with no gui/client report (AIO-612 GUI deletion)", async () => {
+test("merge-coverage succeeds at the explicit staging path with no gui/client report", async () => {
   // The in-tree gui/ is scheduled for deletion (AIO-612). Requiring its coverage report meant the
   // day it goes, `npm run test:coverage` throws, no artifact is produced, and the scanner pushes
   // test_coverage_pct null — surfacing on the Codebases dashboard as a false 0%.
@@ -294,19 +294,57 @@ test("merge-coverage succeeds with no gui/client report (AIO-612 GUI deletion)",
     );
 
     const script = path.resolve("scripts/merge-coverage.mjs");
+    const staged = path.join(dir, "coverage", ".staged");
     const { spawnSync } = await import("node:child_process");
-    const run = spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8" });
+    const run = spawnSync(
+      process.execPath,
+      [script, "--out-dir", path.join("coverage", ".staged")],
+      {
+        cwd: dir,
+        encoding: "utf8",
+      }
+    );
 
     assert.equal(run.status, 0, `merge-coverage exited ${run.status}: ${run.stderr}`);
     assert.match(run.stdout, /root only — no gui\/client report/);
 
-    const merged = JSON.parse(
-      readFileSync(path.join(dir, "coverage", "coverage-summary.json"), "utf8")
-    );
+    const merged = JSON.parse(readFileSync(path.join(staged, "coverage-summary.json"), "utf8"));
     assert.equal(merged.total.lines.pct, 80, "root-only totals must pass through unchanged");
     assert.ok(merged["scripts/a.mjs"], "root per-file rows must survive");
+    assert.equal(existsSync(path.join(dir, "coverage", "coverage-summary.json")), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("standalone merge rejects every scanner-readable output directory before writing", async (t) => {
+  const script = path.resolve("scripts/merge-coverage.mjs");
+  const { spawnSync } = await import("node:child_process");
+  for (const [name, args] of [
+    ["bare invocation", []],
+    ["canonical coverage directory", ["--out-dir", "coverage"]],
+    ["repository root", ["--out-dir", "."]],
+  ]) {
+    await t.test(name, () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "merge-cov-guard-"));
+      try {
+        mkdirSync(path.join(dir, "coverage", "root"), { recursive: true });
+        writeFileSync(
+          path.join(dir, "coverage", "root", "coverage-summary.json"),
+          JSON.stringify({ total: {} })
+        );
+        writeFileSync(path.join(dir, "coverage", "root", "lcov.info"), "TN:\n");
+
+        const run = spawnSync(process.execPath, [script, ...args], { cwd: dir, encoding: "utf8" });
+        assert.notEqual(run.status, 0, "the side entrance must fail");
+        assert.match(run.stderr, /--out-dir (?:is required|must resolve)/);
+        assert.equal(existsSync(path.join(dir, "coverage", "coverage-summary.json")), false);
+        assert.equal(existsSync(path.join(dir, "coverage-summary.json")), false);
+        assert.equal(existsSync(path.join(dir, "coverage", ".staged")), false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   }
 });
 

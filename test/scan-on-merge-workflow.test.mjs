@@ -180,6 +180,29 @@ test("health upload failures are not retried with a destructive plain upload", (
   }
 });
 
+test("the repository-root coverage fallback is removed before every scanner branch", () => {
+  const scanStep = workflowSteps(workflow).find((step) =>
+    /- name: Scan this repo into the brain/.test(step)
+  );
+  assert.ok(scanStep, "missing repository scan step");
+
+  const sanitation = "rm -f -- coverage-summary.json";
+  const sanitationIndex = scanStep.indexOf(sanitation);
+  assert.ok(sanitationIndex >= 0, "the legacy root fallback must be removed in the scan shell");
+  assert.doesNotMatch(scanStep, /rm -f -- coverage-summary\.json\s*\|\|\s*true/);
+
+  const scannerInvocations = [
+    ...scanStep.matchAll(/^\s+python (?:.*scan_with_health|.*aios_ingest\.cli scan)/gm),
+  ];
+  assert.equal(scannerInvocations.length, 2, "both scanner branches must remain covered");
+  for (const invocation of scannerInvocations) {
+    assert.ok(
+      sanitationIndex < invocation.index,
+      `sanitation must precede scanner invocation: ${invocation[0].trim()}`
+    );
+  }
+});
+
 test("the scaffold's exact toolkit pin resolves from the public npm registry", () => {
   const match = scaffoldWorkflow.match(
     /npm install -g (@aiosbrain\/aios@(\d+\.\d+\.\d+)) --ignore-scripts/

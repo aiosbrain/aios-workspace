@@ -71,6 +71,12 @@ export function recorder(root) {
       calls.filter((c) => c.command === "npm" && c.args.includes("gui/client")).length,
     exec: async (command, args, options) => {
       calls.push({ command, args, options });
+      if (args.includes("--reporter=none")) {
+        const tempFlag = args.indexOf("--temp-directory");
+        const shardDir = String(args[tempFlag + 1]);
+        mkdirSync(shardDir, { recursive: true });
+        writeFileSync(path.join(shardDir, "coverage-fixture.json"), "{}");
+      }
       if (!args.some((a) => String(a).endsWith("merge-coverage.mjs"))) return;
       // Model the real merge-coverage.mjs: it writes BOTH outputs, and it writes them wherever
       // `--out-dir` says. run-coverage points that at the staging directory, because the

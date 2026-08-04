@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { COVERAGE_SNAPSHOT_PREFIX, rotateCoverageDirectory } from "../scripts/coverage-outputs.mjs";
 import { main } from "../scripts/run-coverage.mjs";
 import { readCoverageReport } from "../scripts/coverage-report.mjs";
 import { LCOV, SUMMARY, makeRoot, recorder } from "./run-coverage-guard-fixtures.mjs";
@@ -42,7 +45,6 @@ function silenceErrors(fn) {
   }
 }
 
-const isClientPass = (command, args) => command === "npm" && args.includes("gui/client");
 const isNodeSuite = (args) => args.some((a) => String(a).endsWith("test-suite.mjs"));
 
 /** Drive a mode with an `exec` that fails on selected commands, and return whatever it threw. */
@@ -64,119 +66,112 @@ async function runWith(root, rec, argv, shouldFail) {
   }
 }
 
-const runWithFailingClient = (root, rec) =>
-  runWith(root, rec, [], (c, a) => isClientPass(c, a) && "client coverage boom");
-
 const runWithFailingSuite = (root, rec, argv = []) =>
   runWith(root, rec, argv, (_c, a) => isNodeSuite(a) && "17 tests failed");
 
-test("a degraded full run leaves NOTHING at the canonical coverage names", async () => {
-  const root = makeRoot({ manifest: true, registered: true });
-  const rec = recorder(root);
-  const thrown = await runWithFailingClient(root, rec);
-  try {
-    // 1. The command still fails. `main` throwing is what sets process.exitCode = 1 in the CLI
-    //    entry point, so the gate keeps failing exactly as before.
-    assert.match(thrown?.message ?? "", /client coverage boom/, "the failure must still propagate");
+const snapshots = (root) =>
+  readdirSync(root).filter((entry) => entry.startsWith(COVERAGE_SNAPSHOT_PREFIX));
 
-    // 2. Nothing answers to the name that means "this repo's coverage". This is the half that
-    //    reaches consumers outside this repo — they never see the marker.
-    for (const name of CANONICAL) {
-      assert.equal(existsSync(at(root, name)), false, `${name} must not be left behind`);
-    }
+test("coverage invalidation is one parent rename with no child removal", () => {
+  const calls = [];
+  const root = path.resolve("/fixture/repo");
+  const result = rotateCoverageDirectory(root, {
+    uuid: () => "fixed-id",
+    pathExists: (target) => {
+      calls.push(["exists", target]);
+      return true;
+    },
+    rename: (from, to) => calls.push(["rename", from, to]),
+  });
 
-    // 3. The data is PRESERVED, not destroyed — under a name nothing reads as authoritative.
-    for (const name of QUARANTINED) {
-      assert.ok(existsSync(at(root, name)), `${name} must hold the partial data`);
-    }
-    assert.equal(
-      JSON.parse(readFileSync(at(root, "coverage-summary.degraded.json"), "utf8")).total.lines.pct,
-      80,
-      "the preserved copy must be the real measurement, not a stub"
-    );
-    assert.equal(readFileSync(at(root, "lcov.degraded.info"), "utf8"), LCOV);
-
-    // 4. The marker explains why, and points at where the data went.
-    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
-    assert.match(marker.reason, /client coverage boom/);
-    assert.deepEqual(marker.missing, ["gui/client"]);
-    assert.deepEqual(marker.preserved, [
-      "coverage/coverage-summary.degraded.json",
-      "coverage/lcov.degraded.info",
-    ]);
-
-    // 5. And the consequence that matters for consumers that DO call our JS.
-    assert.equal(
-      silenceErrors(() => readCoverageReport(root)),
-      null
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.equal(result, path.join(root, ".coverage-stale-fixed-id"));
+  assert.deepEqual(calls, [
+    ["exists", path.join(root, "coverage")],
+    ["rename", path.join(root, "coverage"), result],
+  ]);
 });
 
-test("a FAILING NODE SUITE degrades the artifact exactly like a failed client pass", async () => {
-  // THE CASE THAT SURVIVED THE GUI CUT, and the larger one. `mergeThenPropagate` catches a suite
-  // failure, merges anyway, and RE-THROWS — so everything after that call was unreachable on this
-  // path, which is how the suite case stayed unguarded while the client case was fixed twice.
-  // scan-on-merge.yml discards the throw, so what got published was a number computed over
-  // whatever fraction of ~2,500 tests happened to run before the failure.
+test("SIGKILL after rotation cannot expose a torn canonical coverage directory", async () => {
   const root = makeRoot();
-  const rec = recorder(root);
-  const thrown = await runWithFailingSuite(root, rec);
-  try {
-    assert.match(
-      thrown?.message ?? "",
-      /17 tests failed/,
-      "the suite failure must still propagate"
-    );
-
-    for (const name of CANONICAL) {
-      assert.equal(existsSync(at(root, name)), false, `${name} must not be left behind`);
-    }
-    for (const name of QUARANTINED) {
-      assert.ok(existsSync(at(root, name)), `${name} must hold the partial data`);
-    }
-    assert.equal(
-      JSON.parse(readFileSync(at(root, "coverage-summary.degraded.json"), "utf8")).total.lines.pct,
-      80,
-      "the preserved copy must be the real partial measurement"
-    );
-
-    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
-    assert.match(marker.reason, /node suite failed: 17 tests failed/);
-    assert.deepEqual(marker.missing, ["node suite (partial c8 data)"]);
-    assert.deepEqual(marker.preserved, [
-      "coverage/coverage-summary.degraded.json",
-      "coverage/lcov.degraded.info",
-    ]);
-
-    assert.equal(
-      silenceErrors(() => readCoverageReport(root)),
-      null
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("the marker's reason distinguishes a suite failure from a workspace failure", async () => {
-  // Whoever reads the marker has to know which half of the run died. When BOTH fail the suite is
-  // named first, matching the error mergeThenPropagate re-throws as the more informative one.
-  const root = makeRoot({ manifest: true, registered: true });
-  const rec = recorder(root);
-  const thrown = await runWith(
-    root,
-    rec,
-    [],
-    (c, a) =>
-      (isClientPass(c, a) && "client coverage boom") || (isNodeSuite(a) && "17 tests failed")
+  writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
+  writeFileSync(at(root, "lcov.info"), LCOV);
+  const moduleUrl = new URL("../scripts/coverage-outputs.mjs", import.meta.url).href;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `import { rotateCoverageDirectory } from ${JSON.stringify(moduleUrl)};\n` +
+        `rotateCoverageDirectory(${JSON.stringify(root)});\n` +
+        `process.stdout.write("rotated\\n");\n` +
+        `setInterval(() => {}, 60_000);`,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
   );
   try {
-    assert.match(thrown?.message ?? "", /17 tests failed/);
-    const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
-    assert.match(marker.reason, /^node suite failed: 17 tests failed; client coverage failed: /);
-    assert.deepEqual(marker.missing, ["node suite (partial c8 data)", "gui/client"]);
+    await new Promise((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(() => reject(new Error("rotation acknowledgement timed out")), 5000);
+      child.once("error", reject);
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (!output.includes("rotated\n")) return;
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.equal(existsSync(path.join(root, "coverage")), false);
+    const rotated = snapshots(root);
+    assert.equal(rotated.length, 1);
+    assert.equal(
+      readFileSync(path.join(root, rotated[0], "coverage-summary.json"), "utf8"),
+      SUMMARY
+    );
+    assert.equal(readFileSync(path.join(root, rotated[0], "lcov.info"), "utf8"), LCOV);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("directory-shaped canonical children are hidden by the parent rotation", () => {
+  const root = makeRoot();
+  try {
+    mkdirSync(path.join(at(root, "coverage-summary.json"), "blocker"), { recursive: true });
+    writeFileSync(at(root, "lcov.info"), LCOV);
+
+    const snapshot = rotateCoverageDirectory(root);
+    assert.equal(existsSync(path.join(root, "coverage")), false);
+    assert.ok(existsSync(path.join(snapshot, "coverage-summary.json", "blocker")));
+    assert.equal(readFileSync(path.join(snapshot, "lcov.info"), "utf8"), LCOV);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a post-rename cleanup failure leaves direct scanner paths absent", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
+  writeFileSync(at(root, "lcov.info"), LCOV);
+  try {
+    await assert.rejects(
+      main([], {
+        root,
+        exec: rec.exec,
+        removeSnapshot: () => {
+          throw new Error("snapshot cleanup failed");
+        },
+      }),
+      /snapshot cleanup failed/
+    );
+    assert.equal(existsSync(at(root, "coverage-summary.json")), false);
+    assert.equal(existsSync(at(root, "lcov.info")), false);
+    assert.equal(existsSync(path.join(root, "coverage")), false);
+    assert.equal(snapshots(root).length, 1, "the forensic snapshot should remain intact");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -229,11 +224,65 @@ test("MERGE refuses to publish a number built from a failed shard", async () => 
       assert.equal(existsSync(at(root, name)), false, `stale ${name} must not survive`);
     }
     const marker = JSON.parse(readFileSync(at(root, "coverage-degraded.json"), "utf8"));
-    assert.match(marker.reason, /shard suite run failed in: coverage\/shard-1/);
+    assert.match(marker.reason, /shard suite run failed in: .*shard-1/);
     assert.equal(
       silenceErrors(() => readCoverageReport(root)),
       null
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MERGE reads shards from the rotated snapshot and writes only to fresh coverage", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  let copiedShardInput = false;
+  const watching = async (command, args, options) => {
+    if (args.includes("report") && args.includes("--temp-directory")) {
+      const tempDir = String(args[args.indexOf("--temp-directory") + 1]);
+      copiedShardInput = readdirSync(tempDir).some((name) => name.startsWith("coverage-s1-"));
+      assert.equal(existsSync(path.join(root, "coverage", "shard-1")), false);
+      assert.equal(snapshots(root).length, 0, "snapshot cleanup follows the completed copy");
+    }
+    return rec.exec(command, args, options);
+  };
+  try {
+    await main(["--merge", "1"], { root, exec: watching });
+    assert.equal(copiedShardInput, true, "c8 must receive the rotated shard's V8 JSON");
+    for (const name of CANONICAL) assert.ok(existsSync(at(root, name)));
+    assert.equal(existsSync(at(root, ".staged")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("strict prep failure poisons a fresh shard, and a later good shard plus merge recovers", async () => {
+  const root = makeRoot();
+  const rec = recorder(root);
+  const staleRaw = path.join(root, "coverage", "shard-1", "coverage-1.json");
+  try {
+    const prepError = await runWith(root, rec, ["--shard", "1/1"], (_c, args) =>
+      args.some((arg) => String(arg).endsWith("ensure-loop-built.mjs")) ? "tsc failed" : null
+    );
+    assert.match(prepError?.message ?? "", /tsc failed/);
+    assert.equal(existsSync(staleRaw), false, "stale raw JSON must leave the expected shard path");
+    assert.ok(existsSync(path.join(root, "coverage", "shard-1", "shard-failed.marker")));
+    const staleShard = readdirSync(path.join(root, "coverage")).find((entry) =>
+      entry.startsWith(".stale-shard-1-")
+    );
+    assert.ok(staleShard, "the old shard should remain under an ignored forensic name");
+    assert.ok(existsSync(path.join(root, "coverage", staleShard, "coverage-1.json")));
+
+    const mergeError = await runWith(root, rec, ["--merge", "1"], () => null);
+    assert.match(mergeError?.message ?? "", /refusing to merge/);
+    for (const name of CANONICAL) assert.equal(existsSync(at(root, name)), false);
+
+    await main(["--shard", "1/1"], { root, exec: rec.exec });
+    await main(["--merge", "1"], { root, exec: rec.exec });
+    for (const name of CANONICAL) assert.ok(existsSync(at(root, name)));
+    assert.equal(existsSync(at(root, ".staged")), false);
+    assert.deepEqual(snapshots(root), [], "a later success removes obsolete forensic snapshots");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -369,30 +418,18 @@ test("a filesystem failure DURING promotion publishes nothing and fails loudly",
   }
 });
 
-test("a degraded run publishes null even with the marker deleted by hand", async () => {
-  // The renames are load-bearing on their own. Someone who "fixes" the dashboard by deleting the
-  // marker must still not get a number out of a partial measurement — and the scanner, which
-  // never reads the marker in the first place, is permanently in this state.
+test("a subsequent good full run clears every stale artifact and publishes", async () => {
   const root = makeRoot({ manifest: true, registered: true });
   const rec = recorder(root);
-  await runWithFailingClient(root, rec);
   try {
-    rmSync(at(root, "coverage-degraded.json"), { force: true });
-    assert.equal(
-      silenceErrors(() => readCoverageReport(root)),
-      null,
-      "with the canonical names empty there is nothing to publish, marker or no marker"
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+    mkdirSync(path.join(root, ".coverage-stale-obsolete"), { recursive: true });
+    writeFileSync(path.join(root, ".coverage-stale-obsolete", "evidence"), "old");
+    mkdirSync(at(root, ".staged"), { recursive: true });
+    writeFileSync(path.join(at(root, ".staged"), "partial"), "old");
+    writeFileSync(at(root, "coverage-degraded.json"), JSON.stringify({ reason: "old" }));
+    writeFileSync(at(root, "coverage-summary.degraded.json"), "old");
+    writeFileSync(path.join(root, "coverage", "shard-1", "shard-failed.marker"), "old\n");
 
-test("a clean full run is untouched: canonical names, no marker, no quarantine", async () => {
-  // The guard has to be inert on the happy path, or it is just an outage with extra steps.
-  const root = makeRoot({ manifest: true, registered: true });
-  const rec = recorder(root);
-  try {
     await main([], { root, exec: rec.exec });
 
     for (const name of CANONICAL) {
@@ -404,6 +441,8 @@ test("a clean full run is untouched: canonical names, no marker, no quarantine",
     const report = readCoverageReport(root);
     assert.ok(report, "a clean run must publish a report");
     assert.equal(report.lines_pct, 80);
+    assert.equal(existsSync(at(root, ".staged")), false);
+    assert.deepEqual(snapshots(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -423,6 +462,9 @@ test("a clean MERGE clears a stale marker and its quarantined copies, and publis
       JSON.stringify({ reason: "left over from an earlier failed run" })
     );
     for (const name of QUARANTINED) writeFileSync(at(root, name), "stale");
+    mkdirSync(at(root, ".staged"), { recursive: true });
+    writeFileSync(path.join(at(root, ".staged"), "partial"), "stale");
+    mkdirSync(path.join(root, ".coverage-stale-obsolete"), { recursive: true });
 
     await main(["--merge", "1"], { root, exec: rec.exec });
 
@@ -437,50 +479,8 @@ test("a clean MERGE clears a stale marker and its quarantined copies, and publis
     const report = readCoverageReport(root);
     assert.ok(report, "a clean run must publish a report");
     assert.equal(report.lines_pct, 80);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("an unreadable degraded marker still suppresses publication", () => {
-  // Fail closed on a malformed marker: nobody gets a clean bill of health out of a broken one.
-  const root = makeRoot();
-  try {
-    mkdirSync(path.join(root, "coverage"), { recursive: true });
-    writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
-    writeFileSync(at(root, "coverage-degraded.json"), "{ not json");
-    assert.equal(
-      silenceErrors(() => readCoverageReport(root)),
-      null
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("a marker that parses to a non-object still suppresses publication", () => {
-  const root = makeRoot();
-  try {
-    mkdirSync(path.join(root, "coverage"), { recursive: true });
-    writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
-    writeFileSync(at(root, "coverage-degraded.json"), "42");
-    assert.equal(
-      silenceErrors(() => readCoverageReport(root)),
-      null
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("no marker means the artifact publishes normally", () => {
-  const root = makeRoot();
-  try {
-    mkdirSync(path.join(root, "coverage"), { recursive: true });
-    writeFileSync(at(root, "coverage-summary.json"), SUMMARY);
-    const report = readCoverageReport(root);
-    assert.ok(report);
-    assert.equal(report.lines_pct, 80);
+    assert.equal(existsSync(at(root, ".staged")), false);
+    assert.deepEqual(snapshots(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

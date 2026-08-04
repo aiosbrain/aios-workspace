@@ -21,8 +21,8 @@ export function coveragePaths(root) {
   return { dir: path.join(root, "coverage") };
 }
 
-export function shardDirectory(index, root = ROOT) {
-  return path.join(root, "coverage", `shard-${index}`);
+export function shardDirectory(index, root = ROOT, coverageRoot = path.join(root, "coverage")) {
+  return path.join(coverageRoot, `shard-${index}`);
 }
 
 // Tests shell out to repo-local CLIs (e.g. dotenvx); when this script is run as
@@ -178,18 +178,17 @@ export async function mergeThenPropagate(runSuite, merge, afterMerge = () => {})
   if (suiteError) throw suiteError;
 }
 
-export function collectShardFiles(total, root = ROOT) {
+export function collectShardFiles(total, root = ROOT, coverageRoot = path.join(root, "coverage")) {
   // The shard total is written in three places (ci.yml coverage-shard matrix,
   // `--shard k/N`, `--merge N`). If they drift, extra shard-<k> data beyond the
   // merge total would be silently ignored, under-reporting coverage — refuse.
-  const coverageRoot = path.join(root, "coverage");
   const strays = (existsSync(coverageRoot) ? readdirSync(coverageRoot) : [])
     .filter((entry) => {
       const match = /^shard-(\d+)$/.exec(entry);
       return match !== null && Number.parseInt(match[1], 10) > total;
     })
     .sort()
-    .map((entry) => `coverage/${entry}`);
+    .map((entry) => path.relative(root, path.join(coverageRoot, entry)));
   if (strays.length) {
     throw new Error(
       `run-coverage: shard data beyond --merge ${total} exists: ${strays.join(", ")} — ` +
@@ -200,7 +199,7 @@ export function collectShardFiles(total, root = ROOT) {
   const missing = [];
   const files = [];
   for (let index = 1; index <= total; index += 1) {
-    const dir = shardDirectory(index, root);
+    const dir = shardDirectory(index, root, coverageRoot);
     const entries = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
     if (!entries.length) {
       missing.push(path.relative(root, dir));

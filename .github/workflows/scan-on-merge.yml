@@ -120,6 +120,7 @@ jobs:
         # (never a sparse health-only payload — the brain 422s those).
         run: |
           HEALTH_JSON="$RUNNER_TEMP/codebase-health.contract.json"
+          rm -f -- coverage-summary.json
           if [ "${AIOS_PUSH_CODEBASE_HEALTH:-}" = "1" ] && [ -s "$HEALTH_JSON" ]; then
             python .github/scripts/scan_with_health.py \
               --path . --slug aios-workspace --full-name "$GITHUB_REPOSITORY" \
