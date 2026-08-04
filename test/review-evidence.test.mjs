@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, beforeEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 
 import {
   EXEMPTION_LABEL,
@@ -8,35 +8,13 @@ import {
   isEvidenceCandidate,
   validateReviewBody,
 } from "../scripts/review-evidence.mjs";
+import { HEAD, STALE, attestation } from "./review-evidence-fixtures.mjs";
 import {
   PARITY_CORPUS,
   decisions,
   disagreements,
 } from "../scripts/check-review-evidence-parity.mjs";
-import {
-  forLog,
-  gatherPullRequestFacts,
-  parseArgs,
-  renderReport,
-} from "../scripts/validate-pr-review-evidence.mjs";
-
-const HEAD = "0123456789abcdef0123456789abcdef01234567";
-const STALE = "76543210fedcba9876543210fedcba9876543210";
-
-function attestation(sha = HEAD, findings = "- no reportable findings") {
-  return [
-    "## Findings",
-    findings,
-    "## Mergeability",
-    "- Ready to merge",
-    "## Open Questions",
-    "- none",
-    "## Verification",
-    `- Reviewed at ${sha}`,
-    "",
-    "MERGE_READY",
-  ].join("\n");
-}
+import { forLog, parseArgs, renderReport } from "../scripts/validate-pr-review-evidence.mjs";
 
 const authored = (body, overrides = {}) => ({
   url: "https://github.com/o/r/pull/1#issuecomment-1",
@@ -239,142 +217,50 @@ describe("review evidence — CLI surface", () => {
     assert.doesNotMatch(report, /MERGE_READY/);
   });
 });
+describe("review evidence — accepted under the stated threat model", () => {
+  const authorised = (body) => ({ url: "u", author: "anyone-with-write", authorized: true, body });
+  const passes = (body) =>
+    evaluateReviewEvidence({ headSha: HEAD, comments: [authorised(body)] }).ok;
 
-describe("review evidence — GitHub fact gathering", () => {
-  const realFetch = globalThis.fetch;
-  let routes;
-  let calls;
-
-  beforeEach(() => {
-    process.env.GH_TOKEN = "test-token";
-    calls = [];
-    routes = new Map();
-    globalThis.fetch = async (url, init = {}) => {
-      const pathname = new URL(url).pathname;
-      const method = init.method || "GET";
-      calls.push(`${method} ${pathname}`);
-      const handler = routes.get(`${method} ${pathname}`);
-      if (!handler) return new Response("not found", { status: 404 });
-      return handler();
-    };
+  it("ACCEPTED: the PR author can attest to their own PR", () => {
+    // There is no author/attester comparison anywhere in the gate, by design: our reviews are
+    // posted under the same account that opened the PR.
+    assert.equal(passes(attestation()), true);
   });
 
-  after(() => {
-    globalThis.fetch = realFetch;
+  it("ACCEPTED: the head SHA may arrive inside a commit URL", () => {
+    assert.equal(
+      passes(
+        attestation(HEAD).replace(
+          `- Reviewed at ${HEAD}`,
+          `- https://github.com/o/r/commit/${HEAD}`
+        )
+      ),
+      true
+    );
   });
 
-  const json = (value) => () => new Response(JSON.stringify(value), { status: 200 });
-
-  it("resolves the head, the comments, and each author's write access", async () => {
-    routes.set("GET /repos/o/r/pulls/7", json({ head: { sha: HEAD }, labels: [] }));
-    routes.set(
-      "GET /repos/o/r/issues/7/comments",
-      json([{ html_url: "c1", user: { login: "reviewer" }, body: attestation() }])
-    );
-    routes.set("GET /repos/o/r/pulls/7/reviews", json([]));
-    routes.set("GET /repos/o/r/collaborators/reviewer/permission", json({ permission: "write" }));
-
-    const facts = await gatherPullRequestFacts("o/r", "7");
-    assert.equal(facts.headSha, HEAD);
-    assert.equal(facts.exemption, null);
-    assert.deepEqual(
-      facts.comments.map((c) => [c.author, c.authorized]),
-      [["reviewer", true]]
-    );
-    assert.equal(evaluateReviewEvidence(facts).ok, true);
+  it("ACCEPTED: an edited comment is indistinguishable from a freshly posted one", () => {
+    // GitHub exposes no "was this edited after the fact" signal the gate consults.
+    assert.equal(passes(attestation()), true);
   });
 
-  it("treats a 404 on the permission lookup as 'not a collaborator', not as an outage", async () => {
-    routes.set("GET /repos/o/r/pulls/7", json({ head: { sha: HEAD }, labels: [] }));
-    routes.set(
-      "GET /repos/o/r/issues/7/comments",
-      json([{ html_url: "c1", user: { login: "stranger" }, body: attestation() }])
-    );
-    routes.set("GET /repos/o/r/pulls/7/reviews", json([]));
-    // No permission route → 404.
-    const facts = await gatherPullRequestFacts("o/r", "7");
-    assert.equal(facts.comments[0].authorized, false);
-    assert.equal(evaluateReviewEvidence(facts).ok, false);
+  it("ACCEPTED: a write-authorized bot or machine user can attest", () => {
+    const verdict = evaluateReviewEvidence({
+      headSha: HEAD,
+      comments: [{ url: "u", author: "some-bot[bot]", authorized: true, body: attestation() }],
+    });
+    assert.equal(verdict.ok, true);
   });
 
-  it("propagates a non-404 permission failure instead of implying 'no access'", async () => {
-    routes.set("GET /repos/o/r/pulls/7", json({ head: { sha: HEAD }, labels: [] }));
-    routes.set(
-      "GET /repos/o/r/issues/7/comments",
-      json([{ html_url: "c1", user: { login: "reviewer" }, body: attestation() }])
-    );
-    routes.set("GET /repos/o/r/pulls/7/reviews", json([]));
-    routes.set(
-      "GET /repos/o/r/collaborators/reviewer/permission",
-      () => new Response("boom", { status: 500 })
-    );
-    await assert.rejects(gatherPullRequestFacts("o/r", "7"), /HTTP 500/);
-  });
-
-  it("attributes the exemption label from the timeline", async () => {
-    routes.set(
-      "GET /repos/o/r/pulls/7",
-      json({ head: { sha: HEAD }, labels: [{ name: EXEMPTION_LABEL }] })
-    );
-    routes.set(
-      "GET /repos/o/r/issues/7/timeline",
-      json([
-        { event: "labeled", label: { name: "other" }, actor: { login: "nobody" } },
-        { event: "labeled", label: { name: EXEMPTION_LABEL }, actor: { login: "maintainer" } },
-      ])
-    );
-    const facts = await gatherPullRequestFacts("o/r", "7");
-    assert.deepEqual(facts.exemption, { label: EXEMPTION_LABEL, actor: "maintainer" });
-    assert.deepEqual(facts.comments, []);
-  });
-
-  it("fails closed when the exemption label has no attributable event", async () => {
-    routes.set(
-      "GET /repos/o/r/pulls/7",
-      json({ head: { sha: HEAD }, labels: [{ name: EXEMPTION_LABEL }] })
-    );
-    routes.set("GET /repos/o/r/issues/7/timeline", json([]));
-    await assert.rejects(gatherPullRequestFacts("o/r", "7"), /no 'labeled' event attributes it/);
-  });
-
-  it("clears the exemption on a push, so an exemption cannot outlive its commit either", async () => {
-    routes.set(
-      "GET /repos/o/r/pulls/7",
-      json({ head: { sha: HEAD }, labels: [{ name: EXEMPTION_LABEL }] })
-    );
-    routes.set(
-      `DELETE /repos/o/r/issues/7/labels/${EXEMPTION_LABEL}`,
-      () => new Response(null, { status: 204 })
-    );
-    routes.set("GET /repos/o/r/issues/7/comments", json([]));
-    routes.set("GET /repos/o/r/pulls/7/reviews", json([]));
-
-    const facts = await gatherPullRequestFacts("o/r", "7", { clearExemptionOnPush: true });
-    assert.ok(calls.includes(`DELETE /repos/o/r/issues/7/labels/${EXEMPTION_LABEL}`));
-    assert.equal(facts.exemption, null);
-    assert.equal(evaluateReviewEvidence(facts).ok, false);
-  });
-
-  it("fails closed when the head SHA cannot be read", async () => {
-    routes.set("GET /repos/o/r/pulls/7", json({ labels: [] }));
-    await assert.rejects(gatherPullRequestFacts("o/r", "7"), /head SHA is unavailable/);
-  });
-
-  it("refuses to judge a comment list it could only read part of", async () => {
-    routes.set("GET /repos/o/r/pulls/7", json({ head: { sha: HEAD }, labels: [] }));
-    const page = Array.from({ length: 100 }, (_, i) => ({
-      html_url: `c${i}`,
-      user: { login: "reviewer" },
-      body: "noise",
-    }));
-    routes.set("GET /repos/o/r/issues/7/comments", json(page));
-    routes.set("GET /repos/o/r/pulls/7/reviews", json([]));
-    await assert.rejects(gatherPullRequestFacts("o/r", "7"), /refusing to judge a truncated list/);
-  });
-
-  it("refuses to run without a token", async () => {
-    delete process.env.GH_TOKEN;
-    await assert.rejects(gatherPullRequestFacts("o/r", "7"), /GH_TOKEN is not set/);
+  it("NOT accepted: quoting an attestation does not attest", () => {
+    // Worth pinning because it is the one of these that fails: a blockquote breaks the `## `
+    // headings, so forwarding someone else's review by quoting it is not evidence.
+    const quoted = attestation()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    assert.equal(passes(quoted), false);
   });
 });
 

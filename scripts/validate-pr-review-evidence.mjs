@@ -149,40 +149,71 @@ async function hasWriteAccess(repo, login, cache) {
 }
 
 /**
- * The exemption is a LABEL, and GitHub already restricts labelling to users with write
- * access — so the label's presence *is* the authorisation. What it does not carry by
- * itself is attribution, so the `labeled` timeline event is required: an exemption nobody
- * can be named for is theatre, and the gate fails rather than granting it.
+ * Resolve the exemption, if there is a LIVE one.
+ *
+ * The label's presence is the authorisation (GitHub already restricts labelling to write
+ * access) and the `labeled` timeline event is the attribution — an exemption nobody can be
+ * named for is theatre, so a label with no event fails rather than passing.
+ *
+ * Freshness is DERIVED, not maintained. The first version of this removed the label on
+ * `synchronize` and trusted that removal to have happened; if that one API call failed
+ * transiently, the stale label and its stale event survived and the next head went green
+ * attributed to whoever labelled the PR *before* the push. Cleanup-on-failure is the wrong
+ * shape: the safe answer has to fall out of the data. So the test is now a comparison —
+ * the `labeled` event must be NEWER than the commit it is exempting. A label applied before
+ * the current head simply does not qualify, whether or not any cleanup ever ran, and a
+ * failed deletion is harmless because nothing depends on the deletion.
+ *
+ * `headCommittedAt` is the head commit's committer date, which an ordinary push sets to
+ * push time. Under this gate's threat model (see the header of scripts/review-evidence.mjs:
+ * every write-access actor is trusted) that is the right clock — it is not forgery-proof,
+ * and is not meant to be.
  */
-async function resolveExemption(repo, number, labels) {
+async function resolveExemption(repo, number, labels, headCommittedAt) {
   if (!labels.includes(EXEMPTION_LABEL)) return null;
   const timeline = await paginate(repoPath(repo, "issues", number, "timeline"));
   const labelled = timeline.filter(
     (event) => event.event === "labeled" && event.label?.name === EXEMPTION_LABEL
   );
-  const actor = labelled.at(-1)?.actor?.login;
+  const latest = labelled.at(-1);
+  const actor = latest?.actor?.login;
   if (!actor) throw new Error(`${EXEMPTION_LABEL} is set but no 'labeled' event attributes it`);
+  const labelledAt = Date.parse(latest.created_at ?? "");
+  const commitAt = Date.parse(headCommittedAt ?? "");
+  // Unreadable on either side is indeterminate, and indeterminate is not an exemption.
+  if (!Number.isFinite(labelledAt) || !Number.isFinite(commitAt)) {
+    throw new Error(`${EXEMPTION_LABEL} cannot be dated against the current head`);
+  }
+  if (labelledAt <= commitAt) return { stale: true, label: EXEMPTION_LABEL, actor };
   return { label: EXEMPTION_LABEL, actor };
 }
 
-export async function gatherPullRequestFacts(repo, number, options = {}) {
+/**
+ * Step one, on its own, and deliberately the smallest possible request: identify the commit
+ * this run is judging. Everything after this point can fail, and every one of those failures
+ * has to be publishable AS a failure against this SHA — otherwise an error after the head was
+ * known posts nothing and a SHA that went green on an earlier run silently stays green while
+ * its evidence is gone. Resolving the head first is what makes "indeterminate is red" true
+ * rather than aspirational.
+ */
+export async function resolvePullRequestHead(repo, number, headShaOverride) {
   const pull = await request(repoPath(repo, "pulls", number));
-  const headSha = options.headSha || pull.head?.sha;
+  const headSha = headShaOverride || pull.head?.sha;
   if (!headSha) throw new Error("PR head SHA is unavailable");
-  const labels = (pull.labels || []).map((label) => label.name);
+  return { headSha, labels: (pull.labels || []).map((label) => label.name) };
+}
 
-  if (options.clearExemptionOnPush && labels.includes(EXEMPTION_LABEL)) {
-    // A push must invalidate an exemption exactly as it invalidates evidence, or the
-    // exemption becomes the hole: label a docs typo, then push real code into it.
-    // Removing the label is itself a timeline event, so the reset is auditable too.
-    await request(repoPath(repo, "issues", number, "labels", EXEMPTION_LABEL), {
-      method: "DELETE",
-    });
-    labels.splice(labels.indexOf(EXEMPTION_LABEL), 1);
-  }
-
-  const exemption = await resolveExemption(repo, number, labels);
-  if (exemption) return { headSha, comments: [], exemption };
+export async function gatherPullRequestFacts(repo, number, head) {
+  const { headSha, labels } = head;
+  const exemption = labels.includes(EXEMPTION_LABEL)
+    ? await resolveExemption(
+        repo,
+        number,
+        labels,
+        (await request(repoPath(repo, "commits", headSha)))?.commit?.committer?.date
+      )
+    : null;
+  if (exemption && !exemption.stale) return { headSha, comments: [], exemption };
 
   const [issueComments, reviews] = await Promise.all([
     paginate(repoPath(repo, "issues", number, "comments")),
@@ -209,7 +240,7 @@ export async function gatherPullRequestFacts(repo, number, options = {}) {
       authorized: await hasWriteAccess(repo, comment.author, cache),
     });
   }
-  return { headSha, comments, exemption: null };
+  return { headSha, comments, exemption: exemption ?? null };
 }
 
 export function renderReport(verdict, { repo, number, headSha }) {
@@ -266,27 +297,38 @@ async function postStatus(repo, headSha, verdict, targetUrl) {
   });
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+/**
+ * Exported so a test can drive the whole path — including the status write — against a
+ * stubbed API. Returns what it decided and what it published; the CLI wrapper below is the
+ * only thing that touches process state.
+ */
+export async function run(argv) {
+  const args = parseArgs(argv);
   const repo = args.repo;
   const number = args.pr;
-  let headSha = args["head-sha"];
+
+  // ---- step 1: identify the commit under judgement, and nothing else ----
+  let head;
+  let headSha;
   let verdict;
   try {
-    const facts = await gatherPullRequestFacts(repo, number, {
-      headSha,
-      clearExemptionOnPush: args["clear-exemption-on-push"],
-    });
-    headSha = facts.headSha;
-    verdict = evaluateReviewEvidence(facts);
+    head = await resolvePullRequestHead(repo, number, args["head-sha"]);
+    headSha = head.headSha;
   } catch (error) {
-    // Indeterminate is FAIL. A gate that goes green when it cannot answer is the bug class.
-    verdict = {
-      ok: false,
-      kind: "error",
-      summary: `Gate error: ${forLog(error.message)}`,
-      rejected: [],
-    };
+    // No head means there is nothing to attach a status to. The required context stays
+    // PENDING, which is still unmergeable — the one fail-closed state we cannot improve on.
+    verdict = gateError(error);
+  }
+
+  // ---- step 2: everything that can fail, now that a failure is publishable ----
+  if (head) {
+    try {
+      verdict = evaluateReviewEvidence(await gatherPullRequestFacts(repo, number, head));
+    } catch (error) {
+      // Indeterminate is FAIL, and — because the head is already known — a PUBLISHED fail.
+      // This is what turns an already-green SHA red when its evidence stops being valid.
+      verdict = gateError(error);
+    }
   }
 
   const report = renderReport(verdict, { repo, number, headSha });
@@ -295,26 +337,37 @@ async function main() {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
   }
 
-  if (!args["no-status"]) {
-    if (!headSha) {
-      console.error(
-        "::error::Head SHA is unknown, so no status could be posted. The required " +
-          `'${STATUS_CONTEXT}' context stays pending and the PR stays blocked.`
-      );
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      await postStatus(repo, headSha, verdict, args["target-url"]);
-    } catch (error) {
-      console.error(
-        `::error::Could not publish the ${STATUS_CONTEXT} status: ${forLog(error.message)}`
-      );
-      process.exitCode = 1;
-      return;
-    }
+  if (args["no-status"]) return { verdict, headSha, published: false };
+  if (!headSha) {
+    console.error(
+      "::error::Head SHA is unknown, so no status could be posted. The required " +
+        `'${STATUS_CONTEXT}' context stays pending and the PR stays blocked.`
+    );
+    return { verdict, headSha, published: false, failed: true };
   }
-  process.exitCode = verdict.ok ? 0 : 1;
+  try {
+    await postStatus(repo, headSha, verdict, args["target-url"]);
+  } catch (error) {
+    console.error(
+      `::error::Could not publish the ${STATUS_CONTEXT} status: ${forLog(error.message)}`
+    );
+    return { verdict, headSha, published: false, failed: true };
+  }
+  return { verdict, headSha, published: true };
+}
+
+function gateError(error) {
+  return {
+    ok: false,
+    kind: "error",
+    summary: `Gate error: ${forLog(error.message)}`,
+    rejected: [],
+  };
+}
+
+async function main() {
+  const outcome = await run(process.argv.slice(2));
+  process.exitCode = outcome.failed || !outcome.verdict.ok ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

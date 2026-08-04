@@ -24,18 +24,19 @@ on:
   issue_comment:
     types: [created, edited, deleted]
 
+# Read plus one write scope. The gate used to need `pull-requests: write` to strip a stale
+# exemption label on push; exemption staleness is now derived from the label's timestamp
+# against the head commit's, so nothing has to be mutated and the scope is gone.
 permissions:
   contents: read
   statuses: write
-  # Only used to strip the exemption label on a push (see --clear-exemption-on-push).
-  pull-requests: write
 
-# Serialised per PR, and deliberately NOT `cancel-in-progress`. The `synchronize` run is the
-# one that clears a stale exemption label; cancelling it because a comment arrived a second
-# later would let an exemption survive a push, which is the one thing the exemption must not
-# do. The cost is that two runs for the same head can finish out of order and the later write
-# wins — a narrow window that any subsequent event corrects, and whose likely direction (a
-# stale red) is the safe one.
+# Serialised per PR, and deliberately NOT `cancel-in-progress`: a cancelled run posts no
+# status, and every run's verdict is derived fresh from current state, so letting each one
+# finish costs a little CI time and removes a class of "the run that would have told us died"
+# from the design. Two runs for the same head can still finish out of order and the later
+# write wins — a narrow window that any subsequent event corrects, and whose likely direction
+# (a stale red) is the safe one.
 concurrency:
   group: review-evidence-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
@@ -86,8 +87,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # A push invalidates an exemption exactly as it invalidates evidence.
-          CLEAR: ${{ (github.event_name == 'pull_request' && github.event.action == 'synchronize') && '--clear-exemption-on-push' || '' }}
         run: |
           node scripts/validate-pr-review-evidence.mjs \
-            --repo "$REPO" --pr "$PR" --target-url "$RUN_URL" $CLEAR
+            --repo "$REPO" --pr "$PR" --target-url "$RUN_URL"

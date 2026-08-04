@@ -18,6 +18,37 @@ described**. So the unit of evidence here is not "a review happened" — it is "
 *this* 40-character head SHA". A push produces a new SHA with no status, the gate goes red, and
 the PR is unmergeable until the new head is re-attested. The staleness *is* the mechanism.
 
+## Threat model — what this does and does not defend against
+
+> **This gate answers "has anything reviewed this exact commit?" — not "is that review
+> honest?". Every actor with write access is trusted; the failure it prevents is a merge
+> racing a review that is still running.**
+
+That is a deliberate scope call by the repo owner, not an oversight. All the code here is
+AI-generated, and the reviewer, the attester and the merger are **the same account by design**
+— reviews are posted under the maintainer's account by an agent running the harness locally. A
+gate demanding an independent human reviewer would break the workflow on day one and still
+would not stop a determined forger. It defends against an agent merging too fast. Nothing more.
+
+Neither incident involved anyone faking anything. Nobody checked.
+
+### Accepted and documented — these satisfy the gate, on purpose
+
+| It passes when… | Why that is accepted |
+| --- | --- |
+| **The PR author attests to their own PR** | This is how the workflow works. There is no author/attester comparison anywhere in the gate. |
+| **The head SHA arrives via a commit URL, a quotation inside the Verification section, or a comment edited long after posting** | The binding is "this text names this SHA". GitHub exposes no "was this edited" signal the gate consults, and tightening the shape would reject legitimate reviews without stopping anyone who wanted to get around it. |
+| **Anything with `statuses: write` posts the `review-evidence` status directly** | The status is the protected context, so the workflow is a *producer* of it, not a guard on it. Closing this would mean not using commit statuses, and statuses are what make the `issue_comment` trigger work at all. |
+| **A write-authorised bot or machine user attests** | Same trust boundary as a human with write access. |
+
+Each row is pinned by a test in `test/review-evidence.test.mjs` ("accepted under the stated
+threat model") so the acceptance stays a recorded decision with an expected value, not a
+paragraph that quietly stops being true. One neighbouring case is pinned as *not* accepted:
+quoting an attestation wholesale does not attest, because a blockquote breaks the `## ` headings.
+
+What the gate *does* guarantee is narrow and worth having: **no commit merges unless something
+with write access put its name against that 40-character SHA, after the SHA existed.**
+
 ## What the gate checks
 
 A PR passes when **one** of these is true:
@@ -62,10 +93,10 @@ Enforced, and worth knowing before you write one:
   approval that a human reading the comment cannot.
 
 This is an *attestation*, not the review itself. Post the full review however you like — the
-gate needs one comment in this shape. The gate cannot verify that the attestation is true; it
-can only guarantee that somebody with write access signed their name against **this exact
-commit**, after that commit existed. (Nobody can name a SHA before it is created, so the SHA
-binding gives the ordering for free.)
+gate needs one comment in this shape. It cannot verify that the attestation is true (see the
+threat model above); it guarantees only that somebody with write access signed their name
+against **this exact commit**, after that commit existed. Nobody can name a SHA before it is
+created, so the SHA binding gives the ordering for free.
 
 ## The three decisions
 
@@ -87,10 +118,23 @@ review, but an exemption that is easy and invisible turns the gate into theatre.
   authorisation — no separate permission check, no separate secret.
 - The gate **refuses an exemption it cannot attribute** to a `labeled` event. An anonymous
   exemption is a hole, not an exemption.
-- **A push clears it.** On `synchronize`, the workflow removes the label and reports red. That
-  keeps exactly one invariant across both paths — nothing survives a new commit — and closes
-  the obvious abuse (label a docs typo, then push real code into it). The removal is itself a
-  timeline event, so the reset is auditable too.
+- **A push invalidates it, and that is derived rather than maintained.** The `labeled` event
+  must be **newer than the head commit it is exempting**; a label applied before the current
+  head simply does not qualify. It is reported as a named rejection ("exemption label predates
+  the current head"), not silently ignored.
+
+  The first version of this removed the label on `synchronize` and trusted that removal to have
+  happened. If that one API call failed transiently, the stale label and its stale event
+  survived, and the next head went green attributed to whoever labelled the PR *before* the
+  push — so the invariant the whole exemption design rests on did not hold. Cleanup-on-failure
+  is the wrong shape. Comparing two timestamps that are already in the data means a failed
+  deletion is harmless, because nothing depends on a deletion: the gate no longer mutates the
+  PR at all, and the workflow no longer needs `pull-requests: write`.
+
+  The clock is the head commit's committer date, which an ordinary push sets to push time.
+  Under the threat model above that is the right clock — it is not forgery-proof and is not
+  meant to be. If either timestamp is unreadable, that is indeterminate, and indeterminate is
+  not an exemption.
 
 Deliberately **not** implemented: path filters (`docs/**`, `*.md`), author allowlists, and
 auto-exempting bots. All three are invisible at review time and drift silently — a PR that is
@@ -129,17 +173,22 @@ The alternatives and why they lost:
 severity or visibility logic in the hub copy and does not port it here, so the release gate and
 the PR gate disagree about what a clean review looks like.
 
-**Mitigations, and the exit:**
+**The parity harness is a spot check, not a mitigation.** `npm run check:review-evidence-parity
+-- --hub <path-to-hub-checkout>` runs a 17-case corpus through both implementations and fails on
+disagreement, and it is worth running — but do not call it drift protection:
 
-- `npm run check:review-evidence-parity -- --hub <path-to-hub-checkout>` runs a shared corpus
-  through both implementations and fails on any behavioural disagreement. It is a local /
-  on-demand check, not a CI job, because the hub is not available to this repo's CI — which is
-  the same fact that ruled out the cross-repo checkout.
-- The file header names the exact source commit, so "has it drifted?" is a `git log` away.
-- **Convergence:** the shared surface belongs in `@aiosbrain/foundation` (this repo's existing
-  shared-module seam, already published). The follow-up is to move it there and have the hub
-  consume it, at which point this copy is deleted. Until then this is one duplicate, recorded,
-  not an unbounded fan-out.
+- **CI never compares the two repos.** It only runs where somebody remembers to run it.
+- **It needs a hub checkout** on the machine, which may simply not exist.
+- **It cannot detect a defect the two copies share.** They agreed on exactly the severity
+  behaviour that adversarial probes later defeated — agreement between two copies of the same
+  mistake is not evidence of correctness.
+
+It catches one copy being edited and the other not. That is all it catches.
+
+**The real answer is the exit:** the shared surface belongs in `@aiosbrain/foundation` (this
+repo's existing shared-module seam, already published). Move it there, have the hub consume it,
+delete this copy. Until that lands, this is one recorded duplicate and the file header names the
+exact source commit, so "has it drifted?" is a `git log` away.
 
 ## Operating it
 
@@ -179,9 +228,10 @@ GH_TOKEN=$(gh auth token) node scripts/validate-pr-review-evidence.mjs \
 
 ## Known limits — stated, not hidden
 
-- **The gate checks that a review was signed, not that it was good.** It cannot tell a careful
-  adversarial pass from a rubber stamp. What it makes impossible is the specific accident that
-  caused both incidents: merging on evidence that describes an older commit.
+- **The gate checks that a review was signed, not that it was good**, and does not defend
+  against forged evidence at all — see the threat model at the top, which lists exactly what
+  passes on purpose. What it makes impossible is the specific accident that caused both
+  incidents: merging on evidence that describes an older commit.
 - **Fork PRs cannot pass.** `GITHUB_TOKEN` is read-only for fork pull requests, so no status
   can be posted and the required context stays pending. That is fail-closed, and correct for
   now, but a maintainer has to intervene on any external contribution.

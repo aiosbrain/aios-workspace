@@ -10,6 +10,36 @@
  * 40-character head SHA". A push makes every prior attestation stale by construction, and
  * the gate goes red until the new head is re-attested.
  *
+ * THREAT MODEL — read this before assuming the gate protects something it does not
+ * ---------------------------------------------------------------------------------
+ * This gate answers "has anything reviewed this exact commit?" — NOT "is that review
+ * honest?". Every actor with write access to the repository is trusted. The failure it
+ * prevents is a merge racing a review that is still running; that is what happened twice,
+ * and in neither case did anyone fake anything — nothing checked.
+ *
+ * That is a deliberate scope call, not an oversight. All the code here is AI-generated and
+ * the reviewer, the attester and the merger are the same account by design: reviews are
+ * posted under the maintainer's account by an agent running the harness locally. A gate
+ * demanding an independent human reviewer would break the workflow on day one and still
+ * would not stop a determined forger.
+ *
+ * So the following all satisfy the gate, ACCEPTED AND DOCUMENTED rather than missed:
+ *
+ *   - The PR author can attest to their own PR. There is no author/attester comparison
+ *     anywhere in this file, on purpose.
+ *   - A head SHA reaches the Verification section by any route that renders — a commit URL,
+ *     a quotation inside the section, a comment edited long after it was posted. GitHub
+ *     exposes no "was this edited" signal that the gate consults.
+ *   - Anything holding a token with `statuses: write` can POST the `review-evidence` status
+ *     directly and skip the workflow entirely. The status is the protected context, so the
+ *     workflow is a producer of it, not a guard on it.
+ *   - A write-authorised bot or machine user can attest exactly like a human.
+ *
+ * Each of those is pinned by a test in test/review-evidence.test.mjs ("accepted under the
+ * stated threat model") so the acceptance stays a recorded decision with an expected value.
+ * What the gate DOES guarantee is narrow and worth having: no commit merges unless something
+ * with write access put its name against that 40-character SHA, after the SHA existed.
+ *
  * PROVENANCE — this is a deliberate vendored copy, not a fresh implementation
  * --------------------------------------------------------------------------
  * The body-validation half of this file (everything from `SHA_PATTERN` down to
@@ -28,13 +58,18 @@
  * adjacency was a fail-open), the entity/zero-width/emphasis normalisation, the
  * visible-markdown model, and the exact SHA binding — is a line-for-line copy of the hub (reflowed only by this repo's Prettier config).
  *
- * Keeping it a faithful copy is the point: `npm run check:review-evidence-parity` (and the
- * test of the same name) can diff this region against the hub copy whenever the hub is
- * checked out beside this repo, so drift is *detectable* rather than silent. The route was
- * chosen over checking the hub out inside the workflow — a required check must not be able
- * to go permanently red because another repo moved, was renamed, or rotated the token that
- * reads it. See docs/pr-review-evidence.md for the full trade-off and the convergence plan
- * (hub consumes `@aiosbrain/foundation`; this copy is then deleted).
+ * The route was chosen over checking the hub out inside the workflow: a required check must
+ * not be able to go permanently red because another repo moved, was renamed, or rotated the
+ * token that reads it.
+ *
+ * `npm run check:review-evidence-parity` is a USEFUL SPOT CHECK, not a mitigation, and should
+ * not be described as one. CI never compares the two repos; the run needs a hub checkout that
+ * may not exist on the machine; and a 17-case corpus cannot detect a defect the two copies
+ * SHARE — the copies agreed on exactly the severity behaviour that adversarial probes later
+ * defeated. It catches one copy being edited and the other not. It cannot tell you the
+ * semantics are right. The real answer to drift is the convergence plan: move the shared
+ * surface into `@aiosbrain/foundation` and have the hub consume it, at which point this copy
+ * is deleted. See docs/pr-review-evidence.md.
  */
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -382,7 +417,9 @@ export function isEvidenceCandidate(body) {
  * @param {object} input
  * @param {string} input.headSha            40-char lowercase head SHA of the PR.
  * @param {Array<{id:string,url:string,author:string,authorized:boolean,body:string}>} input.comments
- * @param {{label:string, actor:string}|null} [input.exemption]  Attributed exemption, or null.
+ * @param {{label:string, actor:string, stale?:boolean}|null} [input.exemption]  Attributed
+ *   exemption, or null. `stale: true` means the label was applied before the current head —
+ *   it is reported as a named rejection, never honoured.
  * @returns {{ok:boolean, kind:string, summary:string, rejected:Array<object>}}
  */
 export function evaluateReviewEvidence({ headSha, comments, exemption = null }) {
@@ -392,18 +429,29 @@ export function evaluateReviewEvidence({ headSha, comments, exemption = null }) 
   if (!Array.isArray(comments)) {
     throw new Error("PR comment list could not be read");
   }
+  const rejected = [];
   if (exemption) {
     if (!exemption.actor) {
       throw new Error(`${exemption.label} label is not attributable to a user`);
     }
-    return {
-      ok: true,
-      kind: "exempt",
-      summary: `Exempt: '${exemption.label}' applied by @${exemption.actor}`,
-      rejected: [],
-    };
+    // A label that predates the current head is reported, not honoured. Its staleness is
+    // derived from the data by the caller, so no cleanup step has to have run for this to
+    // be correct — see resolveExemption in scripts/validate-pr-review-evidence.mjs.
+    if (exemption.stale) {
+      rejected.push({
+        url: `label:${exemption.label}`,
+        author: exemption.actor,
+        reason: "exemption label predates the current head — re-apply it to exempt this commit",
+      });
+    } else {
+      return {
+        ok: true,
+        kind: "exempt",
+        summary: `Exempt: '${exemption.label}' applied by @${exemption.actor}`,
+        rejected: [],
+      };
+    }
   }
-  const rejected = [];
   for (const comment of comments) {
     if (!isEvidenceCandidate(comment.body)) continue;
     // An unauthorized author is reported, never skipped: "a stranger posted a green

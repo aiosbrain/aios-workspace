@@ -16,8 +16,9 @@ This is the **individual workspace** repo. The Team Brain sync contract
   reviewer's attestation names its **current** head SHA; a push makes prior evidence stale and
   the `review-evidence` commit status goes red until the new head is re-reviewed. Exemptions are
   the auditable `review-evidence-exempt` label, cleared by the next push. The body validator is a
-  recorded copy of the hub's release-gate validator, kept honest by
-  `npm run check:review-evidence-parity`. See `docs/pr-review-evidence.md`.
+  recorded copy of the hub's release-gate validator. Scope is deliberate and narrow: it answers
+  "has anything reviewed this exact commit?", not "is that review honest?" — every write-access
+  actor is trusted. See `docs/pr-review-evidence.md`.
 - **Code Maintenance Loop Phase 0 (AIO-610)** — codebase-health v2 distinguishes the observed
   score from evidence completeness and automation admission, loads per-repository capability
   profiles, and emits stable redacted findings for Team Brain. Missing, stale, or errored required
